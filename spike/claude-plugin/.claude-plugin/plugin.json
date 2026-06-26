@@ -1,0 +1,5 @@
+{
+  "name": "shepherd-spike",
+  "version": "0.0.1",
+  "description": "Throwaway Claude Code plugin for the Shepherd three-seam spike. Forwards hook lifecycle events to the Shepherd unix socket ($SHEPHERD_SOCK), tagged by $SHEPHERD_TAB_ID. Delete the dir to uninstall."
+}
