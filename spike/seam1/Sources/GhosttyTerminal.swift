@@ -10,7 +10,7 @@ struct GhosttyTerminal: NSViewRepresentable {
     func makeNSView(context: Context) -> GhosttySurfaceView { GhosttySurfaceView(tabID: tabID) }
 
     func updateNSView(_ v: GhosttySurfaceView, context: Context) {
-        // When this tab becomes the selected one, give its surface keyboard focus.
+        v.setActive(isSelected)   // only the visible tab renders at refresh rate
         if isSelected, let w = v.window, w.firstResponder !== v {
             w.makeFirstResponder(v)
         }
@@ -18,8 +18,8 @@ struct GhosttyTerminal: NSViewRepresentable {
 }
 
 /// NSView backing one libghostty surface. libghostty owns the Metal layer and
-/// drives rendering; we create/size the surface, inject the per-tab env
-/// (SHEPHERD_SOCK / SHEPHERD_TAB_ID) into its PTY, and forward input + focus.
+/// drives rendering; we create/size the surface, inject per-tab env into its PTY,
+/// and forward keyboard + mouse + clipboard.
 final class GhosttySurfaceView: NSView {
     let tabID: String
     private var surface: ghostty_surface_t?
@@ -44,18 +44,36 @@ final class GhosttySurfaceView: NSView {
         guard let s = makeSurface(app: app, window: window) else { return }
         surface = s
         ghostty_surface_set_focus(s, true)
+        ghostty_surface_set_occlusion(s, true)
+        updateDisplayID()                       // lock vsync to this screen's refresh rate
         syncSizeAndScale()
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(screenChanged),
+            name: NSWindow.didChangeScreenNotification, object: window)
+    }
+
+    /// Pause rendering for unselected tabs; the visible one renders at refresh rate.
+    func setActive(_ active: Bool) {
+        guard let surface else { return }
+        ghostty_surface_set_occlusion(surface, active)
+    }
+
+    @objc private func screenChanged() { updateDisplayID() }
+
+    private func updateDisplayID() {
+        guard let surface, let id = window?.screen?.ghosttyDisplayID else { return }
+        ghostty_surface_set_display_id(surface, id)
     }
 
     private func makeSurface(app: ghostty_app_t, window: NSWindow) -> ghostty_surface_t? {
         var cfg = ghostty_surface_config_new()
         cfg.platform_tag = GHOSTTY_PLATFORM_MACOS
         cfg.platform.macos.nsview = Unmanaged.passUnretained(self).toOpaque()
+        cfg.userdata = Unmanaged.passUnretained(self).toOpaque()   // surface-scoped callbacks recover us via this
         cfg.scale_factor = window.backingScaleFactor
 
         // Inject per-tab env into the PTY so the Claude plugin's hook can report
-        // back tagged with this tab. libghostty copies these during surface_new,
-        // so the strdup'd strings only need to live across the call.
+        // back tagged with this tab. libghostty copies these during surface_new.
         var allocs: [UnsafeMutablePointer<CChar>] = []
         func dup(_ s: String) -> UnsafePointer<CChar> {
             let p = strdup(s)!
@@ -92,7 +110,7 @@ final class GhosttySurfaceView: NSView {
         syncSizeAndScale()
     }
 
-    // MARK: Input — real key events (libghostty encodes control chars from keycode).
+    // MARK: Keyboard — libghostty encodes control chars from the keycode.
 
     override func keyDown(with event: NSEvent) {
         send(event.isARepeat ? GHOSTTY_ACTION_REPEAT : GHOSTTY_ACTION_PRESS, event)
@@ -126,8 +144,105 @@ final class GhosttySurfaceView: NSView {
         }
     }
 
+    // MARK: Mouse — position is view-space with a top-left origin (NSView is bottom-left).
+
+    private func mods(_ e: NSEvent) -> ghostty_input_mods_e { ghosttyMods(e.modifierFlags) }
+
+    private func reportPos(_ e: NSEvent) {
+        guard let surface else { return }
+        let p = convert(e.locationInWindow, from: nil)
+        ghostty_surface_mouse_pos(surface, p.x, frame.height - p.y, mods(e))
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach { removeTrackingArea($0) }
+        addTrackingArea(NSTrackingArea(
+            rect: .zero,
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self, userInfo: nil))
+    }
+
+    override func mouseDown(with e: NSEvent) {
+        if window?.firstResponder !== self { window?.makeFirstResponder(self) }
+        guard let surface else { return }
+        reportPos(e)
+        _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, mods(e))
+    }
+    override func mouseUp(with e: NSEvent) {
+        guard let surface else { return }
+        _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_LEFT, mods(e))
+    }
+    override func rightMouseDown(with e: NSEvent) {
+        guard let surface else { return }
+        reportPos(e)
+        _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_RIGHT, mods(e))
+    }
+    override func rightMouseUp(with e: NSEvent) {
+        guard let surface else { return }
+        _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_RIGHT, mods(e))
+    }
+    override func otherMouseDown(with e: NSEvent) {
+        guard let surface else { return }
+        reportPos(e)
+        _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_MIDDLE, mods(e))
+    }
+    override func otherMouseUp(with e: NSEvent) {
+        guard let surface else { return }
+        _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_MIDDLE, mods(e))
+    }
+    override func mouseMoved(with e: NSEvent) { reportPos(e) }
+    override func mouseDragged(with e: NSEvent) { reportPos(e) }
+    override func rightMouseDragged(with e: NSEvent) { reportPos(e) }
+    override func otherMouseDragged(with e: NSEvent) { reportPos(e) }
+
+    override func scrollWheel(with e: NSEvent) {
+        guard let surface else { return }
+        var x = e.scrollingDeltaX, y = e.scrollingDeltaY
+        let precision = e.hasPreciseScrollingDeltas
+        if precision { x *= 2; y *= 2 }
+        var sm: Int32 = precision ? 1 : 0
+        let mp = e.momentumPhase
+        let momentum: Int32 = mp.contains(.began) ? 1
+            : mp.contains(.stationary) ? 2
+            : mp.contains(.changed) ? 3
+            : mp.contains(.ended) ? 4 : 0
+        sm |= momentum << 1
+        ghostty_surface_mouse_scroll(surface, x, y, ghostty_input_scroll_mods_t(sm))
+    }
+
+    // MARK: Clipboard — called from libghostty's runtime callbacks (copy/paste keybinds).
+
+    func readClipboard(location: ghostty_clipboard_e, state: UnsafeMutableRawPointer?) -> Bool {
+        guard let surface, let str = NSPasteboard.general.string(forType: .string) else { return false }
+        str.withCString { ptr in
+            ghostty_surface_complete_clipboard_request(surface, ptr, state, false)
+        }
+        return true
+    }
+
+    func writeClipboard(content: UnsafePointer<ghostty_clipboard_content_s>?, len: Int) {
+        guard let content, len > 0 else { return }
+        for i in 0..<len {
+            let item = content[i]
+            guard let mime = item.mime, let data = item.data,
+                  String(cString: mime) == "text/plain" else { continue }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(String(cString: data), forType: .string)
+            return
+        }
+    }
+
     deinit {
+        NotificationCenter.default.removeObserver(self)
         if let surface { ghostty_surface_free(surface) }
+    }
+}
+
+private extension NSScreen {
+    /// CGDirectDisplayID for libghostty's vsync display link.
+    var ghosttyDisplayID: UInt32? {
+        (deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
     }
 }
 
