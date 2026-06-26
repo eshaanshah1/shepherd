@@ -1,55 +1,76 @@
 import SwiftUI
 
+/// One tab. `state` starts at `.shell` and lights up when a Claude session runs
+/// in it (driven by hook events arriving over the socket).
 struct Agent: Identifiable {
     let tabID: String
-    var title: String = "New session"   // replaced by the surface's OSC title callback
-    var state: AgentState = .idle
+    var title: String
+    var state: AgentState
     var id: String { tabID }
 }
 
-/// Source of truth for the sidebar. Encodes the SPEC §2 transition rules.
+/// App model: the open tabs, the selection, and the receiving end of the agent
+/// state socket. One row per tab (we show them all for now — SPEC §4 filtering
+/// comes later).
 @MainActor
 final class AgentStore: ObservableObject {
-    @Published private(set) var agents: [Agent] = []   // stable order = insertion order
+    static let shared = AgentStore()
 
-    /// A Claude Code hook event (delivered over the unix socket) for a tab.
+    @Published private(set) var tabs: [Agent] = []
+    @Published var selected: String?
+
+    /// Injected into each tab's PTY as $SHEPHERD_SOCK so the Claude plugin can reach us.
+    let socketPath: String
+
+    private var server: SocketServer?
+
+    private init() {
+        socketPath = "/tmp/shepherd-\(getpid()).sock"   // short path: stays under sun_path's 104 limit
+        server = SocketServer(path: socketPath) { [weak self] tabID, event in
+            self?.apply(event: event, tabID: tabID)
+        }
+        server?.start()
+        newTab()   // open with one tab
+    }
+
+    // MARK: Tabs
+
+    @discardableResult
+    func newTab(title: String = "Terminal") -> String {
+        let id = UUID().uuidString
+        tabs.append(Agent(tabID: id, title: title, state: .shell))
+        selected = id
+        return id
+    }
+
+    func select(_ tabID: String) { selected = tabID }
+
+    func closeTab(_ tabID: String) {
+        tabs.removeAll { $0.tabID == tabID }
+        if selected == tabID { selected = tabs.last?.tabID }
+    }
+
+    // MARK: Agent state (from the socket)
+
     func apply(event: String, tabID: String) {
-        if event == "SessionEnd" { remove(tabID: tabID); return }
-        guard let newState = AgentState.from(event: event) else { return }
-        upsert(tabID: tabID) { $0.state = newState }
-    }
-
-    /// Surface title callback (OSC 0/2) → row label. Separate feed from state.
-    func setTitle(_ title: String, tabID: String) {
-        upsert(tabID: tabID) { if !title.isEmpty { $0.title = title } }
-    }
-
-    /// Focus clears need-to-check → idle ONLY. Never touches blocked/working.
-    func didFocus(tabID: String) {
-        guard let i = agents.firstIndex(where: { $0.tabID == tabID }) else { return }
-        if agents[i].state == .needsCheck { agents[i].state = .idle }
-    }
-
-    /// Backstop: PTY child-exit removes the row too (not just SessionEnd).
-    func remove(tabID: String) {
-        agents.removeAll { $0.tabID == tabID }
-    }
-
-    var attentionCount: Int { agents.filter { $0.state.wantsAttention }.count }
-
-    private func upsert(tabID: String, _ mutate: (inout Agent) -> Void) {
-        if let i = agents.firstIndex(where: { $0.tabID == tabID }) {
-            mutate(&agents[i])
-        } else {
-            var a = Agent(tabID: tabID)
-            mutate(&a)
-            agents.append(a)
+        guard let i = tabs.firstIndex(where: { $0.tabID == tabID }) else { return }
+        if event == "SessionEnd" {
+            tabs[i].state = .shell          // agent gone; the tab persists as a shell
+        } else if let s = AgentState.from(event: event) {
+            tabs[i].state = s
         }
     }
 
-    /// TODO(seam 1+2): bind the unix socket here and call `apply(event:tabID:)`.
-    /// The working accept/read/parse loop already exists in
-    /// `../socket-probe/Sources/socket-probe/main.swift` — lift it onto a
-    /// background task and hop back to the main actor to call `apply`.
-    func listen() async { /* empty in skeleton — see socket-probe */ }
+    func setTitle(_ title: String, tabID: String) {
+        guard !title.isEmpty, let i = tabs.firstIndex(where: { $0.tabID == tabID }) else { return }
+        tabs[i].title = title
+    }
+
+    /// Focus clears need-to-check → idle ONLY (never blocked/working).
+    func didFocus(tabID: String) {
+        guard let i = tabs.firstIndex(where: { $0.tabID == tabID }) else { return }
+        if tabs[i].state == .needsCheck { tabs[i].state = .idle }
+    }
+
+    var attentionCount: Int { tabs.filter { $0.state.wantsAttention }.count }
 }
