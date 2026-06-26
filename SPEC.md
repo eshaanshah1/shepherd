@@ -102,6 +102,17 @@ them) · navigator fuzzy-switcher popup · workspaces + persistence/restore ·
 splits · multiple windows · native approval surface · config system / theming ·
 sound.
 
+### Big-ticket future: full remote control
+
+Drive a Shepherd instance from another laptop **as if you were sitting at the
+tab locally** — render its surfaces remotely, send input back, switch/observe
+tabs and agent state. Hard requirements: **smooth, low-latency, and secure**
+(transport over Tailscale / SSH / etc.). This is a post-polish feature — only
+once the local app is solid. Open design questions for when we get there:
+stream the terminal grid/PTY (server-authoritative, thin client) vs. mirror at
+the libghostty layer; how the agent-state socket + sidebar project across the
+link; auth + encryption model; and reconnect/latency-hiding behavior.
+
 ## 7. The live risk → the spike
 
 Everything above assumes three seams work. The throwaway spike in [`spike/`](spike/)
