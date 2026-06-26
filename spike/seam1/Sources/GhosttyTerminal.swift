@@ -2,33 +2,77 @@ import SwiftUI
 import AppKit
 import GhosttyKit
 
-/// SwiftUI host for a libghostty terminal surface.
+/// SwiftUI host for one libghostty terminal surface, identified by `tabID`.
 struct GhosttyTerminal: NSViewRepresentable {
-    func makeNSView(context: Context) -> GhosttySurfaceView { GhosttySurfaceView() }
-    func updateNSView(_ nsView: GhosttySurfaceView, context: Context) {}
+    let tabID: String
+    let isSelected: Bool
+
+    func makeNSView(context: Context) -> GhosttySurfaceView { GhosttySurfaceView(tabID: tabID) }
+
+    func updateNSView(_ v: GhosttySurfaceView, context: Context) {
+        // When this tab becomes the selected one, give its surface keyboard focus.
+        if isSelected, let w = v.window, w.firstResponder !== v {
+            w.makeFirstResponder(v)
+        }
+    }
 }
 
 /// NSView backing one libghostty surface. libghostty owns the Metal layer and
-/// drives rendering into this view; we create/size the surface and forward input.
+/// drives rendering; we create/size the surface, inject the per-tab env
+/// (SHEPHERD_SOCK / SHEPHERD_TAB_ID) into its PTY, and forward input + focus.
 final class GhosttySurfaceView: NSView {
+    let tabID: String
     private var surface: ghostty_surface_t?
 
+    init(tabID: String) {
+        self.tabID = tabID
+        super.init(frame: .zero)
+    }
+    required init?(coder: NSCoder) { fatalError("not supported") }
+
     override var acceptsFirstResponder: Bool { true }
+
+    override func becomeFirstResponder() -> Bool {
+        let ok = super.becomeFirstResponder()
+        if ok { AgentStore.shared.didFocus(tabID: tabID) }   // focus clears need-to-check
+        return ok
+    }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         guard surface == nil, let window, let app = GhosttyApp.shared.app else { return }
+        guard let s = makeSurface(app: app, window: window) else { return }
+        surface = s
+        ghostty_surface_set_focus(s, true)
+        syncSizeAndScale()
+    }
 
+    private func makeSurface(app: ghostty_app_t, window: NSWindow) -> ghostty_surface_t? {
         var cfg = ghostty_surface_config_new()
         cfg.platform_tag = GHOSTTY_PLATFORM_MACOS
         cfg.platform.macos.nsview = Unmanaged.passUnretained(self).toOpaque()
         cfg.scale_factor = window.backingScaleFactor
 
-        guard let s = ghostty_surface_new(app, &cfg) else { return }
-        surface = s
-        ghostty_surface_set_focus(s, true)
-        syncSizeAndScale()
-        window.makeFirstResponder(self)
+        // Inject per-tab env into the PTY so the Claude plugin's hook can report
+        // back tagged with this tab. libghostty copies these during surface_new,
+        // so the strdup'd strings only need to live across the call.
+        var allocs: [UnsafeMutablePointer<CChar>] = []
+        func dup(_ s: String) -> UnsafePointer<CChar> {
+            let p = strdup(s)!
+            allocs.append(p)
+            return UnsafePointer(p)
+        }
+        var envVars = [
+            ghostty_env_var_s(key: dup("SHEPHERD_SOCK"),   value: dup(AgentStore.shared.socketPath)),
+            ghostty_env_var_s(key: dup("SHEPHERD_TAB_ID"), value: dup(tabID)),
+        ]
+        defer { allocs.forEach { free($0) } }
+
+        return envVars.withUnsafeMutableBufferPointer { buf in
+            cfg.env_vars = buf.baseAddress
+            cfg.env_var_count = buf.count
+            return ghostty_surface_new(app, &cfg)
+        }
     }
 
     private func syncSizeAndScale() {
@@ -48,18 +92,14 @@ final class GhosttySurfaceView: NSView {
         syncSizeAndScale()
     }
 
-    // MARK: Input — real key events. libghostty encodes control chars (Enter,
-    // Ctrl-C, arrows…) itself from the keycode; we only attach `text` for
-    // printable characters (codepoint >= 0x20).
+    // MARK: Input — real key events (libghostty encodes control chars from keycode).
 
     override func keyDown(with event: NSEvent) {
         send(event.isARepeat ? GHOSTTY_ACTION_REPEAT : GHOSTTY_ACTION_PRESS, event)
     }
-
     override func keyUp(with event: NSEvent) {
         send(GHOSTTY_ACTION_RELEASE, event)
     }
-
     override func flagsChanged(with event: NSEvent) {
         let flags = event.modifierFlags
         let action: ghostty_input_action_e
