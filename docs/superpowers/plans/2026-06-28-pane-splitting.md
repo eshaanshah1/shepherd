@@ -468,12 +468,13 @@ This is the riskiest task: it swaps the store's `[Agent]` for `[Tab]` while keep
 
 **Files:**
 - Create: `spike/seam1/Sources/Tab.swift` (fill the stub from Task 1)
-- Modify: `spike/seam1/Sources/AgentStore.swift` (large), `GhosttyTerminal.swift`, `Ghostty.swift`
+- Modify: `spike/seam1/Sources/AgentStore.swift` (large), `GhosttyTerminal.swift`, `Ghostty.swift`, and the **compile-ripple** files that read the old `Agent` model: `SidebarView.swift`, `ContentView.swift`, `AppDelegate.swift`. Touch the ripple files only enough to compile + preserve identical behavior — the sidebar bracket/strip redesign is Task 9, the recursive render is Task 6.
 
 **Interfaces — Produces:**
 - `struct Tab: Identifiable { let tabID: String; var userTitle: String?; var root: SplitNode; var focusedPaneID: String; var zoomedPaneID: String?; var collapsed: Bool; var id: String { tabID }; var paneIDs: [String] { root.leafIDs }; var isSplit: Bool { paneIDs.count > 1 }; func focusedPane() -> Pane?; func attentionState() -> AgentState?; var collapsedStripPanes: [Pane] }`
-- `AgentStore`: `@Published tabs: [Tab]`, `@Published selectedTab: String?`. Methods used by views/commands: `newTab()`, `select(tabID:)`, `focusPane(_ paneID:)`, `splitFocused(_ axis: SplitAxis)`, `closeFocusedPane()`, `focusNeighbor(_ dir: FocusDirection, in rect: CGRect)`, `toggleZoom()`, `setCollapsed(_ tabID:, _ value: Bool)`, `rename(tabID:, to:)`, plus the per-pane feeds `apply(event:detail:paneID:)`, `setTitle(_:paneID:)`, `setCwd(_:paneID:)`, `closePane(_ paneID:)`, `didFocus(paneID:)`.
+- `AgentStore`: `@Published tabs: [Tab]`, `@Published selectedTab: String?`. Methods used by views/commands: `newTab()`, `select(tabID:)`, `focusPane(_ paneID:)`, `splitFocused(_ axis: SplitAxis)`, `closeFocusedPane()`, `focusNeighbor(_ dir: FocusDirection, in rect: CGRect)`, `toggleZoom()`, `setCollapsed(_ tabID:, _ value: Bool)`, `rename(tabID:, to:)`, plus the per-pane feeds `apply(event:detail:paneID:)`, `setTitle(_:paneID:)`, `setCwd(_:paneID:)`, `closePane(_ paneID:)`, `didFocus(paneID:)`, and `revealPane(_ paneID:)` (notification routing — select owning tab + focus the pane).
 - `cwd(forPane:)` for surface creation.
+- **Deferred — NOT added in Task 5** (no caller until Tasks 7–9; see Step 3): `splitFocused`, `closeFocusedPane`, `focusPane`, `focusNeighbor`, `toggleZoom`, `setCollapsed`.
 
 **Implementation notes (verify by build+run, not unit test):**
 
@@ -526,11 +527,14 @@ struct Tab: Identifiable {
   - **Attention everywhere becomes per-pane:** `attentionCount = tabs.flatMap { $0.root.panes }.filter { $0.state.wantsAttention }.count`. `selectNextAttention()` iterates panes across tabs in (tab, leaf) order, selecting the tab AND setting its `focusedPaneID`. Notifications fire per pane (title = pane.displayTitle).
   - `selectIndex/selectNext/selectPrevious` operate on **tabs** (unchanged meaning).
   - `rename(tabID:to:)` sets `tabs[i].userTitle`.
-- [ ] **Step 3: Add the new mutations (used by Tasks 9–12; safe to add now, unused):** `splitFocused(_:)`, `closeFocusedPane()`, `focusPane(_:)`, `focusNeighbor(_:in:)`, `toggleZoom()`, `setCollapsed(_:_:)`. (Bodies in their consuming tasks; stub with the real logic now per the snippets in Tasks 9–11 to keep commits compiling — or add in those tasks and accept they're wired then. Prefer adding real bodies now.)
+- [ ] **Step 3: Do NOT add the split/zoom/focus mutations here** (`splitFocused`, `closeFocusedPane`, `focusPane`, `focusNeighbor`, `toggleZoom`, `setCollapsed`). They have no caller until Tasks 7–9, and several need view-supplied geometry that doesn't exist yet — adding them now risks half-baked code. Each consuming task adds its own. Task 5 is *only* the behavior-preserving data-model / socket / persistence / rename refactor. (The `Tab.zoomedPaneID` and `Tab.collapsed` *fields* stay — they're data, just not yet mutated by UI.)
 - [ ] **Step 4: `defaultCollapsed`** — `@AppStorage("shepherd.panes.defaultCollapsed")`-backed via a small helper read in `AgentStore` (UserDefaults.standard.bool(forKey:)). *(ADR 0012 envisions a `~/.config/shepherd` value; sourcing it from that file is a deferred follow-up — note it in the commit.)*
 - [ ] **Step 5: Persistence** — replace `[Persisted]` with `struct PersistedTab: Codable { var userTitle: String?; var root: SplitNode; var collapsed: Bool }`. `save()` maps `tabs` → `[PersistedTab]`; `restore()` decodes and rebuilds `Tab`s (root decodes with fresh pane ids + shell state via Task 4; `focusedPaneID = root.firstLeafID!`). Old persisted blobs under `shepherd.tabs.v1` won't decode → bump the key to `shepherd.tabs.v2` so a stale v1 blob is ignored (first launch falls back to `newTab()`).
 - [ ] **Step 6: Rename `GhosttyTerminal.tabID` → `paneID`** and `GhosttyTerminal(tabID:…)` → `(paneID:…)`; update env injection to inject `paneID` as the value of `SHEPHERD_TAB_ID` (name unchanged). In `Ghostty.swift`, the three callbacks now read `view(ud).paneID` and call `setTitle(_:paneID:)`, `setCwd(_:paneID:)`, `closePane(_:)`. `cwd(forTab:)` → `cwd(forPane:)`.
-- [ ] **Step 7: `ContentView`** — for now keep it rendering one surface per tab, but key by the tab's single pane: `GhosttyTerminal(paneID: tab.focusedPaneID, …)`. (Real recursive render lands in Task 7.) This keeps the app runnable after this task.
+- [ ] **Step 7: Compile-ripple views (behavior-preserving).**
+  - `ContentView` — keep rendering one surface per tab for now, keyed by the tab's single pane: `GhosttyTerminal(paneID: tab.focusedPaneID, …)`. (Real recursive render lands in Task 6.) Keeps the app runnable.
+  - `SidebarView`'s `TabRow` reads the old `Agent` fields (`.state`, `.reason`); rebind to the tab's focused pane: state = `tab.focusedPane()?.state ?? .shell`, reason = `tab.focusedPane()?.reason`, name = `tab.displayTitle` (already on `Tab`). The row must look identical to today for a 1-pane tab. **Do NOT** build the bracket / numbered-strip / zoom-dimming — that's Task 9.
+  - `AppDelegate` routes notification clicks. Notifications now fire per pane, so put the **paneID** in the notification `userInfo` (in `AgentStore.notifyAttention`) and reveal it via the new `AgentStore.revealPane(_ paneID:)` (select owning tab, set `focusedPaneID`, clear need-to-check). For a 1-pane tab this is identical to today's `select(tabID:)`.
 - [ ] **Step 8: Build, run, verify NO regression.**
 
 ```bash
