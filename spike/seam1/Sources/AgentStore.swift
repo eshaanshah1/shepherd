@@ -10,12 +10,27 @@ struct Agent: Identifiable {
     var userTitle: String?      // user-set name; overrides the OSC title
     var cwd: String?            // last-known working dir (for restore-on-relaunch)
     var state: AgentState
-    var reason: String?         // why blocked / errored (sidebar subtitle)
+    var reason: String?         // why blocked / errored
     var id: String { tabID }
 
     var displayTitle: String {
         if let u = userTitle, !u.isEmpty { return u }
-        return title.isEmpty ? "Terminal" : title
+        if state != .shell, !title.isEmpty { return title }   // agent: show the title it set
+        return cwdName ?? "Terminal"
+    }
+
+    /// Default name from the working dir: home → "~", a child of home → "~/dir",
+    /// else "parent/dir". We never surface the shell's user@host OSC title.
+    private var cwdName: String? {
+        guard let cwd, !cwd.isEmpty else { return nil }
+        let home = NSHomeDirectory()
+        if cwd == home { return "~" }
+        let ns = cwd as NSString
+        let last = ns.lastPathComponent
+        let parent = ns.deletingLastPathComponent
+        if parent == home { return "~/\(last)" }
+        let parentName = (parent as NSString).lastPathComponent
+        return (parentName.isEmpty || parentName == "/") ? last : "\(parentName)/\(last)"
     }
 }
 
@@ -26,6 +41,11 @@ final class AgentStore: ObservableObject {
 
     @Published private(set) var tabs: [Agent] = []
     @Published var selected: String?
+
+    /// Bumped to force the selected terminal to reclaim first responder
+    /// (e.g. after a rename ends and the text field gives up focus).
+    @Published var focusTick = 0
+    func refocusActiveTerminal() { focusTick += 1 }
 
     /// Injected into each tab's PTY as $SHEPHERD_SOCK so the Claude plugin can reach us.
     let socketPath: String
@@ -53,7 +73,10 @@ final class AgentStore: ObservableObject {
         return id
     }
 
-    func select(_ tabID: String) { selected = tabID }
+    func select(_ tabID: String) {
+        selected = tabID
+        didFocus(tabID: tabID)   // viewing a finished tab clears its need-to-check
+    }
 
     func closeTab(_ tabID: String) {
         tabs.removeAll { $0.tabID == tabID }
@@ -104,10 +127,16 @@ final class AgentStore: ObservableObject {
         save()
     }
 
-    func move(fromOffsets: IndexSet, toOffset: Int) {
-        tabs.move(fromOffsets: fromOffsets, toOffset: toOffset)
-        save()
+    /// Live reorder during a drag — moves `tabID` to an absolute index without
+    /// persisting; commitOrder() saves once the drag ends.
+    func reorder(tabID: String, toIndex: Int) {
+        guard let from = tabs.firstIndex(where: { $0.tabID == tabID }),
+              from != toIndex, tabs.indices.contains(toIndex) else { return }
+        let item = tabs.remove(at: from)
+        tabs.insert(item, at: toIndex)
     }
+
+    func commitOrder() { save() }
 
     /// cwd to seed a restored tab's surface (consumed once at surface creation).
     func cwd(forTab tabID: String) -> String? {
@@ -140,7 +169,7 @@ final class AgentStore: ObservableObject {
         }
 
         switch event {
-        case "SessionStart":      set(.idle)                          // new session, from any state
+        case "SessionStart":      tabs[i].title = ""; set(.idle)      // drop shell title; the agent sets its own
         case "SessionEnd":        set(.shell)                         // agent gone
         case "UserPromptSubmit":  set(.working)                       // new turn, from any state
         case "Stop":              if midTurn { set(.needsCheck) } else { applied = false }

@@ -6,6 +6,7 @@ import GhosttyKit
 struct GhosttyTerminal: NSViewRepresentable {
     let tabID: String
     let isSelected: Bool
+    var focusTick: Int = 0   // changing this re-runs updateNSView so we can reclaim focus
 
     func makeNSView(context: Context) -> GhosttySurfaceView { GhosttySurfaceView(tabID: tabID) }
 
@@ -47,6 +48,15 @@ final class GhosttySurfaceView: NSView {
         ghostty_surface_set_occlusion(s, true)
         updateDisplayID()                       // lock vsync to this screen's refresh rate
         syncSizeAndScale()
+
+        // Claim keyboard focus on launch/restore if we're the visible tab — else
+        // first responder lands on a SwiftUI control and keystrokes miss the PTY.
+        if AgentStore.shared.selected == tabID {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let window = self.window else { return }
+                window.makeFirstResponder(self)
+            }
+        }
         NotificationCenter.default.addObserver(
             self, selector: #selector(screenChanged),
             name: NSWindow.didChangeScreenNotification, object: window)

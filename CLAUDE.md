@@ -40,13 +40,14 @@ spike/
 ### App source files (`spike/seam1/Sources/`)
 - `ShepherdApp.swift` — `@main` App; menu commands (⌘T/⌘W/⌘⇧[ ]/⌘1–9/⌘⇧A); installs `AppDelegate`.
 - `AppDelegate.swift` — requests notification permission; routes notification clicks → focus that tab.
-- `Ghostty.swift` — `GhosttyApp`: `ghostty_init` + config + the **runtime callback table** + the `wakeup→tick` pump; handles `SET_TITLE`/`PWD` actions.
-- `GhosttyTerminal.swift` — `NSViewRepresentable` + `GhosttySurfaceView`: creates a `ghostty_surface_t`, injects per-tab env into the PTY, forwards keyboard/mouse/clipboard, sets display-id (vsync) + occlusion.
-- `AgentStore.swift` — the app model: tabs, selection, persistence, the **socket→state lifecycle map** (`apply`), dock badge + notifications.
-- `AgentState.swift` — the state enum (`shell/working/blocked/needsCheck/idle/error`) + colors.
+- `Ghostty.swift` — `GhosttyApp`: `ghostty_init` + config (base **theme** + `~/.config/shepherd/config`, [ADR 0010](.claude/adr/0010-terminal-theme-from-shepherd-config.md)) + the **runtime callback table** + the `wakeup→tick` pump; handles `SET_TITLE`/`PWD` actions.
+- `GhosttyTerminal.swift` — `NSViewRepresentable` + `GhosttySurfaceView`: creates a `ghostty_surface_t`, injects per-tab env into the PTY, forwards keyboard/mouse/clipboard, sets display-id (vsync) + occlusion; **claims first responder** when its tab is selected (the focus fix, [ADR 0009](.claude/adr/0009-sidebar-custom-rows-not-list.md)).
+- `AgentStore.swift` — the app model: tabs, selection, persistence, the **socket→state lifecycle map** (`apply`), dock badge + notifications. `displayTitle` = rename ?? the agent's OSC title ?? cwd ([ADR 0011](.claude/adr/0011-tab-names-cwd-and-agent-title.md)); `select()` clears need-to-check.
+- `AgentState.swift` — the state enum (`shell/working/blocked/needsCheck/idle/error`); colors come from `Theme.swift`.
+- `Theme.swift` — design tokens (flat near-black palette + soft state colors) + a `Color(hex:)` init. The single source of UI colors; the libghostty base theme mirrors it.
 - `SocketServer.swift` — in-app unix-domain socket server (receives `{tab_id,event,detail}`).
-- `SidebarView.swift` — the tab list (select / drag-reorder / rename / close).
-- `ContentView.swift` — sidebar + a ZStack of all tab surfaces (only the selected one visible).
+- `SidebarView.swift` — the tab list: a **custom `ScrollView` of rows (not `List`)** — leading glyph + name + status word, live drag-reorder, rename, hover/selection; T3-Code styling ([ADR 0009](.claude/adr/0009-sidebar-custom-rows-not-list.md)).
+- `ContentView.swift` — sidebar + a resizable hairline divider + a ZStack of all tab surfaces (only the selected one visible).
 
 ---
 
@@ -111,10 +112,12 @@ only first-class agent** in v1 (see [ADR 0003](.claude/adr/0003-agent-state-via-
 | `Elicitation` | **blocked** ("input requested") |
 | `Stop` | **need-to-check** |
 | `StopFailure` | **error** (+reason: the API error type) |
-| *user focuses the tab* | need-to-check → **idle** (only need-to-check; never blocked/working) |
+| *focus / select tab / click its notification* | need-to-check → **idle** (only need-to-check; never blocked/working) — `select()` calls `didFocus` |
 
 Plain tabs (no agent) are **shell**. Sidebar currently shows **all** tabs
 (filtering deferred — [ADR 0006](.claude/adr/0006-sidebar-shows-all-tabs.md)).
+Tab names: rename wins, else an agent's own OSC title, else the cwd
+([ADR 0011](.claude/adr/0011-tab-names-cwd-and-agent-title.md)).
 
 ---
 
@@ -127,6 +130,8 @@ Plain tabs (no agent) are **shell**. Sidebar currently shows **all** tabs
 - **`xcodegen generate` after any file add/remove** — else the new file isn't compiled (`cannot find X in scope` at *build* time).
 - **SourceKit lies in this repo** — "Cannot find type AgentState/…" and "'main' attribute…" diagnostics are stale because the editor sees loose files, not the generated project. `xcodebuild` is ground truth; ignore SourceKit "cannot find" noise.
 - **Debug log:** the app appends every state transition to `/tmp/shepherd-events.log` — invaluable for debugging the state machine (`tail -f`). Currently always-on; a deferred cleanup is to put it behind a flag.
+- **Sidebar is a custom `ScrollView`, NOT a `List`** ([ADR 0009](.claude/adr/0009-sidebar-custom-rows-not-list.md)): `List` was a keyboard-focus sink (stole keystrokes from the PTY) and forced ugly default styling. Don't reintroduce it — and keep sidebar SwiftUI controls `.focusable(false)` so focus stays on the terminal.
+- **Screenshotting the app for UI checks:** Shepherd often opens *behind* the frontmost window, so a full-screen `screencapture` grabs the wrong app. Capture its window directly — get the id from `CGWindowListCopyWindowInfo` (a tiny `swift` script: owner == `Shepherd`, `kCGWindowLayer == 0`) → `screencapture -o -l <id> out.png`. Re-`open` right after `killall` can hit LaunchServices `-600`; poll `until ! pgrep -x Shepherd` before reopening. (No `Quartz`/pyobjc on this machine — use `swift`, not Python.)
 
 ---
 
@@ -135,8 +140,9 @@ Plain tabs (no agent) are **shell**. Sidebar currently shows **all** tabs
 - After editing `claude-plugin/`, the user runs `/reload-plugins` (symlinked).
 - Don't commit `vendor/` (huge) or generated Xcode files — they're gitignored.
 - Match existing Swift style; keep comments to the non-obvious "why".
+- UI colors live in `Theme.swift`; keep `GhosttyApp.writeBaseTheme()` in sync so the terminal grid matches the chrome ([ADR 0010](.claude/adr/0010-terminal-theme-from-shepherd-config.md)).
 - Commit messages end with the project's Co-Authored-By line.
 
 ## Done vs deferred
-**Done:** terminal (mouse/scroll/copy-paste/vsync/titles), tabs (create/switch/close/reorder/rename/persist+cwd, keyboard nav), agent-state lifecycle, Claude plugin, attention loop (badge + backgrounded notifications + ⌘⇧A jump-to-alert).
+**Done:** terminal (mouse/scroll/copy-paste/vsync/titles), tabs (create/switch/close/reorder/rename/persist+cwd, keyboard nav), agent-state lifecycle, Claude plugin, attention loop (badge + backgrounded notifications + ⌘⇧A jump-to-alert), **T3-Code-style sidebar** (custom rows not `List`, resizable, cwd/agent tab names) + self-contained theme (`~/.config/shepherd`).
 **Deferred (see SPEC §6):** generic non-Claude agents (Tier-B), sidebar auto-hide at ≤1 tab, debug-log flag, IME/selection polish, workspaces, multi-window, navigator popup, and **full remote control** (the big future bet).
