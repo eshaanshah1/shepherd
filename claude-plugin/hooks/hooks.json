@@ -24,9 +24,6 @@
     "ElicitationResult": [
       { "matcher": "*", "hooks": [ { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/report.sh ElicitationResult" } ] }
     ],
-    "Notification": [
-      { "hooks": [ { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/report.sh Notification" } ] }
-    ],
     "SubagentStart": [
       { "matcher": "*", "hooks": [ { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/report.sh SubagentStart" } ] }
     ],

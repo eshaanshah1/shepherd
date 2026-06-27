@@ -102,43 +102,58 @@ final class AgentStore: ObservableObject {
 
     // MARK: Feeds from libghostty
 
-    /// Agent-state hook event (over the socket). `detail` carries tool_name /
-    /// notification_type / error_type / agent_type depending on the event.
-    /// This is the lifecycle map (see SPEC + the hooks.md analysis).
+    /// Agent-state hook event (over the socket). `detail` carries the cosmetic
+    /// reason field (tool_name / error_type / agent_type) for the few events that
+    /// have one. The lifecycle map — see SPEC + the hooks.md analysis.
+    ///
+    /// Ordering guard: hooks are independent socket writes with no delivery-order
+    /// guarantee, so a stale mid-turn event can arrive after `Stop`. We only let
+    /// mid-turn transitions apply while the tab is actually mid-turn (working or
+    /// blocked); a finished turn (need-to-check) can only be left by a real new
+    /// turn (UserPromptSubmit) or by focus. This kills the "need-to-check flips
+    /// back to working" bug deterministically, regardless of arrival order.
     func apply(event: String, detail: String, tabID: String) {
-        guard let i = tabs.firstIndex(where: { $0.tabID == tabID }) else { return }
+        guard let i = tabs.firstIndex(where: { $0.tabID == tabID }) else {
+            shepherdLog("event=\(event) tab=\(tabID.prefix(8)) -> NO SUCH TAB")
+            return
+        }
+        let cur = tabs[i].state
+        let midTurn = (cur == .working || cur == .blocked)
+        var applied = true
         func set(_ s: AgentState, _ reason: String? = nil) {
             tabs[i].state = s
             tabs[i].reason = reason
         }
+
         switch event {
-        case "SessionStart":
-            set(.idle)
-        case "UserPromptSubmit", "PreToolUse", "PostToolUse",
-             "PostToolUseFailure", "ElicitationResult", "SubagentStop":
-            set(.working)
-        case "SubagentStart":
-            set(.working, detail.isEmpty ? "subagent" : "subagent: \(detail)")
+        case "SessionStart":      set(.idle)                          // new session, from any state
+        case "SessionEnd":        set(.shell)                         // agent gone
+        case "UserPromptSubmit":  set(.working)                       // new turn, from any state
+        case "Stop":              if midTurn { set(.needsCheck) } else { applied = false }
+        case "StopFailure":       if midTurn { set(.error, detail.isEmpty ? "API error" : detail) } else { applied = false }
         case "PermissionRequest":
-            // detail = tool_name; ExitPlanMode == plan approval.
-            set(.blocked, detail == "ExitPlanMode" ? "plan approval"
-                        : (detail.isEmpty ? "approval needed" : "approve \(detail)"))
-        case "Elicitation":
-            set(.blocked, "input requested")
-        case "Notification":
-            switch detail {        // notification_type
-            case "permission_prompt":  set(.blocked, "approval needed")
-            case "elicitation_dialog": set(.blocked, "input requested")
-            default: break          // idle_prompt / auth_success / … — no state change
-            }
-        case "Stop":
-            set(.needsCheck)
-        case "StopFailure":
-            set(.error, detail.isEmpty ? "API error" : detail)   // detail = error_type
-        case "SessionEnd":
-            set(.shell)             // agent gone; tab persists as a shell
-        default:
-            break
+            if midTurn { set(.blocked, detail == "ExitPlanMode" ? "plan approval"
+                                     : (detail.isEmpty ? "approval needed" : "approve \(detail)")) } else { applied = false }
+        case "Elicitation":       if midTurn { set(.blocked, "input requested") } else { applied = false }
+        case "SubagentStart":     if midTurn { set(.working, detail.isEmpty ? "subagent" : "subagent: \(detail)") } else { applied = false }
+        case "PreToolUse", "PostToolUse", "PostToolUseFailure", "SubagentStop", "ElicitationResult":
+            if midTurn { set(.working) } else { applied = false }
+        default:                  applied = false
+        }
+
+        shepherdLog("event=\(event)\(detail.isEmpty ? "" : "[\(detail)]") tab=\(tabID.prefix(8)) "
+            + (applied ? "\(cur.rawValue)->\(tabs[i].state.rawValue)" : "\(cur.rawValue) (ignored: not mid-turn)"))
+    }
+
+    private func shepherdLog(_ msg: String) {
+        let path = "/tmp/shepherd-events.log"
+        guard let data = (msg + "\n").data(using: .utf8) else { return }
+        if let h = FileHandle(forWritingAtPath: path) {
+            defer { try? h.close() }
+            h.seekToEndOfFile()
+            h.write(data)
+        } else {
+            FileManager.default.createFile(atPath: path, contents: data)
         }
     }
 
