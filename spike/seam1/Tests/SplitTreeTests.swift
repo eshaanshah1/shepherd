@@ -34,8 +34,24 @@ final class SplitTreeTests: XCTestCase {
         XCTAssertEqual(tree.leafIDs, ["a"])
     }
 
+    func testFramesRowSplit() {
+        let tree = SplitNode.split(axis: .row, ratio: 0.5,
+            first: .leaf(Pane(paneID: "a")), second: .leaf(Pane(paneID: "b")))
+        let f = tree.frames(in: CGRect(x: 0, y: 0, width: 100, height: 40))
+        XCTAssertEqual(f["a"], CGRect(x: 0, y: 0, width: 50, height: 40))
+        XCTAssertEqual(f["b"], CGRect(x: 50, y: 0, width: 50, height: 40))
+    }
+
+    func testNeighborRight() {
+        let tree = SplitNode.split(axis: .row, ratio: 0.5,
+            first: .leaf(Pane(paneID: "a")), second: .leaf(Pane(paneID: "b")))
+        let rect = CGRect(x: 0, y: 0, width: 100, height: 40)
+        XCTAssertEqual(tree.neighbor(of: "a", .right, in: rect), "b")
+        XCTAssertNil(tree.neighbor(of: "a", .left, in: rect))
+    }
+
     func testCloseCollapsesParentToSibling() {
-        var tree = SplitNode.split(axis: .row, ratio: 0.5,
+        let tree = SplitNode.split(axis: .row, ratio: 0.5,
             first: .leaf(Pane(paneID: "a")), second: .leaf(Pane(paneID: "b")))
         let after = tree.closing(paneID: "a")
         XCTAssertEqual(after?.leafIDs, ["b"])

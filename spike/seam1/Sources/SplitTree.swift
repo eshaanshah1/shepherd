@@ -100,6 +100,48 @@ extension SplitNode {
         }
     }
 
+    func frames(in rect: CGRect) -> [String: CGRect] {
+        switch self {
+        case .leaf(let p):
+            return [p.paneID: rect]
+        case .split(let axis, let ratio, let first, let second):
+            let (r1, r2): (CGRect, CGRect)
+            switch axis {
+            case .row:
+                let w = rect.width * ratio
+                r1 = CGRect(x: rect.minX, y: rect.minY, width: w, height: rect.height)
+                r2 = CGRect(x: rect.minX + w, y: rect.minY, width: rect.width - w, height: rect.height)
+            case .column:
+                let h = rect.height * ratio
+                r1 = CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: h)
+                r2 = CGRect(x: rect.minX, y: rect.minY + h, width: rect.width, height: rect.height - h)
+            }
+            return first.frames(in: r1).merging(second.frames(in: r2)) { a, _ in a }
+        }
+    }
+
+    func neighbor(of paneID: String, _ dir: FocusDirection, in rect: CGRect) -> String? {
+        let f = frames(in: rect)
+        guard let src = f[paneID] else { return nil }
+        let from = CGPoint(x: src.midX, y: src.midY)
+        var best: (id: String, dist: CGFloat)?
+        for (id, r) in f where id != paneID {
+            let to = CGPoint(x: r.midX, y: r.midY)
+            let dx = to.x - from.x, dy = to.y - from.y
+            let inDir: Bool
+            switch dir {
+            case .left:  inDir = dx < 0 && abs(dx) >= abs(dy)
+            case .right: inDir = dx > 0 && abs(dx) >= abs(dy)
+            case .up:    inDir = dy < 0 && abs(dy) >= abs(dx)
+            case .down:  inDir = dy > 0 && abs(dy) >= abs(dx)
+            }
+            guard inDir else { continue }
+            let d = dx*dx + dy*dy
+            if best == nil || d < best!.dist { best = (id, d) }
+        }
+        return best?.id
+    }
+
     /// Returns the tree with `paneID` removed; parent split collapses to its sibling.
     /// `nil` means `paneID` was the only leaf — caller should close the tab.
     func closing(paneID: String) -> SplitNode? {
