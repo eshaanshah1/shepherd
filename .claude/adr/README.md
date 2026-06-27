@@ -31,4 +31,5 @@ Date: YYYY-MM-DD
 - [0004](0004-plugin-protocol-and-ordering.md) — Plugin protocol: pure-bash report.sh + ordering guard
 - [0005](0005-plugin-install-via-skills-dir.md) — Install the plugin via the skills-dir auto-load
 - [0006](0006-sidebar-shows-all-tabs.md) — Sidebar lists all tabs (filtering deferred)
-- [0007](0007-askuserquestion-no-hook.md) — AskUserQuestion is not hook-detectable
+- [0007](0007-askuserquestion-no-hook.md) — AskUserQuestion is not hook-detectable *(superseded by 0008)*
+- [0008](0008-askuserquestion-via-pretooluse.md) — Detect AskUserQuestion (and plan approval) via PreToolUse

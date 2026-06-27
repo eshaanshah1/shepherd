@@ -105,7 +105,8 @@ only first-class agent** in v1 (see [ADR 0003](.claude/adr/0003-agent-state-via-
 |---|---|
 | `SessionStart` | **idle** ; `SessionEnd` → **shell** (agent gone, tab stays) |
 | `UserPromptSubmit` | **working** (always — starts a turn) |
-| `PreToolUse`/`PostToolUse`/`PostToolUseFailure`/`SubagentStart`/`SubagentStop`/`ElicitationResult` | **working** *(only if already mid-turn — see guard)* |
+| `PreToolUse[AskUserQuestion]` / `PreToolUse[ExitPlanMode]` | **blocked** ("answer needed" / "plan approval") |
+| other `PreToolUse`/`PostToolUse`/`PostToolUseFailure`/`SubagentStart`/`SubagentStop`/`ElicitationResult` | **working** *(only if already mid-turn — see guard)* |
 | `PermissionRequest` | **blocked** (+reason: "approve Bash" / "plan approval") |
 | `Elicitation` | **blocked** ("input requested") |
 | `Stop` | **need-to-check** |
@@ -122,7 +123,7 @@ Plain tabs (no agent) are **shell**. Sidebar currently shows **all** tabs
 - **macOS-26 toolchain** ([ADR 0002](.claude/adr/0002-libghostty-build-on-macos-26.md)): the ziglang.org Zig won't link (use brew `zig@0.15`); Metal shaders need the downloaded Metal Toolchain; build the xcframework only (`-Demit-macos-app=false`); Apple `libtool` dedupes same-named members so the combined fat archive is **incomplete** — the build script fixes this with an `ld -r -all_load` merge of the constituent archives.
 - **`report.sh` is pure bash on purpose** ([ADR 0004](.claude/adr/0004-plugin-protocol-and-ordering.md)). Do NOT add `python3` back — its ~50ms startup delayed `PreToolUse` past `Stop` and flipped state. State is decided by event name + env; only 3 cosmetic events parse (via `jq`).
 - **Ordering guard** ([ADR 0004](.claude/adr/0004-plugin-protocol-and-ordering.md)): mid-turn events only apply while the tab is `working`/`blocked`. A finished turn (`need-to-check`) is only left by a new `UserPromptSubmit` or focus. This is deliberate; don't remove it.
-- **`AskUserQuestion` fires NO hook** ([ADR 0007](.claude/adr/0007-askuserquestion-no-hook.md)) — it stays `working`. Known Claude Code limitation, not our bug.
+- **`AskUserQuestion` is detected via `PreToolUse`** ([ADR 0008](.claude/adr/0008-askuserquestion-via-pretooluse.md)) — `PreToolUse[AskUserQuestion]` → blocked. (`Elicitation`/`Notification` don't fire for it, but `PreToolUse` does — `report.sh` parses `tool_name` via `jq`.)
 - **`xcodegen generate` after any file add/remove** — else the new file isn't compiled (`cannot find X in scope` at *build* time).
 - **SourceKit lies in this repo** — "Cannot find type AgentState/…" and "'main' attribute…" diagnostics are stale because the editor sees loose files, not the generated project. `xcodebuild` is ground truth; ignore SourceKit "cannot find" noise.
 - **Debug log:** the app appends every state transition to `/tmp/shepherd-events.log` — invaluable for debugging the state machine (`tail -f`). Currently always-on; a deferred cleanup is to put it behind a flag.

@@ -1,7 +1,13 @@
 # 0007. AskUserQuestion is not hook-detectable (accepted limitation)
 
-Status: Accepted
+Status: Superseded by 0008
 Date: 2026-06-27
+
+> **Superseded — this was wrong.** `PreToolUse` *does* match `AskUserQuestion`
+> (confirmed in the official Claude Code hooks docs). Issues #44326/#59908 are
+> about `Elicitation`/`Notification` not firing — not `PreToolUse`. The original
+> conclusion over-generalized "those two don't fire" into "no hook fires." See
+> [0008](0008-askuserquestion-via-pretooluse.md). Kept as a record of the error.
 
 ## Context
 The most-wanted "blocked" case is when Claude asks the user a multiple-choice

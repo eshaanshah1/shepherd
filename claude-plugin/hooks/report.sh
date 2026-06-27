@@ -25,9 +25,9 @@ payload="$(cat 2>/dev/null || true)"
 detail=""
 key=""
 case "$event" in
-  PermissionRequest)          key="tool_name" ;;
-  StopFailure)                key="error_type" ;;
-  SubagentStart|SubagentStop) key="agent_type" ;;
+  PreToolUse|PermissionRequest) key="tool_name" ;;
+  StopFailure)                  key="error_type" ;;
+  SubagentStart|SubagentStop)   key="agent_type" ;;
 esac
 if [ -n "$key" ] && [ -n "$payload" ]; then
   if command -v jq >/dev/null 2>&1; then
