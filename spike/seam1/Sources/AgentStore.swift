@@ -2,56 +2,31 @@ import SwiftUI
 import AppKit
 import UserNotifications
 
-/// One tab. `state` starts at `.shell` and lights up when a Claude session runs
-/// in it (driven by hook events over the socket).
-struct Agent: Identifiable {
-    let tabID: String
-    var title: String           // OSC title the program sets
-    var userTitle: String?      // user-set name; overrides the OSC title
-    var cwd: String?            // last-known working dir (for restore-on-relaunch)
-    var state: AgentState
-    var reason: String?         // why blocked / errored
-    var id: String { tabID }
-
-    var displayTitle: String {
-        if let u = userTitle, !u.isEmpty { return u }
-        if state != .shell, !title.isEmpty { return title }   // agent: show the title it set
-        return cwdName ?? "Terminal"
-    }
-
-    /// Default name from the working dir: home → "~", a child of home → "~/dir",
-    /// else "parent/dir". We never surface the shell's user@host OSC title.
-    private var cwdName: String? {
-        guard let cwd, !cwd.isEmpty else { return nil }
-        let home = NSHomeDirectory()
-        if cwd == home { return "~" }
-        let ns = cwd as NSString
-        let last = ns.lastPathComponent
-        let parent = ns.deletingLastPathComponent
-        if parent == home { return "~/\(last)" }
-        let parentName = (parent as NSString).lastPathComponent
-        return (parentName.isEmpty || parentName == "/") ? last : "\(parentName)/\(last)"
-    }
-}
-
-/// App model: open tabs, selection, the agent-state socket, and tab persistence.
+/// App model: open tabs (each owning a pane tree), selection, the agent-state
+/// socket (now per-pane), and tab persistence.
 @MainActor
 final class AgentStore: ObservableObject {
     static let shared = AgentStore()
 
-    @Published private(set) var tabs: [Agent] = []
-    @Published var selected: String?
+    @Published private(set) var tabs: [Tab] = []
+    @Published var selectedTab: String?
 
     /// Bumped to force the selected terminal to reclaim first responder
     /// (e.g. after a rename ends and the text field gives up focus).
     @Published var focusTick = 0
     func refocusActiveTerminal() { focusTick += 1 }
 
-    /// Injected into each tab's PTY as $SHEPHERD_SOCK so the Claude plugin can reach us.
+    /// Injected into each pane's PTY as $SHEPHERD_SOCK so the Claude plugin can reach us.
     let socketPath: String
 
     private var server: SocketServer?
-    private let persistKey = "shepherd.tabs.v1"
+    private let persistKey = "shepherd.tabs.v2"
+
+    /// New panes start collapsed-by-default per this flag (ADR 0012 envisions a
+    /// `~/.config/shepherd` value; sourcing it from there is a deferred follow-up).
+    private var defaultCollapsed: Bool {
+        UserDefaults.standard.bool(forKey: "shepherd.panes.defaultCollapsed")
+    }
 
     /// Attention chimes bundled with the app (done.wav / blocked.wav in
     /// Resources), retained for the app's life so playback is never cut short
@@ -70,8 +45,8 @@ final class AgentStore: ObservableObject {
 
     private init() {
         socketPath = "/tmp/shepherd-\(getpid()).sock"   // short: stays under sun_path's 104 limit
-        server = SocketServer(path: socketPath) { [weak self] tabID, event, detail in
-            self?.apply(event: event, detail: detail, tabID: tabID)
+        server = SocketServer(path: socketPath) { [weak self] paneID, event, detail in
+            self?.apply(event: event, detail: detail, paneID: paneID)
         }
         server?.start()
         if !restore() { newTab() }   // reopen prior tabs, else start with one
@@ -80,23 +55,24 @@ final class AgentStore: ObservableObject {
     // MARK: Tabs
 
     @discardableResult
-    func newTab(title: String = "Terminal") -> String {
-        let id = UUID().uuidString
-        tabs.append(Agent(tabID: id, title: title, state: .shell))
-        selected = id
+    func newTab() -> String {
+        let tab = Tab(pane: Pane(), collapsedDefault: defaultCollapsed)
+        tabs.append(tab)
+        selectedTab = tab.tabID
         save()
-        return id
+        return tab.tabID
     }
 
-    func select(_ tabID: String) {
-        selected = tabID
-        didFocus(tabID: tabID)   // viewing a finished tab clears its need-to-check
+    func select(tabID: String) {
+        selectedTab = tabID
+        guard let tab = tabs.first(where: { $0.tabID == tabID }) else { return }
+        didFocus(paneID: tab.focusedPaneID)   // viewing a finished tab clears its need-to-check
     }
 
     func closeTab(_ tabID: String) {
         tabs.removeAll { $0.tabID == tabID }
-        if selected == tabID {
-            selected = tabs.last?.tabID
+        if selectedTab == tabID {
+            selectedTab = tabs.last?.tabID
             // Reclaim focus next runloop: the closed surface's teardown resets the
             // window's first responder, clobbering any same-pass refocus.
             DispatchQueue.main.async { [weak self] in self?.refocusActiveTerminal() }
@@ -106,7 +82,7 @@ final class AgentStore: ObservableObject {
     }
 
     func closeSelected() {
-        if let sel = selected { closeTab(sel) }
+        if let sel = selectedTab { closeTab(sel) }
     }
 
     // MARK: Keyboard navigation
@@ -114,7 +90,7 @@ final class AgentStore: ObservableObject {
     func selectIndex(_ oneBased: Int) {
         let i = oneBased - 1
         guard tabs.indices.contains(i) else { return }
-        selected = tabs[i].tabID
+        select(tabID: tabs[i].tabID)
     }
 
     func selectNext()     { cycle(+1) }
@@ -122,20 +98,46 @@ final class AgentStore: ObservableObject {
 
     private func cycle(_ delta: Int) {
         guard !tabs.isEmpty,
-              let cur = selected,
+              let cur = selectedTab,
               let i = tabs.firstIndex(where: { $0.tabID == cur }) else { return }
-        selected = tabs[(i + delta + tabs.count) % tabs.count].tabID
+        select(tabID: tabs[(i + delta + tabs.count) % tabs.count].tabID)
     }
 
-    /// Jump to the next tab that needs you (blocked / need-to-check / error).
+    /// Jump to the next pane that needs you (blocked / need-to-check / error).
+    /// Iterates panes across tabs in (tab, leaf) order, selecting the owning tab
+    /// AND moving its focus to that pane.
     func selectNextAttention() {
         guard !tabs.isEmpty else { return }
-        let start = tabs.firstIndex(where: { $0.tabID == selected }) ?? -1
-        for off in 1...tabs.count {
-            let idx = (start + off) % tabs.count
-            if tabs[idx].state.wantsAttention { selected = tabs[idx].tabID; return }
+        // Flatten to (tabID, paneID) in tab/leaf order; resume after the
+        // currently-selected tab's focused pane.
+        var flat: [(tabID: String, paneID: String)] = []
+        for tab in tabs {
+            for pid in tab.paneIDs { flat.append((tab.tabID, pid)) }
+        }
+        guard !flat.isEmpty else { return }
+        let start = flat.firstIndex {
+            $0.tabID == selectedTab
+                && $0.paneID == tabs.first(where: { $0.tabID == selectedTab })?.focusedPaneID
+        } ?? -1
+        for off in 1...flat.count {
+            let entry = flat[(start + off) % flat.count]
+            if let tab = tabs.first(where: { $0.tabID == entry.tabID }),
+               tab.root.pane(entry.paneID)?.state.wantsAttention == true {
+                focusPaneSelecting(entry.paneID, in: entry.tabID)
+                return
+            }
         }
         NSSound.beep()   // nothing needs you
+    }
+
+    /// Select the owning tab and move its focus to `paneID`, clearing that pane's
+    /// need-to-check. (Internal helper; the public split/zoom/focus mutations land
+    /// in Tasks 7–9.)
+    private func focusPaneSelecting(_ paneID: String, in tabID: String) {
+        guard let i = tabs.firstIndex(where: { $0.tabID == tabID }) else { return }
+        tabs[i].focusedPaneID = paneID
+        selectedTab = tabID
+        didFocus(paneID: paneID)
     }
 
     // MARK: Management
@@ -158,9 +160,19 @@ final class AgentStore: ObservableObject {
 
     func commitOrder() { save() }
 
-    /// cwd to seed a restored tab's surface (consumed once at surface creation).
-    func cwd(forTab tabID: String) -> String? {
-        tabs.first(where: { $0.tabID == tabID })?.cwd
+    /// True if `paneID` is the focused pane of the currently selected tab — i.e.
+    /// the surface that should hold first responder.
+    func isFocusedSurface(paneID: String) -> Bool {
+        guard let tab = tabs.first(where: { $0.tabID == selectedTab }) else { return false }
+        return tab.focusedPaneID == paneID
+    }
+
+    /// cwd to seed a restored pane's surface (consumed once at surface creation).
+    func cwd(forPane paneID: String) -> String? {
+        for tab in tabs {
+            if let p = tab.root.pane(paneID) { return p.cwd }
+        }
+        return nil
     }
 
     // MARK: Feeds from libghostty
@@ -171,25 +183,29 @@ final class AgentStore: ObservableObject {
     ///
     /// Ordering guard: hooks are independent socket writes with no delivery-order
     /// guarantee, so a stale mid-turn event can arrive after `Stop`. We only let
-    /// mid-turn transitions apply while the tab is actually mid-turn (working or
+    /// mid-turn transitions apply while the pane is actually mid-turn (working or
     /// blocked); a finished turn (need-to-check) can only be left by a real new
     /// turn (UserPromptSubmit) or by focus. This kills the "need-to-check flips
     /// back to working" bug deterministically, regardless of arrival order.
-    func apply(event: String, detail: String, tabID: String) {
-        guard let i = tabs.firstIndex(where: { $0.tabID == tabID }) else {
-            shepherdLog("event=\(event) tab=\(tabID.prefix(8)) -> NO SUCH TAB")
+    func apply(event: String, detail: String, paneID: String) {
+        guard let i = tabs.firstIndex(where: { $0.paneIDs.contains(paneID) }),
+              let pane = tabs[i].root.pane(paneID) else {
+            shepherdLog("event=\(event) tab=\(paneID.prefix(8)) -> NO SUCH TAB")
             return
         }
-        let cur = tabs[i].state
+        let cur = pane.state
         let midTurn = (cur == .working || cur == .blocked)
         var applied = true
+        var newState = cur
+        var newReason: String? = pane.reason
+        var clearTitle = false
         func set(_ s: AgentState, _ reason: String? = nil) {
-            tabs[i].state = s
-            tabs[i].reason = reason
+            newState = s
+            newReason = reason
         }
 
         switch event {
-        case "SessionStart":      tabs[i].title = ""; set(.idle)      // drop shell title; the agent sets its own
+        case "SessionStart":      clearTitle = true; set(.idle)      // drop shell title; the agent sets its own
         case "SessionEnd":        set(.shell)                         // agent gone
         case "UserPromptSubmit":  set(.working)                       // new turn, from any state
         case "Stop":              if midTurn { set(.needsCheck) } else { applied = false }
@@ -211,13 +227,18 @@ final class AgentStore: ObservableObject {
         default:                  applied = false
         }
 
-        shepherdLog("event=\(event)\(detail.isEmpty ? "" : "[\(detail)]") tab=\(tabID.prefix(8)) "
-            + (applied ? "\(cur.rawValue)->\(tabs[i].state.rawValue)" : "\(cur.rawValue) (ignored: not mid-turn)"))
+        shepherdLog("event=\(event)\(detail.isEmpty ? "" : "[\(detail)]") tab=\(paneID.prefix(8)) "
+            + (applied ? "\(cur.rawValue)->\(newState.rawValue)" : "\(cur.rawValue) (ignored: not mid-turn)"))
 
         if applied {
-            let newState = tabs[i].state
-            if newState != cur, newState.wantsAttention {
-                notifyAttention(tabs[i])
+            _ = tabs[i].root.updatePane(paneID) {
+                if clearTitle { $0.title = "" }
+                $0.state = newState
+                $0.reason = newReason
+            }
+            if newState != cur, newState.wantsAttention,
+               let updated = tabs[i].root.pane(paneID) {
+                notifyAttention(updated)
                 playAttentionSound(for: newState)
             }
             updateDockBadge()
@@ -237,25 +258,56 @@ final class AgentStore: ObservableObject {
     }
 
     /// OSC title (SET_TITLE action). Not persisted (only userTitle is).
-    func setTitle(_ title: String, tabID: String) {
-        guard !title.isEmpty, let i = tabs.firstIndex(where: { $0.tabID == tabID }) else { return }
-        tabs[i].title = title
+    func setTitle(_ title: String, paneID: String) {
+        guard !title.isEmpty,
+              let i = tabs.firstIndex(where: { $0.paneIDs.contains(paneID) }) else { return }
+        _ = tabs[i].root.updatePane(paneID) { $0.title = title }
     }
 
     /// Working directory (PWD action) — tracked so we can restore it on relaunch.
-    func setCwd(_ cwd: String, tabID: String) {
-        guard !cwd.isEmpty, let i = tabs.firstIndex(where: { $0.tabID == tabID }), tabs[i].cwd != cwd else { return }
-        tabs[i].cwd = cwd
+    func setCwd(_ cwd: String, paneID: String) {
+        guard !cwd.isEmpty,
+              let i = tabs.firstIndex(where: { $0.paneIDs.contains(paneID) }),
+              tabs[i].root.pane(paneID)?.cwd != cwd else { return }
+        _ = tabs[i].root.updatePane(paneID) { $0.cwd = cwd }
         save()
     }
 
     /// Focus clears need-to-check → idle ONLY (never blocked/working).
-    func didFocus(tabID: String) {
-        guard let i = tabs.firstIndex(where: { $0.tabID == tabID }) else { return }
-        if tabs[i].state == .needsCheck { tabs[i].state = .idle; updateDockBadge() }
+    func didFocus(paneID: String) {
+        guard let i = tabs.firstIndex(where: { $0.paneIDs.contains(paneID) }),
+              tabs[i].root.pane(paneID)?.state == .needsCheck else { return }
+        _ = tabs[i].root.updatePane(paneID) { $0.state = .idle }
+        updateDockBadge()
     }
 
-    var attentionCount: Int { tabs.filter { $0.state.wantsAttention }.count }
+    /// Close a single pane. Collapses the parent split to its sibling; if it was
+    /// the tab's last pane, the whole tab closes (today's `closeTab` behavior).
+    func closePane(_ paneID: String) {
+        guard let i = tabs.firstIndex(where: { $0.paneIDs.contains(paneID) }) else { return }
+        if let newRoot = tabs[i].root.closing(paneID: paneID) {
+            tabs[i].root = newRoot
+            if tabs[i].focusedPaneID == paneID {
+                tabs[i].focusedPaneID = newRoot.firstLeafID ?? tabs[i].focusedPaneID
+            }
+            if tabs[i].zoomedPaneID == paneID { tabs[i].zoomedPaneID = nil }
+            save()
+            updateDockBadge()
+        } else {
+            closeTab(tabs[i].tabID)   // was the last pane → close the tab
+        }
+    }
+
+    /// Notification routing: select the owning tab, focus the pane, clear its
+    /// need-to-check. For a 1-pane tab this is identical to today's select().
+    func revealPane(_ paneID: String) {
+        guard let tab = tabs.first(where: { $0.paneIDs.contains(paneID) }) else { return }
+        focusPaneSelecting(paneID, in: tab.tabID)
+    }
+
+    var attentionCount: Int {
+        tabs.flatMap { $0.root.panes }.filter { $0.state.wantsAttention }.count
+    }
 
     // MARK: Attention surfacing (dock badge + backgrounded notifications)
 
@@ -264,22 +316,22 @@ final class AgentStore: ObservableObject {
         NSApp.dockTile.badgeLabel = n > 0 ? "\(n)" : nil
     }
 
-    /// Fire a native notification when a tab needs you — but only while Shepherd
+    /// Fire a native notification when a pane needs you — but only while Shepherd
     /// is NOT frontmost (when it is, the badge + sidebar are enough).
-    private func notifyAttention(_ tab: Agent) {
+    private func notifyAttention(_ pane: Pane) {
         guard !NSApp.isActive else { return }
         let content = UNMutableNotificationContent()
-        content.title = tab.displayTitle
-        switch tab.state {
-        case .blocked:    content.body = tab.reason ?? "needs you"
+        content.title = pane.displayTitle
+        switch pane.state {
+        case .blocked:    content.body = pane.reason ?? "needs you"
         case .needsCheck: content.body = "finished — needs a look"
-        case .error:      content.body = "errored: \(tab.reason ?? "API error")"
+        case .error:      content.body = "errored: \(pane.reason ?? "API error")"
         default:          return
         }
-        content.userInfo = ["tabID": tab.tabID]
+        content.userInfo = ["paneID": pane.paneID]
         content.sound = nil   // we play our own chime (playAttentionSound) — avoid a double
         UNUserNotificationCenter.current().add(
-            UNNotificationRequest(identifier: "\(tab.tabID)-\(tab.state.rawValue)",
+            UNNotificationRequest(identifier: "\(pane.paneID)-\(pane.state.rawValue)",
                                   content: content, trigger: nil))
     }
 
@@ -291,12 +343,16 @@ final class AgentStore: ObservableObject {
         sound.play()
     }
 
-    // MARK: Persistence (userTitle + cwd, in tab order)
+    // MARK: Persistence (structure + userTitle + cwd, in tab order)
 
-    private struct Persisted: Codable { var userTitle: String?; var cwd: String? }
+    private struct PersistedTab: Codable {
+        var userTitle: String?
+        var root: SplitNode
+        var collapsed: Bool
+    }
 
     private func save() {
-        let snapshot = tabs.map { Persisted(userTitle: $0.userTitle, cwd: $0.cwd) }
+        let snapshot = tabs.map { PersistedTab(userTitle: $0.userTitle, root: $0.root, collapsed: $0.collapsed) }
         if let data = try? JSONEncoder().encode(snapshot) {
             UserDefaults.standard.set(data, forKey: persistKey)
         }
@@ -304,13 +360,18 @@ final class AgentStore: ObservableObject {
 
     private func restore() -> Bool {
         guard let data = UserDefaults.standard.data(forKey: persistKey),
-              let snapshot = try? JSONDecoder().decode([Persisted].self, from: data),
+              let snapshot = try? JSONDecoder().decode([PersistedTab].self, from: data),
               !snapshot.isEmpty else { return false }
-        tabs = snapshot.map {
-            Agent(tabID: UUID().uuidString, title: "Terminal",
-                  userTitle: $0.userTitle, cwd: $0.cwd, state: .shell)
+        tabs = snapshot.compactMap { p -> Tab? in
+            // root decodes with fresh pane ids + .shell state (Pane.Codable).
+            guard let first = p.root.firstLeafID else { return nil }
+            var tab = Tab(pane: Pane(), collapsedDefault: p.collapsed)
+            tab.userTitle = p.userTitle
+            tab.root = p.root
+            tab.focusedPaneID = first
+            return tab
         }
-        selected = tabs.first?.tabID
-        return true
+        selectedTab = tabs.first?.tabID
+        return !tabs.isEmpty
     }
 }
