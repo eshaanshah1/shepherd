@@ -18,6 +18,7 @@ targets:
     platform: macOS
     sources:
       - path: Sources
+      - path: Resources
     dependencies:
       - framework: ../../vendor/GhosttyKit.xcframework
         embed: false
@@ -28,6 +29,7 @@ targets:
       properties:
         CFBundleName: Shepherd
         CFBundleDisplayName: Shepherd
+        CFBundleIconFile: AppIcon
         LSMinimumSystemVersion: "13.0"
         NSHighResolutionCapable: true
         CFBundleShortVersionString: "0.0.1"

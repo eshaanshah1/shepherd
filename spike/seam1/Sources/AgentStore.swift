@@ -53,6 +53,21 @@ final class AgentStore: ObservableObject {
     private var server: SocketServer?
     private let persistKey = "shepherd.tabs.v1"
 
+    /// Attention chimes bundled with the app (done.wav / blocked.wav in
+    /// Resources), retained for the app's life so playback is never cut short
+    /// by deallocation.
+    private let attentionSounds: [AgentState: NSSound] = {
+        var m: [AgentState: NSSound] = [:]
+        if let s = AgentStore.bundledSound("done")    { m[.needsCheck] = s }
+        if let s = AgentStore.bundledSound("blocked") { m[.blocked]    = s }
+        return m
+    }()
+
+    private static func bundledSound(_ name: String) -> NSSound? {
+        guard let url = Bundle.main.url(forResource: name, withExtension: "wav") else { return nil }
+        return NSSound(contentsOf: url, byReference: false)
+    }
+
     private init() {
         socketPath = "/tmp/shepherd-\(getpid()).sock"   // short: stays under sun_path's 104 limit
         server = SocketServer(path: socketPath) { [weak self] tabID, event, detail in
@@ -80,7 +95,12 @@ final class AgentStore: ObservableObject {
 
     func closeTab(_ tabID: String) {
         tabs.removeAll { $0.tabID == tabID }
-        if selected == tabID { selected = tabs.last?.tabID }
+        if selected == tabID {
+            selected = tabs.last?.tabID
+            // Reclaim focus next runloop: the closed surface's teardown resets the
+            // window's first responder, clobbering any same-pass refocus.
+            DispatchQueue.main.async { [weak self] in self?.refocusActiveTerminal() }
+        }
         save()
         updateDockBadge()
     }
@@ -196,7 +216,10 @@ final class AgentStore: ObservableObject {
 
         if applied {
             let newState = tabs[i].state
-            if newState != cur, newState.wantsAttention { notifyAttention(tabs[i]) }
+            if newState != cur, newState.wantsAttention {
+                notifyAttention(tabs[i])
+                playAttentionSound(for: newState)
+            }
             updateDockBadge()
         }
     }
@@ -254,10 +277,18 @@ final class AgentStore: ObservableObject {
         default:          return
         }
         content.userInfo = ["tabID": tab.tabID]
-        content.sound = .default
+        content.sound = nil   // we play our own chime (playAttentionSound) — avoid a double
         UNUserNotificationCenter.current().add(
             UNNotificationRequest(identifier: "\(tab.tabID)-\(tab.state.rawValue)",
                                   content: content, trigger: nil))
+    }
+
+    /// Audible cue on entering an attention state. Always plays, foreground or
+    /// background; `error` has no entry and is intentionally silent.
+    private func playAttentionSound(for state: AgentState) {
+        guard let sound = attentionSounds[state] else { return }
+        sound.stop()   // restart if still ringing, so a rapid re-block re-pings
+        sound.play()
     }
 
     // MARK: Persistence (userTitle + cwd, in tab order)
