@@ -63,3 +63,59 @@ indirect enum SplitNode {
 
     func pane(_ id: String) -> Pane? { panes.first { $0.paneID == id } }
 }
+
+extension SplitNode {
+    mutating func split(paneID: String, axis: SplitAxis, newPane: Pane) -> Bool {
+        switch self {
+        case .leaf(let p) where p.paneID == paneID:
+            self = .split(axis: axis, ratio: 0.5, first: .leaf(p), second: .leaf(newPane))
+            return true
+        case .leaf:
+            return false
+        case .split(let a, let r, var first, var second):
+            if first.split(paneID: paneID, axis: axis, newPane: newPane) {
+                self = .split(axis: a, ratio: r, first: first, second: second); return true
+            }
+            if second.split(paneID: paneID, axis: axis, newPane: newPane) {
+                self = .split(axis: a, ratio: r, first: first, second: second); return true
+            }
+            return false
+        }
+    }
+
+    mutating func updatePane(_ id: String, _ transform: (inout Pane) -> Void) -> Bool {
+        switch self {
+        case .leaf(var p) where p.paneID == id:
+            transform(&p); self = .leaf(p); return true
+        case .leaf:
+            return false
+        case .split(let a, let r, var first, var second):
+            if first.updatePane(id, transform) {
+                self = .split(axis: a, ratio: r, first: first, second: second); return true
+            }
+            if second.updatePane(id, transform) {
+                self = .split(axis: a, ratio: r, first: first, second: second); return true
+            }
+            return false
+        }
+    }
+
+    /// Returns the tree with `paneID` removed; parent split collapses to its sibling.
+    /// `nil` means `paneID` was the only leaf — caller should close the tab.
+    func closing(paneID: String) -> SplitNode? {
+        switch self {
+        case .leaf(let p):
+            return p.paneID == paneID ? nil : self
+        case .split(let axis, let ratio, let first, let second):
+            if first.leafIDs.contains(paneID) {
+                guard let f = first.closing(paneID: paneID) else { return second }
+                return .split(axis: axis, ratio: ratio, first: f, second: second)
+            }
+            if second.leafIDs.contains(paneID) {
+                guard let s = second.closing(paneID: paneID) else { return first }
+                return .split(axis: axis, ratio: ratio, first: first, second: s)
+            }
+            return self
+        }
+    }
+}

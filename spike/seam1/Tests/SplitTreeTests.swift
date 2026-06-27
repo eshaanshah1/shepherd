@@ -18,4 +18,39 @@ final class SplitTreeTests: XCTestCase {
                 second: .leaf(Pane(paneID: "c"))))
         XCTAssertEqual(tree.leafIDs, ["a", "b", "c"])
     }
+
+    func testSplitReplacesLeaf() {
+        var tree = SplitNode.leaf(Pane(paneID: "a"))
+        XCTAssertTrue(tree.split(paneID: "a", axis: .row, newPane: Pane(paneID: "b")))
+        XCTAssertEqual(tree.leafIDs, ["a", "b"])
+        if case .split(let axis, let ratio, _, _) = tree {
+            XCTAssertEqual(axis, .row); XCTAssertEqual(ratio, 0.5)
+        } else { XCTFail("expected split") }
+    }
+
+    func testSplitUnknownPaneReturnsFalse() {
+        var tree = SplitNode.leaf(Pane(paneID: "a"))
+        XCTAssertFalse(tree.split(paneID: "zzz", axis: .row, newPane: Pane(paneID: "b")))
+        XCTAssertEqual(tree.leafIDs, ["a"])
+    }
+
+    func testCloseCollapsesParentToSibling() {
+        var tree = SplitNode.split(axis: .row, ratio: 0.5,
+            first: .leaf(Pane(paneID: "a")), second: .leaf(Pane(paneID: "b")))
+        let after = tree.closing(paneID: "a")
+        XCTAssertEqual(after?.leafIDs, ["b"])
+        if case .leaf = after { } else { XCTFail("sibling should hoist to a leaf") }
+    }
+
+    func testCloseOnlyLeafReturnsNil() {
+        let tree = SplitNode.leaf(Pane(paneID: "a"))
+        XCTAssertNil(tree.closing(paneID: "a"))
+    }
+
+    func testUpdatePane() {
+        var tree = SplitNode.split(axis: .column, ratio: 0.5,
+            first: .leaf(Pane(paneID: "a")), second: .leaf(Pane(paneID: "b")))
+        XCTAssertTrue(tree.updatePane("b") { $0.state = .working })
+        XCTAssertEqual(tree.pane("b")?.state, .working)
+    }
 }
