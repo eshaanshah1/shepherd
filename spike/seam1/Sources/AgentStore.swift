@@ -150,7 +150,14 @@ final class AgentStore: ObservableObject {
                                      : (detail.isEmpty ? "approval needed" : "approve \(detail)")) } else { applied = false }
         case "Elicitation":       if midTurn { set(.blocked, "input requested") } else { applied = false }
         case "SubagentStart":     if midTurn { set(.working, detail.isEmpty ? "subagent" : "subagent: \(detail)") } else { applied = false }
-        case "PreToolUse", "PostToolUse", "PostToolUseFailure", "SubagentStop", "ElicitationResult":
+        case "PreToolUse":
+            // PreToolUse matches AskUserQuestion / ExitPlanMode (per Claude Code
+            // docs) — those are "waiting on the user"; every other tool is work.
+            if !midTurn { applied = false }
+            else if detail == "AskUserQuestion" { set(.blocked, "answer needed") }
+            else if detail == "ExitPlanMode"    { set(.blocked, "plan approval") }
+            else { set(.working) }
+        case "PostToolUse", "PostToolUseFailure", "SubagentStop", "ElicitationResult":
             if midTurn { set(.working) } else { applied = false }
         default:                  applied = false
         }
