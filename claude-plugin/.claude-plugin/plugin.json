@@ -1,0 +1,6 @@
+{
+  "name": "shepherd",
+  "version": "0.1.0",
+  "description": "Reports Claude Code session lifecycle to the Shepherd terminal app over a unix socket, so each tab's sidebar reflects the agent's live state (working / blocked / need-to-check / idle). Silent no-op outside Shepherd.",
+  "author": { "name": "Shepherd" }
+}

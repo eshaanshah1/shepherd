@@ -4,16 +4,16 @@ import Darwin
 #endif
 
 /// Minimal unix-domain socket server. Binds `path`, accepts connections on a
-/// background thread, parses one {"tab_id","event"} JSON message per connection,
-/// and invokes `onEvent` on the main queue. This is the in-app version of the
-/// `spike/socket-probe` listener — the receiving half of seam 2/3.
+/// background thread, parses one {"tab_id","event","detail"} JSON message per
+/// connection, and invokes `onEvent(tab, event, detail)` on the main queue.
+/// The receiving half of seam 2/3.
 final class SocketServer {
     private let path: String
-    private let onEvent: (String, String) -> Void
+    private let onEvent: (String, String, String) -> Void
     private var fd: Int32 = -1
     private let queue = DispatchQueue(label: "shepherd.socket", qos: .utility)
 
-    init(path: String, onEvent: @escaping (String, String) -> Void) {
+    init(path: String, onEvent: @escaping (String, String, String) -> Void) {
         self.path = path
         self.onEvent = onEvent
     }
@@ -55,7 +55,8 @@ final class SocketServer {
                 let tab = obj["tab_id"] as? String,
                 let event = obj["event"] as? String
             else { continue }
-            DispatchQueue.main.async { [weak self] in self?.onEvent(tab, event) }
+            let detail = (obj["detail"] as? String) ?? ""
+            DispatchQueue.main.async { [weak self] in self?.onEvent(tab, event, detail) }
         }
     }
 

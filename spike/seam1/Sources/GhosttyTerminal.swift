@@ -86,6 +86,11 @@ final class GhosttySurfaceView: NSView {
         ]
         defer { allocs.forEach { free($0) } }
 
+        // Restore-on-relaunch: open in the tab's last-known cwd if we have one.
+        if let cwd = AgentStore.shared.cwd(forTab: tabID) {
+            cfg.working_directory = dup(cwd)
+        }
+
         return envVars.withUnsafeMutableBufferPointer { buf in
             cfg.env_vars = buf.baseAddress
             cfg.env_var_count = buf.count
