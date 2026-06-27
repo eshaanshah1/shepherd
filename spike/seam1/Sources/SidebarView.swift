@@ -182,25 +182,41 @@ private struct TabRow: View {
 /// terminal icon for plain shells — so every row reads, like T3's icon column.
 private struct LeadingIcon: View {
     let state: AgentState
-    @State private var pulse = false
 
     var body: some View {
         Group {
-            if state == .shell {
+            switch state {
+            case .shell:
                 Image(systemName: "terminal")
                     .font(.system(size: 10))
                     .foregroundStyle(Theme.textDim)
-            } else {
+            case .working:
+                BreathingDot(color: state.color)
+            default:
                 Circle()
                     .fill(state.color)
                     .frame(width: 7, height: 7)
-                    .opacity(state == .working && pulse ? 0.4 : 1)
-                    .animation(state == .working
-                               ? .easeInOut(duration: 0.9).repeatForever(autoreverses: true)
-                               : .default, value: pulse)
             }
         }
         .frame(width: 14, height: 14)
-        .onAppear { pulse = true }
+    }
+}
+
+/// Breathes for as long as it exists; recreated on each `.working` entry so
+/// `onAppear` restarts the loop (a long-lived view won't re-fire a repeatForever).
+private struct BreathingDot: View {
+    let color: Color
+    @State private var dim = false
+
+    var body: some View {
+        Circle()
+            .fill(color)
+            .frame(width: 7, height: 7)
+            .opacity(dim ? 0.4 : 1)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+                    dim = true
+                }
+            }
     }
 }
