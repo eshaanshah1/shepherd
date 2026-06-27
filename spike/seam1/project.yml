@@ -34,3 +34,12 @@ targets:
         NSHighResolutionCapable: true
         CFBundleShortVersionString: "0.0.1"
         CFBundleVersion: "1"
+  ShepherdModelTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Sources/SplitTree.swift
+      - path: Sources/Tab.swift
+      - path: Sources/AgentState.swift
+      - path: Sources/Theme.swift
+      - path: Tests
