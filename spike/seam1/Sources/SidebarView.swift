@@ -5,21 +5,21 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ScrollView {
-                VStack(spacing: 2) {
-                    ForEach(store.tabs) { tab in
-                        TabRow(tab: tab, isSelected: tab.tabID == store.selected)
-                            .onTapGesture { store.select(tab.tabID) }
-                    }
+            List(selection: Binding(
+                get: { store.selected },
+                set: { if let v = $0 { store.select(v) } }
+            )) {
+                ForEach(store.tabs) { tab in
+                    TabRow(tab: tab).tag(tab.tabID)
                 }
-                .padding(6)
+                .onMove { store.move(fromOffsets: $0, toOffset: $1) }
             }
+            .listStyle(.sidebar)
 
             Divider()
             HStack {
                 Button(action: { store.newTab() }) {
-                    Label("New Tab", systemImage: "plus")
-                        .font(.system(size: 12))
+                    Label("New Tab", systemImage: "plus").font(.system(size: 12))
                 }
                 .buttonStyle(.plain)
                 Spacer()
@@ -30,38 +30,53 @@ struct SidebarView: View {
 }
 
 private struct TabRow: View {
-    let tab: Agent
-    let isSelected: Bool
     @EnvironmentObject var store: AgentStore
-    @State private var hovering = false
+    let tab: Agent
+
+    @State private var editing = false
+    @State private var draft = ""
+    @FocusState private var focused: Bool
 
     var body: some View {
         HStack(spacing: 8) {
-            Circle()
-                .fill(tab.state.color)
-                .frame(width: 8, height: 8)
-            Text(tab.title)
-                .lineLimit(1)
-                .foregroundStyle(tab.state == .shell ? .secondary : .primary)
+            Circle().fill(tab.state.color).frame(width: 8, height: 8)
+
+            if editing {
+                TextField("name", text: $draft)
+                    .textFieldStyle(.plain)
+                    .focused($focused)
+                    .onSubmit(commit)
+                    .onExitCommand { editing = false }
+                    .onAppear { focused = true }
+            } else {
+                Text(tab.displayTitle)
+                    .lineLimit(1)
+                    .foregroundStyle(tab.state == .shell ? .secondary : .primary)
+            }
+
             Spacer(minLength: 4)
             if tab.state.isAgent {
-                Text(tab.state.rawValue)
+                Text(tab.reason ?? tab.state.rawValue)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-            }
-            if hovering && store.tabs.count > 1 {
-                Button(action: { store.closeTab(tab.tabID) }) {
-                    Image(systemName: "xmark").font(.system(size: 9))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(isSelected ? Color.accentColor.opacity(0.25) : Color.clear)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .contentShape(Rectangle())
-        .onHover { hovering = $0 }
+        // No row-level tap/drag gesture: let the List own click-to-select and
+        // drag-to-reorder natively (a custom double-click gesture here swallows
+        // single clicks + drags on the text). Rename lives on the context menu.
+        .contextMenu {
+            Button("Rename") { beginRename() }
+            Button("Close Tab") { store.closeTab(tab.tabID) }
+        }
+    }
+
+    private func beginRename() {
+        draft = tab.userTitle ?? tab.displayTitle
+        editing = true
+    }
+    private func commit() {
+        store.rename(tabID: tab.tabID, to: draft)
+        editing = false
     }
 }

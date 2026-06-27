@@ -93,6 +93,15 @@ final class GhosttyApp {
             let title = String(cString: cTitle)
             DispatchQueue.main.async { AgentStore.shared.setTitle(title, tabID: id) }
             return true
+        case GHOSTTY_ACTION_PWD:
+            guard target.tag == GHOSTTY_TARGET_SURFACE,
+                  let surface = target.target.surface,
+                  let ud = ghostty_surface_userdata(surface),
+                  let cPwd = action.action.pwd.pwd else { return false }
+            let id = view(ud).tabID
+            let pwd = String(cString: cPwd)
+            DispatchQueue.main.async { AgentStore.shared.setCwd(pwd, tabID: id) }
+            return true
         default:
             return false
         }
