@@ -22,12 +22,28 @@ struct ShepherdApp: App {
             CommandGroup(after: .newItem) {
                 Button("New Tab") { AgentStore.shared.newTab() }
                     .keyboardShortcut("t", modifiers: .command)
-                Button("Close Tab") {
+                Button("Close Pane") {
                     let s = AgentStore.shared
-                    if s.tabs.count <= 1 { NSApp.keyWindow?.performClose(nil) }
-                    else { s.closeSelected() }
+                    if s.selectedTabIsSplit { s.closeFocusedPane() }
+                    else if s.tabs.count > 1 { s.closeSelected() }
+                    else { NSApp.keyWindow?.performClose(nil) }
                 }
                 .keyboardShortcut("w", modifiers: .command)
+                Divider()
+                Button("Split Right") { AgentStore.shared.splitFocused(.row) }
+                    .keyboardShortcut("d", modifiers: .command)
+                Button("Split Down") { AgentStore.shared.splitFocused(.column) }
+                    .keyboardShortcut("d", modifiers: [.command, .shift])
+                Button("Zoom Pane") { AgentStore.shared.toggleZoom() }
+                    .keyboardShortcut(.return, modifiers: [.command, .shift])
+                Button("Focus Left")  { AgentStore.shared.focusNeighbor(.left) }
+                    .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
+                Button("Focus Right") { AgentStore.shared.focusNeighbor(.right) }
+                    .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
+                Button("Focus Up")    { AgentStore.shared.focusNeighbor(.up) }
+                    .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+                Button("Focus Down")  { AgentStore.shared.focusNeighbor(.down) }
+                    .keyboardShortcut(.downArrow, modifiers: [.command, .option])
                 Divider()
                 Button("Select Next Tab") { AgentStore.shared.selectNext() }
                     .keyboardShortcut("]", modifiers: [.command, .shift])
