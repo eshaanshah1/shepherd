@@ -30,7 +30,7 @@ struct SidebarView: View {
                         // Boundary line between tabs (not between panes in a group).
                         if idx < store.tabs.count - 1 {
                             Rectangle()
-                                .fill(Theme.hairline)
+                                .fill(Theme.textDim)
                                 .frame(height: 1)
                                 .padding(.horizontal, 6)
                         }
