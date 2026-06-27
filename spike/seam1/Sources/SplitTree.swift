@@ -161,3 +161,48 @@ extension SplitNode {
         }
     }
 }
+
+// Persists only structure + `userTitle`/`cwd`; live state (paneID, state, OSC title)
+// never survives a restart — a restored pane is a fresh shell.
+extension Pane: Codable {
+    enum CodingKeys: String, CodingKey { case userTitle, cwd }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(paneID: UUID().uuidString)
+        userTitle = try c.decodeIfPresent(String.self, forKey: .userTitle)
+        cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(userTitle, forKey: .userTitle)
+        try c.encodeIfPresent(cwd, forKey: .cwd)
+    }
+}
+
+extension SplitNode: Codable {
+    enum CodingKeys: String, CodingKey { case kind, pane, axis, ratio, first, second }
+    private enum Kind: String, Codable { case leaf, split }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        switch try c.decode(Kind.self, forKey: .kind) {
+        case .leaf:
+            self = .leaf(try c.decode(Pane.self, forKey: .pane))
+        case .split:
+            self = .split(axis: try c.decode(SplitAxis.self, forKey: .axis),
+                          ratio: try c.decode(Double.self, forKey: .ratio),
+                          first: try c.decode(SplitNode.self, forKey: .first),
+                          second: try c.decode(SplitNode.self, forKey: .second))
+        }
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .leaf(let p):
+            try c.encode(Kind.leaf, forKey: .kind); try c.encode(p, forKey: .pane)
+        case .split(let axis, let ratio, let first, let second):
+            try c.encode(Kind.split, forKey: .kind)
+            try c.encode(axis, forKey: .axis); try c.encode(ratio, forKey: .ratio)
+            try c.encode(first, forKey: .first); try c.encode(second, forKey: .second)
+        }
+    }
+}
