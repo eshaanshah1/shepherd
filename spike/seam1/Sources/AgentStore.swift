@@ -376,6 +376,14 @@ final class AgentStore: ObservableObject {
         focusPaneSelecting(paneID, in: tab.tabID)
     }
 
+    /// Toggle a split tab's sidebar group between expanded rows and the collapsed
+    /// pip strip. Persisted (PersistedTab.collapsed) so it survives a restart.
+    func setCollapsed(_ tabID: String, _ value: Bool) {
+        guard let i = tabs.firstIndex(where: { $0.tabID == tabID }) else { return }
+        tabs[i].collapsed = value
+        save()
+    }
+
     var attentionCount: Int {
         tabs.flatMap { $0.root.panes }.filter { $0.state.wantsAttention }.count
     }
