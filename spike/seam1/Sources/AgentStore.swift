@@ -1,4 +1,6 @@
 import SwiftUI
+import AppKit
+import UserNotifications
 
 /// One tab. `state` starts at `.shell` and lights up when a Claude session runs
 /// in it (driven by hook events over the socket).
@@ -57,6 +59,7 @@ final class AgentStore: ObservableObject {
         tabs.removeAll { $0.tabID == tabID }
         if selected == tabID { selected = tabs.last?.tabID }
         save()
+        updateDockBadge()
     }
 
     func closeSelected() {
@@ -79,6 +82,17 @@ final class AgentStore: ObservableObject {
               let cur = selected,
               let i = tabs.firstIndex(where: { $0.tabID == cur }) else { return }
         selected = tabs[(i + delta + tabs.count) % tabs.count].tabID
+    }
+
+    /// Jump to the next tab that needs you (blocked / need-to-check / error).
+    func selectNextAttention() {
+        guard !tabs.isEmpty else { return }
+        let start = tabs.firstIndex(where: { $0.tabID == selected }) ?? -1
+        for off in 1...tabs.count {
+            let idx = (start + off) % tabs.count
+            if tabs[idx].state.wantsAttention { selected = tabs[idx].tabID; return }
+        }
+        NSSound.beep()   // nothing needs you
     }
 
     // MARK: Management
@@ -143,6 +157,12 @@ final class AgentStore: ObservableObject {
 
         shepherdLog("event=\(event)\(detail.isEmpty ? "" : "[\(detail)]") tab=\(tabID.prefix(8)) "
             + (applied ? "\(cur.rawValue)->\(tabs[i].state.rawValue)" : "\(cur.rawValue) (ignored: not mid-turn)"))
+
+        if applied {
+            let newState = tabs[i].state
+            if newState != cur, newState.wantsAttention { notifyAttention(tabs[i]) }
+            updateDockBadge()
+        }
     }
 
     private func shepherdLog(_ msg: String) {
@@ -173,10 +193,36 @@ final class AgentStore: ObservableObject {
     /// Focus clears need-to-check → idle ONLY (never blocked/working).
     func didFocus(tabID: String) {
         guard let i = tabs.firstIndex(where: { $0.tabID == tabID }) else { return }
-        if tabs[i].state == .needsCheck { tabs[i].state = .idle }
+        if tabs[i].state == .needsCheck { tabs[i].state = .idle; updateDockBadge() }
     }
 
     var attentionCount: Int { tabs.filter { $0.state.wantsAttention }.count }
+
+    // MARK: Attention surfacing (dock badge + backgrounded notifications)
+
+    private func updateDockBadge() {
+        let n = attentionCount
+        NSApp.dockTile.badgeLabel = n > 0 ? "\(n)" : nil
+    }
+
+    /// Fire a native notification when a tab needs you — but only while Shepherd
+    /// is NOT frontmost (when it is, the badge + sidebar are enough).
+    private func notifyAttention(_ tab: Agent) {
+        guard !NSApp.isActive else { return }
+        let content = UNMutableNotificationContent()
+        content.title = tab.displayTitle
+        switch tab.state {
+        case .blocked:    content.body = tab.reason ?? "needs you"
+        case .needsCheck: content.body = "finished — needs a look"
+        case .error:      content.body = "errored: \(tab.reason ?? "API error")"
+        default:          return
+        }
+        content.userInfo = ["tabID": tab.tabID]
+        content.sound = .default
+        UNUserNotificationCenter.current().add(
+            UNNotificationRequest(identifier: "\(tab.tabID)-\(tab.state.rawValue)",
+                                  content: content, trigger: nil))
+    }
 
     // MARK: Persistence (userTitle + cwd, in tab order)
 
