@@ -159,6 +159,16 @@ extension SplitNode {
         return best?.id
     }
 
+    /// The pane to focus after closing `paneID`: the first leaf of its sibling
+    /// subtree (the immediate split it lives under collapses to that sibling).
+    /// nil if `paneID` is the root leaf (no sibling) or isn't present.
+    func siblingLeaf(of paneID: String) -> String? {
+        guard case .split(_, _, let first, let second) = self else { return nil }
+        if case .leaf(let p) = first,  p.paneID == paneID { return second.firstLeafID }
+        if case .leaf(let p) = second, p.paneID == paneID { return first.firstLeafID }
+        return first.siblingLeaf(of: paneID) ?? second.siblingLeaf(of: paneID)
+    }
+
     /// Returns the tree with `paneID` removed; parent split collapses to its sibling.
     /// `nil` means `paneID` was the only leaf — caller should close the tab.
     func closing(paneID: String) -> SplitNode? {
