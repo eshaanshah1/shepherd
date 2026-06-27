@@ -63,6 +63,19 @@ final class SplitTreeTests: XCTestCase {
         XCTAssertNil(tree.closing(paneID: "a"))
     }
 
+    func testSiblingLeaf() {
+        let t = SplitNode.split(axis: .row, ratio: 0.5,
+            first: .leaf(Pane(paneID: "1")),
+            second: .split(axis: .column, ratio: 0.5,
+                first: .leaf(Pane(paneID: "2")),
+                second: .leaf(Pane(paneID: "3"))))
+        XCTAssertEqual(t.siblingLeaf(of: "3"), "2")        // immediate sibling leaf
+        XCTAssertEqual(t.siblingLeaf(of: "2"), "3")        // immediate sibling leaf
+        XCTAssertEqual(t.siblingLeaf(of: "1"), "2")        // sibling subtree's firstLeafID
+        XCTAssertNil(SplitNode.leaf(Pane(paneID: "x")).siblingLeaf(of: "x"))  // root leaf, no sibling
+        XCTAssertNil(t.siblingLeaf(of: "nope"))            // absent
+    }
+
     func testUpdatePane() {
         var tree = SplitNode.split(axis: .column, ratio: 0.5,
             first: .leaf(Pane(paneID: "a")), second: .leaf(Pane(paneID: "b")))

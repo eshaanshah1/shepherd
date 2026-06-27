@@ -301,10 +301,11 @@ final class AgentStore: ObservableObject {
     /// the tab's last pane, the whole tab closes (today's `closeTab` behavior).
     func closePane(_ paneID: String) {
         guard let i = tabs.firstIndex(where: { $0.paneIDs.contains(paneID) }) else { return }
+        let sibling = tabs[i].root.siblingLeaf(of: paneID)
         if let newRoot = tabs[i].root.closing(paneID: paneID) {
             tabs[i].root = newRoot
             if tabs[i].focusedPaneID == paneID {
-                tabs[i].focusedPaneID = newRoot.firstLeafID ?? tabs[i].focusedPaneID
+                tabs[i].focusedPaneID = sibling ?? newRoot.firstLeafID ?? tabs[i].focusedPaneID
             }
             if tabs[i].zoomedPaneID == paneID { tabs[i].zoomedPaneID = nil }
             save()
