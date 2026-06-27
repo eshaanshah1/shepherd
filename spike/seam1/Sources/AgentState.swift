@@ -13,12 +13,12 @@ enum AgentState: String, CaseIterable {
 
     var color: Color {
         switch self {
-        case .shell:      return .gray
-        case .working:    return .blue
-        case .blocked:    return .red
-        case .needsCheck: return .yellow
-        case .idle:       return .secondary
-        case .error:      return .orange
+        case .shell:      return Theme.textDim
+        case .working:    return Theme.working
+        case .blocked:    return Theme.blocked
+        case .needsCheck: return Theme.needsCheck
+        case .idle:       return Theme.idle
+        case .error:      return Theme.error
         }
     }
 

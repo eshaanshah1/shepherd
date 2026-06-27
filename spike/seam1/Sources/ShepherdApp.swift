@@ -15,7 +15,9 @@ struct ShepherdApp: App {
             ContentView()
                 .environmentObject(AgentStore.shared)
                 .frame(minWidth: 900, minHeight: 560)
+                .preferredColorScheme(.dark)
         }
+        .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(after: .newItem) {
                 Button("New Tab") { AgentStore.shared.newTab() }

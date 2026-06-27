@@ -33,3 +33,6 @@ Date: YYYY-MM-DD
 - [0006](0006-sidebar-shows-all-tabs.md) — Sidebar lists all tabs (filtering deferred)
 - [0007](0007-askuserquestion-no-hook.md) — AskUserQuestion is not hook-detectable *(superseded by 0008)*
 - [0008](0008-askuserquestion-via-pretooluse.md) — Detect AskUserQuestion (and plan approval) via PreToolUse
+- [0009](0009-sidebar-custom-rows-not-list.md) — Sidebar: custom ScrollView rows (not List); T3-Code styling
+- [0010](0010-terminal-theme-from-shepherd-config.md) — Terminal theme from ~/.config/shepherd, not ~/.config/ghostty
+- [0011](0011-tab-names-cwd-and-agent-title.md) — Tab names: cwd for shells, the agent's own title for agents

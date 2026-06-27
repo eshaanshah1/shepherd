@@ -23,9 +23,17 @@ final class GhosttyApp {
         }
         // From here on `self` is fully initialized (app defaulted, version set).
 
-        // 2) Config: built-in defaults + the user's ~/.config/ghostty, then finalize.
+        // 2) Config: our base theme, then Shepherd's own ~/.config/shepherd/config
+        //    (ghostty syntax) on top so the user configures Shepherd independently
+        //    of ghostty. We deliberately do NOT read ~/.config/ghostty.
         guard let cfg = ghostty_config_new() else { return }
-        ghostty_config_load_default_files(cfg)
+        if let themePath = Self.writeBaseTheme() {
+            themePath.withCString { ghostty_config_load_file(cfg, $0) }
+        }
+        let shepherdCfg = (NSHomeDirectory() as NSString).appendingPathComponent(".config/shepherd/config")
+        if FileManager.default.fileExists(atPath: shepherdCfg) {
+            shepherdCfg.withCString { ghostty_config_load_file(cfg, $0) }
+        }
         ghostty_config_finalize(cfg)
 
         // 3) Runtime callbacks. These become @convention(c) pointers, so each must
@@ -55,6 +63,37 @@ final class GhosttyApp {
         guard let app = ghostty_app_new(&runtime, cfg) else { return }
         self.app = app
         ghostty_app_set_focus(app, true)
+    }
+
+    /// Write the Command Deck base theme to a temp file and return its path.
+    /// libghostty only loads config from files, so we materialize one.
+    private static func writeBaseTheme() -> String? {
+        let theme = """
+        background = 0F0F11
+        foreground = EDEDED
+        cursor-color = 5B9DF8
+        selection-background = 232327
+        selection-foreground = EDEDED
+        palette = 0=#0F0F11
+        palette = 8=#5F5F66
+        palette = 1=#E5645D
+        palette = 9=#EC8983
+        palette = 2=#43C988
+        palette = 10=#6FE0A6
+        palette = 3=#E5A23D
+        palette = 11=#ECBB6F
+        palette = 4=#5B9DF8
+        palette = 12=#82B6FA
+        palette = 5=#B98BFF
+        palette = 13=#CDAEFF
+        palette = 6=#4DD0C4
+        palette = 14=#7FE0D6
+        palette = 7=#8C8C92
+        palette = 15=#EDEDED
+        """
+        let path = (NSTemporaryDirectory() as NSString).appendingPathComponent("shepherd-theme.conf")
+        guard (try? theme.write(toFile: path, atomically: true, encoding: .utf8)) != nil else { return nil }
+        return path
     }
 
     func tick() {
