@@ -21,9 +21,10 @@ struct ContentView: View {
             ZStack {
                 Theme.ground
                 ForEach(store.tabs) { tab in
-                    GhosttyTerminal(paneID: tab.focusedPaneID,
-                                    isSelected: tab.tabID == store.selectedTab,
-                                    focusTick: store.focusTick)
+                    SplitContainer(node: tab.root,
+                                   tabID: tab.tabID,
+                                   isTabSelected: tab.tabID == store.selectedTab,
+                                   focusTick: store.focusTick)
                         .opacity(tab.tabID == store.selectedTab ? 1 : 0)
                         .allowsHitTesting(tab.tabID == store.selectedTab)
                 }

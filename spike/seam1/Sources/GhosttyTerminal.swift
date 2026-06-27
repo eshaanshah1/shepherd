@@ -35,7 +35,7 @@ final class GhosttySurfaceView: NSView {
 
     override func becomeFirstResponder() -> Bool {
         let ok = super.becomeFirstResponder()
-        if ok { AgentStore.shared.didFocus(paneID: paneID) }   // focus clears need-to-check
+        if ok { AgentStore.shared.focusPane(paneID) }   // move tab focus here + clear need-to-check
         return ok
     }
 
