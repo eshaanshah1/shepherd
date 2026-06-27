@@ -273,6 +273,18 @@ final class AgentStore: ObservableObject {
         save()
     }
 
+    /// A pane's surface became first responder (a click). Move the owning tab's
+    /// focus to it and clear its need-to-check (subsumes didFocus). Only mutates
+    /// when focusedPaneID actually changes, so the resulting updateNSView →
+    /// makeFirstResponder doesn't re-enter. Clicks only reach the selected tab,
+    /// so we don't touch selectedTab here.
+    func focusPane(_ paneID: String) {
+        guard let i = tabs.firstIndex(where: { $0.paneIDs.contains(paneID) }),
+              tabs[i].focusedPaneID != paneID else { return }
+        tabs[i].focusedPaneID = paneID
+        didFocus(paneID: paneID)
+    }
+
     /// Focus clears need-to-check → idle ONLY (never blocked/working).
     func didFocus(paneID: String) {
         guard let i = tabs.firstIndex(where: { $0.paneIDs.contains(paneID) }),
