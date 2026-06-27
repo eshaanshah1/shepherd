@@ -38,16 +38,21 @@ spike/
 > TODO worth doing: graduate `spike/seam1/` to a top-level `app/` (it's the real app now).
 
 ### App source files (`spike/seam1/Sources/`)
-- `ShepherdApp.swift` — `@main` App; menu commands (⌘T/⌘W/⌘⇧[ ]/⌘1–9/⌘⇧A); installs `AppDelegate`.
+- `ShepherdApp.swift` — `@main` App; menu commands (⌘T/⌘W/⌘D/⌘⇧D/⌘⇧↩/⌘⌥-arrows/⌘⇧[ ]/⌘1–9/⌘⇧A); installs `AppDelegate`.
 - `AppDelegate.swift` — requests notification permission; routes notification clicks → focus that tab.
 - `Ghostty.swift` — `GhosttyApp`: `ghostty_init` + config (base **theme** + `~/.config/shepherd/config`, [ADR 0010](.claude/adr/0010-terminal-theme-from-shepherd-config.md)) + the **runtime callback table** + the `wakeup→tick` pump; handles `SET_TITLE`/`PWD` actions.
-- `GhosttyTerminal.swift` — `NSViewRepresentable` + `GhosttySurfaceView`: creates a `ghostty_surface_t`, injects per-tab env into the PTY, forwards keyboard/mouse/clipboard, sets display-id (vsync) + occlusion; **claims first responder** when its tab is selected (the focus fix, [ADR 0009](.claude/adr/0009-sidebar-custom-rows-not-list.md)).
-- `AgentStore.swift` — the app model: tabs, selection, persistence, the **socket→state lifecycle map** (`apply`), dock badge + notifications. `displayTitle` = rename ?? the agent's OSC title ?? cwd ([ADR 0011](.claude/adr/0011-tab-names-cwd-and-agent-title.md)); `select()` clears need-to-check.
+- `SplitTree.swift` — **pure model**: `Pane` (one surface = one agent unit; `displayTitle`/`state`/`cwd`), the `SplitAxis` enum (`.row`/`.column`), and the `indirect enum SplitNode` binary tree + its ops (`split`/`updatePane`/`setRatio`/`frames`/`neighbor`/`closing`) + `Codable`. No SwiftUI/AppKit — covered by `ShepherdModelTests`.
+- `Tab.swift` — a tab = a container of a `SplitNode` pane tree (`root`) plus `focusedPaneID` / `zoomedPaneID` / `collapsed`; `attentionState()` rolls panes up to the tab dot; an unsplit tab degenerates to the old single-agent behavior.
+- `GhosttyTerminal.swift` — `NSViewRepresentable` + `GhosttySurfaceView`: creates a `ghostty_surface_t`, injects per-pane env into the PTY, forwards keyboard/mouse/clipboard, sets display-id (vsync) + occlusion; **claims first responder** when its pane is the selected tab's focused pane (the focus fix, [ADR 0009](.claude/adr/0009-sidebar-custom-rows-not-list.md)).
+- `SplitContainer.swift` — recursive SwiftUI render of a tab's `SplitNode` tree: leaves → `GhosttyTerminal` surfaces, splits laid out by `ratio` with a **draggable hairline `PaneDivider`**; the **zoom funnel** (zoomed pane fills, siblings starve to 0×0 but stay mounted); **inactive panes dim** (opacity, no border ring).
+- `AgentStore.swift` — the app model: tabs (each owning a pane tree), selection, persistence, the **socket→per-pane-state lifecycle map** (`apply`, keyed on pane id), split/close/focus/zoom mutations, dock badge + notifications (aggregated over all panes). `select()` clears need-to-check.
 - `AgentState.swift` — the state enum (`shell/working/blocked/needsCheck/idle/error`); colors come from `Theme.swift`.
 - `Theme.swift` — design tokens (flat near-black palette + soft state colors) + a `Color(hex:)` init. The single source of UI colors; the libghostty base theme mirrors it.
-- `SocketServer.swift` — in-app unix-domain socket server (receives `{tab_id,event,detail}`).
-- `SidebarView.swift` — the tab list: a **custom `ScrollView` of rows (not `List`)** — leading glyph + name + status word, live drag-reorder, rename, hover/selection; T3-Code styling ([ADR 0009](.claude/adr/0009-sidebar-custom-rows-not-list.md)).
-- `ContentView.swift` — sidebar + a resizable hairline divider + a ZStack of all tab surfaces (only the selected one visible).
+- `SocketServer.swift` — in-app unix-domain socket server (receives `{tab_id,event,detail}` — `tab_id` is really the pane id).
+- `SidebarView.swift` — the tab list: a **custom `ScrollView` of rows (not `List`)**. Unsplit tabs render a `TabRow` (leading glyph + name + status word, live drag-reorder, rename); split tabs render a **`SplitTabGroup`** — bracket-grouped pane rows, collapsible to a `● 1 ▸ 2` pip strip, zoom-dimmed; T3-Code styling ([ADR 0009](.claude/adr/0009-sidebar-custom-rows-not-list.md)).
+- `ContentView.swift` — sidebar + a resizable hairline divider + a ZStack of all tabs, each rendered via `SplitContainer` (only the selected one visible/hit-testable); feeds the content rect to the store so ⌘⌥-arrow focus moves can resolve geometric neighbors.
+
+`Tests/` holds the **`ShepherdModelTests`** target (a `bundle.unit-test` in `project.yml`, `SplitTreeTests.swift`) — pure-model coverage of the `SplitNode` tree ops, compiling `SplitTree`/`Tab`/`AgentState`/`Theme` without the AppKit surface.
 
 ---
 
@@ -85,23 +90,34 @@ Then `/reload-plugins` in any Claude session. Because it's symlinked, edits to
 ## Architecture
 
 **Rendering:** SwiftUI owns all chrome; **libghostty owns the terminal grid** —
-it renders via Metal into the `NSView` we hand it. A "pane" = a libghostty
-surface wrapped in `NSViewRepresentable`. We never draw cells ourselves.
+it renders via Metal into the `NSView` we hand it. A **tab is a container of a
+`SplitNode` pane tree**; each **leaf pane** = one libghostty surface wrapped in
+`NSViewRepresentable` = one tracked agent ([ADR 0012](.claude/adr/0012-pane-splitting-panes-as-agents.md)).
+An unsplit tab is a single-leaf tree (one pane), behaving like the old
+one-agent-per-tab model. `ContentView` renders the **selected** tab's tree via
+the recursive `SplitContainer`. We never draw cells ourselves.
 
 **The agent-state bridge (the "agent-native" part):**
 ```
-claude (in a Shepherd tab, PTY has $SHEPHERD_TAB_ID + $SHEPHERD_SOCK injected)
+claude (in a Shepherd pane, PTY has $SHEPHERD_TAB_ID + $SHEPHERD_SOCK injected)
   → fires a lifecycle hook
   → claude-plugin/hooks/report.sh  (pure bash; reads the env, sends JSON)
   → unix socket ($SHEPHERD_SOCK)
   → SocketServer (in-app)
-  → AgentStore.apply(event, detail, tabID)   # the lifecycle map
+  → AgentStore.apply(event, detail, paneID)   # the lifecycle map, keyed per pane
   → sidebar dot / dock badge / notification
 ```
-Correlation is by the per-tab env var, not PID guessing. **Claude Code is the
-only first-class agent** in v1 (see [ADR 0003](.claude/adr/0003-agent-state-via-claude-hooks.md)).
+Correlation is by the per-pane env var, not PID guessing. The env var NAME is
+still `SHEPHERD_TAB_ID` (unchanged for plugin compatibility) but its **value is
+the pane id** — the plugin protocol and `report.sh` need no change. **Claude
+Code is the only first-class agent** in v1 (see [ADR 0003](.claude/adr/0003-agent-state-via-claude-hooks.md)).
 
 ### Agent state lifecycle (`AgentStore.apply`)
+State is **per-pane**: `apply` keys on the pane id and updates that pane's
+`AgentState` inside its tab's tree. The dock badge, attention-nav (`⌘⇧A`), and
+notifications all **aggregate over every pane across every tab** (a tab's
+sidebar dot rolls its panes up via `Tab.attentionState()`).
+
 | Hook event | → state |
 |---|---|
 | `SessionStart` | **idle** ; `SessionEnd` → **shell** (agent gone, tab stays) |
@@ -112,12 +128,47 @@ only first-class agent** in v1 (see [ADR 0003](.claude/adr/0003-agent-state-via-
 | `Elicitation` | **blocked** ("input requested") |
 | `Stop` | **need-to-check** |
 | `StopFailure` | **error** (+reason: the API error type) |
-| *focus / select tab / click its notification* | need-to-check → **idle** (only need-to-check; never blocked/working) — `select()` calls `didFocus` |
+| *focus / select tab / focus pane / click its notification* | need-to-check → **idle** (only need-to-check; never blocked/working) — `select()`/`focusPane()` call `didFocus` |
 
-Plain tabs (no agent) are **shell**. Sidebar currently shows **all** tabs
+Plain panes (no agent) are **shell**. Sidebar currently shows **all** tabs
 (filtering deferred — [ADR 0006](.claude/adr/0006-sidebar-shows-all-tabs.md)).
-Tab names: rename wins, else an agent's own OSC title, else the cwd
-([ADR 0011](.claude/adr/0011-tab-names-cwd-and-agent-title.md)).
+Pane names: rename wins, else an agent's own OSC title, else the cwd — the
+priority now lives on the **pane** ([ADR 0011](.claude/adr/0011-tab-names-cwd-and-agent-title.md));
+a tab's title is derived from its focused pane.
+
+### Keybindings / menu commands (`ShepherdApp.swift`)
+| Keys | Action |
+|---|---|
+| `⌘T` | new tab |
+| `⌘W` | close the **focused pane** → falls through to close-tab (last pane) → close-window (last tab) |
+| `⌘D` | split right (`.row` — side-by-side) |
+| `⌘⇧D` | split down (`.column` — stacked) |
+| `⌘⇧↩` | toggle **zoom** of the focused pane (transient, not persisted) |
+| `⌘⌥` + arrows | move pane focus directionally (geometric neighbor) |
+| `⌘⇧[` / `⌘⇧]` | previous / next tab |
+| `⌘1`–`⌘9` | jump to tab N |
+| `⌘⇧A` | jump to next pane needing attention (blocked / need-to-check / error) |
+
+A new pane inherits its parent pane's cwd. Splitting clears the tab's zoom.
+
+### Sidebar (`SidebarView.swift`)
+Unsplit tabs render a single `TabRow` (as before). A **split tab** renders a
+`SplitTabGroup`: its panes gathered under a thin leading **bracket/rail** (a
+rounded rail, not a curly `{`), one row per pane. The group **collapses** to a
+`● 1 ▸ 2` strip of `<state-dot> <pane-number>` pips (hover a pip for its title);
+collapse/expand toggles via a hover-only chevron. The focused/zoomed pane is
+emphasized by **dimming the inactive panes** (no border ring) — and a **zoomed**
+pane dims its siblings in the sidebar too, in both the collapsed strip and the
+expanded rows, so a tab reads as zoomed without switching to it. Collapse default
+is a `shepherd.panes.defaultCollapsed` UserDefaults flag (ADR 0012 envisions
+sourcing it from `~/.config/shepherd`; that wiring is a deferred follow-up).
+
+### Persistence
+The store key is now **`shepherd.tabs.v2`** (`AgentStore`): per tab, the
+recursive `SplitNode` tree (shape + split ratios), each pane's `userTitle` + cwd,
+and the `collapsed` flag — in tab order. Restore rebuilds the tree with **fresh
+pane ids and `.shell` state** (live agent state and zoom never survive a
+restart; a restored pane is a fresh shell).
 
 ---
 
@@ -131,6 +182,7 @@ Tab names: rename wins, else an agent's own OSC title, else the cwd
 - **SourceKit lies in this repo** — "Cannot find type AgentState/…" and "'main' attribute…" diagnostics are stale because the editor sees loose files, not the generated project. `xcodebuild` is ground truth; ignore SourceKit "cannot find" noise.
 - **Debug log:** the app appends every state transition to `/tmp/shepherd-events.log` — invaluable for debugging the state machine (`tail -f`). Currently always-on; a deferred cleanup is to put it behind a flag.
 - **Sidebar is a custom `ScrollView`, NOT a `List`** ([ADR 0009](.claude/adr/0009-sidebar-custom-rows-not-list.md)): `List` was a keyboard-focus sink (stole keystrokes from the PTY) and forced ugly default styling. Don't reintroduce it — and keep sidebar SwiftUI controls `.focusable(false)` so focus stays on the terminal.
+- **`SplitAxis` vocab** ([ADR 0012](.claude/adr/0012-pane-splitting-panes-as-agents.md)): `.row` = `⌘D` = panes **side-by-side**, **vertical** divider (`HStack`); `.column` = `⌘⇧D` = panes **stacked**, horizontal divider (`VStack`). "Row" means a row of panes, not a horizontal split — easy to invert, so read it off here, not from intuition.
 - **Screenshotting the app for UI checks:** Shepherd often opens *behind* the frontmost window, so a full-screen `screencapture` grabs the wrong app. Capture its window directly — get the id from `CGWindowListCopyWindowInfo` (a tiny `swift` script: owner == `Shepherd`, `kCGWindowLayer == 0`) → `screencapture -o -l <id> out.png`. Re-`open` right after `killall` can hit LaunchServices `-600`; poll `until ! pgrep -x Shepherd` before reopening. (No `Quartz`/pyobjc on this machine — use `swift`, not Python.)
 
 ---
@@ -144,5 +196,5 @@ Tab names: rename wins, else an agent's own OSC title, else the cwd
 - Commit messages end with the project's Co-Authored-By line.
 
 ## Done vs deferred
-**Done:** terminal (mouse/scroll/copy-paste/vsync/titles), tabs (create/switch/close/reorder/rename/persist+cwd, keyboard nav), agent-state lifecycle, Claude plugin, attention loop (badge + backgrounded notifications + ⌘⇧A jump-to-alert), **T3-Code-style sidebar** (custom rows not `List`, resizable, cwd/agent tab names) + self-contained theme (`~/.config/shepherd`).
+**Done:** terminal (mouse/scroll/copy-paste/vsync/titles), tabs (create/switch/close/reorder/rename/persist+cwd, keyboard nav), **pane splitting** (H/V splits, zoom, draggable dividers, per-pane agents, bracket-grouped collapsible sidebar — [ADR 0012](.claude/adr/0012-pane-splitting-panes-as-agents.md)), agent-state lifecycle, Claude plugin, attention loop (badge + backgrounded notifications + ⌘⇧A jump-to-alert), **T3-Code-style sidebar** (custom rows not `List`, resizable, cwd/agent tab names) + self-contained theme (`~/.config/shepherd`).
 **Deferred (see SPEC §6):** generic non-Claude agents (Tier-B), sidebar auto-hide at ≤1 tab, debug-log flag, IME/selection polish, workspaces, multi-window, navigator popup, and **full remote control** (the big future bet).

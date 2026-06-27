@@ -12,7 +12,11 @@ once and never babysit them.
 
 ## 1. Product shape
 
-- One **window**, many **tabs**, **≤1 agent per tab**. No splits in v1.
+- One **window**, many **tabs**. A tab holds a **recursive binary split tree of
+  panes**, and **each pane is an independently-tracked agent** — run two Claude
+  sessions side-by-side in one tab and track both. Horizontal (`⌘D`) + vertical
+  (`⌘⇧D`) splits, draggable dividers, and pane zoom all exist
+  ([ADR 0012](.claude/adr/0012-pane-splitting-panes-as-agents.md)).
 - A persistent **sidebar** of active agents.
 - **Claude Code is the only first-class agent.** Other CLIs (codex, aider,
   gemini, …) are just normal terminal tabs — invisible to the sidebar in v1.
@@ -99,8 +103,10 @@ are added.
 
 Generic / non-Claude agents (+ the Tier-B PTY/OSC-133 inference ladder for
 them) · navigator fuzzy-switcher popup · workspaces + persistence/restore ·
-splits · multiple windows · native approval surface · config system / theming ·
-sound.
+multiple windows · native approval surface · config system / theming · sound.
+
+> Splits **shipped** (panes-as-agents) — see
+> [ADR 0012](.claude/adr/0012-pane-splitting-panes-as-agents.md) and §1.
 
 ### Big-ticket future: full remote control
 
