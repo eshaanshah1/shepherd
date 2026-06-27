@@ -14,6 +14,7 @@ struct SplitContainer: View {
     let isTabSelected: Bool
     let focusTick: Int
     var path: [Int] = []
+    var zoomedPaneID: String? = nil
     @EnvironmentObject var store: AgentStore
 
     var body: some View {
@@ -33,32 +34,51 @@ struct SplitContainer: View {
                         isSelected: isTabSelected && isFocused,
                         focusTick: focusTick)
             // Active-pane ring: only when the tab is split AND this is the
-            // selected tab's focused pane.
+            // selected tab's focused pane. Bright enough to read on near-black.
             .overlay(
                 Rectangle()
-                    .strokeBorder(Theme.hairline,
-                                  lineWidth: (tab?.isSplit == true && isTabSelected && isFocused) ? 1 : 0)
+                    .strokeBorder(Theme.working,
+                                  lineWidth: (tab?.isSplit == true && isTabSelected && isFocused) ? 1.5 : 0)
                     .allowsHitTesting(false)
             )
     }
 
     @ViewBuilder
     private func split(axis: SplitAxis, ratio: Double, first: SplitNode, second: SplitNode) -> some View {
+        // Zoom funnel: when one child subtree contains the zoomed pane, render that
+        // child full-size and starve the other to 0×0 (kept mounted so its surface
+        // stays alive); hide the divider. Recursion funnels down to the zoomed leaf.
+        let zoomFirst  = zoomedPaneID.map { first.leafIDs.contains($0) } ?? false
+        let zoomSecond = zoomedPaneID.map { second.leafIDs.contains($0) } ?? false
+        let zoomed = zoomFirst || zoomSecond
+
         GeometryReader { geo in
             switch axis {
             case .row:
                 HStack(spacing: 0) {
-                    child(first, 0).frame(width: geo.size.width * ratio)
-                    PaneDivider(axis: axis, ratio: ratio, span: geo.size.width,
-                                tabID: tabID, path: path)
+                    child(first, 0)
+                        .frame(width: zoomed ? (zoomFirst ? geo.size.width : 0) : geo.size.width * ratio)
+                        .clipped()
+                    if !zoomed {
+                        PaneDivider(axis: axis, ratio: ratio, span: geo.size.width,
+                                    tabID: tabID, path: path)
+                    }
                     child(second, 1)
+                        .frame(width: zoomed && !zoomSecond ? 0 : nil)
+                        .clipped()
                 }
             case .column:
                 VStack(spacing: 0) {
-                    child(first, 0).frame(height: geo.size.height * ratio)
-                    PaneDivider(axis: axis, ratio: ratio, span: geo.size.height,
-                                tabID: tabID, path: path)
+                    child(first, 0)
+                        .frame(height: zoomed ? (zoomFirst ? geo.size.height : 0) : geo.size.height * ratio)
+                        .clipped()
+                    if !zoomed {
+                        PaneDivider(axis: axis, ratio: ratio, span: geo.size.height,
+                                    tabID: tabID, path: path)
+                    }
                     child(second, 1)
+                        .frame(height: zoomed && !zoomSecond ? 0 : nil)
+                        .clipped()
                 }
             }
         }
@@ -66,7 +86,7 @@ struct SplitContainer: View {
 
     private func child(_ node: SplitNode, _ branch: Int) -> SplitContainer {
         SplitContainer(node: node, tabID: tabID, isTabSelected: isTabSelected,
-                       focusTick: focusTick, path: path + [branch])
+                       focusTick: focusTick, path: path + [branch], zoomedPaneID: zoomedPaneID)
     }
 }
 

@@ -24,12 +24,20 @@ struct ContentView: View {
                     SplitContainer(node: tab.root,
                                    tabID: tab.tabID,
                                    isTabSelected: tab.tabID == store.selectedTab,
-                                   focusTick: store.focusTick)
+                                   focusTick: store.focusTick,
+                                   zoomedPaneID: tab.zoomedPaneID)
                         .opacity(tab.tabID == store.selectedTab ? 1 : 0)
                         .allowsHitTesting(tab.tabID == store.selectedTab)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // Feed the content rect to the store so ⌘⌥-arrow focus moves can
+            // resolve geometric neighbors against the live layout.
+            .background(GeometryReader { geo in
+                Color.clear
+                    .onAppear { store.lastContentSize = geo.size }
+                    .onChange(of: geo.size) { store.lastContentSize = $0 }
+            })
         }
         .background(Theme.ground)
         .ignoresSafeArea()

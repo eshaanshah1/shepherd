@@ -16,6 +16,10 @@ final class AgentStore: ObservableObject {
     @Published var focusTick = 0
     func refocusActiveTerminal() { focusTick += 1 }
 
+    /// The content area's size (SwiftUI top-left space), fed by ContentView so
+    /// `focusNeighbor` can resolve geometric neighbors against the live layout.
+    @Published var lastContentSize: CGSize = .zero
+
     /// Injected into each pane's PTY as $SHEPHERD_SOCK so the Claude plugin can reach us.
     let socketPath: String
 
@@ -308,6 +312,52 @@ final class AgentStore: ObservableObject {
         } else {
             closeTab(tabs[i].tabID)   // was the last pane → close the tab
         }
+    }
+
+    // MARK: Split / focus / zoom (keyboard-driven)
+
+    /// True if the selected tab has more than one pane.
+    var selectedTabIsSplit: Bool {
+        tabs.first(where: { $0.tabID == selectedTab })?.isSplit ?? false
+    }
+
+    /// Split the selected tab's focused pane along `axis`, focusing the new pane.
+    /// The new pane inherits the focused pane's cwd so it opens in the same place.
+    func splitFocused(_ axis: SplitAxis) {
+        guard let i = tabs.firstIndex(where: { $0.tabID == selectedTab }) else { return }
+        let focused = tabs[i].focusedPaneID
+        var newPane = Pane()
+        newPane.cwd = tabs[i].root.pane(focused)?.cwd
+        guard tabs[i].root.split(paneID: focused, axis: axis, newPane: newPane) else { return }
+        tabs[i].focusedPaneID = newPane.paneID
+        tabs[i].zoomedPaneID = nil
+        save()
+        refocusActiveTerminal()
+    }
+
+    /// Close the selected tab's focused pane (collapse sibling; last pane → close tab).
+    func closeFocusedPane() {
+        guard let tab = tabs.first(where: { $0.tabID == selectedTab }) else { return }
+        closePane(tab.focusedPaneID)
+    }
+
+    /// Move focus to the geometric neighbor of the focused pane in `dir`.
+    /// `lastContentSize` is SwiftUI top-left space — the same convention
+    /// `frames`/`neighbor` assume — so we pass it through without flipping y.
+    func focusNeighbor(_ dir: FocusDirection) {
+        guard let i = tabs.firstIndex(where: { $0.tabID == selectedTab }) else { return }
+        let rect = CGRect(origin: .zero, size: lastContentSize)
+        if let id = tabs[i].root.neighbor(of: tabs[i].focusedPaneID, dir, in: rect) {
+            tabs[i].focusedPaneID = id
+            refocusActiveTerminal()
+        }
+    }
+
+    /// Toggle full-area zoom of the selected tab's focused pane. Transient, not persisted.
+    func toggleZoom() {
+        guard let i = tabs.firstIndex(where: { $0.tabID == selectedTab }) else { return }
+        tabs[i].zoomedPaneID = tabs[i].zoomedPaneID == nil ? tabs[i].focusedPaneID : nil
+        refocusActiveTerminal()
     }
 
     /// Resize a split by setting the ratio of the node at `path` (clamped in the
