@@ -2,13 +2,13 @@ import SwiftUI
 import AppKit
 import GhosttyKit
 
-/// SwiftUI host for one libghostty terminal surface, identified by `tabID`.
+/// SwiftUI host for one libghostty terminal surface, identified by `paneID`.
 struct GhosttyTerminal: NSViewRepresentable {
-    let tabID: String
+    let paneID: String
     let isSelected: Bool
     var focusTick: Int = 0   // changing this re-runs updateNSView so we can reclaim focus
 
-    func makeNSView(context: Context) -> GhosttySurfaceView { GhosttySurfaceView(tabID: tabID) }
+    func makeNSView(context: Context) -> GhosttySurfaceView { GhosttySurfaceView(paneID: paneID) }
 
     func updateNSView(_ v: GhosttySurfaceView, context: Context) {
         v.setActive(isSelected)   // only the visible tab renders at refresh rate
@@ -19,14 +19,14 @@ struct GhosttyTerminal: NSViewRepresentable {
 }
 
 /// NSView backing one libghostty surface. libghostty owns the Metal layer and
-/// drives rendering; we create/size the surface, inject per-tab env into its PTY,
+/// drives rendering; we create/size the surface, inject per-pane env into its PTY,
 /// and forward keyboard + mouse + clipboard.
 final class GhosttySurfaceView: NSView {
-    let tabID: String
+    let paneID: String
     private var surface: ghostty_surface_t?
 
-    init(tabID: String) {
-        self.tabID = tabID
+    init(paneID: String) {
+        self.paneID = paneID
         super.init(frame: .zero)
     }
     required init?(coder: NSCoder) { fatalError("not supported") }
@@ -35,7 +35,7 @@ final class GhosttySurfaceView: NSView {
 
     override func becomeFirstResponder() -> Bool {
         let ok = super.becomeFirstResponder()
-        if ok { AgentStore.shared.didFocus(tabID: tabID) }   // focus clears need-to-check
+        if ok { AgentStore.shared.didFocus(paneID: paneID) }   // focus clears need-to-check
         return ok
     }
 
@@ -49,9 +49,10 @@ final class GhosttySurfaceView: NSView {
         updateDisplayID()                       // lock vsync to this screen's refresh rate
         syncSizeAndScale()
 
-        // Claim keyboard focus on launch/restore if we're the visible tab — else
-        // first responder lands on a SwiftUI control and keystrokes miss the PTY.
-        if AgentStore.shared.selected == tabID {
+        // Claim keyboard focus on launch/restore if our pane is the selected
+        // tab's focused pane — else first responder lands on a SwiftUI control
+        // and keystrokes miss the PTY.
+        if AgentStore.shared.isFocusedSurface(paneID: paneID) {
             DispatchQueue.main.async { [weak self] in
                 guard let self, let window = self.window else { return }
                 window.makeFirstResponder(self)
@@ -82,8 +83,10 @@ final class GhosttySurfaceView: NSView {
         cfg.userdata = Unmanaged.passUnretained(self).toOpaque()   // surface-scoped callbacks recover us via this
         cfg.scale_factor = window.backingScaleFactor
 
-        // Inject per-tab env into the PTY so the Claude plugin's hook can report
-        // back tagged with this tab. libghostty copies these during surface_new.
+        // Inject per-pane env into the PTY so the Claude plugin's hook can report
+        // back tagged with this pane. The env var name is still SHEPHERD_TAB_ID
+        // (plugin compat); its value is this paneID. libghostty copies these
+        // during surface_new.
         var allocs: [UnsafeMutablePointer<CChar>] = []
         func dup(_ s: String) -> UnsafePointer<CChar> {
             let p = strdup(s)!
@@ -92,12 +95,12 @@ final class GhosttySurfaceView: NSView {
         }
         var envVars = [
             ghostty_env_var_s(key: dup("SHEPHERD_SOCK"),   value: dup(AgentStore.shared.socketPath)),
-            ghostty_env_var_s(key: dup("SHEPHERD_TAB_ID"), value: dup(tabID)),
+            ghostty_env_var_s(key: dup("SHEPHERD_TAB_ID"), value: dup(paneID)),
         ]
         defer { allocs.forEach { free($0) } }
 
-        // Restore-on-relaunch: open in the tab's last-known cwd if we have one.
-        if let cwd = AgentStore.shared.cwd(forTab: tabID) {
+        // Restore-on-relaunch: open in the pane's last-known cwd if we have one.
+        if let cwd = AgentStore.shared.cwd(forPane: paneID) {
             cfg.working_directory = dup(cwd)
         }
 

@@ -55,8 +55,8 @@ final class GhosttyApp {
             },
             close_surface_cb: { userdata, _ in
                 guard let userdata else { return }
-                let id = GhosttyApp.view(userdata).tabID
-                DispatchQueue.main.async { AgentStore.shared.closeTab(id) }
+                let id = GhosttyApp.view(userdata).paneID
+                DispatchQueue.main.async { AgentStore.shared.closePane(id) }
             }
         )
 
@@ -128,18 +128,18 @@ final class GhosttyApp {
                   let surface = target.target.surface,
                   let ud = ghostty_surface_userdata(surface),
                   let cTitle = action.action.set_title.title else { return false }
-            let id = view(ud).tabID
+            let id = view(ud).paneID
             let title = String(cString: cTitle)
-            DispatchQueue.main.async { AgentStore.shared.setTitle(title, tabID: id) }
+            DispatchQueue.main.async { AgentStore.shared.setTitle(title, paneID: id) }
             return true
         case GHOSTTY_ACTION_PWD:
             guard target.tag == GHOSTTY_TARGET_SURFACE,
                   let surface = target.target.surface,
                   let ud = ghostty_surface_userdata(surface),
                   let cPwd = action.action.pwd.pwd else { return false }
-            let id = view(ud).tabID
+            let id = view(ud).paneID
             let pwd = String(cString: cPwd)
-            DispatchQueue.main.async { AgentStore.shared.setCwd(pwd, tabID: id) }
+            DispatchQueue.main.async { AgentStore.shared.setCwd(pwd, paneID: id) }
             return true
         default:
             return false

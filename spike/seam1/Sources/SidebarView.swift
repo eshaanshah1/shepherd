@@ -56,7 +56,7 @@ struct SidebarView: View {
 
 private struct TabRow: View {
     @EnvironmentObject var store: AgentStore
-    let tab: Agent
+    let tab: Tab
     @Binding var draggingID: String?
     @Binding var dragOffset: CGFloat
 
@@ -69,13 +69,17 @@ private struct TabRow: View {
     @State private var hovering = false
     @FocusState private var focused: Bool
 
-    private var isSelected: Bool { store.selected == tab.tabID }
+    private var isSelected: Bool { store.selectedTab == tab.tabID }
     private var isDragging: Bool { draggingID == tab.tabID }
     private var index: Int? { store.tabs.firstIndex { $0.tabID == tab.tabID } }
 
+    // Single-pane tab: the row reflects its one (focused) pane, just like today.
+    private var state: AgentState { tab.focusedPane()?.state ?? .shell }
+    private var reason: String? { tab.focusedPane()?.reason }
+
     var body: some View {
         HStack(spacing: 9) {
-            LeadingIcon(state: tab.state)
+            LeadingIcon(state: state)
 
             if editing {
                 TextField("name", text: $draft)
@@ -98,7 +102,7 @@ private struct TabRow: View {
             if !editing, let s = statusText {
                 Text(s)
                     .font(.system(size: 11))
-                    .foregroundStyle(tab.state.color)
+                    .foregroundStyle(state.color)
                     .lineLimit(1)
             }
         }
@@ -112,7 +116,7 @@ private struct TabRow: View {
         .zIndex(isDragging ? 1 : 0)
         .animation(isDragging ? nil : .spring(response: 0.28, dampingFraction: 0.82), value: index)
         .onHover { hovering = $0 }
-        .onTapGesture { store.select(tab.tabID) }
+        .onTapGesture { store.select(tabID: tab.tabID) }
         .gesture(reorderGesture)
         .contextMenu {
             Button("Rename") { beginRename() }
@@ -130,10 +134,10 @@ private struct TabRow: View {
     }
     // Right-aligned status word — only on notable states (matches T3's labels).
     private var statusText: String? {
-        switch tab.state {
+        switch state {
         case .working:      return "Working"
         case .needsCheck:   return "Done"
-        case .blocked:      return (tab.reason?.isEmpty == false) ? capitalized(tab.reason!) : "Blocked"
+        case .blocked:      return (reason?.isEmpty == false) ? capitalized(reason!) : "Blocked"
         case .error:        return "Error"
         case .idle, .shell: return nil
         }
@@ -146,7 +150,7 @@ private struct TabRow: View {
             .onChanged { value in
                 if draggingID == nil {
                     draggingID = tab.tabID
-                    store.select(tab.tabID)
+                    store.select(tabID: tab.tabID)
                 }
                 guard draggingID == tab.tabID, let from = index else { return }
                 dragOffset = value.translation.height

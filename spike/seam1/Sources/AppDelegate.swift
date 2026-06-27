@@ -13,9 +13,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 didReceive response: UNNotificationResponse,
                                 withCompletionHandler completionHandler: @escaping () -> Void) {
-        let tabID = response.notification.request.content.userInfo["tabID"] as? String
+        let paneID = response.notification.request.content.userInfo["paneID"] as? String
         Task { @MainActor in
-            if let tabID { AgentStore.shared.select(tabID) }
+            if let paneID { AgentStore.shared.revealPane(paneID) }
             NSApp.activate(ignoringOtherApps: true)
         }
         completionHandler()
