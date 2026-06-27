@@ -35,7 +35,7 @@
 | `Sources/SidebarView.swift` | Tab row → for split tabs: leading bracket + expanded per-pane rows or collapsed `● 1 ▸ 2` strip; collapse toggle; zoom dimming. |
 | `Sources/ShepherdApp.swift` | New menu commands: ⌘D, ⌘⇧D, ⌘W (pane-aware), ⌘⌥arrows, ⌘⇧↩. |
 | `project.yml` | Add `ShepherdModelTests` unit-test target (sources: SplitTree.swift, Tab.swift, AgentState.swift, Theme.swift). |
-| `Sources/Tests/SplitTreeTests.swift` **(new)** | XCTest for the model. |
+| `Tests/SplitTreeTests.swift` **(new)** | XCTest for the model (sibling of `Sources/`). |
 | `SPEC.md`, `CLAUDE.md` | Update §1/§6 and architecture notes (Task 11). |
 
 ---
@@ -44,7 +44,7 @@
 
 **Files:**
 - Create: `spike/seam1/Sources/SplitTree.swift`
-- Create: `spike/seam1/Sources/Tests/SplitTreeTests.swift`
+- Create: `spike/seam1/Tests/SplitTreeTests.swift`
 - Modify: `spike/seam1/project.yml` (add test target)
 
 **Interfaces — Produces:**
@@ -55,7 +55,7 @@
 
 - [ ] **Step 1: Add the test target to `project.yml`**
 
-Append under `targets:` (sibling of `Shepherd:`):
+Append under `targets:` (sibling of `Shepherd:`). The target is **standalone** — it compiles its own copies of the pure files and has **no dependency on `Shepherd`** (avoids GhosttyKit linkage and duplicate-symbol issues; the app target compiles the same files in its own separate module, which is fine). Tests live in `Tests/` — a **sibling of `Sources/`, NOT under it** — so the app target's `- path: Sources` glob never pulls XCTest into the app:
 
 ```yaml
   ShepherdModelTests:
@@ -66,12 +66,10 @@ Append under `targets:` (sibling of `Shepherd:`):
       - path: Sources/Tab.swift
       - path: Sources/AgentState.swift
       - path: Sources/Theme.swift
-      - path: Sources/Tests
-    dependencies:
-      - target: Shepherd
+      - path: Tests
 ```
 
-> `Sources/Tab.swift` doesn't exist until Task 5. For Tasks 1–4 the model tests only need `SplitTree.swift`; create an empty `Sources/Tab.swift` now (`import Foundation`) so xcodegen resolves the path, and fill it in Task 5.
+> `Sources/Tab.swift` doesn't exist until Task 5. For Tasks 1–4 the model tests only need `SplitTree.swift`; create an empty `Sources/Tab.swift` now (`import Foundation`) so xcodegen resolves the path, and fill it in Task 5. Test files share the `ShepherdModelTests` module with the compiled sources, so they reference `Pane`/`SplitNode` directly — no `import Shepherd`.
 
 - [ ] **Step 2: Write `SplitTree.swift` with the skeleton**
 
@@ -145,7 +143,7 @@ indirect enum SplitNode {
 
 - [ ] **Step 3: Write failing tests**
 
-`Sources/Tests/SplitTreeTests.swift`:
+`Tests/SplitTreeTests.swift`:
 
 ```swift
 import XCTest
@@ -184,7 +182,7 @@ Expected: tests PASS (the skeleton already satisfies them). If the scheme `Sheph
 - [ ] **Step 5: Commit**
 
 ```bash
-git add spike/seam1/Sources/SplitTree.swift spike/seam1/Sources/Tests/SplitTreeTests.swift spike/seam1/Sources/Tab.swift spike/seam1/project.yml
+git add spike/seam1/Sources/SplitTree.swift spike/seam1/Tests/SplitTreeTests.swift spike/seam1/Sources/Tab.swift spike/seam1/project.yml
 git commit -m "feat(splits): pure SplitNode/Pane model + test target"
 ```
 
