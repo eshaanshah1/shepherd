@@ -3,6 +3,8 @@ import AppKit
 
 @main
 struct ShepherdApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     init() {
         _ = GhosttyApp.shared      // init libghostty
         _ = AgentStore.shared      // start the socket + restore/open tabs
@@ -29,6 +31,9 @@ struct ShepherdApp: App {
                     .keyboardShortcut("]", modifiers: [.command, .shift])
                 Button("Select Previous Tab") { AgentStore.shared.selectPrevious() }
                     .keyboardShortcut("[", modifiers: [.command, .shift])
+                Divider()
+                Button("Jump to Next Alert") { AgentStore.shared.selectNextAttention() }
+                    .keyboardShortcut("a", modifiers: [.command, .shift])
             }
             // ⌘1–9 jump to tab N.
             CommandGroup(after: .windowList) {
