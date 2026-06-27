@@ -36,3 +36,4 @@ Date: YYYY-MM-DD
 - [0009](0009-sidebar-custom-rows-not-list.md) — Sidebar: custom ScrollView rows (not List); T3-Code styling
 - [0010](0010-terminal-theme-from-shepherd-config.md) — Terminal theme from ~/.config/shepherd, not ~/.config/ghostty
 - [0011](0011-tab-names-cwd-and-agent-title.md) — Tab names: cwd for shells, the agent's own title for agents
+- [0012](0012-pane-splitting-panes-as-agents.md) — Pane splitting: panes as agents; bracket-grouped collapsible sidebar
