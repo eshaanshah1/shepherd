@@ -30,7 +30,12 @@ struct SplitContainer: View {
     private func leaf(_ pane: Pane) -> some View {
         let tab = store.tabs.first { $0.tabID == tabID }
         let isFocused = pane.paneID == tab?.focusedPaneID
+        // Visible = the selected tab AND (not zoomed, or this is the zoomed pane).
+        // Drives occlusion so every on-screen pane renders live, not just the
+        // focused one. First responder still tracks focus separately.
+        let isVisible = isTabSelected && (tab?.zoomedPaneID == nil || pane.paneID == tab?.zoomedPaneID)
         GhosttyTerminal(paneID: pane.paneID,
+                        isVisible: isVisible,
                         isSelected: isTabSelected && isFocused,
                         focusTick: focusTick)
             // Inactive panes dim instead of the focused one drawing a ring; a

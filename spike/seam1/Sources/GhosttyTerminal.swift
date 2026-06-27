@@ -5,13 +5,14 @@ import GhosttyKit
 /// SwiftUI host for one libghostty terminal surface, identified by `paneID`.
 struct GhosttyTerminal: NSViewRepresentable {
     let paneID: String
-    let isSelected: Bool
+    let isVisible: Bool      // on screen now → render at refresh rate (occlusion)
+    let isSelected: Bool     // this tab's focused pane → hold first responder
     var focusTick: Int = 0   // changing this re-runs updateNSView so we can reclaim focus
 
     func makeNSView(context: Context) -> GhosttySurfaceView { GhosttySurfaceView(paneID: paneID) }
 
     func updateNSView(_ v: GhosttySurfaceView, context: Context) {
-        v.setActive(isSelected)   // only the visible tab renders at refresh rate
+        v.setActive(isVisible)   // every visible pane renders; only hidden ones pause
         if isSelected, let w = v.window, w.firstResponder !== v {
             w.makeFirstResponder(v)
         }

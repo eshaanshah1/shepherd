@@ -347,6 +347,9 @@ final class AgentStore: ObservableObject {
     /// `frames`/`neighbor` assume — so we pass it through without flipping y.
     func focusNeighbor(_ dir: FocusDirection) {
         guard let i = tabs.firstIndex(where: { $0.tabID == selectedTab }) else { return }
+        // Focus is locked while zoomed (iTerm-style): siblings are at 0×0, so
+        // moving focus to one would misdirect input to an invisible pane.
+        guard tabs[i].zoomedPaneID == nil else { return }
         let rect = CGRect(origin: .zero, size: lastContentSize)
         if let id = tabs[i].root.neighbor(of: tabs[i].focusedPaneID, dir, in: rect) {
             tabs[i].focusedPaneID = id
