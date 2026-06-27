@@ -21,11 +21,18 @@ struct SidebarView: View {
 
             ScrollView {
                 LazyVStack(spacing: TabRow.gap) {
-                    ForEach(store.tabs) { tab in
+                    ForEach(Array(store.tabs.enumerated()), id: \.element.id) { idx, tab in
                         if tab.isSplit {
                             SplitTabGroup(tab: tab)
                         } else {
                             TabRow(tab: tab, draggingID: $draggingID, dragOffset: $dragOffset)
+                        }
+                        // Boundary line between tabs (not between panes in a group).
+                        if idx < store.tabs.count - 1 {
+                            Rectangle()
+                                .fill(Theme.hairline)
+                                .frame(height: 1)
+                                .padding(.horizontal, 6)
                         }
                     }
                 }
@@ -213,7 +220,7 @@ private struct SplitTabGroup: View {
     private var expanded: some View {
         HStack(alignment: .top, spacing: 6) {
             Bracket()
-                .stroke(Theme.hairline, lineWidth: 1)
+                .stroke(Theme.textDim, lineWidth: 1)
                 .frame(width: 6)
                 .padding(.vertical, 5)
             VStack(spacing: TabRow.gap) {

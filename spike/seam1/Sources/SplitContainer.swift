@@ -33,14 +33,9 @@ struct SplitContainer: View {
         GhosttyTerminal(paneID: pane.paneID,
                         isSelected: isTabSelected && isFocused,
                         focusTick: focusTick)
-            // Active-pane ring: only when the tab is split AND this is the
-            // selected tab's focused pane. Bright enough to read on near-black.
-            .overlay(
-                Rectangle()
-                    .strokeBorder(Theme.working,
-                                  lineWidth: (tab?.isSplit == true && isTabSelected && isFocused) ? 1.5 : 0)
-                    .allowsHitTesting(false)
-            )
+            // Inactive panes dim instead of the focused one drawing a ring; a
+            // single-pane tab is never dimmed.
+            .opacity(tab?.isSplit == true && !isFocused ? 0.82 : 1.0)
     }
 
     @ViewBuilder
