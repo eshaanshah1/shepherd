@@ -87,6 +87,39 @@ final class SplitTreeTests: XCTestCase {
         XCTAssertEqual(tree.neighbor(of: "b", .up, in: rect), "a")
     }
 
+    func testSetRatioEmptyPathTargetsReceiver() {
+        var tree = SplitNode.split(axis: .row, ratio: 0.5,
+            first: .leaf(Pane(paneID: "a")), second: .leaf(Pane(paneID: "b")))
+        tree.setRatio(at: [], to: 0.7)
+        if case .split(_, let r, _, _) = tree { XCTAssertEqual(r, 0.7) }
+        else { XCTFail("expected split") }
+    }
+
+    func testSetRatioNavigatesToNestedSplit() {
+        var tree = SplitNode.split(axis: .row, ratio: 0.5,
+            first: .leaf(Pane(paneID: "a")),
+            second: .split(axis: .column, ratio: 0.5,
+                first: .leaf(Pane(paneID: "b")),
+                second: .leaf(Pane(paneID: "c"))))
+        tree.setRatio(at: [1], to: 0.25)
+        guard case .split(_, let outer, _, let second) = tree else { return XCTFail("expected outer split") }
+        XCTAssertEqual(outer, 0.5)   // outer unchanged
+        if case .split(_, let inner, _, _) = second { XCTAssertEqual(inner, 0.25) }
+        else { XCTFail("expected nested split") }
+    }
+
+    func testSetRatioClamps() {
+        var low = SplitNode.split(axis: .row, ratio: 0.5,
+            first: .leaf(Pane(paneID: "a")), second: .leaf(Pane(paneID: "b")))
+        low.setRatio(at: [], to: 0.02)
+        if case .split(_, let r, _, _) = low { XCTAssertEqual(r, 0.1) } else { XCTFail() }
+
+        var high = SplitNode.split(axis: .row, ratio: 0.5,
+            first: .leaf(Pane(paneID: "a")), second: .leaf(Pane(paneID: "b")))
+        high.setRatio(at: [], to: 0.98)
+        if case .split(_, let r, _, _) = high { XCTAssertEqual(r, 0.9) } else { XCTFail() }
+    }
+
     func testCodableRoundTripKeepsStructureDropsLiveState() throws {
         var tree = SplitNode.split(axis: .row, ratio: 0.3,
             first: .leaf(Pane(paneID: "a")), second: .leaf(Pane(paneID: "b")))

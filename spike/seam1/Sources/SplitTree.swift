@@ -100,6 +100,23 @@ extension SplitNode {
         }
     }
 
+    /// Navigate `path` (0 = first, 1 = second) to a `.split` node and set its
+    /// ratio, clamped to [0.1, 0.9] so a pane can't collapse to nothing. Empty
+    /// path targets the receiver. No-op if the path doesn't land on a split.
+    mutating func setRatio(at path: [Int], to ratio: Double) {
+        guard case .split(let axis, let r, var first, var second) = self else { return }
+        if path.isEmpty {
+            self = .split(axis: axis, ratio: min(0.9, max(0.1, ratio)), first: first, second: second)
+            return
+        }
+        switch path[0] {
+        case 0: first.setRatio(at: Array(path.dropFirst()), to: ratio)
+        case 1: second.setRatio(at: Array(path.dropFirst()), to: ratio)
+        default: return
+        }
+        self = .split(axis: axis, ratio: r, first: first, second: second)
+    }
+
     func frames(in rect: CGRect) -> [String: CGRect] {
         switch self {
         case .leaf(let p):

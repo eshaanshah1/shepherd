@@ -310,6 +310,15 @@ final class AgentStore: ObservableObject {
         }
     }
 
+    /// Resize a split by setting the ratio of the node at `path` (clamped in the
+    /// tree). Called live from a divider drag; persists so the layout survives a
+    /// restart.
+    func setRatio(tabID: String, path: [Int], to ratio: Double) {
+        guard let i = tabs.firstIndex(where: { $0.tabID == tabID }) else { return }
+        tabs[i].root.setRatio(at: path, to: ratio)
+        save()
+    }
+
     /// Notification routing: select the owning tab, focus the pane, clear its
     /// need-to-check. For a 1-pane tab this is identical to today's select().
     func revealPane(_ paneID: String) {
