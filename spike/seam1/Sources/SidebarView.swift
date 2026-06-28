@@ -298,7 +298,7 @@ private struct SplitTabGroup: View {
 }
 
 /// Right-aligned status word — only on notable states (matches T3's labels).
-/// Shared by `TabRow` and `SplitTabGroup`'s pane rows so the wording stays in one place.
+/// Used by `TabRow` (split tabs show pips, not a status word).
 private func statusWord(_ state: AgentState, _ reason: String?) -> String? {
     switch state {
     case .working:      return "Working"
