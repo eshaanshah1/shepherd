@@ -1,4 +1,5 @@
 import SwiftUI
+import CoreText
 
 extension Color {
     /// #RRGGBB hex (no alpha).
@@ -25,4 +26,23 @@ enum Theme {
     static let blocked    = Color(hex: 0xE5A23D)   // your move
     static let error      = Color(hex: 0xE5645D)   // broke
     static let idle       = Color(hex: 0x8C8C92)   // between turns
+}
+
+extension Font {
+    /// T3-Code's UI typeface — DM Sans (bundled, registered at launch by
+    /// Fonts.registerBundled). Sidebar chrome only; the terminal grid keeps its
+    /// own mono font from ~/.config/shepherd. Default weight is medium (500).
+    static func ui(_ size: CGFloat, _ weight: Font.Weight = .medium) -> Font {
+        .custom("DM Sans", size: size).weight(weight)
+    }
+}
+
+/// Registers the bundled DM Sans variable font into the process at launch so
+/// `Font.ui` resolves it — more reliable for variable fonts than the declarative
+/// ATSApplicationFontsPath. Idempotent enough; failure leaves the system fallback.
+enum Fonts {
+    static func registerBundled() {
+        guard let url = Bundle.main.url(forResource: "DMSans", withExtension: "ttf") else { return }
+        CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+    }
 }
