@@ -23,11 +23,16 @@ struct ShepherdApp: App {
             CommandGroup(after: .newItem) {
                 Button("New Tab") { AgentStore.shared.newTab() }
                     .keyboardShortcut("t", modifiers: .command)
+                Button("New Workspace") { AgentStore.shared.promptingNewWorkspace = true }
+                    .keyboardShortcut("n", modifiers: [.command, .shift])
+                Button("Next Workspace") { AgentStore.shared.nextWorkspace() }
+                    .keyboardShortcut(.tab, modifiers: .control)
+                Button("Previous Workspace") { AgentStore.shared.prevWorkspace() }
+                    .keyboardShortcut(.tab, modifiers: [.control, .shift])
                 Button("Close Pane") {
                     let s = AgentStore.shared
                     if s.selectedTabIsSplit { s.closeFocusedPane() }
-                    else if s.tabs.count > 1 { s.closeSelected() }
-                    else { NSApp.keyWindow?.performClose(nil) }
+                    else { s.closeSelected() }   // last tab reseeds; window close is the traffic light / ⌘Q
                 }
                 .keyboardShortcut("w", modifiers: .command)
                 Divider()

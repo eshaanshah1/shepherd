@@ -7,36 +7,94 @@ struct SidebarView: View {
     // Live-drag state, kept local so per-frame updates only redraw the sidebar.
     @State private var draggingID: String?
     @State private var dragOffset: CGFloat = 0
+    @Binding var showSwitcher: Bool
+    @State private var sidebarHovering = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Color.clear.frame(height: 28)   // clear the traffic-light buttons
 
-            Text("TABS")
-                .font(.ui(11, .semibold))
-                .tracking(0.6)
-                .foregroundStyle(Theme.textDim)
-                .padding(.horizontal, 18)
-                .padding(.bottom, 6)
+            header
 
-            ScrollView {
-                LazyVStack(spacing: TabRow.gap) {
-                    ForEach(store.tabs) { tab in
-                        if tab.isSplit {
-                            SplitTabGroup(tab: tab)
-                        } else {
-                            TabRow(tab: tab, draggingID: $draggingID, dragOffset: $dragOffset)
-                        }
+            // All workspaces' tab lists sit side by side in one strip; sliding it
+            // by -index*width makes the current workspace exit toward the swipe
+            // direction and the next enter from the opposite edge — deterministic,
+            // unlike an id-swap insertion/removal transition.
+            GeometryReader { geo in
+                let w = max(geo.size.width, 1)
+                HStack(spacing: 0) {
+                    ForEach(store.workspaces) { ws in
+                        tabList(for: ws).frame(width: w)
                     }
                 }
-                .padding(.horizontal, 8)
-                .padding(.bottom, 6)
+                .offset(x: -CGFloat(store.currentWorkspaceIndex ?? 0) * w)
+                .animation(.easeInOut(duration: 0.25), value: store.selectedWorkspaceID)
             }
+            .clipped()
 
             Divider().overlay(Theme.hairline)
             footer
         }
         .background(Theme.ground)
+        .onHover { sidebarHovering = $0 }
+        .background(SidebarSwipe(hovering: sidebarHovering,
+                                 onSwipe: { store.swipeToWorkspace($0) })
+            .frame(width: 0, height: 0))
+    }
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            Button(action: { showSwitcher.toggle() }) {
+                HStack(spacing: 4) {
+                    Text(workspaceName)
+                        .font(.ui(11, .semibold))
+                        .tracking(0.6)
+                        .foregroundStyle(Theme.textDim)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(Theme.textDim)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .focusable(false)
+
+            Spacer()
+
+            Button(action: { store.promptingNewWorkspace = true }) {
+                Image(systemName: "plus")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.textDim)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .focusable(false)
+            .help("New Workspace (⌘⇧N)")
+        }
+        .padding(.horizontal, 18)
+        .padding(.bottom, 6)
+    }
+
+    private var workspaceName: String {
+        guard let i = store.currentWorkspaceIndex else { return "WORKSPACE" }
+        return store.workspaces[i].displayName(index: i).uppercased()
+    }
+
+    /// One workspace's tab list — a single column in the sliding strip.
+    private func tabList(for ws: Workspace) -> some View {
+        ScrollView {
+            LazyVStack(spacing: TabRow.gap) {
+                ForEach(ws.tabs) { tab in
+                    if tab.isSplit {
+                        SplitTabGroup(tab: tab)
+                    } else {
+                        TabRow(tab: tab, draggingID: $draggingID, dragOffset: $dragOffset)
+                    }
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.bottom, 6)
+        }
     }
 
     private var footer: some View {
@@ -312,7 +370,7 @@ private func capitalizedFirst(_ s: String) -> String { s.prefix(1).uppercased() 
 
 /// Leading glyph: a colored status dot for agents (working breathes), a muted
 /// terminal icon for plain shells — so every row reads, like T3's icon column.
-private struct LeadingIcon: View {
+struct LeadingIcon: View {
     let state: AgentState
 
     var body: some View {

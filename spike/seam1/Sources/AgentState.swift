@@ -27,3 +27,15 @@ enum AgentState: String, CaseIterable {
 
     var isAgent: Bool { self != .shell }
 }
+
+extension AgentState {
+    /// The most attention-worthy state across a set — the tab/workspace rollup dot.
+    /// Priority: blocked > error > need-to-check > working > idle > shell.
+    static func rollUp<S: Sequence>(_ states: S) -> AgentState where S.Element == AgentState {
+        let set = Set(states)
+        for s: AgentState in [.blocked, .error, .needsCheck, .working, .idle] where set.contains(s) {
+            return s
+        }
+        return .shell
+    }
+}
