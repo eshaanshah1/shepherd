@@ -17,10 +17,6 @@ final class AgentStore: ObservableObject {
     /// workspace; ContentView presents the naming modal off this.
     @Published var promptingNewWorkspace = false
 
-    /// True when the most recent switch moved forward (to a higher index) — drives
-    /// the sidebar slide direction.
-    @Published private(set) var lastSwitchForward = true
-
     /// Bumped to force the selected terminal to reclaim first responder.
     @Published var focusTick = 0
     func refocusActiveTerminal() { focusTick += 1 }
@@ -87,7 +83,6 @@ final class AgentStore: ObservableObject {
         let tab = Tab(pane: Pane())
         let ws = Workspace(tabs: [tab], selectedTabID: tab.tabID)
         workspaces.append(ws)
-        lastSwitchForward = true
         selectedWorkspaceID = ws.id
         save()
         refocusActiveTerminal()
@@ -95,8 +90,7 @@ final class AgentStore: ObservableObject {
     }
 
     func selectWorkspace(_ id: String) {
-        guard let to = workspaces.firstIndex(where: { $0.id == id }) else { return }
-        if let from = currentWorkspaceIndex { lastSwitchForward = to >= from }
+        guard workspaces.contains(where: { $0.id == id }) else { return }
         selectedWorkspaceID = id
         if let ws = currentWorkspace,
            let pid = ws.tabs.first(where: { $0.tabID == ws.selectedTabID })?.focusedPaneID {
@@ -435,7 +429,6 @@ final class AgentStore: ObservableObject {
     /// pane's tab + pane, clear need-to-check. Crosses workspace boundaries.
     func revealPane(_ paneID: String) {
         guard let (w, t) = locatePane(paneID, in: workspaces) else { return }
-        if let from = currentWorkspaceIndex { lastSwitchForward = w >= from }
         selectedWorkspaceID = workspaces[w].id
         workspaces[w].tabs[t].focusedPaneID = paneID
         workspaces[w].selectedTabID = workspaces[w].tabs[t].tabID
