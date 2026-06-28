@@ -39,7 +39,7 @@ extension Font {
 
 /// Registers the bundled DM Sans variable font into the process at launch so
 /// `Font.ui` resolves it — more reliable for variable fonts than the declarative
-/// ATSApplicationFontsPath. Idempotent enough; failure leaves the system fallback.
+/// ATSApplicationFontsPath. Called once at launch; a missing font leaves the system fallback.
 enum Fonts {
     static func registerBundled() {
         guard let url = Bundle.main.url(forResource: "DMSans", withExtension: "ttf") else { return }
