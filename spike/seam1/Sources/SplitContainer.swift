@@ -1,99 +1,78 @@
 import SwiftUI
 import AppKit
 
-/// Recursively renders a tab's `SplitNode` tree: leaves become `GhosttyTerminal`
-/// surfaces, splits lay their two children out by `ratio` with a draggable
-/// hairline between. A single-leaf tree degenerates to one terminal filling the
-/// area (no ring, no divider) — i.e. behaves exactly like an unsplit tab.
+/// Renders a tab's `SplitNode` tree as a FLAT, absolutely-positioned layout: every
+/// pane's `GhosttyTerminal` lives in one `ZStack`, keyed by `paneID`, sized/placed
+/// at its computed frame. Splitting only ADDS a pane to the list, so an existing
+/// pane keeps its SwiftUI identity — its NSView/surface/PTY is never torn down.
+/// (A recursive render reparents the original pane's view into a new container on
+/// split, which frees its surface and restarts its shell.)
 ///
-/// `path` addresses this node from the tab's root (0 = first, 1 = second); a
-/// divider drag uses it to resize the exact split via `store.setRatio`.
+/// Dividers are an overlay derived from `node.dividers(in:)`; a divider's `path`
+/// addresses its split from the root so a drag resizes the exact node.
 struct SplitContainer: View {
     let node: SplitNode
     let tabID: String
     let isTabSelected: Bool
     let focusTick: Int
-    var path: [Int] = []
     var zoomedPaneID: String? = nil
     @EnvironmentObject var store: AgentStore
 
     var body: some View {
-        switch node {
-        case .leaf(let pane):
-            leaf(pane)
-        case .split(let axis, let ratio, let first, let second):
-            split(axis: axis, ratio: ratio, first: first, second: second)
-        }
-    }
-
-    @ViewBuilder
-    private func leaf(_ pane: Pane) -> some View {
         let tab = store.tabs.first { $0.tabID == tabID }
-        let isFocused = pane.paneID == tab?.focusedPaneID
-        // Visible = the selected tab AND (not zoomed, or this is the zoomed pane).
-        // Drives occlusion so every on-screen pane renders live, not just the
-        // focused one. First responder still tracks focus separately.
-        let isVisible = isTabSelected && (tab?.zoomedPaneID == nil || pane.paneID == tab?.zoomedPaneID)
-        GhosttyTerminal(paneID: pane.paneID,
-                        isVisible: isVisible,
-                        isSelected: isTabSelected && isFocused,
-                        focusTick: focusTick)
-            // Inactive panes dim instead of the focused one drawing a ring; a
-            // single-pane tab is never dimmed.
-            .opacity(tab?.isSplit == true && !isFocused ? 0.82 : 1.0)
-    }
-
-    @ViewBuilder
-    private func split(axis: SplitAxis, ratio: Double, first: SplitNode, second: SplitNode) -> some View {
-        // Zoom funnel: when one child subtree contains the zoomed pane, render that
-        // child full-size and starve the other to 0×0 (kept mounted so its surface
-        // stays alive); hide the divider. Recursion funnels down to the zoomed leaf.
-        let zoomFirst  = zoomedPaneID.map { first.leafIDs.contains($0) } ?? false
-        let zoomSecond = zoomedPaneID.map { second.leafIDs.contains($0) } ?? false
-        let zoomed = zoomFirst || zoomSecond
+        let focusedPaneID = tab?.focusedPaneID
+        let isSplit = tab?.isSplit == true
 
         GeometryReader { geo in
-            switch axis {
-            case .row:
-                HStack(spacing: 0) {
-                    child(first, 0)
-                        .frame(width: zoomed ? (zoomFirst ? geo.size.width : 0) : geo.size.width * ratio)
-                        .clipped()
-                    if !zoomed {
-                        PaneDivider(axis: axis, ratio: ratio, span: geo.size.width,
-                                    tabID: tabID, path: path)
-                    }
-                    child(second, 1)
-                        .frame(width: zoomed && !zoomSecond ? 0 : nil)
+            let rect = CGRect(origin: .zero, size: geo.size)
+            let frames = node.frames(in: rect)
+            ZStack(alignment: .topLeading) {
+                ForEach(node.panes, id: \.paneID) { pane in
+                    let f = placedFrame(pane.paneID, frames, rect)
+                    // Visible = selected tab AND (not zoomed, or this is the zoomed
+                    // pane) → occlusion, so every on-screen pane renders live.
+                    let isVisible = isTabSelected && (zoomedPaneID == nil || pane.paneID == zoomedPaneID)
+                    let isFocused = pane.paneID == focusedPaneID
+                    GhosttyTerminal(paneID: pane.paneID,
+                                    isVisible: isVisible,
+                                    isSelected: isTabSelected && isFocused,
+                                    focusTick: focusTick)
+                        .frame(width: f.width, height: f.height)
+                        .position(x: f.midX, y: f.midY)
+                        // Inactive panes dim instead of the focused one drawing a
+                        // ring; a single-pane tab is never dimmed.
+                        .opacity(isSplit && !isFocused ? 0.82 : 1.0)
                         .clipped()
                 }
-            case .column:
-                VStack(spacing: 0) {
-                    child(first, 0)
-                        .frame(height: zoomed ? (zoomFirst ? geo.size.height : 0) : geo.size.height * ratio)
-                        .clipped()
-                    if !zoomed {
-                        PaneDivider(axis: axis, ratio: ratio, span: geo.size.height,
-                                    tabID: tabID, path: path)
+
+                if zoomedPaneID == nil {
+                    ForEach(node.dividers(in: rect), id: \.key) { d in
+                        PaneDivider(axis: d.axis, ratio: d.ratio, span: d.span,
+                                    tabID: tabID, path: d.path)
+                            .frame(width: d.axis == .row ? 6 : d.rect.width,
+                                   height: d.axis == .column ? 6 : d.rect.height)
+                            .position(x: d.rect.midX, y: d.rect.midY)
                     }
-                    child(second, 1)
-                        .frame(height: zoomed && !zoomSecond ? 0 : nil)
-                        .clipped()
                 }
             }
         }
     }
 
-    private func child(_ node: SplitNode, _ branch: Int) -> SplitContainer {
-        SplitContainer(node: node, tabID: tabID, isTabSelected: isTabSelected,
-                       focusTick: focusTick, path: path + [branch], zoomedPaneID: zoomedPaneID)
+    /// The frame to place `paneID` at. While zoomed, the zoomed pane fills `rect`
+    /// and every other pane stays MOUNTED at 0×0 (its surface/PTY stays alive).
+    /// Otherwise use the computed frame (the lone leaf gets the full rect).
+    private func placedFrame(_ paneID: String, _ frames: [String: CGRect], _ rect: CGRect) -> CGRect {
+        if let zoomedPaneID {
+            return paneID == zoomedPaneID ? rect : CGRect(x: rect.minX, y: rect.minY, width: 0, height: 0)
+        }
+        return frames[paneID] ?? rect
     }
 }
 
 /// A 1px `Theme.hairline` centred in a 6px draggable strip (mirrors the sidebar
-/// divider). Dragging sets the owning split's `ratio`; `span` is the parent
-/// `GeometryReader`'s extent along the split axis, used to convert the drag
-/// translation into a ratio delta. Clamping happens in `SplitNode.setRatio`.
+/// divider). Dragging sets the owning split's `ratio`; `span` is the split rect's
+/// extent along the axis, used to convert the drag translation into a ratio delta.
+/// Clamping happens in `SplitNode.setRatio`.
 private struct PaneDivider: View {
     let axis: SplitAxis
     let ratio: Double
@@ -108,7 +87,7 @@ private struct PaneDivider: View {
             Rectangle().fill(Theme.hairline)
                 .frame(width: axis == .row ? 1 : nil, height: axis == .column ? 1 : nil)
         }
-        .frame(width: axis == .row ? 6 : nil, height: axis == .column ? 6 : nil)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contentShape(Rectangle())
         .focusable(false)
         .onHover { inside in
