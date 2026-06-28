@@ -38,21 +38,25 @@ spike/
 > TODO worth doing: graduate `spike/seam1/` to a top-level `app/` (it's the real app now).
 
 ### App source files (`spike/seam1/Sources/`)
-- `ShepherdApp.swift` — `@main` App; menu commands (⌘T/⌘W/⌘D/⌘⇧D/⌘⇧↩/⌘⌥-arrows/⌘⇧[ ]/⌘1–9/⌘⇧A); installs `AppDelegate`.
+- `ShepherdApp.swift` — `@main` App; menu commands (⌘T/⌘W/⌘D/⌘⇧D/⌘⇧↩/⌘⌥-arrows/⌘⇧[ ]/⌘1–9/⌘⇧A; ⌘⇧N/⌃⇥/⌃⇧⇥ for workspaces); installs `AppDelegate`.
 - `AppDelegate.swift` — requests notification permission; routes notification clicks → focus that tab.
 - `Ghostty.swift` — `GhosttyApp`: `ghostty_init` + config (base **theme** + `~/.config/shepherd/config`, [ADR 0010](.claude/adr/0010-terminal-theme-from-shepherd-config.md)) + the **runtime callback table** + the `wakeup→tick` pump; handles `SET_TITLE`/`PWD` actions.
 - `SplitTree.swift` — **pure model**: `Pane` (one surface = one agent unit; `displayTitle`/`state`/`cwd`), the `SplitAxis` enum (`.row`/`.column`), and the `indirect enum SplitNode` binary tree + its ops (`split`/`updatePane`/`setRatio`/`frames`/`neighbor`/`closing`) + `Codable`. No SwiftUI/AppKit — covered by `ShepherdModelTests`.
 - `Tab.swift` — a tab = a container of a `SplitNode` pane tree (`root`) plus `focusedPaneID` / `zoomedPaneID` / `collapsed`; `attentionState()` rolls panes up to the tab dot; an unsplit tab degenerates to the old single-agent behavior.
 - `GhosttyTerminal.swift` — `NSViewRepresentable` + `GhosttySurfaceView`: creates a `ghostty_surface_t`, injects per-pane env into the PTY, forwards keyboard/mouse/clipboard, sets display-id (vsync) + occlusion; **claims first responder** when its pane is the selected tab's focused pane (the focus fix, [ADR 0009](.claude/adr/0009-sidebar-custom-rows-not-list.md)).
 - `SplitContainer.swift` — recursive SwiftUI render of a tab's `SplitNode` tree: leaves → `GhosttyTerminal` surfaces, splits laid out by `ratio` with a **draggable hairline `PaneDivider`**; the **zoom funnel** (zoomed pane fills, siblings starve to 0×0 but stay mounted); **inactive panes dim** (opacity, no border ring).
-- `AgentStore.swift` — the app model: tabs (each owning a pane tree), selection, persistence, the **socket→per-pane-state lifecycle map** (`apply`, keyed on pane id), split/close/focus/zoom mutations, dock badge + notifications (aggregated over all panes). `select()` clears need-to-check.
+- `AgentStore.swift` — the app model: **workspaces** (each owning tabs, each tab a pane tree) + `selectedWorkspaceID`, with `tabs`/`selectedTab` as computed views of the current workspace; selection, persistence, the **socket→per-pane-state lifecycle map** (`apply`, resolving the pane via `locatePane` across all workspaces), split/close/focus/zoom + workspace (new/switch/rename/delete/reorder) mutations, dock badge + notifications (aggregated over all panes in all workspaces). `select()` clears need-to-check.
 - `AgentState.swift` — the state enum (`shell/working/blocked/needsCheck/idle/error`); colors come from `Theme.swift`.
 - `Theme.swift` — design tokens (flat near-black palette + soft state colors) + a `Color(hex:)` init. The single source of UI colors; the libghostty base theme mirrors it.
 - `SocketServer.swift` — in-app unix-domain socket server (receives `{tab_id,event,detail}` — `tab_id` is really the pane id).
 - `SidebarView.swift` — the tab list: a **custom `ScrollView` of rows (not `List`)**. Unsplit tabs render a `TabRow` (leading glyph + name + status word, live drag-reorder, rename); split tabs render a **`SplitTabGroup`** — bracket-grouped pane rows, collapsible to a `● 1 ▸ 2` pip strip, zoom-dimmed; T3-Code styling ([ADR 0009](.claude/adr/0009-sidebar-custom-rows-not-list.md)).
-- `ContentView.swift` — sidebar + a resizable hairline divider + a ZStack of all tabs, each rendered via `SplitContainer` (only the selected one visible/hit-testable); feeds the content rect to the store so ⌘⌥-arrow focus moves can resolve geometric neighbors.
+- `ContentView.swift` — sidebar + a resizable hairline divider + a ZStack of **every workspace's** tabs (each rendered via `SplitContainer`), opacity-gated so only the selected workspace's selected tab is visible/hit-testable while background-workspace surfaces stay mounted (agents keep running); switch **cross-fades** on `selectedWorkspaceID`. Feeds the content rect to the store so ⌘⌥-arrow focus moves can resolve geometric neighbors.
+- `Workspace.swift` — **pure model**: a `Workspace` (id, `userTitle`, `tabs`, `selectedTabID`; `displayName`/`aggregateState`/`reseedIfEmpty`) + pure free helpers (`locatePane`, `removingWorkspace`, `totalAttentionCount`). No AppKit — in `ShepherdModelTests`.
+- `Persistence.swift` — **pure model**: `PersistedTab`/`PersistedWorkspace`/`PersistedState` + `snapshotState`/`buildWorkspaces`/`migrateLegacyTabs` (v2→v1). In `ShepherdModelTests`.
+- `WorkspaceSwitcher.swift` — the custom (non-native) workspace dropdown: switch / inline-rename / delete-with-confirm / drag-reorder.
+- `SidebarSwipe.swift` — `NSViewRepresentable` installing a hover-gated scroll-wheel monitor; horizontal-dominant swipe → prev/next workspace.
 
-`Tests/` holds the **`ShepherdModelTests`** target (a `bundle.unit-test` in `project.yml`, `SplitTreeTests.swift`) — pure-model coverage of the `SplitNode` tree ops, compiling `SplitTree`/`Tab`/`AgentState`/`Theme` without the AppKit surface.
+`Tests/` holds the **`ShepherdModelTests`** target (a `bundle.unit-test` in `project.yml`: `SplitTreeTests.swift`, `WorkspaceTests.swift`, `PersistenceTests.swift`) — pure-model coverage of the `SplitNode` tree ops, the `Workspace`/`locatePane` helpers, and the persistence snapshot/restore/migration, compiling `SplitTree`/`Tab`/`AgentState`/`Theme`/`Workspace`/`Persistence` without the AppKit surface.
 
 ---
 
@@ -113,10 +117,12 @@ the pane id** — the plugin protocol and `report.sh` need no change. **Claude
 Code is the only first-class agent** in v1 (see [ADR 0003](.claude/adr/0003-agent-state-via-claude-hooks.md)).
 
 ### Agent state lifecycle (`AgentStore.apply`)
-State is **per-pane**: `apply` keys on the pane id and updates that pane's
-`AgentState` inside its tab's tree. The dock badge, attention-nav (`⌘⇧A`), and
-notifications all **aggregate over every pane across every tab** (a tab's
-sidebar dot rolls its panes up via `Tab.attentionState()`).
+State is **per-pane**: `apply` resolves the pane via `locatePane` (which walks
+**every workspace**) and updates that pane's `AgentState` inside its tab's tree.
+The dock badge, attention-nav (`⌘⇧A`), and notifications all **aggregate over
+every pane across every tab in every workspace** (a tab's sidebar dot rolls its
+panes up via `Tab.attentionState()`; `⌘⇧A`/`revealPane` switch workspace + tab +
+focus to reach a hidden-workspace pane).
 
 | Hook event | → state |
 |---|---|
@@ -139,20 +145,27 @@ a tab's title is derived from its focused pane.
 ### Keybindings / menu commands (`ShepherdApp.swift`)
 | Keys | Action |
 |---|---|
-| `⌘T` | new tab |
-| `⌘W` | close the **focused pane** → falls through to close-tab (last pane) → close-window (last tab) |
+| `⌘T` | new tab (in the current workspace) |
+| `⌘W` | close the **focused pane** → falls through to close-tab (last pane) → **reseed a fresh tab** (last tab — a workspace is never empty; no longer closes the window) |
 | `⌘D` | split right (`.row` — side-by-side) |
 | `⌘⇧D` | split down (`.column` — stacked) |
 | `⌘⇧↩` | toggle **zoom** of the focused pane (transient, not persisted) |
 | `⌘⌥` + arrows | move pane focus directionally (geometric neighbor) |
-| `⌘⇧[` / `⌘⇧]` | previous / next tab |
-| `⌘1`–`⌘9` | jump to tab N |
-| `⌘⇧A` | jump to next pane needing attention (blocked / need-to-check / error) |
+| `⌘⇧[` / `⌘⇧]` | previous / next tab (within the current workspace) |
+| `⌘1`–`⌘9` | jump to tab N (within the current workspace) |
+| `⌘⇧A` | jump to next pane needing attention (blocked / need-to-check / error — across **all** workspaces) |
+| `⌘⇧N` | new workspace |
+| `⌃⇥` / `⌃⇧⇥` | next / previous workspace (wrap) |
 
 A new pane inherits its parent pane's cwd. Splitting clears the tab's zoom.
 
 ### Sidebar (`SidebarView.swift`)
-Unsplit tabs render a single `TabRow` (as before). A **split tab** renders a
+The sidebar header is the **workspace name** — a custom dropdown (`WorkspaceSwitcher.swift`:
+switch / inline-rename / delete-with-confirm / drag-reorder) plus a `+` to add a
+workspace; a hover-gated two-finger horizontal swipe (`SidebarSwipe.swift`) cycles
+workspaces (stopping at the ends) and the list **slides** directionally on switch.
+Below the header, the tab list of the **current** workspace renders as before:
+unsplit tabs render a single `TabRow`. A **split tab** renders a
 `SplitTabGroup`: its panes gathered under a thin leading **bracket/rail** (a
 rounded rail, not a curly `{`), one row per pane. The group **collapses** to a
 `● 1 ▸ 2` strip of `<state-dot> <pane-number>` pips (hover a pip for its title);
@@ -164,11 +177,14 @@ is a `shepherd.panes.defaultCollapsed` UserDefaults flag (ADR 0012 envisions
 sourcing it from `~/.config/shepherd`; that wiring is a deferred follow-up).
 
 ### Persistence
-The store key is now **`shepherd.tabs.v2`** (`AgentStore`): per tab, the
-recursive `SplitNode` tree (shape + split ratios), each pane's `userTitle` + cwd,
-and the `collapsed` flag — in tab order. Restore rebuilds the tree with **fresh
-pane ids and `.shell` state** (live agent state and zoom never survive a
-restart; a restored pane is a fresh shell).
+The store key is now **`shepherd.workspaces.v1`** (`AgentStore`): per workspace,
+its tabs (each a recursive `SplitNode` tree — shape + split ratios — plus each
+pane's `userTitle` + cwd and the `collapsed` flag, in tab order) + the workspace
+selection-by-index; the store also keeps `selectedWorkspaceID`. A one-time
+migration wraps a legacy `shepherd.tabs.v2` blob into one default workspace.
+Restore rebuilds the trees with **fresh pane ids and `.shell` state** (live agent
+state and zoom never survive a restart; a restored pane is a fresh shell), and
+re-derives selection from the persisted workspace/tab indices (ids regenerate).
 
 ---
 
@@ -183,6 +199,7 @@ restart; a restored pane is a fresh shell).
 - **Debug log:** the app appends every state transition to `/tmp/shepherd-events.log` — invaluable for debugging the state machine (`tail -f`). Currently always-on; a deferred cleanup is to put it behind a flag.
 - **Sidebar is a custom `ScrollView`, NOT a `List`** ([ADR 0009](.claude/adr/0009-sidebar-custom-rows-not-list.md)): `List` was a keyboard-focus sink (stole keystrokes from the PTY) and forced ugly default styling. Don't reintroduce it — and keep sidebar SwiftUI controls `.focusable(false)` so focus stays on the terminal.
 - **`SplitAxis` vocab** ([ADR 0012](.claude/adr/0012-pane-splitting-panes-as-agents.md)): `.row` = `⌘D` = panes **side-by-side**, **vertical** divider (`HStack`); `.column` = `⌘⇧D` = panes **stacked**, horizontal divider (`VStack`). "Row" means a row of panes, not a horizontal split — easy to invert, so read it off here, not from intuition.
+- **`store.tabs`/`selectedTab` are computed views of the *current* workspace** ([ADR 0013](.claude/adr/0013-workspaces.md)): the real owner is `workspaces` + `selectedWorkspaceID`. A pane in a hidden workspace is **not** in `store.tabs`, so socket/state feeds and attention/notification code must resolve panes via `locatePane(_:in: workspaces)` (or iterate `workspaces` directly) — never assume a pane lives in the selected workspace.
 - **Screenshotting the app for UI checks:** Shepherd often opens *behind* the frontmost window, so a full-screen `screencapture` grabs the wrong app. Capture its window directly — get the id from `CGWindowListCopyWindowInfo` (a tiny `swift` script: owner == `Shepherd`, `kCGWindowLayer == 0`) → `screencapture -o -l <id> out.png`. Re-`open` right after `killall` can hit LaunchServices `-600`; poll `until ! pgrep -x Shepherd` before reopening. (No `Quartz`/pyobjc on this machine — use `swift`, not Python.)
 
 ---
@@ -196,5 +213,5 @@ restart; a restored pane is a fresh shell).
 - Commit messages end with the project's Co-Authored-By line.
 
 ## Done vs deferred
-**Done:** terminal (mouse/scroll/copy-paste/vsync/titles), tabs (create/switch/close/reorder/rename/persist+cwd, keyboard nav), **pane splitting** (H/V splits, zoom, draggable dividers, per-pane agents, bracket-grouped collapsible sidebar — [ADR 0012](.claude/adr/0012-pane-splitting-panes-as-agents.md)), agent-state lifecycle, Claude plugin, attention loop (badge + backgrounded notifications + ⌘⇧A jump-to-alert), **T3-Code-style sidebar** (custom rows not `List`, resizable, cwd/agent tab names) + self-contained theme (`~/.config/shepherd`).
-**Deferred (see SPEC §6):** generic non-Claude agents (Tier-B), sidebar auto-hide at ≤1 tab, debug-log flag, IME/selection polish, workspaces, multi-window, navigator popup, and **full remote control** (the big future bet).
+**Done:** terminal (mouse/scroll/copy-paste/vsync/titles), tabs (create/switch/close/reorder/rename/persist+cwd, keyboard nav), **pane splitting** (H/V splits, zoom, draggable dividers, per-pane agents, bracket-grouped collapsible sidebar — [ADR 0012](.claude/adr/0012-pane-splitting-panes-as-agents.md)), **workspaces** (Arc-style nested model, global cross-workspace attention + hidden-workspace notifications, name dropdown + `+`, two-finger swipe, ⌘⇧N/⌃⇥/⌃⇧⇥, content cross-fade + sidebar slide, `shepherd.workspaces.v1` persistence w/ v2→v1 migration — [ADR 0013](.claude/adr/0013-workspaces.md)), agent-state lifecycle, Claude plugin, attention loop (badge + backgrounded notifications + ⌘⇧A jump-to-alert), **T3-Code-style sidebar** (custom rows not `List`, resizable, cwd/agent tab names) + self-contained theme (`~/.config/shepherd`).
+**Deferred (see SPEC §6):** generic non-Claude agents (Tier-B), sidebar auto-hide at ≤1 tab, debug-log flag, IME/selection polish, multi-window, navigator popup, and **full remote control** (the big future bet).

@@ -42,4 +42,6 @@ targets:
       - path: Sources/Tab.swift
       - path: Sources/AgentState.swift
       - path: Sources/Theme.swift
+      - path: Sources/Workspace.swift
+      - path: Sources/Persistence.swift
       - path: Tests

@@ -102,11 +102,14 @@ are added.
 ## 6. Deferred (v1.x+)
 
 Generic / non-Claude agents (+ the Tier-B PTY/OSC-133 inference ladder for
-them) · navigator fuzzy-switcher popup · workspaces + persistence/restore ·
-multiple windows · native approval surface · config system / theming · sound.
+them) · navigator fuzzy-switcher popup · multiple windows · native approval
+surface · config system / theming · sound.
 
 > Splits **shipped** (panes-as-agents) — see
 > [ADR 0012](.claude/adr/0012-pane-splitting-panes-as-agents.md) and §1.
+
+> Workspaces **shipped** (Arc-style, nested model, global attention) — see
+> [ADR 0013](.claude/adr/0013-workspaces.md).
 
 ### Big-ticket future: full remote control
 

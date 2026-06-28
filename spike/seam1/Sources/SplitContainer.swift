@@ -19,7 +19,7 @@ struct SplitContainer: View {
     @EnvironmentObject var store: AgentStore
 
     var body: some View {
-        let tab = store.tabs.first { $0.tabID == tabID }
+        let tab = store.anyTab(tabID)
         let focusedPaneID = tab?.focusedPaneID
         let isSplit = tab?.isSplit == true
 
