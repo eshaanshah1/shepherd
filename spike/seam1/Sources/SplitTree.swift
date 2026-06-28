@@ -137,6 +137,44 @@ extension SplitNode {
         }
     }
 
+    /// One draggable divider: the split's `path` from root, its `axis`/`ratio`,
+    /// the boundary strip `rect` on the split line, and `span` (the split rect's
+    /// extent along the axis — what PaneDivider's drag math divides by).
+    struct SplitDivider {
+        let path: [Int]
+        let axis: SplitAxis
+        let ratio: Double
+        let rect: CGRect
+        let span: CGFloat
+        var key: String { path.map(String.init).joined(separator: ".") }
+    }
+
+    /// Flat list of every `.split` node's divider, geometry resolved against `rect`
+    /// with the same split math as `frames`. Used to overlay dividers in the flat
+    /// render. A leaf has none.
+    func dividers(in rect: CGRect, path: [Int] = []) -> [SplitDivider] {
+        guard case .split(let axis, let ratio, let first, let second) = self else { return [] }
+        let (r1, r2): (CGRect, CGRect)
+        let boundary: CGRect
+        switch axis {
+        case .row:
+            let w = rect.width * ratio
+            r1 = CGRect(x: rect.minX, y: rect.minY, width: w, height: rect.height)
+            r2 = CGRect(x: rect.minX + w, y: rect.minY, width: rect.width - w, height: rect.height)
+            boundary = CGRect(x: rect.minX + w, y: rect.minY, width: 0, height: rect.height)
+        case .column:
+            let h = rect.height * ratio
+            r1 = CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: h)
+            r2 = CGRect(x: rect.minX, y: rect.minY + h, width: rect.width, height: rect.height - h)
+            boundary = CGRect(x: rect.minX, y: rect.minY + h, width: rect.width, height: 0)
+        }
+        let span: CGFloat = axis == .row ? rect.width : rect.height
+        let here = SplitDivider(path: path, axis: axis, ratio: ratio, rect: boundary, span: span)
+        return [here]
+            + first.dividers(in: r1, path: path + [0])
+            + second.dividers(in: r2, path: path + [1])
+    }
+
     func neighbor(of paneID: String, _ dir: FocusDirection, in rect: CGRect) -> String? {
         let f = frames(in: rect)
         guard let src = f[paneID] else { return nil }

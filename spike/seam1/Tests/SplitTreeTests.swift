@@ -83,6 +83,66 @@ final class SplitTreeTests: XCTestCase {
         XCTAssertEqual(tree.pane("b")?.state, .working)
     }
 
+    func testDividersSingleRowSplit() {
+        let tree = SplitNode.split(axis: .row, ratio: 0.5,
+            first: .leaf(Pane(paneID: "a")), second: .leaf(Pane(paneID: "b")))
+        let ds = tree.dividers(in: CGRect(x: 0, y: 0, width: 100, height: 40))
+        XCTAssertEqual(ds.count, 1)
+        let d = ds[0]
+        XCTAssertEqual(d.path, [])
+        XCTAssertEqual(d.axis, .row)
+        XCTAssertEqual(d.ratio, 0.5)
+        XCTAssertEqual(d.span, 100)
+        XCTAssertEqual(d.rect.midX, 50, accuracy: 0.001)   // boundary at x=50
+        XCTAssertEqual(d.rect.height, 40, accuracy: 0.001) // full split height
+    }
+
+    func testDividersLeafHasNone() {
+        let tree = SplitNode.leaf(Pane(paneID: "a"))
+        XCTAssertTrue(tree.dividers(in: CGRect(x: 0, y: 0, width: 100, height: 40)).isEmpty)
+    }
+
+    func testDividersNested() {
+        let tree = SplitNode.split(axis: .row, ratio: 0.5,
+            first: .leaf(Pane(paneID: "a")),
+            second: .split(axis: .column, ratio: 0.5,
+                first: .leaf(Pane(paneID: "b")),
+                second: .leaf(Pane(paneID: "c"))))
+        let ds = tree.dividers(in: CGRect(x: 0, y: 0, width: 100, height: 40))
+        XCTAssertEqual(ds.count, 2)
+        let outer = ds.first { $0.path == [] }
+        let inner = ds.first { $0.path == [1] }
+        XCTAssertNotNil(outer); XCTAssertNotNil(inner)
+        XCTAssertEqual(outer!.axis, .row)
+        XCTAssertEqual(outer!.span, 100)
+        XCTAssertEqual(outer!.rect.midX, 50, accuracy: 0.001)
+        // Inner column split lives in the right half (x 50..100, full height 40).
+        XCTAssertEqual(inner!.axis, .column)
+        XCTAssertEqual(inner!.span, 40)               // splitRect.height of the inner sub-rect
+        XCTAssertEqual(inner!.rect.midY, 20, accuracy: 0.001) // boundary at y=20
+        XCTAssertEqual(inner!.rect.width, 50, accuracy: 0.001) // spans the right half
+    }
+
+    func testDividersAsymmetricRatio() {
+        let tree = SplitNode.split(axis: .row, ratio: 0.3,
+            first: .leaf(Pane(paneID: "a")), second: .leaf(Pane(paneID: "b")))
+        let ds = tree.dividers(in: CGRect(x: 0, y: 0, width: 100, height: 40))
+        XCTAssertEqual(ds[0].rect.midX, 30, accuracy: 0.001) // boundary at 30%
+        XCTAssertEqual(ds[0].ratio, 0.3)
+    }
+
+    func testDividerKeysAreStableAndUnique() {
+        let tree = SplitNode.split(axis: .row, ratio: 0.5,
+            first: .leaf(Pane(paneID: "a")),
+            second: .split(axis: .column, ratio: 0.5,
+                first: .leaf(Pane(paneID: "b")),
+                second: .leaf(Pane(paneID: "c"))))
+        let rect = CGRect(x: 0, y: 0, width: 100, height: 40)
+        let keys = tree.dividers(in: rect).map { $0.key }
+        XCTAssertEqual(Set(keys).count, keys.count)      // unique
+        XCTAssertEqual(keys, tree.dividers(in: rect).map { $0.key }) // stable across calls
+    }
+
     func testFramesColumnSplit() {
         let tree = SplitNode.split(axis: .column, ratio: 0.5,
             first: .leaf(Pane(paneID: "a")), second: .leaf(Pane(paneID: "b")))
