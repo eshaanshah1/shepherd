@@ -41,7 +41,7 @@ struct SplitContainer: View {
                         .position(x: f.midX, y: f.midY)
                         // Inactive panes dim instead of the focused one drawing a
                         // ring; a single-pane tab is never dimmed.
-                        .opacity(isSplit && !isFocused ? 0.82 : 1.0)
+                        .opacity(isSplit && !isFocused ? 0.60 : 1.0)
                         .clipped()
                 }
 

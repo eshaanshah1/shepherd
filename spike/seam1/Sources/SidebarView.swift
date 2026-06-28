@@ -13,7 +13,7 @@ struct SidebarView: View {
             Color.clear.frame(height: 28)   // clear the traffic-light buttons
 
             Text("TABS")
-                .font(.system(size: 11, weight: .semibold))
+                .font(.ui(11, .semibold))
                 .tracking(0.6)
                 .foregroundStyle(Theme.textDim)
                 .padding(.horizontal, 18)
@@ -21,18 +21,11 @@ struct SidebarView: View {
 
             ScrollView {
                 LazyVStack(spacing: TabRow.gap) {
-                    ForEach(Array(store.tabs.enumerated()), id: \.element.id) { idx, tab in
+                    ForEach(store.tabs) { tab in
                         if tab.isSplit {
                             SplitTabGroup(tab: tab)
                         } else {
                             TabRow(tab: tab, draggingID: $draggingID, dragOffset: $dragOffset)
-                        }
-                        // Boundary line between tabs (not between panes in a group).
-                        if idx < store.tabs.count - 1 {
-                            Rectangle()
-                                .fill(Theme.textDim)
-                                .frame(height: 1)
-                                .padding(.horizontal, 6)
                         }
                     }
                 }
@@ -54,7 +47,7 @@ struct SidebarView: View {
                 Spacer()
                 Text("⌘T").foregroundStyle(Theme.textDim)
             }
-            .font(.system(size: 12))
+            .font(.ui(12))
             .foregroundStyle(Theme.textSecondary)
             .padding(.horizontal, 16)
             .padding(.vertical, 11)
@@ -95,7 +88,7 @@ private struct TabRow: View {
             if editing {
                 TextField("name", text: $draft)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 13))
+                    .font(.ui(13))
                     .foregroundStyle(Theme.textPrimary)
                     .focused($focused)
                     .onSubmit(commit)
@@ -103,7 +96,7 @@ private struct TabRow: View {
                     .onAppear { focused = true }
             } else {
                 Text(tab.displayTitle)
-                    .font(.system(size: 13, weight: isSelected ? .medium : .regular))
+                    .font(.ui(13, isSelected ? .medium : .regular))
                     .foregroundStyle(nameColor)
                     .lineLimit(1)
             }
@@ -112,7 +105,7 @@ private struct TabRow: View {
 
             if !editing, let s = statusWord(state, reason) {
                 Text(s)
-                    .font(.system(size: 11))
+                    .font(.ui(11))
                     .foregroundStyle(state.color)
                     .lineLimit(1)
             }
@@ -184,11 +177,10 @@ private struct TabRow: View {
 
 // MARK: - Split tab group
 
-/// A split tab: its panes gathered under a thin leading bracket/rail (expanded)
-/// or folded to a `● 1  ▸ 2  ○ 3` pip strip (collapsed). Shared by both branches:
-/// a subtle hover-only disclosure chevron toggles `collapsed`; the whole group is
-/// the tab's interactive target (right-click → rename / close tab). Zoom dims the
-/// non-zoomed panes in both branches.
+/// A split tab — one sidebar row at the same indent as any tab: a leading
+/// aggregate-state icon (the panes rolled up), the tab's rename if set, then
+/// compact `● 1  ● 2` pips. Hover a pip for its title; tap to focus that pane.
+/// Right-click → rename / close tab. Zoom dims the non-zoomed pips.
 private struct SplitTabGroup: View {
     @EnvironmentObject var store: AgentStore
     let tab: Tab
@@ -201,95 +193,72 @@ private struct SplitTabGroup: View {
     private var isSelected: Bool { store.selectedTab == tab.tabID }
     private var panes: [Pane] { tab.root.panes }
 
+    // The tab's own name — only an explicit rename (userTitle). We can't use a
+    // pane's OSC title: it differs pane-to-pane, so there's no single tab title.
+    private var name: String? {
+        guard let u = tab.userTitle, !u.isEmpty else { return nil }
+        return u
+    }
+
     var body: some View {
-        Group {
-            if tab.collapsed { collapsed } else { expanded }
+        HStack(spacing: 9) {
+            LeadingIcon(state: aggregateState)
+            if editing {
+                renameField
+            } else {
+                if let name {
+                    Text(name)
+                        .font(.ui(13, isSelected ? .semibold : .medium))
+                        .foregroundStyle(isSelected ? Theme.textPrimary : Theme.textSecondary)
+                        .lineLimit(1)
+                }
+                ForEach(Array(panes.enumerated()), id: \.element.paneID) { idx, pane in
+                    pip(pane, number: idx + 1)
+                }
+                Spacer(minLength: 6)
+            }
         }
-        .background(RoundedRectangle(cornerRadius: 6).fill(isSelected ? Theme.raised : .clear))
-        .overlay(alignment: .topLeading) { disclosure }
+        .padding(.horizontal, 10)
+        .frame(height: TabRow.height)
+        .background(RoundedRectangle(cornerRadius: 6).fill(rowFill))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
+        .onTapGesture { store.select(tabID: tab.tabID) }
         .contextMenu {
             Button("Rename") { beginRename() }
             Button("Close Tab") { store.closeTab(tab.tabID) }
         }
     }
 
-    // MARK: expanded — bracket + one row per pane
-
-    private var expanded: some View {
-        HStack(alignment: .top, spacing: 6) {
-            Bracket()
-                .stroke(Theme.textDim, lineWidth: 1)
-                .frame(width: 6)
-                .padding(.vertical, 5)
-            VStack(spacing: TabRow.gap) {
-                if editing { renameField }
-                ForEach(Array(panes.enumerated()), id: \.element.paneID) { _, pane in
-                    paneRow(pane)
-                }
-            }
-        }
-        .padding(.leading, 8)
+    /// Rolled-up state for the leading icon — the most important state across the
+    /// panes (blocked > error > done > working > idle > shell), i.e. the tab's dot.
+    private var aggregateState: AgentState {
+        let states = panes.map(\.state)
+        for s: AgentState in [.blocked, .error, .needsCheck, .working, .idle]
+            where states.contains(s) { return s }
+        return .shell
     }
 
-    private func paneRow(_ pane: Pane) -> some View {
-        HStack(spacing: 9) {
-            LeadingIcon(state: pane.state)
-            Text(pane.displayTitle)
-                .font(.system(size: 13))
-                .foregroundStyle(Theme.textSecondary)
-                .lineLimit(1)
-            Spacer(minLength: 6)
-            if let s = statusWord(pane.state, pane.reason) {
-                Text(s)
-                    .font(.system(size: 11))
-                    .foregroundStyle(pane.state.color)
-                    .lineLimit(1)
-            }
-        }
-        .padding(.horizontal, 8)
-        .frame(height: TabRow.height)
-        .opacity(dim(pane))
-        .background(RoundedRectangle(cornerRadius: 5)
-            .fill(store.selectedTab == tab.tabID && tab.focusedPaneID == pane.paneID ? Theme.raised.opacity(0.6) : .clear))
-        .contentShape(Rectangle())
-        .onTapGesture { store.revealPane(pane.paneID) }
+    private var rowFill: Color {
+        if isSelected { return Theme.raised }
+        if hovering   { return Theme.raised.opacity(0.5) }
+        return .clear
     }
 
-    // MARK: collapsed — the numbered pip strip (state dot + 1-based index)
-
-    private var collapsed: some View {
-        Group {
-            if editing {
-                HStack(spacing: 9) { renameField }
-                    .padding(.horizontal, 10)
-                    .frame(height: TabRow.height)
-            } else {
-                HStack(spacing: 12) {
-                    ForEach(Array(panes.enumerated()), id: \.element.paneID) { idx, pane in
-                        pip(pane, number: idx + 1)
-                    }
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 18)
-                .frame(height: TabRow.height)
-                .contentShape(Rectangle())
-                .onTapGesture { store.select(tabID: tab.tabID) }
-            }
-        }
-    }
-
+    // Compact pip: a small state dot + the pane's 1-based number. Secondary to the
+    // tab's leading aggregate icon; hover reveals the pane's title.
     private func pip(_ pane: Pane, number: Int) -> some View {
-        HStack(spacing: 5) {
-            LeadingIcon(state: pane.state)
+        HStack(spacing: 4) {
+            Circle()
+                .fill(pane.state.color)
+                .frame(width: 6, height: 6)
             Text("\(number)")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Theme.textSecondary)
+                .font(.ui(11, .medium))
+                .foregroundStyle(Theme.textDim)
         }
         .opacity(dim(pane))
         .contentShape(Rectangle())
-        .help(pane.displayTitle)   // hover reveals the pane's title
+        .help(pane.displayTitle)
         .onTapGesture { store.revealPane(pane.paneID) }
     }
 
@@ -301,28 +270,12 @@ private struct SplitTabGroup: View {
         return pane.paneID == zoomed ? 1 : 0.4
     }
 
-    /// Subtle hover-only collapse toggle at the leading edge — no always-on chevron.
-    @ViewBuilder private var disclosure: some View {
-        if hovering && !editing {
-            Button { store.setCollapsed(tab.tabID, !tab.collapsed) } label: {
-                Image(systemName: tab.collapsed ? "chevron.right" : "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(Theme.textDim)
-                    .frame(width: 14, height: 14)
-            }
-            .buttonStyle(.plain)
-            .focusable(false)
-            .padding(.leading, 1)
-            .padding(.top, tab.collapsed ? 7 : 9)
-        }
-    }
-
     // The one sidebar control that legitimately takes keyboard focus (mirrors
     // TabRow's rename); endEditing() hands first responder back to the terminal.
     private var renameField: some View {
         TextField("name", text: $draft)
             .textFieldStyle(.plain)
-            .font(.system(size: 13))
+            .font(.ui(13))
             .foregroundStyle(Theme.textPrimary)
             .focused($focused)
             .onSubmit(commit)
@@ -341,21 +294,6 @@ private struct SplitTabGroup: View {
     private func endEditing() {
         editing = false
         store.refocusActiveTerminal()
-    }
-}
-
-/// A thin rounded left rail with short top/bottom ticks — the group marker for a
-/// split tab (deliberately not a curly `{`; ADR 0012). Drawn in a 6-pt-wide box,
-/// stretched to the group's height.
-private struct Bracket: Shape {
-    func path(in rect: CGRect) -> Path {
-        var p = Path()
-        let x = rect.midX
-        p.move(to: CGPoint(x: rect.maxX, y: rect.minY))           // top tick
-        p.addLine(to: CGPoint(x: x, y: rect.minY))
-        p.addLine(to: CGPoint(x: x, y: rect.maxY))                // the rail
-        p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))        // bottom tick
-        return p
     }
 }
 

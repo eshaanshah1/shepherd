@@ -6,6 +6,7 @@ struct ShepherdApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     init() {
+        Fonts.registerBundled()    // load bundled DM Sans before any view renders
         _ = GhosttyApp.shared      // init libghostty
         _ = AgentStore.shared      // start the socket + restore/open tabs
     }

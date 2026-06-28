@@ -26,12 +26,6 @@ final class AgentStore: ObservableObject {
     private var server: SocketServer?
     private let persistKey = "shepherd.tabs.v2"
 
-    /// New panes start collapsed-by-default per this flag (ADR 0012 envisions a
-    /// `~/.config/shepherd` value; sourcing it from there is a deferred follow-up).
-    private var defaultCollapsed: Bool {
-        UserDefaults.standard.bool(forKey: "shepherd.panes.defaultCollapsed")
-    }
-
     /// Attention chimes bundled with the app (done.wav / blocked.wav in
     /// Resources), retained for the app's life so playback is never cut short
     /// by deallocation.
@@ -60,7 +54,7 @@ final class AgentStore: ObservableObject {
 
     @discardableResult
     func newTab() -> String {
-        let tab = Tab(pane: Pane(), collapsedDefault: defaultCollapsed)
+        let tab = Tab(pane: Pane())
         tabs.append(tab)
         selectedTab = tab.tabID
         save()
@@ -380,14 +374,6 @@ final class AgentStore: ObservableObject {
         focusPaneSelecting(paneID, in: tab.tabID)
     }
 
-    /// Toggle a split tab's sidebar group between expanded rows and the collapsed
-    /// pip strip. Persisted (PersistedTab.collapsed) so it survives a restart.
-    func setCollapsed(_ tabID: String, _ value: Bool) {
-        guard let i = tabs.firstIndex(where: { $0.tabID == tabID }) else { return }
-        tabs[i].collapsed = value
-        save()
-    }
-
     var attentionCount: Int {
         tabs.flatMap { $0.root.panes }.filter { $0.state.wantsAttention }.count
     }
@@ -431,11 +417,10 @@ final class AgentStore: ObservableObject {
     private struct PersistedTab: Codable {
         var userTitle: String?
         var root: SplitNode
-        var collapsed: Bool
     }
 
     private func save() {
-        let snapshot = tabs.map { PersistedTab(userTitle: $0.userTitle, root: $0.root, collapsed: $0.collapsed) }
+        let snapshot = tabs.map { PersistedTab(userTitle: $0.userTitle, root: $0.root) }
         if let data = try? JSONEncoder().encode(snapshot) {
             UserDefaults.standard.set(data, forKey: persistKey)
         }
@@ -448,7 +433,7 @@ final class AgentStore: ObservableObject {
         tabs = snapshot.compactMap { p -> Tab? in
             // root decodes with fresh pane ids + .shell state (Pane.Codable).
             guard let first = p.root.firstLeafID else { return nil }
-            var tab = Tab(pane: Pane(), collapsedDefault: p.collapsed)
+            var tab = Tab(pane: Pane())
             tab.userTitle = p.userTitle
             tab.root = p.root
             tab.focusedPaneID = first
