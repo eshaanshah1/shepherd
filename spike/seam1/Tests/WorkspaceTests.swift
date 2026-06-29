@@ -70,4 +70,19 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertEqual(ws([.working, .needsCheck]).aggregateState, .needsCheck)
         XCTAssertEqual(ws([.shell]).aggregateState, .shell)
     }
+
+    func testIsBusy() {
+        XCTAssertFalse(AgentState.shell.isBusy)
+        XCTAssertFalse(AgentState.idle.isBusy)
+        XCTAssertTrue(AgentState.working.isBusy)
+        XCTAssertTrue(AgentState.blocked.isBusy)
+        XCTAssertTrue(AgentState.needsCheck.isBusy)
+        XCTAssertTrue(AgentState.error.isBusy)
+    }
+
+    func testAnyAgentBusyAcrossWorkspaces() {
+        XCTAssertFalse(anyAgentBusy(in: [ws([.shell]), ws([.idle, .idle])]))
+        XCTAssertTrue(anyAgentBusy(in: [ws([.idle]), ws([.shell, .working])]))   // busy in a hidden ws
+        XCTAssertTrue(anyAgentBusy(in: [ws([.needsCheck])]))
+    }
 }

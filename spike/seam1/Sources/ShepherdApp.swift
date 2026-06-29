@@ -4,11 +4,13 @@ import AppKit
 @main
 struct ShepherdApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @StateObject private var sleep = SleepGuard.shared
 
     init() {
         Fonts.registerBundled()    // load bundled DM Sans before any view renders
         _ = GhosttyApp.shared      // init libghostty
         _ = AgentStore.shared      // start the socket + restore/open tabs
+        _ = SleepGuard.shared      // load persisted caffeinate mode
     }
 
     var body: some Scene {
@@ -58,6 +60,11 @@ struct ShepherdApp: App {
                 Divider()
                 Button("Jump to Next Alert") { AgentStore.shared.selectNextAttention() }
                     .keyboardShortcut("a", modifiers: [.command, .shift])
+                #if DEBUG
+                Divider()
+                Button("DEBUG: Simulate Thermal Serious") { SleepGuard.shared.simulateThermal(.serious) }
+                Button("DEBUG: Simulate Thermal Nominal") { SleepGuard.shared.simulateThermal(.nominal) }
+                #endif
             }
             // ⌘1–9 jump to tab N.
             CommandGroup(after: .windowList) {
@@ -65,6 +72,24 @@ struct ShepherdApp: App {
                     Button("Tab \(n)") { AgentStore.shared.selectIndex(n) }
                         .keyboardShortcut(KeyEquivalent(Character("\(n)")), modifiers: .command)
                 }
+            }
+            CommandMenu("Stay Awake") {
+                Picker("Mode", selection: Binding(
+                    get: { sleep.mode },
+                    set: { sleep.mode = $0 })) {
+                    Text("Off").tag(CaffeinateMode.off)
+                    Text("While Agents Working").tag(CaffeinateMode.whileAgents)
+                    Text("Always (App Open)").tag(CaffeinateMode.always)
+                }
+                .pickerStyle(.inline)
+                Divider()
+                Toggle("Sleep If Running Hot Under Closed Lid", isOn: Binding(
+                    get: { sleep.thermalAutoSleep },
+                    set: { sleep.thermalAutoSleep = $0 }))
+                Divider()
+                Text(sleep.tier2Available
+                     ? "Clamshell survival: on"
+                     : "Clamshell survival: unavailable (idle-sleep guard)")
             }
         }
     }

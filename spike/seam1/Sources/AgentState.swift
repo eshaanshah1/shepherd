@@ -25,6 +25,10 @@ enum AgentState: String, CaseIterable {
     /// Pulls you in: attention queue + dock badge + alert. Plain shells never do.
     var wantsAttention: Bool { self == .blocked || self == .needsCheck || self == .error }
 
+    /// Holds the Mac awake under `.whileAgents`: actively working OR waiting on you.
+    /// Idle (acknowledged) and plain shells do not.
+    var isBusy: Bool { self == .working || wantsAttention }
+
     var isAgent: Bool { self != .shell }
 }
 

@@ -57,3 +57,9 @@ func totalAttentionCount(in workspaces: [Workspace]) -> Int {
     workspaces.flatMap { $0.tabs }.flatMap { $0.root.panes }
         .filter { $0.state.wantsAttention }.count
 }
+
+/// True if any pane in any workspace is busy (working/blocked/needsCheck/error) —
+/// the "keep the Mac awake" trigger for `.whileAgents`.
+func anyAgentBusy(in workspaces: [Workspace]) -> Bool {
+    workspaces.flatMap { $0.tabs }.flatMap { $0.root.panes }.contains { $0.state.isBusy }
+}

@@ -438,11 +438,14 @@ final class AgentStore: ObservableObject {
 
     var attentionCount: Int { totalAttentionCount(in: workspaces) }
 
+    var hasBusyAgent: Bool { anyAgentBusy(in: workspaces) }
+
     // MARK: Attention surfacing (dock badge + notifications + sound)
 
     private func updateDockBadge() {
         let n = attentionCount
         NSApp.dockTile.badgeLabel = n > 0 ? "\(n)" : nil
+        SleepGuard.shared.update(hasBusyAgent: hasBusyAgent)
     }
 
     /// Fire a native notification when a pane needs you — while Shepherd is NOT
