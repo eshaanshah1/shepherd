@@ -52,3 +52,22 @@ targets:
       - path: Sources/SleepPolicy.swift
       - path: Sources/StopPolicy.swift
       - path: Tests
+  shepherdd:
+    type: tool
+    platform: macOS
+    settings:
+      base:
+        PRODUCT_NAME: shepherdd
+        SWIFT_OBJC_BRIDGING_HEADER: Helper/shepherdd-Bridging.h
+    sources:
+      - path: Helper
+  ShepherdHelperTests:
+    type: bundle.unit-test
+    platform: macOS
+    settings:
+      base:
+        SWIFT_OBJC_BRIDGING_HEADER: HelperTests/PtyShim.h
+    sources:
+      - path: HelperTests
+    dependencies:
+      - target: shepherdd
