@@ -118,3 +118,43 @@ extension ShepherddPtyTests {
                       "resize did not reach child; got: \(String(decoding: out, as: UTF8.self))")
     }
 }
+
+extension ShepherddPtyTests {
+    // Regression: the helper must put its controlling (outer) tty into raw mode,
+    // or the outer PTY's line discipline echoes + line-cooks input — breaking
+    // arrow keys, bracketed paste, Ctrl-C, and live syntax highlighting in the
+    // wrapped shell. We silence the INNER pty (stty -echo -icanon) before probing,
+    // so any echo we then observe can only be the OUTER pty's.
+    func testOuterTTYIsRawSoInputIsNotEchoed() {
+        var master: Int32 = 0, slave: Int32 = 0
+        var ws = winsize(ws_row: 24, ws_col: 80, ws_xpixel: 0, ws_ypixel: 0)
+        XCTAssertEqual(openpty(&master, &slave, nil, nil, &ws), 0, "openpty")
+
+        let proc = Process()
+        proc.executableURL = helperURL()
+        proc.arguments = ["pty", "--", "/bin/sh", "-c", "stty -echo -icanon; sleep 2"]
+        let h = FileHandle(fileDescriptor: slave, closeOnDealloc: false)
+        proc.standardInput = h; proc.standardOutput = h; proc.standardError = h
+        do { try proc.run() } catch { XCTFail("launch: \(error)"); return }
+        close(slave)
+
+        // Let the inner `stty -echo` take effect, THEN probe. Any echo of the
+        // probe now can only come from the OUTER pty's line discipline.
+        usleep(700_000)
+        let probe = "ECHOPROBE\n"
+        _ = probe.withCString { write(master, $0, strlen($0)) }
+
+        var out = Data(); var buf = [UInt8](repeating: 0, count: 4096)
+        let deadline = Date().addingTimeInterval(1.5)
+        while Date() < deadline {
+            var pfd = pollfd(fd: master, events: Int16(POLLIN), revents: 0)
+            if poll(&pfd, 1, 200) > 0 {
+                let n = read(master, &buf, buf.count)
+                if n > 0 { out.append(contentsOf: buf[0..<n]) } else { break }
+            }
+        }
+        proc.terminate(); proc.waitUntilExit(); close(master)
+        XCTAssertFalse(String(decoding: out, as: UTF8.self).contains("ECHOPROBE"),
+                       "outer PTY echoed input → helper didn't set raw mode; got: \(String(decoding: out, as: UTF8.self))")
+    }
+}

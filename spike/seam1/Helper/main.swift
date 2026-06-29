@@ -26,6 +26,27 @@ func installWinchForwarder() {
     }
 }
 
+// MARK: - raw mode on the outer (controlling) tty
+
+var gOrigOuter = termios()
+var gOuterWasRaw = false
+
+// libghostty hands us the outer PTY in cooked+ECHO+ISIG mode. The shell does its
+// own echo/line-editing on the INNER pty, so the outer must be a transparent raw
+// conduit — otherwise input is double-echoed and line-cooked (breaking arrows,
+// bracketed paste, Ctrl-C, syntax highlighting). Save the original; restore on exit.
+func makeOuterRaw() {
+    guard isatty(STDIN_FILENO) != 0 else { return }
+    if tcgetattr(STDIN_FILENO, &gOrigOuter) != 0 { return }
+    var raw = gOrigOuter
+    cfmakeraw(&raw)
+    if tcsetattr(STDIN_FILENO, TCSANOW, &raw) == 0 { gOuterWasRaw = true }
+}
+
+func restoreOuter() {
+    if gOuterWasRaw { _ = tcsetattr(STDIN_FILENO, TCSANOW, &gOrigOuter); gOuterWasRaw = false }
+}
+
 // MARK: - child
 
 func execProgram(_ program: [String]) {
@@ -97,8 +118,10 @@ func runPty(_ program: [String]) -> Int32 {
     if pid == 0 { execProgram(program); perror("shepherdd: exec"); _exit(127) }
 
     gMaster = master
+    makeOuterRaw()
     installWinchForwarder()
     pump(master: master)
+    restoreOuter()
 
     var status: Int32 = 0
     while waitpid(pid, &status, 0) < 0 && errno == EINTR {}
