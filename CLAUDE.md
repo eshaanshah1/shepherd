@@ -47,6 +47,7 @@ spike/
 - `SplitContainer.swift` — recursive SwiftUI render of a tab's `SplitNode` tree: leaves → `GhosttyTerminal` surfaces, splits laid out by `ratio` with a **draggable hairline `PaneDivider`**; the **zoom funnel** (zoomed pane fills, siblings starve to 0×0 but stay mounted); **inactive panes dim** (opacity, no border ring).
 - `AgentStore.swift` — the app model: **workspaces** (each owning tabs, each tab a pane tree) + `selectedWorkspaceID`, with `tabs`/`selectedTab` as computed views of the current workspace; selection, persistence, the **socket→per-pane-state lifecycle map** (`apply`, resolving the pane via `locatePane` across all workspaces), split/close/focus/zoom + workspace (new/switch/rename/delete/reorder) mutations, dock badge + notifications (aggregated over all panes in all workspaces). `select()` clears need-to-check.
 - `AgentState.swift` — the state enum (`shell/working/blocked/needsCheck/idle/error`); colors come from `Theme.swift`.
+- `StopPolicy.swift` — **pure model**: `applyEvent(...)` — the whole hook→state lifecycle map + ordering guard + the background-agent `Stop`-suppression counter ([ADR 0014](.claude/adr/0014-background-agent-stop-suppression.md)), returning a `StateTransition`. `AgentStore.apply` is the AppKit shell around it (mirrors `SleepPolicy`/`SleepGuard`). In `ShepherdModelTests`.
 - `Theme.swift` — design tokens (flat near-black palette + soft state colors) + a `Color(hex:)` init. The single source of UI colors; the libghostty base theme mirrors it.
 - `SocketServer.swift` — in-app unix-domain socket server (receives `{tab_id,event,detail}` — `tab_id` is really the pane id).
 - `SidebarView.swift` — the tab list: a **custom `ScrollView` of rows (not `List`)**. Unsplit tabs render a `TabRow` (leading glyph + name + status word, live drag-reorder, rename); split tabs render a **`SplitTabGroup`** — bracket-grouped pane rows, collapsible to a `● 1 ▸ 2` pip strip, zoom-dimmed; T3-Code styling ([ADR 0009](.claude/adr/0009-sidebar-custom-rows-not-list.md)).
@@ -62,7 +63,7 @@ spike/
 - `SleepPolicy.swift` — **pure model**: `CaffeinateMode` + `shouldStayAwake(mode,busy,thermalSuppressed)`. In `ShepherdModelTests`.
 - `ClamshellMonitor.swift` — IOKit lid-state watcher (observe-only). `ThermalMonitor.swift` — `ProcessInfo` thermal watcher.
 
-`Tests/` holds the **`ShepherdModelTests`** target (a `bundle.unit-test` in `project.yml`: `SplitTreeTests.swift`, `WorkspaceTests.swift`, `PersistenceTests.swift`) — pure-model coverage of the `SplitNode` tree ops, the `Workspace`/`locatePane` helpers, and the persistence snapshot/restore/migration, compiling `SplitTree`/`Tab`/`AgentState`/`Theme`/`Workspace`/`Persistence` without the AppKit surface.
+`Tests/` holds the **`ShepherdModelTests`** target (a `bundle.unit-test` in `project.yml`: `SplitTreeTests.swift`, `WorkspaceTests.swift`, `PersistenceTests.swift`, `SleepPolicyTests.swift`, `StopPolicyTests.swift`) — pure-model coverage of the `SplitNode` tree ops, the `Workspace`/`locatePane` helpers, the persistence snapshot/restore/migration, the sleep policy, and the `applyEvent` lifecycle/background-agent counter, compiling `SplitTree`/`Tab`/`AgentState`/`Theme`/`Workspace`/`Persistence`/`SleepPolicy`/`StopPolicy` without the AppKit surface. Test files added under `Tests/` are picked up by the `- path: Tests` glob, but a new compiled **source** must be added to the target's explicit `sources:` list in `project.yml`.
 
 ---
 
@@ -122,8 +123,9 @@ still `SHEPHERD_TAB_ID` (unchanged for plugin compatibility) but its **value is
 the pane id** — the plugin protocol and `report.sh` need no change. **Claude
 Code is the only first-class agent** in v1 (see [ADR 0003](.claude/adr/0003-agent-state-via-claude-hooks.md)).
 
-### Agent state lifecycle (`AgentStore.apply`)
-State is **per-pane**: `apply` resolves the pane via `locatePane` (which walks
+### Agent state lifecycle (`StopPolicy.applyEvent` + `AgentStore.apply`)
+The transition map is the pure `applyEvent` ([ADR 0014](.claude/adr/0014-background-agent-stop-suppression.md));
+`apply` is the shell that resolves the pane via `locatePane` (which walks
 **every workspace**) and updates that pane's `AgentState` inside its tab's tree.
 The dock badge, attention-nav (`⌘⇧A`), and notifications all **aggregate over
 every pane across every tab in every workspace** (a tab's sidebar dot rolls its
@@ -136,9 +138,11 @@ focus to reach a hidden-workspace pane).
 | `UserPromptSubmit` | **working** (always — starts a turn) |
 | `PreToolUse[AskUserQuestion]` / `PreToolUse[ExitPlanMode]` | **blocked** ("answer needed" / "plan approval") |
 | other `PreToolUse`/`PostToolUse`/`PostToolUseFailure`/`SubagentStart`/`SubagentStop`/`ElicitationResult` | **working** *(only if already mid-turn — see guard)* |
+| `PreToolUse[Agent]`/`[Task]` (mid-turn) | **working**, and `outstanding += 1` (background-agent counter) |
+| `SubagentStop` | **working** if mid-turn; always `outstanding = max(0, outstanding − 1)` |
 | `PermissionRequest` | **blocked** (+reason: "approve Bash" / "plan approval") |
 | `Elicitation` | **blocked** ("input requested") |
-| `Stop` | **need-to-check** |
+| `Stop` | **need-to-check** — *unless `outstanding > 0` (a background agent is still running), then held at **working** so a background-wait never reads as done ([ADR 0014](.claude/adr/0014-background-agent-stop-suppression.md))* |
 | `StopFailure` | **error** (+reason: the API error type) |
 | *focus / select tab / focus pane / click its notification* | need-to-check → **idle** (only need-to-check; never blocked/working) — `select()`/`focusPane()` call `didFocus` |
 
@@ -199,6 +203,8 @@ re-derives selection from the persisted workspace/tab indices (ids regenerate).
 - **macOS-26 toolchain** ([ADR 0002](.claude/adr/0002-libghostty-build-on-macos-26.md)): the ziglang.org Zig won't link (use brew `zig@0.15`); Metal shaders need the downloaded Metal Toolchain; build the xcframework only (`-Demit-macos-app=false`); Apple `libtool` dedupes same-named members so the combined fat archive is **incomplete** — the build script fixes this with an `ld -r -all_load` merge of the constituent archives.
 - **`report.sh` is pure bash on purpose** ([ADR 0004](.claude/adr/0004-plugin-protocol-and-ordering.md)). Do NOT add `python3` back — its ~50ms startup delayed `PreToolUse` past `Stop` and flipped state. State is decided by event name + env; only 3 cosmetic events parse (via `jq`).
 - **Ordering guard** ([ADR 0004](.claude/adr/0004-plugin-protocol-and-ordering.md)): mid-turn events only apply while the tab is `working`/`blocked`. A finished turn (`need-to-check`) is only left by a new `UserPromptSubmit` or focus. This is deliberate; don't remove it.
+- **Background-agent `Stop` suppression** ([ADR 0014](.claude/adr/0014-background-agent-stop-suppression.md)): `Stop` fires *while a backgrounded agent is still running*, so a per-pane `outstanding` counter (`[Agent]`/`[Task]` launches − `SubagentStop`s, floored at 0) holds the pane at `working` instead of `need-to-check` when `outstanding > 0`. Don't gate this on `SubagentStart` — it fires unreliably (seen 1 Start vs 6 Stops in one turn). Fails safe: a `Workflow` fan-out just reverts to finish-on-`Stop`.
+- **Notification icon needs an asset catalog**: macOS Notification Center renders the app icon from the compiled asset catalog (`CFBundleIconName` → `Assets.car`), **not** a loose `CFBundleIconFile`/`.icns` (which the Dock reads fine). `Resources/Assets.xcassets/AppIcon.appiconset` + `CFBundleIconName: AppIcon` in `project.yml` is what makes notifications show the Shepherd icon. After changing the icon, a stale system cache may need `lsregister` / a logout to refresh.
 - **`AskUserQuestion` is detected via `PreToolUse`** ([ADR 0008](.claude/adr/0008-askuserquestion-via-pretooluse.md)) — `PreToolUse[AskUserQuestion]` → blocked. (`Elicitation`/`Notification` don't fire for it, but `PreToolUse` does — `report.sh` parses `tool_name` via `jq`.)
 - **`xcodegen generate` after any file add/remove** — else the new file isn't compiled (`cannot find X in scope` at *build* time).
 - **SourceKit lies in this repo** — "Cannot find type AgentState/…" and "'main' attribute…" diagnostics are stale because the editor sees loose files, not the generated project. `xcodebuild` is ground truth; ignore SourceKit "cannot find" noise.

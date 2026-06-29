@@ -34,6 +34,7 @@ targets:
         CFBundleName: Shepherd
         CFBundleDisplayName: Shepherd
         CFBundleIconFile: AppIcon
+        CFBundleIconName: AppIcon
         LSMinimumSystemVersion: "13.0"
         NSHighResolutionCapable: true
         CFBundleShortVersionString: "0.0.1"
@@ -49,4 +50,5 @@ targets:
       - path: Sources/Workspace.swift
       - path: Sources/Persistence.swift
       - path: Sources/SleepPolicy.swift
+      - path: Sources/StopPolicy.swift
       - path: Tests
