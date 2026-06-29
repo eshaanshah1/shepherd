@@ -28,6 +28,17 @@ final class AgentStore: ObservableObject {
     /// Injected into each pane's PTY as $SHEPHERD_SOCK so the Claude plugin can reach us.
     let socketPath: String
 
+    /// Machine-level "serve panes through the helper" switch. Off by default;
+    /// flip with `defaults write com.shepherd.Shepherd shepherd.remote.serving -bool YES`
+    /// (a real Settings toggle lands in M4). Read at pane-creation time, so it
+    /// affects panes opened after it changes.
+    var isServing: Bool { UserDefaults.standard.bool(forKey: "shepherd.remote.serving") }
+
+    /// The bundled `shepherdd` helper, beside the app executable in Contents/MacOS.
+    let helperPath: String = Bundle.main.executableURL?
+        .deletingLastPathComponent()
+        .appendingPathComponent("shepherdd").path ?? "shepherdd"
+
     private var server: SocketServer?
     private let persistKey = "shepherd.workspaces.v1"
     private let legacyKey  = "shepherd.tabs.v2"

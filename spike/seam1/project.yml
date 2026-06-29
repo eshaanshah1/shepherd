@@ -25,6 +25,9 @@ targets:
     dependencies:
       - framework: ../../vendor/GhosttyKit.xcframework
         embed: false
+      - target: shepherdd
+        copy:
+          destination: executables
       - sdk: Carbon.framework
       - sdk: GameController.framework
       - sdk: IOKit.framework
@@ -51,6 +54,7 @@ targets:
       - path: Sources/Persistence.swift
       - path: Sources/SleepPolicy.swift
       - path: Sources/StopPolicy.swift
+      - path: Sources/RemoteWiring.swift
       - path: Tests
   shepherdd:
     type: tool
