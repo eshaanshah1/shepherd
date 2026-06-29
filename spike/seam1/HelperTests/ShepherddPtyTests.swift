@@ -92,9 +92,9 @@ extension ShepherddPtyTests {
         do { try proc.run() } catch { XCTFail("launch: \(error)"); return }
         close(slave)
 
-        // Let the child install its trap, then resize the OUTER pty. The kernel
-        // SIGWINCHes the helper (slave fg proc); the helper forwards to the inner
-        // pty, which SIGWINCHes the child → its trap prints the new size.
+        // Let the child install its trap, then resize the OUTER pty. The helper
+        // forwards the new size to the inner pty, which SIGWINCHes the child → its
+        // trap prints it. (Signal delivery to the helper is handled below.)
         usleep(700_000)
         var bigger = winsize(ws_row: 45, ws_col: 123, ws_xpixel: 0, ws_ypixel: 0)
         XCTAssertEqual(pty_set_winsize(master, &bigger), 0, "resize")
