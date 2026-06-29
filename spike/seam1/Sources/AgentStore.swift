@@ -139,8 +139,10 @@ final class AgentStore: ObservableObject {
     func deleteWorkspace(_ id: String) {
         let oldIndex = workspaces.firstIndex { $0.id == id } ?? 0
         guard let remaining = removingWorkspace(id, from: workspaces) else { return } // last-one guard
+        let closingPaneIDs = workspaces.first { $0.id == id }?.tabs.flatMap { $0.root.panes.map(\.paneID) } ?? []
         let wasSelected = selectedWorkspaceID == id
         workspaces = remaining
+        postPaneClosed(closingPaneIDs)
         if wasSelected {
             let next = max(0, min(oldIndex, workspaces.count - 1))
             selectedWorkspaceID = workspaces.indices.contains(next) ? workspaces[next].id : workspaces.first?.id
@@ -201,12 +203,24 @@ final class AgentStore: ObservableObject {
         }
         save()
         updateDockBadge()
-        for id in closingPaneIDs {
+        postPaneClosed(closingPaneIDs)
+    }
+
+    func closeSelected() { if let sel = selectedTab { closeTab(sel) } }
+
+    /// Free the surfaces of these panes (closing each PTY + its child) by asking
+    /// their views to tear down now — SwiftUI won't deinit them deterministically.
+    private func postPaneClosed(_ ids: [String]) {
+        for id in ids {
             NotificationCenter.default.post(name: .shepherdPaneClosed, object: nil, userInfo: ["paneID": id])
         }
     }
 
-    func closeSelected() { if let sel = selectedTab { closeTab(sel) } }
+    /// Free every pane's surface — used on app quit so the shepherdd helpers and
+    /// their shells don't reparent to launchd as orphans.
+    func teardownAllPanes() {
+        postPaneClosed(workspaces.flatMap { $0.tabs.flatMap { $0.root.panes.map(\.paneID) } })
+    }
 
     // MARK: Keyboard navigation (tabs, current workspace)
 
@@ -386,7 +400,7 @@ final class AgentStore: ObservableObject {
             if workspaces[w].tabs[t].zoomedPaneID == paneID { workspaces[w].tabs[t].zoomedPaneID = nil }
             save()
             updateDockBadge()
-            NotificationCenter.default.post(name: .shepherdPaneClosed, object: nil, userInfo: ["paneID": paneID])
+            postPaneClosed([paneID])
         } else {
             closeTabInWorkspace(w, tabID: workspaces[w].tabs[t].tabID)   // was the tab's last pane
         }
