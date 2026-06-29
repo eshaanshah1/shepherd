@@ -40,7 +40,7 @@ final class AgentStore: ObservableObject {
     private let attentionSounds: [AgentState: NSSound] = {
         var m: [AgentState: NSSound] = [:]
         if let s = AgentStore.bundledSound("done")    { m[.needsCheck] = s }
-        if let s = AgentStore.bundledSound("blocked") { m[.blocked]    = s }
+        if let s = AgentStore.bundledSound("blocked") { s.volume = 0.6; m[.blocked] = s }
         return m
     }()
 
