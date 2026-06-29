@@ -32,6 +32,11 @@ final class AgentStore: ObservableObject {
     private let persistKey = "shepherd.workspaces.v1"
     private let legacyKey  = "shepherd.tabs.v2"
 
+    /// Per-pane count of background agents launched this turn but not yet seen
+    /// finishing — transient (never persisted). Lets `Stop` tell a finished turn
+    /// from one merely paused to await a background agent. See StopPolicy.
+    private var backgroundOutstanding: [String: Int] = [:]
+
     private let attentionSounds: [AgentState: NSSound] = {
         var m: [AgentState: NSSound] = [:]
         if let s = AgentStore.bundledSound("done")    { m[.needsCheck] = s }
@@ -261,8 +266,9 @@ final class AgentStore: ObservableObject {
 
     // MARK: Feeds from libghostty (per-pane, ANY workspace via locatePane)
 
-    /// Agent-state hook event. The lifecycle map + ordering guard are unchanged from
-    /// the pre-workspaces version (see SPEC + ADR 0004); only pane lookup changed.
+    /// Agent-state hook event: resolve the pane, fold the event through the pure
+    /// `applyEvent` (lifecycle map + ordering guard + background-agent counter; see
+    /// StopPolicy and ADR 0004), then surface the result (sidebar / badge / alert).
     func apply(event: String, detail: String, paneID: String) {
         guard let (w, t) = locatePane(paneID, in: workspaces),
               let pane = workspaces[w].tabs[t].root.pane(paneID) else {
@@ -270,53 +276,33 @@ final class AgentStore: ObservableObject {
             return
         }
         let cur = pane.state
-        let midTurn = (cur == .working || cur == .blocked)
-        var applied = true
-        var newState = cur
-        var newReason: String? = pane.reason
-        var clearTitle = false
-        func set(_ s: AgentState, _ reason: String? = nil) {
-            newState = s
-            newReason = reason
-        }
+        let res = applyEvent(event, detail: detail, current: cur, reason: pane.reason,
+                             outstanding: backgroundOutstanding[paneID] ?? 0)
+        if res.outstanding == 0 { backgroundOutstanding[paneID] = nil }
+        else { backgroundOutstanding[paneID] = res.outstanding }
 
-        switch event {
-        case "SessionStart":      clearTitle = true; set(.idle)      // drop shell title; the agent sets its own
-        case "SessionEnd":        set(.shell)                         // agent gone
-        case "UserPromptSubmit":  set(.working)                       // new turn, from any state
-        case "Stop":              if midTurn { set(.needsCheck) } else { applied = false }
-        case "StopFailure":       if midTurn { set(.error, detail.isEmpty ? "API error" : detail) } else { applied = false }
-        case "PermissionRequest":
-            if midTurn { set(.blocked, detail == "ExitPlanMode" ? "plan approval"
-                                     : (detail.isEmpty ? "approval needed" : "approve \(detail)")) } else { applied = false }
-        case "Elicitation":       if midTurn { set(.blocked, "input requested") } else { applied = false }
-        case "SubagentStart":     if midTurn { set(.working, detail.isEmpty ? "subagent" : "subagent: \(detail)") } else { applied = false }
-        case "PreToolUse":
-            if !midTurn { applied = false }
-            else if detail == "AskUserQuestion" { set(.blocked, "answer needed") }
-            else if detail == "ExitPlanMode"    { set(.blocked, "plan approval") }
-            else { set(.working) }
-        case "PostToolUse", "PostToolUseFailure", "SubagentStop", "ElicitationResult":
-            if midTurn { set(.working) } else { applied = false }
-        default:                  applied = false
+        let suffix: String
+        if res.heldForBackground {
+            suffix = "\(cur.rawValue) (held: \(res.outstanding) background agent\(res.outstanding == 1 ? "" : "s"))"
+        } else if res.applied {
+            suffix = "\(cur.rawValue)->\(res.state.rawValue)"
+        } else {
+            suffix = "\(cur.rawValue) (ignored: not mid-turn)"
         }
+        shepherdLog("event=\(event)\(detail.isEmpty ? "" : "[\(detail)]") tab=\(paneID.prefix(8)) " + suffix)
 
-        shepherdLog("event=\(event)\(detail.isEmpty ? "" : "[\(detail)]") tab=\(paneID.prefix(8)) "
-            + (applied ? "\(cur.rawValue)->\(newState.rawValue)" : "\(cur.rawValue) (ignored: not mid-turn)"))
-
-        if applied {
-            _ = workspaces[w].tabs[t].root.updatePane(paneID) {
-                if clearTitle { $0.title = "" }
-                $0.state = newState
-                $0.reason = newReason
-            }
-            if newState != cur, newState.wantsAttention,
-               let updated = workspaces[w].tabs[t].root.pane(paneID) {
-                notifyAttention(updated, inWorkspace: workspaces[w].id)
-                playAttentionSound(for: newState)
-            }
-            updateDockBadge()
+        guard res.applied else { return }
+        _ = workspaces[w].tabs[t].root.updatePane(paneID) {
+            if res.clearTitle { $0.title = "" }
+            $0.state = res.state
+            $0.reason = res.reason
         }
+        if res.state != cur, res.state.wantsAttention,
+           let updated = workspaces[w].tabs[t].root.pane(paneID) {
+            notifyAttention(updated, inWorkspace: workspaces[w].id)
+            playAttentionSound(for: res.state)
+        }
+        updateDockBadge()
     }
 
     private func shepherdLog(_ msg: String) {
