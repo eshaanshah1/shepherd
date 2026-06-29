@@ -55,6 +55,12 @@ spike/
 - `Persistence.swift` — **pure model**: `PersistedTab`/`PersistedWorkspace`/`PersistedState` + `snapshotState`/`buildWorkspaces`/`migrateLegacyTabs` (v2→v1). In `ShepherdModelTests`.
 - `WorkspaceSwitcher.swift` — the custom (non-native) workspace dropdown: switch / inline-rename / delete-with-confirm / drag-reorder.
 - `SidebarSwipe.swift` — `NSViewRepresentable` installing a hover-gated scroll-wheel monitor; horizontal-dominant swipe → prev/next workspace.
+- `SleepGuard.swift` — `@MainActor` keep-awake controller: holds `pmset disablesleep`
+  (Tier 2, clamshell-surviving) or an IOKit idle assertion (Tier 1 fallback) per the
+  3-mode policy; 120s release grace; launch-reconcile + quit-teardown; clamshell
+  display-blank + clamshell-gated thermal auto-sleep. Pure decision in `SleepPolicy.swift`.
+- `SleepPolicy.swift` — **pure model**: `CaffeinateMode` + `shouldStayAwake(mode,busy,thermalSuppressed)`. In `ShepherdModelTests`.
+- `ClamshellMonitor.swift` — IOKit lid-state watcher (observe-only). `ThermalMonitor.swift` — `ProcessInfo` thermal watcher.
 
 `Tests/` holds the **`ShepherdModelTests`** target (a `bundle.unit-test` in `project.yml`: `SplitTreeTests.swift`, `WorkspaceTests.swift`, `PersistenceTests.swift`) — pure-model coverage of the `SplitNode` tree ops, the `Workspace`/`locatePane` helpers, and the persistence snapshot/restore/migration, compiling `SplitTree`/`Tab`/`AgentState`/`Theme`/`Workspace`/`Persistence` without the AppKit surface.
 
@@ -213,5 +219,5 @@ re-derives selection from the persisted workspace/tab indices (ids regenerate).
 - Commit messages end with the project's Co-Authored-By line.
 
 ## Done vs deferred
-**Done:** terminal (mouse/scroll/copy-paste/vsync/titles), tabs (create/switch/close/reorder/rename/persist+cwd, keyboard nav), **pane splitting** (H/V splits, zoom, draggable dividers, per-pane agents, bracket-grouped collapsible sidebar — [ADR 0012](.claude/adr/0012-pane-splitting-panes-as-agents.md)), **workspaces** (Arc-style nested model, global cross-workspace attention + hidden-workspace notifications, name dropdown + `+`, two-finger swipe, ⌘⇧N/⌃⇥/⌃⇧⇥, content cross-fade + sidebar slide, `shepherd.workspaces.v1` persistence w/ v2→v1 migration — [ADR 0013](.claude/adr/0013-workspaces.md)), agent-state lifecycle, Claude plugin, attention loop (badge + backgrounded notifications + ⌘⇧A jump-to-alert), **T3-Code-style sidebar** (custom rows not `List`, resizable, cwd/agent tab names) + self-contained theme (`~/.config/shepherd`).
+**Done:** terminal (mouse/scroll/copy-paste/vsync/titles), tabs (create/switch/close/reorder/rename/persist+cwd, keyboard nav), **pane splitting** (H/V splits, zoom, draggable dividers, per-pane agents, bracket-grouped collapsible sidebar — [ADR 0012](.claude/adr/0012-pane-splitting-panes-as-agents.md)), **workspaces** (Arc-style nested model, global cross-workspace attention + hidden-workspace notifications, name dropdown + `+`, two-finger swipe, ⌘⇧N/⌃⇥/⌃⇧⇥, content cross-fade + sidebar slide, `shepherd.workspaces.v1` persistence w/ v2→v1 migration — [ADR 0013](.claude/adr/0013-workspaces.md)), agent-state lifecycle, Claude plugin, attention loop (badge + backgrounded notifications + ⌘⇧A jump-to-alert), **T3-Code-style sidebar** (custom rows not `List`, resizable, cwd/agent tab names) + self-contained theme (`~/.config/shepherd`), **sleep guard** ("Stay Awake" keep-awake with a 3-mode policy — off / while-agents / always — over `pmset disablesleep` Tier 2 with an IOKit idle-assertion Tier 1 fallback, 120s release grace, launch-reconcile + quit-teardown, clamshell display-blank + clamshell-gated thermal auto-sleep; pure `SleepPolicy` + optional passwordless-`pmset` sudoers setup in the README).
 **Deferred (see SPEC §6):** generic non-Claude agents (Tier-B), sidebar auto-hide at ≤1 tab, debug-log flag, IME/selection polish, multi-window, navigator popup, and **full remote control** (the big future bet).

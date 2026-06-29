@@ -16,6 +16,9 @@ targets:
   Shepherd:
     type: application
     platform: macOS
+    settings:
+      base:
+        SWIFT_OBJC_BRIDGING_HEADER: Sources/Shepherd-Bridging.h
     sources:
       - path: Sources
       - path: Resources
@@ -24,6 +27,7 @@ targets:
         embed: false
       - sdk: Carbon.framework
       - sdk: GameController.framework
+      - sdk: IOKit.framework
     info:
       path: Shepherd-Info.plist
       properties:
@@ -44,4 +48,5 @@ targets:
       - path: Sources/Theme.swift
       - path: Sources/Workspace.swift
       - path: Sources/Persistence.swift
+      - path: Sources/SleepPolicy.swift
       - path: Tests
