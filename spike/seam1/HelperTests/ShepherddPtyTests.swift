@@ -158,3 +158,34 @@ extension ShepherddPtyTests {
                        "outer PTY echoed input → helper didn't set raw mode; got: \(String(decoding: out, as: UTF8.self))")
     }
 }
+
+extension ShepherddPtyTests {
+    // Regression: when libghostty kills the pane it closes the OUTER pty. The helper
+    // must tear down — break its pump AND hang up the inner shell — instead of
+    // blocking in waitpid on a child that has no reason to exit. Otherwise the helper
+    // and the shell leak as orphans.
+    func testClosingOuterPTYTearsDownHelper() {
+        var master: Int32 = 0, slave: Int32 = 0
+        var ws = winsize(ws_row: 24, ws_col: 80, ws_xpixel: 0, ws_ypixel: 0)
+        XCTAssertEqual(openpty(&master, &slave, nil, nil, &ws), 0, "openpty")
+
+        let proc = Process()
+        proc.executableURL = helperURL()
+        proc.arguments = ["pty", "--", "/bin/sh", "-c", "sleep 30"]
+        let h = FileHandle(fileDescriptor: slave, closeOnDealloc: false)
+        proc.standardInput = h; proc.standardOutput = h; proc.standardError = h
+        do { try proc.run() } catch { XCTFail("launch: \(error)"); return }
+        close(slave)
+
+        usleep(300_000)          // let it settle into the pump
+        close(master)            // libghostty closing the pane / window
+
+        // The helper must exit promptly, not block in waitpid on the live `sleep`.
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline && proc.isRunning { usleep(50_000) }
+        let exited = !proc.isRunning
+        if !exited { proc.terminate() }
+        proc.waitUntilExit()
+        XCTAssertTrue(exited, "helper did not exit after its outer PTY closed — orphaned")
+    }
+}

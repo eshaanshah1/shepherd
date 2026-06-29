@@ -79,24 +79,36 @@ func pump(master: Int32) {
             off += w
         }
     }
+    // n==0 is EOF; n<0 is closed too, unless it's a transient EINTR/EAGAIN. On macOS
+    // a pty read after the far end closes returns -1/EIO (not 0), so we must treat
+    // that as closed or the loop spins instead of tearing down.
+    func closed(_ n: Int) -> Bool { n == 0 || (n < 0 && errno != EINTR && errno != EAGAIN) }
 
+    let hup = Int16(POLLHUP | POLLERR | POLLNVAL)
     var pfds = [pollfd(fd: STDIN_FILENO, events: Int16(POLLIN), revents: 0),
                 pollfd(fd: master,       events: Int16(POLLIN), revents: 0)]
     while true {
         if poll(&pfds, nfds_t(pfds.count), -1) < 0 { if errno == EINTR { continue }; break }
 
+        // outer (libghostty) → inner shell
         if pfds[0].revents & Int16(POLLIN) != 0 {
             let n = read(STDIN_FILENO, buf, cap)
-            if n > 0 { writeAll(master, n) } else if n == 0 { break }
+            if n > 0 { writeAll(master, n) } else if closed(n) { break }
         }
+        if pfds[0].revents & hup != 0 { break }       // pane/window closed by libghostty
+
+        // inner shell → outer (+ tee)
         if pfds[1].revents & Int16(POLLIN) != 0 {
             let n = read(master, buf, cap)
             if n > 0 { writeAll(STDOUT_FILENO, n); Tee.shared.output(buf, count: n) }
-            else if n == 0 { break }
+            else if closed(n) { break }
         }
-        if pfds[1].revents & Int16(POLLHUP | POLLERR) != 0 {
-            let n = read(master, buf, cap)            // drain the last output the child wrote
-            if n > 0 { writeAll(STDOUT_FILENO, n); Tee.shared.output(buf, count: n) } else { break }
+        if pfds[1].revents & hup != 0 {
+            while true {                              // drain the child's final output
+                let n = read(master, buf, cap)
+                if n > 0 { writeAll(STDOUT_FILENO, n); Tee.shared.output(buf, count: n) } else { break }
+            }
+            break
         }
         pfds[0].revents = 0; pfds[1].revents = 0
     }
@@ -105,6 +117,24 @@ func pump(master: Int32) {
 func exitCode(from status: Int32) -> Int32 {
     if (status & 0x7f) == 0 { return (status >> 8) & 0xff }   // WIFEXITED → WEXITSTATUS
     return 128 + (status & 0x7f)                              // killed by signal
+}
+
+func reapChild(_ pid: pid_t) -> Int32 {
+    // The pump ended. If the child already exited this just reaps it. If our outer
+    // tty closed (the pane was killed) the child is still alive with nothing telling
+    // it to stop — so hang up its process group like a real terminal would, then
+    // escalate to SIGKILL. We must never leak the shell.
+    _ = kill(-pid, SIGHUP)
+    var status: Int32 = 0
+    for _ in 0..<50 {                                 // ~500ms grace for SIGHUP
+        let r = waitpid(pid, &status, WNOHANG)
+        if r == pid { return exitCode(from: status) }
+        if r < 0 && errno != EINTR { return 0 }       // already reaped / gone
+        usleep(10_000)
+    }
+    _ = kill(-pid, SIGKILL)
+    while waitpid(pid, &status, 0) < 0 && errno == EINTR {}
+    return exitCode(from: status)
 }
 
 // MARK: - pty subcommand
@@ -122,10 +152,7 @@ func runPty(_ program: [String]) -> Int32 {
     installWinchForwarder()
     pump(master: master)
     restoreOuter()
-
-    var status: Int32 = 0
-    while waitpid(pid, &status, 0) < 0 && errno == EINTR {}
-    return exitCode(from: status)
+    return reapChild(pid)
 }
 
 func loginShell() -> String {
