@@ -12,7 +12,7 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Color.clear.frame(height: 28)   // clear the traffic-light buttons
+            Color.clear.frame(height: 28)   // top strip the traffic-lights reveal into on hover
 
             header
 
