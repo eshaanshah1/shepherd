@@ -340,12 +340,22 @@ final class AgentStore: ObservableObject {
         didFocus(paneID: paneID)
     }
 
-    /// Focus clears need-to-check → idle ONLY (never blocked/working).
+    /// Focus dismisses any notification this pane fired (it pulled you here, so
+    /// its banner is now stale) and clears need-to-check → idle ONLY (never
+    /// blocked/working — those clear when the agent itself moves on).
     func didFocus(paneID: String) {
+        dismissNotifications(forPane: paneID)
         guard let (w, t) = locatePane(paneID, in: workspaces),
               workspaces[w].tabs[t].root.pane(paneID)?.state == .needsCheck else { return }
         _ = workspaces[w].tabs[t].root.updatePane(paneID) { $0.state = .idle }
         updateDockBadge()
+    }
+
+    /// Pull this pane's delivered banners out of Notification Center across every
+    /// state that fires one (identifier is `"{paneID}-{state}"`).
+    private func dismissNotifications(forPane paneID: String) {
+        let ids = [AgentState.blocked, .needsCheck, .error].map { "\(paneID)-\($0.rawValue)" }
+        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ids)
     }
 
     /// Close a single pane. Collapses the parent split to its sibling; if it was the
