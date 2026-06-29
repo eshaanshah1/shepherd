@@ -105,6 +105,11 @@ final class GhosttySurfaceView: NSView {
             cfg.working_directory = dup(cwd)
         }
 
+        if let cmd = remoteSurfaceCommand(serving: AgentStore.shared.isServing,
+                                          helperPath: AgentStore.shared.helperPath) {
+            cfg.command = dup(cmd)
+        }
+
         return envVars.withUnsafeMutableBufferPointer { buf in
             cfg.env_vars = buf.baseAddress
             cfg.env_var_count = buf.count
