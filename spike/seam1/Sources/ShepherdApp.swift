@@ -7,10 +7,22 @@ struct ShepherdApp: App {
     @StateObject private var sleep = SleepGuard.shared
 
     init() {
+        Self.scrubInheritedAgentEnv()   // before any pane spawns a shell
         Fonts.registerBundled()    // load bundled DM Sans before any view renders
         _ = GhosttyApp.shared      // init libghostty
         _ = AgentStore.shared      // start the socket + restore/open tabs
         _ = SleepGuard.shared      // load persisted caffeinate mode
+    }
+
+    // Launched from a Claude session, Shepherd inherits CLAUDECODE/CLAUDE_CODE_*; left set,
+    // `claude` in a pane runs as a nested child and writes no resumable session transcript.
+    private static func scrubInheritedAgentEnv() {
+        for key in ProcessInfo.processInfo.environment.keys
+        where key == "CLAUDECODE" || key == "CLAUDE_EFFORT"
+            || key == "AI_AGENT" || key == "TRACEPARENT"
+            || key.hasPrefix("CLAUDE_CODE_") {
+            unsetenv(key)
+        }
     }
 
     var body: some Scene {
