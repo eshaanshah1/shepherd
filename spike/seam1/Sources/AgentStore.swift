@@ -190,6 +190,7 @@ final class AgentStore: ObservableObject {
     /// last one so a workspace is never empty (⌘W no longer closes the window).
     private func closeTabInWorkspace(_ w: Int, tabID: String) {
         let wasSelected = workspaces[w].selectedTabID == tabID
+        let closingPaneIDs = workspaces[w].tabs.first { $0.tabID == tabID }?.root.panes.map(\.paneID) ?? []
         workspaces[w].tabs.removeAll { $0.tabID == tabID }
         if workspaces[w].tabs.isEmpty {
             workspaces[w].reseedIfEmpty()
@@ -200,6 +201,9 @@ final class AgentStore: ObservableObject {
         }
         save()
         updateDockBadge()
+        for id in closingPaneIDs {
+            NotificationCenter.default.post(name: .shepherdPaneClosed, object: nil, userInfo: ["paneID": id])
+        }
     }
 
     func closeSelected() { if let sel = selectedTab { closeTab(sel) } }
@@ -382,6 +386,7 @@ final class AgentStore: ObservableObject {
             if workspaces[w].tabs[t].zoomedPaneID == paneID { workspaces[w].tabs[t].zoomedPaneID = nil }
             save()
             updateDockBadge()
+            NotificationCenter.default.post(name: .shepherdPaneClosed, object: nil, userInfo: ["paneID": paneID])
         } else {
             closeTabInWorkspace(w, tabID: workspaces[w].tabs[t].tabID)   // was the tab's last pane
         }

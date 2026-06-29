@@ -29,8 +29,19 @@ final class GhosttySurfaceView: NSView {
     init(paneID: String) {
         self.paneID = paneID
         super.init(frame: .zero)
+        NotificationCenter.default.addObserver(self, selector: #selector(paneClosed(_:)),
+                                               name: .shepherdPaneClosed, object: nil)
     }
     required init?(coder: NSCoder) { fatalError("not supported") }
+
+    /// The pane was removed from the model. Free the surface now — which closes the
+    /// PTY and tears down its child — instead of waiting on SwiftUI to deallocate
+    /// this view, which it does not do deterministically (the child would leak).
+    @objc private func paneClosed(_ note: Notification) {
+        guard note.userInfo?["paneID"] as? String == paneID, let s = surface else { return }
+        surface = nil
+        ghostty_surface_free(s)
+    }
 
     override var acceptsFirstResponder: Bool { true }
 
@@ -261,6 +272,12 @@ final class GhosttySurfaceView: NSView {
         NotificationCenter.default.removeObserver(self)
         if let surface { ghostty_surface_free(surface) }
     }
+}
+
+extension Notification.Name {
+    /// Posted (with userInfo `["paneID": String]`) when a pane is closed in the
+    /// model, so its surface view can free the libghostty surface synchronously.
+    static let shepherdPaneClosed = Notification.Name("shepherd.paneClosed")
 }
 
 private extension NSScreen {
