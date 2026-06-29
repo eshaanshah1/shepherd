@@ -43,6 +43,7 @@ struct ContentView: View {
             })
         }
         .background(Theme.ground)
+        .background(WindowLightsController().frame(width: 0, height: 0))
         .ignoresSafeArea()
         // Custom (non-native) workspace dropdown: a window-spanning backdrop to
         // dismiss on an outside click, plus the Theme panel anchored under the
