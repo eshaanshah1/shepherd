@@ -76,3 +76,45 @@ final class ShepherddPtyTests: XCTestCase {
         XCTAssertTrue(out.contains("got:hi"), "input not delivered; got: \(out)")
     }
 }
+
+extension ShepherddPtyTests {
+    func testLiveResizePropagatesToChild() {
+        var master: Int32 = 0, slave: Int32 = 0
+        var ws = winsize(ws_row: 24, ws_col: 80, ws_xpixel: 0, ws_ypixel: 0)
+        XCTAssertEqual(openpty(&master, &slave, nil, nil, &ws), 0, "openpty")
+
+        let proc = Process()
+        proc.executableURL = helperURL()
+        // Re-emit our size whenever the window changes, for ~3s.
+        proc.arguments = ["pty", "--", "/bin/sh", "-c", "trap 'stty size' WINCH; sleep 3"]
+        let h = FileHandle(fileDescriptor: slave, closeOnDealloc: false)
+        proc.standardInput = h; proc.standardOutput = h; proc.standardError = h
+        do { try proc.run() } catch { XCTFail("launch: \(error)"); return }
+        close(slave)
+
+        // Let the child install its trap, then resize the OUTER pty. The kernel
+        // SIGWINCHes the helper (slave fg proc); the helper forwards to the inner
+        // pty, which SIGWINCHes the child → its trap prints the new size.
+        usleep(700_000)
+        var bigger = winsize(ws_row: 45, ws_col: 123, ws_xpixel: 0, ws_ypixel: 0)
+        XCTAssertEqual(pty_set_winsize(master, &bigger), 0, "resize")
+        // In production libghostty owns the outer tty, so the kernel SIGWINCHes
+        // the helper on resize. Under XCTest the helper has no controlling tty
+        // (tcgetpgrp(master) == 0), so deliver the signal the kernel would.
+        kill(proc.processIdentifier, SIGWINCH)
+
+        var out = Data(); var buf = [UInt8](repeating: 0, count: 4096)
+        let deadline = Date().addingTimeInterval(4)
+        while Date() < deadline {
+            var pfd = pollfd(fd: master, events: Int16(POLLIN), revents: 0)
+            if poll(&pfd, 1, 200) > 0 {
+                let n = read(master, &buf, buf.count)
+                if n > 0 { out.append(contentsOf: buf[0..<n]); if String(decoding: out, as: UTF8.self).contains("45 123") { break } }
+                else { break }
+            }
+        }
+        proc.terminate(); proc.waitUntilExit(); close(master)
+        XCTAssertTrue(String(decoding: out, as: UTF8.self).contains("45 123"),
+                      "resize did not reach child; got: \(String(decoding: out, as: UTF8.self))")
+    }
+}
