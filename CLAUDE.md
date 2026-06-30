@@ -226,4 +226,9 @@ re-derives selection from the persisted workspace/tab indices (ids regenerate).
 
 ## Done vs deferred
 **Done:** terminal (mouse/scroll/copy-paste/vsync/titles), tabs (create/switch/close/reorder/rename/persist+cwd, keyboard nav), **pane splitting** (H/V splits, zoom, draggable dividers, per-pane agents, bracket-grouped collapsible sidebar — [ADR 0012](.claude/adr/0012-pane-splitting-panes-as-agents.md)), **workspaces** (Arc-style nested model, global cross-workspace attention + hidden-workspace notifications, name dropdown + `+`, two-finger swipe, ⌘⇧N/⌃⇥/⌃⇧⇥, content cross-fade + sidebar slide, `shepherd.workspaces.v1` persistence w/ v2→v1 migration — [ADR 0013](.claude/adr/0013-workspaces.md)), agent-state lifecycle, Claude plugin, attention loop (badge + backgrounded notifications + ⌘⇧A jump-to-alert), **T3-Code-style sidebar** (custom rows not `List`, resizable, cwd/agent tab names) + self-contained theme (`~/.config/shepherd`), **sleep guard** ("Stay Awake" keep-awake with a 3-mode policy — off / while-agents / always — over `pmset disablesleep` Tier 2 with an IOKit idle-assertion Tier 1 fallback, 120s release grace, launch-reconcile + quit-teardown, clamshell display-blank + clamshell-gated thermal auto-sleep; pure `SleepPolicy` + optional passwordless-`pmset` sudoers setup in the README).
+**FCM push (Android Phase 1 step 2):** attention transitions route to local surfaces
+(banner+sound) when present, or a data-only FCM wake when away (`isAway` = lid shut +
+no external display); host mints OAuth2 from `~/.config/shepherd/fcm-service-account.json`,
+away→present replays catch-up banners. Dark-shipped (no key ⇒ no push). See
+`docs/superpowers/specs/2026-06-30-android-fcm-push-design.md`.
 **Deferred (see SPEC §6):** generic non-Claude agents (Tier-B), sidebar auto-hide at ≤1 tab, debug-log flag, IME/selection polish, multi-window, navigator popup, and **full remote control** (the big future bet).

@@ -64,6 +64,13 @@ final class AgentStore: ObservableObject {
     private var pairedDevices: [PairedDevice] = []
     private let pairedDevicesLock = NSLock()
 
+    /// FCM push shell (nil if no service-account key at ~/.config/shepherd) + the away
+    /// signal (lid shut + no external display) + per-pane push dedup state.
+    private var fcmPusher: FCMPusher?
+    private let presence = PresenceMonitor()
+    private var lastPushed: [String: (state: String, at: Date)] = [:]
+    private let pushWindow: TimeInterval = 8
+
     private let attentionSounds: [AgentState: NSSound] = {
         var m: [AgentState: NSSound] = [:]
         if let s = AgentStore.bundledSound("done")    { m[.needsCheck] = s }
@@ -83,6 +90,10 @@ final class AgentStore: ObservableObject {
         }
         server?.start()
         loadPairedDevices()
+        let keyPath = ("~/.config/shepherd/fcm-service-account.json" as NSString).expandingTildeInPath
+        fcmPusher = FCMPusher(serviceAccountPath: keyPath)
+        presence.onChange = { [weak self] away in if !away { self?.runCatchUpNotifications() } }
+        presence.start()
         if !restore() { newWorkspace() }   // reopen prior workspaces, else start with one
         startRemoteServingIfEnabled()      // bind the control channel if serving is on
     }
@@ -344,8 +355,12 @@ final class AgentStore: ObservableObject {
         }
         if res.state != cur, res.state.wantsAttention,
            let updated = workspaces[w].tabs[t].root.pane(paneID) {
-            notifyAttention(updated, inWorkspace: workspaces[w].id)
-            playAttentionSound(for: res.state)
+            let routing = NotificationRoutingPolicy.decide(isAway: isAway())
+            if routing.local {
+                notifyAttention(updated, inWorkspace: workspaces[w].id)
+                playAttentionSound(for: res.state)
+            }
+            if routing.fcm { pushWake(paneID: paneID, state: res.state) }
         }
         updateDockBadge()
         remoteServer?.broadcast(.state(paneID: paneID, state: res.state.rawValue, reason: res.reason))
@@ -583,6 +598,7 @@ final class AgentStore: ObservableObject {
                 guard let self else { return [] }
                 return DispatchQueue.main.sync { self.fleetSnapshot() }
             },
+            updateFCMToken: { [weak self] id, token in self?.updateFCMToken(deviceID: id, token: token) },
             makeSecret: { UUID().uuidString }, makeNonce: { UUID().uuidString })
         if s.start() { remoteServer = s }
     }
@@ -590,6 +606,65 @@ final class AgentStore: ObservableObject {
     /// The user's verdict on a pending pairing request (from the approval sheet).
     func respondToApproval(_ ok: Bool) {
         approvalDecider?(ok); approvalDecider = nil; pendingApproval = nil
+    }
+
+    /// True when you're away from this Mac: lid shut AND no external display attached.
+    private func isAway() -> Bool { presence.isAway }
+
+    /// Fire a data-only FCM wake to every paired device, deduped. Reads PERSISTED tokens
+    /// (push needs no live control channel). Off-main (network); prunes dead tokens.
+    private func pushWake(paneID: String, state: AgentState) {
+        guard isServing, let pusher = fcmPusher else { return }
+        let now = Date()
+        guard PushDecision.shouldPush(paneID: paneID, state: state.rawValue,
+                                      lastPushed: lastPushed, now: now, window: pushWindow) else { return }
+        lastPushed[paneID] = (state.rawValue, now)
+        pairedDevicesLock.lock(); let tokens = pairedDevices.compactMap { $0.fcmToken }; pairedDevicesLock.unlock()
+        guard !tokens.isEmpty else { return }
+        let urgent = (state == .blocked || state == .error)
+        Task { [weak self] in
+            let dead = await pusher.wake(tokens: tokens, paneID: paneID, state: state.rawValue, urgent: urgent)
+            if !dead.isEmpty { await MainActor.run { self?.pruneTokens(dead) } }
+        }
+    }
+
+    /// Drop tokens FCM rejected as unregistered/invalid + persist.
+    private func pruneTokens(_ dead: [String]) {
+        pairedDevicesLock.lock()
+        for i in pairedDevices.indices where dead.contains(pairedDevices[i].fcmToken ?? "") {
+            pairedDevices[i].fcmToken = nil
+        }
+        pairedDevicesLock.unlock()
+        savePairedDevices()
+    }
+
+    /// A paired device rotated its FCM token (refreshFCMToken on the control channel).
+    private func updateFCMToken(deviceID: String, token: String) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.pairedDevicesLock.lock()
+            if let i = self.pairedDevices.firstIndex(where: { $0.deviceID == deviceID }) {
+                self.pairedDevices[i].fcmToken = token
+            }
+            self.pairedDevicesLock.unlock()
+            self.savePairedDevices()
+        }
+    }
+
+    /// On the away→present edge: desktop-banner (no sound) every pane still needing attention.
+    private func runCatchUpNotifications() {
+        let panes: [(id: String, state: AgentState)] = workspaces.flatMap { ws in
+            ws.tabs.flatMap { $0.root.panes.map { ($0.paneID, $0.state) } }
+        }
+        let ids = Set(NotificationRoutingPolicy.catchUpTargets(panes))
+        guard !ids.isEmpty else { return }
+        for (w, ws) in workspaces.enumerated() {
+            for tab in ws.tabs {
+                for pane in tab.root.panes where ids.contains(pane.paneID) {
+                    notifyAttention(pane, inWorkspace: workspaces[w].id)
+                }
+            }
+        }
     }
 
     /// Record a newly paired device and persist the set. The server's `persist`
