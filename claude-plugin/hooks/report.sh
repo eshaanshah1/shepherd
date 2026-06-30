@@ -4,8 +4,10 @@
 # Reports {tab_id, event, detail} to the Shepherd app's unix socket so the tab's
 # sidebar tracks the agent's state. The state is decided by the EVENT NAME alone
 # (passed as $1) + tab_id (from env), so the common path does ZERO JSON parsing
-# and spawns nothing — it stays fast and in-order. Only the 3 events that show a
-# cosmetic "reason" parse one field, via jq (~5ms; grep fallback).
+# and spawns nothing — it stays fast and in-order. Only a few events parse JSON
+# (via jq, ~5ms): the cosmetic "reason" field for tool/agent/error names, and
+# `Stop` reduces `background_tasks` to a count of work the turn is paused on so a
+# backgrounded agent is never read as done.
 #
 # Safe to install globally: silent no-op outside a live Shepherd tab. Never blocks
 # or fails Claude — always exits 0.
@@ -35,6 +37,12 @@ if [ -n "$key" ] && [ -n "$payload" ]; then
   else
     detail="$(printf '%s' "$payload" | grep -oE "\"$key\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | head -1 | sed -E 's/.*"([^"]*)"$/\1/')"
   fi
+elif [ "$event" = "Stop" ] && [ -n "$payload" ] && command -v jq >/dev/null 2>&1; then
+  # detail = how many background tasks the turn is paused on. A backgrounded
+  # subagent/workflow/shell holds the "turn done" notification; a passive monitor
+  # does not. Unparseable -> "" -> the app treats it as 0 (plain finish-on-Stop).
+  detail="$(printf '%s' "$payload" \
+    | jq -r '[.background_tasks[]? | select(.type=="subagent" or .type=="workflow" or .type=="shell")] | length' 2>/dev/null)"
 fi
 
 esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
