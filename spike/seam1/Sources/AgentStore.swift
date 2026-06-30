@@ -583,6 +583,7 @@ final class AgentStore: ObservableObject {
                 guard let self else { return [] }
                 return DispatchQueue.main.sync { self.fleetSnapshot() }
             },
+            updateFCMToken: { _, _ in },
             makeSecret: { UUID().uuidString }, makeNonce: { UUID().uuidString })
         if s.start() { remoteServer = s }
     }

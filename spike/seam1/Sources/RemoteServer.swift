@@ -21,6 +21,7 @@ final class RemoteServer {
     private let persist: (PairedDevice) -> Void
     private let requestApproval: (String, String, @escaping (Bool) -> Void) -> Void
     private let snapshot: () -> [PaneInfo]
+    private let updateFCMToken: (String, String) -> Void
     private let makeSecret: () -> String
     private let makeNonce: () -> String
 
@@ -57,6 +58,7 @@ final class RemoteServer {
         let lock = NSLock()
         var phase: Phase = .unpaired
         var closed = false
+        var deviceID: String?
         let writeQueue = DispatchQueue(label: "shepherd.remote.write", qos: .utility)
     }
 
@@ -66,12 +68,14 @@ final class RemoteServer {
          persist: @escaping (PairedDevice) -> Void,
          requestApproval: @escaping (String, String, @escaping (Bool) -> Void) -> Void,
          snapshot: @escaping () -> [PaneInfo],
+         updateFCMToken: @escaping (String, String) -> Void,
          makeSecret: @escaping () -> String,
          makeNonce: @escaping () -> String) {
         self.bindAddress = bindAddress; self.port = port
         self.currentCode = currentCode; self.knownDevices = knownDevices
         self.persist = persist; self.requestApproval = requestApproval
-        self.snapshot = snapshot; self.makeSecret = makeSecret; self.makeNonce = makeNonce
+        self.snapshot = snapshot; self.updateFCMToken = updateFCMToken
+        self.makeSecret = makeSecret; self.makeNonce = makeNonce
     }
 
     /// Resolve this machine's Tailscale IPv4 (100.64.0.0/10), or nil if Tailscale is down.
@@ -167,7 +171,8 @@ final class RemoteServer {
                 conn.lock.lock(); let phase = conn.phase; conn.lock.unlock()
                 if phase == .closed { closeConn(fd, conn); return }
                 switch m {
-                case let .hello(deviceID, name, code, secret, _, _) where phase == .unpaired:
+                case let .hello(deviceID, name, code, secret, fcmToken, _) where phase == .unpaired:
+                    conn.lock.lock(); conn.deviceID = deviceID; conn.lock.unlock()
                     let decision = pairingDecision(deviceID: deviceID, name: name, code: code, secret: secret,
                                                    known: knownDevices(), currentCode: currentCode(),
                                                    newSecret: makeSecret())
@@ -175,7 +180,7 @@ final class RemoteServer {
                     case let .accept(persistSecret):
                         conn.lock.lock(); conn.phase = .paired; conn.lock.unlock()
                         if let persistSecret {
-                            persist(PairedDevice(deviceID: deviceID, secret: persistSecret, name: name))
+                            persist(PairedDevice(deviceID: deviceID, secret: persistSecret, name: name, fcmToken: fcmToken))
                         }
                         admit(fd, conn)
                     case .reject(let reason):
@@ -194,7 +199,7 @@ final class RemoteServer {
                             conn.phase = ok ? .paired : .closed
                             conn.lock.unlock()
                             if ok {
-                                self.persist(PairedDevice(deviceID: approveID, secret: proposedSecret, name: approveName))
+                                self.persist(PairedDevice(deviceID: approveID, secret: proposedSecret, name: approveName, fcmToken: fcmToken))
                                 self.admit(fd, conn)
                             } else {
                                 self.enqueueWriteThenClose(fd, self.encode(.rejected(reason: "denied")), conn)
@@ -203,6 +208,9 @@ final class RemoteServer {
                     }
                 case .ping where phase == .paired:
                     enqueueWrite(fd, encode(.pong), on: conn)
+                case let .refreshFCMToken(token) where phase == .paired:
+                    conn.lock.lock(); let id = conn.deviceID; conn.lock.unlock()
+                    if let id { updateFCMToken(id, token) }
                 case .detach:
                     conn.lock.lock(); conn.phase = .closed; conn.lock.unlock()
                     closeConn(fd, conn); return
