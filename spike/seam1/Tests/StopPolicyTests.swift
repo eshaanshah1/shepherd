@@ -1,104 +1,136 @@
 import XCTest
 
 /// Covers the pure `applyEvent` transition — especially telling a real turn-end
-/// `Stop` from a `Stop` that only pauses to wait on a background agent.
+/// `Stop` from a `Stop` that only pauses while a background task is still in
+/// flight. The in-flight signal is the `Stop` payload's `background_tasks` count
+/// (passed through `detail` by `report.sh`), not an event-counting heuristic.
 final class StopPolicyTests: XCTestCase {
 
-    // MARK: single-event behavior
+    // MARK: turn boundaries
 
-    func testUserPromptSubmitStartsTurnAndResetsCount() {
-        let t = applyEvent("UserPromptSubmit", detail: "", current: .idle, reason: nil, outstanding: 3)
+    func testUserPromptSubmitStartsTurnFromAnyState() {
+        let t = applyEvent("UserPromptSubmit", detail: "", current: .idle, reason: nil)
         XCTAssertEqual(t.state, .working)
-        XCTAssertEqual(t.outstanding, 0)
         XCTAssertTrue(t.applied)
     }
 
-    func testStopWithNoBackgroundAgentsFinishesTheTurn() {
-        let t = applyEvent("Stop", detail: "", current: .working, reason: nil, outstanding: 0)
+    func testSessionStartIsIdleAndClearsTitle() {
+        let t = applyEvent("SessionStart", detail: "", current: .shell, reason: nil)
+        XCTAssertEqual(t.state, .idle)
+        XCTAssertTrue(t.clearTitle)
+    }
+
+    // MARK: Stop — decided by the background-task count in `detail`
+
+    func testStopWithNoBackgroundTasksFinishesTheTurn() {
+        let t = applyEvent("Stop", detail: "0", current: .working, reason: nil)
+        XCTAssertEqual(t.state, .needsCheck)
+        XCTAssertFalse(t.heldForBackground)
+        XCTAssertTrue(t.applied)
+    }
+
+    func testStopWithABackgroundTaskStaysWorking() {
+        let t = applyEvent("Stop", detail: "1", current: .working, reason: nil)
+        XCTAssertEqual(t.state, .working)        // NOT need-to-check — the turn only paused
+        XCTAssertTrue(t.heldForBackground)
+        XCTAssertTrue(t.applied)
+    }
+
+    func testStopWithSeveralBackgroundTasksStaysWorking() {
+        let t = applyEvent("Stop", detail: "3", current: .working, reason: nil)
+        XCTAssertEqual(t.state, .working)
+        XCTAssertTrue(t.heldForBackground)
+    }
+
+    func testStopWithEmptyDetailFinishes() {
+        // Fail-safe: if `report.sh` could not parse a count (no jq), treat as none
+        // in flight and finish — reverts to plain finish-on-Stop, never sticks.
+        let t = applyEvent("Stop", detail: "", current: .working, reason: nil)
         XCTAssertEqual(t.state, .needsCheck)
         XCTAssertFalse(t.heldForBackground)
     }
 
-    func testStopWhileBackgroundAgentOutstandingStaysWorking() {
-        let t = applyEvent("Stop", detail: "", current: .working, reason: nil, outstanding: 1)
-        XCTAssertEqual(t.state, .working)        // NOT need-to-check — the turn only paused
-        XCTAssertTrue(t.heldForBackground)
-        XCTAssertEqual(t.outstanding, 1)         // still waiting on it
-        XCTAssertTrue(t.applied)
+    func testStopWithGarbageDetailFinishes() {
+        let t = applyEvent("Stop", detail: "nope", current: .working, reason: nil)
+        XCTAssertEqual(t.state, .needsCheck)
     }
 
     func testStopWhenNotMidTurnIsIgnored() {
-        let t = applyEvent("Stop", detail: "", current: .needsCheck, reason: nil, outstanding: 0)
+        // A stray Stop after the turn already ended must not reopen it, even if a
+        // background task is somehow reported.
+        let t = applyEvent("Stop", detail: "1", current: .needsCheck, reason: nil)
         XCTAssertFalse(t.applied)
         XCTAssertEqual(t.state, .needsCheck)
     }
 
-    func testAgentToolLaunchIncrementsOutstanding() {
-        let t = applyEvent("PreToolUse", detail: "Agent", current: .working, reason: nil, outstanding: 0)
+    // MARK: subagent / tool events no longer count anything
+
+    func testAgentToolLaunchJustStaysWorking() {
+        let t = applyEvent("PreToolUse", detail: "Agent", current: .working, reason: nil)
         XCTAssertEqual(t.state, .working)
-        XCTAssertEqual(t.outstanding, 1)
+        XCTAssertTrue(t.applied)
     }
 
-    func testNonAgentToolDoesNotCount() {
-        let t = applyEvent("PreToolUse", detail: "Bash", current: .working, reason: nil, outstanding: 0)
-        XCTAssertEqual(t.outstanding, 0)
+    func testSubagentStopStaysWorkingMidTurn() {
+        let t = applyEvent("SubagentStop", detail: "Explore", current: .working, reason: nil)
+        XCTAssertEqual(t.state, .working)
     }
 
-    func testSubagentStopDecrementsOutstanding() {
-        let t = applyEvent("SubagentStop", detail: "", current: .working, reason: nil, outstanding: 2)
-        XCTAssertEqual(t.outstanding, 1)
-        XCTAssertEqual(t.state, .working)        // mid-turn → keeps working
+    func testSubagentStopIgnoredWhenNotMidTurn() {
+        let t = applyEvent("SubagentStop", detail: "Explore", current: .needsCheck, reason: nil)
+        XCTAssertFalse(t.applied)
     }
 
-    func testSubagentStopFloorsAtZero() {
-        // Fail-safe for Workflow-style fan-out where SubagentStops outnumber [Agent] launches.
-        let t = applyEvent("SubagentStop", detail: "", current: .working, reason: nil, outstanding: 0)
-        XCTAssertEqual(t.outstanding, 0)
+    func testAskUserQuestionBlocks() {
+        let t = applyEvent("PreToolUse", detail: "AskUserQuestion", current: .working, reason: nil)
+        XCTAssertEqual(t.state, .blocked)
+        XCTAssertEqual(t.reason, "answer needed")
     }
 
-    // MARK: the bug — full background-agent turn
+    // MARK: the bug — a turn that pauses on a background agent
 
     func testBackgroundAgentTurnDoesNotFalselyFinishThenFinishesForReal() {
         var state: AgentState = .idle
-        var out = 0
         func step(_ event: String, _ detail: String = "") {
-            let t = applyEvent(event, detail: detail, current: state, reason: nil, outstanding: out)
+            let t = applyEvent(event, detail: detail, current: state, reason: nil)
             if t.applied { state = t.state }
-            out = t.outstanding
         }
 
         step("UserPromptSubmit")
-        XCTAssertEqual(state, .working); XCTAssertEqual(out, 0)
-
-        step("PreToolUse", "Agent")      // launch a background agent
-        XCTAssertEqual(out, 1)
-
-        step("Stop")                     // main loop yields to wait — must NOT read as done
         XCTAssertEqual(state, .working)
 
-        step("SubagentStop")             // background agent finishes
-        XCTAssertEqual(out, 0)
-        XCTAssertEqual(state, .working)  // resumed work tracks normally
-
-        step("PreToolUse", "Read")       // post-resume work
+        step("PreToolUse", "Agent")          // launch a background agent
         XCTAssertEqual(state, .working)
 
-        step("Stop")                     // real end of turn
+        step("Stop", "1")                    // main loop yields to wait — bg task in flight
+        XCTAssertEqual(state, .working)      // must NOT read as done
+
+        step("SubagentStop", "Agent")        // background agent finishes
+        XCTAssertEqual(state, .working)      // resumed work tracks normally
+
+        step("PreToolUse", "Read")           // post-resume work
+        XCTAssertEqual(state, .working)
+
+        step("Stop", "0")                    // real end of turn, nothing in flight
         XCTAssertEqual(state, .needsCheck)
+    }
+
+    func testTurnPausedOnBackgroundShellStaysWorking() {
+        // A background shell counts toward suppression too (report.sh allow-lists it).
+        let t = applyEvent("Stop", detail: "1", current: .working, reason: nil)
+        XCTAssertEqual(t.state, .working)
+        XCTAssertTrue(t.heldForBackground)
     }
 
     func testForegroundSubagentStillFinishesNormally() {
         var state: AgentState = .working
-        var out = 0
         func step(_ event: String, _ detail: String = "") {
-            let t = applyEvent(event, detail: detail, current: state, reason: nil, outstanding: out)
+            let t = applyEvent(event, detail: detail, current: state, reason: nil)
             if t.applied { state = t.state }
-            out = t.outstanding
         }
-        step("PreToolUse", "Agent")      // foreground subagent
-        step("SubagentStop")             // finishes before the agent stops
-        XCTAssertEqual(out, 0)
-        step("Stop")
-        XCTAssertEqual(state, .needsCheck) // balanced → real done
+        step("PreToolUse", "Agent")          // foreground subagent
+        step("SubagentStop", "Agent")        // finishes before the agent stops
+        step("Stop", "0")                    // nothing backgrounded → real done
+        XCTAssertEqual(state, .needsCheck)
     }
 }

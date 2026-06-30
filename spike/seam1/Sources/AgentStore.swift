@@ -43,11 +43,6 @@ final class AgentStore: ObservableObject {
     private let persistKey = "shepherd.workspaces.v1"
     private let legacyKey  = "shepherd.tabs.v2"
 
-    /// Per-pane count of background agents launched this turn but not yet seen
-    /// finishing — transient (never persisted). Lets `Stop` tell a finished turn
-    /// from one merely paused to await a background agent. See StopPolicy.
-    private var backgroundOutstanding: [String: Int] = [:]
-
     private let attentionSounds: [AgentState: NSSound] = {
         var m: [AgentState: NSSound] = [:]
         if let s = AgentStore.bundledSound("done")    { m[.needsCheck] = s }
@@ -305,14 +300,11 @@ final class AgentStore: ObservableObject {
             return
         }
         let cur = pane.state
-        let res = applyEvent(event, detail: detail, current: cur, reason: pane.reason,
-                             outstanding: backgroundOutstanding[paneID] ?? 0)
-        if res.outstanding == 0 { backgroundOutstanding[paneID] = nil }
-        else { backgroundOutstanding[paneID] = res.outstanding }
+        let res = applyEvent(event, detail: detail, current: cur, reason: pane.reason)
 
         let suffix: String
         if res.heldForBackground {
-            suffix = "\(cur.rawValue) (held: \(res.outstanding) background agent\(res.outstanding == 1 ? "" : "s"))"
+            suffix = "\(cur.rawValue) (held: \(detail) background task\(detail == "1" ? "" : "s"))"
         } else if res.applied {
             suffix = "\(cur.rawValue)->\(res.state.rawValue)"
         } else {
