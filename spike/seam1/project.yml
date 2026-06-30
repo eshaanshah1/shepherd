@@ -49,6 +49,7 @@ targets:
       - path: Sources/SplitTree.swift
       - path: Sources/Tab.swift
       - path: Sources/AgentState.swift
+      - path: Sources/FCMMessage.swift
       - path: Sources/Theme.swift
       - path: Sources/Workspace.swift
       - path: Sources/Persistence.swift
