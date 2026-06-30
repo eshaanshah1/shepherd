@@ -1,5 +1,9 @@
 import Foundation
 
+/// Wire protocol version, pinned in the `hello` handshake. Bump on a breaking change;
+/// keep messages additive otherwise. The Kotlin client sends the version it implements.
+let kRemoteProtocolVersion = 1
+
 // MARK: - DTOs
 
 /// One pane's status as projected to a remote client. `state` is AgentState.rawValue.
@@ -15,7 +19,9 @@ struct PaneInfo: Codable, Equatable {
 /// frame. Wire shape per case, e.g. {"ping":{}} or {"state":{"paneID":"…","state":"…","reason":null}}.
 /// The Kotlin client must match this shape; keep cases additive + versioned.
 enum ControlMessage: Codable, Equatable {
-    case hello(deviceID: String, deviceName: String, pairingCode: String?, secret: String?)
+    case hello(deviceID: String, deviceName: String, pairingCode: String?, secret: String?,
+               fcmToken: String?, protocolVersion: Int)
+    case refreshFCMToken(token: String)
     case accepted(sessionNonce: String)
     case rejected(reason: String)
     case pendingApproval
@@ -76,6 +82,7 @@ struct PairedDevice: Codable, Equatable {
     let deviceID: String
     let secret: String
     let name: String
+    var fcmToken: String?
 }
 
 enum PairingDecision: Equatable {
