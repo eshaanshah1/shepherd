@@ -73,6 +73,15 @@ struct ContentView: View {
             }
         }
         .animation(.easeOut(duration: 0.12), value: store.promptingNewWorkspace)
+        // Approval sheet when a remote device requests pairing.
+        .overlay {
+            if store.pendingApproval != nil {
+                PairingApprovalView()
+                    .environmentObject(store)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.12), value: store.pendingApproval != nil)
     }
 
     // 1px hairline inside a 6px draggable strip — restores sidebar resizing
