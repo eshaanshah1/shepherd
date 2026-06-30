@@ -167,7 +167,7 @@ final class RemoteServer {
                 conn.lock.lock(); let phase = conn.phase; conn.lock.unlock()
                 if phase == .closed { closeConn(fd, conn); return }
                 switch m {
-                case let .hello(deviceID, name, code, secret) where phase == .unpaired:
+                case let .hello(deviceID, name, code, secret, _, _) where phase == .unpaired:
                     let decision = pairingDecision(deviceID: deviceID, name: name, code: code, secret: secret,
                                                    known: knownDevices(), currentCode: currentCode(),
                                                    newSecret: makeSecret())

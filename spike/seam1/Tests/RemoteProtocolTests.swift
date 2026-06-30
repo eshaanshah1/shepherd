@@ -24,8 +24,27 @@ final class RemoteProtocolTests: XCTestCase {
     }
 
     func testHelloCodecRoundTrip() throws {
-        let hello = ControlMessage.hello(deviceID: "d1", deviceName: "Pixel", pairingCode: "8421", secret: nil)
+        let hello = ControlMessage.hello(deviceID: "d1", deviceName: "Pixel", pairingCode: "8421",
+                                         secret: nil, fcmToken: nil, protocolVersion: kRemoteProtocolVersion)
         XCTAssertEqual(try FrameDecoder().feed(try FrameCodec.encode(hello)), [hello])
+    }
+
+    func testHelloCarriesFCMTokenAndVersion() throws {
+        let hello = ControlMessage.hello(deviceID: "d1", deviceName: "Pixel", pairingCode: "8421",
+                                         secret: nil, fcmToken: "FCMTOK", protocolVersion: kRemoteProtocolVersion)
+        XCTAssertEqual(try FrameDecoder().feed(try FrameCodec.encode(hello)), [hello])
+    }
+
+    func testRefreshFCMTokenRoundTrip() throws {
+        let msg = ControlMessage.refreshFCMToken(token: "NEWTOK")
+        XCTAssertEqual(try FrameDecoder().feed(try FrameCodec.encode(msg)), [msg])
+    }
+
+    func testPairedDeviceCarriesFCMToken() throws {
+        let dev = PairedDevice(deviceID: "d1", secret: "s", name: "Pixel", fcmToken: "FCMTOK")
+        let back = try JSONDecoder().decode(PairedDevice.self, from: JSONEncoder().encode(dev))
+        XCTAssertEqual(back, dev)
+        XCTAssertEqual(back.fcmToken, "FCMTOK")
     }
 
     func testPairingKnownDeviceGoodSecretAccepts() {

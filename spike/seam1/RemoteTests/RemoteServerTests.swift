@@ -103,7 +103,8 @@ final class RemoteServerTests: XCTestCase {
         let port: UInt16 = 48721
         let server = makeServer(port: port, approve: true); XCTAssertTrue(server.start()); defer { server.stop() }
         let c = TestClient(port: port)
-        c.send(.hello(deviceID: "d1", deviceName: "Pixel", pairingCode: "8421", secret: nil))
+        c.send(.hello(deviceID: "d1", deviceName: "Pixel", pairingCode: "8421",
+                      secret: nil, fcmToken: "FCMTOK", protocolVersion: kRemoteProtocolVersion))
         XCTAssertNotNil(c.waitFor { if case .accepted = $0 { return true }; return false }, "expected accepted")
         XCTAssertNotNil(c.waitFor { if case .snapshot(let p) = $0 { return p.first?.paneID == "p1" }; return false }, "expected snapshot")
     }
@@ -112,7 +113,8 @@ final class RemoteServerTests: XCTestCase {
         let port: UInt16 = 48722
         let server = makeServer(port: port, approve: true); XCTAssertTrue(server.start()); defer { server.stop() }
         let c = TestClient(port: port)
-        c.send(.hello(deviceID: "d1", deviceName: "Pixel", pairingCode: "0000", secret: nil))
+        c.send(.hello(deviceID: "d1", deviceName: "Pixel", pairingCode: "0000",
+                      secret: nil, fcmToken: "FCMTOK", protocolVersion: kRemoteProtocolVersion))
         XCTAssertNotNil(c.waitFor { if case .rejected = $0 { return true }; return false }, "expected rejected")
     }
 
@@ -120,7 +122,8 @@ final class RemoteServerTests: XCTestCase {
         let port: UInt16 = 48723
         let server = makeServer(port: port, approve: true); XCTAssertTrue(server.start()); defer { server.stop() }
         let c = TestClient(port: port)
-        c.send(.hello(deviceID: "d1", deviceName: "Pixel", pairingCode: "8421", secret: nil))
+        c.send(.hello(deviceID: "d1", deviceName: "Pixel", pairingCode: "8421",
+                      secret: nil, fcmToken: "FCMTOK", protocolVersion: kRemoteProtocolVersion))
         _ = c.waitFor { if case .snapshot = $0 { return true }; return false }
         server.broadcast(.state(paneID: "p1", state: "blocked", reason: "approve Bash"))
         let got = c.waitFor { if case .state = $0 { return true }; return false }
@@ -155,7 +158,8 @@ final class RemoteServerTests: XCTestCase {
         // connection's serial write queue (snapshot is enqueued right after accepted, both
         // under clientsLock). So every broadcast we now fire is guaranteed to target this
         // fd, racing the still-flushing snapshot and each other on the one serial queue.
-        c.send(.hello(deviceID: "d1", deviceName: "Pixel", pairingCode: "8421", secret: nil))
+        c.send(.hello(deviceID: "d1", deviceName: "Pixel", pairingCode: "8421",
+                      secret: nil, fcmToken: "FCMTOK", protocolVersion: kRemoteProtocolVersion))
         if let acc = c.waitFor(5, { if case .accepted = $0 { return true }; return false }) { received.append(acc) }
 
         // Fire a burst of broadcasts from several threads at once — maximizing genuinely
