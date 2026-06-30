@@ -49,11 +49,13 @@ targets:
       - path: Sources/SplitTree.swift
       - path: Sources/Tab.swift
       - path: Sources/AgentState.swift
+      - path: Sources/FCMMessage.swift
       - path: Sources/Theme.swift
       - path: Sources/Workspace.swift
       - path: Sources/Persistence.swift
       - path: Sources/SleepPolicy.swift
       - path: Sources/StopPolicy.swift
+      - path: Sources/NotificationRoutingPolicy.swift
       - path: Sources/RemoteWiring.swift
       - path: Sources/RemoteProtocol.swift
       - path: Tests
