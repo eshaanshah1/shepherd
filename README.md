@@ -33,3 +33,18 @@ sudo -n pmset -g >/dev/null 2>&1 && echo "PASSWORDLESS OK" || echo "blocked"
 If absent (or reverted by MDM), Shepherd auto-degrades to the idle assertion. The "Stay
 Awake" menu shows which tier is active. A hard crash while holding can leave the kernel
 `SleepDisabled` flag set until Shepherd's next launch (which clears it) or a reboot.
+
+## Remote push (FCM) — host setup
+
+Shepherd can wake a paired phone over Firebase Cloud Messaging when an agent
+needs you and you're away from the Mac (lid shut, no external display). Setup is
+one-time and shared with the Android client (step 3).
+
+1. Create a free Firebase project at <https://console.firebase.google.com>.
+2. **Project Settings → Service accounts → Generate new private key** → download the JSON.
+3. Save it as `~/.config/shepherd/fcm-service-account.json`.
+
+That's all — `project_id` is read from the key. With no key present, push is
+silently disabled (Shepherd alerts locally as usual). The key is a send-only
+FCM credential; treat it as a secret. Pushes carry only `{paneID, state}` — no
+terminal content ever transits Google.
