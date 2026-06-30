@@ -46,5 +46,5 @@ one-time and shared with the Android client (step 3).
 
 That's all — `project_id` is read from the key. With no key present, push is
 silently disabled (Shepherd alerts locally as usual). The key is a send-only
-FCM credential; treat it as a secret. Pushes carry only `{paneID, state}` — no
+FCM credential; treat it as a secret. Pushes carry only `{paneID, state, urgent}` — no
 terminal content ever transits Google.

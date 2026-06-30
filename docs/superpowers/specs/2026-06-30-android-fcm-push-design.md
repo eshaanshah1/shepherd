@@ -192,7 +192,8 @@ loopback tests update.
   Stored as a user-readable file in `~/.config/shepherd/` for v1 simplicity; **Keychain storage is a
   noted hardening follow-up**, not v1.
 - **Data-only payloads** carry `{paneID, state, urgent}` only — no titles, cwd, or terminal content
-  transits Google (matches the Android-client design §6).
+  transits Google (matches the Android-client design §6). `urgent` is derived purely from `state`, so
+  it carries no new information off the host — privacy is unchanged.
 - **FCM tokens** are per-device push capabilities, stored in `PairedDevice` (UserDefaults). Dropped
   on invalidation or device revoke.
 - The push path adds **no new network listener** and **no public egress beyond Google's FCM/OAuth
