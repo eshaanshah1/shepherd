@@ -50,10 +50,11 @@ final class FCMPusher {
     // MARK: OAuth2 access token (cached ~1h)
 
     private func ensureAccessToken() async -> String? {
-        tokenLock.lock()
-        if let t = accessToken, Date() < accessTokenExpiry { tokenLock.unlock(); return t }
-        tokenLock.unlock()
-        guard let jwt = signedJWT() else { return nil }
+        if let cached = cachedValidToken() { return cached }
+        guard let jwt = signedJWT() else {
+            NSLog("[FCMPusher] JWT signing failed; push disabled")
+            return nil
+        }
         var req = URLRequest(url: URL(string: account.tokenURI)!)
         req.httpMethod = "POST"
         req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
@@ -62,13 +63,25 @@ final class FCMPusher {
         guard let (data, resp) = try? await session.data(for: req),
               (resp as? HTTPURLResponse)?.statusCode == 200,
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let access = obj["access_token"] as? String else { return nil }
+              let access = obj["access_token"] as? String else {
+            NSLog("[FCMPusher] token exchange failed; push disabled")
+            return nil
+        }
         let ttl = (obj["expires_in"] as? Int) ?? 3600
-        tokenLock.lock()
-        accessToken = access
-        accessTokenExpiry = Date().addingTimeInterval(TimeInterval(ttl - 60))   // refresh a minute early
-        tokenLock.unlock()
+        storeAccessToken(access, ttlSeconds: ttl)
         return access
+    }
+
+    private func cachedValidToken() -> String? {
+        tokenLock.lock(); defer { tokenLock.unlock() }
+        if let t = accessToken, Date() < accessTokenExpiry { return t }
+        return nil
+    }
+
+    private func storeAccessToken(_ token: String, ttlSeconds: Int) {
+        tokenLock.lock(); defer { tokenLock.unlock() }
+        accessToken = token
+        accessTokenExpiry = Date().addingTimeInterval(TimeInterval(ttlSeconds - 60))   // refresh a minute early
     }
 
     private func signedJWT() -> String? {
@@ -87,7 +100,7 @@ final class FCMPusher {
     /// Google service-account keys are PKCS#8 (PEM-armored); SecKeyCreateWithData wants the
     /// inner PKCS#1 RSAPrivateKey. For RSA-2048 PKCS#8 the wrapper is a fixed 26-byte prefix
     /// (SEQUENCE | version INTEGER | rsaEncryption AlgId | OCTET STRING header), so we strip
-    /// it. The manual auth check (Step 3) confirms the strip is correct.
+    /// it. Unverified at build time; confirmed when a real RSA-2048 PKCS#8 key is present.
     private static func loadRSAPrivateKey(pem: String) -> SecKey? {
         // Drop the PEM armor lines (any line wrapped in dashes) generically — no banner literal.
         let b64 = pem.split(whereSeparator: { $0 == "\n" || $0 == "\r" })
