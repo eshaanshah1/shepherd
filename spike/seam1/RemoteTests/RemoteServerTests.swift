@@ -85,6 +85,7 @@ final class RemoteServerTests: XCTestCase {
             persist: { _ in },
             requestApproval: { _, _, decide in decide(approve) },
             snapshot: snapshot,
+            updateFCMToken: { _, _ in },
             makeSecret: { "SECRET" }, makeNonce: { "NONCE" })
     }
 
@@ -214,6 +215,53 @@ final class RemoteServerTests: XCTestCase {
             XCTAssertTrue(reason == "END" || reason?.hasPrefix("t") == true,
                           "corrupted body \(String(describing: reason))")
         }
+    }
+
+    func testPairingPersistsFCMToken() {
+        let port: UInt16 = 48725
+        let captured = NSMutableArray()   // thread-safe enough for the test; captures PairedDevice
+        let server = RemoteServer(
+            bindAddress: "127.0.0.1", port: port,
+            currentCode: { "8421" }, knownDevices: { [] },
+            persist: { dev in captured.add(dev) },
+            requestApproval: { _, _, decide in decide(true) },
+            snapshot: { [] },
+            updateFCMToken: { _, _ in },
+            makeSecret: { "SECRET" }, makeNonce: { "NONCE" })
+        XCTAssertTrue(server.start()); defer { server.stop() }
+        let c = TestClient(port: port)
+        c.send(.hello(deviceID: "d1", deviceName: "Pixel", pairingCode: "8421",
+                      secret: nil, fcmToken: "FCMTOK", protocolVersion: kRemoteProtocolVersion))
+        XCTAssertNotNil(c.waitFor { if case .accepted = $0 { return true }; return false })
+        // Give persist (called on the approval path) a beat to land.
+        let dev = (0..<30).lazy.compactMap { _ -> PairedDevice? in
+            usleep(50_000); return captured.firstObject as? PairedDevice
+        }.first
+        XCTAssertEqual(dev?.fcmToken, "FCMTOK")
+        XCTAssertEqual(dev?.deviceID, "d1")
+    }
+
+    func testRefreshFCMTokenInvokesCallback() {
+        let port: UInt16 = 48726
+        let box = NSMutableArray()   // captures (deviceID, token)
+        let server = RemoteServer(
+            bindAddress: "127.0.0.1", port: port,
+            currentCode: { "8421" }, knownDevices: { [] },
+            persist: { _ in },
+            requestApproval: { _, _, decide in decide(true) },
+            snapshot: { [] },
+            updateFCMToken: { id, tok in box.add("\(id)|\(tok)") },
+            makeSecret: { "SECRET" }, makeNonce: { "NONCE" })
+        XCTAssertTrue(server.start()); defer { server.stop() }
+        let c = TestClient(port: port)
+        c.send(.hello(deviceID: "d1", deviceName: "Pixel", pairingCode: "8421",
+                      secret: nil, fcmToken: "OLD", protocolVersion: kRemoteProtocolVersion))
+        XCTAssertNotNil(c.waitFor { if case .accepted = $0 { return true }; return false })
+        c.send(.refreshFCMToken(token: "NEW"))
+        let got = (0..<40).lazy.compactMap { _ -> String? in
+            usleep(50_000); return box.firstObject as? String
+        }.first
+        XCTAssertEqual(got, "d1|NEW")
     }
 }
 
