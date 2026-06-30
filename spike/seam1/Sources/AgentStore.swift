@@ -43,6 +43,27 @@ final class AgentStore: ObservableObject {
     private let persistKey = "shepherd.workspaces.v1"
     private let legacyKey  = "shepherd.tabs.v2"
 
+    // MARK: Remote control channel (Android "monitor" host side)
+
+    /// Set when a not-yet-known device passes the pairing code and is awaiting the
+    /// user's approval; ContentView presents the approval sheet off this.
+    @Published var pendingApproval: (deviceID: String, name: String)?
+    private var approvalDecider: ((Bool) -> Void)?
+    private var remoteServer: RemoteServer?
+    private let remotePort: UInt16 = 8722
+    private let pairedDevicesKey = "shepherd.remote.devices"
+
+    /// The 4-digit code a new device must echo to start pairing. Regenerated each
+    /// launch — surfaced in the host UI; not persisted.
+    private(set) var pairingCode = String(format: "%04d", Int.random(in: 0...9999))
+
+    /// Devices approved in a past session — loaded at launch so they re-pair
+    /// (by secret) without another approval. Persisted to UserDefaults as JSON.
+    /// Read off the accept thread by RemoteServer's `knownDevices` closure and
+    /// mutated on main, so every access goes through `pairedDevicesLock`.
+    private var pairedDevices: [PairedDevice] = []
+    private let pairedDevicesLock = NSLock()
+
     private let attentionSounds: [AgentState: NSSound] = {
         var m: [AgentState: NSSound] = [:]
         if let s = AgentStore.bundledSound("done")    { m[.needsCheck] = s }
@@ -61,7 +82,9 @@ final class AgentStore: ObservableObject {
             self?.apply(event: event, detail: detail, paneID: paneID)
         }
         server?.start()
+        loadPairedDevices()
         if !restore() { newWorkspace() }   // reopen prior workspaces, else start with one
+        startRemoteServingIfEnabled()      // bind the control channel if serving is on
     }
 
     // MARK: Current-workspace accessors
@@ -208,6 +231,7 @@ final class AgentStore: ObservableObject {
     private func postPaneClosed(_ ids: [String]) {
         for id in ids {
             NotificationCenter.default.post(name: .shepherdPaneClosed, object: nil, userInfo: ["paneID": id])
+            remoteServer?.broadcast(.paneRemoved(paneID: id))
         }
     }
 
@@ -324,6 +348,7 @@ final class AgentStore: ObservableObject {
             playAttentionSound(for: res.state)
         }
         updateDockBadge()
+        remoteServer?.broadcast(.state(paneID: paneID, state: res.state.rawValue, reason: res.reason))
     }
 
     private func shepherdLog(_ msg: String) {
@@ -517,5 +542,82 @@ final class AgentStore: ObservableObject {
         selectedWorkspaceID = workspaces[i].id
         save()   // re-persist in v1 form
         return true
+    }
+
+    // MARK: Remote control channel
+
+    /// Project every pane across every workspace to the client-facing `PaneInfo`.
+    /// The pure mapping lives in `buildSnapshot` (RemoteProtocol) so it's testable.
+    func fleetSnapshot() -> [PaneInfo] {
+        buildSnapshot(workspaces.enumerated().flatMap { (i, ws) in
+            ws.tabs.flatMap { $0.root.panes.map {
+                (ws.displayName(index: i), $0.paneID, $0.displayTitle, $0.state.rawValue, $0.reason)
+            } }
+        })
+    }
+
+    /// Start the control server, bound to the Tailscale interface, when serving is
+    /// on. No-op if already running, serving is off, or Tailscale is down (no 100.x).
+    func startRemoteServingIfEnabled() {
+        guard isServing, remoteServer == nil, let ip = RemoteServer.currentTailscaleIPv4() else { return }
+        let s = RemoteServer(
+            bindAddress: ip, port: remotePort,
+            currentCode: { [weak self] in self?.pairingCode ?? "" },
+            knownDevices: { [weak self] in
+                guard let self else { return [] }
+                self.pairedDevicesLock.lock(); defer { self.pairedDevicesLock.unlock() }
+                return self.pairedDevices
+            },
+            persist: { [weak self] dev in self?.addPairedDevice(dev) },
+            requestApproval: { [weak self] deviceID, name, decide in
+                DispatchQueue.main.async {
+                    self?.approvalDecider = decide
+                    self?.pendingApproval = (deviceID, name)
+                }
+            },
+            // fleetSnapshot reads @Published workspaces, so it must run on main. This is
+            // called from RemoteServer's connQueue (admit), never under any RemoteServer
+            // lock; main never blocks on connQueue/writeQueue (broadcast is async), so the
+            // main.sync can't deadlock. The [weak self] nil-guard returns [] if torn down.
+            snapshot: { [weak self] in
+                guard let self else { return [] }
+                return DispatchQueue.main.sync { self.fleetSnapshot() }
+            },
+            makeSecret: { UUID().uuidString }, makeNonce: { UUID().uuidString })
+        if s.start() { remoteServer = s }
+    }
+
+    /// The user's verdict on a pending pairing request (from the approval sheet).
+    func respondToApproval(_ ok: Bool) {
+        approvalDecider?(ok); approvalDecider = nil; pendingApproval = nil
+    }
+
+    /// Record a newly paired device and persist the set. The server's `persist`
+    /// closure runs off the accept thread, so hop to main before touching state.
+    private func addPairedDevice(_ dev: PairedDevice) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.pairedDevicesLock.lock()
+            self.pairedDevices.append(dev)
+            self.pairedDevicesLock.unlock()
+            self.savePairedDevices()
+        }
+    }
+
+    private func loadPairedDevices() {
+        guard let data = UserDefaults.standard.data(forKey: pairedDevicesKey),
+              let devs = try? JSONDecoder().decode([PairedDevice].self, from: data) else { return }
+        pairedDevicesLock.lock()
+        pairedDevices = devs
+        pairedDevicesLock.unlock()
+    }
+
+    private func savePairedDevices() {
+        pairedDevicesLock.lock()
+        let snapshot = pairedDevices
+        pairedDevicesLock.unlock()
+        if let data = try? JSONEncoder().encode(snapshot) {
+            UserDefaults.standard.set(data, forKey: pairedDevicesKey)
+        }
     }
 }

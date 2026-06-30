@@ -55,7 +55,15 @@ targets:
       - path: Sources/SleepPolicy.swift
       - path: Sources/StopPolicy.swift
       - path: Sources/RemoteWiring.swift
+      - path: Sources/RemoteProtocol.swift
       - path: Tests
+  ShepherdRemoteTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: RemoteTests
+      - path: Sources/RemoteProtocol.swift
+      - path: Sources/RemoteServer.swift
   shepherdd:
     type: tool
     platform: macOS

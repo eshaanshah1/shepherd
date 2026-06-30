@@ -23,6 +23,7 @@ struct WorkspaceSwitcher: View {
             ForEach(Array(store.workspaces.enumerated()), id: \.element.id) { idx, ws in
                 row(ws, index: idx)
             }
+            if store.isServing { pairingFooter }
         }
         .padding(6)
         .background(
@@ -34,6 +35,22 @@ struct WorkspaceSwitcher: View {
                 )
         )
         .shadow(color: .black.opacity(0.5), radius: 18, x: 0, y: 10)
+    }
+
+    /// Shown only while remote serving is on: the code a new device must enter to pair.
+    private var pairingFooter: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Divider().overlay(Theme.hairline).padding(.vertical, 4)
+            Text("PAIRING CODE")
+                .font(.ui(9, .semibold))
+                .foregroundStyle(Theme.textDim)
+            Text(store.pairingCode)
+                .font(.system(size: 17, weight: .semibold, design: .monospaced))
+                .foregroundStyle(Theme.textPrimary)
+                .textSelection(.enabled)
+        }
+        .padding(.horizontal, 10)
+        .padding(.bottom, 4)
     }
 
     @ViewBuilder
