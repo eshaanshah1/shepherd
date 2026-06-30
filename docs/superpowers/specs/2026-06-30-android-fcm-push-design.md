@@ -1,8 +1,8 @@
 # Host FCM push — design (Android Phase 1, step 2)
 
 **Date:** 2026-06-30
-**Status:** Design (brainstorming). Host-side only; the Android receiver is step 3. Not yet implemented.
-**Branch:** `android-remote-client`.
+**Status:** Implemented (host-side, dark-shipped). The Android receiver is step 3. See "Status / progress" at the bottom.
+**Branch:** `android-fcm-push`.
 **Prereq context:** Builds on the shipped **Phase 1 host control channel** (squash `506e7cd` on `master`) and the design it implements:
 [`2026-06-30-android-client-design.md`](2026-06-30-android-client-design.md) (read its §2 decisions + §4 host server first) and
 [`2026-06-29-remote-control-design.md`](2026-06-29-remote-control-design.md).
@@ -236,3 +236,13 @@ loopback tests update.
   lid-closed-AND-no-external-display; mutually-exclusive desktop-vs-push routing with an
   away→present catch-up sweep; `protocolVersion` pin folded into `hello`. Next: writing-plans →
   implementation plan for this step.
+- **2026-06-30 (implemented):** Host FCM push built per the plan
+  `docs/superpowers/plans/2026-06-30-android-phase1-fcm-push.md`. Shipped:
+  `FCMMessage.swift` (pure: key parse, JWT signing-input, data-only wake body,
+  PushDecision dedup), `NotificationRoutingPolicy.swift` (pure present-vs-away +
+  catch-up), `FCMPusher.swift` (OAuth2/RS256/PKCS#8 + data-only send + dead-token
+  prune), `PresenceMonitor.swift` (lid + external-display away signal), protocol
+  (hello.fcmToken + protocolVersion + refreshFCMToken + PairedDevice.fcmToken),
+  RemoteServer token persistence/refresh, AgentStore routing + pushWake + catch-up.
+  Tests: ShepherdModelTests 77/0, ShepherdRemoteTests 6/0. Dark-shipped (no key
+  ⇒ no push). Live device-delivery deferred to step 3's checklist.
