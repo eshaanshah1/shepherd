@@ -181,6 +181,8 @@ final class RemoteServer {
                         conn.lock.lock(); conn.phase = .paired; conn.lock.unlock()
                         if let persistSecret {
                             persist(PairedDevice(deviceID: deviceID, secret: persistSecret, name: name, fcmToken: fcmToken))
+                        } else if let fcmToken {
+                            updateFCMToken(deviceID, fcmToken)   // known-device reconnect: reconcile a rotated token
                         }
                         admit(fd, conn)
                     case .reject(let reason):
