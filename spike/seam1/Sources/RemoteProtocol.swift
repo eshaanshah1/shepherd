@@ -99,7 +99,7 @@ func pairingDecision(deviceID: String, name: String, code: String?, secret: Stri
         return secret == dev.secret ? .accept(persistSecret: nil) : .reject(reason: "bad secret")
     }
     if let code, code == currentCode {
-        return .needsApproval(deviceID: deviceID, name: name, proposedSecret: newSecret)
+        return .needsApproval(deviceID: deviceID, name: name, proposedSecret: secret ?? newSecret)
     }
     return .reject(reason: "pairing required")
 }

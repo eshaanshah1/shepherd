@@ -596,11 +596,18 @@ final class AgentStore: ObservableObject {
             // main.sync can't deadlock. The [weak self] nil-guard returns [] if torn down.
             snapshot: { [weak self] in
                 guard let self else { return [] }
+                // admit() runs on connQueue for a known device but on the MAIN thread for a
+                // new-device approval (respondToApproval → decider → admit). main.sync from
+                // main is a libdispatch reentrancy trap, so call directly when already on main.
+                if Thread.isMainThread { return self.fleetSnapshot() }
                 return DispatchQueue.main.sync { self.fleetSnapshot() }
             },
             updateFCMToken: { [weak self] id, token in self?.updateFCMToken(deviceID: id, token: token) },
             makeSecret: { UUID().uuidString }, makeNonce: { UUID().uuidString })
-        if s.start() { remoteServer = s }
+        if s.start() {
+            remoteServer = s
+            shepherdLog("REMOTE serving on \(ip):\(remotePort) — pairing code \(pairingCode)")
+        }
     }
 
     /// The user's verdict on a pending pairing request (from the approval sheet).
