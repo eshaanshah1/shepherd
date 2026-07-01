@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func applicationWillTerminate(_ notification: Notification) {
         SleepGuard.shared.teardownAtQuit()
         AgentStore.shared.teardownAllPanes()   // close every PTY so helpers/shells don't orphan
+        AgentStore.shared.teardownSocket()     // unlink this launch's /tmp socket
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter,

@@ -18,6 +18,21 @@ final class SocketServer {
         self.onEvent = onEvent
     }
 
+    /// Unlinks any `prefix*.sock` left behind by a Shepherd process that's no longer
+    /// running (crash, `killall`, force-quit — anything that skipped this class's own
+    /// teardown). Call before binding a new socket so dead launches don't pile up in /tmp.
+    static func cleanupStale(directory: String = "/tmp", prefix: String = "shepherd-", suffix: String = ".sock") {
+        guard let entries = try? FileManager.default.contentsOfDirectory(atPath: directory) else { return }
+        for name in entries {
+            guard name.hasPrefix(prefix), name.hasSuffix(suffix) else { continue }
+            let pidString = name.dropFirst(prefix.count).dropLast(suffix.count)
+            guard let pid = pid_t(pidString), pid > 0 else { continue }
+            if kill(pid, 0) != 0 && errno == ESRCH {
+                unlink(directory + "/" + name)
+            }
+        }
+    }
+
     func start() {
         unlink(path)
         fd = socket(AF_UNIX, SOCK_STREAM, 0)
@@ -60,8 +75,17 @@ final class SocketServer {
         }
     }
 
-    deinit {
-        if fd >= 0 { close(fd) }
+    /// Deterministic unlink for the graceful-quit path — don't rely on `deinit`,
+    /// which never runs (the accept thread stays parked in `accept()`; closing its fd
+    /// from here doesn't reliably wake it on Darwin). Harmless: the process is exiting.
+    func stop() {
+        let f = fd
+        fd = -1
+        if f >= 0 { close(f) }
         unlink(path)
+    }
+
+    deinit {
+        stop()
     }
 }
