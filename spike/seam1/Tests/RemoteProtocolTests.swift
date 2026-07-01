@@ -73,6 +73,14 @@ final class RemoteProtocolTests: XCTestCase {
         XCTAssertEqual(d, .reject(reason: "pairing required"))
     }
 
+    func testPairingNewDeviceWithCodeAndSuppliedSecretPersistsThatSecret() {
+        // The phone owns its per-device secret and sends it in the first hello; the host
+        // must persist the phone-supplied secret (not its own mint) so reconnect works.
+        let d = pairingDecision(deviceID: "d2", name: "Pixel", code: "8421", secret: "phone-secret",
+                                known: [], currentCode: "8421", newSecret: "NEW")
+        XCTAssertEqual(d, .needsApproval(deviceID: "d2", name: "Pixel", proposedSecret: "phone-secret"))
+    }
+
     func testBuildSnapshotMapsRows() {
         let s = buildSnapshot([("Home", "p1", "claude", "blocked", "approve Bash")])
         XCTAssertEqual(s, [PaneInfo(paneID: "p1", title: "claude", workspace: "Home", state: "blocked", reason: "approve Bash")])
