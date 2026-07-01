@@ -84,6 +84,7 @@ final class AgentStore: ObservableObject {
     }
 
     private init() {
+        SocketServer.cleanupStale()   // sweep sockets left by dead launches (crash/killall/force-quit)
         socketPath = "/tmp/shepherd-\(getpid()).sock"   // short: stays under sun_path's 104 limit
         server = SocketServer(path: socketPath) { [weak self] paneID, event, detail in
             self?.apply(event: event, detail: detail, paneID: paneID)
@@ -250,6 +251,12 @@ final class AgentStore: ObservableObject {
     /// their shells don't reparent to launchd as orphans.
     func teardownAllPanes() {
         postPaneClosed(workspaces.flatMap { $0.tabs.flatMap { $0.root.panes.map(\.paneID) } })
+    }
+
+    /// Unlinks this launch's own socket file — the graceful-quit counterpart to
+    /// `SocketServer.cleanupStale()`'s sweep of other launches' dead sockets.
+    func teardownSocket() {
+        server?.stop()
     }
 
     // MARK: Keyboard navigation (tabs, current workspace)
