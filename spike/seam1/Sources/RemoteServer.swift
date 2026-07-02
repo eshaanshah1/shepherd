@@ -24,6 +24,7 @@ final class RemoteServer {
     private let updateFCMToken: (String, String) -> Void
     private let makeSecret: () -> String
     private let makeNonce: () -> String
+    private let lookupBroker: (String) -> PtyBroker?
 
     /// A client that can't drain a write within this many seconds is treated as dead and
     /// dropped, so a stalled reader parks at most one worker (its own queue) for ≤ this
@@ -33,6 +34,28 @@ final class RemoteServer {
 
     private let listenLock = NSLock()
     private var listenFD: Int32 = -1           // guarded by listenLock
+    private var actualPort: UInt16 = 0         // guarded by listenLock; the OS-assigned port when bound with port 0
+
+    /// The port the listen socket is actually bound to — equals `port`, or the OS-assigned
+    /// ephemeral port when constructed with port 0 (loopback tests). Zero before `start()`.
+    var boundPort: UInt16 { listenLock.lock(); defer { listenLock.unlock() }; return actualPort }
+
+    // Nonces of live control sessions. A data channel is admitted only if its dataHello
+    // carries a nonce still in this set (i.e. an authenticated control session is open).
+    private var liveNonces = Set<String>()
+    private let nonceLock = NSLock()
+
+    /// True while some live control session was issued this sessionNonce.
+    func hasLiveNonce(_ nonce: String) -> Bool {
+        nonceLock.lock(); defer { nonceLock.unlock() }; return liveNonces.contains(nonce)
+    }
+
+    // Open data-channel viewer fds keyed by the sessionNonce that admitted them. When a
+    // control session drops (closeConn) we SHUT_RDWR every data channel it authorized so a
+    // revoked/dropped device can't keep streaming. serveDataChannel is the sole CLOSER of a
+    // viewer fd; this registry is only used to wake it on revoke.
+    private var dataViewers: [String: Set<Int32>] = [:]
+    private let dataViewersLock = NSLock()
     private let acceptQueue = DispatchQueue(label: "shepherd.remote.accept", qos: .utility)
     // Per-connection reader loops run concurrently here so one's blocking read()
     // can't starve another connection's handshake or an approval callback.
@@ -59,6 +82,7 @@ final class RemoteServer {
         var phase: Phase = .unpaired
         var closed = false
         var deviceID: String?
+        var nonce: String?
         let writeQueue = DispatchQueue(label: "shepherd.remote.write", qos: .utility)
     }
 
@@ -70,12 +94,14 @@ final class RemoteServer {
          snapshot: @escaping () -> [PaneInfo],
          updateFCMToken: @escaping (String, String) -> Void,
          makeSecret: @escaping () -> String,
-         makeNonce: @escaping () -> String) {
+         makeNonce: @escaping () -> String,
+         lookupBroker: @escaping (String) -> PtyBroker? = { _ in nil }) {
         self.bindAddress = bindAddress; self.port = port
         self.currentCode = currentCode; self.knownDevices = knownDevices
         self.persist = persist; self.requestApproval = requestApproval
         self.snapshot = snapshot; self.updateFCMToken = updateFCMToken
         self.makeSecret = makeSecret; self.makeNonce = makeNonce
+        self.lookupBroker = lookupBroker
     }
 
     /// Resolve this machine's Tailscale IPv4 (100.64.0.0/10), or nil if Tailscale is down.
@@ -114,7 +140,12 @@ final class RemoteServer {
             }
         }
         guard bound == 0, listen(fd, 8) == 0 else { close(fd); return false }
-        listenLock.lock(); listenFD = fd; listenLock.unlock()
+        var actual = sockaddr_in()
+        var alen = socklen_t(MemoryLayout<sockaddr_in>.size)
+        _ = withUnsafeMutablePointer(to: &actual) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            getsockname(fd, $0, &alen)
+        } }
+        listenLock.lock(); listenFD = fd; actualPort = UInt16(bigEndian: actual.sin_port); listenLock.unlock()
         acceptQueue.async { [weak self] in self?.acceptLoop() }
         return true
     }
@@ -157,71 +188,158 @@ final class RemoteServer {
         }
     }
 
-    /// The single reader loop for one connection.
+    /// Read exactly `count` bytes from `fd`, looping over partial reads. Returns nil on
+    /// EOF/error. Used to consume EXACTLY the first frame (length prefix + body) so the
+    /// socket is never over-read — the control FrameDecoder loop (or the data raw pump)
+    /// then starts cleanly on the remaining socket bytes.
+    private func readExactly(_ fd: Int32, _ count: Int) -> [UInt8]? {
+        if count == 0 { return [] }
+        var out = [UInt8](); out.reserveCapacity(count)
+        var buf = [UInt8](repeating: 0, count: count)
+        while out.count < count {
+            let n = read(fd, &buf, count - out.count)
+            if n <= 0 { if n < 0 && errno == EINTR { continue }; return nil }
+            out.append(contentsOf: buf[0..<n])
+        }
+        return out
+    }
+
+    /// The single reader loop for one connection. Reads exactly one frame and sniffs it:
+    /// a `DataMessage.dataHello` routes to the raw PTY data channel; anything else is a
+    /// control frame and enters the control path seeded with that first message.
     private func handleConnection(_ fd: Int32) {
-        let dec = FrameDecoder()
         let conn = ConnState()
         clientsLock.lock(); conns[fd] = conn; clientsLock.unlock()
+
+        guard let lenBytes = readExactly(fd, 4) else { closeConn(fd, conn); return }
+        let len = lenBytes.withUnsafeBytes { Int(UInt32(bigEndian: $0.load(as: UInt32.self))) }
+        guard len <= 8 * 1024 * 1024, let body = readExactly(fd, len) else { closeConn(fd, conn); return }
+        let json = Data(body)
+
+        if case let .dataHello(nonce, paneID)? = try? JSONDecoder().decode(DataMessage.self, from: json) {
+            // The control server no longer owns this fd; serveDataChannel + the broker do.
+            clientsLock.lock(); conns[fd] = nil; clientsLock.unlock()
+            serveDataChannel(fd, nonce: nonce, paneID: paneID)
+            return
+        }
+        guard let first = try? JSONDecoder().decode(ControlMessage.self, from: json) else { closeConn(fd, conn); return }
+        handleControlConnection(fd, conn: conn, firstMessage: first)
+    }
+
+    private enum MsgOutcome { case keepReading, stop }
+
+    /// The control reader loop: process the sniffed first message, then keep reading frames.
+    private func handleControlConnection(_ fd: Int32, conn: ConnState, firstMessage: ControlMessage) {
+        if process(firstMessage, fd: fd, conn: conn) == .stop { return }
+        let dec = FrameDecoder()
         var buf = [UInt8](repeating: 0, count: 8192)
         while true {
             let n = read(fd, &buf, buf.count)
             if n <= 0 { break }
             let msgs = (try? dec.feed(Data(buf[0..<n]))) ?? []
             for m in msgs {
-                conn.lock.lock(); let phase = conn.phase; conn.lock.unlock()
-                if phase == .closed { closeConn(fd, conn); return }
-                switch m {
-                case let .hello(deviceID, name, code, secret, fcmToken, _) where phase == .unpaired:
-                    conn.lock.lock(); conn.deviceID = deviceID; conn.lock.unlock()
-                    let decision = pairingDecision(deviceID: deviceID, name: name, code: code, secret: secret,
-                                                   known: knownDevices(), currentCode: currentCode(),
-                                                   newSecret: makeSecret())
-                    switch decision {
-                    case let .accept(persistSecret):
-                        conn.lock.lock(); conn.phase = .paired; conn.lock.unlock()
-                        if let persistSecret {
-                            persist(PairedDevice(deviceID: deviceID, secret: persistSecret, name: name, fcmToken: fcmToken))
-                        } else if let fcmToken {
-                            updateFCMToken(deviceID, fcmToken)   // known-device reconnect: reconcile a rotated token
-                        }
-                        admit(fd, conn)
-                    case .reject(let reason):
-                        enqueueWriteThenClose(fd, encode(.rejected(reason: reason)), conn); return
-                    case let .needsApproval(approveID, approveName, proposedSecret):
-                        enqueueWrite(fd, encode(.pendingApproval), on: conn)
-                        conn.lock.lock(); conn.phase = .pending; conn.lock.unlock()
-                        // The decision may arrive on any thread (in production, the main
-                        // queue after the user taps Approve). Phase transitions are
-                        // lock-guarded and only one transition out of `.pending` wins, so
-                        // exactly one admit/reject happens; the reader loop keeps owning the fd.
-                        requestApproval(approveID, approveName) { [weak self] ok in
-                            guard let self else { return }
-                            conn.lock.lock()
-                            guard conn.phase == .pending else { conn.lock.unlock(); return }
-                            conn.phase = ok ? .paired : .closed
-                            conn.lock.unlock()
-                            if ok {
-                                self.persist(PairedDevice(deviceID: approveID, secret: proposedSecret, name: approveName, fcmToken: fcmToken))
-                                self.admit(fd, conn)
-                            } else {
-                                self.enqueueWriteThenClose(fd, self.encode(.rejected(reason: "denied")), conn)
-                            }
-                        }
-                    }
-                case .ping where phase == .paired:
-                    enqueueWrite(fd, encode(.pong), on: conn)
-                case let .refreshFCMToken(token) where phase == .paired:
-                    conn.lock.lock(); let id = conn.deviceID; conn.lock.unlock()
-                    if let id { updateFCMToken(id, token) }
-                case .detach:
-                    conn.lock.lock(); conn.phase = .closed; conn.lock.unlock()
-                    closeConn(fd, conn); return
-                default:
-                    break
-                }
+                if process(m, fd: fd, conn: conn) == .stop { return }
             }
         }
         closeConn(fd, conn)
+    }
+
+    /// Handle one control message on `conn`. `.stop` means the connection is done (closed
+    /// or handed off) and the caller must not keep reading.
+    private func process(_ m: ControlMessage, fd: Int32, conn: ConnState) -> MsgOutcome {
+        conn.lock.lock(); let phase = conn.phase; conn.lock.unlock()
+        if phase == .closed { closeConn(fd, conn); return .stop }
+        switch m {
+        case let .hello(deviceID, name, code, secret, fcmToken, _) where phase == .unpaired:
+            conn.lock.lock(); conn.deviceID = deviceID; conn.lock.unlock()
+            let decision = pairingDecision(deviceID: deviceID, name: name, code: code, secret: secret,
+                                           known: knownDevices(), currentCode: currentCode(),
+                                           newSecret: makeSecret())
+            switch decision {
+            case let .accept(persistSecret):
+                conn.lock.lock(); conn.phase = .paired; conn.lock.unlock()
+                if let persistSecret {
+                    persist(PairedDevice(deviceID: deviceID, secret: persistSecret, name: name, fcmToken: fcmToken))
+                } else if let fcmToken {
+                    updateFCMToken(deviceID, fcmToken)   // known-device reconnect: reconcile a rotated token
+                }
+                admit(fd, conn)
+            case .reject(let reason):
+                enqueueWriteThenClose(fd, encode(.rejected(reason: reason)), conn); return .stop
+            case let .needsApproval(approveID, approveName, proposedSecret):
+                enqueueWrite(fd, encode(.pendingApproval), on: conn)
+                conn.lock.lock(); conn.phase = .pending; conn.lock.unlock()
+                // The decision may arrive on any thread (in production, the main
+                // queue after the user taps Approve). Phase transitions are
+                // lock-guarded and only one transition out of `.pending` wins, so
+                // exactly one admit/reject happens; the reader loop keeps owning the fd.
+                requestApproval(approveID, approveName) { [weak self] ok in
+                    guard let self else { return }
+                    conn.lock.lock()
+                    guard conn.phase == .pending else { conn.lock.unlock(); return }
+                    conn.phase = ok ? .paired : .closed
+                    conn.lock.unlock()
+                    if ok {
+                        self.persist(PairedDevice(deviceID: approveID, secret: proposedSecret, name: approveName, fcmToken: fcmToken))
+                        self.admit(fd, conn)
+                    } else {
+                        self.enqueueWriteThenClose(fd, self.encode(.rejected(reason: "denied")), conn)
+                    }
+                }
+            }
+        case .ping where phase == .paired:
+            enqueueWrite(fd, encode(.pong), on: conn)
+        case let .refreshFCMToken(token) where phase == .paired:
+            conn.lock.lock(); let id = conn.deviceID; conn.lock.unlock()
+            if let id { updateFCMToken(id, token) }
+        case .detach:
+            conn.lock.lock(); conn.phase = .closed; conn.lock.unlock()
+            closeConn(fd, conn); return .stop
+        default:
+            break
+        }
+        return .keepReading
+    }
+
+    /// Serve a phone's raw PTY data channel: gate on a live nonce + a known pane's broker,
+    /// then DataReady → attachViewer (replays the ring + live fan-out) → pump viewer input
+    /// into the helper until EOF. On rejection or teardown the fd is shut down and closed.
+    private func serveDataChannel(_ fd: Int32, nonce: String, paneID: String) {
+        guard hasLiveNonce(nonce), let broker = lookupBroker(paneID) else {
+            _ = rawWrite(fd, (try? DataFrameCodec.encode(.dataRejected(reason: "bad nonce"))) ?? Data())
+            shutdown(fd, SHUT_RDWR); close(fd); return
+        }
+        _ = rawWrite(fd, (try? DataFrameCodec.encode(.dataReady(cols: broker.cols, rows: broker.rows))) ?? Data())
+        // Attach + register atomically under dataViewersLock, re-checking the nonce is STILL
+        // live inside the lock. closeConn removes the nonce (under nonceLock) then sweeps
+        // dataViewers[nonce] (under dataViewersLock) sequentially; if the control session
+        // dropped between the early guard and here, that sweep already ran, so the recheck
+        // fails and we abort rather than register an orphaned fd revocation already swept.
+        // Nesting is one-directional (dataViewersLock → nonceLock via hasLiveNonce); closeConn
+        // takes the two locks sequentially (not nested), so there is no AB/BA cycle.
+        dataViewersLock.lock()
+        guard hasLiveNonce(nonce) else {
+            dataViewersLock.unlock()
+            _ = rawWrite(fd, (try? DataFrameCodec.encode(.dataRejected(reason: "bad nonce"))) ?? Data())
+            shutdown(fd, SHUT_RDWR); close(fd); return
+        }
+        broker.attachViewer(fd: fd)                 // replays the ring, then registers for live fan-out
+        dataViewers[nonce, default: []].insert(fd)  // revocable by closeConn from now on
+        dataViewersLock.unlock()
+        var buf = [UInt8](repeating: 0, count: 65536)
+        while true {
+            let n = read(fd, &buf, buf.count)
+            if n <= 0 { break }
+            broker.inputFromViewer(Array(buf[0..<n]))
+        }
+        // Read-loop exit is the ONE place a viewer fd is closed. Deregister, detach from the
+        // broker, then shut down + close exactly once. closeConn/broker only SHUT_RDWR this fd.
+        dataViewersLock.lock()
+        dataViewers[nonce]?.remove(fd)
+        if dataViewers[nonce]?.isEmpty == true { dataViewers[nonce] = nil }
+        dataViewersLock.unlock()
+        broker.detachViewer(fd: fd)
+        shutdown(fd, SHUT_RDWR); close(fd)
     }
 
     /// Mark a connection paired: register it for broadcasts and send accepted + snapshot.
@@ -234,7 +352,10 @@ final class RemoteServer {
     /// for this fd ahead of its accepted/snapshot. `enqueueWrite` returns immediately
     /// (async), so the lock is never held across the actual Darwin.write.
     private func admit(_ fd: Int32, _ state: ConnState) {
-        let accepted = encode(.accepted(sessionNonce: makeNonce()))
+        let nonce = makeNonce()
+        state.lock.lock(); state.nonce = nonce; state.lock.unlock()
+        nonceLock.lock(); liveNonces.insert(nonce); nonceLock.unlock()
+        let accepted = encode(.accepted(sessionNonce: nonce))
         let snap = encode(.snapshot(panes: snapshot()))
         clientsLock.lock()
         clients[fd] = state
@@ -257,7 +378,20 @@ final class RemoteServer {
         state.lock.lock()
         if state.closed { state.lock.unlock(); return }
         state.closed = true
+        let n = state.nonce; state.nonce = nil
         state.lock.unlock()
+        if let n {
+            nonceLock.lock(); liveNonces.remove(n); nonceLock.unlock()
+            // Tear down every data channel this session authorized: SHUT_RDWR ONLY (never
+            // close — that wakes the blocked read in serveDataChannel, which is the sole
+            // closer + detacher). Held under dataViewersLock so a registered fd can't be
+            // closed by its own serveDataChannel (which removes under the same lock before
+            // closing) while we shut it down — no shutdown of a recycled fd.
+            dataViewersLock.lock()
+            for v in dataViewers[n] ?? [] { shutdown(v, SHUT_RDWR) }
+            dataViewers[n] = nil
+            dataViewersLock.unlock()
+        }
         clientsLock.lock(); clients[fd] = nil; conns[fd] = nil; clientsLock.unlock()
         shutdown(fd, SHUT_RDWR); close(fd)
     }

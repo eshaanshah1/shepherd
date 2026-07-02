@@ -50,6 +50,12 @@ final class AgentStore: ObservableObject {
     @Published var pendingApproval: (deviceID: String, name: String)?
     private var approvalDecider: ((Bool) -> Void)?
     private var remoteServer: RemoteServer?
+
+    /// Dedicated unix socket for shepherdd pty data streams, kept separate from
+    /// socketPath (which carries newline-delimited hook JSON). Injected as
+    /// $SHEPHERD_PTY_SOCK. Matches socketPath's /tmp form to stay under sun_path's 104.
+    let ptySocketPath = "/tmp/shepherd-pty-\(getpid()).sock"
+    private var ptyHub: PtyHub?
     private let remotePort: UInt16 = 8722
     private let pairedDevicesKey = "shepherd.remote.devices"
 
@@ -257,6 +263,7 @@ final class AgentStore: ObservableObject {
     /// `SocketServer.cleanupStale()`'s sweep of other launches' dead sockets.
     func teardownSocket() {
         server?.stop()
+        ptyHub?.stop(); ptyHub = nil   // wakes any live data-channel read loop
     }
 
     // MARK: Keyboard navigation (tabs, current workspace)
@@ -582,6 +589,11 @@ final class AgentStore: ObservableObject {
     /// on. No-op if already running, serving is off, or Tailscale is down (no 100.x).
     func startRemoteServingIfEnabled() {
         guard isServing, remoteServer == nil, let ip = RemoteServer.currentTailscaleIPv4() else { return }
+        // Bring the pty-data hub up before the control server so a fast first data
+        // connection finds its broker.
+        let hub = PtyHub(socketPath: ptySocketPath, makeBroker: { PtyBroker(paneID: $0, cols: $1, rows: $2) })
+        _ = hub.start()
+        ptyHub = hub
         let s = RemoteServer(
             bindAddress: ip, port: remotePort,
             currentCode: { [weak self] in self?.pairingCode ?? "" },
@@ -610,7 +622,11 @@ final class AgentStore: ObservableObject {
                 return DispatchQueue.main.sync { self.fleetSnapshot() }
             },
             updateFCMToken: { [weak self] id, token in self?.updateFCMToken(deviceID: id, token: token) },
-            makeSecret: { UUID().uuidString }, makeNonce: { UUID().uuidString })
+            makeSecret: { UUID().uuidString }, makeNonce: { UUID().uuidString },
+            // Capture the hub ONCE (just created above) rather than re-reading self.ptyHub
+            // per call: that property is written on main but this closure runs on
+            // RemoteServer's connQueue, so re-reading it would be an unsynchronized data race.
+            lookupBroker: { [weak hub] in hub?.broker(for: $0) })
         if s.start() {
             remoteServer = s
             shepherdLog("REMOTE serving on \(ip):\(remotePort) — pairing code \(pairingCode)")

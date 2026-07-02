@@ -231,4 +231,13 @@ re-derives selection from the persisted workspace/tab indices (ids regenerate).
 no external display); host mints OAuth2 from `~/.config/shepherd/fcm-service-account.json`,
 away→present replays catch-up banners. Dark-shipped (no key ⇒ no push). See
 `docs/superpowers/specs/2026-06-30-android-fcm-push-design.md`.
+**PTY data channels (Android Phase 2, host half):** a serving pane's `shepherdd pty` helper
+dials a dedicated `$SHEPHERD_PTY_SOCK` unix socket and streams its tee'd output up + injects
+input down (non-load-bearing: no/dead socket ⇒ byte-identical to M0). The app owns a per-pane
+`PtyBroker` (256 KB replay ring + viewer fan-out) via a `PtyHub`; a phone opens a separate
+nonce-gated TCP data channel per pane (`RemoteServer.serveDataChannel`: `sessionNonce` bound to a
+live control session, `DataReady{cols,rows}`, ring replay then raw duplex PTY bytes). Viewer-not-
+resizer. Dark-shipped (live only when serving + a helper exists). Pure `RemoteProtocol`/`PtyRing`
+unit-tested; loopback E2E in `ShepherdRemoteTests`; tap in `ShepherdHelperTests`. Android terminal
+client (sub-project B) is the next slice. See `docs/superpowers/specs/2026-07-02-android-phase2-data-channels-design.md`.
 **Deferred (see SPEC §6):** generic non-Claude agents (Tier-B), sidebar auto-hide at ≤1 tab, debug-log flag, IME/selection polish, multi-window, navigator popup, and **full remote control** (the big future bet).

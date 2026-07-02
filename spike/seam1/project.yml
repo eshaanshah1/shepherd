@@ -58,6 +58,7 @@ targets:
       - path: Sources/NotificationRoutingPolicy.swift
       - path: Sources/RemoteWiring.swift
       - path: Sources/RemoteProtocol.swift
+      - path: Sources/PtyBroker.swift
       - path: Tests
   ShepherdRemoteTests:
     type: bundle.unit-test
@@ -66,6 +67,7 @@ targets:
       - path: RemoteTests
       - path: Sources/RemoteProtocol.swift
       - path: Sources/RemoteServer.swift
+      - path: Sources/PtyBroker.swift
   shepherdd:
     type: tool
     platform: macOS
