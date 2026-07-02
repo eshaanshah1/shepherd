@@ -18,6 +18,7 @@ sealed interface ControlMessage {
     data class PaneAdded(val pane: PaneInfo) : ControlMessage
     data class PaneRemoved(val paneId: String) : ControlMessage
     data class PaneRenamed(val paneId: String, val title: String) : ControlMessage
+    data class Resize(val paneId: String, val cols: Int, val rows: Int) : ControlMessage
     data object Detach : ControlMessage
     data object Ping : ControlMessage
     data object Pong : ControlMessage

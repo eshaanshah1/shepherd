@@ -8,7 +8,7 @@ final class DataMessageTests: XCTestCase {
 
     func testEachCaseRoundTrips() throws {
         let cases: [DataMessage] = [
-            .dataHello(sessionNonce: "n0nce", paneID: "pane-abc"),
+            .dataHello(sessionNonce: "n0nce", paneID: "pane-abc", cols: 80, rows: 24),
             .dataReady(cols: 120, rows: 40),
             .dataRejected(reason: "bad nonce"),
             .ptyHello(paneID: "pane-abc", cols: 80, rows: 24),

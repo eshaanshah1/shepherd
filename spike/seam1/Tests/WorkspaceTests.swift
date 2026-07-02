@@ -85,4 +85,12 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertTrue(anyAgentBusy(in: [ws([.idle]), ws([.shell, .working])]))   // busy in a hidden ws
         XCTAssertTrue(anyAgentBusy(in: [ws([.needsCheck])]))
     }
+
+    func testPhoneOwnsSizeOnlyWhenDesktopPaneUnfocused() {
+        // focusedPaneID = "p1" ⇒ p1 desktop-owned (phone does NOT own); p2 phone-owned.
+        XCTAssertFalse(phoneOwnsSize(paneID: "p1", focusedPaneID: "p1", selectedTabHasPane: true))
+        XCTAssertTrue(phoneOwnsSize(paneID: "p2", focusedPaneID: "p1", selectedTabHasPane: true))
+        // pane not in the selected/visible tab ⇒ phone owns
+        XCTAssertTrue(phoneOwnsSize(paneID: "p3", focusedPaneID: "p1", selectedTabHasPane: false))
+    }
 }

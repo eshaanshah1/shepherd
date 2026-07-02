@@ -1,0 +1,19 @@
+Shepherd Android client
+========================
+
+This application includes software developed by the Termux project.
+
+Termux (terminal-emulator, terminal-view)
+------------------------------------------
+Copyright (C) Fredrik Fornwall and the Termux contributors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use these files except in compliance with the License.
+You may obtain a copy of the License at
+
+    https://www.apache.org/licenses/LICENSE-2.0
+
+Source: https://github.com/termux/termux-app (tag v0.118.0)
+Consumed as the `terminal-view` and `terminal-emulator` Gradle library
+modules via JitPack (com.github.termux.termux-app:terminal-view:v0.118.0),
+which builds the Apache-2.0 licensed modules of that repository.

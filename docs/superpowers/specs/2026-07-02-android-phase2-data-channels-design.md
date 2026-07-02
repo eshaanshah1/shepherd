@@ -280,3 +280,69 @@ Reaffirms §6 of the parent design, plus the data-channel specifics:
   **Android terminal plan (sub-project B, §5)** — the Kotlin `DataChannel` + Termux terminal view/input.
   Deferred/benign (final-review triage): PtyBroker per-viewer close-guard (vs broker-level), PtyHub
   broker reconnect-reuse, `listenFD` start/stop lock, hand-built `ptyHello` JSON escaping.
+- **2026-07-02 (sub-project B kickoff — the two open §5 questions resolved):** branch
+  `android-phase2-client-terminal` (off `master`). Scope = **full sub-project B** (all of §5) in
+  one slice, verified on a real adb-connected phone at the end. **Termux dependency = official
+  JitPack artifact**, not source-vendor: `com.termux:terminal-view:<v0.118.x>` via
+  `maven { url "https://jitpack.io" }` (Termux publishes these for termux-app ≥ 0.116;
+  `terminal-emulator` resolves transitively), Apache-2.0 NOTICE added. **Fallback:** if Gradle
+  resolution proves flaky, vendor the two library modules' source — so the plan's step 1 verifies
+  resolution before anything is built on it. Android component breakdown (mirrors Phase 1's
+  `protocol/`/`transport/`/`ui/` layout): (1) `protocol/DataMessage.kt` codec byte-pinned to the
+  Swift `DataMessage` + `Resize`, golden-vector test; (2) `transport/DataChannel.kt` — second TCP
+  socket, `DataHello`→`DataReady`, output `Flow<ByteArray>` + `input()` + `resize()`, backoff like
+  the control client; (3) `terminal/RemoteTerminalSession.kt` — drives a Termux `TerminalEmulator`
+  (sized to `DataReady`) + `TerminalView`, feeds output via `append`, routes key/text to
+  `DataChannel.input`, sends `Resize` per §5.1 (phone always sends its size; host arbitrates);
+  (4) `ui/AgentScreen.kt` + `AgentViewModel.kt` — `TerminalView` via `AndroidView` + extra-keys row
+  (Esc/Ctrl/Tab/arrows/Enter) + text field, reached from a Fleet tap or notification deep-link.
+- **2026-07-02 (resize mechanism decided — refines §5.1's "resize on the data channel"):** tracing
+  the shipped host path showed both output hot-paths (helper→app→phone) and the 256 KB replay ring
+  are pure raw, and only the helper owns Claude's inner PTY (`gMaster` via `forkpty`; a SIGWINCH
+  handler already mirrors the *outer* desktop size onto the inner PTY). To carry phone-driven resize
+  with the least surgery on reviewed host code:
+  - **Initial size folds into the attach handshake.** `DataHello` gains `cols, rows`
+    (`dataHello(sessionNonce, paneID, cols, rows)` — additive) so the phone declares its size *as it
+    attaches*; the app arbitrates, applies it to the helper, and echoes the applied size in
+    `DataReady{cols,rows}` before ring-replay + streaming. "Phone opens the chat → machine resizes →
+    streaming begins," in one round-trip.
+  - **Live resize while attached rides the CONTROL channel, not the data channel.** New additive
+    `ControlMessage.resize(paneID, cols, rows)` (phone → app) for size changes *after* attach (phone
+    rotation, soft-keyboard show/hide). The phone already holds a live, authenticated control
+    connection, so the raw data-channel output path and the ring stay **untouched** (no per-chunk
+    framing on the hot path). This supersedes §5.1's "Add `Resize` on the data channel" — same model,
+    cleaner placement.
+  - **App is the arbiter** (as §5.1 requires), and **snap-back is mandatory**: the phone owns the size
+    for a pane only while its desktop surface is **not** the focused/visible pane (`AgentStore`;
+    desktop wins ties). On phone **detach** OR **desktop refocus**, the app pushes the desktop size
+    back to the helper — otherwise Claude is left rendering ~40-col content in the full desktop pane.
+    Desktop's own resize keeps flowing through the helper's existing outer→inner SIGWINCH path and is
+    authoritative whenever it fires; the phone re-asserts its size on its next resize event.
+  - **One shipped-code protocol change (unavoidable):** the **app→helper** link (today raw injected
+    input) gains minimal typed framing — `[u32 len][1-byte type][payload]`, type `0x00` = input bytes
+    (write to `gMaster`), type `0x01` = resize (`cols,rows`) → `sh_set_winsize(gMaster)`. Low-volume
+    direction only; **helper→app output stays raw and the ring is unchanged.** Updates the shipped
+    loopback/helper tests that assert raw app→helper input.
+  - **Android stays simple:** `DataChannel` is pure raw duplex after `DataReady`; it declares the
+    initial size in `DataHello`, and live size changes go over the existing `RemoteConnection` as
+    `ControlMessage.Resize`. `RemoteTerminalSession` computes `cols×rows` from the `TerminalView`
+    size and emits it (debounced).
+  Next: writing-plans.
+- **2026-07-02 (UX refinement — desktop-owned pane shows a placeholder, not a panned grid):**
+  decided during implementation. When the **desktop owns the size** (desktop pane focused/visible),
+  the phone must NOT render a desktop-sized grid with pan/zoom (fiddly UI, poor UX). Instead the phone
+  shows a static **"Pane open on desktop"** placeholder and does not render the terminal. This
+  **replaces §5.1's pan/zoom fallback** (which is deleted — no pan/zoom is built). Mechanism, riding
+  the arbiter that already computes ownership:
+  - `DataReady` gains an **ownership flag** (`ownedByDesktop: Bool` / `phoneOwns`); the app **pushes a
+    small ownership-changed update** to the attached phone when the arbiter flips (a new tiny data- or
+    control-channel message).
+  - The app **remembers each attached viewer's last-requested size**; when ownership flips **to** the
+    phone (desktop unfocuses/detaches elsewhere), it applies that remembered size to the helper and
+    signals the phone, which swaps the placeholder for the **live, phone-width, reflowed** terminal —
+    hands-free. This also closes the earlier gap (leaving the desk did not auto-reflow the phone).
+  - Common case is unaffected: a push arrives when you're away (lid shut → desktop unfocused → phone
+    owns) → phone shows the live reflowed terminal immediately.
+  - **Scope:** additive to H5's arbiter (emit + remember size) + a small Android placeholder state on
+    the Agent screen; A4 drops the pan/zoom path. Implemented as a focused follow-up AFTER the baseline
+    lanes land, before the unified whole-branch review.

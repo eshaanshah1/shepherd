@@ -25,6 +25,10 @@ final class PtyBroker {
     let paneID: String
     private(set) var cols: Int
     private(set) var rows: Int
+    // The pane's desktop grid (the helper's launch size) — the snap-back target after a
+    // phone detaches or the pane is refocused on the Mac. Preserved across phone setSize.
+    let desktopCols: Int
+    let desktopRows: Int
     private let lock = NSLock()
     private var helperFD: Int32 = -1
     private var viewers = Set<Int32>()
@@ -32,7 +36,10 @@ final class PtyBroker {
     private var closed = false
     private let q = DispatchQueue(label: "shepherd.pty.broker")
 
-    init(paneID: String, cols: Int, rows: Int) { self.paneID = paneID; self.cols = cols; self.rows = rows }
+    init(paneID: String, cols: Int, rows: Int) {
+        self.paneID = paneID; self.cols = cols; self.rows = rows
+        self.desktopCols = cols; self.desktopRows = rows
+    }
 
     func attachHelper(fd: Int32) { lock.lock(); helperFD = fd; lock.unlock() }
 
@@ -58,7 +65,14 @@ final class PtyBroker {
 
     func inputFromViewer(_ bytes: [UInt8]) {
         lock.lock(); let h = helperFD; lock.unlock()
-        if h >= 0 { writeAll(h, bytes) }
+        if h >= 0 { writeAll(h, Array(HelperFrameCodec.encode(.input(bytes)))) }
+    }
+
+    /// Update the pane's grid and push a resize frame to the helper (which resizes
+    /// the inner PTY). Records the new size so a later DataReady reflects it.
+    func setSize(cols: Int, rows: Int) {
+        lock.lock(); self.cols = cols; self.rows = rows; let h = helperFD; lock.unlock()
+        if h >= 0 { writeAll(h, Array(HelperFrameCodec.encode(.resize(cols: cols, rows: rows)))) }
     }
 
     func close() {

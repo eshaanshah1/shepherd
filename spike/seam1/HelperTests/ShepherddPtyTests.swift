@@ -50,6 +50,18 @@ final class ShepherddPtyTests: XCTestCase {
         return (String(decoding: out, as: UTF8.self), proc.terminationStatus)
     }
 
+    func testHelperDecodesInputAndResizeFrames() {
+        // input "hi"
+        var buf: [UInt8] = [0,0,0,3, 0x00, 0x68, 0x69,
+                            // resize 40x30
+                            0,0,0,5, 0x01, 0,40, 0,30]
+        let frames = decodeHelperFrames(&buf)
+        XCTAssertEqual(frames.count, 2)
+        XCTAssertFalse(frames[0].isResize); XCTAssertEqual(frames[0].bytes, [0x68,0x69])
+        XCTAssertTrue(frames[1].isResize); XCTAssertEqual(frames[1].cols, 40); XCTAssertEqual(frames[1].rows, 30)
+        XCTAssertTrue(buf.isEmpty)   // fully consumed
+    }
+
     func testPassesChildOutputThrough() {
         let (out, code) = run(["pty", "--", "/bin/echo", "shepherd-marker"])
         XCTAssertTrue(out.contains("shepherd-marker"), "got: \(out)")
@@ -264,7 +276,11 @@ extension ShepherddPtyTests {
         writeRaw(master, Array("abc\n".utf8))                         // user types into the pane
         XCTAssertTrue(sees(conn, contains: "abc"), "cat echo not mirrored to socket")
 
-        writeRaw(conn, Array("xyz\n".utf8))                           // phone input via socket
+        // Phone input is now framed (HelperFrame.input): [u32 BE len][0x00][raw bytes].
+        let payload = Array("xyz\n".utf8)
+        var frame: [UInt8] = [0, 0, 0, UInt8(payload.count + 1), 0x00]
+        frame.append(contentsOf: payload)
+        writeRaw(conn, frame)                                         // phone input via socket
         XCTAssertTrue(sees(master, contains: "xyz"), "socket input not injected into inner PTY")
     }
 

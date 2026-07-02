@@ -30,6 +30,7 @@ enum ControlMessage: Codable, Equatable {
     case paneAdded(PaneInfo)
     case paneRemoved(paneID: String)
     case paneRenamed(paneID: String, title: String)
+    case resize(paneID: String, cols: Int, rows: Int)
     case detach
     case ping
     case pong
@@ -122,7 +123,7 @@ func tailscaleIPv4(from addrs: [(name: String, ipv4: String)]) -> String? {
 /// RAW PTY bytes (no more DataMessage frames). Same wire codec as ControlMessage but a
 /// distinct enum so control and data protocols evolve independently. Keep additive.
 enum DataMessage: Codable, Equatable {
-    case dataHello(sessionNonce: String, paneID: String)   // phone → app
+    case dataHello(sessionNonce: String, paneID: String, cols: Int, rows: Int)   // phone → app
     case dataReady(cols: Int, rows: Int)                   // app → phone
     case dataRejected(reason: String)                      // app → phone, then close
     case ptyHello(paneID: String, cols: Int, rows: Int)    // helper → app
@@ -154,5 +155,44 @@ final class DataFrameDecoder {
             msgs.append(try JSONDecoder().decode(DataMessage.self, from: json))
         }
         return msgs
+    }
+}
+
+// MARK: - App→helper frame (Phase 2 resize)
+// [u32 BE len][1-byte type][payload]. type 0x00 = input (raw bytes); 0x01 = resize [u16 BE cols][u16 BE rows].
+// helper→app output stays raw; only this low-volume direction is framed.
+enum HelperFrame: Equatable { case input([UInt8]); case resize(cols: Int, rows: Int) }
+
+enum HelperFrameCodec {
+    static func encode(_ f: HelperFrame) -> Data {
+        var body: [UInt8]
+        switch f {
+        case .input(let b): body = [0x00] + b
+        case .resize(let c, let r):
+            body = [0x01, UInt8((c >> 8) & 0xff), UInt8(c & 0xff), UInt8((r >> 8) & 0xff), UInt8(r & 0xff)]
+        }
+        var len = UInt32(body.count).bigEndian
+        var out = Data(bytes: &len, count: 4); out.append(contentsOf: body); return out
+    }
+}
+
+final class HelperFrameDecoder {
+    private var buf = [UInt8]()
+    func feed(_ d: Data) -> [HelperFrame] {
+        buf.append(contentsOf: d)
+        var out = [HelperFrame]()
+        while buf.count >= 4 {
+            let len = (Int(buf[0]) << 24) | (Int(buf[1]) << 16) | (Int(buf[2]) << 8) | Int(buf[3])
+            if len <= 0 || buf.count < 4 + len { break }
+            let body = Array(buf[4..<4+len]); buf.removeFirst(4 + len)
+            switch body[0] {
+            case 0x00: out.append(.input(Array(body[1...])))
+            case 0x01 where body.count == 5:
+                out.append(.resize(cols: (Int(body[1]) << 8) | Int(body[2]),
+                                   rows: (Int(body[3]) << 8) | Int(body[4])))
+            default: break
+            }
+        }
+        return out
     }
 }

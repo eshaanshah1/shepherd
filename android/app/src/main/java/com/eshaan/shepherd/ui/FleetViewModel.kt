@@ -14,6 +14,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
+/** Where the Fleet screen wants to navigate next (a pane tap or a notification deep-link). */
+sealed interface NavTarget {
+    data class Agent(val paneId: String) : NavTarget
+}
+
 class FleetViewModel(
     private val store: PairingStore,
     private val fcmToken: suspend () -> String?,
@@ -23,7 +28,17 @@ class FleetViewModel(
     val fleet: StateFlow<Fleet> = _fleet
     private val _connected = MutableStateFlow(false)
     val connected: StateFlow<Boolean> = _connected
+    private val _navTarget = MutableStateFlow<NavTarget?>(null)
+    val navTarget: StateFlow<NavTarget?> = _navTarget
     private var conn: RemoteConnection? = null
+
+    /** The live control connection + its endpoint, for the Agent screen to open a data channel. */
+    val activeConnection: RemoteConnection? get() = conn
+    val host: String? get() = store.load()?.host
+    val port: Int? get() = store.load()?.port
+
+    fun openAgent(paneId: String) { _navTarget.value = NavTarget.Agent(paneId) }
+    fun consumeNavTarget() { _navTarget.value = null }
     private var connectJob: Job? = null
     private var inboundJob: Job? = null
     private var statusJob: Job? = null

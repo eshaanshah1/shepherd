@@ -25,6 +25,11 @@ final class RemoteServer {
     private let makeSecret: () -> String
     private let makeNonce: () -> String
     private let lookupBroker: (String) -> PtyBroker?
+    // "Does the phone currently own the size for this paneID?" — desktop wins ties.
+    // Defaults to always-own for tests/dark-ship; AgentStore wires the real arbiter.
+    private let sizeArbiter: (String) -> Bool
+    // The pane's last-known desktop grid, used to snap back on data-channel detach.
+    private let desktopSize: (String) -> (Int, Int)?
 
     /// A client that can't drain a write within this many seconds is treated as dead and
     /// dropped, so a stalled reader parks at most one worker (its own queue) for ≤ this
@@ -56,6 +61,10 @@ final class RemoteServer {
     // viewer fd; this registry is only used to wake it on revoke.
     private var dataViewers: [String: Set<Int32>] = [:]
     private let dataViewersLock = NSLock()
+    // Each attached pane's last phone-requested size, remembered even when the arbiter didn't apply
+    // it (desktop owned), so it can be re-applied when the Mac goes away (lid shut). Cleared on detach.
+    private var lastPhoneSize: [String: (Int, Int)] = [:]
+    private let phoneSizeLock = NSLock()
     private let acceptQueue = DispatchQueue(label: "shepherd.remote.accept", qos: .utility)
     // Per-connection reader loops run concurrently here so one's blocking read()
     // can't starve another connection's handshake or an approval callback.
@@ -95,13 +104,16 @@ final class RemoteServer {
          updateFCMToken: @escaping (String, String) -> Void,
          makeSecret: @escaping () -> String,
          makeNonce: @escaping () -> String,
-         lookupBroker: @escaping (String) -> PtyBroker? = { _ in nil }) {
+         lookupBroker: @escaping (String) -> PtyBroker? = { _ in nil },
+         sizeArbiter: @escaping (String) -> Bool = { _ in true },
+         desktopSize: @escaping (String) -> (Int, Int)? = { _ in nil }) {
         self.bindAddress = bindAddress; self.port = port
         self.currentCode = currentCode; self.knownDevices = knownDevices
         self.persist = persist; self.requestApproval = requestApproval
         self.snapshot = snapshot; self.updateFCMToken = updateFCMToken
         self.makeSecret = makeSecret; self.makeNonce = makeNonce
         self.lookupBroker = lookupBroker
+        self.sizeArbiter = sizeArbiter; self.desktopSize = desktopSize
     }
 
     /// Resolve this machine's Tailscale IPv4 (100.64.0.0/10), or nil if Tailscale is down.
@@ -216,10 +228,10 @@ final class RemoteServer {
         guard len <= 8 * 1024 * 1024, let body = readExactly(fd, len) else { closeConn(fd, conn); return }
         let json = Data(body)
 
-        if case let .dataHello(nonce, paneID)? = try? JSONDecoder().decode(DataMessage.self, from: json) {
+        if case let .dataHello(nonce, paneID, cols, rows)? = try? JSONDecoder().decode(DataMessage.self, from: json) {
             // The control server no longer owns this fd; serveDataChannel + the broker do.
             clientsLock.lock(); conns[fd] = nil; clientsLock.unlock()
-            serveDataChannel(fd, nonce: nonce, paneID: paneID)
+            serveDataChannel(fd, nonce: nonce, paneID: paneID, cols: cols, rows: rows)
             return
         }
         guard let first = try? JSONDecoder().decode(ControlMessage.self, from: json) else { closeConn(fd, conn); return }
@@ -292,6 +304,8 @@ final class RemoteServer {
         case let .refreshFCMToken(token) where phase == .paired:
             conn.lock.lock(); let id = conn.deviceID; conn.lock.unlock()
             if let id { updateFCMToken(id, token) }
+        case let .resize(paneID, cols, rows) where phase == .paired:
+            applyResize(paneID: paneID, cols: cols, rows: rows)
         case .detach:
             conn.lock.lock(); conn.phase = .closed; conn.lock.unlock()
             closeConn(fd, conn); return .stop
@@ -304,11 +318,14 @@ final class RemoteServer {
     /// Serve a phone's raw PTY data channel: gate on a live nonce + a known pane's broker,
     /// then DataReady → attachViewer (replays the ring + live fan-out) → pump viewer input
     /// into the helper until EOF. On rejection or teardown the fd is shut down and closed.
-    private func serveDataChannel(_ fd: Int32, nonce: String, paneID: String) {
+    private func serveDataChannel(_ fd: Int32, nonce: String, paneID: String, cols: Int, rows: Int) {
         guard hasLiveNonce(nonce), let broker = lookupBroker(paneID) else {
             _ = rawWrite(fd, (try? DataFrameCodec.encode(.dataRejected(reason: "bad nonce"))) ?? Data())
             shutdown(fd, SHUT_RDWR); close(fd); return
         }
+        // Apply the phone's attach size if it currently owns the pane, so the ring replay
+        // and live output reflow to the phone before streaming. DataReady echoes the size.
+        if sizeArbiter(paneID) { broker.setSize(cols: cols, rows: rows) }
         _ = rawWrite(fd, (try? DataFrameCodec.encode(.dataReady(cols: broker.cols, rows: broker.rows))) ?? Data())
         // Attach + register atomically under dataViewersLock, re-checking the nonce is STILL
         // live inside the lock. closeConn removes the nonce (under nonceLock) then sweeps
@@ -339,7 +356,35 @@ final class RemoteServer {
         if dataViewers[nonce]?.isEmpty == true { dataViewers[nonce] = nil }
         dataViewersLock.unlock()
         broker.detachViewer(fd: fd)
+        // Detach: snap the pane back to its desktop size so the Mac grid is never left
+        // sized to the phone. Only when we know the desktop size (AgentStore provides it).
+        if let (dc, dr) = desktopSize(paneID) { broker.setSize(cols: dc, rows: dr) }
+        phoneSizeLock.lock(); lastPhoneSize[paneID] = nil; phoneSizeLock.unlock()
         shutdown(fd, SHUT_RDWR); close(fd)
+    }
+
+    /// Apply a live resize from the phone's control channel, gated on the arbiter. The requested
+    /// size is remembered regardless so it can be re-applied if the Mac later goes away.
+    func applyResize(paneID: String, cols: Int, rows: Int) {
+        phoneSizeLock.lock(); lastPhoneSize[paneID] = (cols, rows); phoneSizeLock.unlock()
+        guard sizeArbiter(paneID), let b = lookupBroker(paneID) else { return }
+        b.setSize(cols: cols, rows: rows)
+    }
+
+    /// Re-apply every attached pane's last phone-requested size — called when the Mac goes away
+    /// (lid shut) so already-attached phones reflow to their grid without having to re-send it.
+    func reapplyPhoneSizes() {
+        phoneSizeLock.lock(); let sizes = lastPhoneSize; phoneSizeLock.unlock()
+        for (paneID, sz) in sizes {
+            guard sizeArbiter(paneID), let b = lookupBroker(paneID) else { continue }
+            b.setSize(cols: sz.0, rows: sz.1)
+        }
+    }
+
+    /// Force a pane back to its desktop size, bypassing the arbiter — a desktop refocus
+    /// is authoritative and always reclaims the size from the phone.
+    func applyResizeForcingDesktop(paneID: String, cols: Int, rows: Int) {
+        lookupBroker(paneID)?.setSize(cols: cols, rows: rows)
     }
 
     /// Mark a connection paired: register it for broadcasts and send accepted + snapshot.

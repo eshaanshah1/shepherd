@@ -37,7 +37,10 @@ final class DataChannelTests: XCTestCase {
         let ptyPath = NSTemporaryDirectory() + "shep-pty-\(UInt32.random(in: 0..<UInt32.max)).sock"
         let hub = PtyHub(socketPath: ptyPath, makeBroker: { PtyBroker(paneID: $0, cols: $1, rows: $2) })
         XCTAssertTrue(hub.start()); defer { hub.stop() }
-        let server = try makePairedLoopbackServer(lookupBroker: { hub.broker(for: $0) })
+        // Phone does NOT own the size here (arbiter false), so no attach/detach resize
+        // frames pollute the helper stream — this test isolates streaming + input framing.
+        let server = try makePairedLoopbackServer(lookupBroker: { hub.broker(for: $0) },
+                                                  sizeArbiter: { _ in false })
         defer { server.stop() }
         let (ctlFD, nonce) = try pairAndGetNonce(server); defer { close(ctlFD) }
 
@@ -50,16 +53,48 @@ final class DataChannelTests: XCTestCase {
 
         // phone opens the data channel with the nonce
         let dataFD = try connectTCP(server.boundPort); defer { close(dataFD) }
-        try writeFrame(dataFD, .dataHello(sessionNonce: nonce, paneID: "paneY"))
+        try writeFrame(dataFD, .dataHello(sessionNonce: nonce, paneID: "paneY", cols: 90, rows: 25))
         let ready = try readOneDataMessage(dataFD)
         XCTAssertEqual(ready, .dataReady(cols: 90, rows: 25))
         XCTAssertEqual(try readRaw(dataFD, 3), Array("PRE".utf8))  // ring replay
 
-        // live fan-out + input round-trip
+        // live fan-out (raw, viewer direction) + input round-trip (framed, helper direction)
         writeRaw(helperFD, Array("LIVE".utf8))
         XCTAssertEqual(try readRaw(dataFD, 4), Array("LIVE".utf8))
         writeRaw(dataFD, Array("keys".utf8))
-        XCTAssertEqual(try readRaw(helperFD, 4), Array("keys".utf8))
+        let keyFrame = Array(HelperFrameCodec.encode(.input(Array("keys".utf8))))
+        XCTAssertEqual(try readRaw(helperFD, keyFrame.count), keyFrame)
+    }
+
+    // MARK: - Phase 2: attach size + snap-back on detach
+
+    func testDataChannelAppliesAttachSizeAndSnapsBack() throws {
+        let ptyPath = NSTemporaryDirectory() + "shep-pty-\(UInt32.random(in: 0..<UInt32.max)).sock"
+        let hub = PtyHub(socketPath: ptyPath, makeBroker: { PtyBroker(paneID: $0, cols: $1, rows: $2) })
+        XCTAssertTrue(hub.start()); defer { hub.stop() }
+        // Phone owns the size (arbiter true), desktop grid is 80x24 (snap-back target).
+        let server = try makePairedLoopbackServer(lookupBroker: { hub.broker(for: $0) },
+                                                  sizeArbiter: { _ in true },
+                                                  desktopSize: { _ in (80, 24) })
+        defer { server.stop() }
+        let (ctlFD, nonce) = try pairAndGetNonce(server); defer { close(ctlFD) }
+
+        let helperFD = try connectUnix(ptyPath); defer { close(helperFD) }
+        try writeFrame(helperFD, .ptyHello(paneID: "p1", cols: 80, rows: 24))
+        _ = try waitFor { hub.broker(for: "p1") }
+
+        let dataFD = try connectTCP(server.boundPort)
+        try writeFrame(dataFD, .dataHello(sessionNonce: nonce, paneID: "p1", cols: 40, rows: 30))
+
+        // Attach applies the phone's size to the helper, and DataReady echoes it.
+        let attach = Array(HelperFrameCodec.encode(.resize(cols: 40, rows: 30)))
+        XCTAssertEqual(try readRaw(helperFD, attach.count), attach)
+        XCTAssertEqual(try readOneDataMessage(dataFD), .dataReady(cols: 40, rows: 30))
+
+        // Detach snaps the pane back to the desktop size.
+        close(dataFD)
+        let snap = Array(HelperFrameCodec.encode(.resize(cols: 80, rows: 24)))
+        XCTAssertEqual(try readRaw(helperFD, snap.count), snap)
     }
 
     func testDataChannelRejectsBadNonce() throws {
@@ -69,8 +104,28 @@ final class DataChannelTests: XCTestCase {
         let server = try makePairedLoopbackServer(lookupBroker: { hub.broker(for: $0) })
         defer { server.stop() }
         let dataFD = try connectTCP(server.boundPort); defer { close(dataFD) }
-        try writeFrame(dataFD, .dataHello(sessionNonce: "not-a-real-nonce", paneID: "paneY"))
+        try writeFrame(dataFD, .dataHello(sessionNonce: "not-a-real-nonce", paneID: "paneY", cols: 80, rows: 24))
         XCTAssertEqual(try readOneDataMessage(dataFD), .dataRejected(reason: "bad nonce"))
+    }
+
+    // MARK: - H5: control-channel resize reaches the helper (arbiter true)
+
+    func testControlResizeReachesHelper() throws {
+        let ptyPath = NSTemporaryDirectory() + "shep-pty-\(UInt32.random(in: 0..<UInt32.max)).sock"
+        let hub = PtyHub(socketPath: ptyPath, makeBroker: { PtyBroker(paneID: $0, cols: $1, rows: $2) })
+        XCTAssertTrue(hub.start()); defer { hub.stop() }
+        let server = try makePairedLoopbackServer(lookupBroker: { hub.broker(for: $0) },
+                                                  sizeArbiter: { _ in true })
+        defer { server.stop() }
+        let (ctlFD, _) = try pairAndGetNonce(server); defer { close(ctlFD) }
+
+        let helperFD = try connectUnix(ptyPath); defer { close(helperFD) }
+        try writeFrame(helperFD, .ptyHello(paneID: "p1", cols: 80, rows: 24))
+        _ = try waitFor { hub.broker(for: "p1") }
+
+        try writeControl(ctlFD, .resize(paneID: "p1", cols: 50, rows: 20))
+        let frame = Array(HelperFrameCodec.encode(.resize(cols: 50, rows: 20)))
+        XCTAssertEqual(try readRaw(helperFD, frame.count), frame)
     }
 
     // MARK: - C1: a data channel must not outlive its control session
@@ -88,7 +143,7 @@ final class DataChannelTests: XCTestCase {
         _ = try waitFor { hub.broker(for: "paneZ") }
 
         let dataFD = try connectTCP(server.boundPort); defer { close(dataFD) }
-        try writeFrame(dataFD, .dataHello(sessionNonce: nonce, paneID: "paneZ"))
+        try writeFrame(dataFD, .dataHello(sessionNonce: nonce, paneID: "paneZ", cols: 80, rows: 24))
         XCTAssertEqual(try readOneDataMessage(dataFD), .dataReady(cols: 80, rows: 24))
 
         // Drop the control session: the nonce is revoked AND the open data channel is torn down.
@@ -112,7 +167,7 @@ final class DataChannelTests: XCTestCase {
         _ = try waitFor { hub.broker(for: "paneH") }
 
         let dataFD = try connectTCP(server.boundPort); defer { close(dataFD) }
-        try writeFrame(dataFD, .dataHello(sessionNonce: nonce, paneID: "paneH"))
+        try writeFrame(dataFD, .dataHello(sessionNonce: nonce, paneID: "paneH", cols: 80, rows: 24))
         XCTAssertEqual(try readOneDataMessage(dataFD), .dataReady(cols: 80, rows: 24))
 
         // Close the helper (pane closed): broker.close() SHUT_RDWRs the viewer, serveDataChannel
@@ -140,7 +195,9 @@ final class DataChannelTests: XCTestCase {
 
     /// Start a RemoteServer on an ephemeral 127.0.0.1 port that auto-approves pairing and
     /// mints a unique nonce per session. `lookupBroker` defaults to none (control-only tests).
-    func makePairedLoopbackServer(lookupBroker: @escaping (String) -> PtyBroker? = { _ in nil }) throws -> RemoteServer {
+    func makePairedLoopbackServer(lookupBroker: @escaping (String) -> PtyBroker? = { _ in nil },
+                                  sizeArbiter: @escaping (String) -> Bool = { _ in true },
+                                  desktopSize: @escaping (String) -> (Int, Int)? = { _ in nil }) throws -> RemoteServer {
         let server = RemoteServer(
             bindAddress: "127.0.0.1", port: 0,
             currentCode: { "8421" },
@@ -151,7 +208,9 @@ final class DataChannelTests: XCTestCase {
             updateFCMToken: { _, _ in },
             makeSecret: { "SECRET" },
             makeNonce: { UUID().uuidString },
-            lookupBroker: lookupBroker)
+            lookupBroker: lookupBroker,
+            sizeArbiter: sizeArbiter,
+            desktopSize: desktopSize)
         XCTAssertTrue(server.start())
         return server
     }

@@ -68,6 +68,12 @@ final class Tee {
 // MARK: - winsize handling
 
 var gMaster: Int32 = -1
+
+func applyResize(cols: Int, rows: Int) {
+    var ws = winsize(ws_row: UInt16(rows), ws_col: UInt16(cols), ws_xpixel: 0, ws_ypixel: 0)
+    _ = sh_set_winsize(gMaster, &ws)
+}
+
 func installWinchForwarder() {
     signal(SIGWINCH) { _ in
         var ws = winsize()
@@ -128,6 +134,20 @@ func pump(master: Int32) {
             off += w
         }
     }
+    // Write an arbitrary byte array to `fd` (decoded app→helper input isn't in `buf`).
+    func writeBytes(_ fd: Int32, _ bytes: [UInt8]) {
+        var off = 0
+        bytes.withUnsafeBufferPointer { p in
+            guard let base = p.baseAddress else { return }
+            while off < bytes.count {
+                let w = write(fd, base + off, bytes.count - off)
+                if w < 0 { if errno == EINTR || errno == EAGAIN { continue }; return }
+                off += w
+            }
+        }
+    }
+    // App→helper bytes are framed (HelperFrame): accumulate + decode across reads.
+    var appInBuf = [UInt8]()
     // n==0 is EOF; n<0 is closed too, unless it's a transient EINTR/EAGAIN. On macOS
     // a pty read after the far end closes returns -1/EIO (not 0), so we must treat
     // that as closed or the loop spins instead of tearing down.
@@ -169,7 +189,13 @@ func pump(master: Int32) {
             var dead = pfds[2].revents & hup != 0
             if !dead, pfds[2].revents & Int16(POLLIN) != 0 {
                 let n = read(tap, buf, cap)
-                if n > 0 { writeAll(master, n) } else if closed(n) { dead = true }
+                if n > 0 {
+                    appInBuf.append(contentsOf: UnsafeBufferPointer(start: buf, count: n))
+                    for f in decodeHelperFrames(&appInBuf) {
+                        if f.isResize { applyResize(cols: f.cols, rows: f.rows) }
+                        else { writeBytes(master, f.bytes) }
+                    }
+                } else if closed(n) { dead = true }
             }
             if dead { Tee.shared.disable(); pfds[2].fd = -1 }
         }

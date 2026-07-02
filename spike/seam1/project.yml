@@ -85,5 +85,19 @@ targets:
         SWIFT_OBJC_BRIDGING_HEADER: HelperTests/PtyShim.h
     sources:
       - path: HelperTests
+      - path: Helper/HelperFrame.swift
     dependencies:
       - target: shepherdd
+schemes:
+  Shepherd:
+    build:
+      targets:
+        Shepherd: all
+        ShepherdModelTests: [test]
+        ShepherdRemoteTests: [test]
+        ShepherdHelperTests: [test]
+    test:
+      targets:
+        - ShepherdModelTests
+        - ShepherdRemoteTests
+        - ShepherdHelperTests

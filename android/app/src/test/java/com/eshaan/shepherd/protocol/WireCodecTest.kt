@@ -63,6 +63,12 @@ class WireCodecTest {
         assertTrue(decodeOne("""{"pong":{}}""") is ControlMessage.Pong)
     }
 
+    @Test fun encodesResizeMatchesSwift() {
+        val json = frameJson(ControlMessage.Resize("p1", 40, 30))
+        assertTrue(json.contains("\"resize\"")); assertTrue(json.contains("\"paneID\":\"p1\""))
+        assertTrue(json.contains("\"cols\":40")); assertTrue(json.contains("\"rows\":30"))
+    }
+
     @Test fun decoderReassemblesSplitAndCoalescedFrames() {
         val a = WireCodec.encode(ControlMessage.Ping)
         val b = WireCodec.encode(ControlMessage.Pong)
