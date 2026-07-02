@@ -160,6 +160,158 @@ extension ShepherddPtyTests {
 }
 
 extension ShepherddPtyTests {
+    // The tap: with $SHEPHERD_PTY_SOCK pointed at a listener the test owns, the helper
+    // dials in, sends a ptyHello frame, mirrors inner output to the socket, and injects
+    // bytes written to the socket into the inner PTY.
+
+    /// Bind + listen on a unix socket at `path`; return the listening fd.
+    private func startUnixListener(_ path: String) throws -> Int32 {
+        unlink(path)
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        XCTAssertGreaterThanOrEqual(fd, 0, "socket()")
+        var addr = sockaddr_un(); addr.sun_family = sa_family_t(AF_UNIX)
+        _ = path.withCString { strncpy(&addr.sun_path.0, $0, MemoryLayout.size(ofValue: addr.sun_path) - 1) }
+        let br = withUnsafePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) } }
+        XCTAssertEqual(br, 0, "bind(\(path)) errno=\(errno)")
+        XCTAssertEqual(listen(fd, 4), 0, "listen")
+        return fd
+    }
+
+    /// Accept one connection within `timeout`, or fail.
+    private func acceptOne(_ listenFD: Int32, timeout: TimeInterval = 5) throws -> Int32 {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            var pfd = pollfd(fd: listenFD, events: Int16(POLLIN), revents: 0)
+            if poll(&pfd, 1, 200) > 0 {
+                let c = accept(listenFD, nil, nil)
+                if c >= 0 { return c }
+            }
+        }
+        XCTFail("helper never dialed in"); return -1
+    }
+
+    /// Read the first `[u32 BE len][json]` frame off `fd` and parse its JSON,
+    /// returning the inner `ptyHello` object as a dictionary.
+    private func readOnePtyHelloJSON(_ fd: Int32, timeout: TimeInterval = 5) throws -> [String: Any] {
+        var acc = [UInt8]()
+        let deadline = Date().addingTimeInterval(timeout)
+        func needBytes(_ k: Int) -> Bool {
+            while acc.count < k, Date() < deadline {
+                var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+                if poll(&pfd, 1, 200) > 0 {
+                    var b = [UInt8](repeating: 0, count: 4096)
+                    let n = read(fd, &b, b.count)
+                    if n > 0 { acc.append(contentsOf: b[0..<n]) } else { break }
+                }
+            }
+            return acc.count >= k
+        }
+        guard needBytes(4) else { XCTFail("no frame header"); return [:] }
+        let len = (UInt32(acc[0]) << 24) | (UInt32(acc[1]) << 16) | (UInt32(acc[2]) << 8) | UInt32(acc[3])
+        guard needBytes(4 + Int(len)) else { XCTFail("frame body truncated"); return [:] }
+        let json = Data(acc[4..<(4 + Int(len))])
+        let obj = (try? JSONSerialization.jsonObject(with: json)) as? [String: Any]
+        return (obj?["ptyHello"] as? [String: Any]) ?? [:]
+    }
+
+    /// True if `fd` yields bytes containing `needle` within `timeout`.
+    private func sees(_ fd: Int32, contains needle: String, timeout: TimeInterval = 5) -> Bool {
+        var acc = Data(); var buf = [UInt8](repeating: 0, count: 4096)
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+            if poll(&pfd, 1, 200) > 0 {
+                let n = read(fd, &buf, buf.count)
+                if n > 0 { acc.append(contentsOf: buf[0..<n]); if String(decoding: acc, as: UTF8.self).contains(needle) { return true } }
+                else { break }
+            }
+        }
+        return false
+    }
+
+    private func writeRaw(_ fd: Int32, _ bytes: [UInt8]) {
+        var b = bytes; _ = b.withUnsafeBytes { write(fd, $0.baseAddress, bytes.count) }
+    }
+
+    func testHelperStreamsAndInjectsOverPtySock() throws {
+        let path = NSTemporaryDirectory() + "shep-pty-t-\(UInt32.random(in: 0..<UInt32.max)).sock"
+        let listenFD = try startUnixListener(path)
+        defer { close(listenFD); unlink(path) }
+
+        var master: Int32 = 0, slave: Int32 = 0
+        var ws = winsize(ws_row: 24, ws_col: 80, ws_xpixel: 0, ws_ypixel: 0)
+        XCTAssertEqual(openpty(&master, &slave, nil, nil, &ws), 0, "openpty")
+
+        let proc = Process()
+        proc.executableURL = helperURL()
+        proc.arguments = ["pty", "--", "/bin/cat"]
+        var env = ProcessInfo.processInfo.environment
+        env["SHEPHERD_PTY_SOCK"] = path
+        env["SHEPHERD_TAB_ID"] = "paneZ"
+        proc.environment = env
+        let h = FileHandle(fileDescriptor: slave, closeOnDealloc: false)
+        proc.standardInput = h; proc.standardOutput = h; proc.standardError = h
+        do { try proc.run() } catch { XCTFail("launch: \(error)"); return }
+        close(slave)
+        defer { proc.terminate(); proc.waitUntilExit(); close(master) }
+
+        let conn = try acceptOne(listenFD)
+        defer { close(conn) }
+        let hello = try readOnePtyHelloJSON(conn)
+        XCTAssertEqual(hello["paneID"] as? String, "paneZ")
+
+        writeRaw(master, Array("abc\n".utf8))                         // user types into the pane
+        XCTAssertTrue(sees(conn, contains: "abc"), "cat echo not mirrored to socket")
+
+        writeRaw(conn, Array("xyz\n".utf8))                           // phone input via socket
+        XCTAssertTrue(sees(master, contains: "xyz"), "socket input not injected into inner PTY")
+    }
+
+    // Regression: the tap is strictly non-load-bearing. When the app closes the helper's
+    // tap socket mid-session, the tap fd goes to persistent-readable EOF — the pump must
+    // retire that fd (no busy-spin) and the LOCAL terminal must keep working exactly as M0.
+    func testLocalTerminalSurvivesTapClose() throws {
+        let path = NSTemporaryDirectory() + "shep-pty-death-\(UInt32.random(in: 0..<UInt32.max)).sock"
+        let listenFD = try startUnixListener(path)
+        defer { close(listenFD); unlink(path) }
+
+        var master: Int32 = 0, slave: Int32 = 0
+        var ws = winsize(ws_row: 24, ws_col: 80, ws_xpixel: 0, ws_ypixel: 0)
+        XCTAssertEqual(openpty(&master, &slave, nil, nil, &ws), 0, "openpty")
+
+        let proc = Process()
+        proc.executableURL = helperURL()
+        proc.arguments = ["pty", "--", "/bin/cat"]
+        var env = ProcessInfo.processInfo.environment
+        env["SHEPHERD_PTY_SOCK"] = path
+        env["SHEPHERD_TAB_ID"] = "paneDeath"
+        proc.environment = env
+        let h = FileHandle(fileDescriptor: slave, closeOnDealloc: false)
+        proc.standardInput = h; proc.standardOutput = h; proc.standardError = h
+        do { try proc.run() } catch { XCTFail("launch: \(error)"); return }
+        close(slave)
+        defer { proc.terminate(); proc.waitUntilExit(); close(master) }
+
+        let conn = try acceptOne(listenFD)
+        _ = try readOnePtyHelloJSON(conn)
+
+        // Sanity: the tap is live and mirroring.
+        writeRaw(master, Array("before\n".utf8))
+        XCTAssertTrue(sees(conn, contains: "before"), "tap not mirroring before close")
+
+        // The app drops the tap socket mid-session.
+        close(conn)
+        usleep(300_000)          // let the helper observe EOF and retire the tap slot
+
+        // The key guarantee: the local terminal still round-trips through the inner PTY.
+        writeRaw(master, Array("survive\n".utf8))
+        XCTAssertTrue(sees(master, contains: "survive"),
+                      "local terminal stopped echoing after the tap died — tap was load-bearing")
+    }
+}
+
+extension ShepherddPtyTests {
     // Regression: when libghostty kills the pane it closes the OUTER pty. The helper
     // must tear down — break its pump AND hang up the inner shell — instead of
     // blocking in waitpid on a child that has no reason to exit. Otherwise the helper

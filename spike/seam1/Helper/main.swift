@@ -9,11 +9,60 @@ import Foundation
 // window size preserved. Output flows through Tee so a later milestone can fan
 // it out to a replay buffer + the network without restructuring this loop.
 
-// MARK: - Output tap (no-op until M2)
+// MARK: - Output tap
 
+// Streams the inner PTY's output to the app's pty-data socket and injects bytes
+// received back from it into the inner PTY. Strictly best-effort: if
+// $SHEPHERD_PTY_SOCK is unset, the dial fails, or the socket dies, the tap stays
+// disabled (sock == -1) and the helper behaves byte-identically to M0 — the local
+// terminal is never blocked or broken by the tap.
 final class Tee {
     static let shared = Tee()
-    func output(_ buf: UnsafePointer<UInt8>, count: Int) { /* M2: ring buffer + network */ }
+    private var sock: Int32 = -1
+
+    func connect(paneID: String, cols: Int, rows: Int) {
+        guard let path = ProcessInfo.processInfo.environment["SHEPHERD_PTY_SOCK"], !path.isEmpty else { return }
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0); guard fd >= 0 else { return }
+        var addr = sockaddr_un(); addr.sun_family = sa_family_t(AF_UNIX)
+        _ = path.withCString { strncpy(&addr.sun_path.0, $0, MemoryLayout.size(ofValue: addr.sun_path) - 1) }
+        let ok = withUnsafePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) == 0 } }
+        guard ok else { close(fd); return }
+        // Non-blocking: output() runs inline in the pump hot path, so a wedged-but-open
+        // socket must never stall the local terminal — a full send buffer drops the burst.
+        _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK)
+        // {"ptyHello":{"paneID":"…","cols":N,"rows":N}} — must match RemoteProtocol.DataMessage.
+        let json = "{\"ptyHello\":{\"paneID\":\"\(paneID)\",\"cols\":\(cols),\"rows\":\(rows)}}"
+        let jd = Array(json.utf8); var len = UInt32(jd.count).bigEndian
+        var frame = [UInt8](); withUnsafeBytes(of: &len) { frame.append(contentsOf: $0) }; frame.append(contentsOf: jd)
+        _ = frame.withUnsafeBytes { write(fd, $0.baseAddress, frame.count) }
+        sock = fd
+    }
+
+    var fd: Int32 { sock }
+
+    // Tear the tap down: close the socket and mark it dead so output() no-ops and the
+    // pump can retire its poll slot. Idempotent — called on EOF/POLLHUP of the tap fd.
+    func disable() {
+        guard sock >= 0 else { return }
+        close(sock)
+        sock = -1
+    }
+
+    func output(_ buf: UnsafePointer<UInt8>, count: Int) {
+        guard sock >= 0 else { return }
+        var off = 0
+        while off < count {
+            let w = write(sock, buf + off, count - off)
+            if w < 0 {
+                if errno == EINTR { continue }
+                // EAGAIN/EWOULDBLOCK: send buffer full. Drop the rest of this burst
+                // rather than spin — the app-side replay ring + reattach recover.
+                return
+            }
+            off += w
+        }
+    }
 }
 
 // MARK: - winsize handling
@@ -85,8 +134,10 @@ func pump(master: Int32) {
     func closed(_ n: Int) -> Bool { n == 0 || (n < 0 && errno != EINTR && errno != EAGAIN) }
 
     let hup = Int16(POLLHUP | POLLERR | POLLNVAL)
+    let tap = Tee.shared.fd
     var pfds = [pollfd(fd: STDIN_FILENO, events: Int16(POLLIN), revents: 0),
                 pollfd(fd: master,       events: Int16(POLLIN), revents: 0)]
+    if tap >= 0 { pfds.append(pollfd(fd: tap, events: Int16(POLLIN), revents: 0)) }
     while true {
         if poll(&pfds, nfds_t(pfds.count), -1) < 0 { if errno == EINTR { continue }; break }
 
@@ -110,7 +161,20 @@ func pump(master: Int32) {
             }
             break
         }
+
+        // phone input (via the tap socket) → inner shell. Best-effort: on EOF/error or
+        // hangup, retire the tap (close it + drop its poll slot to fd = -1, which poll
+        // ignores) so a dead tap can't busy-spin poll(). The local terminal is untouched.
+        if pfds.count > 2, pfds[2].fd >= 0 {
+            var dead = pfds[2].revents & hup != 0
+            if !dead, pfds[2].revents & Int16(POLLIN) != 0 {
+                let n = read(tap, buf, cap)
+                if n > 0 { writeAll(master, n) } else if closed(n) { dead = true }
+            }
+            if dead { Tee.shared.disable(); pfds[2].fd = -1 }
+        }
         pfds[0].revents = 0; pfds[1].revents = 0
+        if pfds.count > 2 { pfds[2].revents = 0 }
     }
 }
 
@@ -148,6 +212,8 @@ func runPty(_ program: [String]) -> Int32 {
     if pid == 0 { execProgram(program); perror("shepherdd: exec"); _exit(127) }
 
     gMaster = master
+    let paneID = ProcessInfo.processInfo.environment["SHEPHERD_TAB_ID"] ?? ""
+    Tee.shared.connect(paneID: paneID, cols: Int(ws.ws_col), rows: Int(ws.ws_row))
     makeOuterRaw()
     installWinchForwarder()
     pump(master: master)

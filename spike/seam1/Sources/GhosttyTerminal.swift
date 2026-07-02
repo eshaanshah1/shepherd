@@ -106,8 +106,9 @@ final class GhosttySurfaceView: NSView {
             return UnsafePointer(p)
         }
         var envVars = [
-            ghostty_env_var_s(key: dup("SHEPHERD_SOCK"),   value: dup(AgentStore.shared.socketPath)),
-            ghostty_env_var_s(key: dup("SHEPHERD_TAB_ID"), value: dup(paneID)),
+            ghostty_env_var_s(key: dup("SHEPHERD_SOCK"),     value: dup(AgentStore.shared.socketPath)),
+            ghostty_env_var_s(key: dup("SHEPHERD_TAB_ID"),   value: dup(paneID)),
+            ghostty_env_var_s(key: dup("SHEPHERD_PTY_SOCK"), value: dup(AgentStore.shared.ptySocketPath)),
         ]
         defer { allocs.forEach { free($0) } }
 

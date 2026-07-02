@@ -64,7 +64,7 @@ final class FrameDecoder {
         var msgs: [ControlMessage] = []
         while buf.count >= 4 {
             let len = buf.prefix(4).withUnsafeBytes { Int(UInt32(bigEndian: $0.load(as: UInt32.self))) }
-            if len < 0 || len > maxFrame { throw RemoteProtocolError.frameTooLarge }
+            if len > maxFrame { throw RemoteProtocolError.frameTooLarge }
             guard buf.count >= 4 + len else { break }
             let json = buf.subdata(in: (buf.startIndex + 4)..<(buf.startIndex + 4 + len))
             buf.removeSubrange(buf.startIndex..<(buf.startIndex + 4 + len))
@@ -114,4 +114,45 @@ func isTailscaleCGNAT(_ ip: String) -> Bool {
 
 func tailscaleIPv4(from addrs: [(name: String, ipv4: String)]) -> String? {
     addrs.first { isTailscaleCGNAT($0.ipv4) }?.ipv4
+}
+
+// MARK: - Data-channel protocol (Phase 2)
+
+/// Data-channel handshake messages. After the hello exchange the connection carries
+/// RAW PTY bytes (no more DataMessage frames). Same wire codec as ControlMessage but a
+/// distinct enum so control and data protocols evolve independently. Keep additive.
+enum DataMessage: Codable, Equatable {
+    case dataHello(sessionNonce: String, paneID: String)   // phone → app
+    case dataReady(cols: Int, rows: Int)                   // app → phone
+    case dataRejected(reason: String)                      // app → phone, then close
+    case ptyHello(paneID: String, cols: Int, rows: Int)    // helper → app
+}
+
+enum DataFrameCodec {
+    static func encode(_ m: DataMessage) throws -> Data {
+        let json = try JSONEncoder().encode(m)
+        var len = UInt32(json.count).bigEndian
+        var out = Data(bytes: &len, count: 4)
+        out.append(json)
+        return out
+    }
+}
+
+final class DataFrameDecoder {
+    private var buf = Data()
+    private let maxFrame = 8 * 1024 * 1024
+
+    func feed(_ data: Data) throws -> [DataMessage] {
+        buf.append(data)
+        var msgs: [DataMessage] = []
+        while buf.count >= 4 {
+            let len = buf.prefix(4).withUnsafeBytes { Int(UInt32(bigEndian: $0.load(as: UInt32.self))) }
+            if len > maxFrame { throw RemoteProtocolError.frameTooLarge }
+            guard buf.count >= 4 + len else { break }
+            let json = buf.subdata(in: (buf.startIndex + 4)..<(buf.startIndex + 4 + len))
+            buf.removeSubrange(buf.startIndex..<(buf.startIndex + 4 + len))
+            msgs.append(try JSONDecoder().decode(DataMessage.self, from: json))
+        }
+        return msgs
+    }
 }
