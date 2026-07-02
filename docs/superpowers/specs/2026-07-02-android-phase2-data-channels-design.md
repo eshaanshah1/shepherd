@@ -49,6 +49,13 @@ smart Approve/Deny buttons (deferred convenience layer over the faithful termina
   current `cols×rows`; the Android emulator sizes to that and pans/zooms. The phone
   **never** sends winsize; the helper ignores any resize from the data channel. Glancing
   from the phone never reflows the desktop view.
+  > **SUPERSEDED for sub-project B (2026-07-02) — see §5.1 "Resize model".** Viewer-not-
+  > resizer is fine for the host half + monitoring, but it makes *responding* to a wide
+  > full-screen TUI (Claude's alt-screen menus/plan/`AskUserQuestion`) bad on a phone: a
+  > TUI frame is a fixed `cols×rows` cell matrix that **cannot** be reflowed client-side,
+  > so the phone is stuck pan/zooming a desktop-shaped grid. The client slice adopts
+  > **winsize-follows-the-active-driver (desktop wins ties)** instead. Keep the host-side
+  > mechanics here (`DataReady{cols,rows}`); §5.1 makes size dynamic + bidirectional.
 - **Android terminal = Termux `terminal-emulator` + `terminal-view`, driven by the socket.**
   Bypass Termux's local-process `TerminalSession` (JNI/PTY-coupled); drive a `TerminalEmulator`
   directly — feed data-channel bytes via `append(...)`, route `TerminalView` key/text input
@@ -158,6 +165,32 @@ starts the PTY-socket listener alongside the control server when `shepherd.remot
 
 ## 5. Android design (`android/`)
 
+### 5.1 Resize model (supersedes "viewer-not-resizer" for the client slice)
+
+**The constraint:** a pane is one PTY with one winsize; Claude renders to that size and
+**every viewer sees the same grid** — there is no per-viewer size. A full-screen TUI frame
+(alt-screen: absolute-positioned cells, no line concept) **cannot be reflowed client-side**,
+so the phone can only font-scale + pan a desktop-shaped grid — bad for *responding* to a wide
+TUI, which is Phase 2's whole point. (Claude's conversation transcript is main-screen scrollback
+and reads OK narrow; the alt-screen overlays — menus / plan / `AskUserQuestion` — are the hard case.)
+
+**The model: the winsize follows the *active driver*; the desktop wins ties.**
+- Phone attaches **and** the desktop pane is not focused/visible on the Mac → the phone sends
+  its size; the host resizes the PTY; Claude repaints at phone dims (~40 cols) — native, readable,
+  no panning. This is the common case (you're away from the desk — that's *why* you're on the phone),
+  so the reflow costs nothing (no one's watching the desktop).
+- Desktop re-focuses that pane → the host snaps the winsize back to the desktop size (one repaint,
+  expected — you're now looking at the desktop). `AgentStore` already tracks per-pane focus/visibility,
+  so it is the natural arbiter.
+- Both actively driving (rare) → desktop wins; the phone falls back to pan/zoom at the desktop size.
+
+**Protocol delta from §4:** make size dynamic + bidirectional. Add `Resize{cols,rows}` (phone→app)
+on the data channel; the host arbiter applies it to the PTY **only when it holds the size** per the
+rule above (else ignores it, matching today's helper behavior). `DataReady{cols,rows}` stays as the
+initial size. A repaint on ownership flip is a clean re-render (Claude redraws from state — no data
+loss). This is the ONLY change to the host contract, and it also serves the future Shepherd-as-client
+(Mac↔Mac) case, where two real terminals share one session under the same arbiter.
+
 - **`transport/`** — add a `DataChannel` (peer to the existing `RemoteConnection` control
   client): opens a second TCP socket to `host:port`, sends `DataHello{sessionNonce, paneID}`
   (nonce obtained from the live control session's `accepted`), awaits `DataReady{cols,rows}`,
@@ -168,7 +201,9 @@ starts the PTY-socket listener alongside the control server when `shepherd.remot
 - **`terminal/` (new)** — wrap Termux `terminal-emulator` + `terminal-view`. A
   `RemoteTerminalSession` drives a `TerminalEmulator` sized to `DataReady` cols×rows; feeds
   `DataChannel` output bytes via `emulator.append(bytes, len)`; routes `TerminalView` key/text
-  input to `DataChannel.input(...)`. Pan/zoom to read; **no resize sent**.
+  input to `DataChannel.input(...)`. Sends `Resize{cols,rows}` per the §5.1 active-driver model
+  (applied host-side only when the phone holds the size); pan/zoom is the fallback when the desktop
+  owns the size.
 - **`ui/`** — an **Agent screen**: the `TerminalView` (host-sized) + an **extra-keys row**
   (Esc / Ctrl / Tab / arrows / Enter) + a text field. Reached by tapping an agent in the Fleet
   screen or a notification deep-link. Smart Approve/Deny buttons deferred.
