@@ -21,4 +21,13 @@ class FleetViewModelTest {
         assertEquals("blocked", vm.fleet.value.pane("p1")!!.state)
         assertEquals(1, vm.fleet.value.attentionCount)
     }
+
+    @Test fun openAgentSetsNavTargetAndConsumeClears() {
+        val vm = vm()
+        assertNull(vm.navTarget.value)
+        vm.openAgent("p1")
+        assertEquals(NavTarget.Agent("p1"), vm.navTarget.value)
+        vm.consumeNavTarget()
+        assertNull(vm.navTarget.value)
+    }
 }

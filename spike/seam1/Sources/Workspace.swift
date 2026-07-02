@@ -63,3 +63,9 @@ func totalAttentionCount(in workspaces: [Workspace]) -> Int {
 func anyAgentBusy(in workspaces: [Workspace]) -> Bool {
     workspaces.flatMap { $0.tabs }.flatMap { $0.root.panes }.contains { $0.state.isBusy }
 }
+
+/// The phone owns a pane's PTY size unless that pane is the focused pane of the
+/// currently selected/visible tab — the desktop driver wins ties.
+func phoneOwnsSize(paneID: String, focusedPaneID: String?, selectedTabHasPane: Bool) -> Bool {
+    !(selectedTabHasPane && focusedPaneID == paneID)
+}

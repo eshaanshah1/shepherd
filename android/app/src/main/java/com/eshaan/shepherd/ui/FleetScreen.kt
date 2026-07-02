@@ -1,6 +1,7 @@
 package com.eshaan.shepherd.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -28,16 +29,16 @@ fun FleetScreen(vm: FleetViewModel) {
         LazyColumn(Modifier.padding(pad).fillMaxSize()) {
             fleet.byWorkspace().forEach { (ws, panes) ->
                 item { Text(ws, Modifier.padding(16.dp, 12.dp, 16.dp, 4.dp), style = MaterialTheme.typography.labelLarge) }
-                items(panes, key = { it.paneId }) { PaneRow(it) }
+                items(panes, key = { it.paneId }) { PaneRow(it) { vm.openAgent(it.paneId) } }
             }
         }
     }
 }
 
 @Composable
-private fun PaneRow(p: PaneInfo) {
+private fun PaneRow(p: PaneInfo, onClick: () -> Unit) {
     val state = AgentState.fromRaw(p.state)
-    Row(Modifier.fillMaxWidth().padding(16.dp, 8.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(16.dp, 8.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(10.dp).clip(CircleShape).background(ShepherdColors.dot(state)))
         Spacer(Modifier.width(12.dp))
         Column {

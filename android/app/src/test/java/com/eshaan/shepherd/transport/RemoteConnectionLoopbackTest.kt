@@ -46,7 +46,9 @@ class RemoteConnectionLoopbackTest {
             scope = scope,
             connect = { h, p -> Socket(h, p) },
         )
-        val received = mutableListOf<ControlMessage>()
+        // Copy-on-write: the collector coroutine appends while the assertions below iterate,
+        // so a plain ArrayList races into ConcurrentModificationException.
+        val received = java.util.concurrent.CopyOnWriteArrayList<ControlMessage>()
         val job = scope.launch { conn.inbound.toList(received) }
         conn.start()
         val connected = withTimeout(3000) { conn.status.first { it is ConnStatus.Connected } } as ConnStatus.Connected

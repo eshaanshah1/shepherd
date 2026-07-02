@@ -99,7 +99,19 @@ final class AgentStore: ObservableObject {
         loadPairedDevices()
         let keyPath = ("~/.config/shepherd/fcm-service-account.json" as NSString).expandingTildeInPath
         fcmPusher = FCMPusher(serviceAccountPath: keyPath)
-        presence.onChange = { [weak self] away in if !away { self?.runCatchUpNotifications() } }
+        presence.onChange = { [weak self] away in
+            guard let self else { return }
+            if away {
+                // Mac just went away (lid shut) → reflow already-attached phones to their own size.
+                self.remoteServer?.reapplyPhoneSizes()
+            } else {
+                self.runCatchUpNotifications()
+                // Mac is back → the visible pane is desktop-owned again; reclaim its size.
+                if let f = self.tabs.first(where: { $0.tabID == self.selectedTab })?.focusedPaneID {
+                    self.snapPaneToDesktop(f)
+                }
+            }
+        }
         presence.start()
         if !restore() { newWorkspace() }   // reopen prior workspaces, else start with one
         startRemoteServingIfEnabled()      // bind the control channel if serving is on
@@ -147,6 +159,7 @@ final class AgentStore: ObservableObject {
         if let ws = currentWorkspace,
            let pid = ws.tabs.first(where: { $0.tabID == ws.selectedTabID })?.focusedPaneID {
             didFocus(paneID: pid)   // viewing a finished workspace clears its need-to-check
+            snapPaneToDesktop(pid)
         }
         refocusActiveTerminal()
     }
@@ -217,6 +230,7 @@ final class AgentStore: ObservableObject {
         selectedTab = tabID
         guard let tab = tabs.first(where: { $0.tabID == tabID }) else { return }
         didFocus(paneID: tab.focusedPaneID)   // viewing a finished tab clears its need-to-check
+        snapPaneToDesktop(tab.focusedPaneID)
     }
 
     func closeTab(_ tabID: String) {
@@ -413,6 +427,20 @@ final class AgentStore: ObservableObject {
               workspaces[w].tabs[t].focusedPaneID != paneID else { return }
         workspaces[w].tabs[t].focusedPaneID = paneID
         didFocus(paneID: paneID)
+        snapPaneToDesktop(paneID)
+    }
+
+    /// The pane's desktop grid (the broker's launch size), or nil if no live broker.
+    func desktopWinsize(for paneID: String) -> (Int, Int)? {
+        guard let b = ptyHub?.broker(for: paneID) else { return nil }
+        return (b.desktopCols, b.desktopRows)
+    }
+
+    /// A pane just became the visible tab's focused pane — reclaim its PTY size from any
+    /// phone by forcing it back to the desktop grid (a desktop refocus is authoritative).
+    private func snapPaneToDesktop(_ paneID: String) {
+        guard let (dc, dr) = desktopWinsize(for: paneID) else { return }
+        remoteServer?.applyResizeForcingDesktop(paneID: paneID, cols: dc, rows: dr)
     }
 
     /// Focus dismisses any notification this pane fired (it pulled you here, so
@@ -481,6 +509,7 @@ final class AgentStore: ObservableObject {
         let rect = CGRect(origin: .zero, size: lastContentSize)
         if let id = tabs[i].root.neighbor(of: tabs[i].focusedPaneID, dir, in: rect) {
             tabs[i].focusedPaneID = id
+            snapPaneToDesktop(id)
             refocusActiveTerminal()
         }
     }
@@ -626,7 +655,26 @@ final class AgentStore: ObservableObject {
             // Capture the hub ONCE (just created above) rather than re-reading self.ptyHub
             // per call: that property is written on main but this closure runs on
             // RemoteServer's connQueue, so re-reading it would be an unsynchronized data race.
-            lookupBroker: { [weak hub] in hub?.broker(for: $0) })
+            lookupBroker: { [weak hub] in hub?.broker(for: $0) },
+            // The phone owns a pane's size unless that pane is the focused pane of the
+            // visible tab. selectedTab reads @Published state, so hop to main (mirrors the
+            // snapshot closure); direct if already there. Fails open to phone-owned.
+            sizeArbiter: { [weak self] paneID in
+                guard let self else { return true }
+                let read = {
+                    // Mac away (lid shut, no external display) → it's showing nothing, so the phone
+                    // owns every pane. Otherwise the desktop owns only its focused/visible pane.
+                    if self.presence.isAway { return true }
+                    let tab = self.tabs.first { $0.tabID == self.selectedTab }
+                    return phoneOwnsSize(paneID: paneID,
+                                         focusedPaneID: tab?.focusedPaneID,
+                                         selectedTabHasPane: tab?.paneIDs.contains(paneID) ?? false)
+                }
+                return Thread.isMainThread ? read() : DispatchQueue.main.sync(execute: read)
+            },
+            // The desktop grid to snap a pane back to on detach — the broker's launch size.
+            // Capture the hub (not self.ptyHub) to avoid the connQueue data race noted above.
+            desktopSize: { [weak hub] paneID in hub?.broker(for: paneID).map { ($0.desktopCols, $0.desktopRows) } })
         if s.start() {
             remoteServer = s
             shepherdLog("REMOTE serving on \(ip):\(remotePort) — pairing code \(pairingCode)")

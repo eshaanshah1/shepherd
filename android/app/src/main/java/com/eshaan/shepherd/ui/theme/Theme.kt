@@ -1,7 +1,24 @@
 package com.eshaan.shepherd.ui.theme
 
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import com.eshaan.shepherd.model.AgentState
+
+/** App-wide dark theme with a true-black background so the terminal reads like a real terminal. */
+private val ShepherdDarkColors = darkColorScheme(
+    background = Color(0xFF000000),
+    surface = Color(0xFF000000),
+    surfaceContainer = Color(0xFF0A0A0A),
+    onBackground = Color(0xFFE6E6E6),
+    onSurface = Color(0xFFE6E6E6),
+    primary = Color(0xFF8AB4F8),
+)
+
+@Composable
+fun ShepherdTheme(content: @Composable () -> Unit) =
+    MaterialTheme(colorScheme = ShepherdDarkColors, content = content)
 
 object ShepherdColors {
     fun dot(state: AgentState): Color = when (state) {

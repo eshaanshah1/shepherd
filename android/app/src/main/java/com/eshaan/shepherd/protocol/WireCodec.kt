@@ -32,6 +32,7 @@ object WireCodec {
             is ControlMessage.PaneAdded -> putJsonObject("paneAdded") { put("_0", paneJson(msg.pane)) }
             is ControlMessage.PaneRemoved -> putJsonObject("paneRemoved") { put("paneID", msg.paneId) }
             is ControlMessage.PaneRenamed -> putJsonObject("paneRenamed") { put("paneID", msg.paneId); put("title", msg.title) }
+            is ControlMessage.Resize -> putJsonObject("resize") { put("paneID", msg.paneId); put("cols", msg.cols); put("rows", msg.rows) }
             ControlMessage.Detach -> putJsonObject("detach") {}
             ControlMessage.Ping -> putJsonObject("ping") {}
             ControlMessage.Pong -> putJsonObject("pong") {}
@@ -70,6 +71,8 @@ object WireCodec {
             "paneRemoved" -> ControlMessage.PaneRemoved(b.getValue("paneID").jsonPrimitive.content)
             "paneRenamed" -> ControlMessage.PaneRenamed(b.getValue("paneID").jsonPrimitive.content,
                 b.getValue("title").jsonPrimitive.content)
+            "resize" -> ControlMessage.Resize(b.getValue("paneID").jsonPrimitive.content,
+                b.getValue("cols").jsonPrimitive.int, b.getValue("rows").jsonPrimitive.int)
             "pong" -> ControlMessage.Pong
             "ping" -> ControlMessage.Ping
             "detach" -> ControlMessage.Detach
