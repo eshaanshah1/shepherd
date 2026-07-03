@@ -49,12 +49,19 @@ class AgentViewModel(
     val terminalSession: StateFlow<RemoteTerminalSession?> = _terminalSession
     private val _status = MutableStateFlow<DataStatus>(DataStatus.Disconnected)
     val status: StateFlow<DataStatus> = _status
+    // The pane's active blocking prompt (AskUserQuestion / permission / plan), or null. Set when a
+    // Prompt for this pane arrives; cleared when the pane leaves the blocked state.
+    private val _prompt = MutableStateFlow<ControlMessage.Prompt?>(null)
+    val prompt: StateFlow<ControlMessage.Prompt?> = _prompt
 
     private var channel: DataChannel? = null
     private val jobs = mutableListOf<Job>()
 
     fun attach() {
         if (channel != null) return
+        // Mirror this pane's current prompt from the store (populated by FleetViewModel's always-on
+        // collector) — gives the current value immediately + live updates, with no missed-prompt race.
+        jobs += viewModelScope.launch { PromptStore.flow(paneId).collect { _prompt.value = it } }
         viewModelScope.launch {
             val nonce = (controlConn.status.first { it is ConnStatus.Connected } as ConnStatus.Connected).sessionNonce
             val ch = channelFactory(nonce, viewModelScope)
@@ -84,6 +91,7 @@ class AgentViewModel(
         channel?.stop(); channel = null
         _terminalSession.value = null
         _status.value = DataStatus.Disconnected
+        _prompt.value = null
     }
 
     override fun onCleared() { detach() }

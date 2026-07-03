@@ -9,11 +9,11 @@ import Darwin
 /// The receiving half of seam 2/3.
 final class SocketServer {
     private let path: String
-    private let onEvent: (String, String, String) -> Void
+    private let onEvent: (String, String, String, String?) -> Void
     private var fd: Int32 = -1
     private let queue = DispatchQueue(label: "shepherd.socket", qos: .utility)
 
-    init(path: String, onEvent: @escaping (String, String, String) -> Void) {
+    init(path: String, onEvent: @escaping (String, String, String, String?) -> Void) {
         self.path = path
         self.onEvent = onEvent
     }
@@ -71,7 +71,8 @@ final class SocketServer {
                 let event = obj["event"] as? String
             else { continue }
             let detail = (obj["detail"] as? String) ?? ""
-            DispatchQueue.main.async { [weak self] in self?.onEvent(tab, event, detail) }
+            let payload = obj["payload"] as? String
+            DispatchQueue.main.async { [weak self] in self?.onEvent(tab, event, detail, payload) }
         }
     }
 

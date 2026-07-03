@@ -56,6 +56,9 @@ private fun pushGridSize(view: TerminalView, session: RemoteTerminalSession) {
 fun AgentScreen(vm: AgentViewModel, onBack: () -> Unit) {
     val session by vm.terminalSession.collectAsState()
     val status by vm.status.collectAsState()
+    val prompt by vm.prompt.collectAsState()
+    // Reset when the prompt changes so a new prompt re-shows the panel even after "Use terminal".
+    var forceTerminal by remember(prompt) { mutableStateOf(false) }
     LaunchedEffect(Unit) { vm.attach() }
     // The VM is remember-scoped (not ViewModelStore-owned), so onCleared() never fires — detach
     // on leaving composition (Back-nav) to close the socket + coroutines and let the host snap back.
@@ -77,7 +80,12 @@ fun AgentScreen(vm: AgentViewModel, onBack: () -> Unit) {
     }) { pad ->
         Column(Modifier.padding(pad).fillMaxSize()) {
             val s = session
-            if (s != null) {
+            val p = prompt
+            if (s != null && p != null && !forceTerminal) {
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    PromptPanel(p, onAnswer = { s.sendPaced(it) }, onUseTerminal = { forceTerminal = true })
+                }
+            } else if (s != null) {
                 AndroidView(
                     // clipToBounds: a legacy TerminalView won't clip its own drawing to the Compose
                     // layout box, so without this its overflow rows paint over the controls below.

@@ -1,6 +1,7 @@
 package com.eshaan.shepherd.ui
 
 import com.eshaan.shepherd.protocol.ControlMessage
+import com.eshaan.shepherd.protocol.PromptQuestion
 import com.eshaan.shepherd.protocol.DataMessage
 import com.eshaan.shepherd.protocol.DataWireCodec
 import com.eshaan.shepherd.protocol.WireCodec
@@ -78,5 +79,28 @@ class AgentViewModelTest {
         assertEquals("nonce-1", seenHello!!.sessionNonce); assertEquals("p1", seenHello!!.paneId)
 
         vm.detach(); controlConn.stop(); scope.cancel(); controlServer.close(); dataServer.close()
+    }
+
+    @Test fun reflectsPromptStoreForItsPaneAndClearsOnUnblock() = runBlocking {
+        PromptStore.reset()
+        val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        // A control connection to a dead port: attach()'s prompt collector runs regardless of the
+        // (never-completing) data-channel connect, which is all this test exercises.
+        val controlConn = RemoteConnection("127.0.0.1", 1, { ControlMessage.Hello("d", "n", null, "s", null, 1) }, scope)
+        val vm = AgentViewModel(paneId = "p1", host = "127.0.0.1", port = 1, controlConn = controlConn)
+        vm.attach()
+
+        PromptStore.update(ControlMessage.Prompt("p1", "askUserQuestion", null,
+            listOf(PromptQuestion("Q", "H", listOf("A", "B"), false))))
+        withTimeout(5000) { vm.prompt.first { it != null } }
+        assertEquals("askUserQuestion", vm.prompt.value!!.kind)
+
+        PromptStore.update(ControlMessage.Prompt("p2", "permission", "Bash", null))  // other pane
+        assertEquals("askUserQuestion", vm.prompt.value!!.kind)                       // unchanged
+
+        PromptStore.update(ControlMessage.StateMsg("p1", "working", null))
+        withTimeout(5000) { vm.prompt.first { it == null } }
+
+        vm.detach(); scope.cancel()
     }
 }

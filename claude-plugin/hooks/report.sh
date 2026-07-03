@@ -18,7 +18,7 @@ set -u
 event="${1:-unknown}"
 
 # Drain the hook's stdin payload so Claude never blocks writing to us.
-payload="$(cat 2>/dev/null || true)"
+payload_src="$(cat 2>/dev/null || true)"
 
 # Only act inside a live Shepherd tab.
 [ -n "${SHEPHERD_TAB_ID:-}" ] && [ -n "${SHEPHERD_SOCK:-}" ] && [ -S "${SHEPHERD_SOCK}" ] || exit 0
@@ -31,22 +31,33 @@ case "$event" in
   StopFailure)                  key="error_type" ;;
   SubagentStart|SubagentStop)   key="agent_type" ;;
 esac
-if [ -n "$key" ] && [ -n "$payload" ]; then
+if [ -n "$key" ] && [ -n "$payload_src" ]; then
   if command -v jq >/dev/null 2>&1; then
-    detail="$(printf '%s' "$payload" | jq -r --arg k "$key" '.[$k] // ""' 2>/dev/null)"
+    detail="$(printf '%s' "$payload_src" | jq -r --arg k "$key" '.[$k] // ""' 2>/dev/null)"
   else
-    detail="$(printf '%s' "$payload" | grep -oE "\"$key\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | head -1 | sed -E 's/.*"([^"]*)"$/\1/')"
+    detail="$(printf '%s' "$payload_src" | grep -oE "\"$key\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | head -1 | sed -E 's/.*"([^"]*)"$/\1/')"
   fi
-elif [ "$event" = "Stop" ] && [ -n "$payload" ] && command -v jq >/dev/null 2>&1; then
+elif [ "$event" = "Stop" ] && [ -n "$payload_src" ] && command -v jq >/dev/null 2>&1; then
   # detail = how many background tasks the turn is paused on. A backgrounded
   # subagent/workflow/shell holds the "turn done" notification; a passive monitor
   # does not. Unparseable -> "" -> the app treats it as 0 (plain finish-on-Stop).
-  detail="$(printf '%s' "$payload" \
+  detail="$(printf '%s' "$payload_src" \
     | jq -r '[.background_tasks[]? | select(.type=="subagent" or .type=="workflow" or .type=="shell")] | length' 2>/dev/null)"
 fi
 
+# Structured prompt payload — only AskUserQuestion carries one (its questions + options),
+# so the phone can render tappable answers. detail stays the tool_name for the state machine.
+payload=""
+if [ "$event" = "PreToolUse" ] && [ "$detail" = "AskUserQuestion" ] && [ -n "$payload_src" ] && command -v jq >/dev/null 2>&1; then
+  payload="$(printf '%s' "$payload_src" | jq -cf "$(dirname "$0")/askquestion-payload.jq" 2>/dev/null)"
+fi
+
 esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
-printf '{"tab_id":"%s","event":"%s","detail":"%s"}\n' \
-  "$(esc "$SHEPHERD_TAB_ID")" "$(esc "$event")" "$(esc "$detail")" \
-  | nc -U "$SHEPHERD_SOCK" 2>/dev/null || true
+if [ -n "$payload" ]; then
+  printf '{"tab_id":"%s","event":"%s","detail":"%s","payload":"%s"}\n' \
+    "$(esc "$SHEPHERD_TAB_ID")" "$(esc "$event")" "$(esc "$detail")" "$(esc "$payload")"
+else
+  printf '{"tab_id":"%s","event":"%s","detail":"%s"}\n' \
+    "$(esc "$SHEPHERD_TAB_ID")" "$(esc "$event")" "$(esc "$detail")"
+fi | nc -U "$SHEPHERD_SOCK" 2>/dev/null || true
 exit 0

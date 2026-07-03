@@ -33,6 +33,16 @@ object WireCodec {
             is ControlMessage.PaneRemoved -> putJsonObject("paneRemoved") { put("paneID", msg.paneId) }
             is ControlMessage.PaneRenamed -> putJsonObject("paneRenamed") { put("paneID", msg.paneId); put("title", msg.title) }
             is ControlMessage.Resize -> putJsonObject("resize") { put("paneID", msg.paneId); put("cols", msg.cols); put("rows", msg.rows) }
+            is ControlMessage.Prompt -> putJsonObject("prompt") {
+                put("paneID", msg.paneId); put("kind", msg.kind)
+                if (msg.detail != null) put("detail", msg.detail)
+                if (msg.questions != null) put("questions", buildJsonArray {
+                    msg.questions.forEach { q -> add(buildJsonObject {
+                        put("prompt", q.prompt); put("header", q.header)
+                        put("options", buildJsonArray { q.options.forEach { add(it) } }); put("multiSelect", q.multiSelect)
+                    }) }
+                })
+            }
             ControlMessage.Detach -> putJsonObject("detach") {}
             ControlMessage.Ping -> putJsonObject("ping") {}
             ControlMessage.Pong -> putJsonObject("pong") {}
@@ -73,6 +83,15 @@ object WireCodec {
                 b.getValue("title").jsonPrimitive.content)
             "resize" -> ControlMessage.Resize(b.getValue("paneID").jsonPrimitive.content,
                 b.getValue("cols").jsonPrimitive.int, b.getValue("rows").jsonPrimitive.int)
+            "prompt" -> ControlMessage.Prompt(
+                b.getValue("paneID").jsonPrimitive.content,
+                b.getValue("kind").jsonPrimitive.content,
+                b["detail"]?.jsonPrimitive?.contentOrNull,
+                b["questions"]?.jsonArray?.map { qe ->
+                    val o = qe.jsonObject
+                    PromptQuestion(o.getValue("prompt").jsonPrimitive.content, o.getValue("header").jsonPrimitive.content,
+                        o.getValue("options").jsonArray.map { it.jsonPrimitive.content }, o.getValue("multiSelect").jsonPrimitive.boolean)
+                })
             "pong" -> ControlMessage.Pong
             "ping" -> ControlMessage.Ping
             "detach" -> ControlMessage.Detach
