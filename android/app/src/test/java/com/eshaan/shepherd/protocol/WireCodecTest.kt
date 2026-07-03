@@ -69,6 +69,18 @@ class WireCodecTest {
         assertTrue(json.contains("\"cols\":40")); assertTrue(json.contains("\"rows\":30"))
     }
 
+    @Test fun decodesPrompt() {
+        val m = decodeOne("""{"prompt":{"paneID":"p1","kind":"askUserQuestion","questions":[{"prompt":"Pick one","header":"H","options":["A","B"],"multiSelect":false}]}}""") as ControlMessage.Prompt
+        assertEquals("p1", m.paneId); assertEquals("askUserQuestion", m.kind); assertNull(m.detail)
+        assertEquals(1, m.questions!!.size)
+        assertEquals(PromptQuestion("Pick one", "H", listOf("A", "B"), false), m.questions!![0])
+    }
+
+    @Test fun decodesPermissionPromptNoQuestions() {
+        val m = decodeOne("""{"prompt":{"paneID":"p1","kind":"permission","detail":"Bash"}}""") as ControlMessage.Prompt
+        assertEquals("permission", m.kind); assertEquals("Bash", m.detail); assertNull(m.questions)
+    }
+
     @Test fun decoderReassemblesSplitAndCoalescedFrames() {
         val a = WireCodec.encode(ControlMessage.Ping)
         val b = WireCodec.encode(ControlMessage.Pong)

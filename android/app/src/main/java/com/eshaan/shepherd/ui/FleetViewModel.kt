@@ -44,7 +44,7 @@ class FleetViewModel(
     private var statusJob: Job? = null
 
     /** Pure reducer (unit-tested). */
-    fun applyInbound(msg: ControlMessage) { _fleet.value = _fleet.value.applying(msg) }
+    fun applyInbound(msg: ControlMessage) { _fleet.value = _fleet.value.applying(msg); PromptStore.update(msg) }
 
     fun connect() {
         val p = store.load() ?: return

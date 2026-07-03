@@ -59,6 +59,18 @@ class RemoteTerminalSession(
         channelInput(bytes)
     }
 
+    /** Send answer keystrokes for a prompt, paced so the TUI keeps up: [keyGapMs] after every
+     *  individual keystroke, [questionGapMs] between questions. [perQuestion]`[q]` is the ordered
+     *  keystrokes for question q. */
+    fun sendPaced(perQuestion: List<List<ByteArray>>, keyGapMs: Long = 50, questionGapMs: Long = 250) {
+        scope.launch {
+            perQuestion.forEachIndexed { qi, keys ->
+                if (qi > 0) delay(questionGapMs)
+                for (k in keys) { channelInput(k); delay(keyGapMs) }
+            }
+        }
+    }
+
     private var resizeJob: Job? = null
 
     /** Termux `resize(columns, rows)` (verified against v0.118.0 bytecode) + a debounced resizeSink. */

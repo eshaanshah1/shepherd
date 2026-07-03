@@ -15,6 +15,12 @@ struct PaneInfo: Codable, Equatable {
     let reason: String?
 }
 
+/// One question in an AskUserQuestion prompt, projected to a remote client so it can render
+/// tappable answers. Byte-pinned to the Kotlin PromptQuestion.
+struct PromptQuestion: Codable, Equatable {
+    let prompt: String; let header: String; let options: [String]; let multiSelect: Bool
+}
+
 /// Control-channel messages. Codable (synthesized) → JSON, one per length-prefixed
 /// frame. Wire shape per case, e.g. {"ping":{}} or {"state":{"paneID":"…","state":"…","reason":null}}.
 /// The Kotlin client must match this shape; keep cases additive + versioned.
@@ -31,6 +37,7 @@ enum ControlMessage: Codable, Equatable {
     case paneRemoved(paneID: String)
     case paneRenamed(paneID: String, title: String)
     case resize(paneID: String, cols: Int, rows: Int)
+    case prompt(paneID: String, kind: String, detail: String?, questions: [PromptQuestion]?)
     case detach
     case ping
     case pong

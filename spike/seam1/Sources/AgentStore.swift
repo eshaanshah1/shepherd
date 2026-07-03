@@ -92,8 +92,8 @@ final class AgentStore: ObservableObject {
     private init() {
         SocketServer.cleanupStale()   // sweep sockets left by dead launches (crash/killall/force-quit)
         socketPath = "/tmp/shepherd-\(getpid()).sock"   // short: stays under sun_path's 104 limit
-        server = SocketServer(path: socketPath) { [weak self] paneID, event, detail in
-            self?.apply(event: event, detail: detail, paneID: paneID)
+        server = SocketServer(path: socketPath) { [weak self] paneID, event, detail, payload in
+            self?.apply(event: event, detail: detail, paneID: paneID, payload: payload)
         }
         server?.start()
         loadPairedDevices()
@@ -356,7 +356,7 @@ final class AgentStore: ObservableObject {
     /// Agent-state hook event: resolve the pane, fold the event through the pure
     /// `applyEvent` (lifecycle map + ordering guard + background-agent counter; see
     /// StopPolicy and ADR 0004), then surface the result (sidebar / badge / alert).
-    func apply(event: String, detail: String, paneID: String) {
+    func apply(event: String, detail: String, paneID: String, payload: String? = nil) {
         guard let (w, t) = locatePane(paneID, in: workspaces),
               let pane = workspaces[w].tabs[t].root.pane(paneID) else {
             shepherdLog("event=\(event) tab=\(paneID.prefix(8)) -> NO SUCH TAB")
@@ -392,6 +392,29 @@ final class AgentStore: ObservableObject {
         }
         updateDockBadge()
         remoteServer?.broadcast(.state(paneID: paneID, state: res.state.rawValue, reason: res.reason))
+        // When a pane blocks on a promptable tool, forward the structured prompt so the phone can
+        // render tappable answers. AskUserQuestion carries its questions (from the hook payload);
+        // permission/plan carry only their kind (+ tool name) and render fixed buttons.
+        if res.state == .blocked {
+            // Detect by EVENT, not detail: detail is the tool_name for BOTH PreToolUse and the
+            // PermissionRequest that AskUserQuestion/ExitPlanMode also fire. Keying off detail let
+            // the payload-less PermissionRequest re-broadcast an empty-questions prompt that clobbered
+            // the good PreToolUse one. Permission prompts are only for OTHER tools.
+            let kind: String? = {
+                if event == "PreToolUse", detail == "AskUserQuestion" { return "askUserQuestion" }
+                if event == "PreToolUse", detail == "ExitPlanMode" { return "plan" }
+                if event == "PermissionRequest", detail != "AskUserQuestion", detail != "ExitPlanMode" { return "permission" }
+                return nil
+            }()
+            if let kind {
+                let questions: [PromptQuestion]? = (kind == "askUserQuestion")
+                    ? payload.flatMap { $0.data(using: .utf8) }
+                             .flatMap { try? JSONDecoder().decode([PromptQuestion].self, from: $0) }
+                    : nil
+                remoteServer?.broadcast(.prompt(paneID: paneID, kind: kind,
+                    detail: kind == "permission" ? detail : nil, questions: questions))
+            }
+        }
     }
 
     private func shepherdLog(_ msg: String) {

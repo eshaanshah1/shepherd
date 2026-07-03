@@ -102,6 +102,19 @@ final class RemoteProtocolTests: XCTestCase {
         XCTAssertEqual(try FrameDecoder().feed(try FrameCodec.encode(m)), [m])
     }
 
+    func testPromptRoundTrips() throws {
+        let q = [PromptQuestion(prompt: "Pick one", header: "H", options: ["A", "B"], multiSelect: false)]
+        let m = ControlMessage.prompt(paneID: "p1", kind: "askUserQuestion", detail: nil, questions: q)
+        XCTAssertEqual(try FrameDecoder().feed(try FrameCodec.encode(m)), [m])
+    }
+
+    func testPromptPermissionOmitsQuestions() throws {
+        let m = ControlMessage.prompt(paneID: "p1", kind: "permission", detail: "Bash", questions: nil)
+        let json = String(data: try JSONEncoder().encode(m), encoding: .utf8)!
+        XCTAssertFalse(json.contains("questions"))
+        XCTAssertTrue(json.contains("\"kind\":\"permission\""))
+    }
+
     func testHelperFrameInputRoundTrips() {
         let f = HelperFrame.input([0x1b, 0x5b, 0x41])   // ESC [ A
         let out = HelperFrameCodec.encode(f)
