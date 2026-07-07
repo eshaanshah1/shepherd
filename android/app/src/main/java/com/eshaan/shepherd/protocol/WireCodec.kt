@@ -10,6 +10,31 @@ object WireCodec {
         if (p.reason != null) put("reason", p.reason)
     }
 
+    private fun treeJson(t: WorkspaceTree): JsonObject = buildJsonObject {
+        put("workspaceID", t.workspaceId); put("name", t.name)
+        if (t.selectedTabId != null) put("selectedTabID", t.selectedTabId)
+        put("tabs", buildJsonArray { t.tabs.forEach { add(tabJson(it)) } })
+    }
+    private fun tabJson(tab: RemoteTab): JsonObject = buildJsonObject {
+        put("tabID", tab.tabId); put("root", nodeJson(tab.root))
+        if (tab.focusedPaneId != null) put("focusedPaneID", tab.focusedPaneId)
+        if (tab.zoomedPaneId != null) put("zoomedPaneID", tab.zoomedPaneId)
+    }
+    private fun nodeJson(n: RemoteNode): JsonObject = buildJsonObject {
+        when (n) {
+            is RemoteNode.Leaf -> { put("kind", "leaf"); put("pane", remotePaneJson(n.pane)) }
+            is RemoteNode.Split -> {
+                put("kind", "split"); put("axis", n.axis); put("ratio", n.ratio)
+                put("first", nodeJson(n.first)); put("second", nodeJson(n.second))
+            }
+        }
+    }
+    private fun remotePaneJson(p: RemotePane): JsonObject = buildJsonObject {
+        put("paneID", p.paneId); put("title", p.title); put("state", p.state)
+        if (p.cwd != null) put("cwd", p.cwd)
+        if (p.reason != null) put("reason", p.reason)
+    }
+
     private fun bodyJson(msg: ControlMessage): JsonObject = buildJsonObject {
         when (msg) {
             is ControlMessage.Hello -> putJsonObject("hello") {
@@ -23,9 +48,12 @@ object WireCodec {
             is ControlMessage.Accepted -> putJsonObject("accepted") { put("sessionNonce", msg.sessionNonce) }
             is ControlMessage.Rejected -> putJsonObject("rejected") { put("reason", msg.reason) }
             ControlMessage.PendingApproval -> putJsonObject("pendingApproval") {}
-            is ControlMessage.Snapshot -> putJsonObject("snapshot") {
-                put("panes", buildJsonArray { msg.panes.forEach { add(paneJson(it)) } })
+            // Host→client in production; encode is kept symmetric so tests can mint host frames.
+            is ControlMessage.WorkspaceTreeMsg -> putJsonObject("workspaceTree") { put("_0", treeJson(msg.tree)) }
+            is ControlMessage.WorkspaceList -> putJsonObject("workspaceList") {
+                put("ids", buildJsonArray { msg.ids.forEach { add(it) } })
             }
+            is ControlMessage.WorkspaceRemoved -> putJsonObject("workspaceRemoved") { put("workspaceID", msg.workspaceId) }
             is ControlMessage.StateMsg -> putJsonObject("state") {
                 put("paneID", msg.paneId); put("state", msg.state); if (msg.reason != null) put("reason", msg.reason)
             }
@@ -66,6 +94,34 @@ object WireCodec {
         reason = o["reason"]?.jsonPrimitive?.contentOrNull,
     )
 
+    private fun parseTree(o: JsonObject): WorkspaceTree = WorkspaceTree(
+        workspaceId = o.getValue("workspaceID").jsonPrimitive.content,
+        name = o.getValue("name").jsonPrimitive.content,
+        selectedTabId = o["selectedTabID"]?.jsonPrimitive?.contentOrNull,
+        tabs = o.getValue("tabs").jsonArray.map { te ->
+            val t = te.jsonObject
+            RemoteTab(
+                tabId = t.getValue("tabID").jsonPrimitive.content,
+                root = parseNode(t.getValue("root").jsonObject),
+                focusedPaneId = t["focusedPaneID"]?.jsonPrimitive?.contentOrNull,
+                zoomedPaneId = t["zoomedPaneID"]?.jsonPrimitive?.contentOrNull)
+        })
+
+    private fun parseNode(o: JsonObject): RemoteNode =
+        when (o.getValue("kind").jsonPrimitive.content) {
+            "leaf" -> RemoteNode.Leaf(parseRemotePane(o.getValue("pane").jsonObject))
+            else -> RemoteNode.Split(
+                o.getValue("axis").jsonPrimitive.content, o.getValue("ratio").jsonPrimitive.double,
+                parseNode(o.getValue("first").jsonObject), parseNode(o.getValue("second").jsonObject))
+        }
+
+    private fun parseRemotePane(o: JsonObject): RemotePane = RemotePane(
+        paneId = o.getValue("paneID").jsonPrimitive.content,
+        title = o.getValue("title").jsonPrimitive.content,
+        cwd = o["cwd"]?.jsonPrimitive?.contentOrNull,
+        state = o.getValue("state").jsonPrimitive.content,
+        reason = o["reason"]?.jsonPrimitive?.contentOrNull)
+
     private fun parse(json: String): ControlMessage? {
         val root = Json.parseToJsonElement(json).jsonObject
         val key = root.keys.firstOrNull() ?: return null
@@ -74,7 +130,9 @@ object WireCodec {
             "accepted" -> ControlMessage.Accepted(b.getValue("sessionNonce").jsonPrimitive.content)
             "rejected" -> ControlMessage.Rejected(b.getValue("reason").jsonPrimitive.content)
             "pendingApproval" -> ControlMessage.PendingApproval
-            "snapshot" -> ControlMessage.Snapshot(b.getValue("panes").jsonArray.map { pane(it.jsonObject) })
+            "workspaceTree" -> ControlMessage.WorkspaceTreeMsg(parseTree(b.getValue("_0").jsonObject))
+            "workspaceList" -> ControlMessage.WorkspaceList(b.getValue("ids").jsonArray.map { it.jsonPrimitive.content })
+            "workspaceRemoved" -> ControlMessage.WorkspaceRemoved(b.getValue("workspaceID").jsonPrimitive.content)
             "state" -> ControlMessage.StateMsg(b.getValue("paneID").jsonPrimitive.content,
                 b.getValue("state").jsonPrimitive.content, b["reason"]?.jsonPrimitive?.contentOrNull)
             "paneAdded" -> ControlMessage.PaneAdded(pane(b.getValue("_0").jsonObject))

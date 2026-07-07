@@ -39,11 +39,27 @@ class WireCodecTest {
         assertTrue(json.contains("\"protocolVersion\":1"))
     }
 
-    @Test fun decodesHostSnapshot() {
-        val m = decodeOne("""{"snapshot":{"panes":[{"paneID":"p1","state":"blocked","title":"~/proj","reason":"approve Bash","workspace":"Work"}]}}""")
-        m as ControlMessage.Snapshot
-        assertEquals(1, m.panes.size)
-        assertEquals(PaneInfo("p1","~/proj","Work","blocked","approve Bash"), m.panes[0])
+    @Test fun decodesWorkspaceTreeAndFlattens() {
+        val json = """{"workspaceTree":{"_0":{"workspaceID":"w1","name":"WS","selectedTabID":"t1",
+          "tabs":[{"tabID":"t1","focusedPaneID":"p1",
+            "root":{"kind":"split","axis":"row","ratio":0.5,
+              "first":{"kind":"leaf","pane":{"paneID":"p1","title":"zsh","state":"working"}},
+              "second":{"kind":"leaf","pane":{"paneID":"p2","title":"claude","state":"blocked","reason":"answer needed"}}}}]}}}"""
+        val tree = (decodeOne(json) as ControlMessage.WorkspaceTreeMsg).tree
+        assertEquals("w1", tree.workspaceId)
+        val panes = com.eshaan.shepherd.model.Fleet.flatten(tree)
+        assertEquals(listOf("p1", "p2"), panes.map { it.paneId })
+        assertEquals("WS", panes[0].workspace)
+        assertEquals("blocked", panes[1].state)
+        assertEquals("answer needed", panes[1].reason)
+        assertNull(panes[0].reason)
+    }
+
+    @Test fun decodesWorkspaceListAndRemoved() {
+        val list = decodeOne("""{"workspaceList":{"ids":["w1","w2"]}}""") as ControlMessage.WorkspaceList
+        assertEquals(listOf("w1", "w2"), list.ids)
+        val removed = decodeOne("""{"workspaceRemoved":{"workspaceID":"w2"}}""") as ControlMessage.WorkspaceRemoved
+        assertEquals("w2", removed.workspaceId)
     }
 
     @Test fun decodesStateWithMissingReasonAsNull() {

@@ -74,40 +74,61 @@ final class RemoteServerTests: XCTestCase {
         deinit { close(fd) }
     }
 
+    /// A one-workspace/one-tab/one-pane tree — the v2 default the client rebuilds from.
+    private static func oneTree() -> [WorkspaceTree] {
+        [WorkspaceTree(workspaceID: "w1", name: "Home",
+            tabs: [RemoteTab(tabID: "t1",
+                root: .leaf(RemotePane(paneID: "p1", title: "claude", cwd: nil, state: "working", reason: nil)),
+                focusedPaneID: "p1", zoomedPaneID: nil)],
+            selectedTabID: "t1")]
+    }
+
+    /// Thread-safe capture of commands forwarded to `onCommand` (called off connQueue).
+    final class CommandBox {
+        private let lock = NSLock(); private var msgs: [ControlMessage] = []
+        func add(_ m: ControlMessage) { lock.lock(); msgs.append(m); lock.unlock() }
+        var all: [ControlMessage] { lock.lock(); defer { lock.unlock() }; return msgs }
+    }
+
     private func makeServer(port: UInt16, approve: Bool, known: [PairedDevice] = [],
-                            snapshot: @escaping () -> [PaneInfo] = {
-                                [PaneInfo(paneID: "p1", title: "claude", workspace: "Home", state: "working", reason: nil)]
-                            }) -> RemoteServer {
+                            workspaceTrees: @escaping () -> [WorkspaceTree] = { RemoteServerTests.oneTree() },
+                            onCommand: @escaping (ControlMessage) -> Void = { _ in }) -> RemoteServer {
         RemoteServer(
             bindAddress: "127.0.0.1", port: port,
             currentCode: { "8421" },
             knownDevices: { known },
             persist: { _ in },
             requestApproval: { _, _, decide in decide(approve) },
-            snapshot: snapshot,
+            workspaceTrees: workspaceTrees,
             updateFCMToken: { _, _ in },
-            makeSecret: { "SECRET" }, makeNonce: { "NONCE" })
+            makeSecret: { "SECRET" }, makeNonce: { "NONCE" },
+            onCommand: onCommand)
     }
 
-    /// A fat snapshot (many panes) so the `accepted`+`snapshot` writes to a freshly
-    /// admitted fd are a large, multi-syscall payload — the frame most likely to be
-    /// spliced if writes to one fd weren't serialized. With the per-connection serial
-    /// write queue it can never interleave with a concurrent broadcast to the same fd.
-    private func fatSnapshot(_ count: Int = 1500) -> [PaneInfo] {
-        (0..<count).map {
-            PaneInfo(paneID: "pane-\($0)", title: "agent-\($0)-long-enough-title-to-bulk-up-the-frame-significantly",
-                     workspace: "Workspace-\($0 % 8)", state: "working", reason: "running a tool with a verbose reason")
-        }
+    /// A fat tree (a workspace of many tabs) so the `accepted`+structure writes to a freshly
+    /// admitted fd are a large, multi-syscall payload — the frame most likely to be spliced
+    /// if writes to one fd weren't serialized. With the per-connection serial write queue it
+    /// can never interleave with a concurrent broadcast to the same fd.
+    private func fatTrees(_ count: Int = 1500) -> [WorkspaceTree] {
+        [WorkspaceTree(workspaceID: "w1", name: "Home",
+            tabs: (0..<count).map { i in
+                RemoteTab(tabID: "t\(i)",
+                    root: .leaf(RemotePane(paneID: "pane-\(i)",
+                        title: "agent-\(i)-long-enough-title-to-bulk-up-the-frame-significantly",
+                        cwd: nil, state: "working", reason: "running a tool with a verbose reason")),
+                    focusedPaneID: "pane-\(i)", zoomedPaneID: nil)
+            }, selectedTabID: "t0")]
     }
 
-    func testPairWithGoodCodeApprovedReceivesSnapshot() {
+    func testPairWithGoodCodeApprovedReceivesWorkspaceTrees() {
         let port: UInt16 = 48721
         let server = makeServer(port: port, approve: true); XCTAssertTrue(server.start()); defer { server.stop() }
         let c = TestClient(port: port)
         c.send(.hello(deviceID: "d1", deviceName: "Pixel", pairingCode: "8421",
                       secret: nil, fcmToken: "FCMTOK", protocolVersion: kRemoteProtocolVersion))
         XCTAssertNotNil(c.waitFor { if case .accepted = $0 { return true }; return false }, "expected accepted")
-        XCTAssertNotNil(c.waitFor { if case .snapshot(let p) = $0 { return p.first?.paneID == "p1" }; return false }, "expected snapshot")
+        XCTAssertNotNil(c.waitFor { if case .workspaceList(let ids) = $0 { return ids == ["w1"] }; return false }, "expected workspaceList")
+        XCTAssertNotNil(c.waitFor { if case .workspaceTree(let t) = $0 { return t.workspaceID == "w1" && t.tabs.first?.tabID == "t1" }; return false }, "expected workspaceTree")
     }
 
     func testWrongCodeRejected() {
@@ -125,7 +146,7 @@ final class RemoteServerTests: XCTestCase {
         let c = TestClient(port: port)
         c.send(.hello(deviceID: "d1", deviceName: "Pixel", pairingCode: "8421",
                       secret: nil, fcmToken: "FCMTOK", protocolVersion: kRemoteProtocolVersion))
-        _ = c.waitFor { if case .snapshot = $0 { return true }; return false }
+        _ = c.waitFor { if case .workspaceTree = $0 { return true }; return false }
         server.broadcast(.state(paneID: "p1", state: "blocked", reason: "approve Bash"))
         let got = c.waitFor { if case .state = $0 { return true }; return false }
         XCTAssertEqual(got, .state(paneID: "p1", state: "blocked", reason: "approve Bash"))
@@ -148,17 +169,17 @@ final class RemoteServerTests: XCTestCase {
     /// code (a concurrent broadcast spliced the snapshot or jumped ahead of it).
     func testConcurrentBroadcastDuringPairingDoesNotCorruptStream() {
         let port: UInt16 = 48724
-        let server = makeServer(port: port, approve: true, snapshot: { self.fatSnapshot() })
+        let server = makeServer(port: port, approve: true, workspaceTrees: { self.fatTrees() })
         XCTAssertTrue(server.start()); defer { server.stop() }
 
         let c = TestClient(port: port)
         var received: [ControlMessage] = []
 
         // Pair and wait for `accepted` — which proves admit has registered this fd as a
-        // broadcast target AND that its big snapshot is already enqueued on the
-        // connection's serial write queue (snapshot is enqueued right after accepted, both
-        // under clientsLock). So every broadcast we now fire is guaranteed to target this
-        // fd, racing the still-flushing snapshot and each other on the one serial queue.
+        // broadcast target AND that its big structure frames are already enqueued on the
+        // connection's serial write queue (workspaceList + trees are enqueued right after
+        // accepted, all under clientsLock). So every broadcast we now fire is guaranteed to
+        // target this fd, racing the still-flushing tree and each other on the one serial queue.
         c.send(.hello(deviceID: "d1", deviceName: "Pixel", pairingCode: "8421",
                       secret: nil, fcmToken: "FCMTOK", protocolVersion: kRemoteProtocolVersion))
         if let acc = c.waitFor(5, { if case .accepted = $0 { return true }; return false }) { received.append(acc) }
@@ -193,15 +214,15 @@ final class RemoteServerTests: XCTestCase {
         XCTAssertFalse(c.decodeError, "stream desynced — a concurrent write corrupted a frame")
         XCTAssertTrue(received.contains { if case .state(_, "idle", "END") = $0 { return true }; return false },
                       "never received the trailing sentinel — stream stalled or desynced")
-        // (b) Coherent ordering: accepted, then a full uncorrupted snapshot, then every
+        // (b) Coherent ordering: accepted, then a full uncorrupted workspaceTree, then every
         // state delta — relative order, since an unknown device first gets pendingApproval.
         let acceptedIdx = received.firstIndex { if case .accepted = $0 { return true }; return false }
-        let snapshotIdx = received.firstIndex { if case .snapshot(let p) = $0 { return p.count == 1500 }; return false }
+        let treeIdx = received.firstIndex { if case .workspaceTree(let t) = $0 { return t.tabs.count == 1500 }; return false }
         let firstState  = received.firstIndex { if case .state = $0 { return true }; return false }
         XCTAssertNotNil(acceptedIdx, "expected accepted")
-        XCTAssertNotNil(snapshotIdx, "expected a full, uncorrupted snapshot (1500 panes)")
-        if let a = acceptedIdx, let s = snapshotIdx { XCTAssertLessThan(a, s, "accepted must precede snapshot") }
-        if let s = snapshotIdx, let f = firstState { XCTAssertLessThan(s, f, "snapshot must precede any state delta") }
+        XCTAssertNotNil(treeIdx, "expected a full, uncorrupted workspaceTree (1500 tabs)")
+        if let a = acceptedIdx, let s = treeIdx { XCTAssertLessThan(a, s, "accepted must precede the tree") }
+        if let s = treeIdx, let f = firstState { XCTAssertLessThan(s, f, "tree must precede any state delta") }
         // (c) Every delta arrived exactly once and intact. The client was a registered
         // broadcast target before the storm, so all threads*perThread deltas plus the
         // sentinel must be present — none lost, none duplicated, none spliced. (A spliced
@@ -217,6 +238,34 @@ final class RemoteServerTests: XCTestCase {
         }
     }
 
+    func testCmdForwardedToHandlerWhenPaired() {
+        let port: UInt16 = 48728
+        let box = CommandBox()
+        let server = makeServer(port: port, approve: true, onCommand: { box.add($0) })
+        XCTAssertTrue(server.start()); defer { server.stop() }
+        let c = TestClient(port: port)
+        c.send(.hello(deviceID: "d1", deviceName: "Mac", pairingCode: "8421",
+                      secret: nil, fcmToken: nil, protocolVersion: kRemoteProtocolVersion))
+        XCTAssertNotNil(c.waitFor { if case .accepted = $0 { return true }; return false })
+        c.send(.cmdNewTab(workspaceID: "w1"))
+        let got = (0..<40).lazy.compactMap { _ -> [ControlMessage]? in
+            usleep(50_000); let a = box.all; return a.isEmpty ? nil : a
+        }.first
+        XCTAssertEqual(got, [.cmdNewTab(workspaceID: "w1")])
+    }
+
+    func testUnpairedCmdIsIgnored() {
+        let port: UInt16 = 48729
+        let box = CommandBox()
+        // approve:false → a new device never pairs, so the connection stays .unpaired.
+        let server = makeServer(port: port, approve: false, onCommand: { box.add($0) })
+        XCTAssertTrue(server.start()); defer { server.stop() }
+        let c = TestClient(port: port)
+        c.send(.cmdClosePane(paneID: "p1"))   // no hello first → phase == .unpaired
+        usleep(300_000)
+        XCTAssertTrue(box.all.isEmpty, "cmd* from an unpaired socket must be ignored")
+    }
+
     func testPairingPersistsFCMToken() {
         let port: UInt16 = 48725
         let captured = NSMutableArray()   // thread-safe enough for the test; captures PairedDevice
@@ -225,7 +274,7 @@ final class RemoteServerTests: XCTestCase {
             currentCode: { "8421" }, knownDevices: { [] },
             persist: { dev in captured.add(dev) },
             requestApproval: { _, _, decide in decide(true) },
-            snapshot: { [] },
+            workspaceTrees: { [] },
             updateFCMToken: { _, _ in },
             makeSecret: { "SECRET" }, makeNonce: { "NONCE" })
         XCTAssertTrue(server.start()); defer { server.stop() }
@@ -249,7 +298,7 @@ final class RemoteServerTests: XCTestCase {
             currentCode: { "8421" }, knownDevices: { [] },
             persist: { _ in },
             requestApproval: { _, _, decide in decide(true) },
-            snapshot: { [] },
+            workspaceTrees: { [] },
             updateFCMToken: { id, tok in box.add("\(id)|\(tok)") },
             makeSecret: { "SECRET" }, makeNonce: { "NONCE" })
         XCTAssertTrue(server.start()); defer { server.stop() }
@@ -273,7 +322,7 @@ final class RemoteServerTests: XCTestCase {
             knownDevices: { [PairedDevice(deviceID: "d1", secret: "SECRET", name: "Pixel", fcmToken: "OLD")] },
             persist: { _ in },
             requestApproval: { _, _, decide in decide(true) },
-            snapshot: { [] },
+            workspaceTrees: { [] },
             updateFCMToken: { id, tok in box.add("\(id)|\(tok)") },
             makeSecret: { "SECRET" }, makeNonce: { "NONCE" })
         XCTAssertTrue(server.start()); defer { server.stop() }

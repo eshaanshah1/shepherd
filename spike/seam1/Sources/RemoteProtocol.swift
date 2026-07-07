@@ -2,7 +2,7 @@ import Foundation
 
 /// Wire protocol version, pinned in the `hello` handshake. Bump on a breaking change;
 /// keep messages additive otherwise. The Kotlin client sends the version it implements.
-let kRemoteProtocolVersion = 1
+let kRemoteProtocolVersion = 2
 
 // MARK: - DTOs
 
@@ -21,6 +21,59 @@ struct PromptQuestion: Codable, Equatable {
     let prompt: String; let header: String; let options: [String]; let multiSelect: Bool
 }
 
+// MARK: - Structural tree DTOs (protocol v2)
+
+/// One leaf pane projected to a client, carrying the LIVE fields the mirror needs
+/// (paneID / title / cwd / state / reason). Distinct from the persistence `Pane`
+/// codec, which deliberately drops paneID/title/state (ids regenerate on restore).
+struct RemotePane: Codable, Equatable {
+    let paneID: String; let title: String; let cwd: String?
+    let state: String; let reason: String?
+}
+
+/// A tab's split tree, projected to a client. Mirrors `SplitNode`'s shape (same
+/// coding keys) but with live-field `RemotePane` leaves so a Kotlin/Swift client
+/// can walk it with one decoder.
+indirect enum RemoteNode: Codable, Equatable {
+    case leaf(RemotePane)
+    case split(axis: String, ratio: Double, first: RemoteNode, second: RemoteNode)
+
+    enum CodingKeys: String, CodingKey { case kind, pane, axis, ratio, first, second }
+    private enum Kind: String, Codable { case leaf, split }
+
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        switch try c.decode(Kind.self, forKey: .kind) {
+        case .leaf: self = .leaf(try c.decode(RemotePane.self, forKey: .pane))
+        case .split: self = .split(axis: try c.decode(String.self, forKey: .axis),
+                                   ratio: try c.decode(Double.self, forKey: .ratio),
+                                   first: try c.decode(RemoteNode.self, forKey: .first),
+                                   second: try c.decode(RemoteNode.self, forKey: .second))
+        }
+    }
+    func encode(to e: Encoder) throws {
+        var c = e.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .leaf(let p): try c.encode(Kind.leaf, forKey: .kind); try c.encode(p, forKey: .pane)
+        case .split(let a, let r, let f, let s):
+            try c.encode(Kind.split, forKey: .kind); try c.encode(a, forKey: .axis)
+            try c.encode(r, forKey: .ratio); try c.encode(f, forKey: .first); try c.encode(s, forKey: .second)
+        }
+    }
+}
+
+/// One tab projected to a client: its split tree + focus/zoom hints.
+struct RemoteTab: Codable, Equatable {
+    let tabID: String; let root: RemoteNode
+    let focusedPaneID: String?; let zoomedPaneID: String?
+}
+
+/// One workspace projected to a client: its tabs (each a tree) + selection.
+struct WorkspaceTree: Codable, Equatable {
+    let workspaceID: String; let name: String
+    let tabs: [RemoteTab]; let selectedTabID: String?
+}
+
 /// Control-channel messages. Codable (synthesized) → JSON, one per length-prefixed
 /// frame. Wire shape per case, e.g. {"ping":{}} or {"state":{"paneID":"…","state":"…","reason":null}}.
 /// The Kotlin client must match this shape; keep cases additive + versioned.
@@ -31,7 +84,6 @@ enum ControlMessage: Codable, Equatable {
     case accepted(sessionNonce: String)
     case rejected(reason: String)
     case pendingApproval
-    case snapshot(panes: [PaneInfo])
     case state(paneID: String, state: String, reason: String?)
     case paneAdded(PaneInfo)
     case paneRemoved(paneID: String)
@@ -41,12 +93,19 @@ enum ControlMessage: Codable, Equatable {
     case detach
     case ping
     case pong
-}
-
-/// Build the projected fleet from (workspaceName, paneID, title, state, reason) rows.
-/// Pure so AgentStore's @MainActor/AppKit fleetSnapshot stays testable here.
-func buildSnapshot(_ rows: [(workspace: String, paneID: String, title: String, state: String, reason: String?)]) -> [PaneInfo] {
-    rows.map { PaneInfo(paneID: $0.paneID, title: $0.title, workspace: $0.workspace, state: $0.state, reason: $0.reason) }
+    // v2 structural snapshot (host→client): one tree per workspace + the ordered id list.
+    case workspaceTree(WorkspaceTree)
+    case workspaceList(ids: [String])
+    case workspaceRemoved(workspaceID: String)
+    // v2 structural commands (client→host): the host applies each to its real store.
+    case cmdNewTab(workspaceID: String)
+    case cmdSplit(paneID: String, axis: String)
+    case cmdClosePane(paneID: String)
+    case cmdFocusPane(paneID: String)
+    case cmdZoom(paneID: String)
+    case cmdRenamePane(paneID: String, title: String)
+    case cmdReorderTab(workspaceID: String, fromIndex: Int, toIndex: Int)
+    case cmdSwitchTab(workspaceID: String, tabID: String)
 }
 
 // MARK: - Framing

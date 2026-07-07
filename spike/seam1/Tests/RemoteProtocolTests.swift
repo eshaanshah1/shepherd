@@ -11,9 +11,7 @@ final class RemoteProtocolTests: XCTestCase {
 
     func testFrameDecoderReassemblesAcrossChunks() throws {
         let a = try FrameCodec.encode(.ping)
-        let b = try FrameCodec.encode(.snapshot(panes: [
-            PaneInfo(paneID: "p1", title: "claude", workspace: "Home", state: "working", reason: nil)
-        ]))
+        let b = try FrameCodec.encode(.paneRenamed(paneID: "p1", title: "claude"))
         let stream = a + b
         let dec = FrameDecoder()
         // Feed byte-by-byte: nothing emitted until each frame completes.
@@ -81,11 +79,6 @@ final class RemoteProtocolTests: XCTestCase {
         XCTAssertEqual(d, .needsApproval(deviceID: "d2", name: "Pixel", proposedSecret: "phone-secret"))
     }
 
-    func testBuildSnapshotMapsRows() {
-        let s = buildSnapshot([("Home", "p1", "claude", "blocked", "approve Bash")])
-        XCTAssertEqual(s, [PaneInfo(paneID: "p1", title: "claude", workspace: "Home", state: "blocked", reason: "approve Bash")])
-    }
-
     func testDataHelloCarriesSize() throws {
         let m = DataMessage.dataHello(sessionNonce: "n1", paneID: "p1", cols: 40, rows: 30)
         let enc = try DataFrameCodec.encode(m)
@@ -138,6 +131,53 @@ final class RemoteProtocolTests: XCTestCase {
         XCTAssertEqual(dec.feed(a.prefix(3)), [])
         XCTAssertEqual(dec.feed(a.suffix(from: a.startIndex + 3) + b.prefix(2)), [.input([0x61])])
         XCTAssertEqual(dec.feed(b.suffix(from: b.startIndex + 2)), [.resize(cols: 10, rows: 5)])
+    }
+
+    func testWorkspaceTreeRoundTrips() throws {
+        let tree = WorkspaceTree(
+            workspaceID: "w1", name: "ACTIVE WORK",
+            tabs: [RemoteTab(
+                tabID: "t1",
+                root: .split(axis: "row", ratio: 0.6,
+                    first: .leaf(RemotePane(paneID: "p1", title: "zsh", cwd: "/x", state: "working", reason: nil)),
+                    second: .leaf(RemotePane(paneID: "p2", title: "claude", cwd: "/y", state: "blocked", reason: "answer needed"))),
+                focusedPaneID: "p1", zoomedPaneID: nil)],
+            selectedTabID: "t1")
+        let data = try FrameCodec.encode(.workspaceTree(tree))
+        let decoded = try FrameDecoder().feed(data)
+        XCTAssertEqual(decoded, [.workspaceTree(tree)])
+    }
+
+    func testStructuralCommandsRoundTrip() throws {
+        let msgs: [ControlMessage] = [
+            .cmdNewTab(workspaceID: "w1"),
+            .cmdSplit(paneID: "p1", axis: "column"),
+            .cmdClosePane(paneID: "p2"),
+            .cmdFocusPane(paneID: "p1"),
+            .cmdZoom(paneID: "p1"),
+            .cmdRenamePane(paneID: "p1", title: "build"),
+            .cmdReorderTab(workspaceID: "w1", fromIndex: 0, toIndex: 2),
+            .cmdSwitchTab(workspaceID: "w1", tabID: "t1"),
+            .workspaceList(ids: ["w1", "w2"]),
+            .workspaceRemoved(workspaceID: "w2"),
+        ]
+        let dec = FrameDecoder()
+        var out: [ControlMessage] = []
+        for m in msgs { out += try dec.feed(try FrameCodec.encode(m)) }
+        XCTAssertEqual(out, msgs)
+    }
+
+    func testBuildRemoteNodeMirrorsSplitTree() {
+        let p1 = Pane(); let p2 = Pane()
+        let tree: SplitNode = .split(axis: .row, ratio: 0.5, first: .leaf(p1), second: .leaf(p2))
+        let node = buildRemoteNode(tree) { p in
+            RemotePane(paneID: p.paneID, title: "T-\(p.paneID.prefix(4))", cwd: nil, state: "working", reason: nil)
+        }
+        guard case let .split(axis, ratio, first, second) = node else { return XCTFail("expected split") }
+        XCTAssertEqual(axis, "row"); XCTAssertEqual(ratio, 0.5)
+        guard case let .leaf(lp) = first else { return XCTFail() }
+        XCTAssertEqual(lp.paneID, p1.paneID); XCTAssertEqual(lp.state, "working")
+        guard case .leaf = second else { return XCTFail() }
     }
 
     func testTailscaleCGNATDetection() {

@@ -7,13 +7,17 @@ sealed interface ControlMessage {
         val pairingCode: String?,
         val secret: String?,
         val fcmToken: String?,
-        val protocolVersion: Int = 1,
+        val protocolVersion: Int = 2,
     ) : ControlMessage
     data class RefreshFcmToken(val token: String) : ControlMessage
     data class Accepted(val sessionNonce: String) : ControlMessage
     data class Rejected(val reason: String) : ControlMessage
     data object PendingApproval : ControlMessage
-    data class Snapshot(val panes: List<PaneInfo>) : ControlMessage
+    // v2 structural snapshot (host→client). The flat Snapshot is gone; the fleet list is
+    // derived by flattening each WorkspaceTree's leaves (Fleet.flatten).
+    data class WorkspaceTreeMsg(val tree: WorkspaceTree) : ControlMessage
+    data class WorkspaceList(val ids: List<String>) : ControlMessage
+    data class WorkspaceRemoved(val workspaceId: String) : ControlMessage
     data class StateMsg(val paneId: String, val state: String, val reason: String?) : ControlMessage
     data class PaneAdded(val pane: PaneInfo) : ControlMessage
     data class PaneRemoved(val paneId: String) : ControlMessage
@@ -37,3 +41,18 @@ data class PromptQuestion(
     val options: List<String>,
     val multiSelect: Boolean,
 )
+
+// v2 structural tree DTOs — byte-pinned to the Swift RemotePane/RemoteNode/RemoteTab/WorkspaceTree.
+
+/** One leaf pane, live fields. Mirrors the Swift RemotePane. */
+data class RemotePane(val paneId: String, val title: String, val cwd: String?, val state: String, val reason: String?)
+
+/** A tab's split tree. Mirrors the Swift RemoteNode (same JSON: kind/pane/axis/ratio/first/second). */
+sealed interface RemoteNode {
+    data class Leaf(val pane: RemotePane) : RemoteNode
+    data class Split(val axis: String, val ratio: Double, val first: RemoteNode, val second: RemoteNode) : RemoteNode
+}
+
+data class RemoteTab(val tabId: String, val root: RemoteNode, val focusedPaneId: String?, val zoomedPaneId: String?)
+
+data class WorkspaceTree(val workspaceId: String, val name: String, val tabs: List<RemoteTab>, val selectedTabId: String?)

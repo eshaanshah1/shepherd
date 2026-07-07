@@ -20,7 +20,10 @@ final class RemoteServer {
     private let knownDevices: () -> [PairedDevice]
     private let persist: (PairedDevice) -> Void
     private let requestApproval: (String, String, @escaping (Bool) -> Void) -> Void
-    private let snapshot: () -> [PaneInfo]
+    private let workspaceTrees: () -> [WorkspaceTree]
+    // A paired client's structural command (cmd*). Forwarded verbatim to the app, which
+    // applies it to the real store on main and re-broadcasts the affected workspace tree.
+    private let onCommand: (ControlMessage) -> Void
     private let updateFCMToken: (String, String) -> Void
     private let makeSecret: () -> String
     private let makeNonce: () -> String
@@ -105,21 +108,23 @@ final class RemoteServer {
          knownDevices: @escaping () -> [PairedDevice],
          persist: @escaping (PairedDevice) -> Void,
          requestApproval: @escaping (String, String, @escaping (Bool) -> Void) -> Void,
-         snapshot: @escaping () -> [PaneInfo],
+         workspaceTrees: @escaping () -> [WorkspaceTree],
          updateFCMToken: @escaping (String, String) -> Void,
          makeSecret: @escaping () -> String,
          makeNonce: @escaping () -> String,
          lookupBroker: @escaping (String) -> PtyBroker? = { _ in nil },
          desktopSize: @escaping (String) -> (Int, Int)? = { _ in nil },
-         desktopOwnsSize: @escaping (String) -> Bool = { _ in false }) {
+         desktopOwnsSize: @escaping (String) -> Bool = { _ in false },
+         onCommand: @escaping (ControlMessage) -> Void = { _ in }) {
         self.bindAddress = bindAddress; self.port = port
         self.currentCode = currentCode; self.knownDevices = knownDevices
         self.persist = persist; self.requestApproval = requestApproval
-        self.snapshot = snapshot; self.updateFCMToken = updateFCMToken
+        self.workspaceTrees = workspaceTrees; self.updateFCMToken = updateFCMToken
         self.makeSecret = makeSecret; self.makeNonce = makeNonce
         self.lookupBroker = lookupBroker
         self.desktopSize = desktopSize
         self.desktopOwnsSize = desktopOwnsSize
+        self.onCommand = onCommand
     }
 
     /// Resolve this machine's Tailscale IPv4 (100.64.0.0/10), or nil if Tailscale is down.
@@ -315,6 +320,11 @@ final class RemoteServer {
         case .detach:
             conn.lock.lock(); conn.phase = .closed; conn.lock.unlock()
             closeConn(fd, conn); return .stop
+        case .cmdNewTab, .cmdSplit, .cmdClosePane, .cmdFocusPane, .cmdZoom,
+             .cmdRenamePane, .cmdReorderTab, .cmdSwitchTab:
+            // Structural commands are honored only from a paired, live session — an
+            // unpaired socket can't mutate the host. The host never sends these.
+            if phase == .paired { onCommand(m) }
         default:
             break
         }
@@ -404,25 +414,29 @@ final class RemoteServer {
         lookupBroker(paneID)?.setSize(cols: dc, rows: dr)
     }
 
-    /// Mark a connection paired: register it for broadcasts and send accepted + snapshot.
-    /// The two frames are distinct events; a client that drains all frames reads both.
+    /// Mark a connection paired: register it for broadcasts and send accepted →
+    /// workspaceList → one workspaceTree per workspace. These are distinct frames; a
+    /// client that drains them all rebuilds the full mirror.
     ///
-    /// Ordering invariant: a newly-paired client must see accepted → snapshot BEFORE any
-    /// delta. We enqueue both frames AND register the fd in `clients` while holding
-    /// `clientsLock`; `broadcast` enqueues its deltas under the same lock. Because each
-    /// connection's write queue is serial-FIFO, a concurrent broadcast can't slip a delta
-    /// for this fd ahead of its accepted/snapshot. `enqueueWrite` returns immediately
-    /// (async), so the lock is never held across the actual Darwin.write.
+    /// Ordering invariant: a newly-paired client must see accepted → the structure frames
+    /// BEFORE any delta. We enqueue all of them AND register the fd in `clients` while
+    /// holding `clientsLock`; `broadcast` enqueues its deltas under the same lock. Because
+    /// each connection's write queue is serial-FIFO, a concurrent broadcast can't slip a
+    /// delta for this fd ahead of its accepted/structure frames. `enqueueWrite` returns
+    /// immediately (async), so the lock is never held across the actual Darwin.write.
     private func admit(_ fd: Int32, _ state: ConnState) {
         let nonce = makeNonce()
         state.lock.lock(); state.nonce = nonce; state.lock.unlock()
         nonceLock.lock(); liveNonces.insert(nonce); nonceLock.unlock()
         let accepted = encode(.accepted(sessionNonce: nonce))
-        let snap = encode(.snapshot(panes: snapshot()))
+        let trees = workspaceTrees()
+        let listFrame = encode(.workspaceList(ids: trees.map { $0.workspaceID }))
+        let treeFrames = trees.map { encode(.workspaceTree($0)) }
         clientsLock.lock()
         clients[fd] = state
         enqueueWrite(fd, accepted, on: state)
-        enqueueWrite(fd, snap, on: state)
+        enqueueWrite(fd, listFrame, on: state)
+        for f in treeFrames { enqueueWrite(fd, f, on: state) }
         clientsLock.unlock()
     }
 

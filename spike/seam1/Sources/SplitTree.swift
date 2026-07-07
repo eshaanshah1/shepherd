@@ -275,3 +275,17 @@ extension SplitNode: Codable {
         }
     }
 }
+
+/// Convert one tab's `SplitNode` tree into a wire `RemoteNode` (protocol v2). The
+/// caller supplies a projection mapping each live `Pane` to its `RemotePane`, since
+/// title/state/reason live on the store and `Pane.Codable` omits them. Bridges the
+/// split-tree model to the wire; both types are pure, so this stays AppKit-free.
+func buildRemoteNode(_ node: SplitNode, projection: (Pane) -> RemotePane) -> RemoteNode {
+    switch node {
+    case .leaf(let p): return .leaf(projection(p))
+    case .split(let axis, let ratio, let first, let second):
+        return .split(axis: axis.rawValue, ratio: ratio,
+                      first: buildRemoteNode(first, projection: projection),
+                      second: buildRemoteNode(second, projection: projection))
+    }
+}

@@ -4,6 +4,10 @@ import com.eshaan.shepherd.data.InMemoryPairingStore
 import com.eshaan.shepherd.data.Pairing
 import com.eshaan.shepherd.protocol.ControlMessage
 import com.eshaan.shepherd.protocol.PaneInfo
+import com.eshaan.shepherd.protocol.RemoteNode
+import com.eshaan.shepherd.protocol.RemotePane
+import com.eshaan.shepherd.protocol.RemoteTab
+import com.eshaan.shepherd.protocol.WorkspaceTree
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -15,7 +19,9 @@ class FleetViewModelTest {
     }
     @Test fun snapshotThenDeltaUpdatesFleet() {
         val vm = vm()
-        vm.applyInbound(ControlMessage.Snapshot(listOf(PaneInfo("p1","t","W","idle",null))))
+        vm.applyInbound(ControlMessage.WorkspaceTreeMsg(
+            WorkspaceTree("w", "W", listOf(RemoteTab("t1",
+                RemoteNode.Leaf(RemotePane("p1","t",null,"idle",null)), "p1", null)), "t1")))
         assertEquals(1, vm.fleet.value.panes.size)
         vm.applyInbound(ControlMessage.StateMsg("p1","blocked","approve Bash"))
         assertEquals("blocked", vm.fleet.value.pane("p1")!!.state)
