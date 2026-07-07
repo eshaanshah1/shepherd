@@ -213,6 +213,7 @@ final class AgentStore: ObservableObject {
         workspaces[w].tabs.append(tab)
         workspaces[w].selectedTabID = tab.tabID
         save()
+        broadcastWorkspaceTree(workspaceID: workspaces[w].id)
         return tab.tabID
     }
 
@@ -243,6 +244,7 @@ final class AgentStore: ObservableObject {
         save()
         updateDockBadge()
         postPaneClosed(closingPaneIDs)
+        broadcastWorkspaceTree(workspaceID: workspaces[w].id)
     }
 
     func closeSelected() { if let sel = selectedTab { closeTab(sel) } }
@@ -315,6 +317,7 @@ final class AgentStore: ObservableObject {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         tabs[i].userTitle = trimmed.isEmpty ? nil : trimmed
         save()
+        broadcastCurrentWorkspaceTree()
     }
 
     func reorder(tabID: String, toIndex: Int) {
@@ -326,7 +329,7 @@ final class AgentStore: ObservableObject {
         tabs = arr
     }
 
-    func commitOrder() { save() }
+    func commitOrder() { save(); broadcastCurrentWorkspaceTree() }
 
     /// True if `paneID` is the focused pane of the currently selected tab.
     func isFocusedSurface(paneID: String) -> Bool {
@@ -497,6 +500,7 @@ final class AgentStore: ObservableObject {
             save()
             updateDockBadge()
             postPaneClosed([paneID])
+            broadcastWorkspaceTree(workspaceID: workspaces[w].id)
         } else {
             closeTabInWorkspace(w, tabID: workspaces[w].tabs[t].tabID)   // was the tab's last pane
         }
@@ -518,6 +522,7 @@ final class AgentStore: ObservableObject {
         tabs[i].zoomedPaneID = nil
         save()
         refocusActiveTerminal()
+        broadcastCurrentWorkspaceTree()
     }
 
     func closeFocusedPane() {
@@ -539,6 +544,7 @@ final class AgentStore: ObservableObject {
         guard let i = tabs.firstIndex(where: { $0.tabID == selectedTab }) else { return }
         tabs[i].zoomedPaneID = tabs[i].zoomedPaneID == nil ? tabs[i].focusedPaneID : nil
         refocusActiveTerminal()
+        broadcastCurrentWorkspaceTree()
     }
 
     func setRatio(tabID: String, path: [Int], to ratio: Double) {
@@ -625,14 +631,70 @@ final class AgentStore: ObservableObject {
 
     // MARK: Remote control channel
 
-    /// Project every pane across every workspace to the client-facing `PaneInfo`.
-    /// The pure mapping lives in `buildSnapshot` (RemoteProtocol) so it's testable.
-    func fleetSnapshot() -> [PaneInfo] {
-        buildSnapshot(workspaces.enumerated().flatMap { (i, ws) in
-            ws.tabs.flatMap { $0.root.panes.map {
-                (ws.displayName(index: i), $0.paneID, $0.displayTitle, $0.state.rawValue, $0.reason)
-            } }
-        })
+    /// Project every workspace to a client-facing `WorkspaceTree` (protocol v2): its tabs,
+    /// each carrying its live `SplitNode` tree with per-pane title/state/cwd/reason. Sent on
+    /// attach; a single workspace is re-sent by `broadcastWorkspaceTree` on structural change.
+    func workspaceTrees() -> [WorkspaceTree] {
+        workspaces.enumerated().map { (i, ws) in
+            WorkspaceTree(workspaceID: ws.id, name: ws.displayName(index: i),
+                          tabs: ws.tabs.map(remoteTab), selectedTabID: ws.selectedTabID)
+        }
+    }
+
+    /// One tab → its wire `RemoteTab`. The projection carries the live fields `Pane.Codable`
+    /// omits (title/state/reason), which the mirror needs.
+    private func remoteTab(_ tab: Tab) -> RemoteTab {
+        RemoteTab(tabID: tab.tabID,
+                  root: buildRemoteNode(tab.root) { p in
+                      RemotePane(paneID: p.paneID, title: p.displayTitle, cwd: p.cwd,
+                                 state: p.state.rawValue, reason: p.reason)
+                  },
+                  focusedPaneID: tab.focusedPaneID, zoomedPaneID: tab.zoomedPaneID)
+    }
+
+    /// Re-broadcast ONE workspace's whole tree to attached clients — the v2 way structural
+    /// change propagates (whole-tree re-snapshot, not granular deltas). No-op unless serving.
+    func broadcastWorkspaceTree(workspaceID: String) {
+        guard isServing, remoteServer != nil,
+              let i = workspaces.firstIndex(where: { $0.id == workspaceID }) else { return }
+        let ws = workspaces[i]
+        let tree = WorkspaceTree(workspaceID: ws.id, name: ws.displayName(index: i),
+                                 tabs: ws.tabs.map(remoteTab), selectedTabID: ws.selectedTabID)
+        remoteServer?.broadcast(.workspaceTree(tree))
+    }
+
+    /// Re-broadcast the current workspace's tree — the common case for keyboard-driven
+    /// structural mutations, which all act on the selected workspace.
+    private func broadcastCurrentWorkspaceTree() {
+        if let id = selectedWorkspaceID { broadcastWorkspaceTree(workspaceID: id) }
+    }
+
+    /// Apply a paired client's structural command to the real store (host-authoritative).
+    /// Each maps to the SAME mutation the local keyboard path uses; pane-addressed commands
+    /// go through `revealPane` first so they act on the right workspace/tab regardless of the
+    /// desktop's current selection. A trailing tree re-broadcast guarantees the client sees
+    /// the result even for the paths that don't broadcast themselves (focus/switch/rename).
+    /// Runs on main (wired via the onCommand closure) — mutations touch @Published state.
+    func applyRemoteCommand(_ msg: ControlMessage) {
+        switch msg {
+        case .cmdNewTab(let ws):            selectWorkspace(ws); _ = newTab()
+        case .cmdSplit(let p, let axis):    revealPane(p); splitFocused(axis == "column" ? .column : .row)
+        case .cmdClosePane(let p):          closePane(p)
+        case .cmdFocusPane(let p):          revealPane(p)
+        case .cmdZoom(let p):               revealPane(p); toggleZoom()
+        case .cmdRenamePane(let p, let title):
+            guard let (w, t) = locatePane(p, in: workspaces) else { return }
+            let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            _ = workspaces[w].tabs[t].root.updatePane(p) { $0.userTitle = trimmed.isEmpty ? nil : trimmed }
+            save()
+        case .cmdReorderTab(let ws, let from, let to):
+            selectWorkspace(ws)
+            guard tabs.indices.contains(from) else { return }
+            reorder(tabID: tabs[from].tabID, toIndex: to); commitOrder()
+        case .cmdSwitchTab(let ws, let tab): selectWorkspace(ws); select(tabID: tab)
+        default: return
+        }
+        broadcastCurrentWorkspaceTree()
     }
 
     /// Start the control server, bound to the Tailscale interface, when serving is
@@ -659,17 +721,17 @@ final class AgentStore: ObservableObject {
                     self?.pendingApproval = (deviceID, name)
                 }
             },
-            // fleetSnapshot reads @Published workspaces, so it must run on main. This is
+            // workspaceTrees reads @Published workspaces, so it must run on main. This is
             // called from RemoteServer's connQueue (admit), never under any RemoteServer
             // lock; main never blocks on connQueue/writeQueue (broadcast is async), so the
             // main.sync can't deadlock. The [weak self] nil-guard returns [] if torn down.
-            snapshot: { [weak self] in
+            workspaceTrees: { [weak self] in
                 guard let self else { return [] }
                 // admit() runs on connQueue for a known device but on the MAIN thread for a
                 // new-device approval (respondToApproval → decider → admit). main.sync from
                 // main is a libdispatch reentrancy trap, so call directly when already on main.
-                if Thread.isMainThread { return self.fleetSnapshot() }
-                return DispatchQueue.main.sync { self.fleetSnapshot() }
+                if Thread.isMainThread { return self.workspaceTrees() }
+                return DispatchQueue.main.sync { self.workspaceTrees() }
             },
             updateFCMToken: { [weak self] id, token in self?.updateFCMToken(deviceID: id, token: token) },
             makeSecret: { UUID().uuidString }, makeNonce: { UUID().uuidString },
@@ -690,6 +752,11 @@ final class AgentStore: ObservableObject {
                     return self.tabs.first { $0.tabID == self.selectedTab }?.isShowing(paneID) ?? false
                 }
                 return Thread.isMainThread ? read() : DispatchQueue.main.sync(execute: read)
+            },
+            // A paired client's structural command arrives on RemoteServer's connQueue; apply
+            // it on main since it mutates @Published state + drives libghostty focus.
+            onCommand: { [weak self] msg in
+                DispatchQueue.main.async { self?.applyRemoteCommand(msg) }
             })
         if s.start() {
             remoteServer = s

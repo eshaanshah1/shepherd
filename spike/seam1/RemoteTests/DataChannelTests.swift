@@ -269,7 +269,7 @@ final class DataChannelTests: XCTestCase {
             knownDevices: { [] },
             persist: { _ in },
             requestApproval: { _, _, decide in decide(true) },
-            snapshot: { [] },
+            workspaceTrees: { [] },
             updateFCMToken: { _, _ in },
             makeSecret: { "SECRET" },
             makeNonce: { UUID().uuidString },

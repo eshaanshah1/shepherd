@@ -2,6 +2,10 @@ package com.eshaan.shepherd.transport
 
 import com.eshaan.shepherd.protocol.ControlMessage
 import com.eshaan.shepherd.protocol.PaneInfo
+import com.eshaan.shepherd.protocol.RemoteNode
+import com.eshaan.shepherd.protocol.RemotePane
+import com.eshaan.shepherd.protocol.RemoteTab
+import com.eshaan.shepherd.protocol.WorkspaceTree
 import com.eshaan.shepherd.protocol.WireCodec
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
@@ -29,7 +33,9 @@ class RemoteConnectionLoopbackTest {
         }
         val out = s.getOutputStream()
         out.write(WireCodec.encode(ControlMessage.Accepted("nonce-xyz")))
-        out.write(WireCodec.encode(ControlMessage.Snapshot(listOf(PaneInfo("p1","t","W","idle",null)))))
+        out.write(WireCodec.encode(ControlMessage.WorkspaceTreeMsg(
+            WorkspaceTree("w","W", listOf(RemoteTab("t1",
+                RemoteNode.Leaf(RemotePane("p1","t",null,"idle",null)), "p1", null)), "t1"))))
         out.write(WireCodec.encode(ControlMessage.StateMsg("p1","blocked","approve Bash")))
         out.flush()
         Thread.sleep(200); s.close()
@@ -54,7 +60,7 @@ class RemoteConnectionLoopbackTest {
         val connected = withTimeout(3000) { conn.status.first { it is ConnStatus.Connected } } as ConnStatus.Connected
         assertEquals("nonce-xyz", connected.sessionNonce)
         withTimeout(3000) { while (received.none { it is ControlMessage.StateMsg }) delay(20) }
-        assertTrue(received.any { it is ControlMessage.Snapshot })
+        assertTrue(received.any { it is ControlMessage.WorkspaceTreeMsg })
         assertTrue(received.any { it is ControlMessage.StateMsg })
         assertNotNull(seenHello); assertEquals("0042", seenHello!!.pairingCode)
         job.cancel(); conn.stop(); scope.cancel(); server.close()
@@ -70,7 +76,7 @@ class RemoteConnectionLoopbackTest {
             val out = s.getOutputStream()
             out.write(WireCodec.encode(ControlMessage.PendingApproval)); out.flush(); Thread.sleep(150)
             out.write(WireCodec.encode(ControlMessage.Accepted("n2")))
-            out.write(WireCodec.encode(ControlMessage.Snapshot(emptyList()))); out.flush(); Thread.sleep(150); s.close()
+            out.write(WireCodec.encode(ControlMessage.WorkspaceList(emptyList()))); out.flush(); Thread.sleep(150); s.close()
         }.apply { isDaemon = true; start() }
         val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
         val conn = RemoteConnection("127.0.0.1", server.localPort,
