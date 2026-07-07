@@ -7,13 +7,21 @@ struct Workspace: Identifiable {
     var userTitle: String?
     var tabs: [Tab]
     var selectedTabID: String?
+    // Non-nil ⇒ this is a MIRROR of a workspace on another Mac (M2). `remoteHostID` keys the
+    // RemoteClient; `remoteWorkspaceID` is the host's workspace id sent back in cmd*.
+    var remoteHostID: String? = nil
+    var remoteWorkspaceID: String? = nil
+    var isRemote: Bool { remoteHostID != nil }
 
     init(id: String = UUID().uuidString, userTitle: String? = nil,
-         tabs: [Tab], selectedTabID: String? = nil) {
+         tabs: [Tab], selectedTabID: String? = nil,
+         remoteHostID: String? = nil, remoteWorkspaceID: String? = nil) {
         self.id = id
         self.userTitle = userTitle
         self.tabs = tabs
         self.selectedTabID = selectedTabID ?? tabs.first?.tabID
+        self.remoteHostID = remoteHostID
+        self.remoteWorkspaceID = remoteWorkspaceID
     }
 
     /// Index-based default name; an explicit rename (userTitle) wins.
@@ -33,6 +41,29 @@ struct Workspace: Identifiable {
         tabs = [t]
         selectedTabID = t.tabID
     }
+}
+
+/// Deterministic local id for a mirror workspace, so re-broadcasts upsert the same one.
+func mirrorWorkspaceID(hostID: String, remoteWorkspaceID: String) -> String {
+    "remote:\(hostID):\(remoteWorkspaceID)"
+}
+
+/// Build a mirror `Workspace` from a wire `WorkspaceTree` (M2 client side). Reuses the
+/// host's tab/pane ids; the local workspace id is deterministic (`mirrorWorkspaceID`) so a
+/// later re-broadcast replaces it in place. The name mirrors the host's (carried on the wire).
+func buildMirrorWorkspace(_ tree: WorkspaceTree, hostID: String) -> Workspace {
+    let tabs = tree.tabs.map { rt in
+        Tab(tabID: rt.tabID,
+            root: buildMirrorNode(rt.root, hostID: hostID),
+            focusedPaneID: rt.focusedPaneID,
+            zoomedPaneID: rt.zoomedPaneID)
+    }
+    return Workspace(id: mirrorWorkspaceID(hostID: hostID, remoteWorkspaceID: tree.workspaceID),
+                     userTitle: tree.name,
+                     tabs: tabs,
+                     selectedTabID: tree.selectedTabID,
+                     remoteHostID: hostID,
+                     remoteWorkspaceID: tree.workspaceID)
 }
 
 /// Find the (workspace, tab) indices owning a pane, across ALL workspaces.
