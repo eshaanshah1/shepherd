@@ -30,6 +30,7 @@ case "$event" in
   PreToolUse|PermissionRequest) key="tool_name" ;;
   StopFailure)                  key="error_type" ;;
   SubagentStart|SubagentStop)   key="agent_type" ;;
+  SessionStart)                 key="session_id" ;;   # carried so Shepherd can resume the agent on relaunch
 esac
 if [ -n "$key" ] && [ -n "$payload_src" ]; then
   if command -v jq >/dev/null 2>&1; then

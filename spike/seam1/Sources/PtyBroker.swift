@@ -69,9 +69,12 @@ final class PtyBroker {
     }
 
     /// Update the pane's grid and push a resize frame to the helper (which resizes
-    /// the inner PTY). Records the new size so a later DataReady reflects it.
+    /// the inner PTY). Records the new size so a later DataReady reflects it. A no-op
+    /// when the grid is unchanged — no reason to churn the helper with a redundant resize.
     func setSize(cols: Int, rows: Int) {
-        lock.lock(); self.cols = cols; self.rows = rows; let h = helperFD; lock.unlock()
+        lock.lock()
+        guard self.cols != cols || self.rows != rows else { lock.unlock(); return }
+        self.cols = cols; self.rows = rows; let h = helperFD; lock.unlock()
         if h >= 0 { writeAll(h, Array(HelperFrameCodec.encode(.resize(cols: cols, rows: rows)))) }
     }
 

@@ -134,7 +134,7 @@ focus to reach a hidden-workspace pane).
 
 | Hook event | → state |
 |---|---|
-| `SessionStart` | **idle** ; `SessionEnd` → **shell** (agent gone, tab stays) |
+| `SessionStart` | **idle** (+ records the `session_id` from `detail` on the pane, for resume-on-relaunch) ; `SessionEnd` → **shell** (agent gone, tab stays; clears `sessionID`) |
 | `UserPromptSubmit` | **working** (always — starts a turn) |
 | `PreToolUse[AskUserQuestion]` / `PreToolUse[ExitPlanMode]` | **blocked** ("answer needed" / "plan approval") |
 | other `PreToolUse`/`PostToolUse`/`PostToolUseFailure`/`SubagentStart`/`SubagentStop`/`ElicitationResult` | **working** *(only if already mid-turn — see guard)* |
@@ -189,12 +189,22 @@ sourcing it from `~/.config/shepherd`; that wiring is a deferred follow-up).
 ### Persistence
 The store key is now **`shepherd.workspaces.v1`** (`AgentStore`): per workspace,
 its tabs (each a recursive `SplitNode` tree — shape + split ratios — plus each
-pane's `userTitle` + cwd and the `collapsed` flag, in tab order) + the workspace
-selection-by-index; the store also keeps `selectedWorkspaceID`. A one-time
-migration wraps a legacy `shepherd.tabs.v2` blob into one default workspace.
+pane's `userTitle` + cwd + `sessionID` and the `collapsed` flag, in tab order) +
+the workspace selection-by-index; the store also keeps `selectedWorkspaceID`. A
+one-time migration wraps a legacy `shepherd.tabs.v2` blob into one default workspace.
 Restore rebuilds the trees with **fresh pane ids and `.shell` state** (live agent
-state and zoom never survive a restart; a restored pane is a fresh shell), and
-re-derives selection from the persisted workspace/tab indices (ids regenerate).
+state and zoom never survive a restart), and re-derives selection from the persisted
+workspace/tab indices (ids regenerate).
+
+**Agent resume:** a pane persists the live Claude `sessionID` (captured from the
+`SessionStart` hook payload via `detail`; cleared on `SessionEnd`). On restore, if a
+pane carries one, `GhosttyTerminal.makeSurface` seeds libghostty's `initial_input` with
+`claude --resume <id>\n` (`AgentStore.takeResumeInput` → `claudeResumeInput`) so the
+agent picks up in the already-restored cwd — composes with the `shepherdd pty` wrapper
+since it's typed into the PTY, not the surface command. One-shot (id consumed async on
+read); a live resume re-arms it via the resumed session's own `SessionStart`, a dead id
+falls back to a plain shell. Requires the plugin reporting `session_id` — after editing
+`report.sh`, run `/reload-plugins`; sessions started before the reload won't resume.
 
 ---
 

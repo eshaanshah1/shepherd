@@ -117,6 +117,13 @@ final class GhosttySurfaceView: NSView {
             cfg.working_directory = dup(cwd)
         }
 
+        // If this pane had a live Claude session at quit, resume it: type `claude --resume <id>`
+        // into the PTY once the shell (or the shepherdd pty wrapper) is up. Only restored panes
+        // carry a sessionID at creation; fresh panes don't, so nothing is injected for them.
+        if let resume = AgentStore.shared.takeResumeInput(forPane: paneID) {
+            cfg.initial_input = dup(resume)
+        }
+
         if let cmd = remoteSurfaceCommand(serving: AgentStore.shared.isServing,
                                           helperPath: AgentStore.shared.helperPath) {
             cfg.command = dup(cmd)
@@ -200,7 +207,11 @@ final class GhosttySurfaceView: NSView {
     }
 
     override func mouseDown(with e: NSEvent) {
+        // A click must switch the focused/active pane deterministically: move keyboard focus
+        // here AND update the model directly, rather than relying solely on becomeFirstResponder
+        // firing (which we don't control the timing/return of). focusPane is idempotent.
         if window?.firstResponder !== self { window?.makeFirstResponder(self) }
+        AgentStore.shared.focusPane(paneID)
         guard let surface else { return }
         reportPos(e)
         _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, mods(e))
