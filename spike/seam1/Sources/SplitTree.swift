@@ -3,6 +3,19 @@ import CoreGraphics
 
 /// One terminal pane = one libghostty surface = the agent unit. The PTY env var
 /// is still literally `SHEPHERD_TAB_ID` (plugin compat); its value is this paneID.
+/// Link health of a mirror pane's connection to its host (M2). Local panes never carry one.
+enum RemoteConnState: String { case live, reconnecting, dead }
+
+/// Marks a pane as a MIRROR of a pane living on another Mac ("host"). Its surface runs
+/// `shepherdd attach <host> <remotePaneID>` instead of a local shell, and structural
+/// actions on it route to the host as `cmd*`. `nil` = an ordinary local pane. Never
+/// persisted — a restored mirror re-attaches (M3).
+struct RemoteRef: Equatable {
+    let hostID: String
+    let remotePaneID: String
+    var conn: RemoteConnState = .live
+}
+
 struct Pane: Identifiable, Equatable {
     let paneID: String
     var title: String = ""        // OSC title the program sets
@@ -11,6 +24,7 @@ struct Pane: Identifiable, Equatable {
     var state: AgentState = .shell
     var reason: String? = nil
     var sessionID: String? = nil  // live Claude session id — persisted to resume the agent on relaunch
+    var remote: RemoteRef? = nil  // non-nil ⇒ this pane mirrors a host pane (M2); never persisted
     var id: String { paneID }
 
     init(paneID: String = UUID().uuidString) { self.paneID = paneID }
@@ -287,5 +301,26 @@ func buildRemoteNode(_ node: SplitNode, projection: (Pane) -> RemotePane) -> Rem
         return .split(axis: axis.rawValue, ratio: ratio,
                       first: buildRemoteNode(first, projection: projection),
                       second: buildRemoteNode(second, projection: projection))
+    }
+}
+
+/// Inverse of `buildRemoteNode` (M2 client side): rebuild a local `SplitNode` from a wire
+/// `RemoteNode`, marking each leaf as a mirror. The mirror pane REUSES the host's paneID
+/// (UUIDs are globally unique, so no local collision) — that keeps `state`/`focused`/`zoom`
+/// routing by-id trivial and lets `RemoteRef.remotePaneID == paneID`.
+func buildMirrorNode(_ node: RemoteNode, hostID: String) -> SplitNode {
+    switch node {
+    case .leaf(let rp):
+        var p = Pane(paneID: rp.paneID)
+        p.title = rp.title
+        p.cwd = rp.cwd
+        p.state = AgentState(rawValue: rp.state) ?? .shell
+        p.reason = rp.reason
+        p.remote = RemoteRef(hostID: hostID, remotePaneID: rp.paneID, conn: .live)
+        return .leaf(p)
+    case .split(let axis, let ratio, let first, let second):
+        return .split(axis: SplitAxis(rawValue: axis) ?? .row, ratio: ratio,
+                      first: buildMirrorNode(first, hostID: hostID),
+                      second: buildMirrorNode(second, hostID: hostID))
     }
 }

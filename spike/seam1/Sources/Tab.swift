@@ -27,6 +27,17 @@ struct Tab: Identifiable {
         self.focusedPaneID = pane.paneID
     }
 
+    /// Build a tab from a full pane tree — used to reconstruct a mirror tab (M2) and by
+    /// persistence restore. `focusedPaneID` falls back to the first leaf if none given.
+    init(tabID: String, root: SplitNode, focusedPaneID: String? = nil,
+         zoomedPaneID: String? = nil, userTitle: String? = nil) {
+        self.tabID = tabID
+        self.root = root
+        self.focusedPaneID = focusedPaneID ?? root.firstLeafID ?? ""
+        self.zoomedPaneID = zoomedPaneID
+        self.userTitle = userTitle
+    }
+
     /// Title for an unsplit tab (mirrors the old Agent.displayTitle): rename →
     /// focused pane's displayTitle.
     var displayTitle: String { userTitle?.isEmpty == false ? userTitle! : (focusedPane()?.displayTitle ?? "Terminal") }

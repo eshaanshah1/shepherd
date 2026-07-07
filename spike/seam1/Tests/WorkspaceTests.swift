@@ -14,6 +14,36 @@ final class WorkspaceTests: XCTestCase {
         return Workspace(userTitle: userTitle, tabs: [tab])
     }
 
+    func testBuildMirrorWorkspaceFromTree() {
+        let tree = WorkspaceTree(
+            workspaceID: "hw1", name: "HostWS",
+            tabs: [RemoteTab(tabID: "ht1",
+                root: .split(axis: "column", ratio: 0.4,
+                    first: .leaf(RemotePane(paneID: "hp1", title: "zsh", cwd: "/x", state: "shell", reason: nil)),
+                    second: .leaf(RemotePane(paneID: "hp2", title: "claude", cwd: "/y", state: "need-to-check", reason: "done"))),
+                focusedPaneID: "hp2", zoomedPaneID: nil)],
+            selectedTabID: "ht1")
+        let w = buildMirrorWorkspace(tree, hostID: "MacA")
+
+        XCTAssertTrue(w.isRemote)
+        XCTAssertEqual(w.remoteHostID, "MacA")
+        XCTAssertEqual(w.remoteWorkspaceID, "hw1")
+        XCTAssertEqual(w.id, "remote:MacA:hw1")
+        XCTAssertEqual(w.displayName(index: 3), "HostWS")   // name mirrors the host's
+        XCTAssertEqual(w.tabs.count, 1)
+        let tab = w.tabs[0]
+        XCTAssertEqual(tab.tabID, "ht1")
+        XCTAssertEqual(tab.focusedPaneID, "hp2")
+        guard case let .split(axis, ratio, first, second) = tab.root else { return XCTFail("expected split") }
+        XCTAssertEqual(axis, .column); XCTAssertEqual(ratio, 0.4)
+        guard case let .leaf(p1) = first, case let .leaf(p2) = second else { return XCTFail() }
+        XCTAssertEqual(p1.paneID, "hp1")                    // reuses the host paneID
+        XCTAssertEqual(p1.remote, RemoteRef(hostID: "MacA", remotePaneID: "hp1", conn: .live))
+        XCTAssertEqual(p2.state, .needsCheck)               // "need-to-check" mapped
+        XCTAssertEqual(p2.reason, "done")
+        XCTAssertEqual(p2.cwd, "/y")
+    }
+
     func testDisplayNameDefaultAndRename() {
         XCTAssertEqual(ws().displayName(index: 0), "Workspace 1")
         XCTAssertEqual(ws().displayName(index: 4), "Workspace 5")
