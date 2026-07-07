@@ -10,6 +10,7 @@ struct Pane: Identifiable, Equatable {
     var cwd: String? = nil        // last-known working dir
     var state: AgentState = .shell
     var reason: String? = nil
+    var sessionID: String? = nil  // live Claude session id — persisted to resume the agent on relaunch
     var id: String { paneID }
 
     init(paneID: String = UUID().uuidString) { self.paneID = paneID }
@@ -227,20 +228,23 @@ extension SplitNode {
     }
 }
 
-// Persists only structure + `userTitle`/`cwd`; live state (paneID, state, OSC title)
-// never survives a restart — a restored pane is a fresh shell.
+// Persists structure + `userTitle`/`cwd` + `sessionID` (to resume the agent); live state
+// (paneID, run state, OSC title) never survives a restart — a restored pane is a fresh shell,
+// or, if it had a live Claude session, one that resumes that session on first input.
 extension Pane: Codable {
-    enum CodingKeys: String, CodingKey { case userTitle, cwd }
+    enum CodingKeys: String, CodingKey { case userTitle, cwd, sessionID }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init(paneID: UUID().uuidString)
         userTitle = try c.decodeIfPresent(String.self, forKey: .userTitle)
         cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
+        sessionID = try c.decodeIfPresent(String.self, forKey: .sessionID)
     }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encodeIfPresent(userTitle, forKey: .userTitle)
         try c.encodeIfPresent(cwd, forKey: .cwd)
+        try c.encodeIfPresent(sessionID, forKey: .sessionID)
     }
 }
 

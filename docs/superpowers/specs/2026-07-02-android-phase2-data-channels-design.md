@@ -174,15 +174,28 @@ so the phone can only font-scale + pan a desktop-shaped grid — bad for *respon
 TUI, which is Phase 2's whole point. (Claude's conversation transcript is main-screen scrollback
 and reads OK narrow; the alt-screen overlays — menus / plan / `AskUserQuestion` — are the hard case.)
 
-**The model: the winsize follows the *active driver*; the desktop wins ties.**
-- Phone attaches **and** the desktop pane is not focused/visible on the Mac → the phone sends
-  its size; the host resizes the PTY; Claude repaints at phone dims (~40 cols) — native, readable,
-  no panning. This is the common case (you're away from the desk — that's *why* you're on the phone),
-  so the reflow costs nothing (no one's watching the desktop).
-- Desktop re-focuses that pane → the host snaps the winsize back to the desktop size (one repaint,
-  expected — you're now looking at the desktop). `AgentStore` already tracks per-pane focus/visibility,
-  so it is the natural arbiter.
-- Both actively driving (rare) → desktop wins; the phone falls back to pan/zoom at the desktop size.
+**The model (refined 2026-07-03): the desktop owns every pane, always. The phone owns
+exactly ONE pane — the single pane its app currently has actively open — and nothing
+else.** Ownership is no longer tied to desktop focus/visibility/lid at all (that coupling was
+the churn that shrank on-screen panes when you clicked a sibling on the Mac). The signal is the
+phone's own action: opening a pane's terminal opens a data channel, which makes that pane the
+sole phone-owned pane; leaving it (closing the channel) releases it back to desktop.
+- Phone opens (taps into) pane X → X becomes phone-owned and takes the phone's size (~40 cols);
+  the host resizes that one PTY, Claude repaints native+readable. Every other pane stays
+  desktop-sized regardless of what you do on the Mac.
+- **Tie-break — desktop wins:** if the desktop is *showing X right now* (visible tab, lid open)
+  at the moment the phone opens it, the desktop keeps it desktop-sized and the phone's size is NOT
+  applied. This is a point-in-time check at the phone's request (`desktopOwnsSize`, via `Tab.isShowing`
+  + presence), NOT a continuous arbiter — desktop focus/tab/zoom changes never trigger a resize on
+  their own (that was the rejected churn).
+- The phone opens a different pane Y while still holding X → X snaps back to desktop first, then
+  Y takes the phone size. Enforced host-side in `RemoteServer` via `activePhonePaneID`
+  (`makeActivePhonePane`/`resignActivePhonePane`) so at most one pane is ever phone-owned.
+- Phone leaves the pane (data channel detaches) → the host snaps it back to the desktop grid.
+- Desktop focus / tab switch / zoom / lid open-close **never** resize a PTY — a desktop pane's
+  size is driven purely by its own surface layout (outer→inner `SIGWINCH`); the only exception is
+  the one pane the phone has open (and the desktop isn't showing). A live phone rotation/keyboard
+  resize (`ControlMessage.resize`) applies **only** to that active, desktop-not-showing pane.
 
 **Protocol delta from §4:** make size dynamic + bidirectional. Add `Resize{cols,rows}` (phone→app)
 on the data channel; the host arbiter applies it to the PTY **only when it holds the size** per the
@@ -312,12 +325,12 @@ Reaffirms §6 of the parent design, plus the data-channel specifics:
     connection, so the raw data-channel output path and the ring stay **untouched** (no per-chunk
     framing on the hot path). This supersedes §5.1's "Add `Resize` on the data channel" — same model,
     cleaner placement.
-  - **App is the arbiter** (as §5.1 requires), and **snap-back is mandatory**: the phone owns the size
-    for a pane only while its desktop surface is **not** the focused/visible pane (`AgentStore`;
-    desktop wins ties). On phone **detach** OR **desktop refocus**, the app pushes the desktop size
-    back to the helper — otherwise Claude is left rendering ~40-col content in the full desktop pane.
-    Desktop's own resize keeps flowing through the helper's existing outer→inner SIGWINCH path and is
-    authoritative whenever it fires; the phone re-asserts its size on its next resize event.
+  - **Host is the arbiter** (as §5.1 requires), and **snap-back is mandatory**: the phone owns the size
+    for exactly the one pane it currently has open (`RemoteServer.activePhonePaneID`; see the 2026-07-03
+    refinement in §5.1). On phone **detach** (or the phone opening a different pane), the host pushes the
+    desktop size back to the helper — otherwise Claude is left rendering ~40-col content in the full
+    desktop pane. Desktop's own resize keeps flowing through the helper's existing outer→inner SIGWINCH
+    path; desktop focus/tab/zoom/lid never change a PTY size — only the phone's one open pane does.
   - **One shipped-code protocol change (unavoidable):** the **app→helper** link (today raw injected
     input) gains minimal typed framing — `[u32 len][1-byte type][payload]`, type `0x00` = input bytes
     (write to `gMaster`), type `0x01` = resize (`cols,rows`) → `sh_set_winsize(gMaster)`. Low-volume
@@ -329,6 +342,10 @@ Reaffirms §6 of the parent design, plus the data-channel specifics:
     size and emits it (debounced).
   Next: writing-plans.
 - **2026-07-02 (UX refinement — desktop-owned pane shows a placeholder, not a panned grid):**
+  > **SUPERSEDED 2026-07-03 by the §5.1 single-active-pane model.** The phone now always owns any pane
+  > it opens (never gets a "desktop owns this" verdict for a pane it actively opened), so this placeholder
+  > case can't arise and was never wired host-side (`DataReady` has no ownership flag). Kept for history.
+
   decided during implementation. When the **desktop owns the size** (desktop pane focused/visible),
   the phone must NOT render a desktop-sized grid with pan/zoom (fiddly UI, poor UX). Instead the phone
   shows a static **"Pane open on desktop"** placeholder and does not render the terminal. This

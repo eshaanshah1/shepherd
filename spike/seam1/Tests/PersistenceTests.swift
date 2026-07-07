@@ -1,10 +1,24 @@
 import XCTest
 
 final class PersistenceTests: XCTestCase {
-    private func tab(_ title: String?, cwd: String? = nil) -> Tab {
+    private func tab(_ title: String?, cwd: String? = nil, sessionID: String? = nil) -> Tab {
         var p = Pane(paneID: UUID().uuidString)
-        p.userTitle = title; p.cwd = cwd
+        p.userTitle = title; p.cwd = cwd; p.sessionID = sessionID
         return Tab(pane: p)
+    }
+
+    func testSessionIDSurvivesSnapshotRoundTrip() throws {
+        let t = tab("agent", cwd: "/tmp/proj", sessionID: "abc-123")
+        let ws = Workspace(tabs: [t])
+        let data = try JSONEncoder().encode(snapshotState([ws], selectedWorkspaceID: ws.id))
+        let rebuilt = buildWorkspaces(from: try JSONDecoder().decode(PersistedState.self, from: data))
+        // sessionID persists so the agent can be resumed; run state does not (fresh shell otherwise).
+        XCTAssertEqual(rebuilt[0].tabs[0].root.panes.first?.sessionID, "abc-123")
+        XCTAssertEqual(rebuilt[0].tabs[0].root.panes.first?.state, .shell)
+    }
+
+    func testClaudeResumeInput() {
+        XCTAssertEqual(claudeResumeInput(sessionID: "abc-123"), "claude --resume abc-123\n")
     }
 
     func testSnapshotRoundTripPreservesStructureAndSelection() throws {

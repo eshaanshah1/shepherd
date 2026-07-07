@@ -53,6 +53,11 @@ func buildWorkspaces(from state: PersistedState) -> [Workspace] {
     }
 }
 
+/// The shell input that resumes a Claude session by id — typed into a restored pane's PTY
+/// so the agent picks up where it left off (Claude keys sessions by id within the cwd, which
+/// is itself restored). Session ids are UUIDs, so no shell-quoting is needed.
+func claudeResumeInput(sessionID: String) -> String { "claude --resume \(sessionID)\n" }
+
 /// Wrap legacy v2 tabs data (`[PersistedTab]`) into a single default workspace.
 /// nil if the data is absent/empty/undecodable.
 func migrateLegacyTabs(_ data: Data) -> PersistedState? {
