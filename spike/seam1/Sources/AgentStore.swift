@@ -58,7 +58,9 @@ final class AgentStore: ObservableObject {
     /// $SHEPHERD_PTY_SOCK. Matches socketPath's /tmp form to stay under sun_path's 104.
     let ptySocketPath = "/tmp/shepherd-pty-\(getpid()).sock"
     private var ptyHub: PtyHub?
-    private let remotePort: UInt16 = 8722
+    /// The control-channel port hosts bind and clients dial by default.
+    static let defaultRemotePort: UInt16 = 8722
+    private let remotePort: UInt16 = AgentStore.defaultRemotePort
     private let pairedDevicesKey = "shepherd.remote.devices"
 
     /// The 4-digit code a new device must echo to start pairing. Regenerated each
