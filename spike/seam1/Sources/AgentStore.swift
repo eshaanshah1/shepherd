@@ -50,6 +50,8 @@ final class AgentStore: ObservableObject {
     @Published var pendingApproval: (deviceID: String, name: String)?
     private var approvalDecider: ((Bool) -> Void)?
     private var remoteServer: RemoteServer?
+    /// Client role (M2): one RemoteClient per attached host, keyed by "host:port".
+    private var remoteClients: [String: RemoteClient] = [:]
 
     /// Dedicated unix socket for shepherdd pty data streams, kept separate from
     /// socketPath (which carries newline-delimited hook JSON). Injected as
@@ -209,6 +211,7 @@ final class AgentStore: ObservableObject {
     @discardableResult
     func newTab() -> String {
         guard let w = currentWorkspaceIndex else { return newWorkspace() }
+        if let (c, wid) = currentRemote { c.send(.cmdNewTab(workspaceID: wid)); return "" }  // host creates it → re-broadcasts
         let tab = Tab(pane: Pane())
         workspaces[w].tabs.append(tab)
         workspaces[w].selectedTabID = tab.tabID
@@ -269,6 +272,7 @@ final class AgentStore: ObservableObject {
     func teardownSocket() {
         server?.stop()
         ptyHub?.stop(); ptyHub = nil   // wakes any live data-channel read loop
+        teardownRemoteClients()        // stop client connections to remote hosts
     }
 
     // MARK: Keyboard navigation (tabs, current workspace)
@@ -490,6 +494,9 @@ final class AgentStore: ObservableObject {
     /// tab's last pane, the tab closes (reseeding if it was the workspace's last tab).
     func closePane(_ paneID: String) {
         guard let (w, t) = locatePane(paneID, in: workspaces) else { return }
+        if workspaces[w].isRemote, let h = workspaces[w].remoteHostID, let c = remoteClients[h] {
+            c.send(.cmdClosePane(paneID: paneID)); return   // host closes it → re-broadcasts; surface tears down on EOF
+        }
         let sibling = workspaces[w].tabs[t].root.siblingLeaf(of: paneID)
         if let newRoot = workspaces[w].tabs[t].root.closing(paneID: paneID) {
             workspaces[w].tabs[t].root = newRoot
@@ -514,6 +521,7 @@ final class AgentStore: ObservableObject {
 
     func splitFocused(_ axis: SplitAxis) {
         guard let i = tabs.firstIndex(where: { $0.tabID == selectedTab }) else { return }
+        if let (c, _) = currentRemote { c.send(.cmdSplit(paneID: tabs[i].focusedPaneID, axis: axis.rawValue)); return }
         let focused = tabs[i].focusedPaneID
         var newPane = Pane()
         newPane.cwd = tabs[i].root.pane(focused)?.cwd
@@ -542,6 +550,7 @@ final class AgentStore: ObservableObject {
 
     func toggleZoom() {
         guard let i = tabs.firstIndex(where: { $0.tabID == selectedTab }) else { return }
+        if let (c, _) = currentRemote { c.send(.cmdZoom(paneID: tabs[i].focusedPaneID)); return }
         tabs[i].zoomedPaneID = tabs[i].zoomedPaneID == nil ? tabs[i].focusedPaneID : nil
         refocusActiveTerminal()
         broadcastCurrentWorkspaceTree()
@@ -606,7 +615,9 @@ final class AgentStore: ObservableObject {
     // MARK: Persistence (workspaces.v1, with one-time v2 migration)
 
     private func save() {
-        let state = snapshotState(workspaces, selectedWorkspaceID: selectedWorkspaceID)
+        // Mirror (remote) workspaces are the host's truth — never persisted as local workspaces
+        // (M3 persists them as reconnect pointers instead). Snapshot only the local ones.
+        let state = snapshotState(workspaces.filter { !$0.isRemote }, selectedWorkspaceID: selectedWorkspaceID)
         if let data = try? JSONEncoder().encode(state) {
             UserDefaults.standard.set(data, forKey: persistKey)
         }
@@ -762,6 +773,105 @@ final class AgentStore: ObservableObject {
             remoteServer = s
             shepherdLog("REMOTE serving on \(ip):\(remotePort) — pairing code \(pairingCode)")
         }
+    }
+
+    // MARK: Remote CLIENT role (M2) — attach to a host, mirror + drive its workspaces
+
+    /// Stable id for THIS Mac acting as a client (persisted so a host remembers us on reconnect).
+    private var clientDeviceID: String {
+        let k = "shepherd.client.deviceID"
+        if let v = UserDefaults.standard.string(forKey: k) { return v }
+        let v = UUID().uuidString; UserDefaults.standard.set(v, forKey: k); return v
+    }
+    private var clientDeviceName: String { Host.current().localizedName ?? "Mac" }
+
+    /// Attach to a host over Tailscale (or loopback): dial, pair with `code`, and mirror its
+    /// workspaces. Idempotent per host. M2 mints an in-memory secret sent with the code (the host
+    /// persists it); M3 persists it per host so reconnect skips re-pairing.
+    func addRemoteHost(host: String, port: UInt16, code: String) {
+        let hostID = "\(host):\(port)"
+        guard remoteClients[hostID] == nil else { return }
+        let secret = UUID().uuidString
+        let client = RemoteClient(
+            host: host, port: port, deviceID: clientDeviceID, deviceName: clientDeviceName,
+            code: code, secret: secret,
+            onAccepted: { _ in },
+            onWorkspaceTree: { [weak self] tree in DispatchQueue.main.async { self?.upsertMirrorWorkspace(tree, hostID: hostID) } },
+            onWorkspaceList: { [weak self] ids in DispatchQueue.main.async { self?.pruneMirrorWorkspaces(hostID: hostID, keep: ids) } },
+            onWorkspaceRemoved: { [weak self] id in DispatchQueue.main.async { self?.removeMirrorWorkspace(hostID: hostID, remoteWorkspaceID: id) } },
+            onState: { [weak self] p, s, r in DispatchQueue.main.async { self?.applyRemoteState(paneID: p, state: s, reason: r) } },
+            onStatus: { [weak self] conn in DispatchQueue.main.async { self?.applyRemoteStatus(hostID: hostID, conn: conn) } })
+        remoteClients[hostID] = client
+        client.start()
+    }
+
+    /// Detach from a host: stop its client and drop its mirror workspaces (never destroys the host's).
+    func removeRemoteHost(_ hostID: String) {
+        remoteClients[hostID]?.stop(); remoteClients[hostID] = nil
+        workspaces.removeAll { $0.remoteHostID == hostID }
+        if currentWorkspaceIndex == nil { selectedWorkspaceID = workspaces.first?.id }
+    }
+
+    private func teardownRemoteClients() { for c in remoteClients.values { c.stop() }; remoteClients.removeAll() }
+
+    /// Attach params for a mirror pane's `shepherdd attach` surface, or nil if it isn't a live
+    /// mirror (no client / not yet accepted). Consumed by GhosttyTerminal.makeSurface (M2.5).
+    func remoteAttachInfo(forPane paneID: String) -> (host: String, port: UInt16, nonce: String, remotePaneID: String)? {
+        guard let (w, t) = locatePane(paneID, in: workspaces),
+              let ref = workspaces[w].tabs[t].root.pane(paneID)?.remote,
+              let client = remoteClients[ref.hostID], let nonce = client.sessionNonce else { return nil }
+        return (client.host, client.port, nonce, ref.remotePaneID)
+    }
+
+    /// Build or replace this host workspace's mirror in place (deterministic id → upsert). Panes
+    /// reuse the host's ids, so unchanged surfaces persist across a re-broadcast.
+    private func upsertMirrorWorkspace(_ tree: WorkspaceTree, hostID: String) {
+        let mirror = buildMirrorWorkspace(tree, hostID: hostID)
+        if let i = workspaces.firstIndex(where: { $0.id == mirror.id }) {
+            workspaces[i] = mirror
+        } else {
+            workspaces.append(mirror)
+            if selectedWorkspaceID == nil { selectedWorkspaceID = mirror.id }
+        }
+        updateDockBadge()
+    }
+
+    /// Drop mirror workspaces for `hostID` no longer in the host's list (closed on the host).
+    private func pruneMirrorWorkspaces(hostID: String, keep ids: [String]) {
+        let keepSet = Set(ids.map { mirrorWorkspaceID(hostID: hostID, remoteWorkspaceID: $0) })
+        workspaces.removeAll { $0.remoteHostID == hostID && !keepSet.contains($0.id) }
+    }
+
+    private func removeMirrorWorkspace(hostID: String, remoteWorkspaceID: String) {
+        let id = mirrorWorkspaceID(hostID: hostID, remoteWorkspaceID: remoteWorkspaceID)
+        workspaces.removeAll { $0.id == id }
+    }
+
+    /// A forwarded host state transition for a mirror pane: set the state the host computed (no
+    /// local StopPolicy — the host already ran it) and refresh the attention rollup.
+    private func applyRemoteState(paneID: String, state: String, reason: String?) {
+        guard let (w, t) = locatePane(paneID, in: workspaces), workspaces[w].isRemote else { return }
+        let st = AgentState(rawValue: state) ?? .shell
+        _ = workspaces[w].tabs[t].root.updatePane(paneID) { $0.state = st; $0.reason = reason }
+        updateDockBadge()
+    }
+
+    /// Reflect a host connection's link health on all its mirror panes (drives M3's overlays).
+    private func applyRemoteStatus(hostID: String, conn: RemoteConnState) {
+        for w in workspaces.indices where workspaces[w].remoteHostID == hostID {
+            for t in workspaces[w].tabs.indices {
+                for pid in workspaces[w].tabs[t].paneIDs {
+                    _ = workspaces[w].tabs[t].root.updatePane(pid) { $0.remote?.conn = conn }
+                }
+            }
+        }
+    }
+
+    /// The current workspace as a live remote target (client + host workspace id), or nil if local.
+    private var currentRemote: (client: RemoteClient, wsID: String)? {
+        guard let ws = currentWorkspace, let h = ws.remoteHostID,
+              let wid = ws.remoteWorkspaceID, let c = remoteClients[h] else { return nil }
+        return (c, wid)
     }
 
     /// The user's verdict on a pending pairing request (from the approval sheet).
