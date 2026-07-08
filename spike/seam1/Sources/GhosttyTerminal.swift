@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import QuartzCore
 import GhosttyKit
 
 /// SwiftUI host for one libghostty terminal surface, identified by `paneID`.
@@ -81,7 +82,29 @@ final class GhosttySurfaceView: NSView {
         ghostty_surface_set_occlusion(surface, active)
     }
 
-    @objc private func screenChanged() { updateDisplayID() }
+    @objc private func screenChanged() {
+        updateDisplayID()
+        syncSizeAndScale()
+    }
+
+    /// Backing scale factor changed — e.g. the window moved to a display with a
+    /// different DPI. libghostty renders the grid at the right pixel size, but the
+    /// Metal layer keeps the contentsScale it was born with, so Core Animation would
+    /// rescale the whole layer during compositing (text 2× too big on the other
+    /// display). Pin contentsScale to the new screen — inside a CATransaction with
+    /// actions off so CA doesn't animate the jump — then re-sync libghostty. (Mirrors
+    /// Ghostty's own SurfaceView; this is the piece a fresh surface gets for free.)
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        if let window {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            layer?.contentsScale = window.backingScaleFactor
+            CATransaction.commit()
+        }
+        updateDisplayID()
+        syncSizeAndScale()
+    }
 
     private func updateDisplayID() {
         guard let surface, let id = window?.screen?.ghosttyDisplayID else { return }
