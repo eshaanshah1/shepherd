@@ -21,6 +21,13 @@ final class AgentStore: ObservableObject {
     @Published var focusTick = 0
     func refocusActiveTerminal() { focusTick += 1 }
 
+    /// Open terminal searches, keyed by paneID (transient — like zoom, never persisted).
+    /// libghostty does the matching + grid highlighting; this holds the query and the
+    /// match counts it reports back.
+    @Published var searches: [String: SearchState] = [:]
+    /// Bumped when ⌘F should (re)focus the open search field, e.g. reopening while active.
+    @Published var searchFocusTick = 0
+
     /// The content area's size (SwiftUI top-left space), fed by ContentView so
     /// `focusNeighbor` can resolve geometric neighbors against the live layout.
     @Published var lastContentSize: CGSize = .zero
@@ -604,6 +611,7 @@ final class AgentStore: ObservableObject {
     /// tab's last pane, the tab closes (reseeding if it was the workspace's last tab).
     func closePane(_ paneID: String) {
         guard let (w, t) = locatePane(paneID, in: workspaces) else { return }
+        searches.removeValue(forKey: paneID)   // drop any open search for this pane
         if workspaces[w].isRemote, let h = workspaces[w].remoteHostID, let c = remoteClients[h] {
             c.send(.cmdClosePane(paneID: paneID)); return   // host closes it → re-broadcasts; surface tears down on EOF
         }
@@ -670,6 +678,54 @@ final class AgentStore: ObservableObject {
         guard let i = tabs.firstIndex(where: { $0.tabID == tabID }) else { return }
         tabs[i].root.setRatio(at: path, to: ratio)
         save()
+    }
+
+    // MARK: Terminal search (⌘F; libghostty does the matching + highlight)
+
+    /// The focused pane of the selected tab, across the current workspace.
+    var focusedPaneID: String? {
+        guard let t = selectedTab else { return nil }
+        return anyTab(t)?.focusedPaneID
+    }
+
+    /// ⌘F: open (or refocus) search on the focused pane.
+    func openSearch() {
+        guard let pid = focusedPaneID else { return }
+        if searches[pid] == nil { searches[pid] = SearchState() }
+        GhosttySurfaceView.perform(paneID: pid, binding: "start_search")
+        searchFocusTick += 1
+    }
+
+    func closeSearch(paneID: String) {
+        guard searches.removeValue(forKey: paneID) != nil else { return }
+        GhosttySurfaceView.perform(paneID: paneID, binding: "end_search")
+        refocusActiveTerminal()
+    }
+
+    /// Live needle update. An empty needle cancels the search in the core.
+    func setSearchQuery(_ q: String, paneID: String) {
+        guard searches[paneID] != nil else { return }
+        searches[paneID]?.query = q
+        if q.isEmpty { searches[paneID]?.total = 0; searches[paneID]?.selected = 0 }
+        GhosttySurfaceView.perform(paneID: paneID, binding: "search:\(q)")
+    }
+
+    func navigateSearch(_ dir: SearchDirection, paneID: String) {
+        guard searches[paneID] != nil else { return }
+        GhosttySurfaceView.perform(paneID: paneID, binding: "navigate_search:\(dir.rawValue)")
+    }
+
+    /// ⌘G / ⌘⇧G from the menu: step the focused pane's active search, if any.
+    func navigateFocusedSearch(_ dir: SearchDirection) {
+        guard let pid = focusedPaneID else { return }
+        navigateSearch(dir, paneID: pid)
+    }
+
+    // Core → app (from handleAction).
+    func setSearchTotal(_ n: Int, paneID: String) { searches[paneID]?.total = max(0, n) }
+    func setSearchSelected(_ n: Int, paneID: String) { searches[paneID]?.selected = max(0, n) }
+    func endSearchFromCore(paneID: String) {
+        if searches.removeValue(forKey: paneID) != nil { refocusActiveTerminal() }
     }
 
     /// Notification routing / attention jump: select the owning WORKSPACE, focus the

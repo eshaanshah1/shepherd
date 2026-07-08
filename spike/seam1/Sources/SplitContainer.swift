@@ -54,8 +54,83 @@ struct SplitContainer: View {
                             .position(x: d.rect.midX, y: d.rect.midY)
                     }
                 }
+
+                // ⌘F search overlay, pinned to the top-right of the focused pane.
+                if isTabSelected, let fp = focusedPaneID, let search = store.searches[fp] {
+                    let pr = paneFrame(fp, in: rect)
+                    ZStack(alignment: .topTrailing) {
+                        Color.clear
+                        PaneSearchOverlay(paneID: fp, state: search)
+                            .padding([.top, .trailing], 8)
+                    }
+                    .frame(width: pr.width, height: pr.height)
+                    .position(x: pr.midX, y: pr.midY)
+                }
             }
         }
+    }
+
+    /// Frame of a pane within the container (the whole rect when zoomed).
+    private func paneFrame(_ id: String, in rect: CGRect) -> CGRect {
+        if zoomedPaneID != nil { return rect }
+        return node.frames(in: rect)[id] ?? rect
+    }
+}
+
+/// Floating find bar over the focused pane. libghostty matches + highlights the
+/// grid; this just drives the query and shows the match counter.
+private struct PaneSearchOverlay: View {
+    let paneID: String
+    let state: SearchState
+    @EnvironmentObject var store: AgentStore
+    @FocusState private var fieldFocused: Bool
+    @State private var query = ""
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11))
+                .foregroundColor(Theme.textDim)
+            TextField("Find", text: $query)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .foregroundColor(Theme.textPrimary)
+                .frame(width: 150)
+                .focused($fieldFocused)
+                .onSubmit { store.navigateSearch(.next, paneID: paneID) }
+                .onChange(of: query) { store.setSearchQuery($0, paneID: paneID) }
+            if !state.counter.isEmpty {
+                Text(state.counter)
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundColor(state.noMatches ? Theme.error : Theme.textSecondary)
+            }
+            iconButton("chevron.up")   { store.navigateSearch(.previous, paneID: paneID) }
+            iconButton("chevron.down") { store.navigateSearch(.next, paneID: paneID) }
+            iconButton("xmark")        { store.closeSearch(paneID: paneID) }
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Theme.raised)
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.hairline, lineWidth: 1))
+                .shadow(color: .black.opacity(0.35), radius: 8, y: 2)
+        )
+        .onExitCommand { store.closeSearch(paneID: paneID) }   // Esc
+        .onAppear { query = state.query; fieldFocused = true }
+        .onChange(of: store.searchFocusTick) { _ in fieldFocused = true }
+    }
+
+    private func iconButton(_ name: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: name)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(Theme.textSecondary)
+                .frame(width: 16, height: 16)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
     }
 }
 
