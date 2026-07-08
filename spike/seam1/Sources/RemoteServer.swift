@@ -67,12 +67,14 @@ final class RemoteServer {
     // viewer fd; this registry is only used to wake it on revoke.
     private var dataViewers: [String: Set<Int32>] = [:]
     private let dataViewersLock = NSLock()
-    // The ONE pane the phone currently has actively open (its foreground terminal). That pane —
-    // and only that pane — is phone-sized; everything else stays desktop-sized. Set when a data
-    // channel attaches, cleared on its detach. Opening a second pane snaps the first back to desktop
-    // so the phone can never own more than one pane at a time. nil ⇒ desktop owns every pane.
-    private var activePhonePaneID: String?
-    private let activePaneLock = NSLock()
+    // Active data-channel VIEWERS per pane. A pane is sized by whoever is actively viewing it
+    // (a viewer's DataReady size wins over the desktop grid, unless the desktop is showing the
+    // pane right now — see desktopOwnsSize). Refcounted so a pane snaps back to its desktop grid
+    // only when its LAST viewer detaches. Per-connection, not one global pane: a Mac client views
+    // a whole workspace (many panes) at once, each pane sized independently. A phone views one
+    // pane at a time, so its count is 1 for that pane — same behavior as the old single-pane model.
+    private var paneViewers: [String: Int] = [:]
+    private let sizeLock = NSLock()
     private let acceptQueue = DispatchQueue(label: "shepherd.remote.accept", qos: .utility)
     // Per-connection reader loops run concurrently here so one's blocking read()
     // can't starve another connection's handshake or an approval callback.
@@ -339,12 +341,10 @@ final class RemoteServer {
             _ = rawWrite(fd, (try? DataFrameCodec.encode(.dataRejected(reason: "bad nonce"))) ?? Data())
             shutdown(fd, SHUT_RDWR); close(fd); return
         }
-        // The phone actively opened this pane → it becomes the ONE phone-owned pane. Any pane
-        // it had open before snaps back to desktop first (never more than one phone-owned pane).
-        // It then takes the phone's size — UNLESS the desktop is showing it right now, in which
-        // case the desktop wins the tie and the pane stays desktop-sized (DataReady echoes that).
-        makeActivePhonePane(paneID)
-        if !desktopOwnsSize(paneID) { broker.setSize(cols: cols, rows: rows) }
+        // This viewer takes the pane at its size — UNLESS the desktop is showing it right now, in
+        // which case the desktop wins the tie and the pane stays desktop-sized (DataReady echoes
+        // that). Refcounted per pane so other panes this device views are untouched.
+        viewerAttached(paneID, cols: cols, rows: rows)
         _ = rawWrite(fd, (try? DataFrameCodec.encode(.dataReady(cols: broker.cols, rows: broker.rows))) ?? Data())
         // Attach + register atomically under dataViewersLock, re-checking the nonce is STILL
         // live inside the lock. closeConn removes the nonce (under nonceLock) then sweeps
@@ -375,42 +375,37 @@ final class RemoteServer {
         if dataViewers[nonce]?.isEmpty == true { dataViewers[nonce] = nil }
         dataViewersLock.unlock()
         broker.detachViewer(fd: fd)
-        // Detach: the phone left this pane, so it's no longer phone-owned — snap it back to
-        // its desktop size so the Mac grid is never left phone-sized. Only clear/snap if this
-        // pane is still the active one (a newer attach may have already taken over).
-        resignActivePhonePane(paneID)
+        // This viewer left the pane. Drop its count; if it was the pane's LAST viewer, snap the
+        // pane back to its desktop grid so the Mac's own grid is never left at a remote size.
+        viewerDetached(paneID)
         shutdown(fd, SHUT_RDWR); close(fd)
     }
 
-    /// Apply a live resize (rotation / soft-keyboard) from the phone's control channel. Applied
-    /// ONLY to the pane the phone currently has open — a resize for any other pane is ignored,
-    /// since the desktop owns every pane the phone isn't actively viewing.
+    /// Apply a live resize (rotation / soft-keyboard / client window resize) from a control
+    /// channel. Applied only to a pane that currently has an active viewer — a resize for an
+    /// unviewed pane is ignored, since the desktop owns any pane no remote is viewing. Also
+    /// deferred when the desktop is showing the pane right now (desktop wins the tie).
     func applyResize(paneID: String, cols: Int, rows: Int) {
-        activePaneLock.lock(); let active = activePhonePaneID; activePaneLock.unlock()
-        guard paneID == active, !desktopOwnsSize(paneID), let b = lookupBroker(paneID) else { return }
+        sizeLock.lock(); let viewed = (paneViewers[paneID] ?? 0) > 0; sizeLock.unlock()
+        guard viewed, !desktopOwnsSize(paneID), let b = lookupBroker(paneID) else { return }
         b.setSize(cols: cols, rows: rows)
     }
 
-    /// Make `paneID` the sole phone-owned pane: snap any previously-active pane back to its
-    /// desktop grid, then record this one. Guarantees at most one phone-owned pane.
-    private func makeActivePhonePane(_ paneID: String) {
-        activePaneLock.lock()
-        let previous = activePhonePaneID
-        activePhonePaneID = paneID
-        activePaneLock.unlock()
-        if let previous, previous != paneID, let (dc, dr) = desktopSize(previous) {
-            lookupBroker(previous)?.setSize(cols: dc, rows: dr)
-        }
+    /// A viewer attached to `paneID` at (cols,rows): bump its viewer count and size the pane to
+    /// this viewer — unless the desktop is showing it now, in which case the desktop wins the tie.
+    private func viewerAttached(_ paneID: String, cols: Int, rows: Int) {
+        sizeLock.lock(); paneViewers[paneID, default: 0] += 1; sizeLock.unlock()
+        if !desktopOwnsSize(paneID) { lookupBroker(paneID)?.setSize(cols: cols, rows: rows) }
     }
 
-    /// Release `paneID` if it's the active phone pane and snap it back to desktop. A newer
-    /// attach that already took ownership leaves `activePhonePaneID` untouched here.
-    private func resignActivePhonePane(_ paneID: String) {
-        activePaneLock.lock()
-        let stillActive = activePhonePaneID == paneID
-        if stillActive { activePhonePaneID = nil }
-        activePaneLock.unlock()
-        guard stillActive, let (dc, dr) = desktopSize(paneID) else { return }
+    /// A viewer detached from `paneID`: drop its count and, if it was the pane's LAST viewer,
+    /// snap the pane back to its desktop grid. Other panes' counts are untouched.
+    private func viewerDetached(_ paneID: String) {
+        sizeLock.lock()
+        let remaining = (paneViewers[paneID] ?? 1) - 1
+        if remaining <= 0 { paneViewers[paneID] = nil } else { paneViewers[paneID] = remaining }
+        sizeLock.unlock()
+        guard remaining <= 0, let (dc, dr) = desktopSize(paneID) else { return }
         lookupBroker(paneID)?.setSize(cols: dc, rows: dr)
     }
 
