@@ -4,6 +4,11 @@ import Foundation
 /// keep messages additive otherwise. The Kotlin client sends the version it implements.
 let kRemoteProtocolVersion = 2
 
+/// Link health of a mirror pane / client connection to its host (M2). Local panes never
+/// carry one. Lives here (not SplitTree) so the client role can use it without pulling in
+/// the split-tree model.
+enum RemoteConnState: String { case live, reconnecting, dead }
+
 // MARK: - DTOs
 
 /// One pane's status as projected to a remote client. `state` is AgentState.rawValue.

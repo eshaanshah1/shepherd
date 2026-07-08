@@ -67,6 +67,7 @@ targets:
       - path: RemoteTests
       - path: Sources/RemoteProtocol.swift
       - path: Sources/RemoteServer.swift
+      - path: Sources/RemoteClient.swift
       - path: Sources/PtyBroker.swift
   shepherdd:
     type: tool
