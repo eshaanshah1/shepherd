@@ -269,3 +269,13 @@ these). None are in v1.
   anchor-preservation is the actual goal.
 - **Workspace-wide / multi-pane diff overview:** v1 is pane-scoped.
 - **git mutations (stage/discard):** view + comment only in v1.
+- **Split (side-by-side) diff mode:** on hold (2026-07-08). Useful for
+  refactor-heavy review (compare old↔new per row), but side-by-side wants
+  full width, and the panel is a width-constrained *side* panel — it reads
+  worse than unified until there's a pop-out/own-window story (ties to the
+  deferred multi-window item). If revisited: a pure, testable `DiffRow`
+  alignment pass in `DiffModel` (pair removed/added runs, pad the shorter side
+  with gap rows) feeding a two-column renderer; header toggle, Unified default,
+  auto-fall-back to unified below ~900px. Syntax highlighting already works
+  per-side so it composes. Doesn't help the comment→prompt flow, which is the
+  actual differentiator.

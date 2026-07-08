@@ -4,17 +4,23 @@ import AppKit
 struct ContentView: View {
     @EnvironmentObject var store: AgentStore
     @AppStorage("shepherd.sidebarWidth") private var sidebarWidth: Double = 240
-    @AppStorage("shepherd.diffPanelWidth") private var diffPanelWidth: Double = 460
+    @AppStorage("shepherd.diffPanelWidth") private var diffPanelWidth: Double = 680
     // Live width while dragging the divider (nil when idle); committed
     // `sidebarWidth` lays out the terminal, so it's updated only on drop.
     @State private var dragWidth: Double?
     @State private var resizeStart: Double?
+    // Same preview-then-commit dance for the diff panel's left-edge divider.
+    @State private var diffDragWidth: Double?
+    @State private var diffResizeStart: Double?
 
     private let minSidebar: Double = 180
     private let maxSidebar: Double = 440
     private let dividerWidth: Double = 6
+    private let minDiffPanel: Double = 380
+    private let maxDiffPanel: Double = 1100
 
     private var displayWidth: Double { dragWidth ?? sidebarWidth }
+    private var diffDisplayWidth: Double { diffDragWidth ?? diffPanelWidth }
 
     var body: some View {
         // Two layers so a divider drag never resizes the terminal mid-drag: the
@@ -26,10 +32,10 @@ struct ContentView: View {
                 Color.clear.frame(width: sidebarWidth + dividerWidth)
                 terminalArea
                 if store.diffPanelOpen {
-                    Rectangle().fill(Theme.hairline).frame(width: 1)
+                    diffDivider
                     DiffPanelView()
                         .environmentObject(store)
-                        .frame(width: diffPanelWidth)
+                        .frame(width: diffDisplayWidth)
                         .transition(.move(edge: .trailing))
                 }
             }
@@ -112,6 +118,32 @@ struct ContentView: View {
                     if let w = dragWidth { sidebarWidth = w }
                     dragWidth = nil
                     resizeStart = nil
+                }
+        )
+    }
+
+    // Left-edge divider of the diff panel. Dragging left grows the panel; the width
+    // previews via `diffDragWidth` and commits to `diffPanelWidth` on release.
+    private var diffDivider: some View {
+        ZStack {
+            Rectangle().fill(Theme.hairline).frame(width: 1)
+        }
+        .frame(width: dividerWidth)
+        .contentShape(Rectangle())
+        .onHover { inside in
+            if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+        }
+        .gesture(
+            DragGesture(minimumDistance: 1)
+                .onChanged { v in
+                    let base = diffResizeStart ?? diffPanelWidth
+                    diffResizeStart = base
+                    diffDragWidth = min(maxDiffPanel, max(minDiffPanel, base - Double(v.translation.width)))
+                }
+                .onEnded { _ in
+                    if let w = diffDragWidth { diffPanelWidth = w }
+                    diffDragWidth = nil
+                    diffResizeStart = nil
                 }
         )
     }
