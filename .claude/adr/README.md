@@ -38,4 +38,6 @@ Date: YYYY-MM-DD
 - [0011](0011-tab-names-cwd-and-agent-title.md) — Tab names: cwd for shells, the agent's own title for agents
 - [0012](0012-pane-splitting-panes-as-agents.md) — Pane splitting: panes as agents; bracket-grouped collapsible sidebar
 - [0013](0013-workspaces.md) — Workspaces: nested model, global attention
-- [0014](0014-background-agent-stop-suppression.md) — Background-agent `Stop` suppression: count `[Agent]` vs `SubagentStop`
+- [0014](0014-background-agent-stop-suppression.md) — Background-agent `Stop` suppression: count `[Agent]` vs `SubagentStop` *(superseded by 0015)*
+- [0015](0015-background-stop-suppression-via-background-tasks.md) — Background-`Stop` suppression from the `Stop` payload's `background_tasks`
+- [0016](0016-pane-click-focus-hit-testing.md) — Click-to-focus a pane: three hit-testing gates (custom Layout + surface hitTest + sidebar allowsHitTesting)
