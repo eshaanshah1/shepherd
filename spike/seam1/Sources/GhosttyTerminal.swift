@@ -105,29 +105,40 @@ final class GhosttySurfaceView: NSView {
             allocs.append(p)
             return UnsafePointer(p)
         }
-        var envVars = [
-            ghostty_env_var_s(key: dup("SHEPHERD_SOCK"),     value: dup(AgentStore.shared.socketPath)),
-            ghostty_env_var_s(key: dup("SHEPHERD_TAB_ID"),   value: dup(paneID)),
-            ghostty_env_var_s(key: dup("SHEPHERD_PTY_SOCK"), value: dup(AgentStore.shared.ptySocketPath)),
-        ]
+        var envVars: [ghostty_env_var_s]
+        if let info = AgentStore.shared.remoteAttachInfo(forPane: paneID) {
+            // MIRROR pane (M2): its surface is a raw byte pipe to the host's pane via
+            // `shepherdd attach`. No local hooks/cwd/resume — the PTY lives on the host; the
+            // attach process just carries its bytes. Params ride env, not argv (no `ps` leak).
+            envVars = [
+                ghostty_env_var_s(key: dup("SHEPHERD_ATTACH_HOST"),  value: dup(info.host)),
+                ghostty_env_var_s(key: dup("SHEPHERD_ATTACH_PORT"),  value: dup(String(info.port))),
+                ghostty_env_var_s(key: dup("SHEPHERD_ATTACH_NONCE"), value: dup(info.nonce)),
+                ghostty_env_var_s(key: dup("SHEPHERD_ATTACH_PANE"),  value: dup(info.remotePaneID)),
+            ]
+            cfg.command = dup("\(AgentStore.shared.helperPath) attach")
+        } else {
+            envVars = [
+                ghostty_env_var_s(key: dup("SHEPHERD_SOCK"),     value: dup(AgentStore.shared.socketPath)),
+                ghostty_env_var_s(key: dup("SHEPHERD_TAB_ID"),   value: dup(paneID)),
+                ghostty_env_var_s(key: dup("SHEPHERD_PTY_SOCK"), value: dup(AgentStore.shared.ptySocketPath)),
+            ]
+            // Restore-on-relaunch: open in the pane's last-known cwd if we have one.
+            if let cwd = AgentStore.shared.cwd(forPane: paneID) {
+                cfg.working_directory = dup(cwd)
+            }
+            // If this pane had a live Claude session at quit, resume it: type `claude --resume <id>`
+            // into the PTY once the shell (or the shepherdd pty wrapper) is up. Only restored panes
+            // carry a sessionID at creation; fresh panes don't, so nothing is injected for them.
+            if let resume = AgentStore.shared.takeResumeInput(forPane: paneID) {
+                cfg.initial_input = dup(resume)
+            }
+            if let cmd = remoteSurfaceCommand(serving: AgentStore.shared.isServing,
+                                              helperPath: AgentStore.shared.helperPath) {
+                cfg.command = dup(cmd)
+            }
+        }
         defer { allocs.forEach { free($0) } }
-
-        // Restore-on-relaunch: open in the pane's last-known cwd if we have one.
-        if let cwd = AgentStore.shared.cwd(forPane: paneID) {
-            cfg.working_directory = dup(cwd)
-        }
-
-        // If this pane had a live Claude session at quit, resume it: type `claude --resume <id>`
-        // into the PTY once the shell (or the shepherdd pty wrapper) is up. Only restored panes
-        // carry a sessionID at creation; fresh panes don't, so nothing is injected for them.
-        if let resume = AgentStore.shared.takeResumeInput(forPane: paneID) {
-            cfg.initial_input = dup(resume)
-        }
-
-        if let cmd = remoteSurfaceCommand(serving: AgentStore.shared.isServing,
-                                          helperPath: AgentStore.shared.helperPath) {
-            cfg.command = dup(cmd)
-        }
 
         return envVars.withUnsafeMutableBufferPointer { buf in
             cfg.env_vars = buf.baseAddress
