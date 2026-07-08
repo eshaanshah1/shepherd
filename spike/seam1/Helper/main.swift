@@ -68,16 +68,39 @@ final class Tee {
 // MARK: - winsize handling
 
 var gMaster: Int32 = -1
+// Self-pipe: the SIGWINCH handler only writes a wake byte (async-signal-safe); the
+// pump drains it and reconciles the size in the main loop. Signals coalesce, so the
+// handler MUST NOT read/copy the size itself — a burst (or a lone display-change
+// resize) would leave the inner PTY stuck on a stale size. Reconciling in the loop
+// always reads the CURRENT outer size, so it converges on the final value.
+var gWinchPipe: (read: Int32, write: Int32) = (-1, -1)
+var gLastWS = winsize()
 
 func applyResize(cols: Int, rows: Int) {
     var ws = winsize(ws_row: UInt16(rows), ws_col: UInt16(cols), ws_xpixel: 0, ws_ypixel: 0)
+    gLastWS = ws
+    _ = sh_set_winsize(gMaster, &ws)
+}
+
+/// Copy the outer (STDIN) winsize onto the inner master, skipping the ioctl when it
+/// hasn't actually changed so we don't spam the child with redundant SIGWINCHs.
+func reconcileWinsize() {
+    var ws = winsize()
+    guard sh_get_winsize(STDIN_FILENO, &ws) == 0 else { return }
+    if ws.ws_row == gLastWS.ws_row, ws.ws_col == gLastWS.ws_col,
+       ws.ws_xpixel == gLastWS.ws_xpixel, ws.ws_ypixel == gLastWS.ws_ypixel { return }
+    gLastWS = ws
     _ = sh_set_winsize(gMaster, &ws)
 }
 
 func installWinchForwarder() {
+    var fds: [Int32] = [-1, -1]
+    guard pipe(&fds) == 0 else { return }
+    for fd in fds { _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK) }
+    gWinchPipe = (fds[0], fds[1])
     signal(SIGWINCH) { _ in
-        var ws = winsize()
-        if sh_get_winsize(STDIN_FILENO, &ws) == 0 { _ = sh_set_winsize(gMaster, &ws) }
+        var b: UInt8 = 1
+        _ = write(gWinchPipe.write, &b, 1)   // wake the pump; reconcile happens there
     }
 }
 
@@ -157,7 +180,12 @@ func pump(master: Int32) {
     let tap = Tee.shared.fd
     var pfds = [pollfd(fd: STDIN_FILENO, events: Int16(POLLIN), revents: 0),
                 pollfd(fd: master,       events: Int16(POLLIN), revents: 0)]
+    let tapIdx = tap >= 0 ? pfds.count : -1
     if tap >= 0 { pfds.append(pollfd(fd: tap, events: Int16(POLLIN), revents: 0)) }
+    // The SIGWINCH self-pipe read end: a wake byte here means "outer resized, reconcile".
+    let winch = gWinchPipe.read
+    let winchIdx = pfds.count
+    if winch >= 0 { pfds.append(pollfd(fd: winch, events: Int16(POLLIN), revents: 0)) }
     while true {
         if poll(&pfds, nfds_t(pfds.count), -1) < 0 { if errno == EINTR { continue }; break }
 
@@ -185,9 +213,9 @@ func pump(master: Int32) {
         // phone input (via the tap socket) → inner shell. Best-effort: on EOF/error or
         // hangup, retire the tap (close it + drop its poll slot to fd = -1, which poll
         // ignores) so a dead tap can't busy-spin poll(). The local terminal is untouched.
-        if pfds.count > 2, pfds[2].fd >= 0 {
-            var dead = pfds[2].revents & hup != 0
-            if !dead, pfds[2].revents & Int16(POLLIN) != 0 {
+        if tapIdx >= 0, pfds[tapIdx].fd >= 0 {
+            var dead = pfds[tapIdx].revents & hup != 0
+            if !dead, pfds[tapIdx].revents & Int16(POLLIN) != 0 {
                 let n = read(tap, buf, cap)
                 if n > 0 {
                     appInBuf.append(contentsOf: UnsafeBufferPointer(start: buf, count: n))
@@ -197,8 +225,18 @@ func pump(master: Int32) {
                     }
                 } else if closed(n) { dead = true }
             }
-            if dead { Tee.shared.disable(); pfds[2].fd = -1 }
+            if dead { Tee.shared.disable(); pfds[tapIdx].fd = -1 }
         }
+
+        // SIGWINCH woke us (a burst coalesces into one byte): drain the pipe and
+        // reconcile the inner PTY to the outer's CURRENT size — reading it here, not
+        // in the async handler, is what makes a lone display-change resize stick.
+        if winch >= 0, pfds[winchIdx].revents & Int16(POLLIN) != 0 {
+            var drain = [UInt8](repeating: 0, count: 64)
+            while read(winch, &drain, drain.count) > 0 {}
+            reconcileWinsize()
+        }
+
         pfds[0].revents = 0; pfds[1].revents = 0
         if pfds.count > 2 { pfds[2].revents = 0 }
     }
@@ -238,6 +276,7 @@ func runPty(_ program: [String]) -> Int32 {
     if pid == 0 { execProgram(program); perror("shepherdd: exec"); _exit(127) }
 
     gMaster = master
+    gLastWS = ws                                              // forkpty already seeded the child at this size
     let paneID = ProcessInfo.processInfo.environment["SHEPHERD_TAB_ID"] ?? ""
     Tee.shared.connect(paneID: paneID, cols: Int(ws.ws_col), rows: Int(ws.ws_row))
     makeOuterRaw()
