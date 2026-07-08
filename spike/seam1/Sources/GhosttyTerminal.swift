@@ -35,6 +35,8 @@ final class GhosttySurfaceView: NSView {
                                                name: .shepherdPaneClosed, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(performBinding(_:)),
                                                name: .shepherdPerformBinding, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(injectText(_:)),
+                                               name: .shepherdInjectText, object: nil)
     }
     required init?(coder: NSCoder) { fatalError("not supported") }
 
@@ -46,12 +48,36 @@ final class GhosttySurfaceView: NSView {
                                         userInfo: ["paneID": paneID, "action": action])
     }
 
+    /// Inject a text string straight into this pane's PTY (as if typed). Used by the
+    /// diff-review "send to agent" action. Posted per pane; runs on main.
+    static func perform(paneID: String, injectText text: String) {
+        NotificationCenter.default.post(name: .shepherdInjectText, object: nil,
+                                        userInfo: ["paneID": paneID, "text": text])
+    }
+
     @objc private func performBinding(_ note: Notification) {
         guard note.userInfo?["paneID"] as? String == paneID,
               let action = note.userInfo?["action"] as? String,
               let surface else { return }
         _ = action.withCString {
             ghostty_surface_binding_action(surface, $0, UInt(action.utf8.count))
+        }
+    }
+
+    @objc private func injectText(_ note: Notification) {
+        guard note.userInfo?["paneID"] as? String == paneID,
+              let text = note.userInfo?["text"] as? String,
+              let surface else { return }
+        var key = ghostty_input_key_s()
+        key.action = GHOSTTY_ACTION_PRESS
+        key.mods = ghostty_input_mods_e(GHOSTTY_MODS_NONE.rawValue)
+        key.consumed_mods = ghostty_input_mods_e(GHOSTTY_MODS_NONE.rawValue)
+        key.keycode = 0
+        key.composing = false
+        key.unshifted_codepoint = 0
+        _ = text.withCString { ptr -> Bool in
+            key.text = ptr
+            return ghostty_surface_key(surface, key)
         }
     }
 
@@ -360,6 +386,10 @@ extension Notification.Name {
     /// libghostty keybind action on a specific pane's surface — the app→core
     /// channel for terminal search.
     static let shepherdPerformBinding = Notification.Name("shepherd.performBinding")
+
+    /// Posted (userInfo `["paneID": String, "text": String]`) to inject text into a
+    /// pane's PTY — the diff-review comment→prompt channel.
+    static let shepherdInjectText = Notification.Name("shepherd.injectText")
 }
 
 private extension NSScreen {

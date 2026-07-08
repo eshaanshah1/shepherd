@@ -26,6 +26,21 @@ enum Theme {
     static let blocked    = Color(hex: 0xE5A23D)   // your move
     static let error      = Color(hex: 0xE5645D)   // broke
     static let idle       = Color(hex: 0x8C8C92)   // between turns
+
+    /// The accent hues Shepherd injects as the terminal's ANSI palette (mirror of
+    /// GhosttyApp.writeBaseTheme). The diff panel snaps syntax-highlight token colors
+    /// to these, so highlighted code reads with the same hues as the terminal grid.
+    /// Keep in sync with writeBaseTheme's `palette` lines.
+    static let syntaxPalette: [UInt32] = [
+        0xEDEDED,   // default foreground (fg / 15)
+        0x5F5F66,   // comments, punctuation (bright black / 8)
+        0xE5645D,   // red (1)
+        0x43C988,   // green (2)
+        0xE5A23D,   // yellow (3)
+        0x5B9DF8,   // blue (4)
+        0xB98BFF,   // magenta (5)
+        0x4DD0C4,   // cyan (6)
+    ]
 }
 
 extension Font {

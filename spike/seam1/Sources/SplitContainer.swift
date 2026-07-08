@@ -85,6 +85,7 @@ private struct PaneSearchOverlay: View {
     @EnvironmentObject var store: AgentStore
     @FocusState private var fieldFocused: Bool
     @State private var query = ""
+    @State private var shiftReturnMonitor: Any?
 
     var body: some View {
         HStack(spacing: 7) {
@@ -117,7 +118,21 @@ private struct PaneSearchOverlay: View {
                 .shadow(color: .black.opacity(0.35), radius: 8, y: 2)
         )
         .onExitCommand { store.closeSearch(paneID: paneID) }   // Esc
-        .onAppear { query = state.query; fieldFocused = true }
+        .onAppear {
+            query = state.query; fieldFocused = true
+            shiftReturnMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                // keyCode 36 = Return. Shift-Return → previous match; swallow it.
+                if event.keyCode == 36, event.modifierFlags.contains(.shift) {
+                    store.navigateSearch(.previous, paneID: paneID)
+                    return nil
+                }
+                return event
+            }
+        }
+        .onDisappear {
+            if let m = shiftReturnMonitor { NSEvent.removeMonitor(m) }
+            shiftReturnMonitor = nil
+        }
         .onChange(of: store.searchFocusTick) { _ in fieldFocused = true }
     }
 
