@@ -23,6 +23,7 @@ struct WorkspaceSwitcher: View {
             ForEach(Array(store.workspaces.enumerated()), id: \.element.id) { idx, ws in
                 row(ws, index: idx)
             }
+            addRemoteHostRow
             if store.isServing { pairingFooter }
         }
         .padding(6)
@@ -35,6 +36,57 @@ struct WorkspaceSwitcher: View {
                 )
         )
         .shadow(color: .black.opacity(0.5), radius: 18, x: 0, y: 10)
+    }
+
+    /// Attach another Mac's Shepherd as remote workspaces (client role).
+    private var addRemoteHostRow: some View {
+        Button(action: promptAddRemoteHost) {
+            HStack(spacing: 9) {
+                Image(systemName: "desktopcomputer")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.textDim)
+                    .frame(width: 12)
+                Text("Add remote host…")
+                    .font(.ui(13))
+                    .foregroundStyle(Theme.textSecondary)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 28)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+    }
+
+    /// Prompt for a host + pairing code (NSAlert, matching the delete-confirm pattern), then
+    /// attach. Host accepts `name`, `100.x.y.z`, or `host:port`; default port is the shared one.
+    private func promptAddRemoteHost() {
+        let alert = NSAlert()
+        alert.messageText = "Add remote host"
+        alert.informativeText = "Enter the host's Tailscale name (or IP) and its 4-digit pairing code."
+        let hostTF = NSTextField(frame: NSRect(x: 0, y: 30, width: 240, height: 24))
+        hostTF.placeholderString = "mac-mini  or  100.x.y.z"
+        let codeTF = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        codeTF.placeholderString = "pairing code"
+        let accessory = NSView(frame: NSRect(x: 0, y: 0, width: 240, height: 54))
+        accessory.addSubview(hostTF); accessory.addSubview(codeTF)
+        alert.accessoryView = accessory
+        alert.addButton(withTitle: "Add")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = hostTF
+        guard alert.runModal() == .alertFirstButtonReturn else { isPresented = false; return }
+
+        let raw = hostTF.stringValue.trimmingCharacters(in: .whitespaces)
+        let code = codeTF.stringValue.trimmingCharacters(in: .whitespaces)
+        guard !raw.isEmpty, !code.isEmpty else { isPresented = false; return }
+        var host = raw
+        var port = AgentStore.defaultRemotePort
+        if let colon = raw.lastIndex(of: ":"), let p = UInt16(raw[raw.index(after: colon)...]) {
+            host = String(raw[..<colon]); port = p
+        }
+        store.addRemoteHost(host: host, port: port, code: code)
+        isPresented = false
     }
 
     /// Shown only while remote serving is on: the code a new device must enter to pair.
