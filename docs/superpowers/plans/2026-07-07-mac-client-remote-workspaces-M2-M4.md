@@ -1,5 +1,17 @@
 # Mac Client Remote Workspaces — M2–M4 Implementation Plan
 
+> **STATUS (2026-07-08):**
+> - ✅ **M2 DONE** — merged to `master` (commits `0fc1474`…`1d9fc5d`): pure models + per-connection
+>   host sizing + `shepherdd attach` + `RemoteClient` + `AgentStore` mirror/command-routing +
+>   mirror surfaces + "Add remote host" UI. Builds; Swift + helper + Android suites green.
+>   **Not yet runtime-verified on two real Macs** — do that before building on top.
+> - ⏳ **M3 REMAINING** — reconnect + link-status overlays, `KnownHost` + `shepherd.workspaces.v2`
+>   pointer persistence, explicit Tailscale endpoint. See §"M3" below.
+> - ⏳ **M4 REMAINING** — ADR 0016, doc updates (CLAUDE.md/SPEC.md), deferred cleanups
+>   (redundant `paneAdded/Removed/Renamed` deltas; focus/selection mirroring).
+> - **To resume:** work continues on branch `mac-client-M2-M4` (kept; even with master at merge).
+>   Start at **M3.1**. See also the [design spec](../specs/2026-07-07-mac-client-remote-workspaces-design.md).
+
 > **For agentic workers:** execute task-by-task, TDD where a unit/integration test is possible, compile-verify the AppKit/libghostty/UI shell, commit per task. Verify by build + tests; defer the real two-Mac runtime check to the user.
 
 **Goal:** Turn the M1 protocol foundation into a working native Mac client: add another Mac's workspaces as fully-controllable remote workspaces with real terminals.
