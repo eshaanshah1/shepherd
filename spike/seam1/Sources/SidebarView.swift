@@ -108,7 +108,6 @@ struct SidebarView: View {
                                    dropTargetWorkspaceID: $dropTargetWorkspaceID)
                         }
                     }
-                    .padding(.leading, 14)   // indent tabs under their folder
                 }
             }
         }
@@ -200,11 +199,11 @@ private struct WorkspaceFolderHeader: View {
     private var isActive: Bool { ws.id == store.selectedWorkspaceID }
 
     var body: some View {
-        HStack(spacing: 7) {
+        HStack(spacing: LeadingIcon.gutterGap) {
             Image(systemName: ws.collapsed ? "chevron.right" : "chevron.down")
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(Theme.textDim)
-                .frame(width: 10)
+                .frame(width: LeadingIcon.gutter)
 
             LeadingIcon(state: ws.aggregateState)
 
@@ -229,7 +228,7 @@ private struct WorkspaceFolderHeader: View {
                 }
             }
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 10)
         .frame(height: Self.height)
         .background(RoundedRectangle(cornerRadius: 6)
             .fill(hovering ? Theme.raised.opacity(0.4) : .clear))
@@ -360,7 +359,8 @@ private struct TabRow: View {
     private var reason: String? { tab.focusedPane()?.reason }
 
     var body: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: LeadingIcon.gutterGap) {
+            Color.clear.frame(width: LeadingIcon.gutter)   // aligns the dot under the folder dot
             LeadingIcon(state: state)
 
             if editing {
@@ -504,7 +504,8 @@ private struct SplitTabGroup: View {
     }
 
     var body: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: LeadingIcon.gutterGap) {
+            Color.clear.frame(width: LeadingIcon.gutter)   // aligns the dot under the folder dot
             LeadingIcon(state: aggregateState)
             if editing {
                 renameField
@@ -617,6 +618,12 @@ private func capitalizedFirst(_ s: String) -> String { s.prefix(1).uppercased() 
 /// terminal icon for plain shells — so every row reads, like T3's icon column.
 struct LeadingIcon: View {
     let state: AgentState
+
+    // Shared leading column so every dot (folder header + tab rows) lands on one
+    // vertical rail: `gutter` holds the folder chevron (empty for tab rows),
+    // `gutterGap` is the space between it and the dot. Header/rows use both + pad 10.
+    static let gutter: CGFloat = 12
+    static let gutterGap: CGFloat = 8
 
     var body: some View {
         Group {
