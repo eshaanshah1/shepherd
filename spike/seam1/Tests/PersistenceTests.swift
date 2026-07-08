@@ -61,6 +61,36 @@ final class PersistenceTests: XCTestCase {
         XCTAssertEqual(rebuilt[0].tabs.count, 2)
     }
 
+    func testCollapsedSurvivesSnapshotRoundTrip() throws {
+        let open = Workspace(userTitle: "Open", tabs: [tab("a")], collapsed: false)
+        let shut = Workspace(userTitle: "Shut", tabs: [tab("b")], collapsed: true)
+
+        let data = try JSONEncoder().encode(snapshotState([open, shut], selectedWorkspaceID: open.id))
+        let rebuilt = buildWorkspaces(from: try JSONDecoder().decode(PersistedState.self, from: data))
+
+        XCTAssertEqual(rebuilt.count, 2)
+        XCTAssertFalse(rebuilt[0].collapsed)
+        XCTAssertTrue(rebuilt[1].collapsed)
+    }
+
+    // A pre-accordion blob has no `collapsed` key; it must still decode (→ expanded).
+    func testLegacyWorkspaceWithoutCollapsedKeyDecodesAsExpanded() throws {
+        // Build a real blob, then strip every `collapsed` key to mimic old data.
+        let ws = Workspace(userTitle: "Legacy", tabs: [tab("t")], collapsed: true)
+        let data = try JSONEncoder().encode(snapshotState([ws], selectedWorkspaceID: ws.id))
+        var obj = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        var pws = obj["workspaces"] as! [[String: Any]]
+        pws[0].removeValue(forKey: "collapsed")
+        obj["workspaces"] = pws
+        let stripped = try JSONSerialization.data(withJSONObject: obj)
+
+        let state = try JSONDecoder().decode(PersistedState.self, from: stripped)
+        XCTAssertNil(state.workspaces[0].collapsed)
+        let rebuilt = buildWorkspaces(from: state)
+        XCTAssertEqual(rebuilt.count, 1)
+        XCTAssertFalse(rebuilt[0].collapsed)   // nil ⇒ expanded
+    }
+
     func testMigrationReturnsNilForEmptyOrGarbage() {
         XCTAssertNil(migrateLegacyTabs(Data()))
         XCTAssertNil(migrateLegacyTabs("not json".data(using: .utf8)!))

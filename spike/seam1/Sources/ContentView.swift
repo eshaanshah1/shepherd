@@ -8,7 +8,6 @@ struct ContentView: View {
     // `sidebarWidth` lays out the terminal, so it's updated only on drop.
     @State private var dragWidth: Double?
     @State private var resizeStart: Double?
-    @State private var showSwitcher = false
 
     private let minSidebar: Double = 180
     private let maxSidebar: Double = 440
@@ -28,7 +27,7 @@ struct ContentView: View {
             }
 
             HStack(spacing: 0) {
-                SidebarView(showSwitcher: $showSwitcher)
+                SidebarView()
                     .frame(width: displayWidth)
                 divider
             }
@@ -36,25 +35,6 @@ struct ContentView: View {
         .background(Theme.ground)
         .background(WindowLightsController().frame(width: 0, height: 0))
         .ignoresSafeArea()
-        // Custom (non-native) workspace dropdown: a window-spanning backdrop to
-        // dismiss on an outside click, plus the Theme panel anchored under the
-        // sidebar header.
-        .overlay(alignment: .topLeading) {
-            ZStack(alignment: .topLeading) {
-                if showSwitcher {
-                    Color.black.opacity(0.001)
-                        .ignoresSafeArea()
-                        .onTapGesture { showSwitcher = false }
-                    WorkspaceSwitcher(isPresented: $showSwitcher)
-                        .environmentObject(store)
-                        .frame(width: CGFloat(max(160, sidebarWidth - 16)))
-                        .padding(.leading, 12)
-                        .padding(.top, 52)
-                        .transition(.opacity)
-                }
-            }
-            .animation(.easeOut(duration: 0.12), value: showSwitcher)
-        }
         // Centered naming modal for a new workspace (+ button / ⌘⇧N).
         .overlay {
             if store.promptingNewWorkspace {
@@ -76,21 +56,20 @@ struct ContentView: View {
     }
 
     // Every workspace's surfaces stay mounted (background agents keep running);
-    // only the current workspace's selected tab is visible.
+    // only the current workspace's selected tab is visible. Flattened to one
+    // tabID-keyed ForEach so a tab keeps its surface (live PTY) when dragged
+    // between workspaces — grouping by workspace would re-parent and re-create it.
     private var terminalArea: some View {
         ZStack {
             Theme.ground
-            ForEach(store.workspaces) { ws in
-                ForEach(ws.tabs) { tab in
-                    let visible = ws.id == store.selectedWorkspaceID && tab.tabID == ws.selectedTabID
-                    SplitContainer(node: tab.root,
-                                   tabID: tab.tabID,
-                                   isTabSelected: visible,
-                                   focusTick: store.focusTick,
-                                   zoomedPaneID: tab.zoomedPaneID)
-                        .opacity(visible ? 1 : 0)
-                        .allowsHitTesting(visible)
-                }
+            ForEach(store.allMountedTabs, id: \.tab.tabID) { entry in
+                SplitContainer(node: entry.tab.root,
+                               tabID: entry.tab.tabID,
+                               isTabSelected: entry.visible,
+                               focusTick: store.focusTick,
+                               zoomedPaneID: entry.tab.zoomedPaneID)
+                    .opacity(entry.visible ? 1 : 0)
+                    .allowsHitTesting(entry.visible)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

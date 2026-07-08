@@ -135,6 +135,21 @@ final class AgentStore: ObservableObject {
         return nil
     }
 
+    /// One tab to mount, with its owning workspace and whether it's the visible one.
+    struct MountedTab { let tab: Tab; let workspaceID: String; let visible: Bool }
+
+    /// Every tab across every workspace, flattened. ContentView mounts these in a
+    /// single `tabID`-keyed ForEach so a tab keeps its surface (and live PTY) when it
+    /// moves between workspaces — grouping by workspace would re-parent and re-create it.
+    var allMountedTabs: [MountedTab] {
+        workspaces.flatMap { ws in
+            ws.tabs.map { tab in
+                MountedTab(tab: tab, workspaceID: ws.id,
+                           visible: ws.id == selectedWorkspaceID && tab.tabID == ws.selectedTabID)
+            }
+        }
+    }
+
     // MARK: Workspaces
 
     @discardableResult
@@ -162,6 +177,13 @@ final class AgentStore: ObservableObject {
         guard let i = workspaces.firstIndex(where: { $0.id == id }) else { return }
         let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
         workspaces[i].userTitle = t.isEmpty ? nil : t
+        save()
+    }
+
+    /// Accordion folder expand/collapse — persisted per workspace.
+    func toggleWorkspaceCollapsed(_ id: String) {
+        guard let i = workspaces.firstIndex(where: { $0.id == id }) else { return }
+        workspaces[i].collapsed.toggle()
         save()
     }
 
@@ -197,8 +219,6 @@ final class AgentStore: ObservableObject {
 
     func nextWorkspace() { cycleWorkspace(+1, wrap: true) }
     func prevWorkspace() { cycleWorkspace(-1, wrap: true) }
-    /// Swipe steps stop at the ends (no wrap), unlike the cyclic keyboard cycle.
-    func swipeToWorkspace(_ delta: Int) { cycleWorkspace(delta, wrap: false) }
 
     private func cycleWorkspace(_ delta: Int, wrap: Bool) {
         guard !workspaces.isEmpty, let i = currentWorkspaceIndex else { return }
@@ -336,6 +356,94 @@ final class AgentStore: ObservableObject {
     }
 
     func commitOrder() { save(); broadcastCurrentWorkspaceTree() }
+
+    // MARK: Workspace-scoped tab ops (accordion — a tab may live in a non-active folder)
+
+    /// A remote target for a specific workspace (mirror ⇒ its host), independent of selection.
+    private func remoteTarget(forWorkspace wsID: String) -> (client: RemoteClient, wsID: String)? {
+        guard let ws = workspaces.first(where: { $0.id == wsID }), let h = ws.remoteHostID,
+              let wid = ws.remoteWorkspaceID, let c = remoteClients[h] else { return nil }
+        return (c, wid)
+    }
+
+    /// Select a tab in any workspace — makes its folder the active workspace too.
+    func select(tabID: String, inWorkspace wsID: String) {
+        guard let w = workspaces.firstIndex(where: { $0.id == wsID }),
+              let tab = workspaces[w].tabs.first(where: { $0.tabID == tabID }) else { return }
+        selectedWorkspaceID = wsID
+        workspaces[w].selectedTabID = tabID
+        didFocus(paneID: tab.focusedPaneID)   // viewing a finished tab clears its need-to-check
+        refocusActiveTerminal()
+    }
+
+    /// New tab into a specific folder, selecting it (the folder-header hover `+`).
+    @discardableResult
+    func newTab(inWorkspace wsID: String) -> String {
+        guard let w = workspaces.firstIndex(where: { $0.id == wsID }) else { return "" }
+        selectedWorkspaceID = wsID
+        if let (c, wid) = remoteTarget(forWorkspace: wsID) { c.send(.cmdNewTab(workspaceID: wid)); return "" }
+        let tab = Tab(pane: Pane())
+        workspaces[w].tabs.append(tab)
+        workspaces[w].selectedTabID = tab.tabID
+        save()
+        refocusActiveTerminal()
+        broadcastWorkspaceTree(workspaceID: wsID)
+        return tab.tabID
+    }
+
+    func rename(tabID: String, to title: String, inWorkspace wsID: String) {
+        guard let w = workspaces.firstIndex(where: { $0.id == wsID }),
+              let i = workspaces[w].tabs.firstIndex(where: { $0.tabID == tabID }) else { return }
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        workspaces[w].tabs[i].userTitle = trimmed.isEmpty ? nil : trimmed
+        save()
+        broadcastWorkspaceTree(workspaceID: wsID)
+    }
+
+    func closeTab(_ tabID: String, inWorkspace wsID: String) {
+        guard let w = workspaces.firstIndex(where: { $0.id == wsID }) else { return }
+        closeTabInWorkspace(w, tabID: tabID)
+    }
+
+    func reorder(tabID: String, toIndex: Int, inWorkspace wsID: String) {
+        guard let w = workspaces.firstIndex(where: { $0.id == wsID }),
+              let from = workspaces[w].tabs.firstIndex(where: { $0.tabID == tabID }),
+              from != toIndex, workspaces[w].tabs.indices.contains(toIndex) else { return }
+        let item = workspaces[w].tabs.remove(at: from)
+        workspaces[w].tabs.insert(item, at: toIndex)
+    }
+
+    func commitOrder(inWorkspace wsID: String) { save(); broadcastWorkspaceTree(workspaceID: wsID) }
+
+    /// Move a tab (with its whole pane tree + live agents) into another folder,
+    /// appended, selected, and made active. No-op across remote/mirror workspaces
+    /// (host-authoritative) or into its own folder. The source reseeds if emptied.
+    func moveTab(_ tabID: String, toWorkspace destID: String) {
+        guard let srcW = workspaces.firstIndex(where: { ws in ws.tabs.contains { $0.tabID == tabID } }),
+              let destW = workspaces.firstIndex(where: { $0.id == destID }),
+              srcW != destW,
+              !workspaces[srcW].isRemote, !workspaces[destW].isRemote,
+              let ti = workspaces[srcW].tabs.firstIndex(where: { $0.tabID == tabID }) else { return }
+
+        let srcID = workspaces[srcW].id
+        let wasSelected = workspaces[srcW].selectedTabID == tabID
+        let tab = workspaces[srcW].tabs.remove(at: ti)
+        if workspaces[srcW].tabs.isEmpty {
+            workspaces[srcW].reseedIfEmpty()
+        } else if wasSelected {
+            workspaces[srcW].selectedTabID = workspaces[srcW].tabs.last?.tabID
+        }
+
+        workspaces[destW].tabs.append(tab)
+        workspaces[destW].selectedTabID = tab.tabID
+        selectedWorkspaceID = destID
+        didFocus(paneID: tab.focusedPaneID)
+        save()
+        refocusActiveTerminal()
+        broadcastWorkspaceTree(workspaceID: srcID)
+        broadcastWorkspaceTree(workspaceID: destID)
+        updateDockBadge()
+    }
 
     /// True if `paneID` is the focused pane of the currently selected tab.
     func isFocusedSurface(paneID: String) -> Bool {

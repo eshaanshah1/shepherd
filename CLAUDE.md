@@ -50,12 +50,10 @@ spike/
 - `StopPolicy.swift` — **pure model**: `applyEvent(...)` — the whole hook→state lifecycle map + ordering guard + background-`Stop` suppression read from the `Stop` payload's `background_tasks` ([ADR 0015](.claude/adr/0015-background-stop-suppression-via-background-tasks.md)), returning a `StateTransition`. `AgentStore.apply` is the AppKit shell around it (mirrors `SleepPolicy`/`SleepGuard`). In `ShepherdModelTests`.
 - `Theme.swift` — design tokens (flat near-black palette + soft state colors) + a `Color(hex:)` init. The single source of UI colors; the libghostty base theme mirrors it.
 - `SocketServer.swift` — in-app unix-domain socket server (receives `{tab_id,event,detail}` — `tab_id` is really the pane id).
-- `SidebarView.swift` — the tab list: a **custom `ScrollView` of rows (not `List`)**. Unsplit tabs render a `TabRow` (leading glyph + name + status word, live drag-reorder, rename); split tabs render a **`SplitTabGroup`** — bracket-grouped pane rows, collapsible to a `● 1 ▸ 2` pip strip, zoom-dimmed; T3-Code styling ([ADR 0009](.claude/adr/0009-sidebar-custom-rows-not-list.md)).
-- `ContentView.swift` — sidebar + a resizable hairline divider + a ZStack of **every workspace's** tabs (each rendered via `SplitContainer`), opacity-gated so only the selected workspace's selected tab is visible/hit-testable while background-workspace surfaces stay mounted (agents keep running); switch **cross-fades** on `selectedWorkspaceID`. Feeds the content rect to the store so ⌘⌥-arrow focus moves can resolve geometric neighbors.
-- `Workspace.swift` — **pure model**: a `Workspace` (id, `userTitle`, `tabs`, `selectedTabID`; `displayName`/`aggregateState`/`reseedIfEmpty`) + pure free helpers (`locatePane`, `removingWorkspace`, `totalAttentionCount`). No AppKit — in `ShepherdModelTests`.
-- `Persistence.swift` — **pure model**: `PersistedTab`/`PersistedWorkspace`/`PersistedState` + `snapshotState`/`buildWorkspaces`/`migrateLegacyTabs` (v2→v1). In `ShepherdModelTests`.
-- `WorkspaceSwitcher.swift` — the custom (non-native) workspace dropdown: switch / inline-rename / delete-with-confirm / drag-reorder.
-- `SidebarSwipe.swift` — `NSViewRepresentable` installing a hover-gated scroll-wheel monitor; horizontal-dominant swipe → prev/next workspace.
+- `SidebarView.swift` — the **accordion** of workspaces: a top bar (`WORKSPACES` · `+` new-workspace · `⋯` overflow = add-remote-host + pairing code) over a **custom `ScrollView`/`LazyVStack` (not `List`)** iterating every workspace as a collapsible **`WorkspaceFolderHeader`** (chevron · aggregate dot · name · hover-`+`; tap=collapse, right-click=rename/collapse/delete, drag=reorder via `FolderCentersKey`) followed by its indented tab rows. Unsplit tabs render a `TabRow` (leading glyph + name + status word, live drag-reorder, rename); split tabs render a **`SplitTabGroup`** — pip strip, zoom-dimmed. Rows carry their owning `workspaceID` and use workspace-scoped store ops ([ADR 0017](.claude/adr/0017-workspace-folders-accordion-sidebar.md)); T3-Code styling ([ADR 0009](.claude/adr/0009-sidebar-custom-rows-not-list.md)).
+- `ContentView.swift` — sidebar + a resizable hairline divider + a ZStack of **all tabs across all workspaces**, mounted in one flat `tabID`-keyed `ForEach` (`store.allMountedTabs`, each rendered via `SplitContainer`) so a tab keeps its surface + live PTY when dragged between workspaces; opacity-gated so only the selected workspace's selected tab is visible/hit-testable while the rest stay mounted (agents keep running); switch **cross-fades** on `selectedWorkspaceID`. Feeds the content rect to the store so ⌘⌥-arrow focus moves can resolve geometric neighbors.
+- `Workspace.swift` — **pure model**: a `Workspace` (id, `userTitle`, `tabs`, `selectedTabID`, `collapsed`; `displayName`/`aggregateState`/`reseedIfEmpty`) + pure free helpers (`locatePane`, `removingWorkspace`, `totalAttentionCount`). No AppKit — in `ShepherdModelTests`.
+- `Persistence.swift` — **pure model**: `PersistedTab`/`PersistedWorkspace` (incl. optional `collapsed`)/`PersistedState` + `snapshotState`/`buildWorkspaces`/`migrateLegacyTabs` (v2→v1). In `ShepherdModelTests`.
 - `SleepGuard.swift` — `@MainActor` keep-awake controller: holds `pmset disablesleep`
   (Tier 2, clamshell-surviving) or an IOKit idle assertion (Tier 1 fallback) per the
   3-mode policy; 120s release grace; launch-reconcile + quit-teardown; clamshell
@@ -170,12 +168,27 @@ a tab's title is derived from its focused pane.
 A new pane inherits its parent pane's cwd. Splitting clears the tab's zoom.
 
 ### Sidebar (`SidebarView.swift`)
-The sidebar header is the **workspace name** — a custom dropdown (`WorkspaceSwitcher.swift`:
-switch / inline-rename / delete-with-confirm / drag-reorder) plus a `+` to add a
-workspace; a hover-gated two-finger horizontal swipe (`SidebarSwipe.swift`) cycles
-workspaces (stopping at the ends) and the list **slides** directionally on switch.
-Below the header, the tab list of the **current** workspace renders as before:
-unsplit tabs render a single `TabRow`. A **split tab** renders a
+The sidebar is an **accordion of workspaces** ([ADR 0017](.claude/adr/0017-workspace-folders-accordion-sidebar.md)):
+a slim top bar (`WORKSPACES` label · `+` new-workspace · `⋯` overflow menu =
+*Add remote host…* + the pairing code while serving) over one `ScrollView` that
+lists **every** workspace as a collapsible **folder**. A `WorkspaceFolderHeader`
+= disclosure chevron · aggregate dot (`Workspace.aggregateState`, priority
+blocked > error > done > working > idle) · name (active workspace reads brighter)
+· a hover-revealed `+` (new tab into that folder). Tapping the header toggles
+collapse (persisted per workspace via `Workspace.collapsed`); right-click →
+rename / collapse / delete; dragging a header reorders folders (drop index
+resolved from published header centers, `FolderCentersKey`, since folder heights
+vary). Expanded, a folder shows its tab rows indented. Because a tab can be shown
+in a **non-active** folder, `TabRow`/`SplitTabGroup` carry their owning
+`workspaceID` and call workspace-scoped store ops (`select(tabID:inWorkspace:)`,
+`newTab(inWorkspace:)`, `rename/closeTab/reorder(...inWorkspace:)`); clicking a
+tab selects it and makes its folder active. A tab can also be **dragged into
+another folder** (hybrid: live reflow within its own folder; once the cursor
+enters another folder's region — `FolderRegionsKey` — that folder highlights and
+on release `store.moveTab` appends the tab there with its live agents). There is
+no dropdown, no horizontal slide, and no swipe — `⌃⇥`/`⌃⇧⇥` still cycle the active
+workspace.
+Unsplit tabs render a single `TabRow`. A **split tab** renders a
 `SplitTabGroup`: its panes gathered under a thin leading **bracket/rail** (a
 rounded rail, not a curly `{`), one row per pane. The group **collapses** to a
 `● 1 ▸ 2` strip of `<state-dot> <pane-number>` pips (hover a pip for its title);
@@ -188,10 +201,12 @@ sourcing it from `~/.config/shepherd`; that wiring is a deferred follow-up).
 
 ### Persistence
 The store key is now **`shepherd.workspaces.v1`** (`AgentStore`): per workspace,
-its tabs (each a recursive `SplitNode` tree — shape + split ratios — plus each
-pane's `userTitle` + cwd + `sessionID` and the `collapsed` flag, in tab order) +
-the workspace selection-by-index; the store also keeps `selectedWorkspaceID`. A
-one-time migration wraps a legacy `shepherd.tabs.v2` blob into one default workspace.
+its `userTitle`, its accordion `collapsed` flag (optional on disk ⇒ old blobs
+still decode, nil = expanded), and its tabs (each a recursive `SplitNode` tree —
+shape + split ratios — plus each pane's `userTitle` + cwd + `sessionID`, in tab
+order) + the workspace selection-by-index; the store also keeps
+`selectedWorkspaceID`. A one-time migration wraps a legacy `shepherd.tabs.v2`
+blob into one default workspace.
 Restore rebuilds the trees with **fresh pane ids and `.shell` state** (live agent
 state and zoom never survive a restart), and re-derives selection from the persisted
 workspace/tab indices (ids regenerate).
@@ -235,7 +250,7 @@ falls back to a plain shell. Requires the plugin reporting `session_id` — afte
 - Commit messages end with the project's Co-Authored-By line.
 
 ## Done vs deferred
-**Done:** terminal (mouse/scroll/copy-paste/vsync/titles), tabs (create/switch/close/reorder/rename/persist+cwd, keyboard nav), **pane splitting** (H/V splits, zoom, draggable dividers, per-pane agents, bracket-grouped collapsible sidebar — [ADR 0012](.claude/adr/0012-pane-splitting-panes-as-agents.md)), **workspaces** (Arc-style nested model, global cross-workspace attention + hidden-workspace notifications, name dropdown + `+`, two-finger swipe, ⌘⇧N/⌃⇥/⌃⇧⇥, content cross-fade + sidebar slide, `shepherd.workspaces.v1` persistence w/ v2→v1 migration — [ADR 0013](.claude/adr/0013-workspaces.md)), agent-state lifecycle, Claude plugin, attention loop (badge + backgrounded notifications + ⌘⇧A jump-to-alert), **T3-Code-style sidebar** (custom rows not `List`, resizable, cwd/agent tab names) + self-contained theme (`~/.config/shepherd`), **sleep guard** ("Stay Awake" keep-awake with a 3-mode policy — off / while-agents / always — over `pmset disablesleep` Tier 2 with an IOKit idle-assertion Tier 1 fallback, 120s release grace, launch-reconcile + quit-teardown, clamshell display-blank + clamshell-gated thermal auto-sleep; pure `SleepPolicy` + optional passwordless-`pmset` sudoers setup in the README).
+**Done:** terminal (mouse/scroll/copy-paste/vsync/titles), tabs (create/switch/close/reorder/rename/persist+cwd, keyboard nav), **pane splitting** (H/V splits, zoom, draggable dividers, per-pane agents, bracket-grouped collapsible sidebar — [ADR 0012](.claude/adr/0012-pane-splitting-panes-as-agents.md)), **workspaces** (Arc-style nested model, global cross-workspace attention + hidden-workspace notifications, **accordion sidebar** — collapsible per-workspace folders, all tabs in one view, one aggregate dot per folder, drag a tab across folders (live PTY survives via flat `tabID`-keyed mounting), ⌘⇧N/⌃⇥/⌃⇧⇥, content cross-fade, `shepherd.workspaces.v1` persistence w/ `collapsed` + v2→v1 migration — [ADR 0013](.claude/adr/0013-workspaces.md), [ADR 0017](.claude/adr/0017-workspace-folders-accordion-sidebar.md)), agent-state lifecycle, Claude plugin, attention loop (badge + backgrounded notifications + ⌘⇧A jump-to-alert), **T3-Code-style sidebar** (custom rows not `List`, resizable, cwd/agent tab names) + self-contained theme (`~/.config/shepherd`), **sleep guard** ("Stay Awake" keep-awake with a 3-mode policy — off / while-agents / always — over `pmset disablesleep` Tier 2 with an IOKit idle-assertion Tier 1 fallback, 120s release grace, launch-reconcile + quit-teardown, clamshell display-blank + clamshell-gated thermal auto-sleep; pure `SleepPolicy` + optional passwordless-`pmset` sudoers setup in the README).
 **FCM push (Android Phase 1 step 2):** attention transitions route to local surfaces
 (banner+sound) when present, or a data-only FCM wake when away (`isAway` = lid shut +
 no external display); host mints OAuth2 from `~/.config/shepherd/fcm-service-account.json`,

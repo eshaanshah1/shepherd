@@ -50,6 +50,10 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertEqual(ws(userTitle: "Build").displayName(index: 0), "Build")
     }
 
+    func testCollapsedDefaultsToExpanded() {
+        XCTAssertFalse(ws().collapsed)   // accordion folders start expanded
+    }
+
     func testReseedIfEmpty() {
         var w = ws()
         w.tabs.removeAll()

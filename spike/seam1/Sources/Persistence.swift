@@ -12,6 +12,7 @@ struct PersistedWorkspace: Codable {
     var userTitle: String?
     var selectedTabIndex: Int      // selection by position — tab ids regenerate on restore
     var tabs: [PersistedTab]
+    var collapsed: Bool?           // optional so pre-accordion blobs still decode (nil = expanded)
 }
 
 struct PersistedState: Codable {
@@ -28,7 +29,8 @@ func snapshotState(_ workspaces: [Workspace], selectedWorkspaceID: String?) -> P
         return PersistedWorkspace(
             userTitle: ws.userTitle,
             selectedTabIndex: selTab,
-            tabs: ws.tabs.map { PersistedTab(userTitle: $0.userTitle, root: $0.root) })
+            tabs: ws.tabs.map { PersistedTab(userTitle: $0.userTitle, root: $0.root) },
+            collapsed: ws.collapsed)
     }
     return PersistedState(workspaces: pws, selectedWorkspaceIndex: selWs)
 }
@@ -49,7 +51,8 @@ func buildWorkspaces(from state: PersistedState) -> [Workspace] {
         let selID = tabs.indices.contains(pw.selectedTabIndex)
             ? tabs[pw.selectedTabIndex].tabID
             : tabs.first?.tabID
-        return Workspace(userTitle: pw.userTitle, tabs: tabs, selectedTabID: selID)
+        return Workspace(userTitle: pw.userTitle, tabs: tabs, selectedTabID: selID,
+                         collapsed: pw.collapsed ?? false)
     }
 }
 
