@@ -25,24 +25,24 @@ struct SplitContainer: View {
 
         GeometryReader { geo in
             let rect = CGRect(origin: .zero, size: geo.size)
-            let frames = node.frames(in: rect)
             ZStack(alignment: .topLeading) {
-                ForEach(node.panes, id: \.paneID) { pane in
-                    let f = placedFrame(pane.paneID, frames, rect)
-                    // Visible = selected tab AND (not zoomed, or this is the zoomed
-                    // pane) → occlusion, so every on-screen pane renders live.
-                    let isVisible = isTabSelected && (zoomedPaneID == nil || pane.paneID == zoomedPaneID)
-                    let isFocused = pane.paneID == focusedPaneID
-                    GhosttyTerminal(paneID: pane.paneID,
-                                    isVisible: isVisible,
-                                    isSelected: isTabSelected && isFocused,
-                                    focusTick: focusTick)
-                        .frame(width: f.width, height: f.height)
-                        .position(x: f.midX, y: f.midY)
-                        // Inactive panes dim instead of the focused one drawing a
-                        // ring; a single-pane tab is never dimmed.
-                        .opacity(isSplit && !isFocused ? 0.60 : 1.0)
-                        .clipped()
+                // Panes are placed by a custom Layout that gives each backing view a
+                // frame EQUAL to its pane rect. A SwiftUI `.position`/`.offset` wrapper
+                // instead expands each pane's backing `_NSGraphicsView` to fill the
+                // whole container; stacked, the topmost pane then swallows every click
+                // landing over a sibling, so sibling panes can't be focused by mouse.
+                PaneLayout(node: node, zoomedPaneID: zoomedPaneID) {
+                    ForEach(node.panes, id: \.paneID) { pane in
+                        let isVisible = isTabSelected && (zoomedPaneID == nil || pane.paneID == zoomedPaneID)
+                        let isFocused = pane.paneID == focusedPaneID
+                        GhosttyTerminal(paneID: pane.paneID,
+                                        isVisible: isVisible,
+                                        isSelected: isTabSelected && isFocused,
+                                        focusTick: focusTick)
+                            // Inactive panes dim instead of the focused one drawing a
+                            // ring; a single-pane tab is never dimmed.
+                            .opacity(isSplit && !isFocused ? 0.60 : 1.0)
+                    }
                 }
 
                 if zoomedPaneID == nil {
@@ -57,10 +57,33 @@ struct SplitContainer: View {
             }
         }
     }
+}
 
-    /// The frame to place `paneID` at. While zoomed, the zoomed pane fills `rect`
-    /// and every other pane stays MOUNTED at 0×0 (its surface/PTY stays alive).
-    /// Otherwise use the computed frame (the lone leaf gets the full rect).
+/// Places each pane subview at its exact rect from `node.frames`, so the backing
+/// NSView's frame equals the pane rect (no full-container expansion → no click
+/// swallowing between siblings). Subview order matches `ForEach(node.panes)`, so
+/// `subviews[i]` is `node.panes[i]`. While zoomed, the zoomed pane fills the bounds
+/// and every other pane stays MOUNTED at 0×0 (its surface/PTY stays alive).
+private struct PaneLayout: Layout {
+    let node: SplitNode
+    let zoomedPaneID: String?
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        proposal.replacingUnspecifiedDimensions()
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let frames = node.frames(in: CGRect(origin: .zero, size: bounds.size))
+        let panes = node.panes
+        for (i, sub) in subviews.enumerated() {
+            guard i < panes.count else { break }
+            let f = placedFrame(panes[i].paneID, frames, CGRect(origin: .zero, size: bounds.size))
+            sub.place(at: CGPoint(x: bounds.minX + f.minX, y: bounds.minY + f.minY),
+                      anchor: .topLeading,
+                      proposal: ProposedViewSize(width: f.width, height: f.height))
+        }
+    }
+
     private func placedFrame(_ paneID: String, _ frames: [String: CGRect], _ rect: CGRect) -> CGRect {
         if let zoomedPaneID {
             return paneID == zoomedPaneID ? rect : CGRect(x: rect.minX, y: rect.minY, width: 0, height: 0)

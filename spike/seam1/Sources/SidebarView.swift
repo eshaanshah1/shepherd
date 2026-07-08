@@ -24,7 +24,9 @@ struct SidebarView: View {
                 let w = max(geo.size.width, 1)
                 HStack(spacing: 0) {
                     ForEach(store.workspaces) { ws in
-                        tabList(for: ws).frame(width: w)
+                        tabList(for: ws)
+                            .frame(width: w)
+                            .allowsHitTesting(ws.id == store.selectedWorkspaceID)
                     }
                 }
                 .offset(x: -CGFloat(store.currentWorkspaceIndex ?? 0) * w)

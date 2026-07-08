@@ -14,6 +14,7 @@ struct GhosttyTerminal: NSViewRepresentable {
 
     func updateNSView(_ v: GhosttySurfaceView, context: Context) {
         v.setActive(isVisible)   // every visible pane renders; only hidden ones pause
+        v.hitTestable = isVisible // only the selected tab's on-screen panes take clicks
         if isSelected, let w = v.window, w.firstResponder !== v {
             w.makeFirstResponder(v)
         }
@@ -42,6 +43,17 @@ final class GhosttySurfaceView: NSView {
         guard note.userInfo?["paneID"] as? String == paneID, let s = surface else { return }
         surface = nil
         ghostty_surface_free(s)
+    }
+
+    /// Only the selected tab's on-screen panes should receive clicks. Every tab of
+    /// every workspace stays mounted (agents keep running), and SwiftUI's
+    /// `.allowsHitTesting(false)` on the hidden ones does NOT propagate to the raw
+    /// surface — so without this gate, a background tab's full-size surface overlaps
+    /// the visible split and swallows clicks meant for its panes.
+    var hitTestable = false
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        hitTestable ? super.hitTest(point) : nil
     }
 
     override var acceptsFirstResponder: Bool { true }
