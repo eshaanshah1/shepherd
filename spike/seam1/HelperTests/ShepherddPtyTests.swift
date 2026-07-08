@@ -190,6 +190,49 @@ extension ShepherddPtyTests {
         return fd
     }
 
+    /// A loopback TCP listener on an OS-assigned port. Returns (listenFD, port).
+    private func startTCPListener() throws -> (Int32, UInt16) {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        XCTAssertGreaterThanOrEqual(fd, 0, "socket()")
+        var yes: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET); addr.sin_port = 0
+        inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr)
+        let br = withUnsafePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+        XCTAssertEqual(br, 0, "bind errno=\(errno)")
+        XCTAssertEqual(listen(fd, 4), 0, "listen")
+        var actual = sockaddr_in(); var alen = socklen_t(MemoryLayout<sockaddr_in>.size)
+        _ = withUnsafeMutablePointer(to: &actual) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            getsockname(fd, $0, &alen) } }
+        return (fd, UInt16(bigEndian: actual.sin_port))
+    }
+
+    /// Write a `[u32 BE len][json]` frame to `fd`.
+    private func writeFrameJSON(_ fd: Int32, _ json: String) {
+        let jd = Array(json.utf8)
+        var frame: [UInt8] = [UInt8((jd.count >> 24) & 0xff), UInt8((jd.count >> 16) & 0xff),
+                              UInt8((jd.count >> 8) & 0xff), UInt8(jd.count & 0xff)]
+        frame.append(contentsOf: jd); writeRaw(fd, frame)
+    }
+
+    /// Read one `[u32 BE len][json]` frame off `fd`, returning the JSON string.
+    private func readOneFrameString(_ fd: Int32, timeout: TimeInterval = 5) -> String {
+        var acc = [UInt8](); let deadline = Date().addingTimeInterval(timeout)
+        func need(_ k: Int) -> Bool {
+            while acc.count < k, Date() < deadline {
+                var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+                if poll(&pfd, 1, 200) > 0 { var b = [UInt8](repeating: 0, count: 4096); let n = read(fd, &b, b.count); if n > 0 { acc.append(contentsOf: b[0..<n]) } else { break } }
+            }
+            return acc.count >= k
+        }
+        guard need(4) else { return "" }
+        let len = (Int(acc[0]) << 24) | (Int(acc[1]) << 16) | (Int(acc[2]) << 8) | Int(acc[3])
+        guard need(4 + len) else { return "" }
+        return String(decoding: acc[4..<(4 + len)], as: UTF8.self)
+    }
+
     /// Accept one connection within `timeout`, or fail.
     private func acceptOne(_ listenFD: Int32, timeout: TimeInterval = 5) throws -> Int32 {
         let deadline = Date().addingTimeInterval(timeout)
@@ -282,6 +325,79 @@ extension ShepherddPtyTests {
         frame.append(contentsOf: payload)
         writeRaw(conn, frame)                                         // phone input via socket
         XCTAssertTrue(sees(master, contains: "xyz"), "socket input not injected into inner PTY")
+    }
+
+    // MARK: - attach: client-side raw PTY pipe
+
+    func testAttachHandshakesThenPipesRawBothWays() throws {
+        let (listenFD, port) = try startTCPListener()
+        defer { close(listenFD) }
+
+        var master: Int32 = 0, slave: Int32 = 0
+        var ws = winsize(ws_row: 30, ws_col: 40, ws_xpixel: 0, ws_ypixel: 0)
+        XCTAssertEqual(openpty(&master, &slave, nil, nil, &ws), 0, "openpty")
+
+        let proc = Process()
+        proc.executableURL = helperURL()
+        proc.arguments = ["attach"]
+        var env = ProcessInfo.processInfo.environment
+        env["SHEPHERD_ATTACH_HOST"] = "127.0.0.1"
+        env["SHEPHERD_ATTACH_PORT"] = String(port)
+        env["SHEPHERD_ATTACH_NONCE"] = "nonce-1"
+        env["SHEPHERD_ATTACH_PANE"] = "paneR"
+        proc.environment = env
+        let h = FileHandle(fileDescriptor: slave, closeOnDealloc: false)
+        proc.standardInput = h; proc.standardOutput = h; proc.standardError = h
+        do { try proc.run() } catch { XCTFail("launch: \(error)"); return }
+        close(slave)
+        defer { proc.terminate(); proc.waitUntilExit(); close(master) }
+
+        let conn = try acceptOne(listenFD)
+        defer { close(conn) }
+
+        // Handshake: attach sends dataHello (with its 40x30 grid + nonce/pane), we reply dataReady.
+        let hello = readOneFrameString(conn)
+        XCTAssertTrue(hello.contains("\"dataHello\""), "expected dataHello, got: \(hello)")
+        XCTAssertTrue(hello.contains("\"paneID\":\"paneR\""))
+        XCTAssertTrue(hello.contains("\"nonce-1\""))
+        XCTAssertTrue(hello.contains("\"cols\":40") && hello.contains("\"rows\":30"), "initial size in dataHello")
+        writeFrameJSON(conn, "{\"dataReady\":{\"cols\":40,\"rows\":30}}")
+
+        // Raw duplex: client stdin → socket; socket → client stdout.
+        writeRaw(master, Array("type-this\n".utf8))
+        XCTAssertTrue(sees(conn, contains: "type-this"), "stdin not forwarded to socket")
+        writeRaw(conn, Array("HOST-OUTPUT".utf8))
+        XCTAssertTrue(sees(master, contains: "HOST-OUTPUT"), "socket bytes not written to stdout")
+    }
+
+    func testAttachExitsWhenHostRejects() throws {
+        let (listenFD, port) = try startTCPListener()
+        defer { close(listenFD) }
+        let (out, code) = runAttach(port: port, expectAccept: false, on: listenFD)
+        XCTAssertNotEqual(code, 0, "attach must exit non-zero on rejection; stdout=\(out)")
+    }
+
+    /// Spawn `shepherdd attach` against `port`; if `expectAccept` is false, reply dataRejected.
+    private func runAttach(port: UInt16, expectAccept: Bool, on listenFD: Int32) -> (String, Int32) {
+        var master: Int32 = 0, slave: Int32 = 0
+        var ws = winsize(ws_row: 24, ws_col: 80, ws_xpixel: 0, ws_ypixel: 0)
+        XCTAssertEqual(openpty(&master, &slave, nil, nil, &ws), 0)
+        let proc = Process(); proc.executableURL = helperURL(); proc.arguments = ["attach"]
+        var env = ProcessInfo.processInfo.environment
+        env["SHEPHERD_ATTACH_HOST"] = "127.0.0.1"; env["SHEPHERD_ATTACH_PORT"] = String(port)
+        env["SHEPHERD_ATTACH_NONCE"] = "n"; env["SHEPHERD_ATTACH_PANE"] = "p"
+        proc.environment = env
+        let hh = FileHandle(fileDescriptor: slave, closeOnDealloc: false)
+        proc.standardInput = hh; proc.standardOutput = hh; proc.standardError = hh
+        try? proc.run(); close(slave)
+        if let conn = try? acceptOne(listenFD) {
+            _ = readOneFrameString(conn)
+            writeFrameJSON(conn, expectAccept ? "{\"dataReady\":{\"cols\":80,\"rows\":24}}"
+                                              : "{\"dataRejected\":{\"reason\":\"bad nonce\"}}")
+            if !expectAccept { close(conn) }
+        }
+        proc.waitUntilExit(); close(master)
+        return ("", proc.terminationStatus)
     }
 
     // Regression: the tap is strictly non-load-bearing. When the app closes the helper's
