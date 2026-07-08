@@ -3,9 +3,6 @@ import CoreGraphics
 
 /// One terminal pane = one libghostty surface = the agent unit. The PTY env var
 /// is still literally `SHEPHERD_TAB_ID` (plugin compat); its value is this paneID.
-/// Link health of a mirror pane's connection to its host (M2). Local panes never carry one.
-enum RemoteConnState: String { case live, reconnecting, dead }
-
 /// Marks a pane as a MIRROR of a pane living on another Mac ("host"). Its surface runs
 /// `shepherdd attach <host> <remotePaneID>` instead of a local shell, and structural
 /// actions on it route to the host as `cmd*`. `nil` = an ordinary local pane. Never
