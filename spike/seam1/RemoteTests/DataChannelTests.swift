@@ -157,9 +157,9 @@ final class DataChannelTests: XCTestCase {
         XCTAssertEqual(try readRaw(helperFD, frame.count), frame)
     }
 
-    // MARK: - Single phone-owned pane: opening a second pane releases the first to desktop
+    // MARK: - Per-connection sizing: concurrently-viewed panes keep independent sizes
 
-    func testOpeningSecondPaneSnapsFirstBackToDesktop() throws {
+    func testTwoPanesKeepIndependentSizes() throws {
         let ptyPath = NSTemporaryDirectory() + "shep-pty-\(UInt32.random(in: 0..<UInt32.max)).sock"
         let hub = PtyHub(socketPath: ptyPath, makeBroker: { PtyBroker(paneID: $0, cols: $1, rows: $2) })
         XCTAssertTrue(hub.start()); defer { hub.stop() }
@@ -176,21 +176,28 @@ final class DataChannelTests: XCTestCase {
         try writeFrame(helperB, .ptyHello(paneID: "B", cols: 80, rows: 24))
         _ = try waitFor { hub.broker(for: "B") }
 
-        // Phone opens A at phone size (40x30) → A resizes to phone size.
+        // A client opens A at 40x30 → A resizes to 40x30.
         let dataA = try connectTCP(server.boundPort); defer { close(dataA) }
         try writeFrame(dataA, .dataHello(sessionNonce: nonce, paneID: "A", cols: 40, rows: 30))
         let attachA = Array(HelperFrameCodec.encode(.resize(cols: 40, rows: 30)))
         XCTAssertEqual(try readRaw(helperA, attachA.count), attachA)
         XCTAssertEqual(try readOneDataMessage(dataA), .dataReady(cols: 40, rows: 30))
 
-        // Phone now opens B (still holding A's channel) → A must snap back to desktop (80x24),
-        // enforcing at most one phone-owned pane, and B takes the phone size.
+        // It also opens B (a DIFFERENT size) while still holding A → B takes 44x28 and A is left
+        // untouched (per-connection): sending a byte to A and reading it back proves no snap-back
+        // resize was injected ahead of it — A kept its 40x30.
         let dataB = try connectTCP(server.boundPort); defer { close(dataB) }
-        try writeFrame(dataB, .dataHello(sessionNonce: nonce, paneID: "B", cols: 40, rows: 30))
-        let snapA = Array(HelperFrameCodec.encode(.resize(cols: 80, rows: 24)))
-        XCTAssertEqual(try readRaw(helperA, snapA.count), snapA)
-        let attachB = Array(HelperFrameCodec.encode(.resize(cols: 40, rows: 30)))
+        try writeFrame(dataB, .dataHello(sessionNonce: nonce, paneID: "B", cols: 44, rows: 28))
+        let attachB = Array(HelperFrameCodec.encode(.resize(cols: 44, rows: 28)))
         XCTAssertEqual(try readRaw(helperB, attachB.count), attachB)
+        writeRaw(dataA, Array("x".utf8))
+        let keyA = Array(HelperFrameCodec.encode(.input(Array("x".utf8))))
+        XCTAssertEqual(try readRaw(helperA, keyA.count), keyA)   // no resize precedes it → A untouched
+
+        // Each pane snaps back to desktop only when ITS OWN last viewer detaches.
+        close(dataA)
+        let snap = Array(HelperFrameCodec.encode(.resize(cols: 80, rows: 24)))
+        XCTAssertEqual(try readRaw(helperA, snap.count), snap)
     }
 
     // MARK: - C1: a data channel must not outlive its control session
