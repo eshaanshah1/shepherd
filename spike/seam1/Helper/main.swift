@@ -253,17 +253,136 @@ func loginShell() -> String {
     return "/bin/zsh"
 }
 
+// MARK: - attach subcommand (client side)
+//
+// `attach`: connect to a Shepherd host's TCP control-channel port, open a per-pane data
+// channel, and be a DUMB bidirectional raw pipe between that socket and our stdio (which the
+// client's libghostty drives). Handshake: send DataMessage.dataHello, await dataReady, then
+// raw duplex. Host/port/nonce/pane arrive via env (SHEPHERD_ATTACH_*), never argv (no `ps`
+// leak). Live resize is NOT handled here — it rides the in-app control channel (a mirror
+// pane's surface size change → RemoteClient sends `resize`). Initial size ships in dataHello.
+
+/// Dial `host:port` (IP or MagicDNS name) over TCP; returns a connected fd or -1.
+func dialTCP(_ host: String, _ port: UInt16) -> Int32 {
+    var hints = addrinfo(ai_flags: 0, ai_family: AF_UNSPEC, ai_socktype: SOCK_STREAM,
+                         ai_protocol: 0, ai_addrlen: 0, ai_canonname: nil, ai_addr: nil, ai_next: nil)
+    var res: UnsafeMutablePointer<addrinfo>?
+    guard getaddrinfo(host, String(port), &hints, &res) == 0, let head = res else { return -1 }
+    defer { freeaddrinfo(res) }
+    var ptr: UnsafeMutablePointer<addrinfo>? = head
+    while let ai = ptr {
+        let fd = socket(ai.pointee.ai_family, ai.pointee.ai_socktype, ai.pointee.ai_protocol)
+        if fd >= 0 {
+            if Darwin.connect(fd, ai.pointee.ai_addr, ai.pointee.ai_addrlen) == 0 {
+                var on: Int32 = 1
+                setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &on, socklen_t(MemoryLayout<Int32>.size))
+                setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
+                return fd
+            }
+            close(fd)
+        }
+        ptr = ai.pointee.ai_next
+    }
+    return -1
+}
+
+/// `[u32 BE len][json]` — one framed control/data message, matching RemoteProtocol's codec.
+func writeFramedJSON(_ fd: Int32, _ json: String) {
+    let jd = Array(json.utf8); var len = UInt32(jd.count).bigEndian
+    var frame = [UInt8](); withUnsafeBytes(of: &len) { frame.append(contentsOf: $0) }; frame.append(contentsOf: jd)
+    var off = 0
+    frame.withUnsafeBytes { p in
+        guard let base = p.baseAddress else { return }
+        while off < frame.count {
+            let w = write(fd, base + off, frame.count - off)
+            if w < 0 { if errno == EINTR { continue }; return }
+            off += w
+        }
+    }
+}
+
+/// Read exactly `count` bytes, or nil on EOF/error — used to consume the single response
+/// frame without over-reading into the raw stream that follows.
+func readExactly(_ fd: Int32, _ count: Int) -> [UInt8]? {
+    var out = [UInt8](); out.reserveCapacity(count)
+    var buf = [UInt8](repeating: 0, count: count)
+    while out.count < count {
+        let n = read(fd, &buf, count - out.count)
+        if n <= 0 { if n < 0 && errno == EINTR { continue }; return nil }
+        out.append(contentsOf: buf[0..<n])
+    }
+    return out
+}
+
+/// Read the one handshake response frame; true iff it's a `dataReady` (else rejected/closed).
+func awaitDataReady(_ fd: Int32) -> Bool {
+    guard let lenB = readExactly(fd, 4) else { return false }
+    let len = (Int(lenB[0]) << 24) | (Int(lenB[1]) << 16) | (Int(lenB[2]) << 8) | Int(lenB[3])
+    guard len > 0, len <= 1 << 20, let body = readExactly(fd, len) else { return false }
+    return String(decoding: body, as: UTF8.self).contains("\"dataReady\"")
+}
+
+/// Raw duplex pump: STDIN→socket (keystrokes/paste), socket→STDOUT (PTY bytes). Exits on
+/// either side's EOF/hangup. No framing — the data channel is raw after dataReady.
+func attachPump(_ sock: Int32) {
+    let cap = 65536
+    let buf = UnsafeMutablePointer<UInt8>.allocate(capacity: cap); defer { buf.deallocate() }
+    func writeAll(_ fd: Int32, _ n: Int) {
+        var off = 0
+        while off < n { let w = write(fd, buf + off, n - off); if w < 0 { if errno == EINTR || errno == EAGAIN { continue }; return }; off += w }
+    }
+    let hup = Int16(POLLHUP | POLLERR | POLLNVAL)
+    var pfds = [pollfd(fd: STDIN_FILENO, events: Int16(POLLIN), revents: 0),
+                pollfd(fd: sock, events: Int16(POLLIN), revents: 0)]
+    while true {
+        if poll(&pfds, 2, -1) < 0 { if errno == EINTR { continue }; break }
+        if pfds[0].revents & Int16(POLLIN) != 0 { let n = read(STDIN_FILENO, buf, cap); if n > 0 { writeAll(sock, n) } else { break } }
+        if pfds[0].revents & hup != 0 { break }
+        if pfds[1].revents & Int16(POLLIN) != 0 { let n = read(sock, buf, cap); if n > 0 { writeAll(STDOUT_FILENO, n) } else { break } }
+        if pfds[1].revents & hup != 0 { break }
+        pfds[0].revents = 0; pfds[1].revents = 0
+    }
+}
+
+func runAttach() -> Int32 {
+    let env = ProcessInfo.processInfo.environment
+    guard let host = env["SHEPHERD_ATTACH_HOST"], !host.isEmpty,
+          let portS = env["SHEPHERD_ATTACH_PORT"], let port = UInt16(portS),
+          let nonce = env["SHEPHERD_ATTACH_NONCE"], let pane = env["SHEPHERD_ATTACH_PANE"] else {
+        FileHandle.standardError.write(Data("shepherdd attach: missing SHEPHERD_ATTACH_* env\n".utf8)); return 64
+    }
+    var ws = winsize(); _ = sh_get_winsize(STDIN_FILENO, &ws)
+    let sock = dialTCP(host, port)
+    guard sock >= 0 else {
+        FileHandle.standardError.write(Data("shepherdd attach: cannot reach \(host):\(port)\n".utf8)); return 69
+    }
+    // {"dataHello":{"sessionNonce":"…","paneID":"…","cols":N,"rows":N}} — DataMessage.dataHello.
+    writeFramedJSON(sock, "{\"dataHello\":{\"sessionNonce\":\"\(nonce)\",\"paneID\":\"\(pane)\",\"cols\":\(Int(ws.ws_col)),\"rows\":\(Int(ws.ws_row))}}")
+    guard awaitDataReady(sock) else {
+        FileHandle.standardError.write(Data("shepherdd attach: host rejected pane \(pane)\n".utf8)); close(sock); return 1
+    }
+    makeOuterRaw()
+    attachPump(sock)
+    restoreOuter()
+    shutdown(sock, SHUT_RDWR); close(sock)
+    return 0
+}
+
 // MARK: - entry
 
 let argv = Array(CommandLine.arguments.dropFirst())
-guard argv.first == "pty" else {
-    FileHandle.standardError.write(Data("usage: shepherdd pty [-- <program> [args…]]\n".utf8))
+switch argv.first {
+case "pty":
+    let program: [String]
+    if let dash = argv.firstIndex(of: "--"), dash + 1 < argv.count {
+        program = Array(argv[(dash + 1)...])
+    } else {
+        program = [loginShell()]
+    }
+    exit(runPty(program))
+case "attach":
+    exit(runAttach())
+default:
+    FileHandle.standardError.write(Data("usage: shepherdd (pty [-- <program> …] | attach)\n".utf8))
     exit(64)
 }
-let program: [String]
-if let dash = argv.firstIndex(of: "--"), dash + 1 < argv.count {
-    program = Array(argv[(dash + 1)...])
-} else {
-    program = [loginShell()]
-}
-exit(runPty(program))
