@@ -4,6 +4,7 @@ import AppKit
 struct ContentView: View {
     @EnvironmentObject var store: AgentStore
     @AppStorage("shepherd.sidebarWidth") private var sidebarWidth: Double = 240
+    @AppStorage("shepherd.diffPanelWidth") private var diffPanelWidth: Double = 460
     // Live width while dragging the divider (nil when idle); committed
     // `sidebarWidth` lays out the terminal, so it's updated only on drop.
     @State private var dragWidth: Double?
@@ -24,6 +25,13 @@ struct ContentView: View {
             HStack(spacing: 0) {
                 Color.clear.frame(width: sidebarWidth + dividerWidth)
                 terminalArea
+                if store.diffPanelOpen {
+                    Rectangle().fill(Theme.hairline).frame(width: 1)
+                    DiffPanelView()
+                        .environmentObject(store)
+                        .frame(width: diffPanelWidth)
+                        .transition(.move(edge: .trailing))
+                }
             }
 
             HStack(spacing: 0) {
@@ -33,6 +41,7 @@ struct ContentView: View {
             }
         }
         .background(Theme.ground)
+        .animation(.easeOut(duration: 0.16), value: store.diffPanelOpen)
         .background(WindowLightsController().frame(width: 0, height: 0))
         .ignoresSafeArea()
         // Centered naming modal for a new workspace (+ button / ⌘⇧N).

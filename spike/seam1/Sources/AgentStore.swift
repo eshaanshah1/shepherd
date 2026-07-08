@@ -28,6 +28,13 @@ final class AgentStore: ObservableObject {
     /// Bumped when ⌘F should (re)focus the open search field, e.g. reopening while active.
     @Published var searchFocusTick = 0
 
+    /// Diff-review panel: whether it's open, and which pane it reviews (⌘G).
+    @Published var diffPanelOpen = false
+    @Published var diffPanelPaneID: String? = nil
+    /// Bumped when the reviewed pane finishes a turn, so an open panel can offer a refresh.
+    @Published private(set) var diffTurnTick = 0
+    private(set) var diffTurnPane: String? = nil
+
     /// The content area's size (SwiftUI top-left space), fed by ContentView so
     /// `focusNeighbor` can resolve geometric neighbors against the live layout.
     @Published var lastContentSize: CGSize = .zero
@@ -464,6 +471,39 @@ final class AgentStore: ObservableObject {
         return workspaces[w].tabs[t].root.pane(paneID)?.cwd
     }
 
+    func pane(_ paneID: String) -> Pane? {
+        guard let (w, t) = locatePane(paneID, in: workspaces) else { return nil }
+        return workspaces[w].tabs[t].root.pane(paneID)
+    }
+
+    /// A pane running a live Claude session (so the comment→prompt composer applies).
+    func hasLiveAgent(paneID: String) -> Bool {
+        (pane(paneID)?.sessionID?.isEmpty == false)
+    }
+
+    /// ⌘G — toggle the diff panel for the selected tab's focused pane.
+    func toggleDiffPanel() {
+        if diffPanelOpen { diffPanelOpen = false; return }
+        guard let tab = tabs.first(where: { $0.tabID == selectedTab }) else { return }
+        diffPanelPaneID = tab.focusedPaneID
+        diffPanelOpen = true
+    }
+
+    /// Inject text into a live pane's PTY (diff-review "send to agent").
+    func injectText(_ text: String, intoPane paneID: String) {
+        GhosttySurfaceView.perform(paneID: paneID, injectText: text)
+    }
+
+    /// Compose review comments into one prompt and inject it into the pane's agent.
+    /// `shepherd.diff.autoReviewSubmit` (default true) appends a newline to send it;
+    /// false stages the text for the user to press Enter.
+    func submitReview(_ comments: [ReviewComment], toPane paneID: String) {
+        guard !comments.isEmpty else { return }
+        let auto = (UserDefaults.standard.object(forKey: "shepherd.diff.autoReviewSubmit") as? Bool) ?? true
+        let prompt = ReviewPrompt.compose(comments) + (auto ? "\n" : "")
+        injectText(prompt, intoPane: paneID)
+    }
+
     /// The one-shot `initial_input` to resume this pane's Claude session on restore, or nil if it
     /// wasn't running an agent. Consumes the stored id (cleared async so we don't mutate published
     /// state mid-view-build): resume is attempted once; a successful resume re-arms it via the
@@ -508,6 +548,10 @@ final class AgentStore: ObservableObject {
             if res.clearTitle { $0.title = "" }
             $0.state = res.state
             $0.reason = res.reason
+        }
+        if res.state == .needsCheck {
+            diffTurnPane = paneID
+            diffTurnTick += 1   // an open diff panel watches this to offer a refresh
         }
         // Track the live Claude session id so we can resume it on relaunch: SessionStart carries
         // the id (in detail), SessionEnd means the agent exited so there's nothing to resume.
