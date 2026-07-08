@@ -70,6 +70,13 @@ struct ShepherdApp: App {
                 Button("Select Previous Tab") { AgentStore.shared.selectPrevious() }
                     .keyboardShortcut("[", modifiers: [.command, .shift])
                 Divider()
+                Button("Find") { AgentStore.shared.openSearch() }
+                    .keyboardShortcut("f", modifiers: .command)
+                Button("Find Next") { AgentStore.shared.navigateFocusedSearch(.next) }
+                    .keyboardShortcut("g", modifiers: .command)
+                Button("Find Previous") { AgentStore.shared.navigateFocusedSearch(.previous) }
+                    .keyboardShortcut("g", modifiers: [.command, .shift])
+                Divider()
                 Button("Jump to Next Alert") { AgentStore.shared.selectNextAttention() }
                     .keyboardShortcut("a", modifiers: [.command, .shift])
                 #if DEBUG

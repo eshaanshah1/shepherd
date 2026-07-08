@@ -115,6 +115,14 @@ final class GhosttyApp {
         Unmanaged<GhosttySurfaceView>.fromOpaque(userdata).takeUnretainedValue()
     }
 
+    /// The paneID for a surface-target action, or nil if the target isn't a surface.
+    private static func surfacePaneID(_ target: ghostty_target_s) -> String? {
+        guard target.tag == GHOSTTY_TARGET_SURFACE,
+              let surface = target.target.surface,
+              let ud = ghostty_surface_userdata(surface) else { return nil }
+        return view(ud).paneID
+    }
+
     /// Handle surface actions. We currently only consume SET_TITLE → sidebar label;
     /// everything else is left to libghostty's defaults.
     private static func handleAction(
@@ -140,6 +148,20 @@ final class GhosttyApp {
             let id = view(ud).paneID
             let pwd = String(cString: cPwd)
             DispatchQueue.main.async { AgentStore.shared.setCwd(pwd, paneID: id) }
+            return true
+        case GHOSTTY_ACTION_SEARCH_TOTAL:
+            guard let id = surfacePaneID(target) else { return false }
+            let total = Int(action.action.search_total.total)
+            DispatchQueue.main.async { AgentStore.shared.setSearchTotal(total, paneID: id) }
+            return true
+        case GHOSTTY_ACTION_SEARCH_SELECTED:
+            guard let id = surfacePaneID(target) else { return false }
+            let sel = Int(action.action.search_selected.selected)   // 1-based; -1 = none
+            DispatchQueue.main.async { AgentStore.shared.setSearchSelected(sel, paneID: id) }
+            return true
+        case GHOSTTY_ACTION_END_SEARCH:
+            guard let id = surfacePaneID(target) else { return false }
+            DispatchQueue.main.async { AgentStore.shared.endSearchFromCore(paneID: id) }
             return true
         default:
             return false

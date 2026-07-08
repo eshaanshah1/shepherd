@@ -33,8 +33,27 @@ final class GhosttySurfaceView: NSView {
         super.init(frame: .zero)
         NotificationCenter.default.addObserver(self, selector: #selector(paneClosed(_:)),
                                                name: .shepherdPaneClosed, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(performBinding(_:)),
+                                               name: .shepherdPerformBinding, object: nil)
     }
     required init?(coder: NSCoder) { fatalError("not supported") }
+
+    /// Invoke a libghostty keybind action (e.g. "search:foo", "navigate_search:next",
+    /// "end_search") on this surface by name — the app→core channel for terminal
+    /// search. Posted per pane so the matching surface performs it; runs on main.
+    static func perform(paneID: String, binding action: String) {
+        NotificationCenter.default.post(name: .shepherdPerformBinding, object: nil,
+                                        userInfo: ["paneID": paneID, "action": action])
+    }
+
+    @objc private func performBinding(_ note: Notification) {
+        guard note.userInfo?["paneID"] as? String == paneID,
+              let action = note.userInfo?["action"] as? String,
+              let surface else { return }
+        _ = action.withCString {
+            ghostty_surface_binding_action(surface, $0, UInt(action.utf8.count))
+        }
+    }
 
     /// The pane was removed from the model. Free the surface now — which closes the
     /// PTY and tears down its child — instead of waiting on SwiftUI to deallocate
@@ -336,6 +355,11 @@ extension Notification.Name {
     /// Posted (with userInfo `["paneID": String]`) when a pane is closed in the
     /// model, so its surface view can free the libghostty surface synchronously.
     static let shepherdPaneClosed = Notification.Name("shepherd.paneClosed")
+
+    /// Posted (with userInfo `["paneID": String, "action": String]`) to invoke a
+    /// libghostty keybind action on a specific pane's surface — the app→core
+    /// channel for terminal search.
+    static let shepherdPerformBinding = Notification.Name("shepherd.performBinding")
 }
 
 private extension NSScreen {
