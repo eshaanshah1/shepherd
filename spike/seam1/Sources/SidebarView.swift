@@ -28,6 +28,9 @@ struct SidebarView: View {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     ForEach(Array(store.workspaces.enumerated()), id: \.element.id) { idx, ws in
                         folderSection(ws, index: idx)
+                        if idx < store.workspaces.count - 1 {
+                            folderDivider
+                        }
                     }
                 }
                 .padding(.horizontal, 8)
@@ -127,6 +130,16 @@ struct SidebarView: View {
         .zIndex(draggingWorkspaceID == ws.id ? 1 : 0)
     }
 
+    // A short, inset hairline between folders — separates workspaces without a
+    // full-width rule.
+    private var folderDivider: some View {
+        Rectangle()
+            .fill(Theme.hairline)
+            .frame(height: 1)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 3)
+    }
+
     private var footer: some View {
         Button(action: { store.newTab() }) {
             HStack(spacing: 8) {
@@ -200,12 +213,7 @@ private struct WorkspaceFolderHeader: View {
 
     var body: some View {
         HStack(spacing: LeadingIcon.gutterGap) {
-            Image(systemName: ws.collapsed ? "chevron.right" : "chevron.down")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(Theme.textDim)
-                .frame(width: LeadingIcon.gutter)
-
-            LeadingIcon(state: ws.aggregateState)
+            FolderIcon(open: !ws.collapsed, state: ws.aggregateState)
 
             if editing {
                 renameField
@@ -613,6 +621,30 @@ private func statusWord(_ state: AgentState, _ reason: String?) -> String? {
     }
 }
 private func capitalizedFirst(_ s: String) -> String { s.prefix(1).uppercased() + s.dropFirst() }
+
+/// A workspace's leading glyph — and its disclosure control: a filled folder when
+/// expanded (open), an outline folder when collapsed (closed), so it doubles as the
+/// open/closed indicator and folders never look like terminal rows. Tinted by the
+/// workspace's rolled-up state: dim when idle/quiet, the state color when a pane
+/// wants you, so attention still rolls up to the folder without a separate dot.
+private struct FolderIcon: View {
+    let open: Bool
+    let state: AgentState
+
+    var body: some View {
+        Image(systemName: open ? "folder.fill" : "folder")
+            .font(.system(size: 11))
+            .foregroundStyle(tint)
+            .frame(width: 14, height: 14)
+    }
+
+    private var tint: Color {
+        switch state {
+        case .shell, .idle: return Theme.textDim
+        default:            return state.color
+        }
+    }
+}
 
 /// Leading glyph: a colored status dot for agents (working breathes), a muted
 /// terminal icon for plain shells — so every row reads, like T3's icon column.
