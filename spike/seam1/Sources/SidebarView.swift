@@ -204,9 +204,16 @@ private struct WorkspaceFolderHeader: View {
     @State private var editing = false
     @State private var draft = ""
     @State private var hovering = false
+    @State private var isGitRepo = false   // local: live git check on hover; unused for mirrors
     @FocusState private var focused: Bool
 
     static let height: CGFloat = 26
+
+    /// Show "New Worktree Tab…" when the default dir is a git repo. For a mirror the repo
+    /// lives on the host (can't run git locally), so gate on the wired defaultPath instead.
+    private var worktreeEnabled: Bool {
+        ws.isRemote ? (ws.defaultPath?.isEmpty == false) : isGitRepo
+    }
 
     private var isActive: Bool { ws.id == store.selectedWorkspaceID }
 
@@ -223,12 +230,19 @@ private struct WorkspaceFolderHeader: View {
                     .lineLimit(1)
                 Spacer(minLength: 6)
                 if hovering {
-                    Button(action: { store.newTab(inWorkspace: ws.id) }) {
+                    Menu {
+                        Button("New Tab") { store.newTab(inWorkspace: ws.id) }
+                        if worktreeEnabled {
+                            Button("New Worktree Tab…") { promptNewWorktree() }
+                        }
+                    } label: {
                         Image(systemName: "plus")
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(Theme.textDim)
                     }
-                    .buttonStyle(.plain)
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
                     .focusable(false)
                     .help("New tab in this workspace")
                 }
@@ -243,11 +257,18 @@ private struct WorkspaceFolderHeader: View {
             Color.clear.preference(key: FolderCentersKey.self,
                                    value: [ws.id: g.frame(in: .named("wsList")).midY])
         })
-        .onHover { hovering = $0 }
+        .onHover { h in
+            hovering = h
+            if h { refreshGitStatus() }
+        }
         .onTapGesture { if !editing { store.toggleWorkspaceCollapsed(ws.id) } }
         .gesture(reorderGesture)
         .contextMenu {
             Button("Rename") { beginRename() }
+            Button("Set Directory…") { promptSetDirectory() }
+            if ws.defaultPath?.isEmpty == false {
+                Button("Clear Directory") { store.setWorkspaceDirectory(ws.id, to: nil) }
+            }
             Button(ws.collapsed ? "Expand" : "Collapse") { store.toggleWorkspaceCollapsed(ws.id) }
             if store.workspaces.count > 1 {
                 Button("Delete", role: .destructive) { confirmDelete() }
@@ -291,6 +312,68 @@ private struct WorkspaceFolderHeader: View {
     private func beginRename() {
         draft = ws.userTitle ?? ws.displayName(index: index)
         editing = true
+    }
+
+    /// Refresh whether the (local) default dir is a git work tree; drives the worktree menu
+    /// item. Off-main so a hover never hitches; settles before the `+` menu is opened. Skipped
+    /// for mirrors (the repo is on the host — worktreeEnabled reads the wired defaultPath there).
+    private func refreshGitStatus() {
+        guard !ws.isRemote, let p = ws.defaultPath, !p.isEmpty else { isGitRepo = false; return }
+        let dir = (p as NSString).expandingTildeInPath
+        DispatchQueue.global(qos: .userInitiated).async {
+            let ok = Git.isWorkTree(dir)
+            DispatchQueue.main.async { isGitRepo = ok }
+        }
+    }
+
+    /// Set the workspace's default directory. Local: native folder chooser. Mirror: the path
+    /// must exist on the HOST, so prompt for text (a local folder picker would browse the wrong machine).
+    private func promptSetDirectory() {
+        if ws.isRemote { promptSetDirectoryOnHost(); return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Set"
+        panel.message = "Choose the default directory for new tabs in this workspace"
+        if let cur = ws.defaultPath, !cur.isEmpty {
+            panel.directoryURL = URL(fileURLWithPath: (cur as NSString).expandingTildeInPath)
+        }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        store.setWorkspaceDirectory(ws.id, to: url.path)
+        store.refocusActiveTerminal()
+    }
+
+    private func promptSetDirectoryOnHost() {
+        let alert = NSAlert()
+        alert.messageText = "Set workspace directory (on host)"
+        alert.informativeText = "Enter a path as it exists on the host machine. New tabs open there."
+        let tf = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        tf.stringValue = ws.defaultPath ?? ""
+        tf.placeholderString = "/Users/you/dev/repo"
+        alert.accessoryView = tf
+        alert.addButton(withTitle: "Set")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = tf
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        store.setWorkspaceDirectory(ws.id, to: tf.stringValue)
+    }
+
+    /// Prompt for a branch name, then create a worktree tab (mirrors promptAddRemoteHost).
+    private func promptNewWorktree() {
+        let alert = NSAlert()
+        alert.messageText = "New worktree tab"
+        alert.informativeText = "Name a branch. An existing branch is reused; a new name is created off origin's default branch (freshly fetched)."
+        let tf = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        tf.placeholderString = "branch name"
+        alert.accessoryView = tf
+        alert.addButton(withTitle: "Create")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = tf
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let name = tf.stringValue.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return }
+        store.newWorktreeTab(inWorkspace: ws.id, name: name)
     }
     private func commit() {
         store.renameWorkspace(ws.id, to: draft)

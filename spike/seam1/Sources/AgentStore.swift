@@ -242,13 +242,81 @@ final class AgentStore: ObservableObject {
         selectWorkspace(workspaces[j].id)
     }
 
+    // MARK: Workspace default directory + git worktrees
+
+    /// The workspace's default dir, tilde-expanded, or nil when unset/empty.
+    private func expandedDefaultPath(_ ws: Workspace) -> String? {
+        guard let p = ws.defaultPath, !p.isEmpty else { return nil }
+        return (p as NSString).expandingTildeInPath
+    }
+
+    /// Set (or clear, when nil/empty) the directory new tabs in this workspace open in.
+    /// On a mirror workspace the repo lives on the host, so forward to it (host-authoritative);
+    /// the change comes back on the next `workspaceTree` broadcast.
+    func setWorkspaceDirectory(_ id: String, to path: String?) {
+        if let t = remoteTarget(forWorkspace: id) {
+            t.client.send(.cmdSetWorkspaceDirectory(workspaceID: t.wsID, path: path)); return
+        }
+        guard let i = workspaces.firstIndex(where: { $0.id == id }) else { return }
+        let trimmed = path?.trimmingCharacters(in: .whitespacesAndNewlines)
+        workspaces[i].defaultPath = (trimmed?.isEmpty ?? true) ? nil : trimmed
+        save()
+        broadcastWorkspaceTree(workspaceID: id)   // propagate defaultPath to any attached client
+    }
+
+    /// The base dir worktrees are created under: `# shepherd: worktree-base` from the config,
+    /// else `~/.shepherd/worktrees`.
+    private func worktreeBaseDir() -> String {
+        let cfgPath = (NSHomeDirectory() as NSString).appendingPathComponent(".config/shepherd/config")
+        if let contents = try? String(contentsOfFile: cfgPath, encoding: .utf8),
+           let base = parseShepherdConfig(contents).worktreeBase, !base.isEmpty {
+            return (base as NSString).expandingTildeInPath
+        }
+        return (NSHomeDirectory() as NSString).appendingPathComponent(".shepherd/worktrees")
+    }
+
+    /// Create a git worktree under the workspace's default repo and open a tab in it.
+    /// git runs off-main; on success the tab opens in the worktree, on failure git's
+    /// stderr is surfaced. Reuses an existing branch named `name`, else creates it off origin's
+    /// freshly-fetched default branch.
+    func newWorktreeTab(inWorkspace wsID: String, name: String) {
+        if let t = remoteTarget(forWorkspace: wsID) {   // repo is on the host — it runs git
+            let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !n.isEmpty else { return }
+            t.client.send(.cmdNewWorktreeTab(workspaceID: t.wsID, name: n)); return
+        }
+        guard let ws = workspaces.first(where: { $0.id == wsID }),
+              let repoDir = expandedDefaultPath(ws) else { return }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let dest = worktreePath(base: worktreeBaseDir(), repoDir: repoDir, name: trimmed)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = Git.addWorktree(dest: dest, name: trimmed, in: repoDir)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if result.ok {
+                    self.newTab(inWorkspace: wsID, cwd: dest)
+                } else {
+                    let alert = NSAlert()
+                    alert.messageText = "Couldn't create worktree"
+                    alert.informativeText = result.err.isEmpty ? "git worktree add failed." : result.err
+                    alert.alertStyle = .warning
+                    alert.addButton(withTitle: "OK")
+                    alert.runModal()
+                }
+            }
+        }
+    }
+
     // MARK: Tabs (current workspace)
 
     @discardableResult
     func newTab() -> String {
         guard let w = currentWorkspaceIndex else { return newWorkspace() }
         if let (c, wid) = currentRemote { c.send(.cmdNewTab(workspaceID: wid)); return "" }  // host creates it → re-broadcasts
-        let tab = Tab(pane: Pane())
+        var pane = Pane()
+        pane.cwd = expandedDefaultPath(workspaces[w])
+        let tab = Tab(pane: pane)
         workspaces[w].tabs.append(tab)
         workspaces[w].selectedTabID = tab.tabID
         save()
@@ -391,12 +459,15 @@ final class AgentStore: ObservableObject {
     }
 
     /// New tab into a specific folder, selecting it (the folder-header hover `+`).
+    /// An explicit `cwd` (worktree flow) overrides the workspace's default directory.
     @discardableResult
-    func newTab(inWorkspace wsID: String) -> String {
+    func newTab(inWorkspace wsID: String, cwd: String? = nil) -> String {
         guard let w = workspaces.firstIndex(where: { $0.id == wsID }) else { return "" }
         selectedWorkspaceID = wsID
         if let (c, wid) = remoteTarget(forWorkspace: wsID) { c.send(.cmdNewTab(workspaceID: wid)); return "" }
-        let tab = Tab(pane: Pane())
+        var pane = Pane()
+        pane.cwd = cwd ?? expandedDefaultPath(workspaces[w])
+        let tab = Tab(pane: pane)
         workspaces[w].tabs.append(tab)
         workspaces[w].selectedTabID = tab.tabID
         save()
@@ -858,7 +929,8 @@ final class AgentStore: ObservableObject {
     func workspaceTrees() -> [WorkspaceTree] {
         workspaces.enumerated().map { (i, ws) in
             WorkspaceTree(workspaceID: ws.id, name: ws.displayName(index: i),
-                          tabs: ws.tabs.map(remoteTab), selectedTabID: ws.selectedTabID)
+                          tabs: ws.tabs.map(remoteTab), selectedTabID: ws.selectedTabID,
+                          defaultPath: ws.defaultPath)
         }
     }
 
@@ -880,7 +952,8 @@ final class AgentStore: ObservableObject {
               let i = workspaces.firstIndex(where: { $0.id == workspaceID }) else { return }
         let ws = workspaces[i]
         let tree = WorkspaceTree(workspaceID: ws.id, name: ws.displayName(index: i),
-                                 tabs: ws.tabs.map(remoteTab), selectedTabID: ws.selectedTabID)
+                                 tabs: ws.tabs.map(remoteTab), selectedTabID: ws.selectedTabID,
+                                 defaultPath: ws.defaultPath)
         remoteServer?.broadcast(.workspaceTree(tree))
     }
 
@@ -913,6 +986,8 @@ final class AgentStore: ObservableObject {
             guard tabs.indices.contains(from) else { return }
             reorder(tabID: tabs[from].tabID, toIndex: to); commitOrder()
         case .cmdSwitchTab(let ws, let tab): selectWorkspace(ws); select(tabID: tab)
+        case .cmdSetWorkspaceDirectory(let ws, let path): setWorkspaceDirectory(ws, to: path)
+        case .cmdNewWorktreeTab(let ws, let name):        newWorktreeTab(inWorkspace: ws, name: name)
         default: return
         }
         broadcastCurrentWorkspaceTree()

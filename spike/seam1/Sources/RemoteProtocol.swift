@@ -77,6 +77,7 @@ struct RemoteTab: Codable, Equatable {
 struct WorkspaceTree: Codable, Equatable {
     let workspaceID: String; let name: String
     let tabs: [RemoteTab]; let selectedTabID: String?
+    var defaultPath: String? = nil   // host's per-workspace default dir (new tabs open here)
 }
 
 /// Control-channel messages. Codable (synthesized) → JSON, one per length-prefixed
@@ -111,6 +112,8 @@ enum ControlMessage: Codable, Equatable {
     case cmdRenamePane(paneID: String, title: String)
     case cmdReorderTab(workspaceID: String, fromIndex: Int, toIndex: Int)
     case cmdSwitchTab(workspaceID: String, tabID: String)
+    case cmdSetWorkspaceDirectory(workspaceID: String, path: String?)
+    case cmdNewWorktreeTab(workspaceID: String, name: String)
 }
 
 // MARK: - Framing
