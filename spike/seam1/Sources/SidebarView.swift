@@ -50,9 +50,8 @@ struct SidebarView: View {
 
     private var topBar: some View {
         HStack(spacing: 8) {
-            Text("WORKSPACES")
-                .font(.ui(11, .semibold))
-                .tracking(0.6)
+            Text("Workspaces")
+                .font(.ui(11, .medium))
                 .foregroundStyle(Theme.textDim)
             Spacer()
             Button(action: { store.promptingNewWorkspace = true }) {
@@ -134,7 +133,7 @@ struct SidebarView: View {
     // full-width rule.
     private var folderDivider: some View {
         Rectangle()
-            .fill(Theme.hairline)
+            .fill(Theme.divider)
             .frame(height: 1)
             .padding(.horizontal, 14)
             .padding(.vertical, 3)
@@ -219,8 +218,7 @@ private struct WorkspaceFolderHeader: View {
                 renameField
             } else {
                 Text(ws.displayName(index: index))
-                    .font(.ui(12, .semibold))
-                    .tracking(0.3)
+                    .font(.ui(12, .medium))
                     .foregroundStyle(isActive ? Theme.textPrimary : Theme.textSecondary)
                     .lineLimit(1)
                 Spacer(minLength: 6)
@@ -260,7 +258,7 @@ private struct WorkspaceFolderHeader: View {
     private var renameField: some View {
         TextField("name", text: $draft)
             .textFieldStyle(.plain)
-            .font(.ui(12, .semibold))
+            .font(.ui(12, .medium))
             .foregroundStyle(Theme.textPrimary)
             .focused($focused)
             .onSubmit(commit)
@@ -364,7 +362,6 @@ private struct TabRow: View {
 
     // Single-pane tab: the row reflects its one (focused) pane, just like today.
     private var state: AgentState { tab.focusedPane()?.state ?? .shell }
-    private var reason: String? { tab.focusedPane()?.reason }
 
     var body: some View {
         HStack(spacing: LeadingIcon.gutterGap) {
@@ -388,13 +385,6 @@ private struct TabRow: View {
             }
 
             Spacer(minLength: 6)
-
-            if !editing, let s = statusWord(state, reason) {
-                Text(s)
-                    .font(.ui(11))
-                    .foregroundStyle(state.color)
-                    .lineLimit(1)
-            }
         }
         .padding(.horizontal, 10)
         .frame(height: Self.height)
@@ -609,19 +599,6 @@ private struct SplitTabGroup: View {
     }
 }
 
-/// Right-aligned status word — only on notable states (matches T3's labels).
-/// Used by `TabRow` (split tabs show pips, not a status word).
-private func statusWord(_ state: AgentState, _ reason: String?) -> String? {
-    switch state {
-    case .working:      return "Working"
-    case .needsCheck:   return "Done"
-    case .blocked:      return (reason?.isEmpty == false) ? capitalizedFirst(reason!) : "Blocked"
-    case .error:        return "Error"
-    case .idle, .shell: return nil
-    }
-}
-private func capitalizedFirst(_ s: String) -> String { s.prefix(1).uppercased() + s.dropFirst() }
-
 /// A workspace's leading glyph — and its disclosure control: a filled folder when
 /// expanded (open), an outline folder when collapsed (closed), so it doubles as the
 /// open/closed indicator and folders never look like terminal rows. Tinted by the
@@ -632,10 +609,8 @@ private struct FolderIcon: View {
     let state: AgentState
 
     var body: some View {
-        Image(systemName: open ? "folder.fill" : "folder")
-            .font(.system(size: 11))
+        TablerIcon(paths: open ? Tabler.folderOpen : Tabler.folder, size: 14)
             .foregroundStyle(tint)
-            .frame(width: 14, height: 14)
     }
 
     private var tint: Color {
@@ -643,6 +618,46 @@ private struct FolderIcon: View {
         case .shell, .idle: return Theme.textDim
         default:            return state.color
         }
+    }
+}
+
+/// Tabler icon path data (24×24 grid, 2px stroke) — the same line-icon set Synara
+/// draws, so glyphs read as thin strokes, not SF Symbols' heavier fills. Each icon
+/// is its list of SVG `<path d>` values.
+enum Tabler {
+    static let folder = ["M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2"]
+    static let folderOpen = ["M5 19l2.757 -7.351a1 1 0 0 1 .936 -.649h12.307a1 1 0 0 1 .986 1.164l-.996 5.211a2 2 0 0 1 -1.964 1.625h-14.026a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2h4l3 3h7a2 2 0 0 1 2 2v2"]
+    static let terminal2 = ["M8 9l3 3l-3 3", "M13 15l3 0", "M3 6a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2l0 -12"]
+}
+
+/// Renders a Tabler stroke-icon from its SVG path list as a tint-able template
+/// image, so `.foregroundStyle` colors it like an SF Symbol. Parsed images are
+/// cached since rows redraw often (hover/drag).
+struct TablerIcon: View {
+    let paths: [String]
+    var size: CGFloat = 14
+
+    var body: some View {
+        Image(nsImage: Self.image(paths))
+            .renderingMode(.template)
+            .resizable()
+            .frame(width: size, height: size)
+    }
+
+    private static var cache: [String: NSImage] = [:]
+    private static func image(_ paths: [String]) -> NSImage {
+        let key = paths.joined(separator: "|")
+        if let cached = cache[key] { return cached }
+        let elements = paths.map { #"<path d="\#($0)"/>"# }.joined()
+        let svg = """
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" \
+        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" \
+        stroke-linejoin="round">\(elements)</svg>
+        """
+        let img = NSImage(data: Data(svg.utf8)) ?? NSImage()
+        img.isTemplate = true
+        cache[key] = img
+        return img
     }
 }
 
@@ -661,8 +676,7 @@ struct LeadingIcon: View {
         Group {
             switch state {
             case .shell:
-                Image(systemName: "terminal")
-                    .font(.system(size: 10))
+                TablerIcon(paths: Tabler.terminal2, size: 13)
                     .foregroundStyle(Theme.textDim)
             case .working:
                 BreathingDot(color: state.color)

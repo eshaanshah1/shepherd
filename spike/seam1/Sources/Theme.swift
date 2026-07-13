@@ -18,6 +18,9 @@ enum Theme {
     static let ground        = Color(hex: 0x0F0F11)
     static let raised        = Color(hex: 0x1D1D20)
     static let hairline      = Color(hex: 0x232327)
+    // Ghost separator for inter-group lines — white at ~5% alpha so groups read
+    // apart on whitespace, not a visible rule.
+    static let divider       = Color.white.opacity(0.05)
     static let textPrimary   = Color(hex: 0xEDEDED)
     static let textSecondary = Color(hex: 0x8C8C92)
     static let textDim       = Color(hex: 0x5F5F66)
