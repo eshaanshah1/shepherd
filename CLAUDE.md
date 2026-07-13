@@ -188,6 +188,22 @@ enters another folder's region — `FolderRegionsKey` — that folder highlights
 on release `store.moveTab` appends the tab there with its live agents). There is
 no dropdown, no horizontal slide, and no swipe — `⌃⇥`/`⌃⇧⇥` still cycle the active
 workspace.
+A folder's right-click menu also carries **Set Directory…** / **Clear Directory** — a
+per-workspace `defaultPath` that **new tabs open in** (seeded onto the new pane's `cwd`;
+libghostty opens the pane there). The hover-`+` is a **menu** (*New Tab* / *New Worktree
+Tab…*); *New Worktree Tab…* shows only when the default dir is a git work tree. It runs
+`git worktree add` under `<base>/<repo-name>/<branch>` (base `~/.shepherd/worktrees`,
+overridable via `# shepherd: worktree-base = …` in `~/.config/shepherd/config`) — reusing
+an existing branch of that name, else creating it off **origin's default branch**,
+auto-detected from `origin/HEAD` (`git fetch origin` first; a failed fetch aborts) — then
+opens a tab in the new worktree.
+`WorktreeService.swift` holds the pure path/args/config-parse + the `git` `Process` shell.
+**Remote (mirror) workspaces** are host-authoritative: the client forwards
+`cmdSetWorkspaceDirectory` / `cmdNewWorktreeTab` to the host (which owns the repo + runs
+git), and `defaultPath` rides `WorkspaceTree` back so the mirror knows it; the client's
+Set-Directory prompt is text (a host-side path) and gates the worktree item on that wired
+`defaultPath` rather than a local git check. Worktree git errors on a mirror surface on the
+**host** (a v1 limitation).
 Unsplit tabs render a single `TabRow`. A **split tab** renders a
 `SplitTabGroup`: its panes gathered under a thin leading **bracket/rail** (a
 rounded rail, not a curly `{`), one row per pane. The group **collapses** to a
@@ -202,7 +218,8 @@ sourcing it from `~/.config/shepherd`; that wiring is a deferred follow-up).
 ### Persistence
 The store key is now **`shepherd.workspaces.v1`** (`AgentStore`): per workspace,
 its `userTitle`, its accordion `collapsed` flag (optional on disk ⇒ old blobs
-still decode, nil = expanded), and its tabs (each a recursive `SplitNode` tree —
+still decode, nil = expanded), its optional `defaultPath` (also optional on disk ⇒
+old blobs decode as nil), and its tabs (each a recursive `SplitNode` tree —
 shape + split ratios — plus each pane's `userTitle` + cwd + `sessionID`, in tab
 order) + the workspace selection-by-index; the store also keeps
 `selectedWorkspaceID`. A one-time migration wraps a legacy `shepherd.tabs.v2`
@@ -225,6 +242,7 @@ falls back to a plain shell. Requires the plugin reporting `session_id` — afte
 
 ## Critical gotchas (read before building / debugging)
 
+- **Shepherd config keys ride ghostty comments**: `~/.config/shepherd/config` is parsed by libghostty, so Shepherd-specific keys (currently `worktree-base`) live on `# shepherd: key = value` comment lines that libghostty ignores. `parseShepherdConfig` (in `WorktreeService.swift`) reads them; don't add a bare non-ghostty key to that file.
 - **macOS-26 toolchain** ([ADR 0002](.claude/adr/0002-libghostty-build-on-macos-26.md)): the ziglang.org Zig won't link (use brew `zig@0.15`); Metal shaders need the downloaded Metal Toolchain; build the xcframework only (`-Demit-macos-app=false`); Apple `libtool` dedupes same-named members so the combined fat archive is **incomplete** — the build script fixes this with an `ld -r -all_load` merge of the constituent archives.
 - **`report.sh` is pure bash on purpose** ([ADR 0004](.claude/adr/0004-plugin-protocol-and-ordering.md)). Do NOT add `python3` back — its ~50ms startup delayed `PreToolUse` past `Stop` and flipped state. State is decided by event name + env; only 3 cosmetic events parse (via `jq`).
 - **Ordering guard** ([ADR 0004](.claude/adr/0004-plugin-protocol-and-ordering.md)): mid-turn events only apply while the tab is `working`/`blocked`. A finished turn (`need-to-check`) is only left by a new `UserPromptSubmit` or focus. This is deliberate; don't remove it.

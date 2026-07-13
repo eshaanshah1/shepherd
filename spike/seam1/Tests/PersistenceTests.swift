@@ -21,6 +21,22 @@ final class PersistenceTests: XCTestCase {
         XCTAssertEqual(claudeResumeInput(sessionID: "abc-123"), "claude --resume abc-123\n")
     }
 
+    func testDefaultPathRoundTrips() throws {
+        let ws = Workspace(userTitle: "proj", tabs: [tab("t")], defaultPath: "~/dev/shepherd")
+        let data = try JSONEncoder().encode(snapshotState([ws], selectedWorkspaceID: ws.id))
+        let rebuilt = buildWorkspaces(from: try JSONDecoder().decode(PersistedState.self, from: data))
+        XCTAssertEqual(rebuilt[0].defaultPath, "~/dev/shepherd")
+    }
+
+    func testMissingDefaultPathKeyDecodesToNil() throws {
+        // A nil optional is OMITTED by JSONEncoder, so this blob is shaped like a pre-feature one.
+        let ws = Workspace(tabs: [tab("t")])   // defaultPath nil
+        let data = try JSONEncoder().encode(snapshotState([ws], selectedWorkspaceID: ws.id))
+        XCTAssertFalse(String(decoding: data, as: UTF8.self).contains("defaultPath"))
+        let rebuilt = buildWorkspaces(from: try JSONDecoder().decode(PersistedState.self, from: data))
+        XCTAssertNil(rebuilt.first?.defaultPath)
+    }
+
     func testSnapshotRoundTripPreservesStructureAndSelection() throws {
         let t1 = tab("one", cwd: "/tmp/a")
         let t2 = tab("two", cwd: "/tmp/b")

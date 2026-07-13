@@ -58,6 +58,7 @@ targets:
       - path: Sources/Theme.swift
       - path: Sources/Workspace.swift
       - path: Sources/Persistence.swift
+      - path: Sources/WorktreeService.swift
       - path: Sources/SleepPolicy.swift
       - path: Sources/StopPolicy.swift
       - path: Sources/DiffModel.swift
