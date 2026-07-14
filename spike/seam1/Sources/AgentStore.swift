@@ -13,6 +13,10 @@ final class AgentStore: ObservableObject {
     @Published private(set) var workspaces: [Workspace] = []
     @Published var selectedWorkspaceID: String?
 
+    /// Archived git worktrees (dir reclaimed, work preserved under a git ref).
+    /// Restorable until they expire; persisted under `archiveKey`.
+    @Published private(set) var archivedWorktrees: [ArchivedWorktree] = []
+
     /// Set by the `+` button / ⌘⇧N to ask the UI for a name before creating a
     /// workspace; ContentView presents the naming modal off this.
     @Published var promptingNewWorkspace = false
@@ -58,6 +62,7 @@ final class AgentStore: ObservableObject {
     private var server: SocketServer?
     private let persistKey = "shepherd.workspaces.v1"
     private let legacyKey  = "shepherd.tabs.v2"
+    private let archiveKey = "shepherd.archived-worktrees.v1"
 
     // MARK: Remote control channel (Android "monitor" host side)
 
@@ -125,6 +130,8 @@ final class AgentStore: ObservableObject {
         }
         presence.start()
         if !restore() { newWorkspace() }   // reopen prior workspaces, else start with one
+        loadArchives()
+        expireOldArchives()                // drop archives past the retention window
         startRemoteServingIfEnabled()      // bind the control channel if serving is on
     }
 
@@ -292,21 +299,188 @@ final class AgentStore: ObservableObject {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         let dest = worktreePath(base: worktreeBaseDir(), repoDir: repoDir, name: trimmed)
+        // Show the tab immediately in a loading state, then run git off-main — the
+        // terminal mounts once the directory exists (or the tab is removed on failure).
+        guard let provisional = addProvisioningTab(inWorkspace: wsID, name: trimmed, dest: dest) else { return }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = Git.addWorktree(dest: dest, name: trimmed, in: repoDir)
             DispatchQueue.main.async {
                 guard let self else { return }
                 if result.ok {
-                    self.newTab(inWorkspace: wsID, cwd: dest)
+                    self.finishProvisioning(paneID: provisional.paneID)
                 } else {
-                    let alert = NSAlert()
-                    alert.messageText = "Couldn't create worktree"
-                    alert.informativeText = result.err.isEmpty ? "git worktree add failed." : result.err
-                    alert.alertStyle = .warning
-                    alert.addButton(withTitle: "OK")
-                    alert.runModal()
+                    self.closeTab(provisional.tabID, inWorkspace: wsID)
+                    self.showWorktreeError("Couldn't create worktree",
+                                           detail: result.err.isEmpty ? "git worktree add failed." : result.err)
                 }
             }
+        }
+    }
+
+    /// Append a loading placeholder tab (a single provisioning pane) and select it.
+    private func addProvisioningTab(inWorkspace wsID: String, name: String, dest: String) -> (tabID: String, paneID: String)? {
+        guard let w = workspaces.firstIndex(where: { $0.id == wsID }) else { return nil }
+        selectedWorkspaceID = wsID
+        var pane = Pane()
+        pane.provisioning = true
+        pane.userTitle = name
+        pane.cwd = dest
+        let tab = Tab(pane: pane)
+        workspaces[w].tabs.append(tab)
+        workspaces[w].selectedTabID = tab.tabID
+        save()
+        return (tab.tabID, pane.paneID)
+    }
+
+    /// Clear a pane's provisioning flag so its `GhosttyTerminal` mounts in the now-real cwd.
+    private func finishProvisioning(paneID: String) {
+        guard let (w, t) = locatePane(paneID, in: workspaces) else { return }
+        _ = workspaces[w].tabs[t].root.updatePane(paneID) { $0.provisioning = false }
+        save()
+        broadcastWorkspaceTree(workspaceID: workspaces[w].id)
+        refocusActiveTerminal()
+    }
+
+    private func showWorktreeError(_ title: String, detail: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = detail
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
+    // MARK: Worktree archive / restore
+
+    private func loadArchives() {
+        guard let data = UserDefaults.standard.data(forKey: archiveKey),
+              let arr = try? JSONDecoder().decode([ArchivedWorktree].self, from: data) else { return }
+        archivedWorktrees = arr
+    }
+
+    private func saveArchives() {
+        if let data = try? JSONEncoder().encode(archivedWorktrees) {
+            UserDefaults.standard.set(data, forKey: archiveKey)
+        }
+    }
+
+    /// Drop archives past the retention window and delete their git state off-main.
+    private func expireOldArchives() {
+        let (keep, expired) = WorktreeArchive.expireArchives(archivedWorktrees, now: Date())
+        guard !expired.isEmpty else { return }
+        archivedWorktrees = keep
+        saveArchives()
+        DispatchQueue.global(qos: .utility).async {
+            for a in expired { Git.deleteArchive(a) }
+        }
+    }
+
+    /// Archive the tab's worktree: snapshot its work, reclaim the directory, keep a
+    /// restorable record. On success the tab is closed (its dir is gone).
+    func archiveWorktreeTab(_ tabID: String, inWorkspace wsID: String) {
+        guard let w = workspaces.firstIndex(where: { $0.id == wsID }), !workspaces[w].isRemote,
+              let tab = workspaces[w].tabs.first(where: { $0.tabID == tabID }),
+              let cwd = tab.focusedPane()?.cwd ?? tab.root.panes.first?.cwd else { return }
+        let name = tab.displayTitle
+        let wsName = workspaces[w].displayName(index: w)
+        let sessionID = tab.root.panes.compactMap { $0.sessionID }.first
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let info = Git.worktreeInfo(cwd) else {
+                DispatchQueue.main.async { self?.showWorktreeError("Can't archive", detail: "This tab isn't a git worktree.") }
+                return
+            }
+            let id = UUID().uuidString
+            let result = Git.archiveWorktree(info: info, id: id)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard result.ok else {
+                    self.showWorktreeError("Couldn't archive worktree", detail: result.err)
+                    return
+                }
+                self.archivedWorktrees.append(ArchivedWorktree(
+                    id: id, workspaceID: wsID, workspaceName: wsName, repoDir: info.mainRepo, branch: info.branch,
+                    name: name, dest: info.root, headCommit: info.head, archivedAt: Date(), sessionID: sessionID))
+                self.saveArchives()
+                self.closeTab(tabID, inWorkspace: wsID)
+            }
+        }
+    }
+
+    /// Recreate an archived worktree and open a tab in it (resuming its agent if any).
+    func restoreWorktree(_ id: String) {
+        guard let a = archivedWorktrees.first(where: { $0.id == id }) else { return }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = Git.restoreWorktree(a)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard result.ok else {
+                    self.showWorktreeError("Couldn't restore worktree", detail: result.err)
+                    return
+                }
+                self.archivedWorktrees.removeAll { $0.id == id }
+                self.saveArchives()
+                self.openRestoredWorktree(a)
+            }
+        }
+    }
+
+    /// Open a restored worktree in its original workspace, recreating that workspace
+    /// (with its saved name) if it no longer exists.
+    private func openRestoredWorktree(_ a: ArchivedWorktree) {
+        if workspaces.contains(where: { $0.id == a.workspaceID }) {
+            newTab(inWorkspace: a.workspaceID, cwd: a.dest, sessionID: a.sessionID)
+            return
+        }
+        let wsID = newWorkspace()   // seeds one empty tab + selects it
+        if let name = a.workspaceName, !name.isEmpty { renameWorkspace(wsID, to: name) }
+        let seed = workspaces.first { $0.id == wsID }?.tabs.first?.tabID
+        newTab(inWorkspace: wsID, cwd: a.dest, sessionID: a.sessionID)
+        if let seed { closeTab(seed, inWorkspace: wsID) }   // drop the empty seed tab
+    }
+
+    /// Forget an archive entirely (protection ref + branch). Same semantics as expiry.
+    func deleteArchive(_ id: String) {
+        guard let a = archivedWorktrees.first(where: { $0.id == id }) else { return }
+        archivedWorktrees.removeAll { $0.id == id }
+        saveArchives()
+        DispatchQueue.global(qos: .utility).async { Git.deleteArchive(a) }
+    }
+
+    /// Close a tab, but if it's a single-pane local git worktree, first offer to
+    /// archive vs discard (removing the dir) vs cancel. Non-worktree tabs close now.
+    func requestCloseTab(_ tabID: String, inWorkspace wsID: String) {
+        guard let w = workspaces.firstIndex(where: { $0.id == wsID }),
+              let tab = workspaces[w].tabs.first(where: { $0.tabID == tabID }) else { return }
+        guard !workspaces[w].isRemote, !tab.isSplit, let cwd = tab.focusedPane()?.cwd, !cwd.isEmpty else {
+            closeTab(tabID, inWorkspace: wsID); return
+        }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let isWt = Git.isLinkedWorktree(cwd)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard isWt else { self.closeTab(tabID, inWorkspace: wsID); return }
+                self.presentCloseWorktreePrompt(tabID: tabID, inWorkspace: wsID, cwd: cwd)
+            }
+        }
+    }
+
+    private func presentCloseWorktreePrompt(tabID: String, inWorkspace wsID: String, cwd: String) {
+        let alert = NSAlert()
+        alert.messageText = "Close this worktree tab?"
+        alert.informativeText = "Archive keeps your work (resumable for \(WorktreeArchive.retentionDays) days) and frees the directory. Discard removes the worktree directory."
+        alert.addButton(withTitle: "Archive")
+        alert.addButton(withTitle: "Discard")
+        alert.addButton(withTitle: "Cancel")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            archiveWorktreeTab(tabID, inWorkspace: wsID)
+        case .alertSecondButtonReturn:
+            closeTab(tabID, inWorkspace: wsID)
+            DispatchQueue.global(qos: .utility).async {
+                if let info = Git.worktreeInfo(cwd) { Git.removeWorktree(root: info.root, mainRepo: info.mainRepo) }
+            }
+        default:
+            break
         }
     }
 
@@ -356,7 +530,10 @@ final class AgentStore: ObservableObject {
         broadcastWorkspaceTree(workspaceID: workspaces[w].id)
     }
 
-    func closeSelected() { if let sel = selectedTab { closeTab(sel) } }
+    func closeSelected() {
+        guard let sel = selectedTab, let wsID = selectedWorkspaceID else { return }
+        requestCloseTab(sel, inWorkspace: wsID)
+    }
 
     /// Free the surfaces of these panes (closing each PTY + its child) by asking
     /// their views to tear down now — SwiftUI won't deinit them deterministically.
@@ -463,12 +640,13 @@ final class AgentStore: ObservableObject {
     /// New tab into a specific folder, selecting it (the folder-header hover `+`).
     /// An explicit `cwd` (worktree flow) overrides the workspace's default directory.
     @discardableResult
-    func newTab(inWorkspace wsID: String, cwd: String? = nil) -> String {
+    func newTab(inWorkspace wsID: String, cwd: String? = nil, sessionID: String? = nil) -> String {
         guard let w = workspaces.firstIndex(where: { $0.id == wsID }) else { return "" }
         selectedWorkspaceID = wsID
         if let (c, wid) = remoteTarget(forWorkspace: wsID) { c.send(.cmdNewTab(workspaceID: wid)); return "" }
         var pane = Pane()
         pane.cwd = cwd ?? expandedDefaultPath(workspaces[w])
+        pane.sessionID = sessionID   // set ⇒ GhosttyTerminal seeds `claude --resume` on mount
         let tab = Tab(pane: pane)
         workspaces[w].tabs.append(tab)
         workspaces[w].selectedTabID = tab.tabID

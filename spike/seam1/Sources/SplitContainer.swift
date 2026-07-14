@@ -35,13 +35,21 @@ struct SplitContainer: View {
                     ForEach(node.panes, id: \.paneID) { pane in
                         let isVisible = isTabSelected && (zoomedPaneID == nil || pane.paneID == zoomedPaneID)
                         let isFocused = pane.paneID == focusedPaneID
-                        GhosttyTerminal(paneID: pane.paneID,
-                                        isVisible: isVisible,
-                                        isSelected: isTabSelected && isFocused,
-                                        focusTick: focusTick)
-                            // Inactive panes dim instead of the focused one drawing a
-                            // ring; a single-pane tab is never dimmed.
-                            .opacity(isSplit && !isFocused ? 0.60 : 1.0)
+                        Group {
+                            // A provisioning pane has no directory yet — show the loading
+                            // view and hold off mounting the surface until it clears.
+                            if pane.provisioning {
+                                WorktreeProvisioningView(name: pane.displayTitle)
+                            } else {
+                                GhosttyTerminal(paneID: pane.paneID,
+                                                isVisible: isVisible,
+                                                isSelected: isTabSelected && isFocused,
+                                                focusTick: focusTick)
+                            }
+                        }
+                        // Inactive panes dim instead of the focused one drawing a
+                        // ring; a single-pane tab is never dimmed.
+                        .opacity(isSplit && !isFocused ? 0.60 : 1.0)
                     }
                 }
 
