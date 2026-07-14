@@ -74,6 +74,12 @@ struct ShepherdApp: App {
                     .keyboardShortcut("f", modifiers: .command)
                 Button("Review Diff") { AgentStore.shared.toggleDiffPanel() }
                     .keyboardShortcut("g", modifiers: .command)
+                Button("Open Editor") { AgentStore.shared.openEditor() }
+                    .keyboardShortcut("o", modifiers: .command)
+                Button("Save File") {
+                    NotificationCenter.default.post(name: .shepherdSaveCodeSurface, object: nil)
+                }
+                .keyboardShortcut("s", modifiers: .command)
                 Divider()
                 Button("Jump to Next Alert") { AgentStore.shared.selectNextAttention() }
                     .keyboardShortcut("a", modifiers: [.command, .shift])

@@ -31,6 +31,8 @@ final class AgentStore: ObservableObject {
     /// Diff-review panel: whether it's open, and which pane it reviews (⌘G).
     @Published var diffPanelOpen = false
     @Published var diffPanelPaneID: String? = nil
+    /// Code surface overlay (⌘O edit mode; diff mode is Phase 2).
+    @Published var codeSurface: CodeSurfaceState? = nil
     /// Bumped when the reviewed pane finishes a turn, so an open panel can offer a refresh.
     @Published private(set) var diffTurnTick = 0
     private(set) var diffTurnPane: String? = nil
@@ -556,8 +558,45 @@ final class AgentStore: ObservableObject {
     func toggleDiffPanel() {
         if diffPanelOpen { diffPanelOpen = false; return }
         guard let tab = tabs.first(where: { $0.tabID == selectedTab }) else { return }
+        codeSurface = nil          // one code surface at a time: diff replaces edit
         diffPanelPaneID = tab.focusedPaneID
         diffPanelOpen = true
+    }
+
+    /// ⌘O — toggle the code surface (edit mode); mirrors ⌘G for the diff.
+    func openEditor() {
+        if codeSurface != nil { codeSurface = nil; return }
+        diffPanelOpen = false      // one code surface at a time: edit replaces diff
+        let tab = tabs.first(where: { $0.tabID == selectedTab })
+        codeSurface = .editing(root: focusedPaneCwd ?? NSHomeDirectory(), pane: tab?.focusedPaneID)
+    }
+
+    /// Open a specific file as a tab (from the file tree, or a diff's "edit" pencil).
+    func openFile(_ path: String) {
+        diffPanelOpen = false
+        if codeSurface == nil {
+            let tab = tabs.first(where: { $0.tabID == selectedTab })
+            codeSurface = .editing(root: focusedPaneCwd ?? (path as NSString).deletingLastPathComponent,
+                                   pane: tab?.focusedPaneID)
+        }
+        codeSurface?.open(path)
+    }
+
+    func closeFile(_ path: String) { codeSurface?.close(path) }
+    func selectFile(_ path: String) { codeSurface?.open(path) }
+    func closeCodeSurface() { codeSurface = nil }
+    func markCodeSurfaceDirty(_ path: String) { codeSurface?.markDirty(path) }
+
+    func saveActiveFile(_ text: String) {
+        guard let path = codeSurface?.activeFile else { return }
+        try? text.write(toFile: path, atomically: true, encoding: .utf8)
+        codeSurface?.clearDirty(path)
+    }
+
+    /// cwd of the selected tab's focused pane — the file tree's root.
+    var focusedPaneCwd: String? {
+        guard let tab = tabs.first(where: { $0.tabID == selectedTab }) else { return nil }
+        return tab.root.pane(tab.focusedPaneID)?.cwd
     }
 
     /// Inject text into a live pane's PTY (diff-review "send to agent").
@@ -708,6 +747,9 @@ final class AgentStore: ObservableObject {
     /// its banner is now stale) and clears need-to-check → idle ONLY (never
     /// blocked/working — those clear when the agent itself moves on).
     func didFocus(paneID: String) {
+        // Navigating to a pane (tab click, ⌘⇧A, a notification) surfaces the
+        // terminal — a full-takeover overlay would otherwise stay stale on top.
+        if diffPanelOpen || codeSurface != nil { diffPanelOpen = false; codeSurface = nil }
         dismissNotifications(forPane: paneID)
         guard let (w, t) = locatePane(paneID, in: workspaces),
               workspaces[w].tabs[t].root.pane(paneID)?.state == .needsCheck else { return }

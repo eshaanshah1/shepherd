@@ -27,12 +27,21 @@ struct ContentView: View {
                 // trailing edge, opaque), rather than sharing width as a side panel.
                 ZStack {
                     terminalArea
+                    // Diff and editor are mutually exclusive full-takeover overlays.
+                    // One opacity transition keeps open/close/swap calm (sliding both
+                    // from the same edge crossed and looked janky).
                     if store.diffPanelOpen {
                         DiffPanelView()
                             .environmentObject(store)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .background(Theme.ground)
-                            .transition(.move(edge: .trailing))
+                            .transition(.opacity)
+                    } else if let surface = store.codeSurface {
+                        CodeSurfaceView(state: surface)
+                            .environmentObject(store)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .background(Theme.ground)
+                            .transition(.opacity)
                     }
                 }
             }
@@ -44,7 +53,8 @@ struct ContentView: View {
             }
         }
         .background(Theme.ground)
-        .animation(.easeOut(duration: 0.16), value: store.diffPanelOpen)
+        .animation(.easeOut(duration: 0.18),
+                   value: store.diffPanelOpen ? 1 : (store.codeSurface != nil ? 2 : 0))
         .background(WindowLightsController().frame(width: 0, height: 0))
         .ignoresSafeArea()
         // Centered naming modal for a new workspace (+ button / ⌘⇧N).
