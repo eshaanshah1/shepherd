@@ -213,7 +213,7 @@ private struct WorkspaceFolderHeader: View {
                 renameField
             } else {
                 Text(ws.displayName(index: index))
-                    .font(.ui(12, .medium))
+                    .font(.ui(13, .medium))
                     .foregroundStyle(isActive ? Theme.textPrimary : Theme.textSecondary)
                     .lineLimit(1)
                 Spacer(minLength: 6)
@@ -267,7 +267,7 @@ private struct WorkspaceFolderHeader: View {
     private var renameField: some View {
         TextField("name", text: $draft)
             .textFieldStyle(.plain)
-            .font(.ui(12, .medium))
+            .font(.ui(13, .medium))
             .foregroundStyle(Theme.textPrimary)
             .focused($focused)
             .onSubmit(commit)
