@@ -61,7 +61,7 @@ spike/
 - `SleepPolicy.swift` — **pure model**: `CaffeinateMode` + `shouldStayAwake(mode,busy,thermalSuppressed)`. In `ShepherdModelTests`.
 - `ClamshellMonitor.swift` — IOKit lid-state watcher (observe-only). `ThermalMonitor.swift` — `ProcessInfo` thermal watcher.
 
-`Tests/` holds the **`ShepherdModelTests`** target (a `bundle.unit-test` in `project.yml`: `SplitTreeTests.swift`, `WorkspaceTests.swift`, `PersistenceTests.swift`, `SleepPolicyTests.swift`, `StopPolicyTests.swift`) — pure-model coverage of the `SplitNode` tree ops, the `Workspace`/`locatePane` helpers, the persistence snapshot/restore/migration, the sleep policy, and the `applyEvent` lifecycle/background-`Stop` suppression, compiling `SplitTree`/`Tab`/`AgentState`/`Theme`/`Workspace`/`Persistence`/`SleepPolicy`/`StopPolicy` without the AppKit surface. Test files added under `Tests/` are picked up by the `- path: Tests` glob, but a new compiled **source** must be added to the target's explicit `sources:` list in `project.yml`.
+`Tests/` holds the **`ShepherdModelTests`** target (a `bundle.unit-test` in `project.yml`: `SplitTreeTests.swift`, `WorkspaceTests.swift`, `PersistenceTests.swift`, `SleepPolicyTests.swift`, `StopPolicyTests.swift`, `WorktreeArchiveTests.swift`) — pure-model coverage of the `SplitNode` tree ops, the `Workspace`/`locatePane` helpers, the persistence snapshot/restore/migration, the sleep policy, the `applyEvent` lifecycle/background-`Stop` suppression, and the worktree-archive expiry/age math, compiling `SplitTree`/`Tab`/`AgentState`/`Theme`/`Workspace`/`Persistence`/`SleepPolicy`/`StopPolicy`/`WorktreeService`/`WorktreeArchive` without the AppKit surface. Test files added under `Tests/` are picked up by the `- path: Tests` glob, but a new compiled **source** must be added to the target's explicit `sources:` list in `project.yml`.
 
 ---
 
@@ -197,7 +197,22 @@ overridable via `# shepherd: worktree-base = …` in `~/.config/shepherd/config`
 an existing branch of that name, else creating it off **origin's default branch**,
 auto-detected from `origin/HEAD` (`git fetch origin` first; a failed fetch aborts) — then
 opens a tab in the new worktree.
-`WorktreeService.swift` holds the pure path/args/config-parse + the `git` `Process` shell.
+`WorktreeService.swift` holds the pure path/args/config-parse + the `git` `Process` shell (incl. the archive/restore/detect helpers).
+
+**Worktree lifecycle** ([ADR 0018](.claude/adr/0018-worktree-archive-and-provisioning.md)):
+creating a worktree tab is now **optimistic** — `newWorktreeTab` opens the tab immediately
+with a transient `Pane.provisioning` flag (loading `WorktreeProvisioningView` + a sidebar
+`ScrambleText`), runs git off-main, then clears the flag so the `GhosttyTerminal` mounts in
+the now-real dir (failure removes the tab + alerts). Closing a worktree tab (⌘W /
+context-menu, via `AgentStore.requestCloseTab`) offers **Archive / Discard / Cancel**, and a
+`TabRow` right-click has **Archive Worktree**. Archive snapshots uncommitted work as two
+detached commits pinned under `refs/shepherd/archived-worktrees/<id>` and `git worktree
+remove`s the dir; restore recreates it (staged/unstaged split + deletions reproduced), reattaches
+the branch, and resumes the Claude `sessionID`. Archives persist under
+**`shepherd.archived-worktrees.v1`** and auto-expire on launch after **90 literal days**
+(`WorktreeArchive.expireArchives`; full removal incl. `git branch -D`). Each folder shows a
+collapsible **"Archived (N)"** subsection (`ArchivedSection`). Pure bits in
+`WorktreeArchive.swift`; local workspaces only (v1).
 **Remote (mirror) workspaces** are host-authoritative: the client forwards
 `cmdSetWorkspaceDirectory` / `cmdNewWorktreeTab` to the host (which owns the repo + runs
 git), and `defaultPath` rides `WorkspaceTree` back so the mirror knows it; the client's
@@ -268,7 +283,7 @@ falls back to a plain shell. Requires the plugin reporting `session_id` — afte
 - Commit messages end with the project's Co-Authored-By line.
 
 ## Done vs deferred
-**Done:** terminal (mouse/scroll/copy-paste/vsync/titles), tabs (create/switch/close/reorder/rename/persist+cwd, keyboard nav), **pane splitting** (H/V splits, zoom, draggable dividers, per-pane agents, bracket-grouped collapsible sidebar — [ADR 0012](.claude/adr/0012-pane-splitting-panes-as-agents.md)), **workspaces** (Arc-style nested model, global cross-workspace attention + hidden-workspace notifications, **accordion sidebar** — collapsible per-workspace folders, all tabs in one view, one aggregate dot per folder, drag a tab across folders (live PTY survives via flat `tabID`-keyed mounting), ⌘⇧N/⌃⇥/⌃⇧⇥, content cross-fade, `shepherd.workspaces.v1` persistence w/ `collapsed` + v2→v1 migration — [ADR 0013](.claude/adr/0013-workspaces.md), [ADR 0017](.claude/adr/0017-workspace-folders-accordion-sidebar.md)), agent-state lifecycle, Claude plugin, attention loop (badge + backgrounded notifications + ⌘⇧A jump-to-alert), **T3-Code-style sidebar** (custom rows not `List`, resizable, cwd/agent tab names) + self-contained theme (`~/.config/shepherd`), **sleep guard** ("Stay Awake" keep-awake with a 3-mode policy — off / while-agents / always — over `pmset disablesleep` Tier 2 with an IOKit idle-assertion Tier 1 fallback, 120s release grace, launch-reconcile + quit-teardown, clamshell display-blank + clamshell-gated thermal auto-sleep; pure `SleepPolicy` + optional passwordless-`pmset` sudoers setup in the README).
+**Done:** terminal (mouse/scroll/copy-paste/vsync/titles), tabs (create/switch/close/reorder/rename/persist+cwd, keyboard nav), **pane splitting** (H/V splits, zoom, draggable dividers, per-pane agents, bracket-grouped collapsible sidebar — [ADR 0012](.claude/adr/0012-pane-splitting-panes-as-agents.md)), **workspaces** (Arc-style nested model, global cross-workspace attention + hidden-workspace notifications, **accordion sidebar** — collapsible per-workspace folders, all tabs in one view, one aggregate dot per folder, drag a tab across folders (live PTY survives via flat `tabID`-keyed mounting), ⌘⇧N/⌃⇥/⌃⇧⇥, content cross-fade, `shepherd.workspaces.v1` persistence w/ `collapsed` + v2→v1 migration — [ADR 0013](.claude/adr/0013-workspaces.md), [ADR 0017](.claude/adr/0017-workspace-folders-accordion-sidebar.md)), agent-state lifecycle, Claude plugin, attention loop (badge + backgrounded notifications + ⌘⇧A jump-to-alert), **T3-Code-style sidebar** (custom rows not `List`, resizable, cwd/agent tab names) + self-contained theme (`~/.config/shepherd`), **sleep guard** ("Stay Awake" keep-awake with a 3-mode policy — off / while-agents / always — over `pmset disablesleep` Tier 2 with an IOKit idle-assertion Tier 1 fallback, 120s release grace, launch-reconcile + quit-teardown, clamshell display-blank + clamshell-gated thermal auto-sleep; pure `SleepPolicy` + optional passwordless-`pmset` sudoers setup in the README), **worktree lifecycle** (optimistic provisioning loading state + archive/restore with 90-day literal expiry — [ADR 0018](.claude/adr/0018-worktree-archive-and-provisioning.md)).
 **FCM push (Android Phase 1 step 2):** attention transitions route to local surfaces
 (banner+sound) when present, or a data-only FCM wake when away (`isAway` = lid shut +
 no external display); host mints OAuth2 from `~/.config/shepherd/fcm-service-account.json`,

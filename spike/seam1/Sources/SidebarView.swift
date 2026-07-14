@@ -40,8 +40,10 @@ struct SidebarView: View {
             .onPreferenceChange(FolderCentersKey.self) { headerMids = $0 }
             .onPreferenceChange(FolderRegionsKey.self) { folderRegions = $0 }
 
-            Divider().overlay(Theme.hairline)
-            footer
+            if !store.archivedWorktrees.isEmpty {
+                Divider().overlay(Theme.hairline)
+                footer
+            }
         }
         .background(Theme.ground)
     }
@@ -140,21 +142,7 @@ struct SidebarView: View {
     }
 
     private var footer: some View {
-        Button(action: { store.newTab() }) {
-            HStack(spacing: 8) {
-                Image(systemName: "plus")
-                Text("New Tab")
-                Spacer()
-                Text("⌘T").foregroundStyle(Theme.textDim)
-            }
-            .font(.ui(12))
-            .foregroundStyle(Theme.textSecondary)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 11)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .focusable(false)
+        GlobalArchivedSection()
     }
 
     /// Prompt for a host + pairing code, then attach it as remote (mirror) workspaces.
@@ -433,6 +421,7 @@ private struct TabRow: View {
     @State private var editing = false
     @State private var draft = ""
     @State private var hovering = false
+    @State private var isWorktree = false   // live git check on hover; gates "Archive Worktree"
     @FocusState private var focused: Bool
 
     private var ws: Workspace? { store.workspaces.first { $0.id == workspaceID } }
@@ -445,29 +434,44 @@ private struct TabRow: View {
 
     // Single-pane tab: the row reflects its one (focused) pane, just like today.
     private var state: AgentState { tab.focusedPane()?.state ?? .shell }
+    private var isProvisioning: Bool { tab.focusedPane()?.provisioning ?? false }
 
     var body: some View {
         HStack(spacing: LeadingIcon.gutterGap) {
             Color.clear.frame(width: LeadingIcon.gutter)   // aligns the dot under the folder dot
-            LeadingIcon(state: state)
 
-            if editing {
-                TextField("name", text: $draft)
-                    .textFieldStyle(.plain)
-                    .font(.ui(13))
-                    .foregroundStyle(Theme.textPrimary)
-                    .focused($focused)
-                    .onSubmit(commit)
-                    .onExitCommand { endEditing() }
-                    .onAppear { focused = true }
-            } else {
-                Text(tab.displayTitle)
+            if isProvisioning {
+                ProgressView()
+                    .controlSize(.small)
+                    .scaleEffect(0.68)
+                    .frame(width: 14, height: 14)
+                    .tint(Theme.working)
+                Text(tab.displayTitle)   // real name from the start → seamless once it's ready
                     .font(.ui(13, isSelected ? .medium : .regular))
                     .foregroundStyle(nameColor)
                     .lineLimit(1)
-            }
+                Spacer(minLength: 6)
+            } else {
+                LeadingIcon(state: state)
 
-            Spacer(minLength: 6)
+                if editing {
+                    TextField("name", text: $draft)
+                        .textFieldStyle(.plain)
+                        .font(.ui(13))
+                        .foregroundStyle(Theme.textPrimary)
+                        .focused($focused)
+                        .onSubmit(commit)
+                        .onExitCommand { endEditing() }
+                        .onAppear { focused = true }
+                } else {
+                    Text(tab.displayTitle)
+                        .font(.ui(13, isSelected ? .medium : .regular))
+                        .foregroundStyle(nameColor)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 6)
+            }
         }
         .padding(.horizontal, 10)
         .frame(height: Self.height)
@@ -478,12 +482,25 @@ private struct TabRow: View {
         .offset(y: isDragging ? dragOffset : 0)
         .zIndex(isDragging ? 1 : 0)
         .animation(isDragging ? nil : .spring(response: 0.28, dampingFraction: 0.82), value: index)
-        .onHover { hovering = $0 }
+        .onHover { hovering = $0; if $0 { refreshWorktreeStatus() } }
         .onTapGesture { store.select(tabID: tab.tabID, inWorkspace: workspaceID) }
         .gesture(reorderGesture)
         .contextMenu {
             Button("Rename") { beginRename() }
-            Button("Close Tab") { store.closeTab(tab.tabID, inWorkspace: workspaceID) }
+            if isWorktree, ws?.isRemote == false {
+                Button("Archive Worktree") { store.archiveWorktreeTab(tab.tabID, inWorkspace: workspaceID) }
+            }
+            Button("Close Tab") { store.requestCloseTab(tab.tabID, inWorkspace: workspaceID) }
+        }
+    }
+
+    /// Is this tab's directory a linked git worktree? Checked off-main on hover so
+    /// the "Archive Worktree" item is ready by the time the menu opens. Local only.
+    private func refreshWorktreeStatus() {
+        guard ws?.isRemote == false, let cwd = tab.focusedPane()?.cwd, !cwd.isEmpty else { isWorktree = false; return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let ok = Git.isLinkedWorktree(cwd)
+            DispatchQueue.main.async { isWorktree = ok }
         }
     }
 
@@ -552,6 +569,105 @@ private struct TabRow: View {
     private func endEditing() {
         editing = false
         store.refocusActiveTerminal()
+    }
+}
+
+// MARK: - Archived worktrees (global)
+
+/// A single collapsible "Archived (N)" section pinned in the sidebar footer — all
+/// archived worktrees across every workspace, newest first. Tap a row to restore
+/// (recreating its workspace if gone); right-click to restore or delete. Collapsed
+/// by default; the expanded list is height-capped so the footer stays bounded.
+private struct GlobalArchivedSection: View {
+    @EnvironmentObject var store: AgentStore
+    @State private var expanded = false
+
+    private var archives: [ArchivedWorktree] {
+        store.archivedWorktrees.sorted { $0.archivedAt > $1.archivedAt }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if expanded {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: TabRow.gap) {
+                        ForEach(archives) { a in ArchivedRow(archive: a) }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                }
+                .frame(maxHeight: 220)
+            }
+            Button(action: { expanded.toggle() }) {
+                HStack(spacing: 8) {
+                    Image(systemName: "archivebox")
+                    Text("Archived")
+                    Text("\(store.archivedWorktrees.count)")
+                        .font(.ui(11, .medium))
+                        .foregroundStyle(Theme.textDim)
+                    Spacer()
+                    Image(systemName: expanded ? "chevron.down" : "chevron.up")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Theme.textDim)
+                }
+                .font(.ui(12))
+                .foregroundStyle(Theme.textSecondary)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 11)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .focusable(false)
+        }
+    }
+}
+
+private struct ArchivedRow: View {
+    @EnvironmentObject var store: AgentStore
+    let archive: ArchivedWorktree
+    @State private var hovering = false
+
+    private var workspaceLabel: String {
+        if let ws = store.workspaces.first(where: { $0.id == archive.workspaceID }),
+           let i = store.workspaces.firstIndex(where: { $0.id == archive.workspaceID }) {
+            return ws.displayName(index: i)
+        }
+        return (archive.workspaceName.map { "\($0) (new)" }) ?? "new workspace"
+    }
+
+    var body: some View {
+        HStack(spacing: LeadingIcon.gutterGap) {
+            Image(systemName: "archivebox")
+                .font(.system(size: 10))
+                .foregroundStyle(Theme.textDim)
+                .frame(width: 14)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(archive.name)
+                    .font(.ui(12))
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
+                Text(workspaceLabel)
+                    .font(.ui(10))
+                    .foregroundStyle(Theme.textDim)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 6)
+            Text(WorktreeArchive.archiveAgeString(archive.archivedAt, now: Date()))
+                .font(.ui(10))
+                .foregroundStyle(Theme.textDim)
+        }
+        .padding(.horizontal, 8)
+        .frame(height: TabRow.height + 4)
+        .background(RoundedRectangle(cornerRadius: 6).fill(hovering ? Theme.raised.opacity(0.5) : .clear))
+        .opacity(hovering ? 1 : 0.75)
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .help("\(archive.branch.isEmpty ? "detached" : archive.branch) · archived \(WorktreeArchive.archiveAgeString(archive.archivedAt, now: Date())) ago")
+        .onTapGesture { store.restoreWorktree(archive.id) }
+        .contextMenu {
+            Button("Restore") { store.restoreWorktree(archive.id) }
+            Button("Delete", role: .destructive) { store.deleteArchive(archive.id) }
+        }
     }
 }
 
