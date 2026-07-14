@@ -61,7 +61,7 @@ spike/
 - `SleepPolicy.swift` — **pure model**: `CaffeinateMode` + `shouldStayAwake(mode,busy,thermalSuppressed)`. In `ShepherdModelTests`.
 - `ClamshellMonitor.swift` — IOKit lid-state watcher (observe-only). `ThermalMonitor.swift` — `ProcessInfo` thermal watcher.
 
-`Tests/` holds the **`ShepherdModelTests`** target (a `bundle.unit-test` in `project.yml`: `SplitTreeTests.swift`, `WorkspaceTests.swift`, `PersistenceTests.swift`, `SleepPolicyTests.swift`, `StopPolicyTests.swift`, `WorktreeArchiveTests.swift`) — pure-model coverage of the `SplitNode` tree ops, the `Workspace`/`locatePane` helpers, the persistence snapshot/restore/migration, the sleep policy, the `applyEvent` lifecycle/background-`Stop` suppression, and the worktree-archive expiry/age math, compiling `SplitTree`/`Tab`/`AgentState`/`Theme`/`Workspace`/`Persistence`/`SleepPolicy`/`StopPolicy`/`WorktreeService`/`WorktreeArchive` without the AppKit surface. Test files added under `Tests/` are picked up by the `- path: Tests` glob, but a new compiled **source** must be added to the target's explicit `sources:` list in `project.yml`.
+`Tests/` holds the **`ShepherdModelTests`** target (a `bundle.unit-test` in `project.yml`: `SplitTreeTests.swift`, `WorkspaceTests.swift`, `PersistenceTests.swift`, `SleepPolicyTests.swift`, `StopPolicyTests.swift`, `WorktreeArchiveTests.swift`, `PRStatusTests.swift`) — pure-model coverage of the `SplitNode` tree ops, the `Workspace`/`locatePane` helpers, the persistence snapshot/restore/migration, the sleep policy, the `applyEvent` lifecycle/background-`Stop` suppression, the worktree-archive expiry/age math, and the PR-status classify/parse reduction, compiling `SplitTree`/`Tab`/`AgentState`/`Theme`/`Workspace`/`Persistence`/`SleepPolicy`/`StopPolicy`/`WorktreeService`/`WorktreeArchive`/`PRStatus` without the AppKit surface. Test files added under `Tests/` are picked up by the `- path: Tests` glob, but a new compiled **source** must be added to the target's explicit `sources:` list in `project.yml`.
 
 ---
 
@@ -213,6 +213,16 @@ the branch, and resumes the Claude `sessionID`. Archives persist under
 (`WorktreeArchive.expireArchives`; full removal incl. `git branch -D`). Each folder shows a
 collapsible **"Archived (N)"** subsection (`ArchivedSection`). Pure bits in
 `WorktreeArchive.swift`; local workspaces only (v1).
+
+**PR status on idle agents:** when a pane is `.idle` and its checkout has a PR, the
+leading state dot is replaced by a clickable **PR-status icon** (Tabler git-pull-request
+family; color = state: merged=violet, open=blue, ready=green, review/checks-pending=amber,
+failing/closed=red, draft=gray) → click opens the PR. Status comes from `gh pr view --json`
+run in the pane's cwd (`GitHubService.swift`), fetched when a pane enters `.idle` (hooked in
+`apply`/`didFocus`) + a 60s refresh of all idle panes; cached in `AgentStore.prStatuses`
+(transient). The whole feature is **gated on `GH.isInstalled`** (resolves `gh`'s real path,
+since a GUI `.app` misses Homebrew's PATH) — no `gh` ⇒ the normal state dot stays. Pure
+reduce/parse in `PRStatus.swift` (`enum PR`, unit-tested); single-pane tabs only (v1).
 **Remote (mirror) workspaces** are host-authoritative: the client forwards
 `cmdSetWorkspaceDirectory` / `cmdNewWorktreeTab` to the host (which owns the repo + runs
 git), and `defaultPath` rides `WorkspaceTree` back so the mirror knows it; the client's
