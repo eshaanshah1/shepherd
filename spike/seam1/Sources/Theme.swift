@@ -30,6 +30,7 @@ enum Theme {
     static let blocked    = Color(hex: 0xE5A23D)   // your move
     static let error      = Color(hex: 0xE5645D)   // broke
     static let idle       = Color(hex: 0x8C8C92)   // between turns
+    static let prMerged   = Color(hex: 0xA371F7)   // merged PR — GitHub-ish violet
 
     // Elevation ramp — surfaces separate by a few % lightness, not borders/shadows
     // (Linear discipline). `raised` above is kept for existing views; new surfaces

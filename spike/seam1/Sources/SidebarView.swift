@@ -452,7 +452,11 @@ private struct TabRow: View {
                     .lineLimit(1)
                 Spacer(minLength: 6)
             } else {
-                LeadingIcon(state: state)
+                if state == .idle, let pr = store.prStatuses[tab.focusedPaneID] {
+                    PRStatusIcon(status: pr) { store.openPR(forPane: tab.focusedPaneID) }
+                } else {
+                    LeadingIcon(state: state)
+                }
 
                 if editing {
                     TextField("name", text: $draft)
@@ -827,6 +831,36 @@ enum Tabler {
     static let folder = ["M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2"]
     static let folderOpen = ["M5 19l2.757 -7.351a1 1 0 0 1 .936 -.649h12.307a1 1 0 0 1 .986 1.164l-.996 5.211a2 2 0 0 1 -1.964 1.625h-14.026a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2h4l3 3h7a2 2 0 0 1 2 2v2"]
     static let terminal2 = ["M8 9l3 3l-3 3", "M13 15l3 0", "M3 6a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2l0 -12"]
+
+    // git-pull-request family — Tabler encodes circles as path arcs, so the
+    // path-only renderer handles them unchanged.
+    static let pullRequest = [
+        "M6 6m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0",
+        "M6 18m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0",
+        "M18 18m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0",
+        "M6 8l0 8",
+        "M11 6h5a2 2 0 0 1 2 2v8",
+        "M14 9l-3 -3l3 -3"]
+    static let gitMerge = [
+        "M7 18m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0",
+        "M7 6m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0",
+        "M17 12m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0",
+        "M7 8l0 8",
+        "M7 8a4 4 0 0 0 4 4h4"]
+    static let pullRequestClosed = [
+        "M6 6m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0",
+        "M6 18m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0",
+        "M6 8l0 8",
+        "M18 11l0 5",
+        "M16 3l4 4",
+        "M20 3l-4 4"]
+    static let pullRequestDraft = [
+        "M6 6m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0",
+        "M6 18m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0",
+        "M18 18m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0",
+        "M6 8l0 8",
+        "M18 11l0 5",
+        "M18 5l0 .01"]
 }
 
 /// Renders a Tabler stroke-icon from its SVG path list as a tint-able template
@@ -857,6 +891,59 @@ struct TablerIcon: View {
         img.isTemplate = true
         cache[key] = img
         return img
+    }
+}
+
+/// PR-status glyph shown in an idle agent's leading slot; click opens the PR. Icon
+/// family conveys open/merged/closed/draft; color conveys the finer status.
+struct PRStatusIcon: View {
+    let status: PRStatus
+    let onOpen: () -> Void
+
+    var body: some View {
+        Button(action: onOpen) {
+            TablerIcon(paths: Self.paths(status.kind), size: 13)
+                .foregroundStyle(Self.color(status.kind))
+                .frame(width: 14, height: 14)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .help("PR #\(status.number) · \(Self.label(status.kind)) — click to open")
+    }
+
+    static func paths(_ kind: PRKind) -> [String] {
+        switch kind {
+        case .merged: return Tabler.gitMerge
+        case .closed: return Tabler.pullRequestClosed
+        case .draft:  return Tabler.pullRequestDraft
+        default:      return Tabler.pullRequest
+        }
+    }
+
+    static func color(_ kind: PRKind) -> Color {
+        switch kind {
+        case .merged:                                          return Theme.prMerged
+        case .closed, .checksFailing:                          return Theme.error
+        case .draft:                                           return Theme.textDim
+        case .changesRequested, .checksPending, .reviewRequired: return Theme.blocked
+        case .mergeReady:                                      return Theme.needsCheck
+        case .open:                                            return Theme.working
+        }
+    }
+
+    static func label(_ kind: PRKind) -> String {
+        switch kind {
+        case .merged: return "merged"
+        case .closed: return "closed"
+        case .draft: return "draft"
+        case .checksFailing: return "checks failing"
+        case .changesRequested: return "changes requested"
+        case .checksPending: return "checks running"
+        case .reviewRequired: return "review required"
+        case .mergeReady: return "ready to merge"
+        case .open: return "open"
+        }
     }
 }
 

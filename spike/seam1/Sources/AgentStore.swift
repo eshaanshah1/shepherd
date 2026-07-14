@@ -17,6 +17,12 @@ final class AgentStore: ObservableObject {
     /// Restorable until they expire; persisted under `archiveKey`.
     @Published private(set) var archivedWorktrees: [ArchivedWorktree] = []
 
+    /// PR status per pane, shown in the sidebar when the pane is idle (transient —
+    /// fetched via `gh`, refreshed while idle, never persisted).
+    @Published private(set) var prStatuses: [String: PRStatus] = [:]
+    private var prInFlight: Set<String> = []
+    private var prTimer: Timer?
+
     /// Set by the `+` button / ⌘⇧N to ask the UI for a name before creating a
     /// workspace; ContentView presents the naming modal off this.
     @Published var promptingNewWorkspace = false
@@ -132,6 +138,7 @@ final class AgentStore: ObservableObject {
         if !restore() { newWorkspace() }   // reopen prior workspaces, else start with one
         loadArchives()
         expireOldArchives()                // drop archives past the retention window
+        startPRRefreshTimer()              // keep idle agents' PR status live-ish
         startRemoteServingIfEnabled()      // bind the control channel if serving is on
     }
 
@@ -436,6 +443,49 @@ final class AgentStore: ObservableObject {
         let seed = workspaces.first { $0.id == wsID }?.tabs.first?.tabID
         newTab(inWorkspace: wsID, cwd: a.dest, sessionID: a.sessionID)
         if let seed { closeTab(seed, inWorkspace: wsID) }   // drop the empty seed tab
+    }
+
+    // MARK: PR status (idle agents)
+
+    private func startPRRefreshTimer() {
+        guard GH.isInstalled else { return }   // no gh ⇒ feature off, sidebar keeps the state dot
+        prTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.refreshAllIdlePRs() }
+        }
+    }
+
+    /// Every pane currently idle → refresh its PR status.
+    private func refreshAllIdlePRs() {
+        for ws in workspaces where !ws.isRemote {
+            for tab in ws.tabs {
+                for pane in tab.root.panes where pane.state == .idle {
+                    refreshPR(forPane: pane.paneID)
+                }
+            }
+        }
+    }
+
+    /// Fetch (off-main) the PR for a pane's checked-out branch and cache it; clears
+    /// the entry when there's no PR. No-op without a cwd or while already fetching.
+    func refreshPR(forPane paneID: String) {
+        guard GH.isInstalled, !prInFlight.contains(paneID),
+              let cwd = cwd(forPane: paneID), !cwd.isEmpty else { return }
+        prInFlight.insert(paneID)
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let status = GH.prStatus(inDir: cwd)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.prInFlight.remove(paneID)
+                if let status { self.prStatuses[paneID] = status }
+                else { self.prStatuses.removeValue(forKey: paneID) }
+            }
+        }
+    }
+
+    /// Open a pane's PR in the browser (leading-icon click).
+    func openPR(forPane paneID: String) {
+        guard let url = prStatuses[paneID].flatMap({ URL(string: $0.url) }) else { return }
+        NSWorkspace.shared.open(url)
     }
 
     /// Forget an archive entirely (protection ref + branch). Same semantics as expiry.
@@ -841,6 +891,7 @@ final class AgentStore: ObservableObject {
             diffTurnPane = paneID
             diffTurnTick += 1   // an open diff panel watches this to offer a refresh
         }
+        if res.state == .idle { refreshPR(forPane: paneID) }   // idle agent → surface its PR status
         // Track the live Claude session id so we can resume it on relaunch: SessionStart carries
         // the id (in detail), SessionEnd means the agent exited so there's nothing to resume.
         if event == "SessionStart", !detail.isEmpty {
@@ -933,6 +984,7 @@ final class AgentStore: ObservableObject {
               workspaces[w].tabs[t].root.pane(paneID)?.state == .needsCheck else { return }
         _ = workspaces[w].tabs[t].root.updatePane(paneID) { $0.state = .idle }
         updateDockBadge()
+        refreshPR(forPane: paneID)   // finished turn just went idle → refresh its PR status
     }
 
     /// Pull this pane's delivered banners out of Notification Center across every
