@@ -861,6 +861,13 @@ enum Tabler {
         "M6 8l0 8",
         "M18 11l0 5",
         "M18 5l0 .01"]
+    static let file = [
+        "M14 3v4a1 1 0 0 0 1 1h4",
+        "M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z"]
+    static let eye = [
+        "M10 12a2 2 0 1 0 4 0a2 2 0 1 0 -4 0",
+        "M21 12c-2.4 4 -5.4 6 -9 6c-3.6 0 -6.6 -2 -9 -6c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6"]
+    static let x = ["M18 6l-12 12", "M6 6l12 12"]
 }
 
 /// Renders a Tabler stroke-icon from its SVG path list as a tint-able template
@@ -899,36 +906,68 @@ struct TablerIcon: View {
 struct PRStatusIcon: View {
     let status: PRStatus
     let onOpen: () -> Void
+    @State private var hovering = false
 
     var body: some View {
         Button(action: onOpen) {
-            TablerIcon(paths: Self.paths(status.kind), size: 13)
-                .foregroundStyle(Self.color(status.kind))
-                .frame(width: 14, height: 14)
+            glyph
+                .frame(width: 14, height: 14)   // layout footprint stays aligned with the state dot
+                .background(
+                    // Squircle hover chip — signals the icon is a clickable button.
+                    // Drawn behind at a fixed size so it doesn't shift the row layout.
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Theme.surface3)
+                        .frame(width: 22, height: 22)
+                        .opacity(hovering ? 1 : 0)
+                )
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .focusable(false)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
         .help("PR #\(status.number) · \(Self.label(status.kind)) — click to open")
+    }
+
+    @ViewBuilder private var glyph: some View {
+        let color = Self.color(status.kind)
+        if status.kind == .checksFailing {
+            // Keep the PR glyph, add a tiny Tabler-x badge bottom-right.
+            TablerIcon(paths: Tabler.pullRequest, size: 13)
+                .foregroundStyle(color)
+                .overlay(alignment: .bottomTrailing) {
+                    TablerIcon(paths: Tabler.x, size: 7)
+                        .foregroundStyle(color)
+                        .padding(1)
+                        .background(Circle().fill(Theme.ground))
+                        .offset(x: 3, y: 3)
+                }
+        } else {
+            TablerIcon(paths: Self.paths(status.kind), size: 13)
+                .foregroundStyle(color)
+        }
     }
 
     static func paths(_ kind: PRKind) -> [String] {
         switch kind {
-        case .merged: return Tabler.gitMerge
-        case .closed: return Tabler.pullRequestClosed
-        case .draft:  return Tabler.pullRequestDraft
-        default:      return Tabler.pullRequest
+        case .merged:           return Tabler.gitMerge
+        case .closed:           return Tabler.pullRequestClosed
+        case .draft:            return Tabler.pullRequestDraft
+        case .changesRequested: return Tabler.file
+        case .reviewRequired:   return Tabler.eye
+        default:                return Tabler.pullRequest   // open, mergeReady, checksPending, checksFailing (badge in glyph)
         }
     }
 
     static func color(_ kind: PRKind) -> Color {
         switch kind {
-        case .merged:                                          return Theme.prMerged
-        case .closed, .checksFailing:                          return Theme.error
-        case .draft:                                           return Theme.textDim
-        case .changesRequested, .checksPending, .reviewRequired: return Theme.blocked
-        case .mergeReady:                                      return Theme.needsCheck
-        case .open:                                            return Theme.working
+        case .merged:                          return Theme.prMerged
+        case .closed, .checksFailing,
+             .changesRequested:                return Theme.error   // changes-requested reads red, GitHub-style
+        case .draft:                           return Theme.textDim
+        case .checksPending, .reviewRequired:  return Theme.blocked
+        case .mergeReady:                      return Theme.needsCheck
+        case .open:                            return Theme.working
         }
     }
 
