@@ -392,8 +392,27 @@ private struct DiffFileView: View {
     let file: DiffFile
     @ObservedObject var model: DiffReviewModel
     let hasAgent: Bool
+    @State private var headerHovering = false
 
     private var collapsed: Bool { model.collapsedFiles.contains(file.path) }
+
+    /// Hover-revealed "edit in place" affordance: opens the file in the code
+    /// surface's edit mode (jump from reviewing a diff to editing the file).
+    @ViewBuilder private var editFileButton: some View {
+        if headerHovering, file.status != .deleted, let cwd = model.cwd {
+            Button {
+                AgentStore.shared.openFile((cwd as NSString).appendingPathComponent(file.path))
+            } label: {
+                Image(systemName: "pencil").font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(Theme.textSecondary)
+                    .padding(.horizontal, 6).padding(.vertical, 3)
+                    .background(Theme.surface3)
+                    .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            }
+            .buttonStyle(.plain).focusable(false)
+            .help("Edit this file")
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -412,6 +431,8 @@ private struct DiffFileView: View {
             }
             .buttonStyle(.plain).focusable(false)
             .padding(.bottom, 4)
+            .overlay(alignment: .trailing) { editFileButton }
+            .onHover { headerHovering = $0 }
 
             if collapsed {
                 EmptyView()
