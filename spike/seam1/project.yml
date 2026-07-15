@@ -14,6 +14,9 @@ packages:
   CodeEditLanguages:
     url: https://github.com/CodeEditApp/CodeEditLanguages
     exactVersion: 0.1.20
+  SwiftMarkdown:
+    url: https://github.com/apple/swift-markdown
+    from: 0.3.0
 settings:
   base:
     SWIFT_VERSION: "5.0"
@@ -40,6 +43,8 @@ targets:
         product: CodeEditSourceEditor
       - package: CodeEditLanguages
         product: CodeEditLanguages
+      - package: SwiftMarkdown
+        product: Markdown
       - target: shepherdd
         copy:
           destination: executables
@@ -68,6 +73,8 @@ targets:
         product: CodeEditSourceEditor
       - package: CodeEditLanguages
         product: CodeEditLanguages
+      - package: SwiftMarkdown
+        product: Markdown
     sources:
       - path: Sources/SplitTree.swift
       - path: Sources/Tab.swift
@@ -79,6 +86,10 @@ targets:
       - path: Sources/WorktreeService.swift
       - path: Sources/WorktreeArchive.swift
       - path: Sources/PRStatus.swift
+      - path: Sources/SequenceAlign.swift
+      - path: Sources/MarkdownInlineDiff.swift
+      - path: Sources/MarkdownFrontmatter.swift
+      - path: Sources/MarkdownTableDiff.swift
       - path: Sources/SleepPolicy.swift
       - path: Sources/StopPolicy.swift
       - path: Sources/DiffModel.swift

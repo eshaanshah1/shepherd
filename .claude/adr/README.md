@@ -41,3 +41,6 @@ Date: YYYY-MM-DD
 - [0014](0014-background-agent-stop-suppression.md) — Background-agent `Stop` suppression: count `[Agent]` vs `SubagentStop` *(superseded by 0015)*
 - [0015](0015-background-stop-suppression-via-background-tasks.md) — Background-`Stop` suppression from the `Stop` payload's `background_tasks`
 - [0016](0016-pane-click-focus-hit-testing.md) — Click-to-focus a pane: three hit-testing gates (custom Layout + surface hitTest + sidebar allowsHitTesting)
+- [0017](0017-workspace-folders-accordion-sidebar.md) — Workspace folders: accordion sidebar (all tabs in one view)
+- [0018](0018-worktree-archive-and-provisioning.md) — Worktree archive/restore + optimistic provisioning feedback
+- [0019](0019-markdown-rendered-diff.md) — Rendered markdown diff in the review panel (block-level, per-file Rendered⇄Raw toggle)

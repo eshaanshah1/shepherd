@@ -27,9 +27,30 @@ final class DiffReviewModel: ObservableObject {
     @Published var expanding: Set<String> = []
     /// Files collapsed via their header. Default (absent) = expanded.
     @Published var collapsedFiles: Set<String> = []
+    /// Old/new source per `.md` file path, fetched off the main thread in the same pass
+    /// as highlighting (git blobs pump a run loop). `MarkdownDiffView` parses + diffs +
+    /// renders it. Rendered by default.
+    @Published var mdSources: [String: MarkdownDiffSource] = [:]
+    /// `.md` paths the user flipped to the raw unified diff. Default (absent) = rendered.
+    @Published var mdRaw: Set<String> = []
 
     func toggleCollapsed(_ path: String) {
         if collapsedFiles.contains(path) { collapsedFiles.remove(path) } else { collapsedFiles.insert(path) }
+    }
+
+    func isMarkdown(_ f: DiffFile) -> Bool {
+        let ext = (f.path as NSString).pathExtension.lowercased()
+        return (ext == "md" || ext == "markdown") && !f.isBinary
+    }
+
+    /// A markdown file shows its rendered block-diff when it isn't flipped to raw and
+    /// its blocks have finished computing.
+    func showsRendered(_ f: DiffFile) -> Bool {
+        isMarkdown(f) && !mdRaw.contains(f.path) && mdSources[f.path] != nil
+    }
+
+    func toggleRaw(_ path: String) {
+        if mdRaw.contains(path) { mdRaw.remove(path) } else { mdRaw.insert(path) }
     }
 
     private var pending: DiffReadResult? = nil
@@ -82,13 +103,16 @@ final class DiffReviewModel: ObservableObject {
     /// on demand via expandLargeFile). A generation guard drops stale work after reload.
     private func rehighlight() {
         highlights = [:]
+        mdSources = [:]
+        mdRaw = []                // fresh diff → all markdown rendered
         expanded = []
         expanding = []
         collapsedFiles = []   // fresh diff → all files expanded
         highlightGeneration += 1
         let gen = highlightGeneration
         let targets = files.filter { !$0.isBinary && !isLargeDiff($0) }
-        guard let cwd, !targets.isEmpty else { highlighting = false; return }
+        let mdTargets = files.filter { isMarkdown($0) }
+        guard let cwd, !(targets.isEmpty && mdTargets.isEmpty) else { highlighting = false; return }
         highlighting = true
         let base = self.baseLabel
         highlightQueue.async {
@@ -102,10 +126,18 @@ final class DiffReviewModel: ObservableObject {
                     out["\(f.path)#old"] = hl
                 }
             }
-            let final = out
+            var sources: [String: MarkdownDiffSource] = [:]
+            for f in mdTargets {
+                let oldSrc = DiffReader.fileBlob(cwd: cwd, path: f.oldPath ?? f.path, side: .old, baseLabel: base) ?? ""
+                let newSrc = DiffReader.fileBlob(cwd: cwd, path: f.path, side: .new, baseLabel: base) ?? ""
+                sources[f.path] = MarkdownDiffSource(old: oldSrc, new: newSrc)
+            }
+            let finalHL = out
+            let finalMD = sources
             DispatchQueue.main.async {
                 guard gen == self.highlightGeneration else { return }   // superseded by a reload
-                self.highlights = final
+                self.highlights = finalHL
+                self.mdSources = finalMD
                 self.highlighting = false
             }
         }
@@ -175,31 +207,50 @@ final class DiffReviewModel: ObservableObject {
 }
 
 /// Whole-file syntax highlighting (HighlighterSwift / Highlight.js). atom-one-dark
-/// only tokenizes (distinct hue per token category); every token color is then
-/// recolored to the muted Shepherd code theme (Theme.codePalette) by nearest hue —
-/// so the result is our own theme, not the library's. Highlight each file once,
-/// cache per line, map onto diff lines by line number. Large / minified files skip
-/// highlighting and fall back to plain diff coloring.
+/// tokenizes (a distinct hue per category); each token color is then remapped to the
+/// matching role in Shepherd's own `Theme.Code` palette — so the diff and the editor
+/// render from the same colors, in the app's voice rather than the library's. Highlight
+/// each file once, cache per line, map onto diff lines by line number. Large / minified
+/// files skip highlighting and fall back to plain diff coloring.
 enum DiffSyntaxHighlighter {
     private static let maxBytes = 500_000
     private static let highlighter: Highlighter? = {
         let h = Highlighter()
         // Match the terminal grid's font so highlighted code and the terminal agree.
         if let name = Theme.monoFontName {
-            _ = h?.setTheme("atom-one-dark", withFont: name, ofSize: 12)
+            _ = h?.setTheme("atom-one-dark", withFont: name, ofSize: 13)
         } else {
             _ = h?.setTheme("atom-one-dark")
         }
         return h
     }()
-    /// The Shepherd code theme as sRGB components + the NSColor to apply.
-    private static let palette: [(r: CGFloat, g: CGFloat, b: CGFloat, color: NSColor)] =
-        Theme.codePalette.map { hex in
-            let r = CGFloat((hex >> 16) & 0xFF) / 255
-            let g = CGFloat((hex >> 8) & 0xFF) / 255
-            let b = CGFloat(hex & 0xFF) / 255
-            return (r, g, b, NSColor(srgbRed: r, green: g, blue: b, alpha: 1))
-        }
+
+    /// atom-one-dark's token colors paired with their Shepherd `Theme.Code` target.
+    /// Each highlighted token is recolored to the target of its nearest anchor — a
+    /// semantic remap (keyword→blue, string→green, …), not a nearest-hue match, so
+    /// categories that collapse to shared grays in the restrained palette still route
+    /// correctly.
+    private struct RemapEntry { let r, g, b: CGFloat; let color: NSColor }
+    private static func entry(anchor: UInt32, target: UInt32) -> RemapEntry {
+        let r = CGFloat((anchor >> 16) & 0xFF) / 255
+        let g = CGFloat((anchor >> 8) & 0xFF) / 255
+        let b = CGFloat(anchor & 0xFF) / 255
+        let color = NSColor(srgbRed: CGFloat((target >> 16) & 0xFF) / 255,
+                            green: CGFloat((target >> 8) & 0xFF) / 255,
+                            blue: CGFloat(target & 0xFF) / 255, alpha: 1)
+        return RemapEntry(r: r, g: g, b: b, color: color)
+    }
+    private static let remap: [RemapEntry] = [
+        entry(anchor: 0xABB2BF, target: Theme.Code.text),      // default text / punctuation
+        entry(anchor: 0x5C6370, target: Theme.Code.comment),   // comment
+        entry(anchor: 0xC678DD, target: Theme.Code.keyword),   // keyword / control
+        entry(anchor: 0x98C379, target: Theme.Code.string),    // string
+        entry(anchor: 0xE5C07B, target: Theme.Code.type),      // type / class
+        entry(anchor: 0xD19A66, target: Theme.Code.number),    // number / constant
+        entry(anchor: 0x61AFEF, target: Theme.Code.function),  // function / title
+        entry(anchor: 0xE06C75, target: Theme.Code.variable),  // variable / property / tag
+        entry(anchor: 0x56B6C2, target: Theme.Code.builtin),   // built-in / literal
+    ]
 
     /// Read + highlight + split one whole file, or nil if unavailable / too large.
     /// MUST be called off the main thread — it spawns `git show` (which pumps a run
@@ -209,7 +260,7 @@ enum DiffSyntaxHighlighter {
         guard let blob = DiffReader.fileBlob(cwd: cwd, path: path, side: side, baseLabel: baseLabel),
               blob.utf8.count <= maxBytes,
               let raw = highlighter?.highlight(blob, as: language(forPath: path)) else { return nil }
-        let attr = applyShepherdTheme(raw)
+        let attr = applyShepherdPalette(raw)
         var result: [NSAttributedString] = []
         let plain = attr.string as NSString
         plain.enumerateSubstrings(in: NSRange(location: 0, length: plain.length),
@@ -219,19 +270,20 @@ enum DiffSyntaxHighlighter {
         return result
     }
 
-    /// Recolor every token to the nearest hue in the Shepherd code theme and drop
-    /// backgrounds (so the diff row tint shows through).
-    private static func applyShepherdTheme(_ ns: NSAttributedString) -> NSAttributedString {
+    /// Recolor every token to its Shepherd `Theme.Code` role (via the nearest atom-one-dark
+    /// anchor) and drop the theme's backgrounds so the diff row tint shows through.
+    private static func applyShepherdPalette(_ ns: NSAttributedString) -> NSAttributedString {
         let m = NSMutableAttributedString(attributedString: ns)
         let full = NSRange(location: 0, length: m.length)
         m.removeAttribute(.backgroundColor, range: full)
         m.enumerateAttribute(.foregroundColor, in: full) { value, range, _ in
             guard let col = (value as? NSColor)?.usingColorSpace(.sRGB) else { return }
             let r = col.redComponent, g = col.greenComponent, b = col.blueComponent
-            var best = palette[0].color, bestD = CGFloat.greatestFiniteMagnitude
-            for p in palette {
-                let d = (p.r - r) * (p.r - r) + (p.g - g) * (p.g - g) + (p.b - b) * (p.b - b)
-                if d < bestD { bestD = d; best = p.color }
+            var best = remap[0].color, bestD = CGFloat.greatestFiniteMagnitude
+            for e in remap {
+                let dr = e.r - r, dg = e.g - g, db = e.b - b
+                let d = dr * dr + dg * dg + db * db
+                if d < bestD { bestD = d; best = e.color }
             }
             m.addAttribute(.foregroundColor, value: best, range: range)
         }
@@ -392,22 +444,37 @@ private struct DiffFileView: View {
     let file: DiffFile
     @ObservedObject var model: DiffReviewModel
     let hasAgent: Bool
-    @State private var headerHovering = false
+    @State private var copied = false
 
     private var collapsed: Bool { model.collapsedFiles.contains(file.path) }
+
+    /// Always-visible "copy path" affordance next to the file name (GitHub-style); flips
+    /// to a check for ~1s after copying. Copies the repo-relative path shown in the header.
+    @ViewBuilder private var copyPathButton: some View {
+        Button {
+            let pb = NSPasteboard.general
+            pb.clearContents(); pb.setString(file.path, forType: .string)
+            copied = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { copied = false }
+        } label: {
+            TablerIcon(paths: copied ? Tabler.check : Tabler.copy, size: 12)
+                .foregroundColor(copied ? Theme.needsCheck : Theme.textDim)
+                .padding(3).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).focusable(false)
+        .help("Copy path")
+    }
 
     /// Hover-revealed "edit in place" affordance: opens the file in the code
     /// surface's edit mode (jump from reviewing a diff to editing the file).
     @ViewBuilder private var editFileButton: some View {
-        if headerHovering, file.status != .deleted, let cwd = model.cwd {
+        if file.status != .deleted, let cwd = model.cwd {
             Button {
                 AgentStore.shared.openFile((cwd as NSString).appendingPathComponent(file.path))
             } label: {
-                Image(systemName: "pencil").font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(Theme.textSecondary)
-                    .padding(.horizontal, 6).padding(.vertical, 3)
-                    .background(Theme.surface3)
-                    .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                TablerIcon(paths: Tabler.pencil, size: 12)
+                    .foregroundColor(Theme.textDim)
+                    .padding(3).contentShape(Rectangle())
             }
             .buttonStyle(.plain).focusable(false)
             .help("Edit this file")
@@ -416,26 +483,31 @@ private struct DiffFileView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button { model.toggleCollapsed(file.path) } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: collapsed ? "chevron.right" : "chevron.down")
-                        .font(.system(size: 9, weight: .semibold)).foregroundColor(Theme.textDim)
-                        .frame(width: 10)
-                    Text(statusGlyph).font(.system(size: 11, weight: .bold)).foregroundColor(statusColor)
-                    Text(file.path).font(.system(size: 12, weight: .medium)).foregroundColor(Theme.textPrimary)
-                    Spacer()
-                    Text("+\(file.addedCount)").foregroundColor(Theme.needsCheck).font(.system(size: 11))
-                    Text("−\(file.removedCount)").foregroundColor(Theme.error).font(.system(size: 11))
+            HStack(spacing: 8) {
+                Button { model.toggleCollapsed(file.path) } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: collapsed ? "chevron.right" : "chevron.down")
+                            .font(.system(size: 9, weight: .semibold)).foregroundColor(Theme.textDim)
+                            .frame(width: 10)
+                        Text(statusGlyph).font(.system(size: 11, weight: .bold)).foregroundColor(statusColor)
+                        Text(file.path).font(.system(size: 12, weight: .medium)).foregroundColor(Theme.textPrimary)
+                    }
+                    .contentShape(Rectangle())
                 }
-                .contentShape(Rectangle())
+                .buttonStyle(.plain).focusable(false)
+                HStack(spacing: 2) { copyPathButton; editFileButton }
+                Spacer()
+                if model.isMarkdown(file) { renderRawToggle }
+                Text("+\(file.addedCount)").foregroundColor(Theme.needsCheck).font(.system(size: 11))
+                Text("−\(file.removedCount)").foregroundColor(Theme.error).font(.system(size: 11))
             }
-            .buttonStyle(.plain).focusable(false)
             .padding(.bottom, 4)
-            .overlay(alignment: .trailing) { editFileButton }
-            .onHover { headerHovering = $0 }
 
             if collapsed {
                 EmptyView()
+            } else if model.showsRendered(file), let src = model.mdSources[file.path] {
+                MarkdownDiffView(source: src)
+                    .padding(.top, 2)
             } else if file.isBinary {
                 Text("Binary file").foregroundColor(Theme.textDim).font(.system(size: 11))
             } else if model.isLargeDiff(file) && !model.expanded.contains(file.path) {
@@ -453,6 +525,32 @@ private struct DiffFileView: View {
                 }
             }
         }
+    }
+
+    /// Rendered-markdown ⇄ raw-diff toggle, shown only on `.md` files. Rendered is the
+    /// default; Raw drops to the unified +/- diff (and re-enables line commenting).
+    private var renderRawToggle: some View {
+        let raw = model.mdRaw.contains(file.path)
+        return HStack(spacing: 1) {
+            miniSeg("Rendered", active: !raw) { model.mdRaw.remove(file.path) }
+            miniSeg("Raw", active: raw) { model.mdRaw.insert(file.path) }
+        }
+        .padding(1)
+        .background(Theme.raised)
+        .clipShape(RoundedRectangle(cornerRadius: 5))
+        .overlay(RoundedRectangle(cornerRadius: 5).stroke(Theme.hairline, lineWidth: 1))
+    }
+
+    private func miniSeg(_ title: String, active: Bool, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title).font(.ui(10, active ? .semibold : .medium))
+                .foregroundStyle(active ? Theme.working : Theme.textSecondary)
+                .padding(.horizontal, 7).padding(.vertical, 2)
+                .background(active ? Theme.working.opacity(0.16) : .clear)
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).focusable(false)
     }
 
     private var lineCount: Int { file.hunks.reduce(0) { $0 + $1.lines.count } }
@@ -486,6 +584,20 @@ private struct DiffFileView: View {
     }
 }
 
+/// Diff row rhythm, matched to the editor. CodeEditSourceEditor lays lines out at
+/// `lineHeightMultiple` 1.2× the font's natural line height; the diff's SwiftUI rows
+/// are tight (~1.0), so we add half the difference as vertical padding above/below
+/// each line to land on the same rhythm.
+private enum DiffMetrics {
+    static let lineHeightMultiple: CGFloat = 1.2
+    static let rowPad: CGFloat = {
+        let f = Theme.monoFontName.flatMap { NSFont(name: $0, size: 13) }
+            ?? NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        let natural = NSLayoutManager().defaultLineHeight(for: f)
+        return natural * (lineHeightMultiple - 1) / 2
+    }()
+}
+
 private struct DiffLineRow: View {
     let line: DiffLine
     let file: DiffFile
@@ -497,11 +609,12 @@ private struct DiffLineRow: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 8) {
                 Text(gutter).frame(width: 44, alignment: .trailing)
-                    .foregroundColor(Theme.textDim).font(.mono(11))
+                    .foregroundColor(Theme.textDim).font(.mono(12))
                 highlightedText
-                    .font(.mono(12))
+                    .font(.mono(13))
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .padding(.vertical, DiffMetrics.rowPad)
             .background(bg)
             .overlay(alignment: .leading) {
                 // Hover affordance to comment (double-click also works). Only shown when
