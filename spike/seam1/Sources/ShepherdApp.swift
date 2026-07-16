@@ -83,6 +83,9 @@ struct ShepherdApp: App {
                 Divider()
                 Button("Jump to Next Alert") { AgentStore.shared.selectNextAttention() }
                     .keyboardShortcut("a", modifiers: [.command, .shift])
+                Divider()
+                Button("Reload Config") { GhosttyApp.shared.reloadConfig() }
+                    .keyboardShortcut("r", modifiers: [.command, .shift])
                 #if DEBUG
                 Divider()
                 Button("DEBUG: Simulate Thermal Serious") { SleepGuard.shared.simulateThermal(.serious) }

@@ -9,6 +9,13 @@ final class GhosttyApp {
     private(set) var app: ghostty_app_t? = nil
     let version: String
 
+    /// Live terminal surfaces, weakly held, so a config reload can push a fresh
+    /// config to each one (`ghostty_surface_update_config`). Views register on
+    /// creation and drop out on `deinit`.
+    private let surfaceViews = NSHashTable<GhosttySurfaceView>.weakObjects()
+    func register(_ view: GhosttySurfaceView)   { surfaceViews.add(view) }
+    func unregister(_ view: GhosttySurfaceView) { surfaceViews.remove(view) }
+
     private init() {
         // 1) Global init with argc/argv.
         _ = ghostty_init(UInt(CommandLine.argc), CommandLine.unsafeArgv)
@@ -23,18 +30,8 @@ final class GhosttyApp {
         }
         // From here on `self` is fully initialized (app defaulted, version set).
 
-        // 2) Config: our base theme, then Shepherd's own ~/.config/shepherd/config
-        //    (ghostty syntax) on top so the user configures Shepherd independently
-        //    of ghostty. We deliberately do NOT read ~/.config/ghostty.
-        guard let cfg = ghostty_config_new() else { return }
-        if let themePath = Self.writeBaseTheme() {
-            themePath.withCString { ghostty_config_load_file(cfg, $0) }
-        }
-        let shepherdCfg = (NSHomeDirectory() as NSString).appendingPathComponent(".config/shepherd/config")
-        if FileManager.default.fileExists(atPath: shepherdCfg) {
-            shepherdCfg.withCString { ghostty_config_load_file(cfg, $0) }
-        }
-        ghostty_config_finalize(cfg)
+        // 2) Config: our base theme, then Shepherd's own ~/.config/shepherd/config.
+        guard let cfg = Self.buildConfig() else { return }
 
         // 3) Runtime callbacks. These become @convention(c) pointers, so each must
         //    be non-capturing. Surface-scoped callbacks (clipboard, close) receive
@@ -65,10 +62,41 @@ final class GhosttyApp {
         ghostty_app_set_focus(app, true)
     }
 
+    /// Build a finalized ghostty config: our (mode-aware) base theme, then
+    /// Shepherd's own ~/.config/shepherd/config (ghostty syntax) on top so the
+    /// user configures Shepherd independently of ghostty. We deliberately do NOT
+    /// read ~/.config/ghostty. Caller owns the returned config (free it after use,
+    /// except the one handed to `ghostty_app_new` at launch).
+    private static func buildConfig() -> ghostty_config_t? {
+        guard let cfg = ghostty_config_new() else { return nil }
+        if let themePath = Self.writeBaseTheme() {
+            themePath.withCString { ghostty_config_load_file(cfg, $0) }
+        }
+        let shepherdCfg = (NSHomeDirectory() as NSString).appendingPathComponent(".config/shepherd/config")
+        if FileManager.default.fileExists(atPath: shepherdCfg) {
+            shepherdCfg.withCString { ghostty_config_load_file(cfg, $0) }
+        }
+        ghostty_config_finalize(cfg)
+        return cfg
+    }
+
+    /// Re-read the config and propagate it live (⌘⇧R) — no rebuild/relaunch.
+    /// Re-resolves the theme, rebuilds the ghostty config, pushes it to the app +
+    /// every live surface (grid repaints, PTYs survive), then re-renders the chrome.
+    /// Main-thread only (libghostty C API + AppKit).
+    @MainActor func reloadConfig() {
+        Theme.reloadMode()
+        guard let app, let cfg = Self.buildConfig() else { return }
+        ghostty_app_update_config(app, cfg)
+        for view in surfaceViews.allObjects { view.updateConfig(cfg) }
+        ghostty_config_free(cfg)
+        AgentStore.shared.bumpTheme()
+    }
+
     /// Write the Command Deck base theme to a temp file and return its path.
     /// libghostty only loads config from files, so we materialize one.
     private static func writeBaseTheme() -> String? {
-        let theme = """
+        let dark = """
         background = 0F0F11
         foreground = EDEDED
         cursor-color = 5B9DF8
@@ -91,6 +119,62 @@ final class GhosttyApp {
         palette = 7=#8C8C92
         palette = 15=#EDEDED
         """
+        // Light mirror — warm off-white ground; the 0/7/8/15 grayscale ramp flips so
+        // text stays legible on white. Kept in sync with Theme.swift (ADR 0010).
+        let light = """
+        background = FBFBF9
+        foreground = 1A1A1E
+        cursor-color = 2F7DE1
+        selection-background = D6E4FB
+        selection-foreground = 1A1A1E
+        palette = 0=#1A1A1E
+        palette = 8=#6A6A72
+        palette = 1=#D23A33
+        palette = 9=#E5645D
+        palette = 2=#1FA463
+        palette = 10=#2FBE7C
+        palette = 3=#C7811A
+        palette = 11=#E5A23D
+        palette = 4=#2F7DE1
+        palette = 12=#5B9DF8
+        palette = 5=#8250DF
+        palette = 13=#A371F7
+        palette = 6=#178F85
+        palette = 14=#2FB0A4
+        palette = 7=#9A9AA2
+        palette = 15=#1A1A1E
+        """
+        // Warm cream/sepia middle-ground — mapped from ~/.claude/themes/shepherd.json.
+        // Paper ground, warm brown text, muted earthy ANSI. In sync with Theme.swift.
+        let warm = """
+        background = FAF4E6
+        foreground = 43413A
+        cursor-color = 4A7996
+        selection-background = E0D3B4
+        selection-foreground = 43413A
+        palette = 0=#43413A
+        palette = 8=#8F897A
+        palette = 1=#B04A3D
+        palette = 9=#C05F3A
+        palette = 2=#6F8F3D
+        palette = 10=#8BA85A
+        palette = 3=#B5841C
+        palette = 11=#D1A542
+        palette = 4=#4A7996
+        palette = 12=#6F9BB8
+        palette = 5=#8563A8
+        palette = 13=#A288C4
+        palette = 6=#4A8F85
+        palette = 14=#6FB0A4
+        palette = 7=#8F897A
+        palette = 15=#43413A
+        """
+        let theme: String
+        switch Theme.mode {
+        case .dark:  theme = dark
+        case .light: theme = light
+        case .warm:  theme = warm
+        }
         let path = (NSTemporaryDirectory() as NSString).appendingPathComponent("shepherd-theme.conf")
         guard (try? theme.write(toFile: path, atomically: true, encoding: .utf8)) != nil else { return nil }
         return path

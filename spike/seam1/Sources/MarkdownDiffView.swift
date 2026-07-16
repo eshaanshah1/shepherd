@@ -161,7 +161,7 @@ private enum MDPalette {
     static let added = Shepherd.Theme.needsCheck
     static let removed = Shepherd.Theme.error
     static let changed = Shepherd.Theme.working
-    static let code = Color(hex: 0x8AA9C7)   // subtle steel blue — off green (adds) and off the vivid changed-blue
+    static let code = Shepherd.Theme.pick(dark: 0x8AA9C7, light: 0x4A6B8A, warm: 0x4A7996)   // subtle steel blue — off green (adds) and off the vivid changed-blue
     static let link = Shepherd.Theme.accent
     static let hairline = Shepherd.Theme.hairline
     // Diff tints: `line` = whole-line wash, `dense` = the changed span within it.

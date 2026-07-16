@@ -40,4 +40,28 @@ final class WorktreeServiceTests: XCTestCase {
         let c = parseShepherdConfig("worktree-base = /should/not/apply")
         XCTAssertNil(c.worktreeBase)
     }
+
+    func testParseConfigThemeDefaultsDark() {
+        XCTAssertEqual(parseShepherdConfig("background = 000").theme, .dark)
+    }
+    func testParseConfigThemeLight() {
+        let c = parseShepherdConfig("# shepherd: theme = light")
+        XCTAssertEqual(c.theme, .light)
+    }
+    func testParseConfigThemeDarkExplicit() {
+        let c = parseShepherdConfig("# shepherd: theme = dark")
+        XCTAssertEqual(c.theme, .dark)
+    }
+    func testParseConfigThemeWarm() {
+        let c = parseShepherdConfig("# shepherd: theme = warm")
+        XCTAssertEqual(c.theme, .warm)
+    }
+    func testParseConfigThemeGarbageFallsBackDark() {
+        let c = parseShepherdConfig("# shepherd: theme = solarized")
+        XCTAssertEqual(c.theme, .dark)
+    }
+    func testParseConfigThemeExtraSpacingCaseInsensitive() {
+        let c = parseShepherdConfig("#   shepherd:   theme   =   LIGHT  ")
+        XCTAssertEqual(c.theme, .light)
+    }
 }

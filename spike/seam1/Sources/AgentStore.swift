@@ -31,6 +31,12 @@ final class AgentStore: ObservableObject {
     @Published var focusTick = 0
     func refocusActiveTerminal() { focusTick += 1 }
 
+    /// Bumped on a live config reload so the chrome re-renders and re-reads the
+    /// (now re-resolved) `Theme` tokens. Any @Published change re-renders the
+    /// store's observers (sidebar, content) without remounting terminals.
+    @Published private(set) var themeVersion = 0
+    func bumpTheme() { themeVersion += 1 }
+
     /// Open terminal searches, keyed by paneID (transient — like zoom, never persisted).
     /// libghostty does the matching + grid highlighting; this holds the query and the
     /// match counts it reports back.

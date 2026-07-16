@@ -2,9 +2,13 @@ import Foundation
 
 // MARK: - Pure core (unit-tested)
 
+/// Which theme the chrome + terminal grid render in. Resolved from the config.
+enum ThemeMode: Equatable { case dark, light, warm }
+
 /// Shepherd-specific settings parsed from its own config file.
 struct ShepherdConfig: Equatable {
     var worktreeBase: String? = nil
+    var theme: ThemeMode = .dark
 }
 
 /// Parse Shepherd directives out of the ghostty-syntax `~/.config/shepherd/config`.
@@ -24,6 +28,13 @@ func parseShepherdConfig(_ contents: String) -> ShepherdConfig {
         let value = body[body.index(after: eq)...].trimmingCharacters(in: .whitespaces)
         guard !value.isEmpty else { continue }
         if key == "worktree-base" { cfg.worktreeBase = value }
+        if key == "theme" {
+            switch value.lowercased() {
+            case "light": cfg.theme = .light
+            case "warm":  cfg.theme = .warm
+            default:      cfg.theme = .dark
+            }
+        }
     }
     return cfg
 }
