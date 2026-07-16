@@ -33,6 +33,10 @@ final class DiffReviewModel: ObservableObject {
     @Published var mdSources: [String: MarkdownDiffSource] = [:]
     /// `.md` paths the user flipped to the raw unified diff. Default (absent) = rendered.
     @Published var mdRaw: Set<String> = []
+    /// Thread id whose inline reply composer is open (GitHub threads), or nil.
+    @Published var replyingTo: String? = nil
+    /// Resolved thread ids the user expanded (resolved threads collapse by default).
+    @Published var expandedResolved: Set<String> = []
 
     func toggleCollapsed(_ path: String) {
         if collapsedFiles.contains(path) { collapsedFiles.remove(path) } else { collapsedFiles.insert(path) }
@@ -204,6 +208,22 @@ final class DiffReviewModel: ObservableObject {
     func removeComment(_ id: ReviewComment.ID) {
         comments.removeAll { $0.id == id }
     }
+
+    /// Append a GitHub review comment to the outgoing batch so it ships with the same
+    /// "Send to agent" button, framed for the agent via `ReviewComment.githubAuthor`.
+    func addGitHubComment(file: String, line: Int, side: DiffSide, author: String, body: String) {
+        comments.append(ReviewComment(id: UUID(), file: file, line: line, side: side,
+                                      text: body, githubAuthor: author))
+    }
+
+    func toggleExpandedResolved(_ id: String) {
+        if expandedResolved.contains(id) { expandedResolved.remove(id) } else { expandedResolved.insert(id) }
+    }
+
+    /// Post a reply via the store (needs the pane id — the panel is pane-scoped).
+    func replyToThread(id: String, body: String, forPane paneID: String) {
+        AgentStore.shared.replyToThread(id: id, body: body, forPane: paneID)
+    }
 }
 
 /// Whole-file syntax highlighting (HighlighterSwift / Highlight.js). atom-one-dark
@@ -335,6 +355,15 @@ struct DiffPanelView: View {
         model.load(cwd: store.cwd(forPane: pid), mode: model.mode)
     }
 
+    /// The pane's cached review threads, but only in vs-base mode (they anchor to the PR diff).
+    private var paneThreads: [GHReviewThread] {
+        guard model.mode == .branchVsBase, let pid = store.diffPanelPaneID else { return [] }
+        return store.reviewThreads[pid] ?? []
+    }
+    private func threadsForFile(_ path: String) -> [GHReviewThread] {
+        paneThreads.filter { $0.path == path }
+    }
+
     private var header: some View {
         HStack(spacing: 10) {
             Text("Review").font(.ui(12, .semibold)).foregroundStyle(Theme.textPrimary)
@@ -416,7 +445,8 @@ struct DiffPanelView: View {
                 LazyVStack(alignment: .leading, spacing: 14) {
                     ForEach(model.files, id: \.path) { file in
                         DiffFileView(file: file, model: model,
-                                     hasAgent: store.diffPanelPaneID.map { store.hasLiveAgent(paneID: $0) } ?? false)
+                                     hasAgent: store.diffPanelPaneID.map { store.hasLiveAgent(paneID: $0) } ?? false,
+                                     threads: threadsForFile(file.path))
                     }
                 }
                 .padding(12)
@@ -444,9 +474,36 @@ private struct DiffFileView: View {
     let file: DiffFile
     @ObservedObject var model: DiffReviewModel
     let hasAgent: Bool
+    let threads: [GHReviewThread]
     @State private var copied = false
+    @State private var showUnanchored = false
 
     private var collapsed: Bool { model.collapsedFiles.contains(file.path) }
+
+    /// Set of "side#line" keys for every diff line actually shown in this file.
+    private var anchoredKeys: Set<String> {
+        var keys: Set<String> = []
+        for hunk in file.hunks {
+            for line in hunk.lines {
+                if let a = HighlightMap.sourceLine(for: line) { keys.insert("\(a.side)#\(a.lineNo)") }
+            }
+        }
+        return keys
+    }
+    /// Threads that DO map to a visible line (rendered inline under their row).
+    private var anchoredThreads: [GHReviewThread] {
+        threads.filter { t in
+            guard let line = t.line else { return false }
+            return anchoredKeys.contains("\(t.side)#\(line)")
+        }
+    }
+    /// Threads whose line no longer maps to a shown diff line (outdated / nil line).
+    private var unanchoredThreads: [GHReviewThread] {
+        threads.filter { t in
+            guard let line = t.line else { return true }
+            return !anchoredKeys.contains("\(t.side)#\(line)")
+        }
+    }
 
     /// Always-visible "copy path" affordance next to the file name (GitHub-style); flips
     /// to a check for ~1s after copying. Copies the repo-relative path shown in the header.
@@ -503,6 +560,19 @@ private struct DiffFileView: View {
             }
             .padding(.bottom, 4)
 
+            if !collapsed && !unanchoredThreads.isEmpty {
+                DisclosureGroup(isExpanded: $showUnanchored) {
+                    ForEach(unanchoredThreads) { thread in
+                        GitHubThreadView(thread: thread, file: file.path, model: model)
+                            .padding(.vertical, 4)
+                    }
+                } label: {
+                    Text("\(unanchoredThreads.count) review comment\(unanchoredThreads.count == 1 ? "" : "s") not on the current diff")
+                        .font(.ui(11, .medium)).foregroundStyle(Theme.textSecondary)
+                }
+                .padding(.bottom, 6)
+            }
+
             if collapsed {
                 EmptyView()
             } else if model.showsRendered(file), let src = model.mdSources[file.path] {
@@ -520,7 +590,8 @@ private struct DiffFileView: View {
             } else {
                 ForEach(Array(file.hunks.enumerated()), id: \.offset) { _, hunk in
                     ForEach(Array(hunk.lines.enumerated()), id: \.offset) { _, line in
-                        DiffLineRow(line: line, file: file, model: model, hasAgent: hasAgent)
+                        DiffLineRow(line: line, file: file, model: model, hasAgent: hasAgent,
+                                    threads: anchoredThreads)
                     }
                 }
             }
@@ -603,6 +674,7 @@ private struct DiffLineRow: View {
     let file: DiffFile
     @ObservedObject var model: DiffReviewModel
     let hasAgent: Bool
+    let threads: [GHReviewThread]
     @State private var hovering = false
 
     var body: some View {
@@ -639,6 +711,10 @@ private struct DiffLineRow: View {
                 CommentBubble(comment: c) { model.removeComment(c.id) }
                     .padding(.leading, 52).padding(.vertical, 4)
             }
+            ForEach(threadsHere) { thread in
+                GitHubThreadView(thread: thread, file: file.path, model: model)
+                    .padding(.leading, 52).padding(.vertical, 4)
+            }
             if let a = anchor, model.composing == a {
                 CommentComposer(anchor: a, model: model)
                     .padding(.leading, 52).padding(.vertical, 4)
@@ -654,6 +730,10 @@ private struct DiffLineRow: View {
     private var commentsHere: [ReviewComment] {
         guard let a = anchor else { return [] }
         return model.comments.filter { $0.file == a.file && $0.line == a.line && $0.side == a.side }
+    }
+    private var threadsHere: [GHReviewThread] {
+        guard let a = anchor else { return [] }
+        return threads.filter { $0.line == a.line && $0.side == a.side }
     }
 
     @ViewBuilder private var highlightedText: some View {
@@ -803,5 +883,144 @@ private struct CommentBubble: View {
         .frame(maxWidth: 440, alignment: .leading)
         .shepherdCard()
         .onHover { hovering = $0 }
+    }
+}
+
+/// A GitHub PR review thread, rendered in Shepherd's idiom but unmistakably GitHub:
+/// a violet left rail + octocat glyph, author/time header, stacked replies, and a
+/// footer of Reply / Resolve / Send-to-agent. Resolved threads dim and collapse to
+/// their root comment until expanded.
+private struct GitHubThreadView: View {
+    let thread: GHReviewThread
+    let file: String
+    @ObservedObject var model: DiffReviewModel
+    @EnvironmentObject var store: AgentStore
+
+    private var expanded: Bool { !thread.isResolved || model.expandedResolved.contains(thread.id) }
+    private var visibleComments: [GHReviewComment] {
+        expanded ? thread.comments : Array(thread.comments.prefix(1))
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            RoundedRectangle(cornerRadius: 2).fill(Theme.prMerged.opacity(0.6)).frame(width: 3)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    TablerIcon(paths: Tabler.brandGithub, size: 13).foregroundStyle(Theme.prMerged)
+                    Text("Review thread").font(.ui(11, .semibold)).foregroundStyle(Theme.prMerged)
+                    if thread.isResolved {
+                        Text("Resolved").font(.ui(10, .medium)).foregroundStyle(Theme.textDim)
+                    }
+                    Spacer()
+                    if thread.isResolved {
+                        Button { model.toggleExpandedResolved(thread.id) } label: {
+                            Text(expanded ? "Hide" : "Show").font(.ui(10, .medium)).foregroundStyle(Theme.textDim)
+                        }.buttonStyle(.plain).focusable(false)
+                    }
+                }
+                ForEach(visibleComments) { c in
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text("@\(c.author.isEmpty ? "unknown" : c.author)")
+                                .font(.ui(11, .semibold)).foregroundStyle(Theme.textPrimary)
+                            Text(Self.relative(c.createdAt)).font(.ui(10)).foregroundStyle(Theme.textDim)
+                        }
+                        Text(c.body).font(.ui(12)).foregroundStyle(Theme.textPrimary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                if model.replyingTo == thread.id {
+                    ThreadReplyComposer(thread: thread, paneID: store.diffPanelPaneID, model: model)
+                } else {
+                    footer
+                }
+            }
+            .opacity(thread.isResolved && !expanded ? 0.55 : 1)
+        }
+        .padding(10)
+        .frame(maxWidth: 460, alignment: .leading)
+        .shepherdCard()
+    }
+
+    private var footer: some View {
+        HStack(spacing: 14) {
+            actionButton("Reply") { model.replyingTo = thread.id }
+            actionButton(thread.isResolved ? "Reopen" : "Resolve") {
+                if let pid = store.diffPanelPaneID {
+                    store.setThreadResolved(id: thread.id, !thread.isResolved, forPane: pid)
+                }
+            }
+            actionButton("Send to agent") {
+                if let root = thread.comments.first {
+                    model.addGitHubComment(file: file, line: thread.line ?? 0, side: thread.side,
+                                           author: root.author, body: root.body)
+                }
+            }
+            Spacer()
+        }
+    }
+
+    private func actionButton(_ title: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title).font(.ui(11, .semibold)).foregroundStyle(Theme.prMerged)
+                .contentShape(Rectangle())
+        }.buttonStyle(.plain).focusable(false)
+    }
+
+    /// Compact relative time from an ISO8601 timestamp; falls back to the raw string.
+    static func relative(_ iso: String) -> String {
+        let fmt = ISO8601DateFormatter()
+        guard let date = fmt.date(from: iso) else { return iso }
+        let rel = RelativeDateTimeFormatter()
+        rel.unitsStyle = .abbreviated
+        return rel.localizedString(for: date, relativeTo: Date())
+    }
+}
+
+/// Inline reply composer for a GitHub thread — mirrors `CommentComposer`'s look, posts
+/// via the store, and closes on send/cancel.
+private struct ThreadReplyComposer: View {
+    let thread: GHReviewThread
+    let paneID: String?
+    @ObservedObject var model: DiffReviewModel
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    private var empty: Bool { text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextEditor(text: $text)
+                .font(.ui(12)).scrollContentBackground(.hidden).focused($focused)
+                .frame(height: 56)
+                .overlay(alignment: .topLeading) {
+                    if empty {
+                        Text("Reply on GitHub…").font(.ui(12)).foregroundStyle(Theme.textDim)
+                            .padding(.leading, 5).padding(.top, 1).allowsHitTesting(false)
+                    }
+                }
+            HStack(spacing: 6) {
+                Spacer()
+                Button { model.replyingTo = nil } label: {
+                    Text("Cancel").font(.ui(11, .medium)).foregroundStyle(Theme.textSecondary)
+                        .padding(.horizontal, 8).padding(.vertical, 3).contentShape(Rectangle())
+                }.buttonStyle(.plain).focusable(false)
+                Button {
+                    let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !t.isEmpty, let pid = paneID {
+                        model.replyToThread(id: thread.id, body: t, forPane: pid)
+                    }
+                    model.replyingTo = nil
+                } label: {
+                    Text("Reply").font(.ui(11, .semibold))
+                        .foregroundStyle(empty ? Theme.textDim : Theme.textPrimary)
+                        .padding(.horizontal, 9).padding(.vertical, 3)
+                        .background(empty ? Color.clear : Theme.surface3)
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        .contentShape(Rectangle())
+                }.buttonStyle(.plain).disabled(empty).focusable(false)
+            }
+        }
+        .onAppear { focused = true }
     }
 }

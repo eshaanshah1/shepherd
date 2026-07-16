@@ -167,6 +167,21 @@ final class DiffModelTests: XCTestCase {
         XCTAssertEqual(ReviewPrompt.compose(comments), expected)
     }
 
+    func test_composesGitHubSourcedReviewPrompt() {
+        let comments = [
+            ReviewComment(id: UUID(), file: "src/foo.rb", line: 42, side: .new,
+                          text: "handle nil here", githubAuthor: "alice"),
+        ]
+        let expected = """
+        Review feedback on your changes:
+
+        1. Address this PR review comment from @alice on src/foo.rb:42: handle nil here
+
+        Please address these.
+        """
+        XCTAssertEqual(ReviewPrompt.compose(comments), expected)
+    }
+
     func test_highlightMapPicksCorrectSide() {
         let added = DiffLine(kind: .added, text: "x", oldLineNo: nil, newLineNo: 7)
         let removed = DiffLine(kind: .removed, text: "y", oldLineNo: 3, newLineNo: nil)

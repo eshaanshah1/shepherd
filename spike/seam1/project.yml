@@ -86,6 +86,7 @@ targets:
       - path: Sources/WorktreeService.swift
       - path: Sources/WorktreeArchive.swift
       - path: Sources/PRStatus.swift
+      - path: Sources/PRComments.swift
       - path: Sources/SequenceAlign.swift
       - path: Sources/MarkdownInlineDiff.swift
       - path: Sources/MarkdownFrontmatter.swift
