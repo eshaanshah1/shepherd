@@ -12,53 +12,88 @@ extension Color {
     }
 }
 
-/// Design tokens. Flat near-black, premium-minimal — modeled on T3 Code /
-/// Conductor. State colors are soft and used sparingly.
+/// Design tokens. Flat near-black (dark) or warm off-white (light),
+/// premium-minimal — modeled on T3 Code / Conductor. State colors are soft and
+/// used sparingly. The active palette is chosen once at launch from
+/// `# shepherd: theme = light|dark` in `~/.config/shepherd/config`; token names
+/// are identical across themes so call sites never branch on the mode.
 enum Theme {
-    static let ground        = Color(hex: 0x0F0F11)
-    static let raised        = Color(hex: 0x1D1D20)
-    static let hairline      = Color(hex: 0x232327)
-    // Ghost separator for inter-group lines — white at ~5% alpha so groups read
-    // apart on whitespace, not a visible rule.
-    static let divider       = Color.white.opacity(0.05)
-    static let textPrimary   = Color(hex: 0xEDEDED)
-    static let textSecondary = Color(hex: 0x8C8C92)
-    static let textDim       = Color(hex: 0x5F5F66)
+    /// The active theme. Resolved from the config at launch and re-resolved on a
+    /// live config reload (⌘⇧R → `reloadMode()`). Mutable so tokens (computed
+    /// below) re-resolve against it without a relaunch.
+    static var mode: ThemeMode = resolveMode()
 
-    static let working    = Color(hex: 0x5B9DF8)   // busy — leave it
-    static let needsCheck = Color(hex: 0x43C988)   // done — ready for you
-    static let blocked    = Color(hex: 0xE5A23D)   // your move
-    static let error      = Color(hex: 0xE5645D)   // broke
-    static let idle       = Color(hex: 0x8C8C92)   // between turns
-    static let prMerged   = Color(hex: 0xA371F7)   // merged PR — GitHub-ish violet
+    private static func resolveMode() -> ThemeMode {
+        guard let cfg = try? String(contentsOfFile: (NSHomeDirectory() as NSString)
+            .appendingPathComponent(".config/shepherd/config"), encoding: .utf8)
+        else { return .dark }
+        return parseShepherdConfig(cfg).theme
+    }
+
+    /// Re-read the config file and update `mode`. The chrome re-render + libghostty
+    /// grid reload are driven by the caller (`GhosttyApp.reloadConfig`).
+    static func reloadMode() { mode = resolveMode() }
+
+    /// Pick a per-theme color / raw hex. Tokens are computed `static var` so each
+    /// read re-resolves against the current `mode` — cheap, and lets a live reload
+    /// recolor without a relaunch. `warm` is the cream/sepia middle-ground light
+    /// theme (mapped from ~/.claude/themes/shepherd.json).
+    static func pick(dark: UInt32, light: UInt32, warm: UInt32) -> Color {
+        Color(hex: pickHex(dark: dark, light: light, warm: warm))
+    }
+    static func pickHex(dark: UInt32, light: UInt32, warm: UInt32) -> UInt32 {
+        switch mode {
+        case .dark:  return dark
+        case .light: return light
+        case .warm:  return warm
+        }
+    }
+
+    static var ground        : Color { pick(dark: 0x0F0F11, light: 0xFBFBF9, warm: 0xFAF4E6) }
+    static var raised        : Color { pick(dark: 0x1D1D20, light: 0xF0F0EE, warm: 0xF0E8D4) }
+    static var hairline      : Color { pick(dark: 0x232327, light: 0xDEDEDA, warm: 0xC9BFA8) }
+    // Ghost separator for inter-group lines — a low-alpha wash so groups read
+    // apart on whitespace, not a visible rule (white on dark, black on the light themes).
+    static var divider       : Color { mode == .dark ? Color.white.opacity(0.05)
+                                                      : Color.black.opacity(0.06) }
+    static var textPrimary   : Color { pick(dark: 0xEDEDED, light: 0x1A1A1E, warm: 0x43413A) }
+    static var textSecondary : Color { pick(dark: 0x8C8C92, light: 0x6A6A72, warm: 0x8F897A) }
+    static var textDim       : Color { pick(dark: 0x5F5F66, light: 0x9A9AA2, warm: 0xA39A86) }
+
+    static var working    : Color { pick(dark: 0x5B9DF8, light: 0x2F7DE1, warm: 0x4A7996) }   // busy — leave it
+    static var needsCheck : Color { pick(dark: 0x43C988, light: 0x1FA463, warm: 0x6F8F3D) }   // done — ready for you
+    static var blocked    : Color { pick(dark: 0xE5A23D, light: 0xC7811A, warm: 0xB5841C) }   // your move
+    static var error      : Color { pick(dark: 0xE5645D, light: 0xD23A33, warm: 0xB04A3D) }   // broke
+    static var idle       : Color { pick(dark: 0x8C8C92, light: 0x77777E, warm: 0x8F897A) }   // between turns
+    static var prMerged   : Color { pick(dark: 0xA371F7, light: 0x8250DF, warm: 0x8563A8) }   // merged PR — GitHub-ish violet
 
     // Elevation ramp — surfaces separate by a few % lightness, not borders/shadows
     // (Linear discipline). `raised` above is kept for existing views; new surfaces
-    // use these. ground → surface1 (panels) → surface2 (cards) → surface3 (hover).
-    static let surface1 = Color(hex: 0x141417)
-    static let surface2 = Color(hex: 0x1A1A1E)
-    static let surface3 = Color(hex: 0x212127)
+    // use these. ground → surface1 (panels) → surface2 (cards) → surface3 (hover);
+    // dark rises lighter, the light themes sink to a warmer/greyer tint.
+    static var surface1 : Color { pick(dark: 0x141417, light: 0xF3F3F1, warm: 0xF3ECDA) }
+    static var surface2 : Color { pick(dark: 0x1A1A1E, light: 0xEEEEEC, warm: 0xECE3CD) }
+    static var surface3 : Color { pick(dark: 0x212127, light: 0xE6E6E3, warm: 0xE3D9BF) }
 
-    static let accent = working                    // the one accent, spent sparingly
+    static var accent : Color { working }          // the one accent, spent sparingly
     static func accentWash(_ o: Double = 0.14) -> Color { working.opacity(o) }
 
-    /// The **Shepherd code theme** — our own syntax palette for the diff panel.
-    /// Deliberately muted and harmonious on the near-black ground: most code is a
-    /// soft near-white, comments recede to a dim slate, and the accents are
-    /// desaturated so nothing shouts. This is NOT the terminal's ANSI palette (that
-    /// one is tuned for terminal legibility and reads as a rainbow in a review
-    /// surface). Token categories are remapped onto these by nearest hue.
-    static let codePalette: [UInt32] = [
-        0xC5CAD3,   // default text / punctuation — soft near-white
-        0x5B6270,   // comments — dim slate, recedes
-        0xB08CD9,   // keyword / control — muted violet
-        0x8FBF9F,   // string — sage
-        0xD2A277,   // number / constant — warm amber
-        0x6C9EE6,   // function / method — soft blue (kin of the accent)
-        0xD8C08A,   // type / class — muted gold
-        0xD98A82,   // variable / tag — muted coral
-        0x6FBAB0,   // built-in / attribute — muted teal
-    ]
+    /// Shepherd's own syntax palette — the "restrained" scheme. Three accents drawn
+    /// straight from the state-dot colors (keyword = working blue, string = done green,
+    /// number = blocked amber); everything else stays in the text ramp so nothing
+    /// shouts on the near-black ground. Both the diff and the editor render from this,
+    /// so code reads in the app's voice — not a stock IDE theme.
+    enum Code {
+        static var text     : UInt32 { pickHex(dark: 0xC8C8CE, light: 0x2A2A30, warm: 0x43413A) }
+        static var comment  : UInt32 { pickHex(dark: 0x5F5F66, light: 0x9A9AA2, warm: 0x8F897A) }
+        static var keyword  : UInt32 { pickHex(dark: 0x5B9DF8, light: 0x2F7DE1, warm: 0x4A7996) }   // working
+        static var string   : UInt32 { pickHex(dark: 0x43C988, light: 0x1FA463, warm: 0x6F8F3D) }   // needsCheck
+        static var number   : UInt32 { pickHex(dark: 0xE5A23D, light: 0xC7811A, warm: 0xB5841C) }   // blocked
+        static var type     : UInt32 { pickHex(dark: 0x8C8C92, light: 0x6A6A72, warm: 0x8F897A) }   // secondary — quiet
+        static var function : UInt32 { pickHex(dark: 0xEDEDED, light: 0x1A1A1E, warm: 0x43413A) }   // primary
+        static var variable : UInt32 { pickHex(dark: 0xC8C8CE, light: 0x2A2A30, warm: 0x5A564C) }   // text
+        static var builtin  : UInt32 { pickHex(dark: 0x5B9DF8, light: 0x2F7DE1, warm: 0x4A7996) }   // working
+    }
 }
 
 extension Font {

@@ -164,6 +164,7 @@ a tab's title is derived from its focused pane.
 | `⌘⇧A` | jump to next pane needing attention (blocked / need-to-check / error — across **all** workspaces) |
 | `⌘⇧N` | new workspace |
 | `⌃⇥` / `⌃⇧⇥` | next / previous workspace (wrap) |
+| `⌘⇧R` | reload config live (re-read `~/.config/shepherd/config`; repaints chrome + terminal grid, agents stay alive) |
 
 A new pane inherits its parent pane's cwd. Splitting clears the tab's zoom.
 
@@ -267,7 +268,7 @@ falls back to a plain shell. Requires the plugin reporting `session_id` — afte
 
 ## Critical gotchas (read before building / debugging)
 
-- **Shepherd config keys ride ghostty comments**: `~/.config/shepherd/config` is parsed by libghostty, so Shepherd-specific keys (currently `worktree-base`) live on `# shepherd: key = value` comment lines that libghostty ignores. `parseShepherdConfig` (in `WorktreeService.swift`) reads them; don't add a bare non-ghostty key to that file.
+- **Shepherd config keys ride ghostty comments**: `~/.config/shepherd/config` is parsed by libghostty, so Shepherd-specific keys (`worktree-base`, `theme = dark|light|warm`) live on `# shepherd: key = value` comment lines that libghostty ignores. `parseShepherdConfig` (in `WorktreeService.swift`) reads them; don't add a bare non-ghostty key to that file. `theme` is resolved by `Theme.mode` at launch and re-resolved live on **⌘⇧R** (`GhosttyApp.reloadConfig` → `Theme.reloadMode` + rebuild the ghostty config, push to app + every registered surface, bump `AgentStore.themeVersion` to re-render the chrome — agents survive since surfaces get `updateNSView`, not a remount). `Theme` tokens are computed `static var` so they re-resolve; both `Theme.swift` and `writeBaseTheme()` in `Ghostty.swift` branch on the mode, so keep the two palettes in sync ([ADR 0010](.claude/adr/0010-terminal-theme-from-shepherd-config.md)). Known gap: the chrome's own mono font (`Theme.monoFontName`) is still cached until relaunch.
 - **macOS-26 toolchain** ([ADR 0002](.claude/adr/0002-libghostty-build-on-macos-26.md)): the ziglang.org Zig won't link (use brew `zig@0.15`); Metal shaders need the downloaded Metal Toolchain; build the xcframework only (`-Demit-macos-app=false`); Apple `libtool` dedupes same-named members so the combined fat archive is **incomplete** — the build script fixes this with an `ld -r -all_load` merge of the constituent archives.
 - **`report.sh` is pure bash on purpose** ([ADR 0004](.claude/adr/0004-plugin-protocol-and-ordering.md)). Do NOT add `python3` back — its ~50ms startup delayed `PreToolUse` past `Stop` and flipped state. State is decided by event name + env; only 3 cosmetic events parse (via `jq`).
 - **Ordering guard** ([ADR 0004](.claude/adr/0004-plugin-protocol-and-ordering.md)): mid-turn events only apply while the tab is `working`/`blocked`. A finished turn (`need-to-check`) is only left by a new `UserPromptSubmit` or focus. This is deliberate; don't remove it.

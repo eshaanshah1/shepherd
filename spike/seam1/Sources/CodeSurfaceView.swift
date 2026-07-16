@@ -118,11 +118,18 @@ struct CodeEditorView: View {
         CodeLanguage.detectLanguageFrom(url: URL(fileURLWithPath: filePath))
     }
 
+    /// The terminal grid's mono face (JetBrains Mono), so the editor matches the
+    /// diff and the terminal. Falls back to the system mono if it can't load.
+    private var editorFont: NSFont {
+        NSFont(name: Theme.monoFontName ?? "", size: 13)
+            ?? NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+    }
+
     private var configuration: SourceEditorConfiguration {
         SourceEditorConfiguration(
             appearance: .init(
                 theme: shepherdEditorTheme,
-                font: NSFont.monospacedSystemFont(ofSize: 13, weight: .regular),
+                font: editorFont,
                 wrapLines: false
             ),
             behavior: .init(isEditable: true),
@@ -145,28 +152,28 @@ extension Notification.Name {
     static let shepherdSaveCodeSurface = Notification.Name("shepherd.codeSurface.save")
 }
 
-/// Editor theme matching the diff's `atom-one-dark` (HighlighterSwift) palette, so
-/// syntax colors read identically between the diff and the editor. Background stays
-/// Shepherd `ground` to match the app chrome (the diff panel sits on it too).
+/// The editor theme, built from Shepherd's own `Theme.Code` palette. The diff renders
+/// from the same palette, so syntax reads identically between the two surfaces.
+/// Background is Shepherd `ground`, matching the app chrome and the diff panel.
 private var shepherdEditorTheme: EditorTheme {
     func attr(_ hex: UInt32) -> EditorTheme.Attribute { .init(color: NSColor(hex: hex)) }
     return EditorTheme(
-        text: attr(0xABB2BF),
-        insertionPoint: NSColor(hex: 0x528BFF),
-        invisibles: attr(0x3B4048),
-        background: NSColor(hex: 0x0F0F11),
-        lineHighlight: NSColor(hex: 0x2C313A),
-        selection: NSColor(hex: 0x3E4451),
-        keywords: attr(0xC678DD),
-        commands: attr(0x56B6C2),
-        types: attr(0xE5C07B),
-        attributes: attr(0xD19A66),
-        variables: attr(0xE06C75),
-        values: attr(0x56B6C2),
-        numbers: attr(0xD19A66),
-        strings: attr(0x98C379),
-        characters: attr(0x98C379),
-        comments: attr(0x5C6370)
+        text: attr(Theme.Code.text),
+        insertionPoint: NSColor(hex: Theme.Code.keyword),
+        invisibles: attr(Theme.pickHex(dark: 0x3B4048, light: 0xC8C8C4, warm: 0xCFC6B0)),
+        background: NSColor(hex: Theme.pickHex(dark: 0x0F0F11, light: 0xFBFBF9, warm: 0xFAF4E6)),
+        lineHighlight: NSColor(hex: Theme.pickHex(dark: 0x1A1A1E, light: 0xEEEEEC, warm: 0xECE3CD)),
+        selection: NSColor(hex: Theme.pickHex(dark: 0x2E2E36, light: 0xD6E4FB, warm: 0xE0D3B4)),
+        keywords: attr(Theme.Code.keyword),
+        commands: attr(Theme.Code.function),
+        types: attr(Theme.Code.type),
+        attributes: attr(Theme.Code.type),
+        variables: attr(Theme.Code.variable),
+        values: attr(Theme.Code.number),
+        numbers: attr(Theme.Code.number),
+        strings: attr(Theme.Code.string),
+        characters: attr(Theme.Code.string),
+        comments: attr(Theme.Code.comment)
     )
 }
 

@@ -114,6 +114,7 @@ final class GhosttySurfaceView: NSView {
         guard surface == nil, let window, let app = GhosttyApp.shared.app else { return }
         guard let s = makeSurface(app: app, window: window) else { return }
         surface = s
+        GhosttyApp.shared.register(self)
         ghostty_surface_set_focus(s, true)
         ghostty_surface_set_occlusion(s, true)
         updateDisplayID()                       // lock vsync to this screen's refresh rate
@@ -373,7 +374,15 @@ final class GhosttySurfaceView: NSView {
 
     deinit {
         NotificationCenter.default.removeObserver(self)
+        GhosttyApp.shared.unregister(self)
         if let surface { ghostty_surface_free(surface) }
+    }
+
+    /// Push a rebuilt config to this surface (live config reload). The surface —
+    /// and its PTY/agent — survives; only the grid's config (theme, font, …) changes.
+    func updateConfig(_ cfg: ghostty_config_t) {
+        guard let surface else { return }
+        ghostty_surface_update_config(surface, cfg)
     }
 }
 
