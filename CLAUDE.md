@@ -224,6 +224,17 @@ run in the pane's cwd (`GitHubService.swift`), fetched when a pane enters `.idle
 (transient). The whole feature is **gated on `GH.isInstalled`** (resolves `gh`'s real path,
 since a GUI `.app` misses Homebrew's PATH) — no `gh` ⇒ the normal state dot stays. Pure
 reduce/parse in `PRStatus.swift` (`enum PR`, unit-tested); single-pane tabs only (v1).
+
+**PR review comments in the diff panel:** a PR's inline **review threads** are pulled into
+the diff panel (vs-base mode only) via `gh api graphql` (`GH.reviewThreads`/`replyToThread`/
+`setThreadResolved`), cached per-pane in `AgentStore.reviewThreads` (approach B, next to
+`prStatuses`, fetched on the same triggers). They render as **violet octocat cards** with
+**Reply / Resolve / Send-to-agent** — distinct from local comments (blue, agent-bound);
+send-to-agent appends a GitHub-tagged `ReviewComment` (`githubAuthor`) to the same
+"Send to agent" batch. Threads whose line no longer maps surface in a per-file "N not on
+the current diff" disclosure. An idle agent's PR icon shows a **red `message` badge with the
+unresolved count** (`PRThreads.unresolvedCount`, overrides the PR-kind glyph). Pure parse in
+`PRComments.swift` (`PRThreads`, `PRCommentsTests`); the `reviewRequired` eye icon was removed.
 **Remote (mirror) workspaces** are host-authoritative: the client forwards
 `cmdSetWorkspaceDirectory` / `cmdNewWorktreeTab` to the host (which owns the repo + runs
 git), and `defaultPath` rides `WorkspaceTree` back so the mirror knows it; the client's

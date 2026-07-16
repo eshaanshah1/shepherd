@@ -149,14 +149,19 @@ struct ReviewComment: Equatable, Identifiable {
     let line: Int
     let side: DiffSide
     let text: String
+    var githubAuthor: String? = nil   // set = sourced from a GitHub review thread; nil = local
 }
 
 enum ReviewPrompt {
     /// Compose accumulated comments into one prompt for the agent. Empty → "".
+    /// GitHub-sourced entries are framed as review comments to address.
     static func compose(_ comments: [ReviewComment]) -> String {
         guard !comments.isEmpty else { return "" }
         let body = comments.enumerated().map { idx, c in
-            "\(idx + 1). \(c.file):\(c.line) — \(c.text)"
+            if let author = c.githubAuthor {
+                return "\(idx + 1). Address this PR review comment from @\(author) on \(c.file):\(c.line): \(c.text)"
+            }
+            return "\(idx + 1). \(c.file):\(c.line) — \(c.text)"
         }.joined(separator: "\n")
         return "Review feedback on your changes:\n\n\(body)\n\nPlease address these."
     }

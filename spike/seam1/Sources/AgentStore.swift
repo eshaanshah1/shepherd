@@ -23,6 +23,10 @@ final class AgentStore: ObservableObject {
     private var prInFlight: Set<String> = []
     private var prTimer: Timer?
 
+    /// PR review threads per pane (keyed by pane id), fetched alongside PR status.
+    @Published private(set) var reviewThreads: [String: [GHReviewThread]] = [:]
+    private var reviewThreadsInFlight: Set<String> = []
+
     /// Set by the `+` button / ⌘⇧N to ask the UI for a name before creating a
     /// workspace; ContentView presents the naming modal off this.
     @Published var promptingNewWorkspace = false
@@ -482,8 +486,13 @@ final class AgentStore: ObservableObject {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.prInFlight.remove(paneID)
-                if let status { self.prStatuses[paneID] = status }
-                else { self.prStatuses.removeValue(forKey: paneID) }
+                if let status {
+                    self.prStatuses[paneID] = status
+                    self.refreshReviewThreads(forPane: paneID)   // PR exists → pull its review threads
+                } else {
+                    self.prStatuses.removeValue(forKey: paneID)
+                    self.reviewThreads.removeValue(forKey: paneID)
+                }
             }
         }
     }
@@ -492,6 +501,45 @@ final class AgentStore: ObservableObject {
     func openPR(forPane paneID: String) {
         guard let url = prStatuses[paneID].flatMap({ URL(string: $0.url) }) else { return }
         NSWorkspace.shared.open(url)
+    }
+
+    /// Fetch (off-main) the review threads for a pane's PR and cache them; clears the
+    /// entry when there's no PR. Reads owner/repo from the cached PRStatus url. No-op
+    /// without `gh` / a PR / a cwd, or while already fetching.
+    func refreshReviewThreads(forPane paneID: String) {
+        guard GH.isInstalled, !reviewThreadsInFlight.contains(paneID),
+              let status = prStatuses[paneID],
+              let cwd = cwd(forPane: paneID), !cwd.isEmpty,
+              let (owner, repo) = PRThreads.ownerRepo(fromURL: status.url) else { return }
+        reviewThreadsInFlight.insert(paneID)
+        let number = status.number
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let threads = GH.reviewThreads(owner: owner, repo: repo, number: number, inDir: cwd)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.reviewThreadsInFlight.remove(paneID)
+                if let threads { self.reviewThreads[paneID] = threads }
+                else { self.reviewThreads.removeValue(forKey: paneID) }
+            }
+        }
+    }
+
+    /// Post a reply into a thread, then refetch to reconcile. Off-main.
+    func replyToThread(id: String, body: String, forPane paneID: String) {
+        guard let cwd = cwd(forPane: paneID), !cwd.isEmpty else { return }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            _ = GH.replyToThread(id: id, body: body, inDir: cwd)
+            DispatchQueue.main.async { self?.refreshReviewThreads(forPane: paneID) }
+        }
+    }
+
+    /// Resolve / unresolve a thread, then refetch to reconcile. Off-main.
+    func setThreadResolved(id: String, _ resolved: Bool, forPane paneID: String) {
+        guard let cwd = cwd(forPane: paneID), !cwd.isEmpty else { return }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            _ = GH.setThreadResolved(id: id, resolved, inDir: cwd)
+            DispatchQueue.main.async { self?.refreshReviewThreads(forPane: paneID) }
+        }
     }
 
     /// Forget an archive entirely (protection ref + branch). Same semantics as expiry.

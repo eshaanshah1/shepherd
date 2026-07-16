@@ -453,7 +453,10 @@ private struct TabRow: View {
                 Spacer(minLength: 6)
             } else {
                 if state == .idle, let pr = store.prStatuses[tab.focusedPaneID] {
-                    PRStatusIcon(status: pr) { store.openPR(forPane: tab.focusedPaneID) }
+                    PRStatusIcon(status: pr,
+                                 unresolvedCount: PRThreads.unresolvedCount(store.reviewThreads[tab.focusedPaneID] ?? [])) {
+                        store.openPR(forPane: tab.focusedPaneID)
+                    }
                 } else {
                     LeadingIcon(state: state)
                 }
@@ -864,9 +867,6 @@ enum Tabler {
     static let file = [
         "M14 3v4a1 1 0 0 0 1 1h4",
         "M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z"]
-    static let eye = [
-        "M10 12a2 2 0 1 0 4 0a2 2 0 1 0 -4 0",
-        "M21 12c-2.4 4 -5.4 6 -9 6c-3.6 0 -6.6 -2 -9 -6c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6"]
     static let x = ["M18 6l-12 12", "M6 6l12 12"]
     static let copy = [
         "M8 8m0 2a2 2 0 0 1 2 -2h8a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-8a2 2 0 0 1 -2 -2z",
@@ -875,6 +875,12 @@ enum Tabler {
         "M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4",
         "M13.5 6.5l4 4"]
     static let check = ["M5 12l5 5l10 -10"]
+    static let message = [
+        "M8 9h8",
+        "M8 13h6",
+        "M18 4a3 3 0 0 1 3 3v8a3 3 0 0 1 -3 3h-5l-5 3v-3h-2a3 3 0 0 1 -3 -3v-8a3 3 0 0 1 3 -3h12z"]
+    static let brandGithub = [
+        "M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5"]
 }
 
 /// Renders a Tabler stroke-icon from its SVG path list as a tint-able template
@@ -912,6 +918,7 @@ struct TablerIcon: View {
 /// family conveys open/merged/closed/draft; color conveys the finer status.
 struct PRStatusIcon: View {
     let status: PRStatus
+    var unresolvedCount: Int = 0
     let onOpen: () -> Void
     @State private var hovering = false
 
@@ -933,12 +940,27 @@ struct PRStatusIcon: View {
         .focusable(false)
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.12), value: hovering)
-        .help("PR #\(status.number) · \(Self.label(status.kind)) — click to open")
+        .help(unresolvedCount > 0
+              ? "PR #\(status.number) · \(unresolvedCount) unresolved review comment\(unresolvedCount == 1 ? "" : "s") — click to open"
+              : "PR #\(status.number) · \(Self.label(status.kind)) — click to open")
     }
 
     @ViewBuilder private var glyph: some View {
         let color = Self.color(status.kind)
-        if status.kind == .checksFailing {
+        if unresolvedCount > 0 {
+            // Unresolved review comments override the PR-kind glyph — a red comment icon + count.
+            let label = unresolvedCount > 9 ? "9+" : "\(unresolvedCount)"
+            TablerIcon(paths: Tabler.message, size: 13)
+                .foregroundStyle(Theme.error)
+                .overlay(alignment: .bottomTrailing) {
+                    Text(label)
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundStyle(Theme.error)
+                        .padding(.horizontal, 1)
+                        .background(Capsule().fill(Theme.ground))
+                        .offset(x: 4, y: 3)
+                }
+        } else if status.kind == .checksFailing {
             // Keep the PR glyph, add a tiny Tabler-x badge bottom-right.
             TablerIcon(paths: Tabler.pullRequest, size: 13)
                 .foregroundStyle(color)
@@ -961,8 +983,7 @@ struct PRStatusIcon: View {
         case .closed:           return Tabler.pullRequestClosed
         case .draft:            return Tabler.pullRequestDraft
         case .changesRequested: return Tabler.file
-        case .reviewRequired:   return Tabler.eye
-        default:                return Tabler.pullRequest   // open, mergeReady, checksPending, checksFailing (badge in glyph)
+        default:                return Tabler.pullRequest   // open, mergeReady, checksPending, checksFailing, reviewRequired (badge in glyph)
         }
     }
 
