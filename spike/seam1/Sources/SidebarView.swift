@@ -74,6 +74,9 @@ struct SidebarView: View {
 
     private var overflowMenu: some View {
         Menu {
+            Toggle("Serve to remote devices", isOn: Binding(
+                get: { store.isServing },
+                set: { store.setServing($0) }))
             Button("Add remote host…") { promptAddRemoteHost() }
             if store.isServing {
                 Divider()
