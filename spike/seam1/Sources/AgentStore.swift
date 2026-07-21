@@ -67,10 +67,10 @@ final class AgentStore: ObservableObject {
     /// Injected into each pane's PTY as $SHEPHERD_SOCK so the Claude plugin can reach us.
     let socketPath: String
 
-    /// Machine-level "serve panes through the helper" switch. Off by default;
-    /// flip with `defaults write com.shepherd.Shepherd shepherd.remote.serving -bool YES`
-    /// (a real Settings toggle lands in M4). Read at pane-creation time, so it
-    /// affects panes opened after it changes.
+    /// Machine-level "serve panes through the helper" switch. Off by default; flip via
+    /// the `⋯` sidebar menu ("Serve to remote devices", `setServing`) or, headless,
+    /// `defaults write com.shepherd.Shepherd shepherd.remote.serving -bool YES`. Read at
+    /// pane-creation time, so PTY streaming only affects panes opened after it changes.
     var isServing: Bool { UserDefaults.standard.bool(forKey: "shepherd.remote.serving") }
 
     /// The bundled `shepherdd` helper, beside the app executable in Contents/MacOS.
@@ -1320,6 +1320,25 @@ final class AgentStore: ObservableObject {
         default: return
         }
         broadcastCurrentWorkspaceTree()
+    }
+
+    /// UI toggle for `isServing` (the `⋯` menu item). Writes the flag, then starts or
+    /// tears down the control channel live — no relaunch. `objectWillChange` fires so the
+    /// menu checkmark + pairing-code row re-render off the new `isServing`. Panes already
+    /// open keep their plain PTY (the helper is chosen at pane creation); control/mirroring
+    /// takes effect immediately, PTY streaming only for panes opened after enabling.
+    func setServing(_ on: Bool) {
+        guard on != isServing else { return }
+        objectWillChange.send()
+        UserDefaults.standard.set(on, forKey: "shepherd.remote.serving")
+        if on { startRemoteServingIfEnabled() } else { stopRemoteServing() }
+    }
+
+    /// Tear the control channel + pty hub down (serving-off counterpart to
+    /// `startRemoteServingIfEnabled`). Idempotent; leaves paired-device records intact.
+    func stopRemoteServing() {
+        remoteServer?.stop(); remoteServer = nil
+        ptyHub?.stop(); ptyHub = nil
     }
 
     /// Start the control server, bound to the Tailscale interface, when serving is
