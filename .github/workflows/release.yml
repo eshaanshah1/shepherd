@@ -66,6 +66,7 @@ jobs:
             -configuration "${{ inputs.configuration }}" \
             -derivedDataPath ./build CODE_SIGNING_ALLOWED=NO \
             -skipPackagePluginValidation -skipMacroValidation \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
             CLANG_MODULE_CACHE_PATH=./build/ModuleCache build
 
       - name: Ad-hoc sign & package
