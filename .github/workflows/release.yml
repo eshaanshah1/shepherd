@@ -65,6 +65,7 @@ jobs:
           xcodebuild -project Shepherd.xcodeproj -scheme Shepherd \
             -configuration "${{ inputs.configuration }}" \
             -derivedDataPath ./build CODE_SIGNING_ALLOWED=NO \
+            -skipPackagePluginValidation -skipMacroValidation \
             CLANG_MODULE_CACHE_PATH=./build/ModuleCache build
 
       - name: Ad-hoc sign & package
