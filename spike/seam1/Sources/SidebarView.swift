@@ -48,7 +48,7 @@ struct SidebarView: View {
         .background(Theme.ground)
     }
 
-    // MARK: Top bar — label · new-workspace · overflow (remote host + pairing code)
+    // MARK: Top bar — label · new-workspace · overflow (serve toggle + add remote device)
 
     private var topBar: some View {
         HStack(spacing: 8) {
@@ -77,11 +77,7 @@ struct SidebarView: View {
             Toggle("Serve to remote devices", isOn: Binding(
                 get: { store.isServing },
                 set: { store.setServing($0) }))
-            Button("Add remote host…") { promptAddRemoteHost() }
-            if store.isServing {
-                Divider()
-                Text("Pairing code: \(store.pairingCode)")
-            }
+            Button("Add remote device…") { store.showingRemoteDevices = true }
         } label: {
             Image(systemName: "ellipsis")
                 .font(.system(size: 12, weight: .semibold))
@@ -147,35 +143,6 @@ struct SidebarView: View {
     private var footer: some View {
         GlobalArchivedSection()
     }
-
-    /// Prompt for a host + pairing code, then attach it as remote (mirror) workspaces.
-    /// Host accepts `name`, `100.x.y.z`, or `host:port`; default port is the shared one.
-    private func promptAddRemoteHost() {
-        let alert = NSAlert()
-        alert.messageText = "Add remote host"
-        alert.informativeText = "Enter the host's Tailscale name (or IP) and its 4-digit pairing code."
-        let hostTF = NSTextField(frame: NSRect(x: 0, y: 30, width: 240, height: 24))
-        hostTF.placeholderString = "mac-mini  or  100.x.y.z"
-        let codeTF = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
-        codeTF.placeholderString = "pairing code"
-        let accessory = NSView(frame: NSRect(x: 0, y: 0, width: 240, height: 54))
-        accessory.addSubview(hostTF); accessory.addSubview(codeTF)
-        alert.accessoryView = accessory
-        alert.addButton(withTitle: "Add")
-        alert.addButton(withTitle: "Cancel")
-        alert.window.initialFirstResponder = hostTF
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-
-        let raw = hostTF.stringValue.trimmingCharacters(in: .whitespaces)
-        let code = codeTF.stringValue.trimmingCharacters(in: .whitespaces)
-        guard !raw.isEmpty, !code.isEmpty else { return }
-        var host = raw
-        var port = AgentStore.defaultRemotePort
-        if let colon = raw.lastIndex(of: ":"), let p = UInt16(raw[raw.index(after: colon)...]) {
-            host = String(raw[..<colon]); port = p
-        }
-        store.addRemoteHost(host: host, port: port, code: code)
-    }
 }
 
 // MARK: - Folder header
@@ -208,9 +175,22 @@ private struct WorkspaceFolderHeader: View {
 
     private var isActive: Bool { ws.id == store.selectedWorkspaceID }
 
+    /// Host part of `remoteHostID` ("host:port") for the indicator tooltip.
+    private var remoteHostDisplay: String {
+        guard let id = ws.remoteHostID else { return "remote" }
+        return id.split(separator: ":").first.map(String.init) ?? id
+    }
+
     var body: some View {
         HStack(spacing: LeadingIcon.gutterGap) {
             FolderIcon(open: !ws.collapsed, state: ws.aggregateState)
+
+            if ws.isRemote {
+                Image(systemName: "antenna.radiowaves.left.and.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Theme.textDim)
+                    .help("Remote · \(remoteHostDisplay)")
+            }
 
             if editing {
                 renameField
@@ -350,7 +330,7 @@ private struct WorkspaceFolderHeader: View {
         store.setWorkspaceDirectory(ws.id, to: tf.stringValue)
     }
 
-    /// Prompt for a branch name, then create a worktree tab (mirrors promptAddRemoteHost).
+    /// Prompt for a branch name, then create a worktree tab.
     private func promptNewWorktree() {
         let alert = NSAlert()
         alert.messageText = "New worktree tab"

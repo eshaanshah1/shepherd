@@ -100,6 +100,7 @@ targets:
       - path: Sources/NotificationRoutingPolicy.swift
       - path: Sources/RemoteWiring.swift
       - path: Sources/RemoteProtocol.swift
+      - path: Sources/TailscaleDiscovery.swift
       - path: Sources/PtyBroker.swift
       - path: Tests
   ShepherdRemoteTests:

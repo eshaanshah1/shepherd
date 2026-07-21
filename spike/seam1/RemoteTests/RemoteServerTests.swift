@@ -91,17 +91,19 @@ final class RemoteServerTests: XCTestCase {
     }
 
     private func makeServer(port: UInt16, approve: Bool, known: [PairedDevice] = [],
+                            verifiedPeer: VerifiedPeer? = VerifiedPeer(userID: "u1", name: "Pixel"),
+                            selfUserID: String? = "u1",
                             workspaceTrees: @escaping () -> [WorkspaceTree] = { RemoteServerTests.oneTree() },
                             onCommand: @escaping (ControlMessage) -> Void = { _ in }) -> RemoteServer {
         RemoteServer(
             bindAddress: "127.0.0.1", port: port,
-            currentCode: { "8421" },
             knownDevices: { known },
             persist: { _ in },
             requestApproval: { _, _, decide in decide(approve) },
             workspaceTrees: workspaceTrees,
             updateFCMToken: { _, _ in },
             makeSecret: { "SECRET" }, makeNonce: { "NONCE" },
+            verifyPeer: { _ in verifiedPeer }, selfUserID: { selfUserID },
             onCommand: onCommand)
     }
 
@@ -120,23 +122,36 @@ final class RemoteServerTests: XCTestCase {
             }, selectedTabID: "t0")]
     }
 
-    func testPairWithGoodCodeApprovedReceivesWorkspaceTrees() {
+    func testVerifiedSameUserPeerApprovedReceivesWorkspaceTrees() {
         let port: UInt16 = 48721
         let server = makeServer(port: port, approve: true); XCTAssertTrue(server.start()); defer { server.stop() }
         let c = TestClient(port: port)
-        c.send(.hello(deviceID: "d1", deviceName: "Pixel", pairingCode: "8421",
+        c.send(.hello(deviceID: "d1", deviceName: "Pixel", pairingCode: nil,
                       secret: nil, fcmToken: "FCMTOK", protocolVersion: kRemoteProtocolVersion))
         XCTAssertNotNil(c.waitFor { if case .accepted = $0 { return true }; return false }, "expected accepted")
         XCTAssertNotNil(c.waitFor { if case .workspaceList(let ids) = $0 { return ids == ["w1"] }; return false }, "expected workspaceList")
         XCTAssertNotNil(c.waitFor { if case .workspaceTree(let t) = $0 { return t.workspaceID == "w1" && t.tabs.first?.tabID == "t1" }; return false }, "expected workspaceTree")
     }
 
-    func testWrongCodeRejected() {
+    func testUnverifiedPeerRejected() {
         let port: UInt16 = 48722
-        let server = makeServer(port: port, approve: true); XCTAssertTrue(server.start()); defer { server.stop() }
+        // Source IP does not resolve to any tailnet peer → reject.
+        let server = makeServer(port: port, approve: true, verifiedPeer: nil)
+        XCTAssertTrue(server.start()); defer { server.stop() }
         let c = TestClient(port: port)
-        c.send(.hello(deviceID: "d1", deviceName: "Pixel", pairingCode: "0000",
+        c.send(.hello(deviceID: "d1", deviceName: "Pixel", pairingCode: nil,
                       secret: nil, fcmToken: "FCMTOK", protocolVersion: kRemoteProtocolVersion))
+        XCTAssertNotNil(c.waitFor { if case .rejected = $0 { return true }; return false }, "expected rejected")
+    }
+
+    func testDifferentUserPeerRejected() {
+        let port: UInt16 = 48729
+        let server = makeServer(port: port, approve: true,
+                                verifiedPeer: VerifiedPeer(userID: "OTHER", name: "Colleague"))
+        XCTAssertTrue(server.start()); defer { server.stop() }
+        let c = TestClient(port: port)
+        c.send(.hello(deviceID: "d1", deviceName: "Colleague", pairingCode: nil,
+                      secret: nil, fcmToken: nil, protocolVersion: kRemoteProtocolVersion))
         XCTAssertNotNil(c.waitFor { if case .rejected = $0 { return true }; return false }, "expected rejected")
     }
 
@@ -271,15 +286,16 @@ final class RemoteServerTests: XCTestCase {
         let captured = NSMutableArray()   // thread-safe enough for the test; captures PairedDevice
         let server = RemoteServer(
             bindAddress: "127.0.0.1", port: port,
-            currentCode: { "8421" }, knownDevices: { [] },
+            knownDevices: { [] },
             persist: { dev in captured.add(dev) },
             requestApproval: { _, _, decide in decide(true) },
             workspaceTrees: { [] },
             updateFCMToken: { _, _ in },
-            makeSecret: { "SECRET" }, makeNonce: { "NONCE" })
+            makeSecret: { "SECRET" }, makeNonce: { "NONCE" },
+            verifyPeer: { _ in VerifiedPeer(userID: "u1", name: "Pixel") }, selfUserID: { "u1" })
         XCTAssertTrue(server.start()); defer { server.stop() }
         let c = TestClient(port: port)
-        c.send(.hello(deviceID: "d1", deviceName: "Pixel", pairingCode: "8421",
+        c.send(.hello(deviceID: "d1", deviceName: "Pixel", pairingCode: nil,
                       secret: nil, fcmToken: "FCMTOK", protocolVersion: kRemoteProtocolVersion))
         XCTAssertNotNil(c.waitFor { if case .accepted = $0 { return true }; return false })
         // Give persist (called on the approval path) a beat to land.
@@ -295,15 +311,16 @@ final class RemoteServerTests: XCTestCase {
         let box = NSMutableArray()   // captures (deviceID, token)
         let server = RemoteServer(
             bindAddress: "127.0.0.1", port: port,
-            currentCode: { "8421" }, knownDevices: { [] },
+            knownDevices: { [] },
             persist: { _ in },
             requestApproval: { _, _, decide in decide(true) },
             workspaceTrees: { [] },
             updateFCMToken: { id, tok in box.add("\(id)|\(tok)") },
-            makeSecret: { "SECRET" }, makeNonce: { "NONCE" })
+            makeSecret: { "SECRET" }, makeNonce: { "NONCE" },
+            verifyPeer: { _ in VerifiedPeer(userID: "u1", name: "Pixel") }, selfUserID: { "u1" })
         XCTAssertTrue(server.start()); defer { server.stop() }
         let c = TestClient(port: port)
-        c.send(.hello(deviceID: "d1", deviceName: "Pixel", pairingCode: "8421",
+        c.send(.hello(deviceID: "d1", deviceName: "Pixel", pairingCode: nil,
                       secret: nil, fcmToken: "OLD", protocolVersion: kRemoteProtocolVersion))
         XCTAssertNotNil(c.waitFor { if case .accepted = $0 { return true }; return false })
         c.send(.refreshFCMToken(token: "NEW"))
@@ -318,7 +335,6 @@ final class RemoteServerTests: XCTestCase {
         let box = NSMutableArray()   // captures (deviceID, token)
         let server = RemoteServer(
             bindAddress: "127.0.0.1", port: port,
-            currentCode: { "8421" },
             knownDevices: { [PairedDevice(deviceID: "d1", secret: "SECRET", name: "Pixel", fcmToken: "OLD")] },
             persist: { _ in },
             requestApproval: { _, _, decide in decide(true) },

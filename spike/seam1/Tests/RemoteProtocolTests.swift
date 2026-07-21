@@ -45,39 +45,7 @@ final class RemoteProtocolTests: XCTestCase {
         XCTAssertEqual(back.fcmToken, "FCMTOK")
     }
 
-    func testPairingKnownDeviceGoodSecretAccepts() {
-        let known = [PairedDevice(deviceID: "d1", secret: "s", name: "Pixel")]
-        let d = pairingDecision(deviceID: "d1", name: "Pixel", code: nil, secret: "s",
-                                known: known, currentCode: "8421", newSecret: "NEW")
-        XCTAssertEqual(d, .accept(persistSecret: nil))
-    }
-
-    func testPairingKnownDeviceBadSecretRejects() {
-        let known = [PairedDevice(deviceID: "d1", secret: "s", name: "Pixel")]
-        let d = pairingDecision(deviceID: "d1", name: "Pixel", code: nil, secret: "WRONG",
-                                known: known, currentCode: "8421", newSecret: "NEW")
-        XCTAssertEqual(d, .reject(reason: "bad secret"))
-    }
-
-    func testPairingNewDeviceWithGoodCodeNeedsApproval() {
-        let d = pairingDecision(deviceID: "d2", name: "Pixel", code: "8421", secret: nil,
-                                known: [], currentCode: "8421", newSecret: "NEW")
-        XCTAssertEqual(d, .needsApproval(deviceID: "d2", name: "Pixel", proposedSecret: "NEW"))
-    }
-
-    func testPairingNewDeviceWrongCodeRejects() {
-        let d = pairingDecision(deviceID: "d2", name: "Pixel", code: "0000", secret: nil,
-                                known: [], currentCode: "8421", newSecret: "NEW")
-        XCTAssertEqual(d, .reject(reason: "pairing required"))
-    }
-
-    func testPairingNewDeviceWithCodeAndSuppliedSecretPersistsThatSecret() {
-        // The phone owns its per-device secret and sends it in the first hello; the host
-        // must persist the phone-supplied secret (not its own mint) so reconnect works.
-        let d = pairingDecision(deviceID: "d2", name: "Pixel", code: "8421", secret: "phone-secret",
-                                known: [], currentCode: "8421", newSecret: "NEW")
-        XCTAssertEqual(d, .needsApproval(deviceID: "d2", name: "Pixel", proposedSecret: "phone-secret"))
-    }
+    // Pairing-decision coverage lives in RemotePairingTests (identity-gated, code-free).
 
     func testDataHelloCarriesSize() throws {
         let m = DataMessage.dataHello(sessionNonce: "n1", paneID: "p1", cols: 40, rows: 30)

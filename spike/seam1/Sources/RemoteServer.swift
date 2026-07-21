@@ -16,7 +16,8 @@ import Darwin
 final class RemoteServer {
     private let bindAddress: String
     private let port: UInt16
-    private let currentCode: () -> String
+    private let verifyPeer: (String) -> VerifiedPeer?
+    private let selfUserID: () -> String?
     private let knownDevices: () -> [PairedDevice]
     private let persist: (PairedDevice) -> Void
     private let requestApproval: (String, String, @escaping (Bool) -> Void) -> Void
@@ -101,12 +102,12 @@ final class RemoteServer {
         var phase: Phase = .unpaired
         var closed = false
         var deviceID: String?
+        var peerIP: String?
         var nonce: String?
         let writeQueue = DispatchQueue(label: "shepherd.remote.write", qos: .utility)
     }
 
     init(bindAddress: String, port: UInt16,
-         currentCode: @escaping () -> String,
          knownDevices: @escaping () -> [PairedDevice],
          persist: @escaping (PairedDevice) -> Void,
          requestApproval: @escaping (String, String, @escaping (Bool) -> Void) -> Void,
@@ -114,12 +115,15 @@ final class RemoteServer {
          updateFCMToken: @escaping (String, String) -> Void,
          makeSecret: @escaping () -> String,
          makeNonce: @escaping () -> String,
+         verifyPeer: @escaping (String) -> VerifiedPeer? = { _ in nil },
+         selfUserID: @escaping () -> String? = { nil },
          lookupBroker: @escaping (String) -> PtyBroker? = { _ in nil },
          desktopSize: @escaping (String) -> (Int, Int)? = { _ in nil },
          desktopOwnsSize: @escaping (String) -> Bool = { _ in false },
          onCommand: @escaping (ControlMessage) -> Void = { _ in }) {
         self.bindAddress = bindAddress; self.port = port
-        self.currentCode = currentCode; self.knownDevices = knownDevices
+        self.verifyPeer = verifyPeer; self.selfUserID = selfUserID
+        self.knownDevices = knownDevices
         self.persist = persist; self.requestApproval = requestApproval
         self.workspaceTrees = workspaceTrees; self.updateFCMToken = updateFCMToken
         self.makeSecret = makeSecret; self.makeNonce = makeNonce
@@ -197,8 +201,17 @@ final class RemoteServer {
         listenLock.lock(); let lfd = listenFD; listenLock.unlock()
         guard lfd >= 0 else { return }
         while true {
-            let fd = accept(lfd, nil, nil)
+            var sa = sockaddr_in()
+            var slen = socklen_t(MemoryLayout<sockaddr_in>.size)
+            let fd = withUnsafeMutablePointer(to: &sa) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { accept(lfd, $0, &slen) }
+            }
             if fd < 0 { if errno == EINTR { continue } else { break } }
+            // The connection's source IP — resolved host-side to a verified peer identity.
+            var ipbuf = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+            let peerIP: String? = withUnsafePointer(to: &sa.sin_addr) {
+                inet_ntop(AF_INET, $0, &ipbuf, socklen_t(INET_ADDRSTRLEN))
+            } != nil ? String(cString: ipbuf) : nil
             // A control channel wants each frame on the wire immediately, not Nagle-batched.
             var on: Int32 = 1
             setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &on, socklen_t(MemoryLayout<Int32>.size))
@@ -209,7 +222,7 @@ final class RemoteServer {
             // this, write() returns EAGAIN and we drop the client (see rawWrite).
             var snd = timeval(tv_sec: sendTimeoutSeconds, tv_usec: 0)
             setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &snd, socklen_t(MemoryLayout<timeval>.size))
-            connQueue.async { [weak self] in self?.handleConnection(fd) }
+            connQueue.async { [weak self] in self?.handleConnection(fd, peerIP: peerIP) }
         }
     }
 
@@ -232,8 +245,9 @@ final class RemoteServer {
     /// The single reader loop for one connection. Reads exactly one frame and sniffs it:
     /// a `DataMessage.dataHello` routes to the raw PTY data channel; anything else is a
     /// control frame and enters the control path seeded with that first message.
-    private func handleConnection(_ fd: Int32) {
+    private func handleConnection(_ fd: Int32, peerIP: String?) {
         let conn = ConnState()
+        conn.peerIP = peerIP
         clientsLock.lock(); conns[fd] = conn; clientsLock.unlock()
 
         guard let lenBytes = readExactly(fd, 4) else { closeConn(fd, conn); return }
@@ -275,16 +289,16 @@ final class RemoteServer {
         conn.lock.lock(); let phase = conn.phase; conn.lock.unlock()
         if phase == .closed { closeConn(fd, conn); return .stop }
         switch m {
-        case let .hello(deviceID, name, code, secret, fcmToken, _) where phase == .unpaired:
-            conn.lock.lock(); conn.deviceID = deviceID; conn.lock.unlock()
-            let decision = pairingDecision(deviceID: deviceID, name: name, code: code, secret: secret,
-                                           known: knownDevices(), currentCode: currentCode(),
-                                           newSecret: makeSecret())
+        case let .hello(deviceID, _, _, secret, fcmToken, _) where phase == .unpaired:
+            conn.lock.lock(); conn.deviceID = deviceID; let ip = conn.peerIP; conn.lock.unlock()
+            let decision = pairingDecision(deviceID: deviceID, secret: secret,
+                                           known: knownDevices(), newSecret: makeSecret(),
+                                           peer: ip.flatMap { verifyPeer($0) }, selfUserID: selfUserID())
             switch decision {
             case let .accept(persistSecret):
                 conn.lock.lock(); conn.phase = .paired; conn.lock.unlock()
                 if let persistSecret {
-                    persist(PairedDevice(deviceID: deviceID, secret: persistSecret, name: name, fcmToken: fcmToken))
+                    persist(PairedDevice(deviceID: deviceID, secret: persistSecret, name: deviceID, fcmToken: fcmToken))
                 } else if let fcmToken {
                     updateFCMToken(deviceID, fcmToken)   // known-device reconnect: reconcile a rotated token
                 }

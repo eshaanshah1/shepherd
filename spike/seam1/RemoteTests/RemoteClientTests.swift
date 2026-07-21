@@ -16,7 +16,6 @@ final class RemoteClientTests: XCTestCase {
                         onCommand: @escaping (ControlMessage) -> Void = { _ in }) -> RemoteServer {
         RemoteServer(
             bindAddress: "127.0.0.1", port: 0,
-            currentCode: { "8421" },
             knownDevices: { [PairedDevice(deviceID: "macB", secret: "S", name: "MacB")] },   // known → auto-accept
             persist: { _ in },
             requestApproval: { _, _, decide in decide(true) },
@@ -42,7 +41,7 @@ final class RemoteClientTests: XCTestCase {
         let nonceH = Holder<String>(); let treeH = Holder<WorkspaceTree>()
         let client = RemoteClient(
             host: "127.0.0.1", port: s.boundPort, deviceID: "macB", deviceName: "MacB",
-            code: nil, secret: "S",
+            secret: "S",
             onAccepted: { nonceH.set($0); accepted.fulfill() },
             onWorkspaceTree: { treeH.set($0); gotTree.fulfill() },
             onState: { _, _, _ in },
@@ -64,7 +63,7 @@ final class RemoteClientTests: XCTestCase {
         let ready = expectation(description: "accepted")
         let client = RemoteClient(
             host: "127.0.0.1", port: s.boundPort, deviceID: "macB", deviceName: "MacB",
-            code: nil, secret: "S",
+            secret: "S",
             onAccepted: { _ in ready.fulfill() },
             onWorkspaceTree: { _ in },
             onState: { _, _, _ in },
@@ -84,7 +83,7 @@ final class RemoteClientTests: XCTestCase {
         dead.assertForOverFulfill = false   // .dead fires on both reject and loop-exit
         let client = RemoteClient(
             host: "127.0.0.1", port: s.boundPort, deviceID: "macB", deviceName: "MacB",
-            code: nil, secret: "WRONG",                // known device, wrong secret → reject
+            secret: "WRONG",                           // known device, wrong secret → reject
             onAccepted: { _ in XCTFail("should not accept") },
             onWorkspaceTree: { _ in },
             onState: { _, _, _ in },

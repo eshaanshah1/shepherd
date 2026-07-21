@@ -16,7 +16,6 @@ final class RemoteClient {
     let port: UInt16
     private let deviceID: String
     private let deviceName: String
-    private let code: String?
     private let secret: String?
 
     private let onAccepted: (String) -> Void            // sessionNonce (also seeds `shepherdd attach`)
@@ -34,7 +33,7 @@ final class RemoteClient {
     private let queue = DispatchQueue(label: "shepherd.remote.client", qos: .utility)
 
     init(host: String, port: UInt16, deviceID: String, deviceName: String,
-         code: String?, secret: String?,
+         secret: String?,
          onAccepted: @escaping (String) -> Void,
          onWorkspaceTree: @escaping (WorkspaceTree) -> Void,
          onWorkspaceList: @escaping ([String]) -> Void = { _ in },
@@ -43,7 +42,7 @@ final class RemoteClient {
          onStatus: @escaping (RemoteConnState) -> Void) {
         self.host = host; self.port = port
         self.deviceID = deviceID; self.deviceName = deviceName
-        self.code = code; self.secret = secret
+        self.secret = secret
         self.onAccepted = onAccepted
         self.onWorkspaceTree = onWorkspaceTree
         self.onWorkspaceList = onWorkspaceList
@@ -90,7 +89,7 @@ final class RemoteClient {
         lock.unlock()
 
         let hello = ControlMessage.hello(deviceID: deviceID, deviceName: deviceName,
-                                         pairingCode: code, secret: secret, fcmToken: nil,
+                                         pairingCode: nil, secret: secret, fcmToken: nil,
                                          protocolVersion: kRemoteProtocolVersion)
         if let d = try? FrameCodec.encode(hello) {
             _ = d.withUnsafeBytes { write(f, $0.baseAddress, d.count) }

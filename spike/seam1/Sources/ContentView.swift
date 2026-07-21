@@ -75,6 +75,15 @@ struct ContentView: View {
             }
         }
         .animation(.easeOut(duration: 0.12), value: store.pendingApproval != nil)
+        // Tailnet device-discovery sheet (⋯ menu → "Add remote device…").
+        .overlay {
+            if store.showingRemoteDevices {
+                RemoteDeviceSheet()
+                    .environmentObject(store)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.12), value: store.showingRemoteDevices)
         // ⌘/ keyboard-shortcut cheatsheet.
         .overlay {
             if store.showShortcuts {
