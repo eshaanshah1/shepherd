@@ -1,0 +1,90 @@
+name: Build Release
+
+# Manual-only: trigger from the Actions tab (or `gh workflow run`) whenever you
+# want to cut a Shepherd release. Builds the .app, ad-hoc signs it, zips it, and
+# publishes a GitHub Release with the zip attached.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag / version (e.g. v1.0.0)"
+        required: true
+        type: string
+      configuration:
+        description: "Xcode build configuration"
+        required: true
+        default: Release
+        type: choice
+        options:
+          - Release
+          - Debug
+      prerelease:
+        description: "Mark the GitHub Release as a pre-release"
+        required: false
+        default: false
+        type: boolean
+
+# libghostty's build saga is pinned to macOS 26 / Xcode 26 (Metal Toolchain +
+# ld -r archive merge). macos-26 is the only runner that reproduces it.
+jobs:
+  build:
+    runs-on: macos-26
+    permissions:
+      contents: write        # create the GitHub Release + upload the asset
+    env:
+      APP_DIR: spike/seam1
+    steps:
+      - uses: actions/checkout@v4
+
+      # Cache the compiled xcframework so libghostty only rebuilds when the
+      # build script (which pins the Ghostty tag) changes. On a hit the whole
+      # expensive Zig/Metal path below is skipped.
+      - name: Cache GhosttyKit.xcframework
+        id: ghostty-cache
+        uses: actions/cache@v4
+        with:
+          path: vendor/GhosttyKit.xcframework
+          key: ghostty-${{ runner.os }}-${{ hashFiles('scripts/build-libghostty.sh') }}
+
+      - name: Install build tools
+        run: brew install xcodegen ${{ steps.ghostty-cache.outputs.cache-hit == 'true' && '' || 'zig@0.15' }}
+
+      - name: Build libghostty (cache miss only)
+        if: steps.ghostty-cache.outputs.cache-hit != 'true'
+        run: |
+          xcodebuild -downloadComponent MetalToolchain
+          ./scripts/build-libghostty.sh
+
+      - name: Generate Xcode project
+        working-directory: ${{ env.APP_DIR }}
+        run: xcodegen generate
+
+      - name: Build Shepherd.app
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          xcodebuild -project Shepherd.xcodeproj -scheme Shepherd \
+            -configuration "${{ inputs.configuration }}" \
+            -derivedDataPath ./build CODE_SIGNING_ALLOWED=NO \
+            CLANG_MODULE_CACHE_PATH=./build/ModuleCache build
+
+      - name: Ad-hoc sign & package
+        working-directory: ${{ env.APP_DIR }}
+        env:
+          CONFIGURATION: ${{ inputs.configuration }}
+        run: |
+          APP="./build/Build/Products/$CONFIGURATION/Shepherd.app"
+          codesign --force --deep --sign - "$APP"
+          # ditto (not zip) preserves the bundle's symlinks & permissions.
+          ditto -c -k --keepParent "$APP" "$GITHUB_WORKSPACE/Shepherd.zip"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          CONFIGURATION: ${{ inputs.configuration }}
+        run: |
+          gh release create "$VERSION" \
+            "$GITHUB_WORKSPACE/Shepherd.zip#Shepherd.app ($CONFIGURATION)" \
+            --title "Shepherd $VERSION" \
+            --generate-notes \
+            ${{ inputs.prerelease && '--prerelease' || '' }}
