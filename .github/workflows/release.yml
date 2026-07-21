@@ -53,7 +53,7 @@ jobs:
         if: steps.ghostty-cache.outputs.cache-hit != 'true'
         run: |
           xcodebuild -downloadComponent MetalToolchain
-          ./scripts/build-libghostty.sh
+          bash ./scripts/build-libghostty.sh
 
       - name: Generate Xcode project
         working-directory: ${{ env.APP_DIR }}
