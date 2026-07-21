@@ -49,6 +49,8 @@ spike/
 - `AgentState.swift` — the state enum (`shell/working/blocked/needsCheck/idle/error`); colors come from `Theme.swift`.
 - `StopPolicy.swift` — **pure model**: `applyEvent(...)` — the whole hook→state lifecycle map + ordering guard + background-`Stop` suppression read from the `Stop` payload's `background_tasks` ([ADR 0015](.claude/adr/0015-background-stop-suppression-via-background-tasks.md)), returning a `StateTransition`. `AgentStore.apply` is the AppKit shell around it (mirrors `SleepPolicy`/`SleepGuard`). In `ShepherdModelTests`.
 - `Theme.swift` — design tokens (flat near-black palette + soft state colors) + a `Color(hex:)` init. The single source of UI colors; the libghostty base theme mirrors it.
+- `ShortcutCatalog.swift` — **pure model**: the single source of truth for keyboard shortcuts (`ShortcutID`/`ShortcutCategory`/`ShortcutCommand` + `ShortcutCatalog.all`/`menuCommands`). Both the menu bar and the `⌘/` cheatsheet render from it. In `ShepherdModelTests`.
+- `ShortcutCheatsheetView.swift` — the `⌘/` HUD overlay: a centered two-column reference card built from `ShortcutCatalog`, over a dimmed click-to-dismiss backdrop; Esc via a hidden `.cancelAction` button.
 - `SocketServer.swift` — in-app unix-domain socket server (receives `{tab_id,event,detail}` — `tab_id` is really the pane id).
 - `SidebarView.swift` — the **accordion** of workspaces: a top bar (`WORKSPACES` · `+` new-workspace · `⋯` overflow = add-remote-host + pairing code) over a **custom `ScrollView`/`LazyVStack` (not `List`)** iterating every workspace as a collapsible **`WorkspaceFolderHeader`** (chevron · aggregate dot · name · hover-`+`; tap=collapse, right-click=rename/collapse/delete, drag=reorder via `FolderCentersKey`) followed by its indented tab rows. Unsplit tabs render a `TabRow` (leading glyph + name + status word, live drag-reorder, rename); split tabs render a **`SplitTabGroup`** — pip strip, zoom-dimmed. Rows carry their owning `workspaceID` and use workspace-scoped store ops ([ADR 0017](.claude/adr/0017-workspace-folders-accordion-sidebar.md)); T3-Code styling ([ADR 0009](.claude/adr/0009-sidebar-custom-rows-not-list.md)).
 - `ContentView.swift` — sidebar + a resizable hairline divider + a ZStack of **all tabs across all workspaces**, mounted in one flat `tabID`-keyed `ForEach` (`store.allMountedTabs`, each rendered via `SplitContainer`) so a tab keeps its surface + live PTY when dragged between workspaces; opacity-gated so only the selected workspace's selected tab is visible/hit-testable while the rest stay mounted (agents keep running); switch **cross-fades** on `selectedWorkspaceID`. Feeds the content rect to the store so ⌘⌥-arrow focus moves can resolve geometric neighbors.
@@ -61,7 +63,7 @@ spike/
 - `SleepPolicy.swift` — **pure model**: `CaffeinateMode` + `shouldStayAwake(mode,busy,thermalSuppressed)`. In `ShepherdModelTests`.
 - `ClamshellMonitor.swift` — IOKit lid-state watcher (observe-only). `ThermalMonitor.swift` — `ProcessInfo` thermal watcher.
 
-`Tests/` holds the **`ShepherdModelTests`** target (a `bundle.unit-test` in `project.yml`: `SplitTreeTests.swift`, `WorkspaceTests.swift`, `PersistenceTests.swift`, `SleepPolicyTests.swift`, `StopPolicyTests.swift`, `WorktreeArchiveTests.swift`, `PRStatusTests.swift`) — pure-model coverage of the `SplitNode` tree ops, the `Workspace`/`locatePane` helpers, the persistence snapshot/restore/migration, the sleep policy, the `applyEvent` lifecycle/background-`Stop` suppression, the worktree-archive expiry/age math, and the PR-status classify/parse reduction, compiling `SplitTree`/`Tab`/`AgentState`/`Theme`/`Workspace`/`Persistence`/`SleepPolicy`/`StopPolicy`/`WorktreeService`/`WorktreeArchive`/`PRStatus` without the AppKit surface. Test files added under `Tests/` are picked up by the `- path: Tests` glob, but a new compiled **source** must be added to the target's explicit `sources:` list in `project.yml`.
+`Tests/` holds the **`ShepherdModelTests`** target (a `bundle.unit-test` in `project.yml`: `SplitTreeTests.swift`, `WorkspaceTests.swift`, `PersistenceTests.swift`, `SleepPolicyTests.swift`, `StopPolicyTests.swift`, `WorktreeArchiveTests.swift`, `PRStatusTests.swift`, `ShortcutCatalogTests.swift`) — pure-model coverage of the `SplitNode` tree ops, the `Workspace`/`locatePane` helpers, the persistence snapshot/restore/migration, the sleep policy, the `applyEvent` lifecycle/background-`Stop` suppression, the worktree-archive expiry/age math, the PR-status classify/parse reduction, and the shortcut-catalog integrity (no dupe glyphs/ids, full `ShortcutID` coverage), compiling `SplitTree`/`Tab`/`AgentState`/`Theme`/`Workspace`/`Persistence`/`SleepPolicy`/`StopPolicy`/`WorktreeService`/`WorktreeArchive`/`PRStatus`/`ShortcutCatalog` without the AppKit surface. Test files added under `Tests/` are picked up by the `- path: Tests` glob, but a new compiled **source** must be added to the target's explicit `sources:` list in `project.yml`.
 
 ---
 
@@ -165,8 +167,15 @@ a tab's title is derived from its focused pane.
 | `⌘⇧N` | new workspace |
 | `⌃⇥` / `⌃⇧⇥` | next / previous workspace (wrap) |
 | `⌘⇧R` | reload config live (re-read `~/.config/shepherd/config`; repaints chrome + terminal grid, agents stay alive) |
+| `⌘/` | toggle the keyboard-shortcut cheatsheet HUD (also under Help; Esc / click-out / ⌘/ dismiss) |
 
 A new pane inherits its parent pane's cwd. Splitting clears the tab's zoom.
+
+The menu bar's keyboard commands and the `⌘/` cheatsheet are both generated from
+`ShortcutCatalog` (single source of truth; display data only) — a shortcut is
+declared once there, and `ShortcutActions.run(_:)` (an exhaustive `switch` in
+`ShepherdApp.swift`) resolves each `ShortcutID` to its live action, so the menu
+and the cheatsheet can't drift.
 
 ### Sidebar (`SidebarView.swift`)
 The sidebar is an **accordion of workspaces** ([ADR 0017](.claude/adr/0017-workspace-folders-accordion-sidebar.md)):

@@ -34,63 +34,31 @@ struct ShepherdApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .commands {
+            // Menu items are generated from ShortcutCatalog (single source of truth
+            // shared with the ⌘/ cheatsheet) — one Button per catalog command, grouped
+            // by category with dividers. ⌘/ itself lives under Help (below).
             CommandGroup(after: .newItem) {
-                Button("New Tab") { AgentStore.shared.newTab() }
-                    .keyboardShortcut("t", modifiers: .command)
-                Button("New Workspace") { AgentStore.shared.promptingNewWorkspace = true }
-                    .keyboardShortcut("n", modifiers: [.command, .shift])
-                Button("Next Workspace") { AgentStore.shared.nextWorkspace() }
-                    .keyboardShortcut(.tab, modifiers: .control)
-                Button("Previous Workspace") { AgentStore.shared.prevWorkspace() }
-                    .keyboardShortcut(.tab, modifiers: [.control, .shift])
-                Button("Close Pane") {
-                    let s = AgentStore.shared
-                    if s.selectedTabIsSplit { s.closeFocusedPane() }
-                    else { s.closeSelected() }   // last tab reseeds; window close is the traffic light / ⌘Q
+                ForEach(ShortcutCategory.allCases, id: \.self) { category in
+                    let cmds = ShortcutCatalog.menuCommands.filter {
+                        $0.category == category && $0.id != .showShortcuts
+                    }
+                    if !cmds.isEmpty {
+                        Divider()
+                        ForEach(cmds) { cmd in
+                            Button(cmd.title) { ShortcutActions.run(cmd.id) }
+                                .keyboardShortcut(cmd.key!, modifiers: cmd.modifiers)
+                        }
+                    }
                 }
-                .keyboardShortcut("w", modifiers: .command)
-                Divider()
-                Button("Split Right") { AgentStore.shared.splitFocused(.row) }
-                    .keyboardShortcut("d", modifiers: .command)
-                Button("Split Down") { AgentStore.shared.splitFocused(.column) }
-                    .keyboardShortcut("d", modifiers: [.command, .shift])
-                Button("Zoom Pane") { AgentStore.shared.toggleZoom() }
-                    .keyboardShortcut(.return, modifiers: [.command, .shift])
-                Button("Focus Left")  { AgentStore.shared.focusNeighbor(.left) }
-                    .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
-                Button("Focus Right") { AgentStore.shared.focusNeighbor(.right) }
-                    .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
-                Button("Focus Up")    { AgentStore.shared.focusNeighbor(.up) }
-                    .keyboardShortcut(.upArrow, modifiers: [.command, .option])
-                Button("Focus Down")  { AgentStore.shared.focusNeighbor(.down) }
-                    .keyboardShortcut(.downArrow, modifiers: [.command, .option])
-                Divider()
-                Button("Select Next Tab") { AgentStore.shared.selectNext() }
-                    .keyboardShortcut("]", modifiers: [.command, .shift])
-                Button("Select Previous Tab") { AgentStore.shared.selectPrevious() }
-                    .keyboardShortcut("[", modifiers: [.command, .shift])
-                Divider()
-                Button("Find") { AgentStore.shared.openSearch() }
-                    .keyboardShortcut("f", modifiers: .command)
-                Button("Review Diff") { AgentStore.shared.toggleDiffPanel() }
-                    .keyboardShortcut("g", modifiers: .command)
-                Button("Open Editor") { AgentStore.shared.openEditor() }
-                    .keyboardShortcut("o", modifiers: .command)
-                Button("Save File") {
-                    NotificationCenter.default.post(name: .shepherdSaveCodeSurface, object: nil)
-                }
-                .keyboardShortcut("s", modifiers: .command)
-                Divider()
-                Button("Jump to Next Alert") { AgentStore.shared.selectNextAttention() }
-                    .keyboardShortcut("a", modifiers: [.command, .shift])
-                Divider()
-                Button("Reload Config") { GhosttyApp.shared.reloadConfig() }
-                    .keyboardShortcut("r", modifiers: [.command, .shift])
                 #if DEBUG
                 Divider()
                 Button("DEBUG: Simulate Thermal Serious") { SleepGuard.shared.simulateThermal(.serious) }
                 Button("DEBUG: Simulate Thermal Nominal") { SleepGuard.shared.simulateThermal(.nominal) }
                 #endif
+            }
+            CommandGroup(replacing: .help) {
+                Button("Keyboard Shortcuts") { ShortcutActions.run(.showShortcuts) }
+                    .keyboardShortcut("/", modifiers: .command)
             }
             // ⌘1–9 jump to tab N.
             CommandGroup(after: .windowList) {
@@ -117,6 +85,40 @@ struct ShepherdApp: App {
                      ? "Clamshell survival: on"
                      : "Clamshell survival: unavailable (idle-sleep guard)")
             }
+        }
+    }
+}
+
+/// Resolves a `ShortcutID` to its live action. Exhaustive over the enum, so adding
+/// a catalog command without wiring it up is a compile error — the anti-drift half
+/// of keeping the menu and the ⌘/ cheatsheet in a single source.
+enum ShortcutActions {
+    @MainActor
+    static func run(_ id: ShortcutID) {
+        let s = AgentStore.shared
+        switch id {
+        case .newTab:        s.newTab()
+        case .closePane:     if s.selectedTabIsSplit { s.closeFocusedPane() } else { s.closeSelected() }
+        case .splitRight:    s.splitFocused(.row)
+        case .splitDown:     s.splitFocused(.column)
+        case .zoomPane:      s.toggleZoom()
+        case .focusLeft:     s.focusNeighbor(.left)
+        case .focusRight:    s.focusNeighbor(.right)
+        case .focusUp:       s.focusNeighbor(.up)
+        case .focusDown:     s.focusNeighbor(.down)
+        case .prevTab:       s.selectPrevious()
+        case .nextTab:       s.selectNext()
+        case .jumpTab:       break   // ⌘1–9 is the windowList ForEach; display-only here
+        case .newWorkspace:  s.promptingNewWorkspace = true
+        case .nextWorkspace: s.nextWorkspace()
+        case .prevWorkspace: s.prevWorkspace()
+        case .find:          s.openSearch()
+        case .reviewDiff:    s.toggleDiffPanel()
+        case .openEditor:    s.openEditor()
+        case .saveFile:      NotificationCenter.default.post(name: .shepherdSaveCodeSurface, object: nil)
+        case .nextAlert:     s.selectNextAttention()
+        case .reloadConfig:  GhosttyApp.shared.reloadConfig()
+        case .showShortcuts: s.showShortcuts.toggle()
         }
     }
 }
