@@ -31,6 +31,9 @@ final class AgentStore: ObservableObject {
     /// workspace; ContentView presents the naming modal off this.
     @Published var promptingNewWorkspace = false
 
+    /// Toggled by ⌘/ to show the keyboard-shortcut cheatsheet overlay (transient).
+    @Published var showShortcuts = false
+
     /// Bumped to force the selected terminal to reclaim first responder.
     @Published var focusTick = 0
     func refocusActiveTerminal() { focusTick += 1 }

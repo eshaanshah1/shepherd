@@ -75,6 +75,14 @@ struct ContentView: View {
             }
         }
         .animation(.easeOut(duration: 0.12), value: store.pendingApproval != nil)
+        // ⌘/ keyboard-shortcut cheatsheet.
+        .overlay {
+            if store.showShortcuts {
+                ShortcutCheatsheetView(isPresented: $store.showShortcuts)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.12), value: store.showShortcuts)
     }
 
     // Every workspace's surfaces stay mounted (background agents keep running);
