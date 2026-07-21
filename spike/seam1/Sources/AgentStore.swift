@@ -88,6 +88,8 @@ final class AgentStore: ObservableObject {
     /// Set when a not-yet-known device passes the pairing code and is awaiting the
     /// user's approval; ContentView presents the approval sheet off this.
     @Published var pendingApproval: (deviceID: String, name: String)?
+    /// Drives the tailnet device-discovery sheet (⋯ menu → "Add remote device…").
+    @Published var showingRemoteDevices = false
     private var approvalDecider: ((Bool) -> Void)?
     private var remoteServer: RemoteServer?
     /// Client role (M2): one RemoteClient per attached host, keyed by "host:port".
@@ -103,9 +105,18 @@ final class AgentStore: ObservableObject {
     private let remotePort: UInt16 = AgentStore.defaultRemotePort
     private let pairedDevicesKey = "shepherd.remote.devices"
 
-    /// The 4-digit code a new device must echo to start pairing. Regenerated each
-    /// launch — surfaced in the host UI; not persisted.
-    private(set) var pairingCode = String(format: "%04d", Int.random(in: 0...9999))
+    /// Cached `tailscale status` for host-side pairing verification. Refreshed at most once
+    /// per few seconds so a burst of hellos doesn't spawn a Process each. Serving-side only.
+    private var tsStatusCache: (status: TSStatus, at: Date)?
+    private let tsStatusLock = NSLock()
+    private func tailnetStatus() -> TSStatus? {
+        tsStatusLock.lock()
+        if let c = tsStatusCache, Date().timeIntervalSince(c.at) < 5 { tsStatusLock.unlock(); return c.status }
+        tsStatusLock.unlock()
+        guard let s = TailscaleDiscovery.fetchStatus() else { return nil }
+        tsStatusLock.lock(); tsStatusCache = (s, Date()); tsStatusLock.unlock()
+        return s
+    }
 
     /// Devices approved in a past session — loaded at launch so they re-pair
     /// (by secret) without another approval. Persisted to UserDefaults as JSON.
@@ -1352,7 +1363,6 @@ final class AgentStore: ObservableObject {
         ptyHub = hub
         let s = RemoteServer(
             bindAddress: ip, port: remotePort,
-            currentCode: { [weak self] in self?.pairingCode ?? "" },
             knownDevices: { [weak self] in
                 guard let self else { return [] }
                 self.pairedDevicesLock.lock(); defer { self.pairedDevicesLock.unlock() }
@@ -1379,6 +1389,11 @@ final class AgentStore: ObservableObject {
             },
             updateFCMToken: { [weak self] id, token in self?.updateFCMToken(deviceID: id, token: token) },
             makeSecret: { UUID().uuidString }, makeNonce: { UUID().uuidString },
+            verifyPeer: { [weak self] ip in
+                guard let s = self?.tailnetStatus() else { return nil }
+                return TailscaleDiscovery.verifiedPeer(forIP: ip, in: s)
+            },
+            selfUserID: { [weak self] in self?.tailnetStatus()?.selfUserID },
             // Capture the hub ONCE (just created above) rather than re-reading self.ptyHub
             // per call: that property is written on main but this closure runs on
             // RemoteServer's connQueue, so re-reading it would be an unsynchronized data race.
@@ -1404,7 +1419,7 @@ final class AgentStore: ObservableObject {
             })
         if s.start() {
             remoteServer = s
-            shepherdLog("REMOTE serving on \(ip):\(remotePort) — pairing code \(pairingCode)")
+            shepherdLog("REMOTE serving on \(ip):\(remotePort)")
         }
     }
 
@@ -1418,16 +1433,17 @@ final class AgentStore: ObservableObject {
     }
     private var clientDeviceName: String { Host.current().localizedName ?? "Mac" }
 
-    /// Attach to a host over Tailscale (or loopback): dial, pair with `code`, and mirror its
-    /// workspaces. Idempotent per host. M2 mints an in-memory secret sent with the code (the host
-    /// persists it); M3 persists it per host so reconnect skips re-pairing.
-    func addRemoteHost(host: String, port: UInt16, code: String) {
+    /// Attach to a host over Tailscale (or loopback): dial, pair, and mirror its workspaces.
+    /// Idempotent per host. No code — the host gates the first pairing by verifying our source
+    /// IP against its tailnet peers (same user) + the approval popup; it persists the minted
+    /// secret so reconnect skips re-pairing.
+    func addRemoteHost(host: String, port: UInt16) {
         let hostID = "\(host):\(port)"
         guard remoteClients[hostID] == nil else { return }
         let secret = UUID().uuidString
         let client = RemoteClient(
             host: host, port: port, deviceID: clientDeviceID, deviceName: clientDeviceName,
-            code: code, secret: secret,
+            secret: secret,
             onAccepted: { _ in },
             onWorkspaceTree: { [weak self] tree in DispatchQueue.main.async { self?.upsertMirrorWorkspace(tree, hostID: hostID) } },
             onWorkspaceList: { [weak self] ids in DispatchQueue.main.async { self?.pruneMirrorWorkspaces(hostID: hostID, keep: ids) } },
@@ -1436,6 +1452,23 @@ final class AgentStore: ObservableObject {
             onStatus: { [weak self] conn in DispatchQueue.main.async { self?.applyRemoteStatus(hostID: hostID, conn: conn) } })
         remoteClients[hostID] = client
         client.start()
+    }
+
+    /// Discover the user's own tailnet devices off-main, probe each online peer's control
+    /// port, and deliver sorted rows on main. Empty if the tailscale binary is missing or
+    /// no same-user peers exist (the sheet renders the appropriate empty state).
+    func discoverDevices(_ completion: @escaping ([RemoteDeviceRow]) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard let status = TailscaleDiscovery.fetchStatus() else {
+                DispatchQueue.main.async { completion([]) }; return
+            }
+            let port = AgentStore.defaultRemotePort
+            let rows = TailscaleDiscovery.myPeers(status).map { peer -> RemoteDeviceRow in
+                let open = peer.online && peer.ipv4.map { TailscaleDiscovery.probe(host: $0, port: port) } == true
+                return TailscaleDiscovery.row(for: peer, portOpen: open)
+            }
+            DispatchQueue.main.async { completion(rows) }
+        }
     }
 
     /// Detach from a host: stop its client and drop its mirror workspaces (never destroys the host's).

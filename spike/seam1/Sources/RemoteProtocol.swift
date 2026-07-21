@@ -166,17 +166,24 @@ enum PairingDecision: Equatable {
     case needsApproval(deviceID: String, name: String, proposedSecret: String)
 }
 
-/// Decide how to handle a `hello`. Pure: callers pass the freshly generated
-/// `newSecret` (so randomness stays out of the model).
-func pairingDecision(deviceID: String, name: String, code: String?, secret: String?,
-                     known: [PairedDevice], currentCode: String, newSecret: String) -> PairingDecision {
+/// A connecting peer's Tailscale-verified identity, resolved host-side from the
+/// connection's source IP (never from the self-reported `hello` name).
+struct VerifiedPeer: Equatable { let userID: String; let name: String }
+
+/// Decide how to handle a `hello`. Pure. The pairing code is gone: a NEW device is
+/// admitted for approval only if its source IP resolves to a Tailscale peer owned by
+/// the same user as this host (`peer.userID == selfUserID`); the approval name is the
+/// VERIFIED name. `newSecret` is passed in so randomness stays out of the model.
+func pairingDecision(deviceID: String, secret: String?,
+                     known: [PairedDevice], newSecret: String,
+                     peer: VerifiedPeer?, selfUserID: String?) -> PairingDecision {
     if let dev = known.first(where: { $0.deviceID == deviceID }) {
         return secret == dev.secret ? .accept(persistSecret: nil) : .reject(reason: "bad secret")
     }
-    if let code, code == currentCode {
-        return .needsApproval(deviceID: deviceID, name: name, proposedSecret: secret ?? newSecret)
+    if let peer, let selfUserID, peer.userID == selfUserID {
+        return .needsApproval(deviceID: deviceID, name: peer.name, proposedSecret: secret ?? newSecret)
     }
-    return .reject(reason: "pairing required")
+    return .reject(reason: "unverified peer")
 }
 
 // MARK: - Tailscale interface selection

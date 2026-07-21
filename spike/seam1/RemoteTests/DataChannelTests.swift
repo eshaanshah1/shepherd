@@ -272,7 +272,6 @@ final class DataChannelTests: XCTestCase {
                                   desktopOwnsSize: @escaping (String) -> Bool = { _ in false }) throws -> RemoteServer {
         let server = RemoteServer(
             bindAddress: "127.0.0.1", port: 0,
-            currentCode: { "8421" },
             knownDevices: { [] },
             persist: { _ in },
             requestApproval: { _, _, decide in decide(true) },
@@ -280,6 +279,8 @@ final class DataChannelTests: XCTestCase {
             updateFCMToken: { _, _ in },
             makeSecret: { "SECRET" },
             makeNonce: { UUID().uuidString },
+            verifyPeer: { _ in VerifiedPeer(userID: "u1", name: "Pixel") },
+            selfUserID: { "u1" },
             lookupBroker: lookupBroker,
             desktopSize: desktopSize,
             desktopOwnsSize: desktopOwnsSize)
