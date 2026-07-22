@@ -93,6 +93,14 @@ final class AgentStore: ObservableObject {
         .appendingPathComponent("shepherdd").path ?? "shepherdd"
 
     private var server: SocketServer?
+
+    /// Always-on local control channel for the `shepherd` CLI. A stable, well-known
+    /// path (single-window v1) so a shell outside a pane finds it without knowing the
+    /// pid; also injected into each pane as $SHEPHERD_CTL_SOCK.
+    let ctlSocketPath: String = (NSHomeDirectory() as NSString).appendingPathComponent(".shepherd/control.sock")
+    private var ctlServer: ControlServer?
+    let controlHandles = HandleRegistry()
+
     private let persistKey = "shepherd.workspaces.v1"
     private let legacyKey  = "shepherd.tabs.v2"
     private let archiveKey = "shepherd.archived-worktrees.v1"
@@ -167,6 +175,13 @@ final class AgentStore: ObservableObject {
             self?.apply(event: event, detail: detail, paneID: paneID, sid: sid, payload: payload)
         }
         server?.start()
+        try? FileManager.default.createDirectory(
+            atPath: (ctlSocketPath as NSString).deletingLastPathComponent,
+            withIntermediateDirectories: true)
+        ctlServer = ControlServer(path: ctlSocketPath) { [weak self] req in
+            self?.controlRoute(req) ?? ["ok": false, "error": "store gone"]
+        }
+        ctlServer?.start()
         loadPairedDevices()
         let keyPath = ("~/.config/shepherd/fcm-service-account.json" as NSString).expandingTildeInPath
         fcmPusher = FCMPusher(serviceAccountPath: keyPath)
@@ -1873,5 +1888,257 @@ final class AgentStore: ObservableObject {
         if let data = try? JSONEncoder().encode(snapshot) {
             UserDefaults.standard.set(data, forKey: pairedDevicesKey)
         }
+    }
+
+    // MARK: - Control CLI
+
+    func controlRoute(_ req: [String: Any]) -> [String: Any] {
+        switch req["cmd"] as? String {
+        case "ping": return ["ok": true, "data": "pong"]
+
+        case "ls":
+            return ["ok": true, "data": ["workspaces": controlSnapshot()]]
+
+        case "whoami":
+            guard let token = req["pane"] as? String, !token.isEmpty,
+                  let uuid = resolvePane(token), let (w, t) = locatePane(uuid, in: workspaces)
+            else { return ["ok": false, "error": "not inside a Shepherd pane"] }
+            _ = controlSnapshot()   // ensure handles are minted
+            return ["ok": true, "data": [
+                "pane": controlHandles.handle(for: uuid, kind: .pane),
+                "tab": controlHandles.handle(for: workspaces[w].tabs[t].tabID, kind: .tab),
+                "workspace": controlHandles.handle(for: workspaces[w].id, kind: .workspace),
+            ]]
+
+        case "state":
+            guard let token = req["pane"] as? String, let uuid = resolvePane(token),
+                  let p = pane(uuid) else { return ["ok": false, "error": "no such pane"] }
+            return ["ok": true, "data": ["state": p.state.rawValue, "reason": p.reason ?? ""]]
+
+        case "workspace-new":
+            let id = newWorkspace()
+            return ["ok": true, "data": ["workspace": controlHandles.handle(for: id, kind: .workspace)]]
+        case "workspace-rename":
+            guard let ws = (req["workspace"] as? String).flatMap(resolveWorkspace),
+                  let name = req["name"] as? String else { return ["ok": false, "error": "bad args"] }
+            renameWorkspace(ws, to: name); return ["ok": true, "data": NSNull()]
+        case "workspace-switch":
+            guard let ws = (req["workspace"] as? String).flatMap(resolveWorkspace)
+            else { return ["ok": false, "error": "no such workspace"] }
+            selectWorkspace(ws); return ["ok": true, "data": NSNull()]
+
+        case "tab-new":
+            guard let ws = (req["workspace"] as? String).flatMap(resolveWorkspace) ?? selectedWorkspaceID
+            else { return ["ok": false, "error": "no workspace"] }
+            let tabID = newTab(inWorkspace: ws)
+            _ = controlSnapshot()
+            let paneID = workspaces.first { $0.id == ws }?.tabs.first { $0.tabID == tabID }?.root.firstLeafID
+            return ["ok": true, "data": [
+                "tab": controlHandles.handle(for: tabID, kind: .tab),
+                "pane": paneID.map { controlHandles.handle(for: $0, kind: .pane) } ?? "",
+            ]]
+        case "tab-rename":
+            guard let t = (req["tab"] as? String).flatMap(resolveTab), let name = req["name"] as? String,
+                  let wsID = workspaces.first(where: { $0.tabs.contains { $0.tabID == t } })?.id
+            else { return ["ok": false, "error": "bad args"] }
+            rename(tabID: t, to: name, inWorkspace: wsID); return ["ok": true, "data": NSNull()]
+        case "tab-switch":
+            guard let t = (req["tab"] as? String).flatMap(resolveTab),
+                  let wsID = workspaces.first(where: { $0.tabs.contains { $0.tabID == t } })?.id
+            else { return ["ok": false, "error": "no such tab"] }
+            applyRemoteCommand(.cmdSwitchTab(workspaceID: wsID, tabID: t)); return ["ok": true, "data": NSNull()]
+
+        case "split":
+            guard let p = (req["pane"] as? String).flatMap(resolvePane) else { return ["ok": false, "error": "no such pane"] }
+            let axis = (req["axis"] as? String) == "column" ? "column" : "row"
+            applyRemoteCommand(.cmdSplit(paneID: p, axis: axis))
+            _ = controlSnapshot()
+            return ["ok": true, "data": ["pane": focusedControlPaneHandle()]]
+        case "pane-close":
+            guard let p = (req["pane"] as? String).flatMap(resolvePane) else { return ["ok": false, "error": "no such pane"] }
+            if paneHasLiveWork(p), req["force"] as? Bool != true {
+                return ["ok": false, "error": "pane has a live agent; pass --force to close anyway"]
+            }
+            applyRemoteCommand(.cmdClosePane(paneID: p)); return ["ok": true, "data": NSNull()]
+
+        case "workspace-rm":
+            guard let ws = (req["workspace"] as? String).flatMap(resolveWorkspace)
+            else { return ["ok": false, "error": "no such workspace"] }
+            if workspaceHasLiveWork(ws), req["force"] as? Bool != true {
+                return ["ok": false, "error": "workspace has live agents; pass --force to delete anyway"]
+            }
+            deleteWorkspace(ws); return ["ok": true, "data": NSNull()]
+
+        case "tab-close":
+            guard let t = (req["tab"] as? String).flatMap(resolveTab),
+                  let wsID = workspaces.first(where: { $0.tabs.contains { $0.tabID == t } })?.id,
+                  let tab = workspaces.first(where: { $0.id == wsID })?.tabs.first(where: { $0.tabID == t })
+            else { return ["ok": false, "error": "no such tab"] }
+            let live = tab.root.panes.contains { paneHasLiveWork($0.paneID) }
+            if req["archive"] as? Bool == true { archiveWorktreeTab(t, inWorkspace: wsID); return ["ok": true, "data": NSNull()] }
+            if live, req["force"] as? Bool != true {
+                return ["ok": false, "error": "tab has live work; pass --force (close) or --archive"]
+            }
+            closeTab(t, inWorkspace: wsID); return ["ok": true, "data": NSNull()]
+        case "focus":
+            guard let p = (req["pane"] as? String).flatMap(resolvePane) else { return ["ok": false, "error": "no such pane"] }
+            applyRemoteCommand(.cmdFocusPane(paneID: p)); return ["ok": true, "data": NSNull()]
+        case "zoom":
+            guard let p = (req["pane"] as? String).flatMap(resolvePane) else { return ["ok": false, "error": "no such pane"] }
+            applyRemoteCommand(.cmdZoom(paneID: p)); return ["ok": true, "data": NSNull()]
+
+        case "tell":
+            guard let p = (req["pane"] as? String).flatMap(resolvePane),
+                  let text = req["text"] as? String else { return ["ok": false, "error": "bad args"] }
+            let payload = (req["enter"] as? Bool == false) ? text : text + "\n"
+            injectText(payload, intoPane: p)
+            return ["ok": true, "data": NSNull()]
+
+        case "view":
+            guard let p = (req["pane"] as? String).flatMap(resolvePane), let pn = pane(p)
+            else { return ["ok": false, "error": "no such pane"] }
+            let lines = (req["lines"] as? Int) ?? 40
+            let forceRaw = (req["raw"] as? Bool) == true
+            if !forceRaw, let sid = pn.sessionID, !sid.isEmpty {
+                let projects = (NSHomeDirectory() as NSString).appendingPathComponent(".claude/projects")
+                guard let file = TranscriptReader.sessionFile(sessionID: sid, projectsDir: projects),
+                      let text = try? String(contentsOfFile: file, encoding: .utf8)
+                else { return ["ok": true, "data": ["kind": "transcript", "text": "(no transcript yet)"]] }
+                let turns = TranscriptReader.turns(fromJSONL: text.components(separatedBy: "\n"), limit: lines)
+                let rendered = turns.map { "\($0.role): \($0.text)" }.joined(separator: "\n\n")
+                return ["ok": true, "data": ["kind": "transcript", "text": rendered]]
+            }
+            guard let bytes = ptyRingSnapshot(paneID: p) else {
+                return ["ok": false, "error": "no capture for this pane (shell panes need 'serve' enabled)"]
+            }
+            let raw = String(decoding: bytes, as: UTF8.self)
+            let text = forceRaw ? AnsiText.tailLines(raw, lines) : AnsiText.tailLines(AnsiText.strip(raw), lines)
+            return ["ok": true, "data": ["kind": forceRaw ? "raw" : "ring", "text": text]]
+
+        case "config-get":
+            guard let key = req["key"] as? String else { return ["ok": false, "error": "bad args"] }
+            let value: Any = configGet(key).map { $0 as Any } ?? NSNull()
+            return ["ok": true, "data": ["key": key, "value": value, "backend": configBackend(key)]]
+        case "config-set":
+            guard let key = req["key"] as? String, let value = req["value"] as? String
+            else { return ["ok": false, "error": "bad args"] }
+            guard configSet(key, value) else { return ["ok": false, "error": "unknown or invalid config key: \(key)"] }
+            return ["ok": true, "data": NSNull()]
+        case "config-list":
+            return ["ok": true, "data": ["items": configList()]]
+
+        default: return ["ok": false, "error": "unknown command: \(req["cmd"] as? String ?? "nil")"]
+        }
+    }
+
+    /// Full workspace→tab→pane tree as plain dicts, assigning/refreshing handles.
+    private func controlSnapshot() -> [[String: Any]] {
+        var live = Set<String>()
+        let tree = workspaces.enumerated().map { idx, ws -> [String: Any] in
+            live.insert(ws.id)
+            let tabsJSON = ws.tabs.map { tab -> [String: Any] in
+                live.insert(tab.tabID)
+                let panesJSON = tab.root.panes.map { p -> [String: Any] in
+                    live.insert(p.paneID)
+                    return [
+                        "pane": controlHandles.handle(for: p.paneID, kind: .pane),
+                        "uuid": p.paneID,
+                        "state": p.state.rawValue,
+                        "title": p.displayTitle,
+                        "cwd": p.cwd ?? "",
+                        "sessionID": p.sessionID ?? "",
+                    ]
+                }
+                return [
+                    "tab": controlHandles.handle(for: tab.tabID, kind: .tab),
+                    "uuid": tab.tabID,
+                    "title": tab.displayTitle,
+                    "panes": panesJSON,
+                ]
+            }
+            return [
+                "workspace": controlHandles.handle(for: ws.id, kind: .workspace),
+                "uuid": ws.id,
+                "name": ws.displayName(index: idx),
+                "active": ws.id == selectedWorkspaceID,
+                "tabs": tabsJSON,
+            ]
+        }
+        controlHandles.prune(live: live)
+        return tree
+    }
+
+    private func ptyRingSnapshot(paneID: String) -> [UInt8]? {
+        ptyHub?.broker(for: paneID)?.snapshotBytes()
+    }
+
+    private func paneHasLiveWork(_ paneID: String) -> Bool {
+        guard let p = pane(paneID) else { return false }
+        return p.state != .shell || (p.sessionID?.isEmpty == false)
+    }
+    private func workspaceHasLiveWork(_ wsID: String) -> Bool {
+        guard let ws = workspaces.first(where: { $0.id == wsID }) else { return false }
+        return ws.tabs.contains { $0.root.panes.contains { paneHasLiveWork($0.paneID) } }
+    }
+
+    // Config backends: app settings vs the ghostty-syntax config file.
+    private var configFilePath: String {
+        (NSHomeDirectory() as NSString).appendingPathComponent(".config/shepherd/config")
+    }
+    private func configBackend(_ key: String) -> String {
+        ["sleep.mode", "serve.remote"].contains(key) ? "app" : "file"
+    }
+    private func configGet(_ key: String) -> String? {
+        switch key {
+        case "sleep.mode":   return SleepGuard.shared.mode.rawValue
+        case "serve.remote": return isServing ? "on" : "off"
+        default:
+            let text = (try? String(contentsOfFile: configFilePath, encoding: .utf8)) ?? ""
+            return ShepherdConfigWriter.get(key, from: text)
+        }
+    }
+    private func configSet(_ key: String, _ value: String) -> Bool {
+        switch key {
+        case "sleep.mode":
+            guard let m = CaffeinateMode(rawValue: value) else { return false }
+            SleepGuard.shared.mode = m; return true
+        case "serve.remote":
+            setServing(value == "on" || value == "true"); return true
+        default:
+            let edit = ConfigEdit(key: key, kind: ShepherdConfigWriter.kind(for: key), value: value)
+            guard (try? ShepherdConfigWriter.set([edit])) != nil else { return false }
+            GhosttyApp.shared.reloadConfig()
+            return true
+        }
+    }
+    private func configList() -> [[String: Any]] {
+        var items: [[String: Any]] = [
+            ["key": "sleep.mode", "value": SleepGuard.shared.mode.rawValue, "backend": "app"],
+            ["key": "serve.remote", "value": isServing ? "on" : "off", "backend": "app"],
+        ]
+        let text = (try? String(contentsOfFile: configFilePath, encoding: .utf8)) ?? ""
+        for key in ["theme", "worktree-base"] {
+            items.append(["key": key, "value": ShepherdConfigWriter.get(key, from: text) ?? "", "backend": "file"])
+        }
+        return items
+    }
+
+    private func focusedControlPaneHandle() -> String {
+        guard let id = focusedPaneID else { return "" }
+        return controlHandles.handle(for: id, kind: .pane)
+    }
+
+    /// Resolve a handle or raw UUID to a live pane UUID.
+    private func resolvePane(_ token: String) -> String? {
+        let uuid = controlHandles.uuid(for: token) ?? token
+        return locatePane(uuid, in: workspaces) != nil ? uuid : nil
+    }
+    private func resolveWorkspace(_ token: String) -> String? {
+        let uuid = controlHandles.uuid(for: token) ?? token
+        return workspaces.contains { $0.id == uuid } ? uuid : nil
+    }
+    private func resolveTab(_ token: String) -> String? {
+        let uuid = controlHandles.uuid(for: token) ?? token
+        return workspaces.contains { $0.tabs.contains { $0.tabID == uuid } } ? uuid : nil
     }
 }

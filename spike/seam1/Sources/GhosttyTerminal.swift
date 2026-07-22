@@ -212,6 +212,7 @@ final class GhosttySurfaceView: NSView {
                 ghostty_env_var_s(key: dup("SHEPHERD_SOCK"),     value: dup(AgentStore.shared.socketPath)),
                 ghostty_env_var_s(key: dup("SHEPHERD_TAB_ID"),   value: dup(paneID)),
                 ghostty_env_var_s(key: dup("SHEPHERD_PTY_SOCK"), value: dup(AgentStore.shared.ptySocketPath)),
+                ghostty_env_var_s(key: dup("SHEPHERD_CTL_SOCK"), value: dup(AgentStore.shared.ctlSocketPath)),
             ]
             // Restore-on-relaunch: open in the pane's last-known cwd if we have one.
             if let cwd = AgentStore.shared.cwd(forPane: paneID) {
