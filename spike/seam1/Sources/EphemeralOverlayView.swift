@@ -48,6 +48,10 @@ struct EphemeralOverlayView: View {
         let corner: CGFloat = isOverlay ? 12 : 8
 
         card(e, isOverlay: isOverlay, size: CGSize(width: full.width, height: full.height))
+            // Flatten the card (chrome + Metal terminal) into one composited layer BEFORE
+            // scaling, so the terminal's CAMetalLayer scales with the card instead of
+            // compositing at its own unscaled size.
+            .compositingGroup()
             .scaleEffect(scale, anchor: .topLeading)
             .frame(width: footprint.width, height: footprint.height, alignment: .topLeading)
             .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
