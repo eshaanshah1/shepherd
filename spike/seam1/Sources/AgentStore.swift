@@ -1379,6 +1379,7 @@ final class AgentStore: ObservableObject {
             persist: { [weak self] dev in self?.addPairedDevice(dev) },
             requestApproval: { [weak self] deviceID, name, decide in
                 DispatchQueue.main.async {
+                    self?.showingPhonePairingQR = false   // the phone connected; the QR is spent
                     self?.approvalDecider = decide
                     self?.pendingApproval = (deviceID, name)
                 }
