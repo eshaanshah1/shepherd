@@ -9,13 +9,22 @@ struct GhosttyTerminal: NSViewRepresentable {
     let isVisible: Bool      // on screen now → render at refresh rate (occlusion)
     let isSelected: Bool     // this tab's focused pane → hold first responder
     var focusTick: Int = 0   // changing this re-runs updateNSView so we can reclaim focus
+    /// Explicit hit-test/focus intent for ephemeral panes (overlay = true, PiP = false).
+    /// nil ⇒ a normal workspace pane: hittable while visible AND no ephemeral overlay is
+    /// open (an open overlay must let its SwiftUI backdrop/buttons take clicks — the raw
+    /// surface beneath would otherwise swallow them, since it's a real NSView).
+    var hittableOverride: Bool? = nil
 
     func makeNSView(context: Context) -> GhosttySurfaceView { GhosttySurfaceView(paneID: paneID) }
 
     func updateNSView(_ v: GhosttySurfaceView, context: Context) {
         v.setActive(isVisible)   // every visible pane renders; only hidden ones pause
-        v.hitTestable = isVisible // only the selected tab's on-screen panes take clicks
-        if isSelected, let w = v.window, w.firstResponder !== v {
+        let overlayUp = AgentStore.shared.expandedEphemeralID != nil
+        v.hitTestable = hittableOverride ?? (isVisible && !overlayUp)
+        // Focus: the ephemeral overlay surface always may claim; a normal pane only when no
+        // overlay is up (else the two fight over first responder each render).
+        let mayFocus = (hittableOverride == true) || (hittableOverride == nil && !overlayUp)
+        if isSelected, mayFocus, let w = v.window, w.firstResponder !== v {
             w.makeFirstResponder(v)
         }
     }
