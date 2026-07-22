@@ -112,6 +112,18 @@ func printData(verb: String, data: Any?) {
         } else if let v = d["value"] { print(v is NSNull ? "" : "\(v)") }
         return
     }
+    // Handle-returning verbs print a bare, scriptable token instead of JSON:
+    // tab new / split → the new pane; workspace new → the workspace; state → the
+    // state word; whoami → "pane tab workspace". Silent (NSNull) verbs fall through.
+    if let d = data as? [String: Any] {
+        switch verb {
+        case "tab", "split", "pane": if let p = d["pane"] as? String { print(p); return }
+        case "workspace":            if let w = d["workspace"] as? String { print(w); return }
+        case "whoami":               print([d["pane"], d["tab"], d["workspace"]].compactMap { $0 as? String }.joined(separator: " ")); return
+        case "state":                if let s = d["state"] as? String { print(s); return }
+        default: break
+        }
+    }
     if let s = data as? String { print(s) }
     else if let data, !(data is NSNull),
             let out = try? JSONSerialization.data(withJSONObject: data, options: [.prettyPrinted]) {
