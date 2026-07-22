@@ -435,6 +435,9 @@ case "pty":
 case "attach":
     exit(runAttach())
 default:
-    FileHandle.standardError.write(Data("usage: shepherdd (pty [-- <program> …] | attach)\n".utf8))
+    if argv.first != nil {
+        exit(runControl(argv))   // any other verb is a control command
+    }
+    FileHandle.standardError.write(Data("usage: shepherdd (pty [-- <program> …] | attach | <control-cmd>)\n".utf8))
     exit(64)
 }

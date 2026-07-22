@@ -60,6 +60,32 @@ enum ShepherdConfigWriter {
         return s[..<eq].trimmingCharacters(in: .whitespaces)
     }
 
+    // MARK: - Reads (control CLI: `config get` / `config list`)
+
+    /// Keys that ride a `# shepherd:` comment line rather than being native ghostty keys.
+    static let shepherdKeys: Set<String> = ["theme", "worktree-base"]
+    static func kind(for key: String) -> ConfigKeyKind { shepherdKeys.contains(key) ? .shepherd : .native }
+
+    /// Read a single key's value from the config text (nil if absent).
+    static func get(_ key: String, from contents: String) -> String? {
+        let edit = ConfigEdit(key: key, kind: kind(for: key), value: "")
+        for line in contents.components(separatedBy: "\n") where matches(line, edit) {
+            return valueOf(line, kind: edit.kind)
+        }
+        return nil
+    }
+
+    private static func valueOf(_ line: String, kind: ConfigKeyKind) -> String? {
+        var t = line.trimmingCharacters(in: .whitespaces)
+        if kind == .shepherd {
+            t = String(t.dropFirst()).trimmingCharacters(in: .whitespaces)   // drop leading '#'
+            guard t.hasPrefix("shepherd:") else { return nil }
+            t = String(t.dropFirst("shepherd:".count)).trimmingCharacters(in: .whitespaces)
+        }
+        guard let eq = t.firstIndex(of: "=") else { return nil }
+        return t[t.index(after: eq)...].trimmingCharacters(in: .whitespaces)
+    }
+
     // MARK: - File IO shell (Foundation only)
 
     /// Read `~/.config/shepherd/config` (creating its dir if needed), apply the edits,

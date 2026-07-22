@@ -49,4 +49,19 @@ final class ShepherdConfigWriterTests: XCTestCase {
         let twice = ShepherdConfigWriter.apply(contents: once, sets: [edit])
         XCTAssertEqual(once, twice)
     }
+
+    func testGetShepherdKey() {
+        let text = "font-size = 13\n# shepherd: theme = dark\n"
+        XCTAssertEqual(ShepherdConfigWriter.get("theme", from: text), "dark")
+    }
+    func testGetNativeKey() {
+        XCTAssertEqual(ShepherdConfigWriter.get("font-size", from: "font-size = 13\n"), "13")
+    }
+    func testGetMissingKeyIsNil() {
+        XCTAssertNil(ShepherdConfigWriter.get("theme", from: "font-size = 13\n"))
+    }
+    func testKindClassification() {
+        XCTAssertEqual(ShepherdConfigWriter.kind(for: "theme"), .shepherd)
+        XCTAssertEqual(ShepherdConfigWriter.kind(for: "font-size"), .native)
+    }
 }

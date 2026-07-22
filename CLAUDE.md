@@ -126,6 +126,16 @@ still `SHEPHERD_TAB_ID` (unchanged for plugin compatibility) but its **value is
 the pane id** — the plugin protocol and `report.sh` need no change. **Claude
 Code is the only first-class agent** in v1 (see [ADR 0003](.claude/adr/0003-agent-state-via-claude-hooks.md)).
 
+**Control CLI (`shepherd`):** a second, always-on local unix socket
+(`~/.shepherd/control.sock`, injected as `$SHEPHERD_CTL_SOCK`; `SocketServer` is
+fire-and-forget hooks, `ControlServer.swift` is request→response) lets the
+`shepherdd` binary (symlinked as `shepherd`) drive the app: `ls`/`whoami`/`state`,
+workspace/tab/pane CRUD + `split`/`focus`/`zoom` (reusing `applyRemoteCommand`),
+`tell` (→ `injectText`), `view` (agent → session-transcript via `TranscriptReader`;
+shell → `PtyBroker` ring via `AnsiText`), `config` (file + app backends), and
+`wait` (client-side state poll). Router = `AgentStore.controlRoute`; client =
+`Helper/ControlClient.swift`. Verb reference: [`docs/control-cli.md`](docs/control-cli.md).
+
 ### Agent state lifecycle (`StopPolicy.applyEvent` + `AgentStore.apply`)
 The transition map is the pure `applyEvent` ([ADR 0015](.claude/adr/0015-background-stop-suppression-via-background-tasks.md));
 `apply` is the shell that resolves the pane via `locatePane` (which walks

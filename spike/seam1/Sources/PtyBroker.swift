@@ -118,8 +118,11 @@ final class PtyBroker {
         }
     }
 
+    /// Recent-output ring bytes (raw PTY stream, ANSI included). Used by `view`.
+    func snapshotBytes() -> [UInt8] { lock.lock(); defer { lock.unlock() }; return ring.snapshot() }
+
     // Test-only.
-    func ringSnapshotForTest() -> [UInt8] { lock.lock(); defer { lock.unlock() }; return ring.snapshot() }
+    func ringSnapshotForTest() -> [UInt8] { snapshotBytes() }
 }
 
 /// Accepts helper connections on a unix-domain socket ($SHEPHERD_PTY_SOCK), reads each

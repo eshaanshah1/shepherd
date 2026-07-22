@@ -34,6 +34,24 @@ If absent (or reverted by MDM), Shepherd auto-degrades to the idle assertion. Th
 Awake" menu shows which tier is active. A hard crash while holding can leave the kernel
 `SleepDisabled` flag set until Shepherd's next launch (which clears it) or a reboot.
 
+## Control CLI
+
+A running Shepherd can be driven from any shell — and by Claude Code itself —
+through the `shepherd` CLI, which talks to the app over a local unix socket. It
+can list/create/edit/delete workspaces, tabs, and panes, split/focus/zoom, change
+config, `tell` a pane text, `view` a pane's output, and `wait` on a pane's state.
+
+```sh
+./scripts/install-shepherd-cli.sh        # symlink ~/.local/bin/shepherd -> the built helper
+shepherd ls                              # workspace -> tab -> pane tree with handles
+shepherd tab new                         # prints the new pane handle
+shepherd tell p3 "run the tests"         # type into a pane (agents queue it)
+shepherd wait p3 --any-attention         # block until it needs you
+shepherd view p3 --lines 60              # read its transcript
+```
+
+Full verb reference: **[`docs/control-cli.md`](docs/control-cli.md)**.
+
 ## Remote push (FCM) — host setup
 
 Shepherd can wake a paired phone over Firebase Cloud Messaging when an agent
