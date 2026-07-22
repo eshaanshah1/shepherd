@@ -1343,6 +1343,13 @@ final class AgentStore: ObservableObject {
 
     /// Notification routing / attention jump: select the owning WORKSPACE, focus the
     /// pane's tab + pane, clear need-to-check. Crosses workspace boundaries.
+    /// Route a notification click to the right pane: an ephemeral pane expands its
+    /// overlay; a workspace pane reveals its workspace/tab.
+    func focusForNotification(paneID: String) {
+        if ephemeralPanes.contains(where: { $0.id == paneID }) { expandEphemeral(paneID) }
+        else { revealPane(paneID) }
+    }
+
     func revealPane(_ paneID: String) {
         guard let (w, t) = locatePane(paneID, in: workspaces) else { return }
         selectedWorkspaceID = workspaces[w].id

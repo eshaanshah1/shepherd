@@ -22,8 +22,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                                 didReceive response: UNNotificationResponse,
                                 withCompletionHandler completionHandler: @escaping () -> Void) {
         let paneID = response.notification.request.content.userInfo["paneID"] as? String
-        if let paneID { AgentStore.shared.revealPane(paneID) }
+        if let paneID { AgentStore.shared.focusForNotification(paneID: paneID) }
         NSApp.activate(ignoringOtherApps: true)
+        bringMainWindowFront()   // reuse the existing window instead of spawning a new one
         completionHandler()
+    }
+
+    /// Clicking the dock icon with no visible window reuses the existing one.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { bringMainWindowFront() }
+        return true
+    }
+
+    /// Bring the app's existing content window forward (de-minimizing if needed) rather
+    /// than letting SwiftUI's WindowGroup open a fresh one on activation. The Settings
+    /// window (⌘,) is excluded via `canBecomeMain` + a content check.
+    private func bringMainWindowFront() {
+        guard let win = NSApp.windows.first(where: { $0.canBecomeMain && $0.contentView != nil }) else { return }
+        if win.isMiniaturized { win.deminiaturize(nil) }
+        win.makeKeyAndOrderFront(nil)
     }
 }
