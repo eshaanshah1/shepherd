@@ -6,7 +6,7 @@ import SwiftUI
 struct EphemeralOverlayView: View {
     @EnvironmentObject var store: AgentStore
 
-    private let pipSize = CGSize(width: 240, height: 150)
+    private let pipTargetWidth: CGFloat = 260   // PiP width; height follows the overlay's aspect
     private let pipGap: CGFloat = 12
 
     var body: some View {
@@ -35,45 +35,58 @@ struct EphemeralOverlayView: View {
     @ViewBuilder
     private func paneContainer(_ e: EphemeralPane, in size: CGSize) -> some View {
         let isOverlay = !e.collapsed
-        let frame = isOverlay ? overlayFrame(in: size) : pipFrame(for: e, in: size)
+        // The card is ALWAYS laid out at the full overlay size, so the terminal keeps its
+        // full grid (no reflow). A PiP is that same card shrunk by a layer transform —
+        // a true scaled-down thumbnail, not a tiny few-column terminal.
+        let full = overlayFrame(in: size)
+        let scale = isOverlay ? 1 : (pipTargetWidth / full.width)
+        let footprint = CGSize(width: full.width * scale, height: full.height * scale)
+        let center = isOverlay
+            ? CGPoint(x: full.midX, y: full.midY)
+            : pipCenter(for: e, in: size, footprint: footprint)
+        let corner: CGFloat = isOverlay ? 12 : 8
 
+        card(e, isOverlay: isOverlay)
+            .frame(width: full.width, height: full.height)
+            .scaleEffect(scale, anchor: .topLeading)
+            .frame(width: footprint.width, height: footprint.height, alignment: .topLeading)
+            .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: corner, style: .continuous)
+                .strokeBorder(Theme.hairline, lineWidth: 1))
+            .shadow(color: .black.opacity(isOverlay ? 0.4 : 0.25),
+                    radius: isOverlay ? 30 : 10, y: isOverlay ? 16 : 6)
+            // Collapsed: a real-NSView catcher (at true PiP size, unscaled) so the expand
+            // tap wins AppKit hit-testing over the live terminal beneath it.
+            .overlay { if !isOverlay { MouseCatcher { store.expandEphemeral(e.id) } } }
+            .position(x: center.x, y: center.y)
+            .modifier(FlashOnBump(trigger: store.ephemeralCapFlash, active: e.collapsed))
+    }
+
+    private func card(_ e: EphemeralPane, isOverlay: Bool) -> some View {
         ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: isOverlay ? 12 : 8, style: .continuous)
-                .fill(Theme.ground)
-                .overlay(RoundedRectangle(cornerRadius: isOverlay ? 12 : 8, style: .continuous)
-                    .strokeBorder(Theme.hairline, lineWidth: 1))
-
+            Theme.ground
             VStack(spacing: 0) {
-                titleBar(e, isOverlay: isOverlay)
+                titleBar(e, showButtons: isOverlay)
                 terminal(e, isOverlay: isOverlay)
             }
         }
-        // A collapsed card expands on click. Its click-catcher is a real NSView (not a
-        // SwiftUI gesture) so it wins AppKit hit-testing over the live terminal beneath it.
-        .overlay { if !isOverlay { MouseCatcher { store.expandEphemeral(e.id) } } }
-        .frame(width: frame.width, height: frame.height)
-        .clipShape(RoundedRectangle(cornerRadius: isOverlay ? 12 : 8, style: .continuous))
-        .shadow(color: .black.opacity(isOverlay ? 0.4 : 0.25),
-                radius: isOverlay ? 30 : 10, y: isOverlay ? 16 : 6)
-        .position(x: frame.midX, y: frame.midY)
-        .modifier(FlashOnBump(trigger: store.ephemeralCapFlash, active: e.collapsed))
     }
 
-    private func titleBar(_ e: EphemeralPane, isOverlay: Bool) -> some View {
+    private func titleBar(_ e: EphemeralPane, showButtons: Bool) -> some View {
         HStack(spacing: 8) {
             Circle().fill(e.pane.state.color).frame(width: 7, height: 7)
             Text(e.pane.displayTitle)
-                .font(.ui(isOverlay ? 12.5 : 11))
+                .font(.ui(12.5))
                 .foregroundColor(Theme.textPrimary)
                 .lineLimit(1)
             Spacer(minLength: 0)
-            if isOverlay {
+            if showButtons {
                 iconButton("minus") { store.collapseEphemeral(e.id) }
                 iconButton("xmark") { store.closeEphemeral(e.id) }
             }
         }
         .padding(.horizontal, 10)
-        .frame(height: isOverlay ? 30 : 24)
+        .frame(height: 30)
         .background(Theme.surface1)
     }
 
@@ -93,6 +106,7 @@ struct EphemeralOverlayView: View {
                         isSelected: isOverlay,              // overlay grabs first responder
                         focusTick: store.focusTick,
                         hittableOverride: isOverlay)        // overlay types; PiP is expand-only
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: Layout
@@ -103,14 +117,15 @@ struct EphemeralOverlayView: View {
         return CGRect(x: (size.width - w) / 2, y: (size.height - h) / 2, width: w, height: h)
     }
 
-    /// Vertical stack of PiPs anchored bottom-right, newest at the bottom.
-    private func pipFrame(for e: EphemeralPane, in size: CGSize) -> CGRect {
+    /// Center for a PiP in the bottom-right stack (newest at the bottom). All PiPs share
+    /// the same footprint (same scale), so the stack spacing is uniform.
+    private func pipCenter(for e: EphemeralPane, in size: CGSize, footprint: CGSize) -> CGPoint {
         let collapsed = store.ephemeralPanes.filter { $0.collapsed }
         let idx = collapsed.firstIndex { $0.id == e.id } ?? 0
         let fromBottom = collapsed.count - 1 - idx
-        let x = size.width - pipSize.width - pipGap
-        let y = size.height - pipSize.height - pipGap - CGFloat(fromBottom) * (pipSize.height + pipGap)
-        return CGRect(x: x, y: y, width: pipSize.width, height: pipSize.height)
+        let x = size.width - footprint.width / 2 - pipGap
+        let y = size.height - footprint.height / 2 - pipGap - CGFloat(fromBottom) * (footprint.height + pipGap)
+        return CGPoint(x: x, y: y)
     }
 
     private var escHandler: some View {
