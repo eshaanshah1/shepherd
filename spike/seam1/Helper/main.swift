@@ -75,16 +75,28 @@ var gMaster: Int32 = -1
 // always reads the CURRENT outer size, so it converges on the final value.
 var gWinchPipe: (read: Int32, write: Int32) = (-1, -1)
 var gLastWS = winsize()
+// While a remote viewer drives the size (a `.resize` frame arrived from the app), the outer
+// PTY's SIGWINCH must NOT stomp the remote grid — else any Mac-side layout change would snap
+// the pane back to the desktop size mid-session. `.releaseSize` clears this on the last detach.
+var gAppDriven = false
 
 func applyResize(cols: Int, rows: Int) {
+    gAppDriven = true
     var ws = winsize(ws_row: UInt16(rows), ws_col: UInt16(cols), ws_xpixel: 0, ws_ypixel: 0)
     gLastWS = ws
     _ = sh_set_winsize(gMaster, &ws)
 }
 
+/// The last remote viewer left: resume sizing from the outer PTY and snap to its CURRENT size.
+func releaseLocalSize() {
+    gAppDriven = false
+    reconcileWinsize()
+}
+
 /// Copy the outer (STDIN) winsize onto the inner master, skipping the ioctl when it
 /// hasn't actually changed so we don't spam the child with redundant SIGWINCHs.
 func reconcileWinsize() {
+    if gAppDriven { return }   // a remote viewer owns the size — don't stomp it with the outer grid
     var ws = winsize()
     guard sh_get_winsize(STDIN_FILENO, &ws) == 0 else { return }
     if ws.ws_row == gLastWS.ws_row, ws.ws_col == gLastWS.ws_col,
@@ -221,6 +233,7 @@ func pump(master: Int32) {
                     appInBuf.append(contentsOf: UnsafeBufferPointer(start: buf, count: n))
                     for f in decodeHelperFrames(&appInBuf) {
                         if f.isResize { applyResize(cols: f.cols, rows: f.rows) }
+                        else if f.isRelease { releaseLocalSize() }
                         else { writeBytes(master, f.bytes) }
                     }
                 } else if closed(n) { dead = true }

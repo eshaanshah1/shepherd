@@ -84,14 +84,6 @@ class RemoteTerminalSession(
         }
     }
 
-    /** Resize the local emulator to the host-authoritative grid WITHOUT echoing a [resizeSink]
-     *  callback — the size came FROM the host (`DataReady`), so re-sending it would loop. */
-    fun applyRemoteSize(cols: Int, rows: Int) {
-        emulator.resize(cols, rows)
-        currentCols = cols; currentRows = rows
-        onScreenUpdated?.invoke()
-    }
-
     /** Test seam: the current screen transcript. */
     fun screenText(): String = emulator.screen.transcriptText
 

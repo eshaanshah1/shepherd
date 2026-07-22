@@ -92,6 +92,13 @@ final class RemoteProtocolTests: XCTestCase {
         XCTAssertEqual(HelperFrameDecoder().feed(out), [.resize(cols: 40, rows: 30)])
     }
 
+    func testHelperFrameReleaseSizeRoundTrips() {
+        let out = HelperFrameCodec.encode(.releaseSize)
+        XCTAssertEqual(Array(out.prefix(4)), [0,0,0,1])            // 1 type byte, no payload
+        XCTAssertEqual(out[out.startIndex + 4], 0x02)
+        XCTAssertEqual(HelperFrameDecoder().feed(out), [.releaseSize])
+    }
+
     func testHelperFrameDecoderReassemblesSplitFrames() {
         let a = HelperFrameCodec.encode(.input([0x61]))
         let b = HelperFrameCodec.encode(.resize(cols: 10, rows: 5))

@@ -34,6 +34,19 @@ final class PtyBrokerFramingTests: XCTestCase {
         XCTAssertEqual(got, Array(HelperFrameCodec.encode(.input([0x61]))) + Array(HelperFrameCodec.encode(.resize(cols: 40, rows: 30))))
         XCTAssertEqual(b.cols, 40); XCTAssertEqual(b.rows, 30)
     }
+
+    func testReleaseSizeFramesReleaseAndRestoresDesktopGrid() throws {
+        var fds = [Int32](repeating: 0, count: 2); socketpair(AF_UNIX, SOCK_STREAM, 0, &fds)
+        defer { close(fds[1]) }
+        let b = PtyBroker(paneID: "p1", cols: 80, rows: 24)   // desktop grid = 80x24
+        b.attachHelper(fd: fds[0])
+        b.setSize(cols: 40, rows: 30)                          // a viewer sized it down
+        b.releaseSize()                                        // last viewer left → release
+        let got = readAvailable(fds[1], count: 64)
+        XCTAssertEqual(got, Array(HelperFrameCodec.encode(.resize(cols: 40, rows: 30)))
+                          + Array(HelperFrameCodec.encode(.releaseSize)))
+        XCTAssertEqual(b.cols, 80); XCTAssertEqual(b.rows, 24)  // broker record back at the desktop grid
+    }
 }
 
 final class PtyRingTests: XCTestCase {

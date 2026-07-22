@@ -54,11 +54,14 @@ final class ShepherddPtyTests: XCTestCase {
         // input "hi"
         var buf: [UInt8] = [0,0,0,3, 0x00, 0x68, 0x69,
                             // resize 40x30
-                            0,0,0,5, 0x01, 0,40, 0,30]
+                            0,0,0,5, 0x01, 0,40, 0,30,
+                            // releaseSize
+                            0,0,0,1, 0x02]
         let frames = decodeHelperFrames(&buf)
-        XCTAssertEqual(frames.count, 2)
-        XCTAssertFalse(frames[0].isResize); XCTAssertEqual(frames[0].bytes, [0x68,0x69])
+        XCTAssertEqual(frames.count, 3)
+        XCTAssertFalse(frames[0].isResize); XCTAssertFalse(frames[0].isRelease); XCTAssertEqual(frames[0].bytes, [0x68,0x69])
         XCTAssertTrue(frames[1].isResize); XCTAssertEqual(frames[1].cols, 40); XCTAssertEqual(frames[1].rows, 30)
+        XCTAssertFalse(frames[2].isResize); XCTAssertTrue(frames[2].isRelease)
         XCTAssertTrue(buf.isEmpty)   // fully consumed
     }
 
