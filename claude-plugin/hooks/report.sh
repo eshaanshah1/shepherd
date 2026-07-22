@@ -46,6 +46,18 @@ elif [ "$event" = "Stop" ] && [ -n "$payload_src" ] && command -v jq >/dev/null 
     | jq -r '[.background_tasks[]? | select(.type=="subagent" or .type=="workflow" or .type=="shell")] | length' 2>/dev/null)"
 fi
 
+# session_id rides EVERY event so the app can pin a pane to its owning agent and drop
+# hooks from a nested `claude` (e.g. `claude -p` run via Bash inherits SHEPHERD_TAB_ID
+# and would otherwise flip the parent pane's state). Unparseable -> "" -> app fails safe.
+sid=""
+if [ -n "$payload_src" ]; then
+  if command -v jq >/dev/null 2>&1; then
+    sid="$(printf '%s' "$payload_src" | jq -r '.session_id // ""' 2>/dev/null)"
+  else
+    sid="$(printf '%s' "$payload_src" | grep -oE "\"session_id\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | head -1 | sed -E 's/.*"([^"]*)"$/\1/')"
+  fi
+fi
+
 # Structured prompt payload — only AskUserQuestion carries one (its questions + options),
 # so the phone can render tappable answers. detail stays the tool_name for the state machine.
 payload=""
@@ -55,10 +67,10 @@ fi
 
 esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 if [ -n "$payload" ]; then
-  printf '{"tab_id":"%s","event":"%s","detail":"%s","payload":"%s"}\n' \
-    "$(esc "$SHEPHERD_TAB_ID")" "$(esc "$event")" "$(esc "$detail")" "$(esc "$payload")"
+  printf '{"tab_id":"%s","event":"%s","detail":"%s","sid":"%s","payload":"%s"}\n' \
+    "$(esc "$SHEPHERD_TAB_ID")" "$(esc "$event")" "$(esc "$detail")" "$(esc "$sid")" "$(esc "$payload")"
 else
-  printf '{"tab_id":"%s","event":"%s","detail":"%s"}\n' \
-    "$(esc "$SHEPHERD_TAB_ID")" "$(esc "$event")" "$(esc "$detail")"
+  printf '{"tab_id":"%s","event":"%s","detail":"%s","sid":"%s"}\n' \
+    "$(esc "$SHEPHERD_TAB_ID")" "$(esc "$event")" "$(esc "$detail")" "$(esc "$sid")"
 fi | nc -U "$SHEPHERD_SOCK" 2>/dev/null || true
 exit 0

@@ -4,16 +4,17 @@ import Darwin
 #endif
 
 /// Minimal unix-domain socket server. Binds `path`, accepts connections on a
-/// background thread, parses one {"tab_id","event","detail"} JSON message per
-/// connection, and invokes `onEvent(tab, event, detail)` on the main queue.
+/// background thread, parses one {"tab_id","event","detail","sid"} JSON message per
+/// connection, and invokes `onEvent(tab, event, detail, sid)` on the main queue
+/// (`sid` = the reporting agent's session_id, used to pin a pane to its owner).
 /// The receiving half of seam 2/3.
 final class SocketServer {
     private let path: String
-    private let onEvent: (String, String, String, String?) -> Void
+    private let onEvent: (String, String, String, String, String?) -> Void
     private var fd: Int32 = -1
     private let queue = DispatchQueue(label: "shepherd.socket", qos: .utility)
 
-    init(path: String, onEvent: @escaping (String, String, String, String?) -> Void) {
+    init(path: String, onEvent: @escaping (String, String, String, String, String?) -> Void) {
         self.path = path
         self.onEvent = onEvent
     }
@@ -71,8 +72,9 @@ final class SocketServer {
                 let event = obj["event"] as? String
             else { continue }
             let detail = (obj["detail"] as? String) ?? ""
+            let sid = (obj["sid"] as? String) ?? ""
             let payload = obj["payload"] as? String
-            DispatchQueue.main.async { [weak self] in self?.onEvent(tab, event, detail, payload) }
+            DispatchQueue.main.async { [weak self] in self?.onEvent(tab, event, detail, sid, payload) }
         }
     }
 

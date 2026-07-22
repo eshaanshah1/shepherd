@@ -133,4 +133,29 @@ final class StopPolicyTests: XCTestCase {
         step("Stop", "0")                    // nothing backgrounded → real done
         XCTAssertEqual(state, .needsCheck)
     }
+
+    // MARK: session ownership (nested `claude -p` isolation)
+
+    func testUnlockedPaneAcceptsAnySession() {
+        // owner nil ⇒ the first SessionStart claims; nothing is dropped beforehand.
+        XCTAssertTrue(sessionEventAccepted(sid: "abc", owner: nil))
+    }
+
+    func testMissingSessionIdFailsSafeAndIsAccepted() {
+        // Old plugin (no `sid`) must behave exactly as before — never stricter.
+        XCTAssertTrue(sessionEventAccepted(sid: "", owner: "owner-1"))
+    }
+
+    func testOwningSessionEventAccepted() {
+        XCTAssertTrue(sessionEventAccepted(sid: "owner-1", owner: "owner-1"))
+    }
+
+    func testForeignNestedSessionEventDropped() {
+        // A nested `claude -p` reports the parent's pane id with its own session_id.
+        XCTAssertFalse(sessionEventAccepted(sid: "nested-2", owner: "owner-1"))
+    }
+
+    func testEmptyOwnerAcceptsEvenWithSid() {
+        XCTAssertTrue(sessionEventAccepted(sid: "abc", owner: ""))
+    }
 }
