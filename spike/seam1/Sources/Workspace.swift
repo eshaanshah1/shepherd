@@ -42,9 +42,12 @@ struct Workspace: Identifiable {
     }
 
     /// Drop in a fresh tab if the workspace was emptied — a workspace is never empty.
+    /// The reseeded tab opens in the workspace's default dir, like any new tab here.
     mutating func reseedIfEmpty() {
         guard tabs.isEmpty else { return }
-        let t = Tab(pane: Pane())
+        var pane = Pane()
+        if let p = defaultPath, !p.isEmpty { pane.cwd = (p as NSString).expandingTildeInPath }
+        let t = Tab(pane: pane)
         tabs = [t]
         selectedTabID = t.tabID
     }

@@ -62,6 +62,21 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertEqual(w.selectedTabID, w.tabs.first?.tabID)
     }
 
+    func testReseedSeedsDefaultPath() {
+        var w = Workspace(tabs: ws().tabs, defaultPath: "~/dev/shepherd")
+        w.tabs.removeAll()
+        w.reseedIfEmpty()
+        let expected = ("~/dev/shepherd" as NSString).expandingTildeInPath
+        XCTAssertEqual(w.tabs.first?.root.panes.first?.cwd, expected)
+    }
+
+    func testReseedNoDefaultPathLeavesCwdNil() {
+        var w = ws()   // no defaultPath
+        w.tabs.removeAll()
+        w.reseedIfEmpty()
+        XCTAssertNil(w.tabs.first?.root.panes.first?.cwd)
+    }
+
     func testReseedNoopWhenNonEmpty() {
         var w = ws()
         let before = w.tabs.first?.tabID
