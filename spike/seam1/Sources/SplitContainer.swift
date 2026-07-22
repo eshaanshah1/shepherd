@@ -50,6 +50,9 @@ struct SplitContainer: View {
                         // Inactive panes dim instead of the focused one drawing a
                         // ring; a single-pane tab is never dimmed.
                         .opacity(isSplit && !isFocused ? 0.60 : 1.0)
+                        // A stowing pane locks + dims while its worktree is torn down.
+                        .overlay { if let stow = pane.stowing { StowOverlay(kind: stow) } }
+                        .allowsHitTesting(pane.stowing == nil)
                     }
                 }
 
@@ -82,6 +85,26 @@ struct SplitContainer: View {
     private func paneFrame(_ id: String, in rect: CGRect) -> CGRect {
         if zoomedPaneID != nil { return rect }
         return node.frames(in: rect)[id] ?? rect
+    }
+}
+
+/// Dim, non-interactive scrim over a pane whose worktree is being torn down. The
+/// terminal stays mounted underneath so nothing flickers before the tab closes.
+private struct StowOverlay: View {
+    let kind: StowKind
+
+    var body: some View {
+        ZStack {
+            Theme.ground.opacity(0.6)
+            VStack(spacing: 8) {
+                Image(systemName: kind == .archiving ? "archivebox" : "trash")
+                    .font(.system(size: 26, weight: .light))
+                Text(kind == .archiving ? "Archiving…" : "Discarding…")
+                    .font(.ui(12))
+            }
+            .foregroundStyle(kind == .archiving ? Theme.textSecondary : Theme.error)
+        }
+        .transition(.opacity)
     }
 }
 
