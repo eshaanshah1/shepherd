@@ -90,7 +90,7 @@ struct ShepherdApp: App {
         Settings {
             SettingsView()
                 .environmentObject(AgentStore.shared)
-                .preferredColorScheme(.dark)
+                .preferredColorScheme(Theme.mode == .dark ? .dark : .light)
         }
     }
 }

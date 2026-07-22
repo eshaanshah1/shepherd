@@ -152,6 +152,33 @@ extension Notification.Name {
     static let shepherdSaveCodeSurface = Notification.Name("shepherd.codeSurface.save")
 }
 
+/// A small syntax-highlighted code field bound to in-memory text (no file), used by
+/// Settings for the worktree-hook editor. Same CESE engine + Shepherd theme as the
+/// full editor, so bash reads in the app's palette. Recreate via `.id(...)` to reseed
+/// (CESE reads the binding only at init — see `CodeEditorView`).
+struct CodeFieldView: View {
+    @Binding var text: String
+    var language: CodeLanguage = .bash
+    @State private var editorState = SourceEditorState()
+
+    private var editorFont: NSFont {
+        NSFont(name: Theme.monoFontName ?? "", size: 12.5)
+            ?? NSFont.monospacedSystemFont(ofSize: 12.5, weight: .regular)
+    }
+
+    private var configuration: SourceEditorConfiguration {
+        SourceEditorConfiguration(
+            appearance: .init(theme: shepherdEditorTheme, font: editorFont, wrapLines: true),
+            behavior: .init(isEditable: true),
+            peripherals: .init(showGutter: false, showFoldingRibbon: false)
+        )
+    }
+
+    var body: some View {
+        SourceEditor($text, language: language, configuration: configuration, state: $editorState)
+    }
+}
+
 /// The editor theme, built from Shepherd's own `Theme.Code` palette. The diff renders
 /// from the same palette, so syntax reads identically between the two surfaces.
 /// Background is Shepherd `ground`, matching the app chrome and the diff panel.
