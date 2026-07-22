@@ -73,6 +73,10 @@ struct RemoteTab: Codable, Equatable {
     let focusedPaneID: String?; let zoomedPaneID: String?
 }
 
+/// Reserved workspace id for the synthetic "Temp Tabs" folder that mirrors
+/// ephemeral panes. Real workspace ids are UUIDs, so this never collides.
+let ephemeralWorkspaceID = "ephemeral"
+
 /// One workspace projected to a client: its tabs (each a tree) + selection.
 struct WorkspaceTree: Codable, Equatable {
     let workspaceID: String; let name: String

@@ -105,6 +105,7 @@ targets:
       - path: Sources/PairingPayload.swift
       - path: Sources/TailscaleDiscovery.swift
       - path: Sources/PtyBroker.swift
+      - path: Sources/EphemeralPane.swift
       - path: Tests
   ShepherdRemoteTests:
     type: bundle.unit-test

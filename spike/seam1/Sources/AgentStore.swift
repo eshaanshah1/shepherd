@@ -13,6 +13,16 @@ final class AgentStore: ObservableObject {
     @Published private(set) var workspaces: [Workspace] = []
     @Published var selectedWorkspaceID: String?
 
+    /// Scratch panes owned by no workspace (spec: ephemeral panes). At most one is
+    /// un-collapsed (the overlay); the rest are bottom-right PiP thumbnails.
+    @Published var ephemeralPanes: [EphemeralPane] = []
+    /// Bumped when a summon is blocked at the cap — drives a brief PiP-row flash.
+    @Published private(set) var ephemeralCapFlash: Int = 0
+
+    /// The single open overlay's pane id (nil = all collapsed). Derived from
+    /// `collapsed` so there's one source of truth.
+    var expandedEphemeralID: String? { ephemeralPanes.first { !$0.collapsed }?.id }
+
     /// Archived git worktrees (dir reclaimed, work preserved under a git ref).
     /// Restorable until they expire; persisted under `archiveKey`.
     @Published private(set) var archivedWorktrees: [ArchivedWorktree] = []
@@ -730,20 +740,27 @@ final class AgentStore: ObservableObject {
     /// Jump to the next pane that needs you — across ALL workspaces. revealPane
     /// switches workspace + tab + focus.
     func selectNextAttention() {
-        var flat: [(ws: String, pane: String)] = []
-        for ws in workspaces { for tab in ws.tabs { for pid in tab.paneIDs { flat.append((ws.id, pid)) } } }
+        var flat: [(kind: String, ws: String?, pane: String)] = []
+        for ws in workspaces { for tab in ws.tabs { for pid in tab.paneIDs { flat.append(("ws", ws.id, pid)) } } }
+        for e in ephemeralPanes { flat.append(("ephemeral", nil, e.id)) }
         guard !flat.isEmpty else { return }
         let curPane = currentWorkspace.flatMap { ws in
             ws.tabs.first { $0.tabID == ws.selectedTabID }?.focusedPaneID
         }
-        let start = flat.firstIndex { $0.ws == selectedWorkspaceID && $0.pane == curPane } ?? -1
+        let start = flat.firstIndex { $0.kind == "ws" && $0.ws == selectedWorkspaceID && $0.pane == curPane } ?? -1
         for off in 1...flat.count {
             let e = flat[(start + off) % flat.count]
-            if let (w, t) = locatePane(e.pane, in: workspaces),
-               workspaces[w].tabs[t].root.pane(e.pane)?.state.wantsAttention == true {
-                revealPane(e.pane)
-                return
+            let wants: Bool
+            if e.kind == "ws" {
+                wants = locatePane(e.pane, in: workspaces).map {
+                    workspaces[$0.ws].tabs[$0.tab].root.pane(e.pane)?.state.wantsAttention == true
+                } ?? false
+            } else {
+                wants = ephemeralPanes.first { $0.id == e.pane }?.pane.state.wantsAttention == true
             }
+            guard wants else { continue }
+            if e.kind == "ws" { revealPane(e.pane) } else { expandEphemeral(e.pane) }
+            return
         }
         NSSound.beep()   // nothing needs you
     }
@@ -869,13 +886,17 @@ final class AgentStore: ObservableObject {
 
     /// cwd to seed a restored pane's surface (consumed once at surface creation).
     func cwd(forPane paneID: String) -> String? {
-        guard let (w, t) = locatePane(paneID, in: workspaces) else { return nil }
-        return workspaces[w].tabs[t].root.pane(paneID)?.cwd
+        if let (w, t) = locatePane(paneID, in: workspaces) {
+            return workspaces[w].tabs[t].root.pane(paneID)?.cwd
+        }
+        return ephemeralPanes.first { $0.id == paneID }?.pane.cwd
     }
 
     func pane(_ paneID: String) -> Pane? {
-        guard let (w, t) = locatePane(paneID, in: workspaces) else { return nil }
-        return workspaces[w].tabs[t].root.pane(paneID)
+        if let (w, t) = locatePane(paneID, in: workspaces) {
+            return workspaces[w].tabs[t].root.pane(paneID)
+        }
+        return ephemeralPanes.first { $0.id == paneID }?.pane
     }
 
     /// A pane running a live Claude session (so the comment→prompt composer applies).
@@ -948,11 +969,20 @@ final class AgentStore: ObservableObject {
     /// state mid-view-build): resume is attempted once; a successful resume re-arms it via the
     /// agent's own SessionStart, while a dead id simply falls back to a plain shell next launch.
     func takeResumeInput(forPane paneID: String) -> String? {
-        guard let (w, t) = locatePane(paneID, in: workspaces),
-              let sid = workspaces[w].tabs[t].root.pane(paneID)?.sessionID, !sid.isEmpty else { return nil }
+        let sid: String?
+        if let (w, t) = locatePane(paneID, in: workspaces) {
+            sid = workspaces[w].tabs[t].root.pane(paneID)?.sessionID
+        } else {
+            sid = ephemeralPanes.first { $0.id == paneID }?.pane.sessionID
+        }
+        guard let sid, !sid.isEmpty else { return nil }
         DispatchQueue.main.async { [weak self] in
-            guard let self, let (w, t) = locatePane(paneID, in: self.workspaces) else { return }
-            _ = self.workspaces[w].tabs[t].root.updatePane(paneID) { $0.sessionID = nil }
+            guard let self else { return }
+            if let (w, t) = locatePane(paneID, in: self.workspaces) {
+                _ = self.workspaces[w].tabs[t].root.updatePane(paneID) { $0.sessionID = nil }
+            } else if let i = self.ephemeralPanes.firstIndex(where: { $0.id == paneID }) {
+                self.ephemeralPanes[i].pane.sessionID = nil
+            }
             self.save()
         }
         return claudeResumeInput(sessionID: sid)
@@ -964,19 +994,41 @@ final class AgentStore: ObservableObject {
     /// `applyEvent` (lifecycle map + ordering guard + background-agent counter; see
     /// StopPolicy and ADR 0004), then surface the result (sidebar / badge / alert).
     func apply(event: String, detail: String, paneID: String, sid: String = "", payload: String? = nil) {
-        guard let (w, t) = locatePane(paneID, in: workspaces),
-              let pane = workspaces[w].tabs[t].root.pane(paneID) else {
+        if let (w, t) = locatePane(paneID, in: workspaces),
+           let pane = workspaces[w].tabs[t].root.pane(paneID) {
+            applyTransition(event: event, detail: detail, paneID: paneID, sid: sid, payload: payload,
+                            current: pane, wsID: workspaces[w].id) { body in
+                guard let (w, t) = locatePane(paneID, in: self.workspaces) else { return nil }
+                _ = self.workspaces[w].tabs[t].root.updatePane(paneID, body)
+                return self.workspaces[w].tabs[t].root.pane(paneID)
+            }
+        } else if let i = ephemeralPanes.firstIndex(where: { $0.id == paneID }) {
+            applyTransition(event: event, detail: detail, paneID: paneID, sid: sid, payload: payload,
+                            current: ephemeralPanes[i].pane, wsID: nil) { body in
+                guard let i = self.ephemeralPanes.firstIndex(where: { $0.id == paneID }) else { return nil }
+                body(&self.ephemeralPanes[i].pane)
+                return self.ephemeralPanes[i].pane
+            }
+        } else {
             shepherdLog("event=\(event) tab=\(paneID.prefix(8)) -> NO SUCH TAB")
-            return
         }
+    }
+
+    /// The socket lifecycle tail, shared by the workspace and ephemeral feeds. `wsID`
+    /// is nil for an ephemeral pane (no owning workspace ⇒ treated as "hidden" for
+    /// notification routing, since it has no visible sidebar dot). `mutate` applies a
+    /// change to the resolved pane and returns the updated pane.
+    private func applyTransition(event: String, detail: String, paneID: String, sid: String,
+                                 payload: String?, current: Pane, wsID: String?,
+                                 mutate: ((inout Pane) -> Void) -> Pane?) {
         // A nested `claude` (e.g. `claude -p` run via Bash) reports on the parent pane's
         // id with its own session_id; drop it so it can't drive the parent's state.
-        guard sessionEventAccepted(sid: sid, owner: pane.sessionID) else {
+        guard sessionEventAccepted(sid: sid, owner: current.sessionID) else {
             shepherdLog("event=\(event) tab=\(paneID.prefix(8)) (ignored: foreign session \(sid.prefix(8)))")
             return
         }
-        let cur = pane.state
-        let res = applyEvent(event, detail: detail, current: cur, reason: pane.reason)
+        let cur = current.state
+        let res = applyEvent(event, detail: detail, current: cur, reason: current.reason)
 
         let suffix: String
         if res.heldForBackground {
@@ -989,7 +1041,7 @@ final class AgentStore: ObservableObject {
         shepherdLog("event=\(event)\(detail.isEmpty ? "" : "[\(detail)]") tab=\(paneID.prefix(8)) " + suffix)
 
         guard res.applied else { return }
-        _ = workspaces[w].tabs[t].root.updatePane(paneID) {
+        let updated = mutate {
             if res.clearTitle { $0.title = "" }
             $0.state = res.state
             $0.reason = res.reason
@@ -1002,17 +1054,16 @@ final class AgentStore: ObservableObject {
         // Track the live Claude session id so we can resume it on relaunch: SessionStart carries
         // the id (in detail), SessionEnd means the agent exited so there's nothing to resume.
         if event == "SessionStart", !detail.isEmpty {
-            _ = workspaces[w].tabs[t].root.updatePane(paneID) { $0.sessionID = detail }
+            _ = mutate { $0.sessionID = detail }
             save()
         } else if event == "SessionEnd" {
-            _ = workspaces[w].tabs[t].root.updatePane(paneID) { $0.sessionID = nil }
+            _ = mutate { $0.sessionID = nil }
             save()
         }
-        if res.state != cur, res.state.wantsAttention,
-           let updated = workspaces[w].tabs[t].root.pane(paneID) {
+        if res.state != cur, res.state.wantsAttention, let updated {
             let routing = NotificationRoutingPolicy.decide(isAway: isAway())
             if routing.local {
-                notifyAttention(updated, inWorkspace: workspaces[w].id)
+                notifyAttention(updated, hidden: wsID == nil || wsID != selectedWorkspaceID)
                 playAttentionSound(for: res.state)
             }
             if routing.fcm { pushWake(paneID: paneID, state: res.state) }
@@ -1042,6 +1093,7 @@ final class AgentStore: ObservableObject {
                     detail: kind == "permission" ? detail : nil, questions: questions))
             }
         }
+        if wsID == nil { broadcastEphemeralTree() }   // ephemeral state changed → re-mirror
     }
 
     private func shepherdLog(_ msg: String) {
@@ -1058,16 +1110,27 @@ final class AgentStore: ObservableObject {
 
     /// OSC title (SET_TITLE action). Not persisted (only userTitle is).
     func setTitle(_ title: String, paneID: String) {
-        guard !title.isEmpty, let (w, t) = locatePane(paneID, in: workspaces) else { return }
-        _ = workspaces[w].tabs[t].root.updatePane(paneID) { $0.title = title }
+        guard !title.isEmpty else { return }
+        if let (w, t) = locatePane(paneID, in: workspaces) {
+            _ = workspaces[w].tabs[t].root.updatePane(paneID) { $0.title = title }
+        } else if let i = ephemeralPanes.firstIndex(where: { $0.id == paneID }) {
+            ephemeralPanes[i].pane.title = title
+            broadcastEphemeralTree()
+        }
     }
 
     /// Working directory (PWD action) — tracked so we can restore it on relaunch.
     func setCwd(_ cwd: String, paneID: String) {
-        guard !cwd.isEmpty, let (w, t) = locatePane(paneID, in: workspaces),
-              workspaces[w].tabs[t].root.pane(paneID)?.cwd != cwd else { return }
-        _ = workspaces[w].tabs[t].root.updatePane(paneID) { $0.cwd = cwd }
-        save()
+        guard !cwd.isEmpty else { return }
+        if let (w, t) = locatePane(paneID, in: workspaces) {
+            guard workspaces[w].tabs[t].root.pane(paneID)?.cwd != cwd else { return }
+            _ = workspaces[w].tabs[t].root.updatePane(paneID) { $0.cwd = cwd }
+            save()
+        } else if let i = ephemeralPanes.firstIndex(where: { $0.id == paneID }) {
+            guard ephemeralPanes[i].pane.cwd != cwd else { return }
+            ephemeralPanes[i].pane.cwd = cwd
+            save()
+        }
     }
 
     /// A pane's surface became first responder (a click). Move its tab's focus to it
@@ -1087,9 +1150,14 @@ final class AgentStore: ObservableObject {
         // terminal — a full-takeover overlay would otherwise stay stale on top.
         if diffPanelOpen || codeSurface != nil { diffPanelOpen = false; codeSurface = nil }
         dismissNotifications(forPane: paneID)
-        guard let (w, t) = locatePane(paneID, in: workspaces),
-              workspaces[w].tabs[t].root.pane(paneID)?.state == .needsCheck else { return }
-        _ = workspaces[w].tabs[t].root.updatePane(paneID) { $0.state = .idle }
+        if let (w, t) = locatePane(paneID, in: workspaces) {
+            guard workspaces[w].tabs[t].root.pane(paneID)?.state == .needsCheck else { return }
+            _ = workspaces[w].tabs[t].root.updatePane(paneID) { $0.state = .idle }
+        } else if let i = ephemeralPanes.firstIndex(where: { $0.id == paneID }) {
+            guard ephemeralPanes[i].pane.state == .needsCheck else { return }
+            ephemeralPanes[i].pane.state = .idle
+            broadcastEphemeralTree()
+        } else { return }
         updateDockBadge()
         refreshPR(forPane: paneID)   // finished turn just went idle → refresh its PR status
     }
@@ -1148,6 +1216,54 @@ final class AgentStore: ObservableObject {
     func closeFocusedPane() {
         guard let tab = tabs.first(where: { $0.tabID == selectedTab }) else { return }
         closePane(tab.focusedPaneID)
+    }
+
+    // MARK: Ephemeral panes (workspace-less scratch panes)
+
+    /// ⌘⌥N: open a fresh scratch shell in ~ as the overlay, collapsing any current
+    /// overlay. Blocked (beep + flash) at the cap.
+    func spawnEphemeral() {
+        guard canSpawnEphemeral(count: ephemeralPanes.count) else {
+            ephemeralCapFlash += 1
+            NSSound.beep()
+            return
+        }
+        var p = Pane()
+        p.cwd = NSHomeDirectory()
+        ephemeralPanes.append(EphemeralPane(pane: p, collapsed: false))
+        ephemeralPanes = collapsingAllExcept(p.id, in: ephemeralPanes)   // single overlay
+        save()
+        broadcastEphemeralTree()
+    }
+
+    /// Click a PiP → make it the overlay (collapsing the previous one). Clears its
+    /// need-to-check like any focus.
+    func expandEphemeral(_ id: String) {
+        guard ephemeralPanes.contains(where: { $0.id == id }) else { return }
+        ephemeralPanes = collapsingAllExcept(id, in: ephemeralPanes)
+        didFocus(paneID: id)
+        broadcastEphemeralTree()
+    }
+
+    /// Blur / minimize / Esc → tuck the overlay into PiP. Returns focus to the
+    /// underlying terminal.
+    func collapseEphemeral(_ id: String) {
+        guard let i = ephemeralPanes.firstIndex(where: { $0.id == id }), !ephemeralPanes[i].collapsed else { return }
+        ephemeralPanes[i].collapsed = true
+        refocusActiveTerminal()
+        broadcastEphemeralTree()
+    }
+
+    /// ⌘W (overlay up) / × button: destroy for good — free the surface (PTY dies).
+    func closeEphemeral(_ id: String) {
+        guard ephemeralPanes.contains(where: { $0.id == id }) else { return }
+        let wasOverlay = expandedEphemeralID == id
+        ephemeralPanes.removeAll { $0.id == id }
+        postPaneClosed([id])              // GhosttyTerminal frees the surface
+        if wasOverlay { refocusActiveTerminal() }
+        save()
+        updateDockBadge()
+        broadcastEphemeralTree()
     }
 
     func focusNeighbor(_ dir: FocusDirection) {
@@ -1233,9 +1349,9 @@ final class AgentStore: ObservableObject {
         refocusActiveTerminal()
     }
 
-    var attentionCount: Int { totalAttentionCount(in: workspaces) }
+    var attentionCount: Int { totalAttentionCount(in: workspaces) + ephemeralAttentionCount(ephemeralPanes) }
 
-    var hasBusyAgent: Bool { anyAgentBusy(in: workspaces) }
+    var hasBusyAgent: Bool { anyAgentBusy(in: workspaces) || anyEphemeralBusy(ephemeralPanes) }
 
     // MARK: Attention surfacing (dock badge + notifications + sound)
 
@@ -1248,8 +1364,7 @@ final class AgentStore: ObservableObject {
     /// Fire a native notification when a pane needs you — while Shepherd is NOT
     /// frontmost OR the pane's workspace isn't the active one (a hidden-workspace
     /// agent has no visible sidebar dot to rely on).
-    private func notifyAttention(_ pane: Pane, inWorkspace wsID: String) {
-        let hidden = wsID != selectedWorkspaceID
+    private func notifyAttention(_ pane: Pane, hidden: Bool) {
         guard !NSApp.isActive || hidden else { return }
         let content = UNMutableNotificationContent()
         content.title = pane.displayTitle
@@ -1277,7 +1392,9 @@ final class AgentStore: ObservableObject {
     private func save() {
         // Mirror (remote) workspaces are the host's truth — never persisted as local workspaces
         // (M3 persists them as reconnect pointers instead). Snapshot only the local ones.
-        let state = snapshotState(workspaces.filter { !$0.isRemote }, selectedWorkspaceID: selectedWorkspaceID)
+        let state = snapshotState(workspaces.filter { !$0.isRemote },
+                                  selectedWorkspaceID: selectedWorkspaceID,
+                                  ephemeral: ephemeralPanes)
         if let data = try? JSONEncoder().encode(state) {
             UserDefaults.standard.set(data, forKey: persistKey)
         }
@@ -1294,6 +1411,7 @@ final class AgentStore: ObservableObject {
         guard let state, !state.workspaces.isEmpty else { return false }
         workspaces = buildWorkspaces(from: state)
         guard !workspaces.isEmpty else { return false }
+        ephemeralPanes = buildEphemerals(from: state.ephemeral)   // all collapsed (PiP)
         let i = workspaces.indices.contains(state.selectedWorkspaceIndex) ? state.selectedWorkspaceIndex : 0
         selectedWorkspaceID = workspaces[i].id
         save()   // re-persist in v1 form
@@ -1306,11 +1424,29 @@ final class AgentStore: ObservableObject {
     /// each carrying its live `SplitNode` tree with per-pane title/state/cwd/reason. Sent on
     /// attach; a single workspace is re-sent by `broadcastWorkspaceTree` on structural change.
     func workspaceTrees() -> [WorkspaceTree] {
-        workspaces.enumerated().map { (i, ws) in
+        var trees = workspaces.enumerated().map { (i, ws) in
             WorkspaceTree(workspaceID: ws.id, name: ws.displayName(index: i),
                           tabs: ws.tabs.map(remoteTab), selectedTabID: ws.selectedTabID,
                           defaultPath: ws.defaultPath)
         }
+        if let e = ephemeralTree() { trees.append(e) }
+        return trees
+    }
+
+    /// The synthetic "Temp Tabs" workspace projecting ephemeral panes as single-leaf
+    /// tabs, so any client shows them as ordinary tabs. nil when there are none.
+    private func ephemeralTree() -> WorkspaceTree? {
+        guard !ephemeralPanes.isEmpty else { return nil }
+        let tabs = ephemeralPanes.map { e in
+            RemoteTab(tabID: e.pane.paneID,
+                      root: .leaf(RemotePane(paneID: e.pane.paneID, title: e.pane.displayTitle,
+                                             cwd: e.pane.cwd, state: e.pane.state.rawValue,
+                                             reason: e.pane.reason)),
+                      focusedPaneID: e.pane.paneID, zoomedPaneID: nil)
+        }
+        return WorkspaceTree(workspaceID: ephemeralWorkspaceID, name: "Temp Tabs",
+                             tabs: tabs, selectedTabID: expandedEphemeralID ?? ephemeralPanes.first?.id,
+                             defaultPath: nil)
     }
 
     /// One tab → its wire `RemoteTab`. The projection carries the live fields `Pane.Codable`
@@ -1342,6 +1478,17 @@ final class AgentStore: ObservableObject {
         if let id = selectedWorkspaceID { broadcastWorkspaceTree(workspaceID: id) }
     }
 
+    /// Re-broadcast the synthetic "Temp Tabs" tree to attached clients. When the last
+    /// ephemeral pane closes, tell clients to drop the folder. No-op unless serving.
+    func broadcastEphemeralTree() {
+        guard isServing, let server = remoteServer else { return }
+        if let tree = ephemeralTree() {
+            server.broadcast(.workspaceTree(tree))
+        } else {
+            server.broadcast(.workspaceRemoved(workspaceID: ephemeralWorkspaceID))
+        }
+    }
+
     /// Apply a paired client's structural command to the real store (host-authoritative).
     /// Each maps to the SAME mutation the local keyboard path uses; pane-addressed commands
     /// go through `revealPane` first so they act on the right workspace/tab regardless of the
@@ -1350,6 +1497,14 @@ final class AgentStore: ObservableObject {
     /// Runs on main (wired via the onCommand closure) — mutations touch @Published state.
     func applyRemoteCommand(_ msg: ControlMessage) {
         switch msg {
+        case .cmdNewTab(let ws) where ws == ephemeralWorkspaceID:
+            spawnEphemeral(); return
+        case .cmdSwitchTab(let ws, let tab) where ws == ephemeralWorkspaceID:
+            expandEphemeral(tab); return
+        case .cmdClosePane(let p) where ephemeralPanes.contains(where: { $0.id == p }):
+            closeEphemeral(p); return
+        case .cmdFocusPane(let p) where ephemeralPanes.contains(where: { $0.id == p }):
+            expandEphemeral(p); return
         case .cmdNewTab(let ws):            selectWorkspace(ws); _ = newTab()
         case .cmdSplit(let p, let axis):    revealPane(p); splitFocused(axis == "column" ? .column : .row)
         case .cmdClosePane(let p):          closePane(p)
@@ -1640,7 +1795,7 @@ final class AgentStore: ObservableObject {
         for (w, ws) in workspaces.enumerated() {
             for tab in ws.tabs {
                 for pane in tab.root.panes where ids.contains(pane.paneID) {
-                    notifyAttention(pane, inWorkspace: workspaces[w].id)
+                    notifyAttention(pane, hidden: workspaces[w].id != selectedWorkspaceID)
                 }
             }
         }

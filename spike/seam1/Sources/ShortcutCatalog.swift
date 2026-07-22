@@ -17,7 +17,7 @@ enum ShortcutCategory: String, CaseIterable {
 
 /// Stable identity for each command; the app maps this to a live action.
 enum ShortcutID: CaseIterable {
-    case newTab, closePane, splitRight, splitDown, zoomPane
+    case newTab, newEphemeral, closePane, splitRight, splitDown, zoomPane
     case focusLeft, focusRight, focusUp, focusDown, prevTab, nextTab, jumpTab
     case newWorkspace, nextWorkspace, prevWorkspace
     case find, reviewDiff, openEditor, saveFile
@@ -40,6 +40,7 @@ struct ShortcutCommand: Identifiable {
 enum ShortcutCatalog {
     static let all: [ShortcutCommand] = [
         .init(id: .newTab,     title: "New Tab",     key: "t",     modifiers: .command,          category: .tabsPanes, display: "⌘T"),
+        .init(id: .newEphemeral, title: "New Ephemeral Pane", key: "n", modifiers: [.command, .option], category: .tabsPanes, display: "⌘⌥N"),
         .init(id: .closePane,  title: "Close Pane",  key: "w",     modifiers: .command,          category: .tabsPanes, display: "⌘W"),
         .init(id: .splitRight, title: "Split Right", key: "d",     modifiers: .command,          category: .tabsPanes, display: "⌘D"),
         .init(id: .splitDown,  title: "Split Down",  key: "d",     modifiers: [.command, .shift], category: .tabsPanes, display: "⌘⇧D"),
