@@ -147,8 +147,8 @@ final class AgentStore: ObservableObject {
     private init() {
         SocketServer.cleanupStale()   // sweep sockets left by dead launches (crash/killall/force-quit)
         socketPath = "/tmp/shepherd-\(getpid()).sock"   // short: stays under sun_path's 104 limit
-        server = SocketServer(path: socketPath) { [weak self] paneID, event, detail, payload in
-            self?.apply(event: event, detail: detail, paneID: paneID, payload: payload)
+        server = SocketServer(path: socketPath) { [weak self] paneID, event, detail, sid, payload in
+            self?.apply(event: event, detail: detail, paneID: paneID, sid: sid, payload: payload)
         }
         server?.start()
         loadPairedDevices()
@@ -930,10 +930,16 @@ final class AgentStore: ObservableObject {
     /// Agent-state hook event: resolve the pane, fold the event through the pure
     /// `applyEvent` (lifecycle map + ordering guard + background-agent counter; see
     /// StopPolicy and ADR 0004), then surface the result (sidebar / badge / alert).
-    func apply(event: String, detail: String, paneID: String, payload: String? = nil) {
+    func apply(event: String, detail: String, paneID: String, sid: String = "", payload: String? = nil) {
         guard let (w, t) = locatePane(paneID, in: workspaces),
               let pane = workspaces[w].tabs[t].root.pane(paneID) else {
             shepherdLog("event=\(event) tab=\(paneID.prefix(8)) -> NO SUCH TAB")
+            return
+        }
+        // A nested `claude` (e.g. `claude -p` run via Bash) reports on the parent pane's
+        // id with its own session_id; drop it so it can't drive the parent's state.
+        guard sessionEventAccepted(sid: sid, owner: pane.sessionID) else {
+            shepherdLog("event=\(event) tab=\(paneID.prefix(8)) (ignored: foreign session \(sid.prefix(8)))")
             return
         }
         let cur = pane.state

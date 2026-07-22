@@ -11,6 +11,23 @@ struct StateTransition: Equatable {
     var heldForBackground: Bool
 }
 
+/// Whether a hook event belongs to the pane's owning agent session.
+///
+/// A nested `claude` (e.g. `claude -p …` a top-level agent runs via Bash) inherits
+/// `SHEPHERD_TAB_ID`/`SHEPHERD_SOCK`, so it fires hooks tagged with the PARENT pane's
+/// id but carrying its OWN `session_id`. Left unchecked, the child's `Stop` flips the
+/// parent to need-to-check mid-turn, its `SessionStart` clobbers the parent's resume
+/// id, etc. A pane locks to the first session that sends `SessionStart` and only that
+/// session's events count until it releases the lock via `SessionEnd`.
+///
+/// Fail-safe: an empty `sid` (a plugin predating the field) or an unlocked pane
+/// (`owner == nil`, e.g. a session that started before the plugin reload) accepts
+/// everything — never stricter than the pre-lock behavior.
+func sessionEventAccepted(sid: String, owner: String?) -> Bool {
+    guard !sid.isEmpty, let owner, !owner.isEmpty else { return true }
+    return sid == owner
+}
+
 /// Pure transition for one hook event (no AppKit / I/O — covered by tests).
 ///
 /// Claude Code fires `Stop` when its synchronous loop ends, even with a
