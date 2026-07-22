@@ -90,6 +90,8 @@ final class AgentStore: ObservableObject {
     @Published var pendingApproval: (deviceID: String, name: String)?
     /// Drives the tailnet device-discovery sheet (⋯ menu → "Add remote device…").
     @Published var showingRemoteDevices = false
+    /// Drives the phone-pairing QR sheet (⋯ menu → "Connect a phone…").
+    @Published var showingPhonePairingQR = false
     private var approvalDecider: ((Bool) -> Void)?
     private var remoteServer: RemoteServer?
     /// Client role (M2): one RemoteClient per attached host, keyed by "host:port".
@@ -1458,6 +1460,22 @@ final class AgentStore: ObservableObject {
             onStatus: { [weak self] conn in DispatchQueue.main.async { self?.applyRemoteStatus(hostID: hostID, conn: conn) } })
         remoteClients[hostID] = client
         client.start()
+    }
+
+    /// The QR bootstrap payload for a phone to reach this host, or nil if Tailscale is down.
+    func phonePairingPayload() -> String? {
+        let status = tailnetStatus()
+        let ip = status?.selfIPv4 ?? RemoteServer.currentTailscaleIPv4()
+        let host = status?.selfDNSName
+        guard host != nil || ip != nil else { return nil }
+        let name = host?.split(separator: ".").first.map(String.init) ?? (Host.current().localizedName ?? "mac")
+        return PairingPayload.encode(host: host, ip: ip, port: AgentStore.defaultRemotePort, name: name)
+    }
+
+    /// Human-readable host line under the QR (MagicDNS name : port), or nil.
+    func phonePairingHostLabel() -> String? {
+        guard let host = tailnetStatus()?.selfDNSName ?? RemoteServer.currentTailscaleIPv4() else { return nil }
+        return "\(host):\(AgentStore.defaultRemotePort)"
     }
 
     /// Discover the user's own tailnet devices off-main, probe each online peer's control

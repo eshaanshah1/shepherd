@@ -87,6 +87,31 @@ class RemoteConnectionLoopbackTest {
         conn.stop(); scope.cancel(); server.close()
     }
 
+    @Test fun fallsBackToSecondHostWhenFirstRefused() = runBlocking {
+        val server = ServerSocket(0)
+        Thread {
+            val s = server.accept(); val ins = DataInputStream(s.getInputStream())
+            val dec = WireCodec.Decoder(); val buf = ByteArray(4096)
+            loop@ while (true) { val n = ins.read(buf); if (n <= 0) return@Thread
+                for (m in dec.feed(buf.copyOf(n))) if (m is ControlMessage.Hello) break@loop }
+            val out = s.getOutputStream()
+            out.write(WireCodec.encode(ControlMessage.Accepted("n"))); out.flush(); Thread.sleep(150); s.close()
+        }.apply { isDaemon = true; start() }
+        val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        val attempted = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val conn = RemoteConnection("dead-host", server.localPort,
+            { ControlMessage.Hello("d", "n", null, "s", null, 2) }, scope,
+            fallbackHosts = listOf("127.0.0.1"),
+            connect = { h, p ->
+                attempted += h
+                if (h == "127.0.0.1") Socket("127.0.0.1", p) else throw java.net.ConnectException("refused")
+            })
+        conn.start()
+        withTimeout(3000) { conn.status.first { it is ConnStatus.Connected } }
+        assertEquals(listOf("dead-host", "127.0.0.1"), attempted.toList())
+        conn.stop(); scope.cancel(); server.close()
+    }
+
     @Test fun stopReturnsPromptlyEvenWhenSocketWriteIsStuck() = runBlocking {
         // A write() that blocks forever (never-released semaphore) simulates a stalled/dead
         // peer — java.net.Socket has no write timeout, so stop() must not wait on it.

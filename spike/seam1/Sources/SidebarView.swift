@@ -78,6 +78,9 @@ struct SidebarView: View {
                 get: { store.isServing },
                 set: { store.setServing($0) }))
             Button("Add remote device…") { store.showingRemoteDevices = true }
+            if store.isServing {
+                Button("Connect a phone…") { store.showingPhonePairingQR = true }
+            }
         } label: {
             Image(systemName: "ellipsis")
                 .font(.system(size: 12, weight: .semibold))

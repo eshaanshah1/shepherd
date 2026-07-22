@@ -9,11 +9,11 @@ import org.junit.Test
 class PairingControllerTest {
     private val pending = Pairing("100.64.0.5", 8722, "dev-1", "Pixel 8", "secret-abc")
 
-    @Test fun firstPairHelloCarriesCodeAndSecretAndToken() {
+    @Test fun firstPairHelloHasNoCodeButCarriesSecretAndToken() {
         val c = PairingController(InMemoryPairingStore())
-        val h = c.helloForFirstPair("h", 8722, "0042", "dev-1", "Pixel 8", "secret-abc", "tok")
-        assertEquals("0042", h.pairingCode); assertEquals("secret-abc", h.secret)
-        assertEquals("tok", h.fcmToken); assertEquals("dev-1", h.deviceId)
+        val h = c.helloForFirstPair("dev-1", "Pixel 8", "secret-abc", "tok")
+        assertNull(h.pairingCode)
+        assertEquals("secret-abc", h.secret); assertEquals("tok", h.fcmToken); assertEquals("dev-1", h.deviceId)
     }
     @Test fun reconnectHelloHasNoCode() {
         val c = PairingController(InMemoryPairingStore())
