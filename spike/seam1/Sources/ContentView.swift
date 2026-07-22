@@ -66,15 +66,6 @@ struct ContentView: View {
             }
         }
         .animation(.easeOut(duration: 0.12), value: store.promptingNewWorkspace)
-        // Approval sheet when a remote device requests pairing.
-        .overlay {
-            if store.pendingApproval != nil {
-                PairingApprovalView()
-                    .environmentObject(store)
-                    .transition(.opacity)
-            }
-        }
-        .animation(.easeOut(duration: 0.12), value: store.pendingApproval != nil)
         // Tailnet device-discovery sheet (⋯ menu → "Add remote device…").
         .overlay {
             if store.showingRemoteDevices {
@@ -101,6 +92,16 @@ struct ContentView: View {
             }
         }
         .animation(.easeOut(duration: 0.12), value: store.showShortcuts)
+        // Approval sheet when a remote device requests pairing — topmost, so it never
+        // hides behind another sheet (e.g. the phone-pairing QR that triggered it).
+        .overlay {
+            if store.pendingApproval != nil {
+                PairingApprovalView()
+                    .environmentObject(store)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.12), value: store.pendingApproval != nil)
     }
 
     // Every workspace's surfaces stay mounted (background agents keep running);
