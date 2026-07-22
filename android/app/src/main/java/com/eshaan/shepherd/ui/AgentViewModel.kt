@@ -74,14 +74,7 @@ class AgentViewModel(
             )
             _terminalSession.value = session
             jobs += launch { ch.output.collect { session.onOutput(it) } }
-            jobs += launch {
-                ch.status.collect { st ->
-                    _status.value = st
-                    // Honor the host-authoritative grid: resize the emulator to what the host
-                    // granted (no control-channel Resize echo — the size came from the host).
-                    if (st is DataStatus.Ready) session.applyRemoteSize(st.cols, st.rows)
-                }
-            }
+            jobs += launch { ch.status.collect { _status.value = it } }
             ch.start()
         }
     }

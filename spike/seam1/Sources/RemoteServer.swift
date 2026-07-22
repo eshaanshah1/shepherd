@@ -29,14 +29,6 @@ final class RemoteServer {
     private let makeSecret: () -> String
     private let makeNonce: () -> String
     private let lookupBroker: (String) -> PtyBroker?
-    // The pane's last-known desktop grid, used to snap back on data-channel detach.
-    private let desktopSize: (String) -> (Int, Int)?
-    // "Is the desktop showing this pane RIGHT NOW (visible tab, lid open)?" Consulted only
-    // when the phone requests a pane (attach / live resize) to resolve the tie: if the desktop
-    // is already showing it, the desktop wins and the phone's size is NOT applied — the pane
-    // stays desktop-sized. Not a continuous arbiter: desktop focus/tab/zoom never resize on
-    // their own. Defaults to "desktop shows nothing" for tests/dark-ship (phone always wins).
-    private let desktopOwnsSize: (String) -> Bool
 
     /// A client that can't drain a write within this many seconds is treated as dead and
     /// dropped, so a stalled reader parks at most one worker (its own queue) for ≤ this
@@ -68,10 +60,10 @@ final class RemoteServer {
     // viewer fd; this registry is only used to wake it on revoke.
     private var dataViewers: [String: Set<Int32>] = [:]
     private let dataViewersLock = NSLock()
-    // Active data-channel VIEWERS per pane. A pane is sized by whoever is actively viewing it
-    // (a viewer's DataReady size wins over the desktop grid, unless the desktop is showing the
-    // pane right now — see desktopOwnsSize). Refcounted so a pane snaps back to its desktop grid
-    // only when its LAST viewer detaches. Per-connection, not one global pane: a Mac client views
+    // Active data-channel VIEWERS per pane. A pane is sized by whoever is actively viewing it —
+    // a viewing remote owns the size even while the desktop shows the pane (the desktop surface
+    // reflows to match). Refcounted so a pane releases back to the desktop grid only when its
+    // LAST viewer detaches. Per-connection, not one global pane: a Mac client views
     // a whole workspace (many panes) at once, each pane sized independently. A phone views one
     // pane at a time, so its count is 1 for that pane — same behavior as the old single-pane model.
     private var paneViewers: [String: Int] = [:]
@@ -118,8 +110,6 @@ final class RemoteServer {
          verifyPeer: @escaping (String) -> VerifiedPeer? = { _ in nil },
          selfUserID: @escaping () -> String? = { nil },
          lookupBroker: @escaping (String) -> PtyBroker? = { _ in nil },
-         desktopSize: @escaping (String) -> (Int, Int)? = { _ in nil },
-         desktopOwnsSize: @escaping (String) -> Bool = { _ in false },
          onCommand: @escaping (ControlMessage) -> Void = { _ in }) {
         self.bindAddress = bindAddress; self.port = port
         self.verifyPeer = verifyPeer; self.selfUserID = selfUserID
@@ -128,8 +118,6 @@ final class RemoteServer {
         self.workspaceTrees = workspaceTrees; self.updateFCMToken = updateFCMToken
         self.makeSecret = makeSecret; self.makeNonce = makeNonce
         self.lookupBroker = lookupBroker
-        self.desktopSize = desktopSize
-        self.desktopOwnsSize = desktopOwnsSize
         self.onCommand = onCommand
     }
 
@@ -397,30 +385,32 @@ final class RemoteServer {
 
     /// Apply a live resize (rotation / soft-keyboard / client window resize) from a control
     /// channel. Applied only to a pane that currently has an active viewer — a resize for an
-    /// unviewed pane is ignored, since the desktop owns any pane no remote is viewing. Also
-    /// deferred when the desktop is showing the pane right now (desktop wins the tie).
+    /// unviewed pane is ignored, since the desktop owns any pane no remote is viewing. A viewing
+    /// remote owns the size even while the desktop shows the pane (the desktop reflows to match).
     func applyResize(paneID: String, cols: Int, rows: Int) {
         sizeLock.lock(); let viewed = (paneViewers[paneID] ?? 0) > 0; sizeLock.unlock()
-        guard viewed, !desktopOwnsSize(paneID), let b = lookupBroker(paneID) else { return }
+        guard viewed, let b = lookupBroker(paneID) else { return }
         b.setSize(cols: cols, rows: rows)
     }
 
     /// A viewer attached to `paneID` at (cols,rows): bump its viewer count and size the pane to
-    /// this viewer — unless the desktop is showing it now, in which case the desktop wins the tie.
+    /// this viewer. The remote owns the size while viewing — even if the desktop is showing the
+    /// pane right now, its surface reflows to match and snaps back on the last detach.
     private func viewerAttached(_ paneID: String, cols: Int, rows: Int) {
         sizeLock.lock(); paneViewers[paneID, default: 0] += 1; sizeLock.unlock()
-        if !desktopOwnsSize(paneID) { lookupBroker(paneID)?.setSize(cols: cols, rows: rows) }
+        lookupBroker(paneID)?.setSize(cols: cols, rows: rows)
     }
 
     /// A viewer detached from `paneID`: drop its count and, if it was the pane's LAST viewer,
-    /// snap the pane back to its desktop grid. Other panes' counts are untouched.
+    /// release the pane back to the desktop — the helper resumes sizing from its own outer PTY.
+    /// Other panes' counts are untouched.
     private func viewerDetached(_ paneID: String) {
         sizeLock.lock()
         let remaining = (paneViewers[paneID] ?? 1) - 1
         if remaining <= 0 { paneViewers[paneID] = nil } else { paneViewers[paneID] = remaining }
         sizeLock.unlock()
-        guard remaining <= 0, let (dc, dr) = desktopSize(paneID) else { return }
-        lookupBroker(paneID)?.setSize(cols: dc, rows: dr)
+        guard remaining <= 0 else { return }
+        lookupBroker(paneID)?.releaseSize()
     }
 
     /// Mark a connection paired: register it for broadcasts and send accepted →

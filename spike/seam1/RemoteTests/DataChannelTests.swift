@@ -71,9 +71,8 @@ final class DataChannelTests: XCTestCase {
         let ptyPath = NSTemporaryDirectory() + "shep-pty-\(UInt32.random(in: 0..<UInt32.max)).sock"
         let hub = PtyHub(socketPath: ptyPath, makeBroker: { PtyBroker(paneID: $0, cols: $1, rows: $2) })
         XCTAssertTrue(hub.start()); defer { hub.stop() }
-        // The pane the phone opens is always phone-owned; desktop grid is 80x24 (snap-back target).
-        let server = try makePairedLoopbackServer(lookupBroker: { hub.broker(for: $0) },
-                                                  desktopSize: { _ in (80, 24) })
+        // The pane the phone opens is always phone-owned; the broker launched at 80x24.
+        let server = try makePairedLoopbackServer(lookupBroker: { hub.broker(for: $0) })
         defer { server.stop() }
         let (ctlFD, nonce) = try pairAndGetNonce(server); defer { close(ctlFD) }
 
@@ -89,36 +88,32 @@ final class DataChannelTests: XCTestCase {
         XCTAssertEqual(try readRaw(helperFD, attach.count), attach)
         XCTAssertEqual(try readOneDataMessage(dataFD), .dataReady(cols: 40, rows: 30))
 
-        // Detach snaps the pane back to the desktop size.
+        // Detach releases the pane: the helper resumes sizing from its own outer PTY.
         close(dataFD)
-        let snap = Array(HelperFrameCodec.encode(.resize(cols: 80, rows: 24)))
-        XCTAssertEqual(try readRaw(helperFD, snap.count), snap)
+        let release = Array(HelperFrameCodec.encode(.releaseSize))
+        XCTAssertEqual(try readRaw(helperFD, release.count), release)
     }
 
-    // MARK: - Tie-break: desktop showing the pane wins — the phone doesn't shrink it
+    // MARK: - Phone drives size: attach resizes the pane, DataReady echoes the phone's grid
 
-    func testDesktopOwnedPaneNotResizedOnAttach() throws {
+    func testAttachResizesPaneToPhoneGrid() throws {
         let ptyPath = NSTemporaryDirectory() + "shep-pty-\(UInt32.random(in: 0..<UInt32.max)).sock"
         let hub = PtyHub(socketPath: ptyPath, makeBroker: { PtyBroker(paneID: $0, cols: $1, rows: $2) })
         XCTAssertTrue(hub.start()); defer { hub.stop() }
-        // Desktop is showing p1 (tie → desktop wins): the phone's attach must NOT resize it.
-        let server = try makePairedLoopbackServer(lookupBroker: { hub.broker(for: $0) },
-                                                  desktopSize: { _ in (80, 24) },
-                                                  desktopOwnsSize: { _ in true })
+        let server = try makePairedLoopbackServer(lookupBroker: { hub.broker(for: $0) })
         defer { server.stop() }
         let (ctlFD, nonce) = try pairAndGetNonce(server); defer { close(ctlFD) }
 
         let helperFD = try connectUnix(ptyPath); defer { close(helperFD) }
         try writeFrame(helperFD, .ptyHello(paneID: "p1", cols: 80, rows: 24))
         _ = try waitFor { hub.broker(for: "p1") }
-        // A live byte after attach; if a phone-size resize had been applied it would sit ahead
-        // of this in the helper stream. Reading exactly LIVE proves no resize frame was injected.
+        // The phone opens the pane at 40x30 → the broker resizes the helper to the phone grid
+        // (the desktop no longer wins — the phone always drives the size while viewing).
         let dataFD = try connectTCP(server.boundPort); defer { close(dataFD) }
         try writeFrame(dataFD, .dataHello(sessionNonce: nonce, paneID: "p1", cols: 40, rows: 30))
-        XCTAssertEqual(try readOneDataMessage(dataFD), .dataReady(cols: 80, rows: 24))  // desktop grid, not 40x30
-        writeRaw(dataFD, Array("keys".utf8))
-        let keyFrame = Array(HelperFrameCodec.encode(.input(Array("keys".utf8))))
-        XCTAssertEqual(try readRaw(helperFD, keyFrame.count), keyFrame)   // no resize frame precedes it
+        let attach = Array(HelperFrameCodec.encode(.resize(cols: 40, rows: 30)))
+        XCTAssertEqual(try readRaw(helperFD, attach.count), attach)
+        XCTAssertEqual(try readOneDataMessage(dataFD), .dataReady(cols: 40, rows: 30))  // phone grid
     }
 
     func testDataChannelRejectsBadNonce() throws {
@@ -163,9 +158,8 @@ final class DataChannelTests: XCTestCase {
         let ptyPath = NSTemporaryDirectory() + "shep-pty-\(UInt32.random(in: 0..<UInt32.max)).sock"
         let hub = PtyHub(socketPath: ptyPath, makeBroker: { PtyBroker(paneID: $0, cols: $1, rows: $2) })
         XCTAssertTrue(hub.start()); defer { hub.stop() }
-        // Both panes launch at the 80x24 desktop grid (the snap-back target).
-        let server = try makePairedLoopbackServer(lookupBroker: { hub.broker(for: $0) },
-                                                  desktopSize: { _ in (80, 24) })
+        // Both panes launch at the 80x24 desktop grid.
+        let server = try makePairedLoopbackServer(lookupBroker: { hub.broker(for: $0) })
         defer { server.stop() }
         let (ctlFD, nonce) = try pairAndGetNonce(server); defer { close(ctlFD) }
 
@@ -194,10 +188,10 @@ final class DataChannelTests: XCTestCase {
         let keyA = Array(HelperFrameCodec.encode(.input(Array("x".utf8))))
         XCTAssertEqual(try readRaw(helperA, keyA.count), keyA)   // no resize precedes it → A untouched
 
-        // Each pane snaps back to desktop only when ITS OWN last viewer detaches.
+        // Each pane releases back to the desktop only when ITS OWN last viewer detaches.
         close(dataA)
-        let snap = Array(HelperFrameCodec.encode(.resize(cols: 80, rows: 24)))
-        XCTAssertEqual(try readRaw(helperA, snap.count), snap)
+        let release = Array(HelperFrameCodec.encode(.releaseSize))
+        XCTAssertEqual(try readRaw(helperA, release.count), release)
     }
 
     // MARK: - C1: a data channel must not outlive its control session
@@ -267,9 +261,7 @@ final class DataChannelTests: XCTestCase {
 
     /// Start a RemoteServer on an ephemeral 127.0.0.1 port that auto-approves pairing and
     /// mints a unique nonce per session. `lookupBroker` defaults to none (control-only tests).
-    func makePairedLoopbackServer(lookupBroker: @escaping (String) -> PtyBroker? = { _ in nil },
-                                  desktopSize: @escaping (String) -> (Int, Int)? = { _ in nil },
-                                  desktopOwnsSize: @escaping (String) -> Bool = { _ in false }) throws -> RemoteServer {
+    func makePairedLoopbackServer(lookupBroker: @escaping (String) -> PtyBroker? = { _ in nil }) throws -> RemoteServer {
         let server = RemoteServer(
             bindAddress: "127.0.0.1", port: 0,
             knownDevices: { [] },
@@ -281,9 +273,7 @@ final class DataChannelTests: XCTestCase {
             makeNonce: { UUID().uuidString },
             verifyPeer: { _ in VerifiedPeer(userID: "u1", name: "Pixel") },
             selfUserID: { "u1" },
-            lookupBroker: lookupBroker,
-            desktopSize: desktopSize,
-            desktopOwnsSize: desktopOwnsSize)
+            lookupBroker: lookupBroker)
         XCTAssertTrue(server.start())
         return server
     }

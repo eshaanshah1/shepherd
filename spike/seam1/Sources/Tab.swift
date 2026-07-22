@@ -13,8 +13,7 @@ struct Tab: Identifiable {
     var paneIDs: [String] { root.leafIDs }
     var isSplit: Bool { paneIDs.count > 1 }
     /// Is this tab currently rendering `paneID`? True when the pane is in the tab and
-    /// either nothing is zoomed or it's the zoomed pane (a zoom starves its siblings to
-    /// 0×0). Used to resolve the phone-vs-desktop size tie in the desktop's favor.
+    /// either nothing is zoomed or it's the zoomed pane (a zoom starves its siblings to 0×0).
     func isShowing(_ paneID: String) -> Bool {
         guard paneIDs.contains(paneID) else { return false }
         return zoomedPaneID == nil || zoomedPaneID == paneID

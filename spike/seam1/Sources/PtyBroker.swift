@@ -78,6 +78,14 @@ final class PtyBroker {
         if h >= 0 { writeAll(h, Array(HelperFrameCodec.encode(.resize(cols: cols, rows: rows)))) }
     }
 
+    /// The pane's last remote viewer detached: record the desktop grid and tell the helper to
+    /// resume sizing from its own outer PTY (snapping to the Mac surface's CURRENT size, which
+    /// may have changed while the phone drove it). The Mac owns its own grid again.
+    func releaseSize() {
+        lock.lock(); self.cols = desktopCols; self.rows = desktopRows; let h = helperFD; lock.unlock()
+        if h >= 0 { writeAll(h, Array(HelperFrameCodec.encode(.releaseSize))) }
+    }
+
     func close() {
         // SHUT_RDWR viewer fds UNDER the lock (mirrors RemoteServer.closeConn): that wakes
         // their serveDataChannel read loop, which is the SOLE closer of a viewer fd — and its

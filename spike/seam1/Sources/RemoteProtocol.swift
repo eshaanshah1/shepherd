@@ -240,9 +240,10 @@ final class DataFrameDecoder {
 }
 
 // MARK: - App→helper frame (Phase 2 resize)
-// [u32 BE len][1-byte type][payload]. type 0x00 = input (raw bytes); 0x01 = resize [u16 BE cols][u16 BE rows].
-// helper→app output stays raw; only this low-volume direction is framed.
-enum HelperFrame: Equatable { case input([UInt8]); case resize(cols: Int, rows: Int) }
+// [u32 BE len][1-byte type][payload]. type 0x00 = input (raw bytes); 0x01 = resize [u16 BE cols][u16 BE rows];
+// 0x02 = releaseSize (no payload) — the pane's last remote viewer left, so the helper resumes sizing
+// from its own outer (desktop) PTY. helper→app output stays raw; only this low-volume direction is framed.
+enum HelperFrame: Equatable { case input([UInt8]); case resize(cols: Int, rows: Int); case releaseSize }
 
 enum HelperFrameCodec {
     static func encode(_ f: HelperFrame) -> Data {
@@ -251,6 +252,7 @@ enum HelperFrameCodec {
         case .input(let b): body = [0x00] + b
         case .resize(let c, let r):
             body = [0x01, UInt8((c >> 8) & 0xff), UInt8(c & 0xff), UInt8((r >> 8) & 0xff), UInt8(r & 0xff)]
+        case .releaseSize: body = [0x02]
         }
         var len = UInt32(body.count).bigEndian
         var out = Data(bytes: &len, count: 4); out.append(contentsOf: body); return out
@@ -271,6 +273,7 @@ final class HelperFrameDecoder {
             case 0x01 where body.count == 5:
                 out.append(.resize(cols: (Int(body[1]) << 8) | Int(body[2]),
                                    rows: (Int(body[3]) << 8) | Int(body[4])))
+            case 0x02 where body.count == 1: out.append(.releaseSize)
             default: break
             }
         }

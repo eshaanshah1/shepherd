@@ -1438,20 +1438,6 @@ final class AgentStore: ObservableObject {
             // per call: that property is written on main but this closure runs on
             // RemoteServer's connQueue, so re-reading it would be an unsynchronized data race.
             lookupBroker: { [weak hub] in hub?.broker(for: $0) },
-            // The desktop grid to snap a pane back to on detach — the broker's launch size.
-            // Capture the hub (not self.ptyHub) to avoid the connQueue data race noted above.
-            desktopSize: { [weak hub] paneID in hub?.broker(for: paneID).map { ($0.desktopCols, $0.desktopRows) } },
-            // Tie-break: if the desktop is showing this pane right now (visible tab, lid open) when
-            // the phone requests it, the desktop wins and the phone doesn't shrink it. selectedTab
-            // reads @Published state → hop to main; direct if already there. Fails open to "not shown".
-            desktopOwnsSize: { [weak self] paneID in
-                guard let self else { return false }
-                let read = {
-                    if self.presence.isAway { return false }   // lid shut → desktop shows nothing
-                    return self.tabs.first { $0.tabID == self.selectedTab }?.isShowing(paneID) ?? false
-                }
-                return Thread.isMainThread ? read() : DispatchQueue.main.sync(execute: read)
-            },
             // A paired client's structural command arrives on RemoteServer's connQueue; apply
             // it on main since it mutates @Published state + drives libghostty focus.
             onCommand: { [weak self] msg in
