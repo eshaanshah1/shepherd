@@ -51,8 +51,11 @@ struct EphemeralOverlayView: View {
             .scaleEffect(scale, anchor: .topLeading)
             .frame(width: footprint.width, height: footprint.height, alignment: .topLeading)
             .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
+            // PiP edges blend into the terminal, so give a collapsed card a stronger,
+            // theme-aware border than the overlay's hairline.
             .overlay(RoundedRectangle(cornerRadius: corner, style: .continuous)
-                .strokeBorder(Theme.hairline, lineWidth: 1))
+                .strokeBorder(isOverlay ? Theme.hairline : Theme.textSecondary.opacity(0.55),
+                              lineWidth: isOverlay ? 1 : 1.5))
             .shadow(color: .black.opacity(isOverlay ? 0.4 : 0.25),
                     radius: isOverlay ? 30 : 10, y: isOverlay ? 16 : 6)
             // Collapsed: a real-NSView catcher (at true PiP size, unscaled) so the expand
