@@ -14,6 +14,7 @@ struct PersistedWorkspace: Codable {
     var tabs: [PersistedTab]
     var collapsed: Bool?           // optional so pre-accordion blobs still decode (nil = expanded)
     var defaultPath: String?       // optional so pre-feature blobs still decode (nil = none)
+    var worktreeHook: String?      // optional so pre-feature blobs still decode (nil = none)
 }
 
 struct PersistedState: Codable {
@@ -32,7 +33,8 @@ func snapshotState(_ workspaces: [Workspace], selectedWorkspaceID: String?) -> P
             selectedTabIndex: selTab,
             tabs: ws.tabs.map { PersistedTab(userTitle: $0.userTitle, root: $0.root) },
             collapsed: ws.collapsed,
-            defaultPath: ws.defaultPath)
+            defaultPath: ws.defaultPath,
+            worktreeHook: ws.worktreeHook)
     }
     return PersistedState(workspaces: pws, selectedWorkspaceIndex: selWs)
 }
@@ -54,7 +56,8 @@ func buildWorkspaces(from state: PersistedState) -> [Workspace] {
             ? tabs[pw.selectedTabIndex].tabID
             : tabs.first?.tabID
         return Workspace(userTitle: pw.userTitle, tabs: tabs, selectedTabID: selID,
-                         collapsed: pw.collapsed ?? false, defaultPath: pw.defaultPath)
+                         collapsed: pw.collapsed ?? false, defaultPath: pw.defaultPath,
+                         worktreeHook: pw.worktreeHook)
     }
 }
 
