@@ -48,15 +48,14 @@ struct EphemeralOverlayView: View {
                 terminal(e, isOverlay: isOverlay)
             }
         }
+        // A collapsed card expands on click. Its click-catcher is a real NSView (not a
+        // SwiftUI gesture) so it wins AppKit hit-testing over the live terminal beneath it.
+        .overlay { if !isOverlay { MouseCatcher { store.expandEphemeral(e.id) } } }
         .frame(width: frame.width, height: frame.height)
         .clipShape(RoundedRectangle(cornerRadius: isOverlay ? 12 : 8, style: .continuous))
         .shadow(color: .black.opacity(isOverlay ? 0.4 : 0.25),
                 radius: isOverlay ? 30 : 10, y: isOverlay ? 16 : 6)
         .position(x: frame.midX, y: frame.midY)
-        // A collapsed card is a click-target that expands; the terminal underneath
-        // doesn't take clicks (see terminal()).
-        .contentShape(Rectangle())
-        .onTapGesture { if !isOverlay { store.expandEphemeral(e.id) } }
         .modifier(FlashOnBump(trigger: store.ephemeralCapFlash, active: e.collapsed))
     }
 
@@ -70,8 +69,8 @@ struct EphemeralOverlayView: View {
             Spacer(minLength: 0)
             if isOverlay {
                 iconButton("minus") { store.collapseEphemeral(e.id) }
+                iconButton("xmark") { store.closeEphemeral(e.id) }
             }
-            iconButton("xmark") { store.closeEphemeral(e.id) }
         }
         .padding(.horizontal, 10)
         .frame(height: isOverlay ? 30 : 24)
@@ -90,10 +89,10 @@ struct EphemeralOverlayView: View {
     @ViewBuilder
     private func terminal(_ e: EphemeralPane, isOverlay: Bool) -> some View {
         GhosttyTerminal(paneID: e.pane.paneID,
-                        isVisible: true,                 // always render (live PiP preview)
-                        isSelected: isOverlay,            // overlay grabs first responder
-                        focusTick: store.focusTick)
-            .allowsHitTesting(isOverlay)                 // PiP: clicks expand, not typed
+                        isVisible: true,                    // always render (live PiP preview)
+                        isSelected: isOverlay,              // overlay grabs first responder
+                        focusTick: store.focusTick,
+                        hittableOverride: isOverlay)        // overlay types; PiP is expand-only
     }
 
     // MARK: Layout
@@ -118,6 +117,22 @@ struct EphemeralOverlayView: View {
         Button("") { if let id = store.expandedEphemeralID { store.collapseEphemeral(id) } }
             .keyboardShortcut(.cancelAction)
             .opacity(0).frame(width: 0, height: 0).focusable(false)
+    }
+}
+
+/// A transparent real NSView that captures a click. Used over a PiP card so the
+/// expand tap beats the live terminal NSView beneath it in AppKit hit-testing —
+/// a SwiftUI `.onTapGesture` there loses to the raw surface.
+private struct MouseCatcher: NSViewRepresentable {
+    let onClick: () -> Void
+    func makeNSView(context: Context) -> NSView { CatcherView(onClick: onClick) }
+    func updateNSView(_ v: NSView, context: Context) { (v as? CatcherView)?.onClick = onClick }
+
+    final class CatcherView: NSView {
+        var onClick: () -> Void
+        init(onClick: @escaping () -> Void) { self.onClick = onClick; super.init(frame: .zero) }
+        required init?(coder: NSCoder) { fatalError() }
+        override func mouseDown(with event: NSEvent) { onClick() }
     }
 }
 

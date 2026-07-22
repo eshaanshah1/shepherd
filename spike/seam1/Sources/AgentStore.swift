@@ -1234,6 +1234,8 @@ final class AgentStore: ObservableObject {
         ephemeralPanes = collapsingAllExcept(p.id, in: ephemeralPanes)   // single overlay
         save()
         broadcastEphemeralTree()
+        // Claim keyboard focus once the surface is mounted in the window (next runloop).
+        DispatchQueue.main.async { [weak self] in self?.refocusActiveTerminal() }
     }
 
     /// Click a PiP → make it the overlay (collapsing the previous one). Clears its
@@ -1243,6 +1245,7 @@ final class AgentStore: ObservableObject {
         ephemeralPanes = collapsingAllExcept(id, in: ephemeralPanes)
         didFocus(paneID: id)
         broadcastEphemeralTree()
+        DispatchQueue.main.async { [weak self] in self?.refocusActiveTerminal() }
     }
 
     /// Blur / minimize / Esc → tuck the overlay into PiP. Returns focus to the
