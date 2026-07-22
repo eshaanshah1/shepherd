@@ -306,6 +306,15 @@ final class AgentStore: ObservableObject {
         broadcastWorkspaceTree(workspaceID: id)   // propagate defaultPath to any attached client
     }
 
+    /// Set (or clear) the bash the workspace runs after creating a worktree. Local-only
+    /// (remote/mirror worktree hooks are deferred). Empty/whitespace clears it.
+    func setWorktreeHook(_ id: String, to script: String?) {
+        guard let i = workspaces.firstIndex(where: { $0.id == id }) else { return }
+        let trimmed = script?.trimmingCharacters(in: .whitespacesAndNewlines)
+        workspaces[i].worktreeHook = (trimmed?.isEmpty ?? true) ? nil : script
+        save()
+    }
+
     /// The base dir worktrees are created under: `# shepherd: worktree-base` from the config,
     /// else `~/.shepherd/worktrees`.
     private func worktreeBaseDir() -> String {
@@ -337,10 +346,26 @@ final class AgentStore: ObservableObject {
         guard let provisional = addProvisioningTab(inWorkspace: wsID, name: trimmed, dest: dest) else { return }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = Git.addWorktree(dest: dest, name: trimmed, in: repoDir)
+            var hookFailure: String? = nil
+            if result.ok {
+                let hook = ws.worktreeHook?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                if !hook.isEmpty {
+                    let env = WorktreeHookRunner.hookEnvironment(
+                        worktreeDir: dest, src: repoDir, branch: trimmed, name: trimmed,
+                        repoName: (repoDir as NSString).lastPathComponent)
+                    let r = WorktreeHookRunner.run(script: hook, cwd: dest, env: env)
+                    if r.exitCode != 0 { hookFailure = r.output }
+                }
+            }
             DispatchQueue.main.async {
                 guard let self else { return }
                 if result.ok {
                     self.finishProvisioning(paneID: provisional.paneID)
+                    if let out = hookFailure {
+                        let tail = Self.tail(out, lines: 20)
+                        self.showWorktreeError("Worktree hook reported an error",
+                            detail: tail.isEmpty ? "The hook exited with a non-zero status." : tail)
+                    }
                 } else {
                     self.closeTab(provisional.tabID, inWorkspace: wsID)
                     self.showWorktreeError("Couldn't create worktree",
@@ -372,6 +397,12 @@ final class AgentStore: ObservableObject {
         save()
         broadcastWorkspaceTree(workspaceID: workspaces[w].id)
         refocusActiveTerminal()
+    }
+
+    /// Last `n` non-empty-trimmed lines of hook output, for a compact error alert.
+    private static func tail(_ s: String, lines n: Int) -> String {
+        let all = s.split(separator: "\n", omittingEmptySubsequences: false)
+        return all.suffix(n).joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func showWorktreeError(_ title: String, detail: String) {

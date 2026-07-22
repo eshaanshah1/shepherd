@@ -84,6 +84,8 @@ targets:
       - path: Sources/Workspace.swift
       - path: Sources/Persistence.swift
       - path: Sources/WorktreeService.swift
+      - path: Sources/ShepherdConfigWriter.swift
+      - path: Sources/WorktreeHookRunner.swift
       - path: Sources/WorktreeArchive.swift
       - path: Sources/PRStatus.swift
       - path: Sources/PRComments.swift

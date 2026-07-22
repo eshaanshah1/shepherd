@@ -9,6 +9,7 @@ struct Workspace: Identifiable {
     var selectedTabID: String?
     var collapsed: Bool = false   // accordion folder state (persisted, default expanded)
     var defaultPath: String? = nil   // new tabs in this workspace open here (tilde allowed); nil = shell default
+    var worktreeHook: String? = nil  // bash run right after this workspace's worktrees are created; nil = none
     // Non-nil ⇒ this is a MIRROR of a workspace on another Mac (M2). `remoteHostID` keys the
     // RemoteClient; `remoteWorkspaceID` is the host's workspace id sent back in cmd*.
     var remoteHostID: String? = nil
@@ -17,7 +18,7 @@ struct Workspace: Identifiable {
 
     init(id: String = UUID().uuidString, userTitle: String? = nil,
          tabs: [Tab], selectedTabID: String? = nil, collapsed: Bool = false,
-         defaultPath: String? = nil,
+         defaultPath: String? = nil, worktreeHook: String? = nil,
          remoteHostID: String? = nil, remoteWorkspaceID: String? = nil) {
         self.id = id
         self.userTitle = userTitle
@@ -25,6 +26,7 @@ struct Workspace: Identifiable {
         self.selectedTabID = selectedTabID ?? tabs.first?.tabID
         self.collapsed = collapsed
         self.defaultPath = defaultPath
+        self.worktreeHook = worktreeHook
         self.remoteHostID = remoteHostID
         self.remoteWorkspaceID = remoteWorkspaceID
     }

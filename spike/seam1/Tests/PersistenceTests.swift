@@ -113,4 +113,19 @@ final class PersistenceTests: XCTestCase {
         let empty = try! JSONEncoder().encode([PersistedTab]())
         XCTAssertNil(migrateLegacyTabs(empty))
     }
+
+    func testWorktreeHookSurvivesRoundTrip() {
+        let ws = Workspace(userTitle: "W", tabs: [Tab(pane: Pane())],
+                           worktreeHook: "cp \"$WORKTREE_SRC/.env\" \"$WORKTREE_DIR/.env\"")
+        let snap = snapshotState([ws], selectedWorkspaceID: ws.id)
+        let rebuilt = buildWorkspaces(from: snap)
+        XCTAssertEqual(rebuilt.first?.worktreeHook,
+                       "cp \"$WORKTREE_SRC/.env\" \"$WORKTREE_DIR/.env\"")
+    }
+
+    func testOldBlobDecodesWithNilHook() throws {
+        let json = #"{"selectedTabIndex":0,"tabs":[]}"#.data(using: .utf8)!
+        let pw = try JSONDecoder().decode(PersistedWorkspace.self, from: json)
+        XCTAssertNil(pw.worktreeHook)
+    }
 }

@@ -86,6 +86,12 @@ struct ShepherdApp: App {
                      : "Clamshell survival: unavailable (idle-sleep guard)")
             }
         }
+
+        Settings {
+            SettingsView()
+                .environmentObject(AgentStore.shared)
+                .preferredColorScheme(.dark)
+        }
     }
 }
 
