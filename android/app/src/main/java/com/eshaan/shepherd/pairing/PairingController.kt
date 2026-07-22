@@ -14,9 +14,9 @@ sealed interface PairingState {
 }
 
 class PairingController(private val store: PairingStore) {
-    fun helloForFirstPair(host: String, port: Int, code: String, deviceId: String,
-                          deviceName: String, secret: String, fcmToken: String?): ControlMessage.Hello =
-        ControlMessage.Hello(deviceId, deviceName, pairingCode = code, secret = secret, fcmToken = fcmToken)
+    fun helloForFirstPair(deviceId: String, deviceName: String, secret: String,
+                          fcmToken: String?): ControlMessage.Hello =
+        ControlMessage.Hello(deviceId, deviceName, pairingCode = null, secret = secret, fcmToken = fcmToken)
 
     fun helloForReconnect(p: Pairing, fcmToken: String?): ControlMessage.Hello =
         ControlMessage.Hello(p.deviceId, p.deviceName, pairingCode = null, secret = p.secret, fcmToken = fcmToken)

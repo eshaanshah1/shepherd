@@ -14,6 +14,9 @@ enum TailscaleDiscovery {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
         let selfObj = root["Self"] as? [String: Any]
         let selfUserID = (selfObj?["UserID"]).map { "\($0)" }
+        let selfDNSName = (selfObj?["DNSName"] as? String)?
+            .trimmingCharacters(in: CharacterSet(charactersIn: ".")).nilIfEmpty
+        let selfIPv4 = (selfObj?["TailscaleIPs"] as? [String])?.first { isTailscaleCGNAT($0) }
 
         var userNames: [String: String] = [:]
         for (uid, v) in (root["User"] as? [String: Any] ?? [:]) {
@@ -37,7 +40,8 @@ enum TailscaleDiscovery {
             .compactMap { $0 as? [String: Any] }
             .map(peer)
             .sorted { $0.hostName < $1.hostName }
-        return TSStatus(selfUserID: selfUserID, peers: peers, userNames: userNames)
+        return TSStatus(selfUserID: selfUserID, selfDNSName: selfDNSName, selfIPv4: selfIPv4,
+                        peers: peers, userNames: userNames)
     }
 
     /// Peers owned by the same user as this host (the programmatic "mine").
@@ -111,8 +115,11 @@ struct TSPeer: Equatable {
     let online: Bool; let userID: String; let ipv4: String?
 }
 struct TSStatus: Equatable {
-    let selfUserID: String?; let peers: [TSPeer]; let userNames: [String: String]
+    let selfUserID: String?; let selfDNSName: String?; let selfIPv4: String?
+    let peers: [TSPeer]; let userNames: [String: String]
 }
+
+private extension String { var nilIfEmpty: String? { isEmpty ? nil : self } }
 struct RemoteDeviceRow: Equatable, Identifiable {
     enum Pairability: Equatable { case pairable, notServing, offline }
     let id: String; let name: String; let os: String; let ipv4: String?

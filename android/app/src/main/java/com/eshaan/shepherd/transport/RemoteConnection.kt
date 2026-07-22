@@ -23,6 +23,7 @@ class RemoteConnection(
     private val pingIntervalMs: Long = 20_000,
     private val backoffStartMs: Long = 1_000,
     private val backoffMaxMs: Long = 30_000,
+    private val fallbackHosts: List<String> = emptyList(),
     private val connect: (String, Int) -> Socket = { h, p -> Socket(h, p) },
 ) {
     private val _status = MutableStateFlow<ConnStatus>(ConnStatus.Disconnected)
@@ -58,7 +59,7 @@ class RemoteConnection(
 
     private suspend fun runSession() = coroutineScope {
         _status.value = ConnStatus.Connecting
-        val s = connect(host, port); socket = s; out = s.getOutputStream()
+        val s = openSocket(); socket = s; out = s.getOutputStream()
         try {
             sendRaw(helloFactory())
             val heartbeat = launch { while (isActive) { delay(pingIntervalMs); runCatching { sendRaw(ControlMessage.Ping) } } }
@@ -77,6 +78,16 @@ class RemoteConnection(
             }
             heartbeat.cancel()
         } finally { closeSocket() }
+    }
+
+    /** Connect to the first reachable candidate: the primary host, then any fallbacks (deduped). */
+    private fun openSocket(): Socket {
+        val candidates = (listOf(host) + fallbackHosts).distinct()
+        var last: Exception? = null
+        for (h in candidates) {
+            try { return connect(h, port) } catch (e: Exception) { last = e }
+        }
+        throw last ?: java.net.ConnectException("no reachable host")
     }
 
     /** Enqueue any message; serialized on the IO dispatcher. */

@@ -32,6 +32,12 @@ final class TailscaleDiscoveryTests: XCTestCase {
         XCTAssertEqual(mini.dnsName, "mac-mini.tail.ts.net")   // trailing dot trimmed
     }
 
+    func testParseCapturesSelfDNSNameAndIP() {
+        let s = TailscaleDiscovery.parse(json)!
+        XCTAssertEqual(s.selfDNSName, "my-mac.tail.ts.net")   // trailing dot trimmed
+        XCTAssertEqual(s.selfIPv4, "100.78.141.27")           // first CGNAT 100.x
+    }
+
     func testMyPeersDropsOtherUser() {
         let s = TailscaleDiscovery.parse(json)!
         let mine = TailscaleDiscovery.myPeers(s)

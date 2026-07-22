@@ -84,6 +84,15 @@ struct ContentView: View {
             }
         }
         .animation(.easeOut(duration: 0.12), value: store.showingRemoteDevices)
+        // Phone-pairing QR sheet (⋯ menu → "Connect a phone…").
+        .overlay {
+            if store.showingPhonePairingQR {
+                PhonePairingQRView()
+                    .environmentObject(store)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.12), value: store.showingPhonePairingQR)
         // ⌘/ keyboard-shortcut cheatsheet.
         .overlay {
             if store.showShortcuts {

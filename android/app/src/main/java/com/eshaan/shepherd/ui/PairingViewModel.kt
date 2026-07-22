@@ -21,14 +21,16 @@ class PairingViewModel(
     val state: StateFlow<PairingState> = _state
     private var conn: RemoteConnection? = null
 
-    fun pair(host: String, port: Int, code: String) {
+    fun pair(host: String, ip: String?, port: Int) {
         val deviceId = DeviceIdentity.newDeviceId()
-        val pending = Pairing(host, port, deviceId, DeviceIdentity.deviceName(), DeviceIdentity.newSecret())
+        val primary = host.ifBlank { ip ?: "" }
+        val fallbacks = listOfNotNull(ip).filter { it != primary }
+        val pending = Pairing(primary, port, deviceId, DeviceIdentity.deviceName(), DeviceIdentity.newSecret())
         viewModelScope.launch {
             val token = fcmToken()
-            val c = RemoteConnection(host, port,
-                helloFactory = { controller.helloForFirstPair(host, port, code, deviceId, pending.deviceName, pending.secret, token) },
-                scope = viewModelScope)
+            val c = RemoteConnection(primary, port,
+                helloFactory = { controller.helloForFirstPair(deviceId, pending.deviceName, pending.secret, token) },
+                scope = viewModelScope, fallbackHosts = fallbacks)
             conn = c
             viewModelScope.launch { c.status.collect { _state.value = controller.reduce(_state.value, it, pending) } }
             c.start()
