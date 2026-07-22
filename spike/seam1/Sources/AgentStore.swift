@@ -27,6 +27,10 @@ final class AgentStore: ObservableObject {
     /// Restorable until they expire; persisted under `archiveKey`.
     @Published private(set) var archivedWorktrees: [ArchivedWorktree] = []
 
+    /// Archived worktrees whose git teardown is in flight — the footer row shows a
+    /// dim, non-interactive "deleting" state until it clears. Transient.
+    @Published private(set) var deletingArchiveIDs: Set<String> = []
+
     /// PR status per pane, shown in the sidebar when the pane is idle (transient —
     /// fetched via `gh`, refreshed while idle, never persisted).
     @Published private(set) var prStatuses: [String: PRStatus] = [:]
@@ -415,6 +419,14 @@ final class AgentStore: ObservableObject {
         return all.suffix(n).joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Mark a pane as being torn down (or clear it) so its row + content pane dim and
+    /// lock while the git op runs.
+    private func setStowing(_ paneID: String, _ kind: StowKind?) {
+        guard let (w, t) = locatePane(paneID, in: workspaces) else { return }
+        _ = workspaces[w].tabs[t].root.updatePane(paneID) { $0.stowing = kind }
+        broadcastWorkspaceTree(workspaceID: workspaces[w].id)
+    }
+
     private func showWorktreeError(_ title: String, detail: String) {
         let alert = NSAlert()
         alert.messageText = title
@@ -458,9 +470,14 @@ final class AgentStore: ObservableObject {
         let name = tab.displayTitle
         let wsName = workspaces[w].displayName(index: w)
         let sessionID = tab.root.panes.compactMap { $0.sessionID }.first
+        let stowPaneID = tab.focusedPaneID
+        setStowing(stowPaneID, .archiving)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let info = Git.worktreeInfo(cwd) else {
-                DispatchQueue.main.async { self?.showWorktreeError("Can't archive", detail: "This tab isn't a git worktree.") }
+                DispatchQueue.main.async {
+                    self?.setStowing(stowPaneID, nil)
+                    self?.showWorktreeError("Can't archive", detail: "This tab isn't a git worktree.")
+                }
                 return
             }
             let id = UUID().uuidString
@@ -468,6 +485,7 @@ final class AgentStore: ObservableObject {
             DispatchQueue.main.async {
                 guard let self else { return }
                 guard result.ok else {
+                    self.setStowing(stowPaneID, nil)
                     self.showWorktreeError("Couldn't archive worktree", detail: result.err)
                     return
                 }
@@ -601,10 +619,17 @@ final class AgentStore: ObservableObject {
 
     /// Forget an archive entirely (protection ref + branch). Same semantics as expiry.
     func deleteArchive(_ id: String) {
-        guard let a = archivedWorktrees.first(where: { $0.id == id }) else { return }
-        archivedWorktrees.removeAll { $0.id == id }
-        saveArchives()
-        DispatchQueue.global(qos: .utility).async { Git.deleteArchive(a) }
+        guard let a = archivedWorktrees.first(where: { $0.id == id }), !deletingArchiveIDs.contains(id) else { return }
+        deletingArchiveIDs.insert(id)
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            Git.deleteArchive(a)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.archivedWorktrees.removeAll { $0.id == id }
+                self.deletingArchiveIDs.remove(id)
+                self.saveArchives()
+            }
+        }
     }
 
     /// Close a tab, but if it's a single-pane local git worktree, first offer to
@@ -636,12 +661,22 @@ final class AgentStore: ObservableObject {
         case .alertFirstButtonReturn:
             archiveWorktreeTab(tabID, inWorkspace: wsID)
         case .alertSecondButtonReturn:
-            closeTab(tabID, inWorkspace: wsID)
-            DispatchQueue.global(qos: .utility).async {
-                if let info = Git.worktreeInfo(cwd) { Git.removeWorktree(root: info.root, mainRepo: info.mainRepo) }
-            }
+            discardWorktreeTab(tabID, inWorkspace: wsID, cwd: cwd)
         default:
             break
+        }
+    }
+
+    /// Remove the worktree directory and close the tab. The tab lingers in a locked
+    /// "discarding" state until git finishes so the teardown is visible.
+    private func discardWorktreeTab(_ tabID: String, inWorkspace wsID: String, cwd: String) {
+        guard let w = workspaces.firstIndex(where: { $0.id == wsID }),
+              let tab = workspaces[w].tabs.first(where: { $0.tabID == tabID }) else { return }
+        let stowPaneID = tab.focusedPaneID
+        setStowing(stowPaneID, .discarding)
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            if let info = Git.worktreeInfo(cwd) { Git.removeWorktree(root: info.root, mainRepo: info.mainRepo) }
+            DispatchQueue.main.async { self?.closeTab(tabID, inWorkspace: wsID) }
         }
     }
 

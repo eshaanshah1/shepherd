@@ -13,6 +13,11 @@ struct RemoteRef: Equatable {
     var conn: RemoteConnState = .live
 }
 
+/// A tab whose worktree is being torn down: the row + its content pane show a dim,
+/// non-interactive "stowing" state until the git op finishes. `.archiving` keeps the
+/// work (neutral); `.discarding` destroys it (red). Transient, never persisted.
+enum StowKind: Equatable { case archiving, discarding }
+
 struct Pane: Identifiable, Equatable {
     let paneID: String
     var title: String = ""        // OSC title the program sets
@@ -22,6 +27,7 @@ struct Pane: Identifiable, Equatable {
     var reason: String? = nil
     var sessionID: String? = nil  // live Claude session id — persisted to resume the agent on relaunch
     var provisioning: Bool = false // worktree being created: show a loading view, don't mount the PTY (transient, never persisted)
+    var stowing: StowKind? = nil  // worktree being archived/discarded: dim + lock the pane while git runs (transient, never persisted)
     var remote: RemoteRef? = nil  // non-nil ⇒ this pane mirrors a host pane (M2); never persisted
     var id: String { paneID }
 

@@ -421,12 +421,26 @@ private struct TabRow: View {
     // Single-pane tab: the row reflects its one (focused) pane, just like today.
     private var state: AgentState { tab.focusedPane()?.state ?? .shell }
     private var isProvisioning: Bool { tab.focusedPane()?.provisioning ?? false }
+    private var stowing: StowKind? { tab.focusedPane()?.stowing }
 
     var body: some View {
         HStack(spacing: LeadingIcon.gutterGap) {
             Color.clear.frame(width: LeadingIcon.gutter)   // aligns the dot under the folder dot
 
-            if isProvisioning {
+            if let stow = stowing {
+                Image(systemName: stow == .archiving ? "archivebox" : "trash")
+                    .font(.system(size: 11))
+                    .foregroundStyle(stow == .archiving ? Theme.textSecondary : Theme.error)
+                    .frame(width: 14)
+                Text(tab.displayTitle)
+                    .font(.ui(13))
+                    .foregroundStyle(nameColor)
+                    .lineLimit(1)
+                Spacer(minLength: 6)
+                Text(stow == .archiving ? "Archiving…" : "Discarding…")
+                    .font(.ui(11))
+                    .foregroundStyle(Theme.textDim)
+            } else if isProvisioning {
                 ProgressView()
                     .controlSize(.small)
                     .scaleEffect(0.68)
@@ -485,6 +499,9 @@ private struct TabRow: View {
             }
             Button("Close Tab") { store.requestCloseTab(tab.tabID, inWorkspace: workspaceID) }
         }
+        .opacity(stowing == nil ? 1 : 0.45)
+        .allowsHitTesting(stowing == nil)
+        .animation(.easeOut(duration: 0.18), value: stowing)
     }
 
     /// Is this tab's directory a linked git worktree? Checked off-main on hover so
@@ -620,6 +637,8 @@ private struct ArchivedRow: View {
     let archive: ArchivedWorktree
     @State private var hovering = false
 
+    private var isDeleting: Bool { store.deletingArchiveIDs.contains(archive.id) }
+
     private var workspaceLabel: String {
         if let ws = store.workspaces.first(where: { $0.id == archive.workspaceID }),
            let i = store.workspaces.firstIndex(where: { $0.id == archive.workspaceID }) {
@@ -630,9 +649,9 @@ private struct ArchivedRow: View {
 
     var body: some View {
         HStack(spacing: LeadingIcon.gutterGap) {
-            Image(systemName: "archivebox")
+            Image(systemName: isDeleting ? "trash" : "archivebox")
                 .font(.system(size: 10))
-                .foregroundStyle(Theme.textDim)
+                .foregroundStyle(isDeleting ? Theme.error : Theme.textDim)
                 .frame(width: 14)
             VStack(alignment: .leading, spacing: 1) {
                 Text(archive.name)
@@ -645,14 +664,16 @@ private struct ArchivedRow: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 6)
-            Text(WorktreeArchive.archiveAgeString(archive.archivedAt, now: Date()))
+            Text(isDeleting ? "Deleting…" : WorktreeArchive.archiveAgeString(archive.archivedAt, now: Date()))
                 .font(.ui(10))
                 .foregroundStyle(Theme.textDim)
         }
         .padding(.horizontal, 8)
         .frame(height: TabRow.height + 4)
-        .background(RoundedRectangle(cornerRadius: 6).fill(hovering ? Theme.raised.opacity(0.5) : .clear))
-        .opacity(hovering ? 1 : 0.75)
+        .background(RoundedRectangle(cornerRadius: 6).fill(hovering && !isDeleting ? Theme.raised.opacity(0.5) : .clear))
+        .opacity(isDeleting ? 0.45 : (hovering ? 1 : 0.75))
+        .allowsHitTesting(!isDeleting)
+        .animation(.easeOut(duration: 0.18), value: isDeleting)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .help("\(archive.branch.isEmpty ? "detached" : archive.branch) · archived \(WorktreeArchive.archiveAgeString(archive.archivedAt, now: Date())) ago")
