@@ -128,4 +128,35 @@ final class PersistenceTests: XCTestCase {
         let pw = try JSONDecoder().decode(PersistedWorkspace.self, from: json)
         XCTAssertNil(pw.worktreeHook)
     }
+
+    func testEphemeralRoundTripRestoresCollapsedShellWithSessionAndCwd() {
+        var p = Pane()
+        p.cwd = "/Users/x"; p.sessionID = "sess-1"; p.userTitle = "scratch"; p.state = .working
+        let live = [EphemeralPane(pane: p, collapsed: false)]
+
+        let snap = snapshotEphemerals(live)
+        XCTAssertEqual(snap.count, 1)
+        XCTAssertEqual(snap[0].cwd, "/Users/x")
+        XCTAssertEqual(snap[0].sessionID, "sess-1")
+        XCTAssertEqual(snap[0].userTitle, "scratch")
+
+        let rebuilt = buildEphemerals(from: snap)
+        XCTAssertEqual(rebuilt.count, 1)
+        XCTAssertTrue(rebuilt[0].collapsed)                 // always restored to PiP
+        XCTAssertEqual(rebuilt[0].pane.state, .shell)       // live state never persists
+        XCTAssertEqual(rebuilt[0].pane.cwd, "/Users/x")
+        XCTAssertEqual(rebuilt[0].pane.sessionID, "sess-1")
+        XCTAssertEqual(rebuilt[0].pane.userTitle, "scratch")
+    }
+
+    func testBuildEphemeralsNilYieldsEmpty() {
+        XCTAssertTrue(buildEphemerals(from: nil).isEmpty)
+    }
+
+    func testPersistedStateDecodesWithoutEphemeralField() throws {
+        // A pre-feature blob has no `ephemeral` key — must still decode (nil).
+        let json = #"{"workspaces":[],"selectedWorkspaceIndex":0}"#
+        let state = try JSONDecoder().decode(PersistedState.self, from: Data(json.utf8))
+        XCTAssertNil(state.ephemeral)
+    }
 }

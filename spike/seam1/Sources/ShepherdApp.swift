@@ -104,7 +104,11 @@ enum ShortcutActions {
         let s = AgentStore.shared
         switch id {
         case .newTab:        s.newTab()
-        case .closePane:     if s.selectedTabIsSplit { s.closeFocusedPane() } else { s.closeSelected() }
+        case .newEphemeral:  s.spawnEphemeral()
+        case .closePane:
+            if let id = s.expandedEphemeralID { s.closeEphemeral(id) }
+            else if s.selectedTabIsSplit { s.closeFocusedPane() }
+            else { s.closeSelected() }
         case .splitRight:    s.splitFocused(.row)
         case .splitDown:     s.splitFocused(.column)
         case .zoomPane:      s.toggleZoom()

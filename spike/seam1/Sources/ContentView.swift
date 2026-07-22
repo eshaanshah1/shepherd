@@ -51,6 +51,10 @@ struct ContentView: View {
                     .frame(width: displayWidth)
                 divider
             }
+
+            EphemeralOverlayView()
+                .environmentObject(store)
+                .allowsHitTesting(!store.ephemeralPanes.isEmpty)
         }
         .background(Theme.ground)
         .animation(.easeOut(duration: 0.18),

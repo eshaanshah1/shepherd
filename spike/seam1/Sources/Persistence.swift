@@ -17,14 +17,24 @@ struct PersistedWorkspace: Codable {
     var worktreeHook: String?      // optional so pre-feature blobs still decode (nil = none)
 }
 
+/// On-disk ephemeral pane: cwd + sessionID + userTitle only (like a tab, live
+/// state never persists). Restored all-collapsed, .shell state, fresh id.
+struct PersistedEphemeral: Codable {
+    var userTitle: String?
+    var cwd: String?
+    var sessionID: String?
+}
+
 struct PersistedState: Codable {
     var workspaces: [PersistedWorkspace]
     var selectedWorkspaceIndex: Int
+    var ephemeral: [PersistedEphemeral]?   // optional ⇒ pre-feature blobs decode as nil
 }
 
 /// Snapshot live workspaces → on-disk form. Selection is captured by index because
 /// tab/workspace ids are regenerated on the next launch.
-func snapshotState(_ workspaces: [Workspace], selectedWorkspaceID: String?) -> PersistedState {
+func snapshotState(_ workspaces: [Workspace], selectedWorkspaceID: String?,
+                   ephemeral: [EphemeralPane] = []) -> PersistedState {
     let selWs = workspaces.firstIndex { $0.id == selectedWorkspaceID } ?? 0
     let pws = workspaces.map { ws -> PersistedWorkspace in
         let selTab = ws.tabs.firstIndex { $0.tabID == ws.selectedTabID } ?? 0
@@ -36,7 +46,26 @@ func snapshotState(_ workspaces: [Workspace], selectedWorkspaceID: String?) -> P
             defaultPath: ws.defaultPath,
             worktreeHook: ws.worktreeHook)
     }
-    return PersistedState(workspaces: pws, selectedWorkspaceIndex: selWs)
+    return PersistedState(workspaces: pws, selectedWorkspaceIndex: selWs,
+                          ephemeral: snapshotEphemerals(ephemeral))
+}
+
+/// Live ephemeral panes → on-disk form (cwd + sessionID + userTitle).
+func snapshotEphemerals(_ panes: [EphemeralPane]) -> [PersistedEphemeral] {
+    panes.map { PersistedEphemeral(userTitle: $0.pane.userTitle, cwd: $0.pane.cwd,
+                                   sessionID: $0.pane.sessionID) }
+}
+
+/// Rebuild ephemeral panes from on-disk form: fresh pane ids, .shell state, all
+/// collapsed (PiP). A restored sessionID resumes via `claudeResumeInput` on mount.
+func buildEphemerals(from persisted: [PersistedEphemeral]?) -> [EphemeralPane] {
+    (persisted ?? []).map { pe in
+        var p = Pane()
+        p.userTitle = pe.userTitle
+        p.cwd = pe.cwd
+        p.sessionID = pe.sessionID
+        return EphemeralPane(pane: p, collapsed: true)
+    }
 }
 
 /// Rebuild live workspaces from on-disk form. Panes decode with fresh ids + .shell
