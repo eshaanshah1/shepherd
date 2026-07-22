@@ -117,14 +117,13 @@ struct EphemeralOverlayView: View {
         return CGRect(x: (size.width - w) / 2, y: (size.height - h) / 2, width: w, height: h)
     }
 
-    /// Center for a PiP in the bottom-right stack (newest at the bottom). All PiPs share
-    /// the same footprint (same scale), so the stack spacing is uniform.
+    /// Center for a PiP in the top-right stack (first at the top, growing down). All PiPs
+    /// share the same footprint (same scale), so the stack spacing is uniform.
     private func pipCenter(for e: EphemeralPane, in size: CGSize, footprint: CGSize) -> CGPoint {
         let collapsed = store.ephemeralPanes.filter { $0.collapsed }
         let idx = collapsed.firstIndex { $0.id == e.id } ?? 0
-        let fromBottom = collapsed.count - 1 - idx
         let x = size.width - footprint.width / 2 - pipGap
-        let y = size.height - footprint.height / 2 - pipGap - CGFloat(fromBottom) * (footprint.height + pipGap)
+        let y = footprint.height / 2 + pipGap + CGFloat(idx) * (footprint.height + pipGap)
         return CGPoint(x: x, y: y)
     }
 
