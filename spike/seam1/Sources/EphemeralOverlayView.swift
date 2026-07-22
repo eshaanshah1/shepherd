@@ -1,8 +1,9 @@
 import SwiftUI
 
 /// In-window layer for ephemeral (workspace-less) panes. Each pane's libghostty
-/// surface is mounted once and kept mounted (live PTY survives collapse/expand);
-/// its container animates between the centered overlay and a bottom-right PiP.
+/// surface is mounted once and kept mounted (live PTY survives collapse/expand); a
+/// PiP is the same live surface rendered at full grid and shrunk by an AppKit layer
+/// transform (see ScaledGhosttyTerminal), so it's a true scaled-down thumbnail.
 struct EphemeralOverlayView: View {
     @EnvironmentObject var store: AgentStore
 
@@ -22,7 +23,7 @@ struct EphemeralOverlayView: View {
                         .transition(.opacity)
                 }
 
-                // One mounted surface per ephemeral pane; frame/position depends on state.
+                // One mounted surface per ephemeral pane; size/position depends on state.
                 ForEach(store.ephemeralPanes, id: \.id) { e in
                     paneContainer(e, in: geo.size)
                 }
@@ -36,50 +37,40 @@ struct EphemeralOverlayView: View {
     @ViewBuilder
     private func paneContainer(_ e: EphemeralPane, in size: CGSize) -> some View {
         let isOverlay = !e.collapsed
-        // The card is ALWAYS laid out at the full overlay size, so the terminal keeps its
-        // full grid (no reflow). A PiP is that same card shrunk by a layer transform —
-        // a true scaled-down thumbnail, not a tiny few-column terminal.
-        let full = overlayFrame(in: size)
+        let full = overlayFrame(in: size)               // the overlay's on-screen rect / logical size
         let scale = isOverlay ? 1 : (pipTargetWidth / full.width)
-        let footprint = CGSize(width: full.width * scale, height: full.height * scale)
+        let bodyLogical = CGSize(width: full.width, height: max(0, full.height - titleBarHeight))
+        let disp = CGSize(width: full.width * scale, height: titleBarHeight + bodyLogical.height * scale)
         let center = isOverlay
             ? CGPoint(x: full.midX, y: full.midY)
-            : pipCenter(for: e, in: size, footprint: footprint)
+            : pipCenter(for: e, in: size, footprint: disp)
         let corner: CGFloat = isOverlay ? 12 : 8
 
-        card(e, isOverlay: isOverlay, size: CGSize(width: full.width, height: full.height))
-            // Flatten the card (chrome + Metal terminal) into one composited layer BEFORE
-            // scaling, so the terminal's CAMetalLayer scales with the card instead of
-            // compositing at its own unscaled size.
-            .compositingGroup()
-            .scaleEffect(scale, anchor: .topLeading)
-            .frame(width: footprint.width, height: footprint.height, alignment: .topLeading)
-            .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
-            // PiP edges blend into the terminal, so give a collapsed card a stronger,
-            // theme-aware border than the overlay's hairline.
-            .overlay(RoundedRectangle(cornerRadius: corner, style: .continuous)
-                .strokeBorder(isOverlay ? Theme.hairline : Theme.textSecondary.opacity(0.55),
-                              lineWidth: isOverlay ? 1 : 1.5))
-            .shadow(color: .black.opacity(isOverlay ? 0.4 : 0.25),
-                    radius: isOverlay ? 30 : 10, y: isOverlay ? 16 : 6)
-            // Collapsed: a real-NSView catcher (at true PiP size, unscaled) so the expand
-            // tap wins AppKit hit-testing over the live terminal beneath it.
-            .overlay { if !isOverlay { MouseCatcher { store.expandEphemeral(e.id) } } }
-            .position(x: center.x, y: center.y)
-            .modifier(FlashOnBump(trigger: store.ephemeralCapFlash, active: e.collapsed))
-    }
-
-    private func card(_ e: EphemeralPane, isOverlay: Bool, size: CGSize) -> some View {
-        // The surface needs an EXPLICIT frame — a plain maxWidth/maxHeight .infinity lets
-        // the ghostty view fall back to a small intrinsic size (SplitContainer sizes it via
-        // an explicit-frame layout for the same reason).
         VStack(spacing: 0) {
             titleBar(e, showButtons: isOverlay)
-            terminal(e, isOverlay: isOverlay)
-                .frame(width: size.width, height: max(0, size.height - titleBarHeight))
+            ScaledGhosttyTerminal(paneID: e.pane.paneID,
+                                  logicalSize: bodyLogical,   // render the full grid at this size…
+                                  scale: scale,               // …then shrink the layer to fit
+                                  isSelected: isOverlay,
+                                  hittable: isOverlay,        // overlay types; PiP is expand-only
+                                  focusTick: store.focusTick)
+                .frame(width: disp.width, height: disp.height - titleBarHeight)
         }
-        .frame(width: size.width, height: size.height)
+        .frame(width: disp.width, height: disp.height)
         .background(Theme.ground)
+        .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
+        // PiP edges blend into the terminal, so give a collapsed card a stronger,
+        // theme-aware border than the overlay's hairline.
+        .overlay(RoundedRectangle(cornerRadius: corner, style: .continuous)
+            .strokeBorder(isOverlay ? Theme.hairline : Theme.textSecondary.opacity(0.55),
+                          lineWidth: isOverlay ? 1 : 1.5))
+        .shadow(color: .black.opacity(isOverlay ? 0.4 : 0.25),
+                radius: isOverlay ? 30 : 10, y: isOverlay ? 16 : 6)
+        // Collapsed: a real-NSView catcher (unscaled, at true PiP size) so the expand
+        // tap wins AppKit hit-testing over the live terminal beneath it.
+        .overlay { if !isOverlay { MouseCatcher { store.expandEphemeral(e.id) } } }
+        .position(x: center.x, y: center.y)
+        .modifier(FlashOnBump(trigger: store.ephemeralCapFlash, active: e.collapsed))
     }
 
     private func titleBar(_ e: EphemeralPane, showButtons: Bool) -> some View {
@@ -96,7 +87,7 @@ struct EphemeralOverlayView: View {
             }
         }
         .padding(.horizontal, 10)
-        .frame(height: 30)
+        .frame(height: titleBarHeight)
         .background(Theme.surface1)
     }
 
@@ -107,15 +98,6 @@ struct EphemeralOverlayView: View {
         }
         .buttonStyle(.plain)
         .focusable(false)
-    }
-
-    @ViewBuilder
-    private func terminal(_ e: EphemeralPane, isOverlay: Bool) -> some View {
-        GhosttyTerminal(paneID: e.pane.paneID,
-                        isVisible: true,                    // always render (live PiP preview)
-                        isSelected: isOverlay,              // overlay grabs first responder
-                        focusTick: store.focusTick,
-                        hittableOverride: isOverlay)        // overlay types; PiP is expand-only
     }
 
     // MARK: Layout
@@ -140,6 +122,51 @@ struct EphemeralOverlayView: View {
         Button("") { if let id = store.expandedEphemeralID { store.collapseEphemeral(id) } }
             .keyboardShortcut(.cancelAction)
             .opacity(0).frame(width: 0, height: 0).focusable(false)
+    }
+}
+
+/// Hosts a `GhosttySurfaceView` at full logical size inside a flipped container and
+/// shrinks it with the container layer's `sublayerTransform`. libghostty renders the
+/// full terminal grid (no reflow); AppKit scales the rendered Metal layer directly —
+/// which SwiftUI's `.scaleEffect` fails to do for a CAMetalLayer. `scale == 1` is the
+/// overlay (identity). Kept mounted across collapse/expand so the PTY survives.
+private struct ScaledGhosttyTerminal: NSViewRepresentable {
+    let paneID: String
+    let logicalSize: CGSize   // size the surface renders its grid at (constant → no reflow)
+    let scale: CGFloat        // shrink factor applied by the container's sublayerTransform
+    let isSelected: Bool      // overlay grabs first responder
+    let hittable: Bool        // overlay types; PiP is expand-only (a MouseCatcher handles clicks)
+    var focusTick: Int = 0
+
+    func makeNSView(context: Context) -> ScaleContainerView { ScaleContainerView(paneID: paneID) }
+
+    func updateNSView(_ v: ScaleContainerView, context: Context) {
+        v.configure(logicalSize: logicalSize, scale: scale, hittable: hittable)
+        if isSelected, let w = v.window, w.firstResponder !== v.surface {
+            w.makeFirstResponder(v.surface)
+        }
+    }
+}
+
+private final class ScaleContainerView: NSView {
+    let surface: GhosttySurfaceView
+    override var isFlipped: Bool { true }   // top-left origin → sublayerTransform scales toward top-left
+
+    init(paneID: String) {
+        surface = GhosttySurfaceView(paneID: paneID)
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.masksToBounds = true
+        addSubview(surface)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    func configure(logicalSize: CGSize, scale: CGFloat, hittable: Bool) {
+        if surface.frame.size != logicalSize {
+            surface.frame = CGRect(origin: .zero, size: logicalSize)   // full grid, no reflow
+        }
+        surface.hitTestable = hittable
+        layer?.sublayerTransform = CATransform3DMakeScale(scale, scale, 1)
     }
 }
 
