@@ -167,6 +167,16 @@ private final class ScaleContainerView: NSView {
         }
         surface.hitTestable = hittable
         layer?.sublayerTransform = CATransform3DMakeScale(scale, scale, 1)
+        // Downscaling the full-res grid with the default (linear) filter aliases the text
+        // badly at mini size. Trilinear (mipmapped) + a slight blur bias softens it; the
+        // overlay (scale 1) stays crisp.
+        if scale < 1 {
+            surface.layer?.minificationFilter = .trilinear
+            surface.layer?.minificationFilterBias = 0.25
+        } else {
+            surface.layer?.minificationFilter = .linear
+            surface.layer?.minificationFilterBias = 0
+        }
     }
 }
 
