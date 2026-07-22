@@ -8,6 +8,7 @@ struct EphemeralOverlayView: View {
 
     private let pipTargetWidth: CGFloat = 260   // PiP width; height follows the overlay's aspect
     private let pipGap: CGFloat = 12
+    private let titleBarHeight: CGFloat = 30     // must match titleBar's .frame(height:)
 
     var body: some View {
         GeometryReader { geo in
@@ -46,8 +47,7 @@ struct EphemeralOverlayView: View {
             : pipCenter(for: e, in: size, footprint: footprint)
         let corner: CGFloat = isOverlay ? 12 : 8
 
-        card(e, isOverlay: isOverlay)
-            .frame(width: full.width, height: full.height)
+        card(e, isOverlay: isOverlay, size: CGSize(width: full.width, height: full.height))
             .scaleEffect(scale, anchor: .topLeading)
             .frame(width: footprint.width, height: footprint.height, alignment: .topLeading)
             .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
@@ -65,14 +65,17 @@ struct EphemeralOverlayView: View {
             .modifier(FlashOnBump(trigger: store.ephemeralCapFlash, active: e.collapsed))
     }
 
-    private func card(_ e: EphemeralPane, isOverlay: Bool) -> some View {
-        ZStack(alignment: .topLeading) {
-            Theme.ground
-            VStack(spacing: 0) {
-                titleBar(e, showButtons: isOverlay)
-                terminal(e, isOverlay: isOverlay)
-            }
+    private func card(_ e: EphemeralPane, isOverlay: Bool, size: CGSize) -> some View {
+        // The surface needs an EXPLICIT frame — a plain maxWidth/maxHeight .infinity lets
+        // the ghostty view fall back to a small intrinsic size (SplitContainer sizes it via
+        // an explicit-frame layout for the same reason).
+        VStack(spacing: 0) {
+            titleBar(e, showButtons: isOverlay)
+            terminal(e, isOverlay: isOverlay)
+                .frame(width: size.width, height: max(0, size.height - titleBarHeight))
         }
+        .frame(width: size.width, height: size.height)
+        .background(Theme.ground)
     }
 
     private func titleBar(_ e: EphemeralPane, showButtons: Bool) -> some View {
@@ -109,7 +112,6 @@ struct EphemeralOverlayView: View {
                         isSelected: isOverlay,              // overlay grabs first responder
                         focusTick: store.focusTick,
                         hittableOverride: isOverlay)        // overlay types; PiP is expand-only
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: Layout
