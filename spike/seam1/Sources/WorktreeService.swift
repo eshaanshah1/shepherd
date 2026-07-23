@@ -9,6 +9,8 @@ enum ThemeMode: Equatable { case dark, light, warm }
 struct ShepherdConfig: Equatable {
     var worktreeBase: String? = nil
     var theme: ThemeMode = .dark
+    /// Code-editor line wrapping. Off by default → the editor scrolls horizontally.
+    var editorWrapLines: Bool = false
 }
 
 /// Parse Shepherd directives out of the ghostty-syntax `~/.config/shepherd/config`.
@@ -33,6 +35,13 @@ func parseShepherdConfig(_ contents: String) -> ShepherdConfig {
             case "light": cfg.theme = .light
             case "warm":  cfg.theme = .warm
             default:      cfg.theme = .dark
+            }
+        }
+        if key == "editor-wrap-lines" {
+            switch value.lowercased() {
+            case "true", "yes", "on", "1":   cfg.editorWrapLines = true
+            case "false", "no", "off", "0":  cfg.editorWrapLines = false
+            default: break
             }
         }
     }

@@ -63,7 +63,7 @@ enum ShepherdConfigWriter {
     // MARK: - Reads (control CLI: `config get` / `config list`)
 
     /// Keys that ride a `# shepherd:` comment line rather than being native ghostty keys.
-    static let shepherdKeys: Set<String> = ["theme", "worktree-base"]
+    static let shepherdKeys: Set<String> = ["theme", "worktree-base", "editor-wrap-lines"]
     static func kind(for key: String) -> ConfigKeyKind { shepherdKeys.contains(key) ? .shepherd : .native }
 
     /// Read a single key's value from the config text (nil if absent).
