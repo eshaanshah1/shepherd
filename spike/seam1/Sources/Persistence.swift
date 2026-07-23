@@ -80,7 +80,6 @@ func buildWorkspaces(from state: PersistedState) -> [Workspace] {
             tab.focusedPaneID = first
             return tab
         }
-        guard !tabs.isEmpty else { return nil }
         let selID = tabs.indices.contains(pw.selectedTabIndex)
             ? tabs[pw.selectedTabIndex].tabID
             : tabs.first?.tabID

@@ -124,6 +124,10 @@ struct ContentView: View {
                     .opacity(entry.visible ? 1 : 0)
                     .allowsHitTesting(entry.visible)
             }
+            if store.selectedTab == nil {
+                WorkspaceEmptyView()
+                    .transition(.opacity)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(.easeInOut(duration: 0.22), value: store.selectedWorkspaceID)  // cross-fade on switch

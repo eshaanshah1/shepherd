@@ -37,6 +37,26 @@ final class PersistenceTests: XCTestCase {
         XCTAssertNil(rebuilt.first?.defaultPath)
     }
 
+    func testEmptyWorkspaceSurvivesRoundTrip() throws {
+        let empty = Workspace(userTitle: "cleared", tabs: [])
+        let data = try JSONEncoder().encode(snapshotState([empty], selectedWorkspaceID: empty.id))
+        let rebuilt = buildWorkspaces(from: try JSONDecoder().decode(PersistedState.self, from: data))
+        XCTAssertEqual(rebuilt.count, 1)                 // NOT dropped
+        XCTAssertTrue(rebuilt[0].tabs.isEmpty)
+        XCTAssertNil(rebuilt[0].selectedTabID)
+        XCTAssertEqual(rebuilt[0].userTitle, "cleared")
+    }
+
+    func testMixedEmptyAndNonEmptyWorkspacesRoundTrip() throws {
+        let empty = Workspace(userTitle: "empty", tabs: [])
+        let full = Workspace(userTitle: "full", tabs: [tab("t")])
+        let data = try JSONEncoder().encode(snapshotState([empty, full], selectedWorkspaceID: full.id))
+        let rebuilt = buildWorkspaces(from: try JSONDecoder().decode(PersistedState.self, from: data))
+        XCTAssertEqual(rebuilt.map(\.userTitle), ["empty", "full"])
+        XCTAssertTrue(rebuilt[0].tabs.isEmpty)
+        XCTAssertEqual(rebuilt[1].tabs.count, 1)
+    }
+
     func testSnapshotRoundTripPreservesStructureAndSelection() throws {
         let t1 = tab("one", cwd: "/tmp/a")
         let t2 = tab("two", cwd: "/tmp/b")

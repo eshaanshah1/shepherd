@@ -722,14 +722,14 @@ final class AgentStore: ObservableObject {
         closeTabInWorkspace(w, tabID: tabID)
     }
 
-    /// closeTab targeting a specific workspace; reseeds a fresh tab if it was the
-    /// last one so a workspace is never empty (⌘W no longer closes the window).
+    /// closeTab targeting a specific workspace. Closing the last tab leaves the
+    /// workspace EMPTY (not deleted) — it persists and shows the empty state.
     private func closeTabInWorkspace(_ w: Int, tabID: String) {
         let wasSelected = workspaces[w].selectedTabID == tabID
         let closingPaneIDs = workspaces[w].tabs.first { $0.tabID == tabID }?.root.panes.map(\.paneID) ?? []
         workspaces[w].tabs.removeAll { $0.tabID == tabID }
         if workspaces[w].tabs.isEmpty {
-            workspaces[w].reseedIfEmpty()
+            workspaces[w].selectedTabID = nil
             DispatchQueue.main.async { [weak self] in self?.refocusActiveTerminal() }
         } else if wasSelected {
             workspaces[w].selectedTabID = workspaces[w].tabs.last?.tabID
@@ -900,7 +900,7 @@ final class AgentStore: ObservableObject {
 
     /// Move a tab (with its whole pane tree + live agents) into another folder,
     /// appended, selected, and made active. No-op across remote/mirror workspaces
-    /// (host-authoritative) or into its own folder. The source reseeds if emptied.
+    /// (host-authoritative) or into its own folder. The source is left empty if drained.
     func moveTab(_ tabID: String, toWorkspace destID: String) {
         guard let srcW = workspaces.firstIndex(where: { ws in ws.tabs.contains { $0.tabID == tabID } }),
               let destW = workspaces.firstIndex(where: { $0.id == destID }),
@@ -912,7 +912,7 @@ final class AgentStore: ObservableObject {
         let wasSelected = workspaces[srcW].selectedTabID == tabID
         let tab = workspaces[srcW].tabs.remove(at: ti)
         if workspaces[srcW].tabs.isEmpty {
-            workspaces[srcW].reseedIfEmpty()
+            workspaces[srcW].selectedTabID = nil
         } else if wasSelected {
             workspaces[srcW].selectedTabID = workspaces[srcW].tabs.last?.tabID
         }
