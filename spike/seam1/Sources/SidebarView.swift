@@ -103,15 +103,24 @@ struct SidebarView: View {
                                   headerMids: $headerMids)
 
             if !ws.collapsed {
-                ForEach(ws.tabs) { tab in
-                    Group {
-                        if tab.isSplit {
-                            SplitTabGroup(tab: tab, workspaceID: ws.id)
-                        } else {
-                            TabRow(tab: tab, workspaceID: ws.id,
-                                   draggingID: $draggingID, dragOffset: $dragOffset,
-                                   folderRegions: folderRegions,
-                                   dropTargetWorkspaceID: $dropTargetWorkspaceID)
+                if ws.tabs.isEmpty {
+                    Text("No tabs")
+                        .font(.ui(12, .regular))
+                        .foregroundStyle(Theme.textDim.opacity(0.7))
+                        .padding(.leading, 22)
+                        .padding(.vertical, 3)
+                        .allowsHitTesting(false)
+                } else {
+                    ForEach(ws.tabs) { tab in
+                        Group {
+                            if tab.isSplit {
+                                SplitTabGroup(tab: tab, workspaceID: ws.id)
+                            } else {
+                                TabRow(tab: tab, workspaceID: ws.id,
+                                       draggingID: $draggingID, dragOffset: $dragOffset,
+                                       folderRegions: folderRegions,
+                                       dropTargetWorkspaceID: $dropTargetWorkspaceID)
+                            }
                         }
                     }
                 }
@@ -235,7 +244,11 @@ private struct WorkspaceFolderHeader: View {
             hovering = h
             if h { refreshGitStatus() }
         }
-        .onTapGesture { if !editing { store.toggleWorkspaceCollapsed(ws.id) } }
+        .onTapGesture {
+            guard !editing else { return }
+            if ws.tabs.isEmpty { store.selectWorkspace(ws.id) }   // no tab to click ⇒ activate via header
+            store.toggleWorkspaceCollapsed(ws.id)
+        }
         .gesture(reorderGesture)
         .contextMenu {
             Button("Rename") { beginRename() }

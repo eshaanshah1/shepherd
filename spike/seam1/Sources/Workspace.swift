@@ -40,17 +40,6 @@ struct Workspace: Identifiable {
     var aggregateState: AgentState {
         AgentState.rollUp(tabs.flatMap { $0.root.panes }.map(\.state))
     }
-
-    /// Drop in a fresh tab if the workspace was emptied — a workspace is never empty.
-    /// The reseeded tab opens in the workspace's default dir, like any new tab here.
-    mutating func reseedIfEmpty() {
-        guard tabs.isEmpty else { return }
-        var pane = Pane()
-        if let p = defaultPath, !p.isEmpty { pane.cwd = (p as NSString).expandingTildeInPath }
-        let t = Tab(pane: pane)
-        tabs = [t]
-        selectedTabID = t.tabID
-    }
 }
 
 /// Deterministic local id for a mirror workspace, so re-broadcasts upsert the same one.

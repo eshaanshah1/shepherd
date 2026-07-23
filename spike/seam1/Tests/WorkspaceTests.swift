@@ -54,35 +54,12 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertFalse(ws().collapsed)   // accordion folders start expanded
     }
 
-    func testReseedIfEmpty() {
-        var w = ws()
-        w.tabs.removeAll()
-        w.reseedIfEmpty()
-        XCTAssertEqual(w.tabs.count, 1)
-        XCTAssertEqual(w.selectedTabID, w.tabs.first?.tabID)
-    }
-
-    func testReseedSeedsDefaultPath() {
-        var w = Workspace(tabs: ws().tabs, defaultPath: "~/dev/shepherd")
-        w.tabs.removeAll()
-        w.reseedIfEmpty()
-        let expected = ("~/dev/shepherd" as NSString).expandingTildeInPath
-        XCTAssertEqual(w.tabs.first?.root.panes.first?.cwd, expected)
-    }
-
-    func testReseedNoDefaultPathLeavesCwdNil() {
-        var w = ws()   // no defaultPath
-        w.tabs.removeAll()
-        w.reseedIfEmpty()
-        XCTAssertNil(w.tabs.first?.root.panes.first?.cwd)
-    }
-
-    func testReseedNoopWhenNonEmpty() {
-        var w = ws()
-        let before = w.tabs.first?.tabID
-        w.reseedIfEmpty()
-        XCTAssertEqual(w.tabs.count, 1)
-        XCTAssertEqual(w.tabs.first?.tabID, before)
+    func testEmptyWorkspaceIsNeutral() {
+        // A workspace may now hold zero tabs (closing the last one no longer reseeds).
+        let w = Workspace(userTitle: "cleared", tabs: [])
+        XCTAssertTrue(w.tabs.isEmpty)
+        XCTAssertNil(w.selectedTabID)
+        XCTAssertEqual(w.aggregateState, .shell)   // no panes ⇒ neutral folder dot
     }
 
     func testLocatePaneAcrossWorkspaces() {
