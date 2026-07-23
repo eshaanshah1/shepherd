@@ -33,8 +33,17 @@ fun FleetScreen(vm: FleetViewModel) {
     val part = Inbox.partition(fleet.panes)
     val needCount = part.attention.size
 
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val settings = remember { com.eshaan.shepherd.data.PrefsSettingsStore(ctx) }
+    var showSettings by remember { mutableStateOf(false) }
+    if (showSettings) { SettingsScreen(settings) { showSettings = false }; return }
+
     Column(Modifier.fillMaxSize().background(Color(ShepherdPalette.ground))) {
-        ShepherdTopBar(title = "Agents", trailing = { ConnectionChip(connected, reconnecting = refreshing && !connected) })
+        ShepherdTopBar(title = "Agents", trailing = {
+            GlyphButton(Tabler.settings) { showSettings = true }
+            Spacer(Modifier.width(12.dp))
+            ConnectionChip(connected, reconnecting = refreshing && !connected)
+        })
         if (needCount > 0) {
             Text("$needCount need you", style = MaterialTheme.typography.bodySmall, color = Color(0xFFE5A23D),
                 modifier = Modifier.padding(16.dp, 0.dp, 16.dp, 8.dp))

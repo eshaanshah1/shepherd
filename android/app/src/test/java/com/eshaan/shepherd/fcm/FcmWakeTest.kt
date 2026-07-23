@@ -16,4 +16,12 @@ class FcmWakeTest {
     @Test fun nullWhenNoPaneId() {
         assertNull(FcmWake.parse(mapOf("state" to "blocked")))
     }
+    @Test fun carriesParsedState() {
+        assertEquals(com.eshaan.shepherd.model.AgentState.BLOCKED,
+            FcmWake.parse(mapOf("paneID" to "p1", "state" to "blocked"))!!.state)
+        assertEquals(com.eshaan.shepherd.model.AgentState.NEEDS_CHECK,
+            FcmWake.parse(mapOf("paneID" to "p2", "state" to "need-to-check"))!!.state)
+        assertEquals(com.eshaan.shepherd.model.AgentState.ERROR,
+            FcmWake.parse(mapOf("paneID" to "p3", "state" to "error"))!!.state)
+    }
 }
