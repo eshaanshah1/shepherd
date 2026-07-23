@@ -7,6 +7,15 @@ import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.ui.unit.IntOffset
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.Surface
 import com.eshaan.shepherd.ui.theme.ShepherdTheme
@@ -59,26 +68,49 @@ class MainActivity : ComponentActivity() {
                                 })
                         }
                         val nav by fvm.navTarget.collectAsState()
+                        val fleet by fvm.fleet.collectAsState()
                         val pending by deepLinkPane.collectAsState()
                         // A notification tap → open that pane once the intent's paneID lands.
                         androidx.compose.runtime.LaunchedEffect(pending) {
                             pending?.let { fvm.openAgent(it); deepLinkPane.value = null }
                         }
-                        when (val target = nav) {
-                            is NavTarget.Agent -> {
-                                val conn = fvm.activeConnection
-                                val host = fvm.host; val port = fvm.port
-                                if (conn != null && host != null && port != null) {
-                                    val avm = remember(target.paneId) {
-                                        AgentViewModel(target.paneId, host, port, conn)
-                                    }
-                                    AgentScreen(avm) { fvm.consumeNavTarget() }
+                        // iOS-style push: opening a chat slides the Agent in from the right over the
+                        // Fleet, which parallax-drifts left + dims; back reverses it. Detail stays on
+                        // top (higher z) so it rides over the list both ways.
+                        AnimatedContent(
+                            targetState = nav,
+                            transitionSpec = {
+                                val opening = targetState is NavTarget.Agent
+                                val slide = tween<IntOffset>(300, easing = FastOutSlowInEasing)
+                                val fade = tween<Float>(300)
+                                val spec = if (opening) {
+                                    slideInHorizontally(slide) { it } togetherWith
+                                        (slideOutHorizontally(slide) { -it / 4 } + fadeOut(fade, 0.7f))
                                 } else {
-                                    // No live connection yet — fall back to the Fleet list.
-                                    fvm.consumeNavTarget(); FleetScreen(fvm)
+                                    (slideInHorizontally(slide) { -it / 4 } + fadeIn(fade, 0.7f)) togetherWith
+                                        slideOutHorizontally(slide) { it }
                                 }
+                                spec.apply { targetContentZIndex = if (opening) 1f else 0f }
+                            },
+                            label = "nav",
+                        ) { target ->
+                            when (target) {
+                                is NavTarget.Agent -> {
+                                    val conn = fvm.activeConnection
+                                    val host = fvm.host; val port = fvm.port
+                                    if (conn != null && host != null && port != null) {
+                                        val avm = remember(target.paneId) {
+                                            AgentViewModel(target.paneId, host, port, conn)
+                                        }
+                                        val title = fleet.pane(target.paneId)?.title ?: ""
+                                        AgentScreen(avm, title) { fvm.consumeNavTarget() }
+                                    } else {
+                                        // No live connection yet — fall back to the Fleet list.
+                                        fvm.consumeNavTarget(); FleetScreen(fvm)
+                                    }
+                                }
+                                null -> FleetScreen(fvm)
                             }
-                            null -> FleetScreen(fvm)
                         }
                     }
                 }
