@@ -78,6 +78,15 @@ fun ShepherdTopBar(title: String, onBack: (() -> Unit)? = null, trailing: @Compo
     }
 }
 
+/** A tappable Tabler glyph, sized for the top bar. */
+@Composable
+fun GlyphButton(icon: List<String>, onClick: () -> Unit) {
+    Box(
+        Modifier.size(34.dp).clip(CircleShape).clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) { TablerIcon(icon, Color(ShepherdPalette.textSecondary), size = 21.dp) }
+}
+
 @Composable
 fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     Button(
