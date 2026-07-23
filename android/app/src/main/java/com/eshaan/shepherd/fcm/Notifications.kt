@@ -30,7 +30,8 @@ object Notifications {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val n = NotificationCompat.Builder(context, CHANNEL)
             .setContentTitle(w.title).setContentText(w.body)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(com.eshaan.shepherd.R.drawable.ic_notification)
+            .setColor(0xFF8D9578.toInt())
             .setPriority(if (w.urgent) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_DEFAULT)
             .setContentIntent(pi).setAutoCancel(true).build()
         runCatching { NotificationManagerCompat.from(context).notify(w.paneId.hashCode(), n) }
