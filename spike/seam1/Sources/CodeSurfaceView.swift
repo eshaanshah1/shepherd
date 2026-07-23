@@ -130,7 +130,7 @@ struct CodeEditorView: View {
             appearance: .init(
                 theme: shepherdEditorTheme,
                 font: editorFont,
-                wrapLines: false
+                wrapLines: Theme.editorWrapLines
             ),
             behavior: .init(isEditable: true),
             // Drop the persistent fold ribbon (CESE couples the fold chevron to the

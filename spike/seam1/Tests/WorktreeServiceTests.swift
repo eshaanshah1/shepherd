@@ -64,4 +64,23 @@ final class WorktreeServiceTests: XCTestCase {
         let c = parseShepherdConfig("#   shepherd:   theme   =   LIGHT  ")
         XCTAssertEqual(c.theme, .light)
     }
+
+    func testParseConfigEditorWrapDefaultsFalse() {
+        XCTAssertFalse(parseShepherdConfig("background = 000").editorWrapLines)
+    }
+    func testParseConfigEditorWrapTrue() {
+        XCTAssertTrue(parseShepherdConfig("# shepherd: editor-wrap-lines = true").editorWrapLines)
+    }
+    func testParseConfigEditorWrapFalseExplicit() {
+        let base = parseShepherdConfig("# shepherd: editor-wrap-lines = true\n# shepherd: editor-wrap-lines = false")
+        XCTAssertFalse(base.editorWrapLines)
+    }
+    func testParseConfigEditorWrapAliasesAndSpacing() {
+        XCTAssertTrue(parseShepherdConfig("#  shepherd:  editor-wrap-lines  =  YES ").editorWrapLines)
+        XCTAssertTrue(parseShepherdConfig("# shepherd: editor-wrap-lines = on").editorWrapLines)
+        XCTAssertTrue(parseShepherdConfig("# shepherd: editor-wrap-lines = 1").editorWrapLines)
+    }
+    func testParseConfigEditorWrapGarbageKeepsDefault() {
+        XCTAssertFalse(parseShepherdConfig("# shepherd: editor-wrap-lines = maybe").editorWrapLines)
+    }
 }

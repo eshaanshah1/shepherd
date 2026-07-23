@@ -23,16 +23,26 @@ enum Theme {
     /// below) re-resolve against it without a relaunch.
     static var mode: ThemeMode = resolveMode()
 
-    private static func resolveMode() -> ThemeMode {
+    /// Code-editor line wrapping (`# shepherd: editor-wrap-lines`). Off by default →
+    /// the editor scrolls horizontally. Re-resolved on ⌘⇧R alongside `mode`.
+    static var editorWrapLines: Bool = resolveConfig().editorWrapLines
+
+    private static func resolveConfig() -> ShepherdConfig {
         guard let cfg = try? String(contentsOfFile: (NSHomeDirectory() as NSString)
             .appendingPathComponent(".config/shepherd/config"), encoding: .utf8)
-        else { return .dark }
-        return parseShepherdConfig(cfg).theme
+        else { return ShepherdConfig() }
+        return parseShepherdConfig(cfg)
     }
 
-    /// Re-read the config file and update `mode`. The chrome re-render + libghostty
-    /// grid reload are driven by the caller (`GhosttyApp.reloadConfig`).
-    static func reloadMode() { mode = resolveMode() }
+    private static func resolveMode() -> ThemeMode { resolveConfig().theme }
+
+    /// Re-read the config file and update `mode` + `editorWrapLines`. The chrome
+    /// re-render + libghostty grid reload are driven by the caller (`GhosttyApp.reloadConfig`).
+    static func reloadMode() {
+        let cfg = resolveConfig()
+        mode = cfg.theme
+        editorWrapLines = cfg.editorWrapLines
+    }
 
     /// Pick a per-theme color / raw hex. Tokens are computed `static var` so each
     /// read re-resolves against the current `mode` — cheap, and lets a live reload
