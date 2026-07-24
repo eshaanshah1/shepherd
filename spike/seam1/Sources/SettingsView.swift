@@ -490,6 +490,7 @@ private struct KeyCap: View {
 
 struct GeneralSettings: View {
     @ObservedObject private var sleep = SleepGuard.shared
+    @EnvironmentObject private var updater: UpdateController
     @State private var worktreeBase: String = ""
     @State private var panesCollapsed: Bool = UserDefaults.standard.bool(forKey: "shepherd.panes.defaultCollapsed")
 
@@ -499,6 +500,22 @@ struct GeneralSettings: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
+            SettingsField(label: "Software update",
+                          footnote: "Shepherd \(AppVersion.current.description) · checks GitHub for new releases.") {
+                HStack(spacing: 10) {
+                    SettingsButton(title: checkTitle, systemImage: "arrow.triangle.2.circlepath") {
+                        Task { await updater.checkNow() }
+                    }
+                    if case .upToDate = updater.phase {
+                        Text("You're up to date").font(.ui(12)).foregroundStyle(Theme.textSecondary)
+                    }
+                }
+                SettingsToggle(label: "Automatically check for updates",
+                               isOn: Binding(get: { updater.autoCheckEnabled },
+                                             set: { updater.autoCheckEnabled = $0 }))
+                updateFoundPanel
+            }
+
             SettingsField(label: "Stay awake") {
                 SettingsSegmented(options: [("Off", CaffeinateMode.off),
                                             ("While agents", CaffeinateMode.whileAgents),
@@ -544,6 +561,50 @@ struct GeneralSettings: View {
         let v = worktreeBase.trimmingCharacters(in: .whitespaces)
         if !v.isEmpty {
             try? ShepherdConfigWriter.set([ConfigEdit(key: "worktree-base", kind: .shepherd, value: v)])
+        }
+    }
+
+    private var checkTitle: String {
+        if case .checking = updater.phase { return "Checking…" }
+        return "Check for Updates"
+    }
+
+    @ViewBuilder private var updateFoundPanel: some View {
+        switch updater.phase {
+        case .available(let u), .readyToRestart(let u):
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Shepherd \(u.tag) is available")
+                    .font(.ui(13, .semibold)).foregroundStyle(Theme.textPrimary)
+                ScrollView {
+                    Text(u.notes.isEmpty ? "No release notes." : u.notes)
+                        .font(.ui(11)).foregroundStyle(Theme.textSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }.frame(maxHeight: 140)
+                if case .readyToRestart = updater.phase {
+                    if let c = updater.countdown {
+                        HStack(spacing: 8) {
+                            Text("Restarting in \(c)s…").font(.ui(12)).foregroundStyle(Theme.textSecondary)
+                            SettingsButton(title: "Cancel") { updater.cancelRestart() }
+                        }
+                    } else {
+                        HStack(spacing: 8) {
+                            SettingsButton(title: "Restart now", prominent: true) { updater.restartNow() }
+                            SettingsButton(title: "Restart when idle") { updater.armRestartWhenIdle() }
+                        }
+                    }
+                } else {
+                    SettingsButton(title: "Update", systemImage: "arrow.down.circle", prominent: true) {
+                        updater.beginDownload()
+                    }
+                }
+            }
+            .padding(12)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Theme.surface2))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.hairline, lineWidth: 1))
+        case .downloading(let p):
+            ProgressView(value: p).frame(maxWidth: 260)
+        default:
+            EmptyView()
         }
     }
 }

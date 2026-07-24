@@ -16,6 +16,13 @@ final class GhosttyApp {
     func register(_ view: GhosttySurfaceView)   { surfaceViews.add(view) }
     func unregister(_ view: GhosttySurfaceView) { surfaceViews.remove(view) }
 
+    /// Pane ids whose live surface is running a foreground command. Main thread only.
+    func paneIDsRunningProcess() -> Set<String> {
+        var running = Set<String>()
+        for v in surfaceViews.allObjects where v.hasForegroundProcess { running.insert(v.paneID) }
+        return running
+    }
+
     private init() {
         // 1) Global init with argc/argv.
         _ = ghostty_init(UInt(CommandLine.argc), CommandLine.unsafeArgv)

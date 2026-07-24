@@ -202,6 +202,17 @@ final class AgentStore: ObservableObject {
     var currentWorkspaceIndex: Int? { workspaces.firstIndex { $0.id == selectedWorkspaceID } }
     var currentWorkspace: Workspace? { currentWorkspaceIndex.map { workspaces[$0] } }
 
+    /// Is every pane across every workspace idle enough to restart for an update?
+    /// Combines tracked agent state with libghostty's foreground-process signal
+    /// for plain shell panes (IdlePolicy).
+    func allPanesIdle() -> Bool {
+        let running = GhosttyApp.shared.paneIDsRunningProcess()
+        let inputs = workspaces.flatMap { $0.tabs }.flatMap { $0.root.panes }.map {
+            (state: $0.state, shellHasForegroundProcess: running.contains($0.id))
+        }
+        return IdlePolicy.allIdle(inputs)
+    }
+
     /// The current workspace's tabs/selection. get/set so existing UI keeps reading
     /// `store.tabs` / `store.selectedTab`; mutations write back via Swift's
     /// get-modify-set writeback for computed properties.

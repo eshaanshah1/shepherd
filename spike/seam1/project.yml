@@ -60,7 +60,7 @@ targets:
         CFBundleIconName: AppIcon
         LSMinimumSystemVersion: "13.0"
         NSHighResolutionCapable: true
-        CFBundleShortVersionString: "0.0.1"
+        CFBundleShortVersionString: "0.0.0-dev"
         CFBundleVersion: "1"
   # Throwaway dev instance: same sources, distinct bundle id + product name so it runs
   # alongside the daily app with fully separate state (its own UserDefaults domain +
@@ -111,7 +111,7 @@ targets:
         CFBundleIconName: AppIcon
         LSMinimumSystemVersion: "13.0"
         NSHighResolutionCapable: true
-        CFBundleShortVersionString: "0.0.1"
+        CFBundleShortVersionString: "0.0.0-dev"
         CFBundleVersion: "1"
   ShepherdModelTests:
     type: bundle.unit-test
@@ -147,6 +147,10 @@ targets:
       - path: Sources/MarkdownTableDiff.swift
       - path: Sources/SleepPolicy.swift
       - path: Sources/StopPolicy.swift
+      - path: Sources/Version.swift
+      - path: Sources/IdlePolicy.swift
+      - path: Sources/UpdateService.swift
+      - path: Sources/UpdateInstaller.swift
       - path: Sources/DiffModel.swift
       - path: Sources/CodeSurfaceState.swift
       - path: Sources/Search.swift

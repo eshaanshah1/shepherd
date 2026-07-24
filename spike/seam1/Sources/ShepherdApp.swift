@@ -5,6 +5,7 @@ import AppKit
 struct ShepherdApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var sleep = SleepGuard.shared
+    @StateObject private var updater = UpdateController.shared
 
     init() {
         Self.scrubInheritedAgentEnv()   // before any pane spawns a shell
@@ -12,6 +13,7 @@ struct ShepherdApp: App {
         _ = GhosttyApp.shared      // init libghostty
         _ = AgentStore.shared      // start the socket + restore/open tabs
         _ = SleepGuard.shared      // load persisted caffeinate mode
+        Task { @MainActor in UpdateController.shared.startIfEligible() }
     }
 
     // Launched from a Claude session, Shepherd inherits CLAUDECODE/CLAUDE_CODE_*; left set,
@@ -29,6 +31,7 @@ struct ShepherdApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(AgentStore.shared)
+                .environmentObject(updater)
                 .frame(minWidth: 900, minHeight: 560)
                 .preferredColorScheme(.dark)
         }
@@ -90,6 +93,7 @@ struct ShepherdApp: App {
         Settings {
             SettingsView()
                 .environmentObject(AgentStore.shared)
+                .environmentObject(updater)
                 .preferredColorScheme(Theme.mode == .dark ? .dark : .light)
         }
     }
