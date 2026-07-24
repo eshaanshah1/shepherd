@@ -19,11 +19,15 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.Surface
 import com.eshaan.shepherd.ui.theme.ShepherdTheme
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.eshaan.shepherd.data.EncryptedPairingStore
 import com.eshaan.shepherd.fcm.Notifications
 import com.eshaan.shepherd.fcm.fcmToken
@@ -66,6 +70,19 @@ class MainActivity : ComponentActivity() {
                                 connectionFactory = { scope, hello ->
                                     store.load()?.let { RemoteConnection(it.host, it.port, hello, scope) }
                                 })
+                        }
+                        // Reconnect whenever the app comes to the foreground: a backgrounded socket
+                        // often dies (Doze) and the backoff loop can be mid-delay, so without this you
+                        // open the app to a stale "offline" until a manual pull-to-refresh. addObserver
+                        // syncs the observer to the current state, so ON_START also fires on first
+                        // registration — this is the initial connect too.
+                        val lifecycleOwner = LocalLifecycleOwner.current
+                        DisposableEffect(lifecycleOwner, fvm) {
+                            val obs = LifecycleEventObserver { _, event ->
+                                if (event == Lifecycle.Event.ON_START) fvm.refresh()
+                            }
+                            lifecycleOwner.lifecycle.addObserver(obs)
+                            onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
                         }
                         val nav by fvm.navTarget.collectAsState()
                         val fleet by fvm.fleet.collectAsState()

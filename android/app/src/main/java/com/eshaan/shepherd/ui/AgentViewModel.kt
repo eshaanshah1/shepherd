@@ -40,10 +40,10 @@ class AgentViewModel(
     private val host: String,
     private val port: Int,
     private val controlConn: RemoteConnection,
-    private val initialCols: Int = 80,
-    private val initialRows: Int = 24,
-    private val channelFactory: (nonce: String, scope: CoroutineScope) -> DataChannel =
-        { nonce, scope -> DataChannel(host, port, nonce, paneId, initialCols, initialRows, scope) },
+    val initialCols: Int = 80,
+    val initialRows: Int = 24,
+    private val channelFactory: (nonce: String, cols: Int, rows: Int, scope: CoroutineScope) -> DataChannel =
+        { nonce, cols, rows, scope -> DataChannel(host, port, nonce, paneId, cols, rows, scope) },
 ) : ViewModel() {
     private val _terminalSession = MutableStateFlow<RemoteTerminalSession?>(null)
     val terminalSession: StateFlow<RemoteTerminalSession?> = _terminalSession
@@ -56,23 +56,38 @@ class AgentViewModel(
 
     private var channel: DataChannel? = null
     private val jobs = mutableListOf<Job>()
+    @Volatile private var opened = false
 
-    fun attach() {
-        if (channel != null) return
+    /** Create the terminal emulator/session eagerly — WITHOUT opening the data channel — so the
+     *  view can render and measure its grid first. [attach] then opens the channel at that measured
+     *  size, so the host resizes the PTY before it streams (no first-paint reshape). Idempotent. */
+    fun prepareSession() {
+        if (_terminalSession.value != null) return
         // Mirror this pane's current prompt from the store (populated by FleetViewModel's always-on
         // collector) — gives the current value immediately + live updates, with no missed-prompt race.
         jobs += viewModelScope.launch { PromptStore.flow(paneId).collect { _prompt.value = it } }
+        _terminalSession.value = RemoteTerminalSession(
+            initialCols, initialRows,
+            channelInput = { channel?.input(it) },   // no-op until the channel opens
+            resizeSink = { c, r -> controlConn.send(ControlMessage.Resize(paneId, c, r)) },
+            scope = viewModelScope,
+        )
+    }
+
+    /** Open the data channel sized to (cols,rows): the host resizes the PTY to this BEFORE the ring
+     *  replay + live stream, so the first frame is already correctly sized. Idempotent — the first
+     *  call wins; later size changes ride the session's control-channel Resize. The no-arg form
+     *  (initial 80×24) is the fallback for a pane opened straight into a prompt, where the terminal
+     *  never renders to be measured. */
+    fun attach(cols: Int = initialCols, rows: Int = initialRows) {
+        prepareSession()
+        if (opened) return
+        opened = true
+        val session = _terminalSession.value!!
         viewModelScope.launch {
             val nonce = (controlConn.status.first { it is ConnStatus.Connected } as ConnStatus.Connected).sessionNonce
-            val ch = channelFactory(nonce, viewModelScope)
+            val ch = channelFactory(nonce, cols, rows, viewModelScope)
             channel = ch
-            val session = RemoteTerminalSession(
-                initialCols, initialRows,
-                channelInput = { ch.input(it) },
-                resizeSink = { c, r -> controlConn.send(ControlMessage.Resize(paneId, c, r)) },
-                scope = viewModelScope,
-            )
-            _terminalSession.value = session
             jobs += launch { ch.output.collect { session.onOutput(it) } }
             jobs += launch { ch.status.collect { _status.value = it } }
             ch.start()
@@ -85,6 +100,7 @@ class AgentViewModel(
         _terminalSession.value = null
         _status.value = DataStatus.Disconnected
         _prompt.value = null
+        opened = false
     }
 
     override fun onCleared() { detach() }
