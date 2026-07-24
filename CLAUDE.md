@@ -100,6 +100,43 @@ Then `/reload-plugins` in any Claude session. Because it's symlinked, edits to
 `claude-plugin/` apply on the next `/reload-plugins` — no reinstall. It's a
 **silent no-op outside Shepherd**, safe to leave installed globally.
 
+### 4. Shepherd Dev — throwaway dev instance (`scripts/dev.sh`)
+Iterate on the app **without killing your daily driver**. `ShepherdDev` is a second
+app target: same sources, bundle id `com.shepherd.Shepherd.dev`, product/exec
+`ShepherdDev`, display name **Shepherd Dev** — so it runs *alongside* your daily
+`Shepherd` with fully separate state and its own Dock/menu identity.
+```sh
+scripts/dev.sh           # build once + relaunch just the dev app
+scripts/dev.sh --watch   # + rebuild/relaunch on every save under Sources/ (needs fswatch)
+```
+- **State isolation** (`AppMode.isDev`, keyed off the `.dev` bundle-id suffix): dev gets
+  its **own UserDefaults domain** (all `shepherd.*` keys separate for free) and its own
+  **`~/.shepherd/dev`** support subtree (control socket + worktrees), so it never fights
+  over `control.sock` or `git worktree remove`s a real worktree. Config
+  (`~/.config/shepherd/config`) is **shared** on purpose — dev looks identical. Debug log
+  is `/tmp/shepherd-dev-events.log`.
+- **Mirrors your layout each launch:** on start a dev build reads the daily app's persisted
+  workspaces cross-domain (`AgentStore.devSeedState`) and seeds from it with every pane's
+  Claude `sessionID` **stripped** (`PersistedState.strippingSessionIDs`) — so it opens your
+  real workspaces/tabs/splits/cwds as **plain shells**, never resuming (hijacking) your live
+  sessions. Layout changes made *in* dev are discarded on the next launch (throwaway).
+- **`killall ShepherdDev`** only touches the dev app; your daily `Shepherd` (process name
+  `Shepherd`) is untouched. The dev target is Debug-only tooling — **releases build the
+  `Shepherd` target**, so promotion is the normal ship workflow, unchanged.
+- **Distinct icon** so you never confuse the two: the daily app is **indigo**, the dev app
+  is **rouge**. Both are the same goat art zoomed to own ~64% of the frame. The dev target
+  shares `Resources/` (fonts/sounds) but `excludes` the icon and pulls its rouge one from
+  `ResourcesDev/` (its own `Assets.xcassets` + `AppIcon.icns`).
+
+**Regenerating the app icon** (`scripts/make-app-icon.sh <source.png> <appiconset-dir> <icns>`):
+the source art is a small goat on a large solid field; the script crops it centered so the
+goat is **64% of the icon height** (the established treatment — a raw resize leaves the goat
+tiny) and emits every `.xcassets` size + the `.icns`. Both the asset catalog **and** the
+`.icns` must be regenerated — the Dock reads the `.icns`, Notification Center reads
+`Assets.car` (see the icon gotcha below). Current sources: `~/Downloads/shepherd_indigo.png`
+(daily) and `shepherd_rouge.png` (dev). After a rebuild the system icon cache can be stale —
+`lsregister` / a re-login refreshes it.
+
 ---
 
 ## Architecture

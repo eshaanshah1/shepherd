@@ -62,6 +62,57 @@ targets:
         NSHighResolutionCapable: true
         CFBundleShortVersionString: "0.0.1"
         CFBundleVersion: "1"
+  # Throwaway dev instance: same sources, distinct bundle id + product name so it runs
+  # alongside the daily app with fully separate state (its own UserDefaults domain +
+  # ~/.shepherd/dev support subtree). Build/relaunch with scripts/dev.sh. Never shipped —
+  # releases build the `Shepherd` target only.
+  ShepherdDev:
+    type: application
+    platform: macOS
+    settings:
+      base:
+        SWIFT_OBJC_BRIDGING_HEADER: Sources/Shepherd-Bridging.h
+        PRODUCT_BUNDLE_IDENTIFIER: com.shepherd.Shepherd.dev
+        PRODUCT_NAME: ShepherdDev
+        # Keep the Swift module name `Shepherd` so `Shepherd.Theme`-style self-qualified
+        # references resolve; only the bundle id + product differ from the daily app.
+        PRODUCT_MODULE_NAME: Shepherd
+    sources:
+      - path: Sources
+      # Share the daily app's fonts/sounds, but swap the icon for the rouge one in
+      # ResourcesDev so the dev app is visually distinct in the Dock + Notifications.
+      - path: Resources
+        excludes:
+          - "Assets.xcassets"
+          - "AppIcon.icns"
+      - path: ResourcesDev
+    dependencies:
+      - framework: ../../vendor/GhosttyKit.xcframework
+        embed: false
+      - package: Highlighter
+      - package: CodeEditSourceEditor
+        product: CodeEditSourceEditor
+      - package: CodeEditLanguages
+        product: CodeEditLanguages
+      - package: SwiftMarkdown
+        product: Markdown
+      - target: shepherdd
+        copy:
+          destination: executables
+      - sdk: Carbon.framework
+      - sdk: GameController.framework
+      - sdk: IOKit.framework
+    info:
+      path: ShepherdDev-Info.plist
+      properties:
+        CFBundleName: ShepherdDev
+        CFBundleDisplayName: Shepherd Dev
+        CFBundleIconFile: AppIcon
+        CFBundleIconName: AppIcon
+        LSMinimumSystemVersion: "13.0"
+        NSHighResolutionCapable: true
+        CFBundleShortVersionString: "0.0.1"
+        CFBundleVersion: "1"
   ShepherdModelTests:
     type: bundle.unit-test
     platform: macOS
@@ -152,3 +203,9 @@ schemes:
         - ShepherdModelTests
         - ShepherdRemoteTests
         - ShepherdHelperTests
+  ShepherdDev:
+    build:
+      targets:
+        ShepherdDev: all
+    run:
+      config: Debug

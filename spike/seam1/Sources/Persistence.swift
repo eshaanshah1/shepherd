@@ -32,6 +32,26 @@ struct PersistedState: Codable {
     var ephemeral: [PersistedEphemeral]?   // optional ⇒ pre-feature blobs decode as nil
 }
 
+extension PersistedState {
+    /// A copy with every pane's (and ephemeral's) live Claude `sessionID` removed, so a
+    /// rebuild opens plain shells instead of resuming agents. Used to seed a dev build from
+    /// the daily app's layout without hijacking its live sessions.
+    func strippingSessionIDs() -> PersistedState {
+        var copy = self
+        copy.workspaces = copy.workspaces.map { ws in
+            var w = ws
+            w.tabs = w.tabs.map { t in
+                var tab = t
+                for id in tab.root.leafIDs { tab.root.updatePane(id) { $0.sessionID = nil } }
+                return tab
+            }
+            return w
+        }
+        copy.ephemeral = copy.ephemeral?.map { var e = $0; e.sessionID = nil; return e }
+        return copy
+    }
+}
+
 /// Snapshot live workspaces → on-disk form. Selection is captured by index because
 /// tab/workspace ids are regenerated on the next launch.
 func snapshotState(_ workspaces: [Workspace], selectedWorkspaceID: String?,

@@ -17,6 +17,25 @@ final class PersistenceTests: XCTestCase {
         XCTAssertEqual(rebuilt[0].tabs[0].root.panes.first?.state, .shell)
     }
 
+    func testStrippingSessionIDsClearsAllPanesButKeepsLayout() throws {
+        // A split tab with two agent panes + an ephemeral, all carrying session ids.
+        var t = tab("left", cwd: "/tmp/a", sessionID: "sess-left")
+        let leftID = t.root.firstLeafID!
+        var right = Pane(paneID: UUID().uuidString); right.cwd = "/tmp/b"; right.sessionID = "sess-right"
+        _ = t.root.split(paneID: leftID, axis: .row, newPane: right)
+        let ws = Workspace(userTitle: "proj", tabs: [t])
+        var state = snapshotState([ws], selectedWorkspaceID: ws.id,
+                                  ephemeral: [EphemeralPane(pane: { var p = Pane(); p.sessionID = "sess-eph"; return p }(), collapsed: true)])
+
+        state = state.strippingSessionIDs()
+
+        let panes = state.workspaces[0].tabs[0].root.panes
+        XCTAssertEqual(panes.count, 2)                                   // layout preserved
+        XCTAssertTrue(panes.allSatisfy { $0.sessionID == nil })          // no agent resumes
+        XCTAssertEqual(panes.map(\.cwd), ["/tmp/a", "/tmp/b"])           // cwds intact
+        XCTAssertNil(state.ephemeral?.first?.sessionID)
+    }
+
     func testClaudeResumeInput() {
         XCTAssertEqual(claudeResumeInput(sessionID: "abc-123"), "claude --resume abc-123\n")
     }

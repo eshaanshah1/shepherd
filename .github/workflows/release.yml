@@ -73,11 +73,20 @@ jobs:
         working-directory: ${{ env.APP_DIR }}
         env:
           CONFIGURATION: ${{ inputs.configuration }}
+          VERSION: ${{ inputs.version }}
         run: |
           APP="./build/Build/Products/$CONFIGURATION/Shepherd.app"
           codesign --force --deep --sign - "$APP"
           # ditto (not zip) preserves the bundle's symlinks & permissions.
           ditto -c -k --keepParent "$APP" "$GITHUB_WORKSPACE/Shepherd.zip"
+          # DMG: canonical drag-to-Applications installer. hdiutil (not create-dmg) so
+          # it's headless-safe — no AppleScript/Finder window scripting on the runner.
+          STAGING="$(mktemp -d)/Shepherd"
+          mkdir -p "$STAGING"
+          cp -R "$APP" "$STAGING/"
+          ln -s /Applications "$STAGING/Applications"
+          hdiutil create -volname "Shepherd $VERSION" -srcfolder "$STAGING" \
+            -fs HFS+ -ov -format UDZO "$GITHUB_WORKSPACE/Shepherd.dmg"
 
       - name: Publish GitHub Release
         env:
@@ -86,7 +95,8 @@ jobs:
           CONFIGURATION: ${{ inputs.configuration }}
         run: |
           gh release create "$VERSION" \
-            "$GITHUB_WORKSPACE/Shepherd.zip#Shepherd.app ($CONFIGURATION)" \
+            "$GITHUB_WORKSPACE/Shepherd.dmg#Shepherd $VERSION (drag-to-Applications .dmg)" \
+            "$GITHUB_WORKSPACE/Shepherd.zip#Shepherd.app ($CONFIGURATION .zip)" \
             --title "Shepherd $VERSION" \
             --generate-notes \
             ${{ inputs.prerelease && '--prerelease' || '' }}
