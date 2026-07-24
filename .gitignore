@@ -18,5 +18,6 @@ xcuserdata/
 
 # xcodegen-generated (regenerate via `xcodegen generate` in spike/seam1)
 spike/seam1/Shepherd-Info.plist
+spike/seam1/ShepherdDev-Info.plist
 spike/seam1/build/
 .claude/worktrees/

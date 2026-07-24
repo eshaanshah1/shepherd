@@ -97,7 +97,7 @@ final class AgentStore: ObservableObject {
     /// Always-on local control channel for the `shepherd` CLI. A stable, well-known
     /// path (single-window v1) so a shell outside a pane finds it without knowing the
     /// pid; also injected into each pane as $SHEPHERD_CTL_SOCK.
-    let ctlSocketPath: String = (NSHomeDirectory() as NSString).appendingPathComponent(".shepherd/control.sock")
+    let ctlSocketPath: String = AppMode.supportPath("control.sock")
     private var ctlServer: ControlServer?
     let controlHandles = HandleRegistry()
 
@@ -352,7 +352,7 @@ final class AgentStore: ObservableObject {
            let base = parseShepherdConfig(contents).worktreeBase, !base.isEmpty {
             return (base as NSString).expandingTildeInPath
         }
-        return (NSHomeDirectory() as NSString).appendingPathComponent(".shepherd/worktrees")
+        return AppMode.supportPath("worktrees")
     }
 
     /// Create a git worktree under the workspace's default repo and open a tab in it.
@@ -1147,7 +1147,7 @@ final class AgentStore: ObservableObject {
     }
 
     private func shepherdLog(_ msg: String) {
-        let path = "/tmp/shepherd-events.log"
+        let path = AppMode.isDev ? "/tmp/shepherd-dev-events.log" : "/tmp/shepherd-events.log"
         guard let data = (msg + "\n").data(using: .utf8) else { return }
         if let h = FileHandle(forWritingAtPath: path) {
             defer { try? h.close() }
@@ -1463,10 +1463,13 @@ final class AgentStore: ObservableObject {
     private func restore() -> Bool {
         let defaults = UserDefaults.standard
         var state: PersistedState?
-        if let data = defaults.data(forKey: persistKey) {
-            state = try? JSONDecoder().decode(PersistedState.self, from: data)
-        } else if let legacy = defaults.data(forKey: legacyKey) {
-            state = migrateLegacyTabs(legacy)   // one-time v2 → v1 wrap
+        if AppMode.isDev { state = devSeedState() }   // mirror the daily app's layout each launch (agents stripped)
+        if state == nil {
+            if let data = defaults.data(forKey: persistKey) {
+                state = try? JSONDecoder().decode(PersistedState.self, from: data)
+            } else if let legacy = defaults.data(forKey: legacyKey) {
+                state = migrateLegacyTabs(legacy)   // one-time v2 → v1 wrap
+            }
         }
         guard let state, !state.workspaces.isEmpty else { return false }
         workspaces = buildWorkspaces(from: state)
@@ -1476,6 +1479,18 @@ final class AgentStore: ObservableObject {
         selectedWorkspaceID = workspaces[i].id
         save()   // re-persist in v1 form
         return true
+    }
+
+    /// (Dev builds only) The daily app's persisted layout, read cross-domain from its
+    /// UserDefaults, with every pane's live Claude `sessionID` stripped so dev opens plain
+    /// shells in the right cwds/splits — it mirrors your real setup without hijacking (or
+    /// resuming) your live sessions. nil when the daily app has never persisted anything.
+    private func devSeedState() -> PersistedState? {
+        guard let daily = UserDefaults(suiteName: AppMode.dailyBundleID),
+              let data = daily.data(forKey: persistKey),
+              let decoded = try? JSONDecoder().decode(PersistedState.self, from: data)
+        else { return nil }
+        return decoded.strippingSessionIDs()
     }
 
     // MARK: Remote control channel
