@@ -20,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -73,7 +74,10 @@ fun AgentScreen(vm: AgentViewModel, title: String, onBack: () -> Unit) {
     val prompt by vm.prompt.collectAsState()
     // Reset when the prompt changes so a new prompt re-shows the panel even after "Use terminal".
     var forceTerminal by remember(prompt) { mutableStateOf(false) }
-    LaunchedEffect(Unit) { vm.attach() }
+    // Create the emulator eagerly so the terminal can render + measure its grid; the data channel is
+    // opened later at that measured size (see the BoxWithConstraints below) so the host resizes the
+    // PTY before it streams — no first-paint reshape.
+    LaunchedEffect(Unit) { vm.prepareSession() }
     // The VM is remember-scoped (not ViewModelStore-owned), so onCleared() never fires — detach
     // on leaving composition (Back-nav) to close the socket + coroutines and let the host snap back.
     // Also mark this pane as the visible one so a push for it skips the (redundant) banner.
@@ -103,6 +107,10 @@ fun AgentScreen(vm: AgentViewModel, title: String, onBack: () -> Unit) {
         val s = session
         val p = prompt
         if (s != null && p != null && !forceTerminal) {
+            // Opened straight into a prompt: the terminal never renders to be measured, so open the
+            // channel at the fallback size just so answers can send. (Switching to the terminal
+            // resizes it to the real grid.)
+            LaunchedEffect(Unit) { vm.attach() }
             Box(Modifier.weight(1f).fillMaxWidth().padding(bottom = bottomInset)) {
                 PromptPanel(p, onAnswer = { s.sendPaced(it) }, onUseTerminal = { forceTerminal = true })
             }
@@ -120,6 +128,18 @@ fun AgentScreen(vm: AgentViewModel, title: String, onBack: () -> Unit) {
                         // Fixed grid height = resting height + whatever the keyboard stole, so it's
                         // invariant to the IME → the emulator/PTY size never changes on keyboard.
                         val fullHeight = maxHeight + keyboardExtra
+                        // Open the data channel at the EXACT grid this pane will render (same math as
+                        // pushGridSize) BEFORE the terminal view mounts — so the host resizes the PTY
+                        // to the phone's size ahead of streaming, and the first frame isn't reshaped.
+                        val density = LocalDensity.current
+                        val grid = remember(maxWidth, fullHeight) {
+                            with(density) {
+                                val cellW = gridPaint.measureText("X").coerceAtLeast(1f)
+                                val lineH = ceil(gridPaint.fontSpacing).toInt().coerceAtLeast(1)
+                                max(1, (maxWidth.toPx() / cellW).toInt()) to max(1, (fullHeight.toPx().toInt() / lineH))
+                            }
+                        }
+                        LaunchedEffect(grid) { vm.attach(grid.first, grid.second) }
                         AndroidView(
                             modifier = Modifier.fillMaxWidth().height(fullHeight).align(Alignment.BottomStart),
                             factory = { ctx ->

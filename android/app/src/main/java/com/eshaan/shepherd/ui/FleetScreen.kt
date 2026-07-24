@@ -25,7 +25,8 @@ fun FleetScreen(vm: FleetViewModel) {
     val fleet by vm.fleet.collectAsState()
     val connected by vm.connected.collectAsState()
     var refreshing by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { vm.connect() }
+    // Connect/reconnect is driven by the app-level ON_START observer in MainActivity (fires on first
+    // start + every foreground), so opening the app always reloads the connection.
     // Clear the spinner once we reconnect (or after a short ceiling so it never hangs).
     LaunchedEffect(connected) { if (connected) refreshing = false }
     LaunchedEffect(refreshing) { if (refreshing) { delay(4000); refreshing = false } }
