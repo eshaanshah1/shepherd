@@ -81,6 +81,22 @@ final class PersistenceTests: XCTestCase {
         XCTAssertEqual(rebuilt[0].tabs[1].root.panes.first?.cwd, "/tmp/b")
     }
 
+    func testWorkspaceIDSurvivesSnapshotRoundTrip() throws {
+        // The stable id is what worktree archives key on to reopen in the same folder.
+        let ws = Workspace(userTitle: "WS", tabs: [tab("one", cwd: "/tmp/a")])
+        let data = try JSONEncoder().encode(snapshotState([ws], selectedWorkspaceID: ws.id))
+        let rebuilt = buildWorkspaces(from: try JSONDecoder().decode(PersistedState.self, from: data))
+        XCTAssertEqual(rebuilt.first?.id, ws.id)
+    }
+
+    func testOldBlobWithoutWorkspaceIDGetsFreshID() throws {
+        let json = #"{"workspaces":[{"userTitle":"WS","selectedTabIndex":0,"tabs":[]}],"selectedWorkspaceIndex":0}"#
+        let state = try JSONDecoder().decode(PersistedState.self, from: Data(json.utf8))
+        let rebuilt = buildWorkspaces(from: state)
+        XCTAssertEqual(rebuilt.count, 1)
+        XCTAssertFalse(rebuilt[0].id.isEmpty)   // regenerated, not empty
+    }
+
     func testMigrationWrapsLegacyTabsIntoOneWorkspace() throws {
         let legacy = [PersistedTab(userTitle: "a", root: .leaf(Pane(paneID: "x"))),
                       PersistedTab(userTitle: "b", root: .leaf(Pane(paneID: "y")))]
