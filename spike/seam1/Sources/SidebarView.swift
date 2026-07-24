@@ -3,6 +3,7 @@ import AppKit
 
 struct SidebarView: View {
     @EnvironmentObject var store: AgentStore
+    @EnvironmentObject var updater: UpdateController
 
     // Live-drag state for tab rows, kept local so per-frame updates only redraw the sidebar.
     @State private var draggingID: String?
@@ -40,6 +41,10 @@ struct SidebarView: View {
             .onPreferenceChange(FolderCentersKey.self) { headerMids = $0 }
             .onPreferenceChange(FolderRegionsKey.self) { folderRegions = $0 }
 
+            if updater.hasSidebarPill {
+                Divider().overlay(Theme.hairline)
+                UpdatePillView()
+            }
             if !store.archivedWorktrees.isEmpty {
                 Divider().overlay(Theme.hairline)
                 footer

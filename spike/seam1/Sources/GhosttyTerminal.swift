@@ -37,6 +37,13 @@ final class GhosttySurfaceView: NSView {
     let paneID: String
     private var surface: ghostty_surface_t?
 
+    /// True when this surface has a running foreground command that isn't the
+    /// idle shell (libghostty's own quit-confirmation signal). Main thread only.
+    var hasForegroundProcess: Bool {
+        guard let surface else { return false }
+        return ghostty_surface_needs_confirm_quit(surface)
+    }
+
     init(paneID: String) {
         self.paneID = paneID
         super.init(frame: .zero)

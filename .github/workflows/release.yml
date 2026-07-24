@@ -76,6 +76,11 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           APP="./build/Build/Products/$CONFIGURATION/Shepherd.app"
+          # Stamp the real version into the bundle (project.yml ships a dev sentinel);
+          # must happen BEFORE signing. Strip a leading `v` for a clean semver.
+          SHORT="${VERSION#v}"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $SHORT" "$APP/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${GITHUB_RUN_NUMBER:-1}" "$APP/Contents/Info.plist"
           codesign --force --deep --sign - "$APP"
           # ditto (not zip) preserves the bundle's symlinks & permissions.
           ditto -c -k --keepParent "$APP" "$GITHUB_WORKSPACE/Shepherd.zip"
