@@ -53,10 +53,10 @@ enum UpdateService {
     /// Stream the zip to a temp file (progress 0…1), unpack with `ditto`, and
     /// `codesign --verify` the unpacked bundle. Returns the unpacked .app path.
     static func download(_ update: UpdateAvailable, progress: @escaping (Double) -> Void) async throws -> String {
-        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("shepherd-update-\(update.tag)", isDirectory: true)
-        try? FileManager.default.removeItem(at: tmp)
-        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        // Fresh, unpredictable, 0700 dir — never derived from the (remote) tag,
+        // so a hostile tag can neither traverse the filesystem nor race a
+        // predictable path.
+        let tmp = URL(fileURLWithPath: UpdateInstaller.uniqueTempDir(), isDirectory: true)
         let zipPath = tmp.appendingPathComponent("Shepherd.zip")
 
         // Stream download with progress against Content-Length.
