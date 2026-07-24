@@ -229,7 +229,17 @@ declared once there, and `ShortcutActions.run(_:)` (an exhaustive `switch` in
 and the cheatsheet can't drift.
 
 ### Sidebar (`SidebarView.swift`)
-The sidebar is an **accordion of workspaces** ([ADR 0017](.claude/adr/0017-workspace-folders-accordion-sidebar.md)):
+A tab that **needs you** (blocked / need-to-check / error — `state.wantsAttention`)
+renders **in place** as a bigger 2-line **card** instead of the normal one-line row:
+`TabRow` branches on `isCard` into `cardBody` (title + a reason line — `alertReason`
+maps blocked→reason, need-check→"done — needs a look", error→"errored: …" — over a
+state-tinted background) vs `rowBody` (the ordinary row); the shared click / drag /
+rename / context-menu / PR-icon behavior lives on the outer `body`, so both modes get
+it. The card stays exactly where the tab already is (no top zone, no relocation) —
+just visually loud so it's an easy jump target — and it shrinks back to a normal row
+the moment the alert clears. Split tabs never card (single-pane only; a split's PR/
+state stays in its `SplitTabGroup`). The sidebar is otherwise the unchanged
+**accordion of workspaces** ([ADR 0017](.claude/adr/0017-workspace-folders-accordion-sidebar.md)):
 a slim top bar (`WORKSPACES` label · `+` new-workspace · `⋯` overflow menu =
 a *Serve to remote devices* toggle + *Add remote host…* + the pairing code while
 serving) over one `ScrollView` that

@@ -436,7 +436,68 @@ private struct TabRow: View {
     private var isProvisioning: Bool { tab.focusedPane()?.provisioning ?? false }
     private var stowing: StowKind? { tab.focusedPane()?.stowing }
 
+    // A tab that needs you grows into a bigger card, in place — no relocation.
+    private var isCard: Bool {
+        state.wantsAttention && !editing && !isProvisioning && stowing == nil
+    }
+
     var body: some View {
+        Group { if isCard { cardBody } else { rowBody } }
+        .contentShape(Rectangle())
+        .shadow(color: .black.opacity(isDragging ? 0.5 : 0),
+                radius: isDragging ? 8 : 0, y: isDragging ? 4 : 0)
+        .offset(y: isDragging ? dragOffset : 0)
+        .zIndex(isDragging ? 1 : 0)
+        .animation(isDragging ? nil : .spring(response: 0.28, dampingFraction: 0.82), value: index)
+        .onHover { hovering = $0; if $0 { refreshWorktreeStatus() } }
+        .onTapGesture { store.select(tabID: tab.tabID, inWorkspace: workspaceID) }
+        .gesture(reorderGesture)
+        .contextMenu {
+            Button("Rename") { beginRename() }
+            if isWorktree, ws?.isRemote == false {
+                Button("Archive Worktree") { store.archiveWorktreeTab(tab.tabID, inWorkspace: workspaceID) }
+            }
+            Button("Close Tab") { store.requestCloseTab(tab.tabID, inWorkspace: workspaceID) }
+        }
+        .opacity(stowing == nil ? 1 : 0.45)
+        .allowsHitTesting(stowing == nil)
+        .animation(.easeOut(duration: 0.18), value: stowing)
+        .animation(.spring(response: 0.26, dampingFraction: 0.85), value: isCard)
+    }
+
+    // Bigger in-place card when the tab needs you (blocked / done / error).
+    private var cardBody: some View {
+        HStack(alignment: .top, spacing: LeadingIcon.gutterGap) {
+            Color.clear.frame(width: LeadingIcon.gutter)
+            LeadingIcon(state: state)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(tab.displayTitle)
+                    .font(.ui(13, .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                Text(alertReason)
+                    .font(.ui(11))
+                    .foregroundStyle(Theme.textDim)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 6)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .background(RoundedRectangle(cornerRadius: 8).fill(state.color.opacity(isSelected ? 0.20 : 0.13)))
+    }
+
+    private var alertReason: String {
+        let r = tab.focusedPane()?.reason
+        switch state {
+        case .blocked:    return r ?? "needs you"
+        case .needsCheck: return "done — needs a look"
+        case .error:      return r.map { "errored: \($0)" } ?? "errored"
+        default:          return state.rawValue
+        }
+    }
+
+    private var rowBody: some View {
         HStack(spacing: LeadingIcon.gutterGap) {
             Color.clear.frame(width: LeadingIcon.gutter)   // aligns the dot under the folder dot
 
@@ -496,25 +557,6 @@ private struct TabRow: View {
         .padding(.horizontal, 10)
         .frame(height: Self.height)
         .background(RoundedRectangle(cornerRadius: 6).fill(rowFill))
-        .contentShape(Rectangle())
-        .shadow(color: .black.opacity(isDragging ? 0.5 : 0),
-                radius: isDragging ? 8 : 0, y: isDragging ? 4 : 0)
-        .offset(y: isDragging ? dragOffset : 0)
-        .zIndex(isDragging ? 1 : 0)
-        .animation(isDragging ? nil : .spring(response: 0.28, dampingFraction: 0.82), value: index)
-        .onHover { hovering = $0; if $0 { refreshWorktreeStatus() } }
-        .onTapGesture { store.select(tabID: tab.tabID, inWorkspace: workspaceID) }
-        .gesture(reorderGesture)
-        .contextMenu {
-            Button("Rename") { beginRename() }
-            if isWorktree, ws?.isRemote == false {
-                Button("Archive Worktree") { store.archiveWorktreeTab(tab.tabID, inWorkspace: workspaceID) }
-            }
-            Button("Close Tab") { store.requestCloseTab(tab.tabID, inWorkspace: workspaceID) }
-        }
-        .opacity(stowing == nil ? 1 : 0.45)
-        .allowsHitTesting(stowing == nil)
-        .animation(.easeOut(duration: 0.18), value: stowing)
     }
 
     /// Is this tab's directory a linked git worktree? Checked off-main on hover so
