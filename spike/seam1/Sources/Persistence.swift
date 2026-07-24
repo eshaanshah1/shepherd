@@ -9,6 +9,7 @@ struct PersistedTab: Codable {
 }
 
 struct PersistedWorkspace: Codable {
+    var id: String?                // stable across launches so worktree archives can find their folder; optional ⇒ old blobs decode (nil = regenerate)
     var userTitle: String?
     var selectedTabIndex: Int      // selection by position — tab ids regenerate on restore
     var tabs: [PersistedTab]
@@ -39,6 +40,7 @@ func snapshotState(_ workspaces: [Workspace], selectedWorkspaceID: String?,
     let pws = workspaces.map { ws -> PersistedWorkspace in
         let selTab = ws.tabs.firstIndex { $0.tabID == ws.selectedTabID } ?? 0
         return PersistedWorkspace(
+            id: ws.id,
             userTitle: ws.userTitle,
             selectedTabIndex: selTab,
             tabs: ws.tabs.map { PersistedTab(userTitle: $0.userTitle, root: $0.root) },
@@ -83,7 +85,8 @@ func buildWorkspaces(from state: PersistedState) -> [Workspace] {
         let selID = tabs.indices.contains(pw.selectedTabIndex)
             ? tabs[pw.selectedTabIndex].tabID
             : tabs.first?.tabID
-        return Workspace(userTitle: pw.userTitle, tabs: tabs, selectedTabID: selID,
+        return Workspace(id: pw.id ?? UUID().uuidString, userTitle: pw.userTitle,
+                         tabs: tabs, selectedTabID: selID,
                          collapsed: pw.collapsed ?? false, defaultPath: pw.defaultPath,
                          worktreeHook: pw.worktreeHook)
     }
