@@ -73,4 +73,12 @@ final class TailscaleDiscoveryTests: XCTestCase {
         XCTAssertEqual(app, "/Applications/Tailscale.app/Contents/MacOS/Tailscale")
         XCTAssertNil(TailscaleDiscovery.resolveBinary { _ in false })
     }
+
+    func testChildEnvironmentAlwaysCarriesTERM() {
+        XCTAssertEqual(TailscaleDiscovery.childEnvironment([:])["TERM"], "dumb")
+        XCTAssertEqual(TailscaleDiscovery.childEnvironment(["TERM": ""])["TERM"], "dumb")
+        XCTAssertEqual(TailscaleDiscovery.childEnvironment(["TERM": "xterm-256color"])["TERM"],
+                       "xterm-256color")
+        XCTAssertEqual(TailscaleDiscovery.childEnvironment(["PATH": "/bin"])["PATH"], "/bin")
+    }
 }
