@@ -18,6 +18,7 @@ final class RemoteServer {
     private let port: UInt16
     private let verifyPeer: (String) -> VerifiedPeer?
     private let selfUserID: () -> String?
+    private let log: (String) -> Void
     private let knownDevices: () -> [PairedDevice]
     private let persist: (PairedDevice) -> Void
     private let requestApproval: (String, String, @escaping (Bool) -> Void) -> Void
@@ -110,7 +111,9 @@ final class RemoteServer {
          verifyPeer: @escaping (String) -> VerifiedPeer? = { _ in nil },
          selfUserID: @escaping () -> String? = { nil },
          lookupBroker: @escaping (String) -> PtyBroker? = { _ in nil },
-         onCommand: @escaping (ControlMessage) -> Void = { _ in }) {
+         onCommand: @escaping (ControlMessage) -> Void = { _ in },
+         log: @escaping (String) -> Void = { _ in }) {
+        self.log = log
         self.bindAddress = bindAddress; self.port = port
         self.verifyPeer = verifyPeer; self.selfUserID = selfUserID
         self.knownDevices = knownDevices
@@ -279,9 +282,12 @@ final class RemoteServer {
         switch m {
         case let .hello(deviceID, _, _, secret, fcmToken, _) where phase == .unpaired:
             conn.lock.lock(); conn.deviceID = deviceID; let ip = conn.peerIP; conn.lock.unlock()
+            let verified = ip.flatMap { verifyPeer($0) }
             let decision = pairingDecision(deviceID: deviceID, secret: secret,
                                            known: knownDevices(), newSecret: makeSecret(),
-                                           peer: ip.flatMap { verifyPeer($0) }, selfUserID: selfUserID())
+                                           peer: verified, selfUserID: selfUserID())
+            log("PAIR hello from \(ip ?? "?") device=\(deviceID.prefix(8)) "
+                + "verified=\(verified?.name ?? "nil") -> \(decision.logLabel)")
             switch decision {
             case let .accept(persistSecret):
                 conn.lock.lock(); conn.phase = .paired; conn.lock.unlock()

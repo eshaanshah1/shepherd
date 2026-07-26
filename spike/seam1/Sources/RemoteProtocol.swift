@@ -164,6 +164,17 @@ struct PairedDevice: Codable, Equatable {
     var fcmToken: String?
 }
 
+extension PairingDecision {
+    /// Short tag for the pairing log — the outcome, without leaking the secret.
+    var logLabel: String {
+        switch self {
+        case .accept(let s):        return s == nil ? "accept(known)" : "accept(new)"
+        case .reject(let reason):   return "reject(\(reason))"
+        case .needsApproval:        return "needsApproval"
+        }
+    }
+}
+
 enum PairingDecision: Equatable {
     case accept(persistSecret: String?)   // nil = already known; non-nil = persist this new device
     case reject(reason: String)

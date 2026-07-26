@@ -424,8 +424,41 @@ struct RemoteSettings: View {
                     store.showingRemoteDevices = true
                 }
             }
+
+            SettingsField(label: "Paired devices",
+                          footnote: store.pairedDeviceList.isEmpty
+                            ? "No devices have been approved on this Mac yet."
+                            : "Devices approved here skip the approval prompt. Forget one to require approval again.") {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(store.pairedDeviceList, id: \.deviceID) { dev in
+                        pairedRow(dev)
+                        if dev.deviceID != store.pairedDeviceList.last?.deviceID {
+                            Divider().overlay(Theme.hairline)
+                        }
+                    }
+                }
+            }
         }
         .onAppear { serving = store.isServing }
+    }
+
+    @ViewBuilder private func pairedRow(_ dev: PairedDevice) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: dev.fcmToken == nil ? "desktopcomputer" : "iphone")
+                .font(.system(size: 12)).foregroundStyle(Theme.textDim).frame(width: 16)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(dev.name).font(.ui(13)).foregroundStyle(Theme.textPrimary)
+                Text(dev.deviceID.prefix(8) + "…").font(.ui(10.5).monospaced())
+                    .foregroundStyle(Theme.textDim)
+            }
+            Spacer(minLength: 12)
+            Button("Forget") { store.forgetPairedDevice(deviceID: dev.deviceID) }
+                .buttonStyle(.plain).focusable(false)
+                .font(.ui(11.5, .medium)).foregroundStyle(Theme.textSecondary)
+                .padding(.horizontal, 9).padding(.vertical, 4)
+                .background(RoundedRectangle(cornerRadius: 6).fill(Theme.raised))
+        }
+        .padding(.vertical, 7)
     }
 }
 

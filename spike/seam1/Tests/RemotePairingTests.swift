@@ -16,6 +16,19 @@ final class RemotePairingTests: XCTestCase {
         XCTAssertEqual(d, .reject(reason: "bad secret"))
     }
 
+    func testLogLabelNamesOutcomeWithoutLeakingSecret() {
+        XCTAssertEqual(PairingDecision.accept(persistSecret: nil).logLabel, "accept(known)")
+        XCTAssertEqual(PairingDecision.accept(persistSecret: "S3CR3T").logLabel, "accept(new)")
+        XCTAssertEqual(PairingDecision.reject(reason: "bad secret").logLabel, "reject(bad secret)")
+        XCTAssertEqual(
+            PairingDecision.needsApproval(deviceID: "d", name: "Mac", proposedSecret: "S3CR3T").logLabel,
+            "needsApproval")
+        for d in [PairingDecision.accept(persistSecret: "S3CR3T"),
+                  .needsApproval(deviceID: "d", name: "Mac", proposedSecret: "S3CR3T")] {
+            XCTAssertFalse(d.logLabel.contains("S3CR3T"))
+        }
+    }
+
     func testUnknownVerifiedSameUserNeedsApprovalWithVerifiedName() {
         let d = pairingDecision(deviceID: "new", secret: nil, known: known, newSecret: "NEW",
                                 peer: VerifiedPeer(userID: "u1", name: "Verified Mini"), selfUserID: "u1")
