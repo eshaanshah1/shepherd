@@ -13,6 +13,7 @@ xcuserdata/
 .DS_Store
 
 # Vendored libghostty (~100MB; regenerate via scripts/build-libghostty.sh)
+/vendor
 /vendor/*.xcframework
 /vendor/libghostty-deps/
 
