@@ -148,6 +148,8 @@ final class AgentStore: ObservableObject {
     /// mutated on main, so every access goes through `pairedDevicesLock`.
     private var pairedDevices: [PairedDevice] = []
     private let pairedDevicesLock = NSLock()
+    /// Main-thread mirror of `pairedDevices` for the Settings → Remote list.
+    @Published private(set) var pairedDeviceList: [PairedDevice] = []
 
     /// FCM push shell (nil if no service-account key at ~/.config/shepherd) + the away
     /// signal (lid shut + no external display) + per-pane push dedup state.
@@ -1683,7 +1685,8 @@ final class AgentStore: ObservableObject {
             // it on main since it mutates @Published state + drives libghostty focus.
             onCommand: { [weak self] msg in
                 DispatchQueue.main.async { self?.applyRemoteCommand(msg) }
-            })
+            },
+            log: { [weak self] line in self?.shepherdLog(line) })
         if s.start() {
             remoteServer = s
             shepherdLog("REMOTE serving on \(ip):\(remotePort)")
@@ -1704,10 +1707,20 @@ final class AgentStore: ObservableObject {
     /// Idempotent per host. No code — the host gates the first pairing by verifying our source
     /// IP against its tailnet peers (same user) + the approval popup; it persists the minted
     /// secret so reconnect skips re-pairing.
+    /// The secret this Mac proposed to a given host, minted once and reused forever: a host
+    /// remembers us by (deviceID, secret), so a fresh one would read as "bad secret".
+    private func hostSecret(forHostID hostID: String) -> String {
+        let k = "shepherd.remote.hostSecret.\(hostID)"
+        if let v = UserDefaults.standard.string(forKey: k) { return v }
+        let v = UUID().uuidString
+        UserDefaults.standard.set(v, forKey: k)
+        return v
+    }
+
     func addRemoteHost(host: String, port: UInt16) {
         let hostID = "\(host):\(port)"
         guard remoteClients[hostID] == nil else { return }
-        let secret = UUID().uuidString
+        let secret = hostSecret(forHostID: hostID)
         let client = RemoteClient(
             host: host, port: port, deviceID: clientDeviceID, deviceName: clientDeviceName,
             secret: secret,
@@ -1814,6 +1827,12 @@ final class AgentStore: ObservableObject {
                 }
             }
         }
+        // A dead client never reconnects (M2), and addRemoteHost early-returns while one is
+        // registered — so drop it or retrying that host silently does nothing until relaunch.
+        if conn == .dead, let dead = remoteClients.removeValue(forKey: hostID) {
+            dead.stop()
+            shepherdLog("REMOTE client \(hostID) dead — slot released")
+        }
     }
 
     /// The current workspace as a live remote target (client + host workspace id), or nil if local.
@@ -1893,10 +1912,26 @@ final class AgentStore: ObservableObject {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.pairedDevicesLock.lock()
-            self.pairedDevices.append(dev)
+            // Re-approval of the same device replaces its record; appending would leave the
+            // stale secret first in line for knownDevices' lookup.
+            if let i = self.pairedDevices.firstIndex(where: { $0.deviceID == dev.deviceID }) {
+                self.pairedDevices[i] = dev
+            } else {
+                self.pairedDevices.append(dev)
+            }
             self.pairedDevicesLock.unlock()
             self.savePairedDevices()
         }
+    }
+
+    /// Forget a paired device: its next connection needs approval again. Any live session it
+    /// already holds stays up until it disconnects.
+    func forgetPairedDevice(deviceID: String) {
+        pairedDevicesLock.lock()
+        pairedDevices.removeAll { $0.deviceID == deviceID }
+        pairedDevicesLock.unlock()
+        savePairedDevices()
+        shepherdLog("REMOTE forgot paired device \(deviceID)")
     }
 
     private func loadPairedDevices() {
@@ -1905,6 +1940,7 @@ final class AgentStore: ObservableObject {
         pairedDevicesLock.lock()
         pairedDevices = devs
         pairedDevicesLock.unlock()
+        publishPairedDevices()
     }
 
     private func savePairedDevices() {
@@ -1914,6 +1950,17 @@ final class AgentStore: ObservableObject {
         if let data = try? JSONEncoder().encode(snapshot) {
             UserDefaults.standard.set(data, forKey: pairedDevicesKey)
         }
+        publishPairedDevices()
+    }
+
+    /// Mirror the lock-guarded list into @Published state for the Settings list. The list is
+    /// mutated from the accept thread's callbacks, so the mirror is only ever written on main.
+    private func publishPairedDevices() {
+        pairedDevicesLock.lock()
+        let snapshot = pairedDevices
+        pairedDevicesLock.unlock()
+        if Thread.isMainThread { pairedDeviceList = snapshot }
+        else { DispatchQueue.main.async { [weak self] in self?.pairedDeviceList = snapshot } }
     }
 
     // MARK: - Control CLI
