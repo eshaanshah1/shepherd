@@ -71,6 +71,16 @@ enum TailscaleDiscovery {
          "/usr/bin/tailscale"].first(where: exists)
     }
 
+    /// The Tailscale.app binary only proxies CLI subcommands when `TERM` is set; without it it
+    /// tries to start the GUI, exits 0, and prints no JSON. A Dock-launched app inherits no `TERM`.
+    static func childEnvironment(
+        _ base: [String: String] = ProcessInfo.processInfo.environment
+    ) -> [String: String] {
+        var env = base
+        if (env["TERM"] ?? "").isEmpty { env["TERM"] = "dumb" }
+        return env
+    }
+
     // MARK: Shell
 
     /// Run `tailscale status --json` and parse it, or nil if the binary is missing / fails.
@@ -79,6 +89,7 @@ enum TailscaleDiscovery {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: bin)
         p.arguments = ["status", "--json"]
+        p.environment = childEnvironment()
         let pipe = Pipe(); p.standardOutput = pipe; p.standardError = FileHandle.nullDevice
         do { try p.run() } catch { return nil }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
