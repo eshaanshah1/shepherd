@@ -138,8 +138,22 @@ struct EditorHost: View {
                                   let first = session.range(forStitchedLine: rows.lowerBound),
                                   let last = session.range(forStitchedLine: rows.upperBound - 1)
                             else { return }
+                            // Include the trailing newline. `range(forStitchedLine:)`
+                            // excludes it, so a blank line is a zero-length range — and a
+                            // zero-length selection is a bare caret, which the
+                            // selected-rows reducer skips. Clicking any empty row in the
+                            // gutter therefore selected nothing at all.
+                            let end = min(session.storage.length,
+                                          last.location + last.length + 1)
                             let span = NSRange(location: first.location,
-                                               length: last.location + last.length - first.location)
+                                               length: max(1, end - first.location))
+                            // Gutter clicks must hand focus to the editor, or the
+                            // selection is set on a view that isn't first responder and
+                            // doesn't show it.
+                            if let textView = controller.textView,
+                               textView.window?.firstResponder !== textView {
+                                textView.window?.makeFirstResponder(textView)
+                            }
                             controller.setCursorPositions([CursorPosition(range: span)])
                         }
                     },
@@ -195,6 +209,16 @@ private struct WorkbenchGutter: NSViewRepresentable {
         view.scrollViewProvider = { [weak session] in session?.editorScrollViewProvider?() }
         view.lineMetrics = { [weak session] index in session?.editorLineMetrics?(index) }
         view.lineIndex = { [weak session] documentY in session?.editorLineIndex?(documentY) }
+        view.blockHeightAbove = { [weak session] index in
+            session?.blockMap.blocks(beforeStitchedLine: index).reduce(0) { $0 + $1.height } ?? 0
+        }
+        view.blocksAbove = { [weak session] index in
+            session?.blockMap.blocks(beforeStitchedLine: index) ?? []
+        }
+        view.onExpandGap = { [weak session] source, collapsed, fromTop in
+            guard let session else { return }
+            session.reveal(collapsed, inFile: session.relativePath(of: source), fromTop: fromTop)
+        }
         session.requestGutterAttach = { [weak view] in view?.attachIfNeeded() }
         view.attachIfNeeded()
         view.row = { [weak session] idx in

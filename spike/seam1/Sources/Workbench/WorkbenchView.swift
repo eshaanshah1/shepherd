@@ -19,6 +19,7 @@ struct WorkbenchView: View {
             VStack(spacing: 0) {
                 header
                 Rectangle().fill(Theme.hairline).frame(height: 1)
+                WorkbenchPRBand(session: session).environmentObject(store)
                 content
             }
             if session.threadsPanelOpen, !paneThreads.isEmpty {
@@ -374,21 +375,32 @@ struct WorkbenchView: View {
 
     private var scopeList: some View {
         VStack(spacing: 0) {
-            scopeRow("Working tree", active: session.mode == .workingTree) {
-                session.mode = .workingTree
+            scopeRow("Working tree", active: session.scope == .workingTree) {
+                session.setScope(.workingTree)
             }
-            scopeRow("Against \(session.baseLabel ?? "base")", active: session.mode == .branchVsBase) {
-                session.mode = .branchVsBase
+            scopeRow("Against \(session.baseLabel ?? "base")", active: session.scope == .vsBase) {
+                session.setScope(.vsBase)
+            }
+            // Only when there are threads to scope to — an always-present "Threads 0"
+            // would be a permanent dead row on every non-PR branch.
+            if !paneThreads.isEmpty {
+                let unresolved = PRThreads.unresolvedCount(paneThreads)
+                scopeRow("Threads \(unresolved > 0 ? "\(unresolved)" : "")",
+                         active: session.scope == .threads,
+                         tint: unresolved > 0 ? Theme.prMerged : nil) {
+                    session.setScope(.threads)
+                }
             }
         }
         .padding(.vertical, 6)
     }
 
-    private func scopeRow(_ title: String, active: Bool, _ action: @escaping () -> Void) -> some View {
+    private func scopeRow(_ title: String, active: Bool, tint: Color? = nil,
+                          _ action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 6) {
                 Text(title).font(.ui(12, active ? .semibold : .medium))
-                    .foregroundStyle(active ? Theme.textPrimary : Theme.textSecondary)
+                    .foregroundStyle(tint ?? (active ? Theme.textPrimary : Theme.textSecondary))
                 Spacer(minLength: 0)
                 if active {
                     Image(systemName: "checkmark").font(.system(size: 9, weight: .bold))
@@ -485,9 +497,20 @@ struct WorkbenchView: View {
     /// A file lands in exactly one section — Staged when the index holds anything for it,
     /// then Unstaged when the working tree does, else Committed. A partially staged file
     /// shows once, under Staged; the gutter is where its individual lines are settled.
+    /// The files the rail lists — narrowed to those carrying review threads in the
+    /// Threads scope, so the list answers "what have I still to address?".
+    private var scopedFiles: [DiffFile] {
+        // Falls back to everything if the threads went away (resolved, or the PR closed)
+        // while the scope was still selected — an empty rail with no explanation is worse
+        // than showing the diff.
+        guard session.scope == .threads, !paneThreads.isEmpty else { return session.files }
+        let withThreads = Set(paneThreads.map(\.path))
+        return session.files.filter { withThreads.contains($0.path) }
+    }
+
     private var sections: [FileSection] {
         var byKind: [SectionKind: [DiffFile]] = [:]
-        for file in session.files {
+        for file in scopedFiles {
             let kind: SectionKind
             if session.stagedPaths.contains(file.path) { kind = .staged }
             else if session.unstagedPaths.contains(file.path) { kind = .unstaged }

@@ -12,9 +12,33 @@ final class WorkbenchSession: ObservableObject {
     let cwd: String
 
     @Published var mode: DiffMode = .workingTree
+    /// What the rail is scoped to. A superset of `mode`: `threads` is vs-base narrowed to
+    /// the files carrying review threads, so "what have I still to address?" is one click.
+    @Published private(set) var scope: WorkbenchScope = .workingTree
+
+    func setScope(_ next: WorkbenchScope) {
+        guard next != scope else { return }
+        scope = next
+        if next == .threads { threadsPanelOpen = true }
+        // Only reload when the underlying git comparison actually changes; switching
+        // between vs-base and threads is a filter over the same diff.
+        if mode != next.mode { mode = next.mode }
+    }
     @Published private(set) var files: [DiffFile] = []
     /// The one file the editor is scoped to, or nil for the whole diff.
     @Published private(set) var focusedFile: String?
+    /// Per file, the 0-based new-side lines revealed out of the gaps between hunks.
+    @Published private(set) var revealedLines: [String: Set<Int>] = [:]
+
+    /// Reveal a slice of a collapsed gap. Ten lines at a time from whichever end was
+    /// clicked, or the whole thing when it is short enough that two directions is silly.
+    func reveal(_ collapsed: Range<Int>, inFile path: String, fromTop: Bool) {
+        let slice = HunkGaps.isFullyExpandable(collapsed)
+            ? Set(collapsed)
+            : (fromTop ? HunkGaps.expandingDown(collapsed) : HunkGaps.expandingUp(collapsed))
+        revealedLines[path, default: []].formUnion(slice)
+        rebuild()
+    }
     @Published private(set) var baseLabel: String?
     @Published private(set) var isRepo = true
     @Published private(set) var loading = false
@@ -143,7 +167,18 @@ final class WorkbenchSession: ObservableObject {
 
     lazy var renderer: BlockRenderer = BlockRenderer(
         stitchedLineForOffset: { [weak self] offset in self?.stitchedLine(forOffset: offset) },
-        styleForStitchedLine: { [weak self] line in self?.style(atStitchedLine: line) ?? .plain }
+        styleForStitchedLine: { [weak self] line in self?.style(atStitchedLine: line) ?? .plain },
+        blocksForStitchedLine: { [weak self] line in
+            self?.blockMap.blocks(beforeStitchedLine: line) ?? []
+        },
+        displayName: { [weak self] source in self?.relativePath(of: source) ?? source.path },
+        rowWidth: { [weak self] in
+            self?.editorScrollViewProvider?()?.documentView?.frame.width ?? 0
+        },
+        onExpandGap: { [weak self] source, collapsed, fromTop in
+            guard let self else { return }
+            self.reveal(collapsed, inFile: self.relativePath(of: source), fromTop: fromTop)
+        }
     )
 
     init(paneID: String, cwd: String) {
@@ -279,6 +314,10 @@ final class WorkbenchSession: ObservableObject {
         var blocks: [Block] = []
         var styles: [RowStyle] = []
         var gutter: [(old: Int?, new: Int?)] = []
+        // Built in this same walk, not by a second pass over `files`: revealed gap
+        // context rows exist only here, so a separate walk would silently disagree about
+        // what every row index means.
+        var origins: [RowOrigin] = []
         var stitched = ""
         var line = 0
 
@@ -292,7 +331,39 @@ final class WorkbenchSession: ObservableObject {
 
             guard !file.isBinary else { continue }
 
-            for hunk in file.hunks {
+            let revealed = revealedLines[file.path] ?? []
+            for (hunkIndex, hunk) in file.hunks.enumerated() {
+                // Unchanged lines the diff skipped since the previous hunk: a band saying
+                // how many, plus any stretches the user has expanded, read from the file.
+                if hunkIndex > 0 {
+                    let previous = file.hunks[hunkIndex - 1]
+                    let gap = (previous.newStart - 1 + previous.newCount)..<(hunk.newStart - 1)
+                    for segment in HunkGaps.segments(gap: gap, revealed: revealed) {
+                        switch segment {
+                        case .collapsed(let range):
+                            blocks.append(Block(id: "gap-\(file.path)-\(range.lowerBound)",
+                                                kind: .hunkGap(source: source, collapsed: range),
+                                                beforeStitchedLine: line, height: rowHeight + 8))
+                        case .revealed(let range):
+                            let text = self.text(for: source)
+                            let fileLines = text.components(separatedBy: "\n")
+                            for index in range where index < fileLines.count {
+                                stitched += fileLines[index] + "\n"
+                                styles.append(.plain)
+                                // Unchanged, so both sides carry a number; the old side is
+                                // offset by however much the diff has added above here.
+                                let oldNumber = index + 1 - (hunk.newStart - hunk.oldStart)
+                                gutter.append((old: oldNumber, new: index + 1))
+                                origins.append(RowOrigin(path: file.path, hunkIndex: hunkIndex,
+                                                         lineIndex: -1, kind: .context))
+                                maxOld = max(maxOld, oldNumber)
+                                maxNew = max(maxNew, index + 1)
+                                line += 1
+                            }
+                        }
+                    }
+                }
+
                 let start = line
                 // Paired once per hunk, not per line: the old per-line lookup rebuilt
                 // both side arrays every time, so a 1000-line hunk did a million array
@@ -304,6 +375,8 @@ final class WorkbenchSession: ObservableObject {
                     styles.append(Self.style(for: diffLine,
                                              counterpart: pairing.counterpart(atLineIndex: lineIndex)))
                     gutter.append((old: diffLine.oldLineNo, new: diffLine.newLineNo))
+                    origins.append(RowOrigin(path: file.path, hunkIndex: hunkIndex,
+                                             lineIndex: lineIndex, kind: diffLine.kind))
                     maxOld = max(maxOld, diffLine.oldLineNo ?? 0)
                     maxNew = max(maxNew, diffLine.newLineNo ?? 0)
                     line += 1
@@ -323,7 +396,7 @@ final class WorkbenchSession: ObservableObject {
         blockMap = BlockMap(blocks: blocks)
         rowStyles = styles
         gutterRows = gutter
-        rowOrigins = StageSelection.rowOrigins(files: shown)
+        rowOrigins = origins
         maxOldLineNumber = maxOld
         maxNewLineNumber = maxNew
         selectedLines.removeAll()   // row indices don't survive a rebuild
@@ -535,7 +608,7 @@ final class WorkbenchSession: ObservableObject {
     }
 
     /// Repo-relative path, which is what `ReviewComment` and the agent prompt expect.
-    private func relativePath(of source: SourceID) -> String {
+    func relativePath(of source: SourceID) -> String {
         guard source.path.hasPrefix(cwd) else { return source.path }
         return String(source.path.dropFirst(cwd.count))
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))

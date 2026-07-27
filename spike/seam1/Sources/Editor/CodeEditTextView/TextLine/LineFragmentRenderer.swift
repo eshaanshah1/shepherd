@@ -239,9 +239,9 @@ public final class LineFragmentRenderer {
 
         return NSRect(
             x: basePosition.x + xOffset,
-            y: basePosition.y,
+            y: basePosition.y + drawingContext.lineFragment.topInset,
             width: xEndOffset - xOffset,
-            height: drawingContext.lineFragment.scaledHeight
+            height: drawingContext.lineFragment.textHeight
         )
     }
 

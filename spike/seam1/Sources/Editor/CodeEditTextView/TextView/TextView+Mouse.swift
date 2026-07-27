@@ -43,7 +43,12 @@ extension TextView {
     fileprivate func handleSingleClick(event: NSEvent, offset: Int) {
         cursorSelectionMode = .character
 
-        guard isEditable else {
+        // Shepherd: `|| isSelectable`. A read-only view still places a caret and a
+        // selection on click — `isSelectable` is documented as "responds to selection
+        // events, such as clicks", and gating this on `isEditable` alone meant a
+        // single click did nothing at all in a read-only editor while drag-select,
+        // which takes another path, still worked.
+        guard isEditable || isSelectable else {
             super.mouseDown(with: event)
             return
         }

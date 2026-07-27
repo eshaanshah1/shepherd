@@ -5,7 +5,7 @@ import Foundation
 /// The whole PR-status feature is gated on `isInstalled`; when `gh` is absent the
 /// sidebar keeps its normal state dot.
 enum GH {
-    private static let fields = "state,isDraft,reviewDecision,statusCheckRollup,mergeStateStatus,number,url"
+    private static let fields = "state,isDraft,reviewDecision,statusCheckRollup,mergeStateStatus,number,url,title"
 
     /// PATH augmented with the common Homebrew locations a GUI-launched app doesn't
     /// inherit — so `gh` (and the `git` it shells out to) resolve.
@@ -42,6 +42,11 @@ enum GH {
     /// The PR for the branch checked out in `dir`, or nil if there's none (or `gh`
     /// isn't installed / authed for the repo). Runs synchronously — call off-main.
     static func prStatus(inDir dir: String) -> PRStatus? {
+        prViewPayload(inDir: dir).flatMap(PR.parse)
+    }
+
+    /// `gh pr view --json …` for a checkout, or nil when there's no PR / no `gh`.
+    private static func prViewPayload(inDir dir: String) -> Data? {
         guard let gh = executablePath else { return nil }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: gh)
@@ -56,7 +61,55 @@ enum GH {
         _ = err.fileHandleForReading.readDataToEndOfFile()   // drain so the pipe can't fill
         p.waitUntilExit()
         guard p.terminationStatus == 0 else { return nil }   // non-zero ⇒ no PR for the branch
-        return PR.parse(data)
+        return data
+    }
+
+    /// The same `gh pr view` payload as `prStatus`, kept in full for the workbench's PR
+    /// band. One call serves both — the sidebar takes the reduced form, the band the
+    /// detail — so a pane never spawns two `gh` processes for the same facts.
+    static func prDetail(inDir dir: String) -> PRDetail? {
+        guard let data = prViewPayload(inDir: dir) else { return nil }
+        return PR.parseDetail(data)
+    }
+
+    /// Approve, request changes on, or comment on a PR. True on success. Off-main.
+    static func review(_ verdict: PRReviewVerdict, body: String, inDir dir: String) -> GitResult {
+        var args = ["pr", "review", verdict.flag]
+        if !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            args += ["--body", body]
+        }
+        return runCapturing(args, inDir: dir)
+    }
+
+    /// Merge a PR. `gh` refuses when GitHub says it isn't mergeable, and its stderr is
+    /// the honest reason, so it is surfaced rather than swallowed.
+    static func merge(method: PRMergeMethod, deleteBranch: Bool, inDir dir: String) -> GitResult {
+        var args = ["pr", "merge", method.flag]
+        if deleteBranch { args.append("--delete-branch") }
+        return runCapturing(args, inDir: dir)
+    }
+
+    /// Run `gh` and keep stderr, so a refusal can be shown instead of vanishing.
+    private static func runCapturing(_ args: [String], inDir dir: String) -> GitResult {
+        guard let gh = executablePath else { return .failed("gh is not installed.") }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: gh)
+        p.arguments = args
+        p.currentDirectoryURL = URL(fileURLWithPath: dir)
+        p.environment = augmentedEnv
+        let out = Pipe(), err = Pipe()
+        p.standardOutput = out
+        p.standardError = err
+        do { try p.run() } catch { return .failed("Could not run gh: \(error.localizedDescription)") }
+        let stdout = out.fileHandleForReading.readDataToEndOfFile()
+        let stderr = err.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        guard p.terminationStatus == 0 else {
+            let reason = String(data: stderr, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return .failed(reason.isEmpty ? "gh \(args.first ?? "") failed." : reason)
+        }
+        return .ok(String(data: stdout, encoding: .utf8) ?? "")
     }
 
     /// The PR's inline review threads via GraphQL (thread ids + resolved/outdated + comments

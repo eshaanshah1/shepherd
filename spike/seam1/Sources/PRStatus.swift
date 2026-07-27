@@ -78,4 +78,173 @@ enum PR {
                             mergeState: obj["mergeStateStatus"] as? String ?? "")
         return PRStatus(number: number, url: url, kind: kind)
     }
+
+    /// The sidebar's one-icon reduction of an already-parsed detail, so a single `gh`
+    /// call can serve both and the two can never describe the same PR differently.
+    static func reduce(_ detail: PRDetail) -> PRStatus {
+        PRStatus(number: detail.number, url: detail.url,
+                 kind: classify(state: detail.state,
+                                isDraft: detail.isDraft,
+                                reviewDecision: detail.reviewDecision,
+                                checks: detail.rollup,
+                                mergeState: detail.mergeability.isReady ? "CLEAN" : ""))
+    }
+}
+
+// MARK: - Detail (the workbench's PR band)
+
+/// What a review submits as.
+enum PRReviewVerdict: Equatable {
+    case approve, requestChanges, comment
+
+    var flag: String {
+        switch self {
+        case .approve:        return "--approve"
+        case .requestChanges: return "--request-changes"
+        case .comment:        return "--comment"
+        }
+    }
+
+    /// `gh` rejects request-changes and comment reviews with no body.
+    var requiresBody: Bool { self != .approve }
+}
+
+/// How to merge.
+enum PRMergeMethod: String, Equatable, CaseIterable {
+    case merge, squash, rebase
+
+    var flag: String { "--\(rawValue)" }
+    var title: String { rawValue.capitalized }
+}
+
+/// One status check, kept individually rather than rolled up.
+struct PRCheck: Equatable, Identifiable {
+    let name: String
+    let verdict: ChecksVerdict
+    /// Where to open the run, when the payload carries one.
+    let url: String?
+
+    var id: String { name + (url ?? "") }
+}
+
+/// Whether a PR can be merged right now, and if not, why.
+///
+/// `gh`'s `mergeStateStatus` is the useful field and its vocabulary is not obvious, so it
+/// is mapped to something a button can be disabled with *and* explain.
+enum PRMergeability: Equatable {
+    case ready
+    case blocked(String)
+    case unknown
+
+    var isReady: Bool { self == .ready }
+    var reason: String? { if case .blocked(let why) = self { return why }; return nil }
+}
+
+/// Everything the workbench's PR band shows. `PRStatus` reduces a PR to one icon for the
+/// sidebar; this keeps the detail that reduction throws away.
+struct PRDetail: Equatable {
+    let number: Int
+    let url: String
+    let title: String
+    let state: String
+    let isDraft: Bool
+    let reviewDecision: String
+    let mergeability: PRMergeability
+    let checks: [PRCheck]
+
+    /// Merged or closed — the PR is history. Its review decision and checks are stale
+    /// trivia at that point, and showing them without the state reads as "ready to go".
+    var isHistory: Bool { ["MERGED", "CLOSED"].contains(state.uppercased()) }
+
+    var rollup: ChecksVerdict { PR.checksVerdict(ofParsed: checks) }
+    var failingChecks: [PRCheck] { checks.filter { $0.verdict == .failing } }
+
+    /// "3 of 12 passing" style summary, or nil when the PR has no checks at all.
+    var checksSummary: String? {
+        guard !checks.isEmpty else { return nil }
+        let passing = checks.filter { $0.verdict == .passing }.count
+        return "\(passing)/\(checks.count) checks passing"
+    }
+}
+
+extension PR {
+    /// Roll already-parsed checks up, same precedence as `checksVerdict(from:)`.
+    static func checksVerdict(ofParsed checks: [PRCheck]) -> ChecksVerdict {
+        guard !checks.isEmpty else { return .none }
+        if checks.contains(where: { $0.verdict == .failing }) { return .failing }
+        if checks.contains(where: { $0.verdict == .pending }) { return .pending }
+        return .passing
+    }
+
+    /// One rollup entry's verdict. Shared with `checksVerdict(from:)` so a single check
+    /// and the rollup can never disagree about what a status string means.
+    static func verdict(ofRollupItem item: [String: Any]) -> ChecksVerdict {
+        let failing: Set<String> = ["FAILURE", "ERROR", "TIMED_OUT", "CANCELLED",
+                                    "ACTION_REQUIRED", "STARTUP_FAILURE"]
+        let pending: Set<String> = ["PENDING", "EXPECTED", "IN_PROGRESS", "QUEUED",
+                                    "WAITING", "REQUESTED"]
+        let status = (item["status"] as? String)?.uppercased() ?? ""
+        let conclusion = (item["conclusion"] as? String)?.uppercased() ?? ""
+        let contextState = (item["state"] as? String)?.uppercased() ?? ""
+        let verdict: String
+        if !conclusion.isEmpty { verdict = conclusion }
+        else if !contextState.isEmpty { verdict = contextState }
+        else if !status.isEmpty, status != "COMPLETED" { verdict = "PENDING" }
+        else { verdict = "" }
+
+        if failing.contains(verdict) { return .failing }
+        if pending.contains(verdict) { return .pending }
+        return verdict.isEmpty ? .none : .passing
+    }
+
+    /// `gh`'s `mergeStateStatus`, translated into something a disabled button can say.
+    static func mergeability(state: String, isDraft: Bool, mergeStateStatus: String) -> PRMergeability {
+        guard state.uppercased() == "OPEN" else {
+            return .blocked("This PR is \(state.lowercased()).")
+        }
+        if isDraft { return .blocked("This PR is a draft.") }
+        switch mergeStateStatus.uppercased() {
+        case "CLEAN", "HAS_HOOKS": return .ready
+        case "BLOCKED":  return .blocked("Merging is blocked — required reviews or checks are outstanding.")
+        case "BEHIND":   return .blocked("The branch is behind its base; update it first.")
+        case "DIRTY":    return .blocked("There are merge conflicts to resolve.")
+        case "UNSTABLE": return .blocked("Some checks are failing.")
+        case "DRAFT":    return .blocked("This PR is a draft.")
+        case "":         return .unknown
+        default:         return .unknown
+        }
+    }
+
+    /// Parse the same `gh pr view --json …` payload `parse(_:)` reads, keeping the
+    /// individual checks and the merge state instead of collapsing them.
+    static func parseDetail(_ data: Data) -> PRDetail? {
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let number = obj["number"] as? Int,
+              let url = obj["url"] as? String, !url.isEmpty else { return nil }
+
+        let rollup = obj["statusCheckRollup"] as? [[String: Any]] ?? []
+        let checks: [PRCheck] = rollup.map { item in
+            // CheckRun calls it `name`, StatusContext calls it `context`.
+            let name = (item["name"] as? String)
+                ?? (item["context"] as? String)
+                ?? "check"
+            let link = (item["detailsUrl"] as? String) ?? (item["targetUrl"] as? String)
+            return PRCheck(name: name, verdict: verdict(ofRollupItem: item),
+                           url: (link?.isEmpty == false) ? link : nil)
+        }
+
+        let state = obj["state"] as? String ?? "OPEN"
+        let isDraft = obj["isDraft"] as? Bool ?? false
+        return PRDetail(
+            number: number,
+            url: url,
+            title: obj["title"] as? String ?? "",
+            state: state,
+            isDraft: isDraft,
+            reviewDecision: obj["reviewDecision"] as? String ?? "",
+            mergeability: mergeability(state: state, isDraft: isDraft,
+                                       mergeStateStatus: obj["mergeStateStatus"] as? String ?? ""),
+            checks: checks
+        )
+    }
 }

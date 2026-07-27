@@ -200,9 +200,11 @@ extension TextLayoutManager {
 
         return CGRect(
             x: minXPos + edgeInsets.left,
-            y: linePosition.yPos + fragmentPosition.yPos,
+            // `topInset` is decoration space above the text (Shepherd block rows), not
+            // part of the line — a caret spanning it would tower over its own row.
+            y: linePosition.yPos + fragmentPosition.yPos + fragmentPosition.data.topInset,
             width: maxXPos - minXPos,
-            height: fragmentPosition.data.scaledHeight
+            height: fragmentPosition.data.textHeight
         )
     }
 
@@ -335,9 +337,9 @@ extension TextLayoutManager {
         let maxXPos = characterXPosition(in: lineFragment, for: range.upperBound)
         return CGRect(
             x: minXPos,
-            y: 0,
+            y: lineFragment.topInset,
             width: maxXPos - minXPos,
-            height: lineFragment.scaledHeight
+            height: lineFragment.textHeight
         ).pixelAligned
     }
 
