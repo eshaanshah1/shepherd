@@ -7,17 +7,17 @@
 
 ## Progress
 
-Last updated 2026-07-27 · branch `workbench-w2-deleted-line-blocks` · 452 model tests, 0 failures
+Last updated 2026-07-27 · branch `workbench-w3-merge-resolver` · 545 model tests, 0 failures
 
 ```
 W0  editor foundation      ██████████████████████  100%   run + hardened
 W1  review & staging       ██████████████████████  100%   run + hardened
 W2  editing in anger       ██████████████████████  100%   W2.0/W2.1 + write-back live-run
-W3  merge resolver         ░░░░░░░░░░░░░░░░░░░░░░    0%   ← in progress
+W3  merge resolver         ██████████████████████  100%   run + reshaped from that run
 W4  PR surface             ██████████████████████  100%   band, checks, gh actions, threads
 W5  history & power tools  ░░░░░░░░░░░░░░░░░░░░░░    0%   own spec; ~= W1–W4 combined
                            ──────────────────────
-    overall                ████████████████░░░░░░   72%
+    overall                ██████████████████░░░░   84%
 ```
 
 **W0 — done (11 tasks).** Editor vendored (247 files / 23,946 lines in-module,
@@ -458,16 +458,82 @@ judging every synthesized patch, is what surfaced the two parser bugs below.
 - **Branch + worktree ops**: reuse `WorktreeService` / `WorktreeArchive`; a branch menu in
   the header, "new worktree tab from here" wired to the existing flow.
 
-## W3 — Merge resolver
+## W3 — Merge resolver — **DONE**
 
-- **`ConflictParse`** (pure, tested): `git ls-files -u` → `(base, ours, theirs)` stage
-  triples; blobs via `git show :1:/:2:/:3:`. **Never** scrape `<<<<<<<` markers.
-- Conflicted files become `.conflict` excerpts; `BlockKind.conflictControls` already
-  exists — render accept ours / theirs / both (either order) / edit.
-- Resolving writes the worktree file then `git add`s, **only** on explicit resolve.
-- Auto-resolved regions stay **silent** — VSCode's known flaw is highlighting and
-  pre-checking them.
-- Scope row `Conflicts (n)`, auto-selected when the repo is mid-merge.
+Spec: [`2026-07-27-workbench-w3-merge-resolver-design.md`](../specs/2026-07-27-workbench-w3-merge-resolver-design.md).
+
+**What shipped.** `Diff3.merge` over two `SequenceAlign.lcs` runs against the index's
+stage blobs (`ConflictParse` + `ConflictReader`), `RowPlanner.planConflicts`, the accept
+controls on a new hit-testable overlay, and a Files scope that carries conflicts. Never
+scrapes markers — but *draws* them, which is a distinction worth keeping straight (below).
+
+**Four deviations from the design doc**, all found by building or running it:
+
+1. **Whole-file conflicts produce no rows and no write.** Binary, delete/modify and
+   add/add-with-a-binary-side have no line list; reconstructing one so it could flow
+   through the normal write path would make the fabrication real. They resolve through
+   `WholeFileResolve` → `git checkout --ours/--theirs` / `git rm`, from the rail. §1 of
+   the spec had them rendering through the same band machinery.
+2. **Both sides show at once, delimited by markers.** The spec's chosen-design was
+   chosen-side-as-rows with the other behind a band. Live, that means deciding with half
+   the information off screen. Now: `<<<<<<< main` / `=======` / `>>>>>>> feature`, each
+   side tinted, each marker in its block's colour; picking a side collapses the region and
+   drops the markers. **The markers are bands, never rows** — the document is what
+   `Resolve` writes, so a marker that was a text row could reach a file.
+3. **No separate Conflicts scope.** Folded into Files. A file you have to fix is still a
+   file, and a second tab put the most urgent thing one click out of sight.
+4. **`MergeOutput` splits into `preview` and `text`.** The buffer must render before any
+   decision; the write must refuse until every one is made. `text` is `preview` joined plus
+   the all-decided guard, so the two cannot disagree about content.
+
+**The integration test earned its keep on the first run.** Git 2.55 writes no
+`rebase-merge/onto_name` for a plain `git rebase main` — only the interactive and `--onto`
+paths do — so the "ours" label fell through to `onto`, a bare sha, and the button that
+discards one side of a rebase was labelled with forty hex characters. Unit tests could not
+have found it; only real git knows what files it writes. `ConflictIntegrationTests` builds
+real repos mid-real-merge and covers content conflicts, a one-sided change staying silent
+beside a conflicting one, resolution producing a file git accepts as merged, delete/modify
+both ways, add/add, binary, unicode/spaced paths, and rebase side inversion.
+
+**The rebase inversion is the thing to not "fix" later.** Mid-rebase git checks out the
+upstream and replays your commits onto it, so stage 2 — git's "ours" — is the branch you
+are rebasing *onto*, and stage 3 is your own work. Every label is a ref name for that
+reason, and a test asserts the side labelled `main` carries main's content.
+
+**Four UI defects the live run found**, none visible to `xcodebuild` or 545 green tests:
+
+- The keep-both buttons were `Both` and `Both ⇅` — an arrow carrying the entire meaning of
+  "reversed order". This plan had already rejected gutter glyphs because "`b` vs `B` is not
+  discoverable"; the same defect shipped in a nicer font. Now `Both (current first)` /
+  `Both (incoming first)`, fixed width, unlike concatenating two branch names.
+- The scope pill forced equal-width segments. Fine at two, unreadable at five — 260pt split
+  five ways is ~7 characters, so every label ellipsised at once. Wraps past three now.
+- The vs-base segment read "vs base" until you visited it and "vs main" afterwards:
+  `DiffReader` only resolved the base name in branch mode, so one segment's label depended
+  on which segment you were standing on.
+- A side band's label wore `Theme.Diff.hover` — the hunk-gap band's fill — so it read as
+  unrelated chrome floating between two lines rather than a header for the run below it.
+
+**`WorkbenchOverlay` is the `WidgetLayer` seed.** A transparent `NSView` over the text view
+that draws *and* hit-tests the accept controls, returning nil from `hitTest` everywhere
+else so selection and scrolling pass through. It exists because `TextView.hitTest` returns
+the text view for any point inside it — the gap arrows answered that by moving to the
+gutter and the reconcile row by moving to the rail, and neither works for four labelled
+buttons. Written against "blocks with targets", not conflicts, so comments, threads and
+W5's blame column can retire their rail-only placements onto it.
+
+**Deferred, recorded so it isn't mistaken for done:**
+
+- **In-place editing of a conflict region.** Conflicted files are read-only with a visible
+  reason in the header (silent refusal is the W2.2 defect). Resolve, and the file becomes an
+  ordinary editable one — the file is `git add`ed and drops out of `ls-files -u`.
+- **Resolution choices do not survive closing the workbench.** In memory by design, so a
+  half-triaged file is untouched on disk; the cost is losing the triage.
+- **Word-level diff inside a conflict region.** The pairing rule for a three-way region is
+  its own question.
+- **Combined-diff (`@@@`) parsing** in `DiffParser`, so Working and vs-base are honest
+  mid-merge. Pre-existing; they show a banner pointing at Files instead.
+- **Rebase conflicts recursing mid-sequence**, which W5's interactive rebase needs.
 
 ## W4 — PR surface — **DONE**
 
@@ -483,6 +549,16 @@ the progress bar above under-reported it for a while):
 - Review threads render **inline** under their line as violet `.reviewNote` bands as well as
   in the threads panel; local pending comments render the same way in blue. Distinguished by
   marker shape and label as well as colour.
+
+## Files scope — the workbench as a plain editor
+
+`⌃3`: no diff, no staging. Conflicted files at the top of the rail in red, then anything
+opened with `⌘P`, edited and saved through W2.2's write-back. `displayedFiles` is empty in
+this scope so the document is built from `openedPaths` plus the merge files, which
+`RowPlanner`'s `opened:` path already handled.
+
+The rail deliberately grows no file browser — `⌘P` already fuzzy-matches every file git
+knows about, and a second worse one beside it would be two ways to do one thing.
 
 ## W5 — History & power tools (last; blocks nothing)
 

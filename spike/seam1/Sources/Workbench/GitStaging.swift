@@ -121,7 +121,11 @@ enum GitStaging {
 
     // MARK: - Process
 
-    private static func run(_ args: [String], cwd: String, stdin: String? = nil) -> GitResult {
+    /// Internal rather than private: the merge resolver settles whole-file conflicts by
+    /// handing git the argument lists `WholeFileResolve` picks, and those have no business
+    /// each becoming a named wrapper here.
+    @discardableResult
+    static func run(_ args: [String], cwd: String, stdin: String? = nil) -> GitResult {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         p.arguments = ["-C", cwd] + args

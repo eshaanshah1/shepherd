@@ -24,6 +24,7 @@ enum ShortcutID: CaseIterable {
     case find, reviewDiff, openEditor, saveFile
     case nextHunk, prevHunk, stageHunk, unstageHunk, focusCommitMessage, commentOnLine, selectScope
     case openFileFinder
+    case acceptOurs, acceptTheirs, acceptBoth
     case nextAlert
     case reloadConfig, showShortcuts
 }
@@ -79,6 +80,9 @@ enum ShortcutCatalog {
         .init(id: .commentOnLine,      title: "Comment on Line",    key: nil, modifiers: [], category: .workbench, display: "⌘⇧C"),
         .init(id: .openFileFinder,     title: "Open File…",        key: nil, modifiers: [], category: .workbench, display: "⌘P"),
         .init(id: .selectScope,        title: "Select Scope N",     key: nil, modifiers: [], category: .workbench, display: "⌃1–⌃4"),
+        .init(id: .acceptOurs,         title: "Accept Ours",        key: nil, modifiers: [], category: .workbench, display: "⌃⇧O"),
+        .init(id: .acceptTheirs,       title: "Accept Theirs",      key: nil, modifiers: [], category: .workbench, display: "⌃⇧T"),
+        .init(id: .acceptBoth,         title: "Accept Both",        key: nil, modifiers: [], category: .workbench, display: "⌃⇧B"),
 
         .init(id: .nextAlert, title: "Jump to Next Alert", key: "a", modifiers: [.command, .shift], category: .attention, display: "⌘⇧A"),
 

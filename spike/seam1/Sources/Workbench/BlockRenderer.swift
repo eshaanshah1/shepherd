@@ -1,7 +1,12 @@
 import AppKit
 
 /// A diff row's background treatment.
-enum RowTint: Equatable { case none, added, removed, conflict }
+enum RowTint: Equatable {
+    case none, added, removed, conflict
+    /// The two sides of a merge conflict, tinted apart so a glance tells you which is which
+    /// without reading the marker above it.
+    case conflictOurs, conflictTheirs
+}
 
 /// What a row should look like: its tint plus the word-level spans inside it.
 struct RowStyle: Equatable {
@@ -19,6 +24,33 @@ struct DeletedLineRow {
     /// theme gives each token its own font, so multiplying a character index by one
     /// character's advance drifts further right the longer the line.
     let wordSpans: [(x: CGFloat, width: CGFloat)]
+}
+
+/// Geometry for the two conflict bands.
+///
+/// In one place because two views need it — `DiffRowView` paints the marker rules and
+/// `WorkbenchOverlay` draws *and* hit-tests the controls strip.
+/// Three opinions about where a row sits is how the gutter drifted against the text for two
+/// days; the rule since is exactly one.
+enum ConflictBandMetrics {
+    /// The accept buttons get their own row, and the `<<<<<<<` marker its own line below
+    /// them — the way VSCode stacks its action links above the marker. Sharing one row made
+    /// the marker text and the buttons compete for the same horizontal space, so the buttons
+    /// pushed the marker out of view.
+    static let buttonRowHeight: CGFloat = 24
+
+    static var controlsHeight: CGFloat { buttonRowHeight + WorkbenchMetrics.rowHeight }
+
+    /// The buttons row and the marker line inside a controls band.
+    static func controlsLayout(_ band: NSRect) -> (buttons: NSRect, marker: NSRect) {
+        let buttons = NSRect(x: band.minX, y: band.minY,
+                             width: band.width, height: buttonRowHeight)
+        return (buttons, NSRect(x: band.minX, y: band.minY + buttonRowHeight,
+                                width: band.width,
+                                height: max(0, band.height - buttonRowHeight)))
+    }
+    /// A `=======` / `>>>>>>>` rule. One text line tall, like the code around it.
+    static var markerHeight: CGFloat { WorkbenchMetrics.rowHeight }
 }
 
 /// A line fragment that paints a full-width diff tint behind its text, plus stronger
@@ -108,10 +140,18 @@ final class DiffRowView: LineFragmentView {
                 drawHunkGap(collapsed, in: rect)
             case .deletedLines:
                 drawDeletedLines(block, in: rect, onscreen: onscreen)
+            case .conflictMarker(_, _, let label, let side, let isEnd):
+                drawConflictMarker(label: label, side: side, isEnd: isEnd, in: rect)
             case .reviewNote(_, let origin, let header, let body):
                 drawReviewNote(origin: origin, header: header, body: body, in: rect)
+            case .conflictControls:
+                // Drawn by `WorkbenchOverlay`, which also hit-tests it. A line-fragment
+                // subview never receives a click (`TextView.hitTest` returns the text view
+                // for any point inside it), and painting it here while another view owned
+                // its buttons would be two opinions about where they are.
+                break
             default:
-                break   // conflict controls + rendered markdown arrive with W3 / ADR 0019
+                break   // rendered markdown arrives with ADR 0019
             }
         }
     }
@@ -146,6 +186,29 @@ final class DiffRowView: LineFragmentView {
             }
             line.text.draw(at: NSPoint(x: 0, y: rect.midY - glyphHeight / 2))
         }
+    }
+
+    /// A `=======` or `>>>>>>> branch` rule.
+    ///
+    /// The marker text is drawn, not parsed — git's own shape is the one every developer
+    /// already reads without being taught, so the resolver wears it even though the data
+    /// underneath comes from a three-way merge of the index's stage blobs.
+    private func drawConflictMarker(label: String, side: MergeSide?, isEnd: Bool,
+                                   in band: NSRect) {
+        // The closer wears the colour of the block it closes, so the two sides read as
+        // bounded regions rather than as one long tinted run. The `=======` between them
+        // belongs to neither and stays neutral.
+        let accent = NSColor(hex24: side == .ours ? Theme.Diff.addition : Theme.Diff.modified)
+        accent.withAlphaComponent(side == nil ? 0.10 : 0.22).setFill()
+        band.fill()
+
+        let text = (isEnd ? ">>>>>>> \(label)" : "=======") as NSString
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: WorkbenchMetrics.font,
+            .foregroundColor: accent,
+        ]
+        let size = text.size(withAttributes: attributes)
+        text.draw(at: NSPoint(x: 0, y: band.midY - size.height / 2), withAttributes: attributes)
     }
 
     /// Glyph height for band text, cached against the font.
@@ -255,6 +318,10 @@ final class DiffRowView: LineFragmentView {
         case .added:    return NSColor(hex24: Theme.Diff.addition).withAlphaComponent(0.14)
         case .removed:  return NSColor(hex24: Theme.Diff.deletion).withAlphaComponent(0.14)
         case .conflict: return NSColor(hex24: Theme.Diff.modified).withAlphaComponent(0.14)
+        case .conflictOurs:
+            return NSColor(hex24: Theme.Diff.addition).withAlphaComponent(0.12)
+        case .conflictTheirs:
+            return NSColor(hex24: Theme.Diff.modified).withAlphaComponent(0.14)
         }
     }
 
@@ -263,7 +330,8 @@ final class DiffRowView: LineFragmentView {
         case .none:     return nil
         case .added:    return NSColor(hex24: Theme.Diff.wordAdd).withAlphaComponent(0.55)
         case .removed:  return NSColor(hex24: Theme.Diff.wordDel).withAlphaComponent(0.55)
-        case .conflict: return NSColor(hex24: Theme.Diff.modified).withAlphaComponent(0.28)
+        case .conflict, .conflictOurs, .conflictTheirs:
+            return NSColor(hex24: Theme.Diff.modified).withAlphaComponent(0.28)
         }
     }
 }

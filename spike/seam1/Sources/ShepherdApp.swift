@@ -142,7 +142,8 @@ enum ShortcutActions {
         // Declared inside `WorkbenchView` so the terminal keeps these keys whenever the
         // workbench is closed; display-only here.
         case .nextHunk, .prevHunk, .stageHunk, .unstageHunk,
-             .focusCommitMessage, .commentOnLine, .selectScope, .openFileFinder: break
+             .focusCommitMessage, .commentOnLine, .selectScope, .openFileFinder,
+             .acceptOurs, .acceptTheirs, .acceptBoth: break
         case .nextAlert:     s.selectNextAttention()
         case .reloadConfig:  GhosttyApp.shared.reloadConfig()
         case .showShortcuts: s.showShortcuts.toggle()

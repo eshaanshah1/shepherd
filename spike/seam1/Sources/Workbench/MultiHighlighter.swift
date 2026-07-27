@@ -55,25 +55,46 @@ enum SourceHighlightCache {
 /// Highlight.js and remapped token colors by nearest-RGB distance, while the editor
 /// used tree-sitter — so identical lines got different colors. Now there is one
 /// tokenizer feeding both.
+/// Which text a row's colours come from.
+///
+/// A row is not always a line of a file on disk. A removed line lives in the base blob; a
+/// row of a conflicted file lives in a merge preview that exists nowhere but memory, because
+/// the file on disk still holds git's markers. Asking for `.new` and indexing the working
+/// copy — which is what every anchor did before W3 — paints those rows with whatever line
+/// happens to sit at that number, which is the bug that mangled highlighting on the first
+/// live run.
+enum HighlightVariant: Hashable {
+    /// The working copy.
+    case new
+    /// The base blob, for deletion bands.
+    case old
+    /// The merged text a conflicted file's document is showing.
+    case mergePreview
+    /// A fragment with no file position at all — the hidden side of a conflict. Keyed by
+    /// the block id so each band parses and caches on its own.
+    case snippet(String)
+}
+
 final class MultiHighlighter: HighlightProviding {
-    /// The file, side, and 0-based source line a stitched row shows.
+    /// The file, variant, and 0-based line a stitched row shows.
     ///
     /// A row-level anchor rather than a `StitchMap` lookup: excerpt line ranges are in
     /// stitched coordinates, so reading them as source lines painted each row with some
     /// other line's colors.
-    private let anchor: (Int) -> (source: SourceID, side: DiffSide, line: Int)?
-    /// A file's text on one side — the working copy, or the base blob.
-    private let textForSource: (SourceID, DiffSide) -> String
+    private let anchor: (Int) -> (source: SourceID, variant: HighlightVariant, line: Int)?
+    /// The text behind a variant — the working copy, the base blob, a merge preview, or a
+    /// loose fragment.
+    private let textForSource: (SourceID, HighlightVariant) -> String
     /// The stitched document's NSRange for a stitched line, or nil if not laid out.
     private let rangeForStitchedLine: (Int) -> NSRange?
     /// The stitched lines a document range covers.
     private let stitchedLineRange: (NSRange) -> Range<Int>?
 
-    /// One parse per file **per side** — a removed line's colors come from the base blob,
+    /// One parse per file **per variant** — a removed line's colors come from the base blob,
     /// which is a different document from the working copy.
     private struct CacheKey: Hashable {
         let source: SourceID
-        let side: DiffSide
+        let variant: HighlightVariant
     }
     private var cache: [CacheKey: [Int: [HighlightRange]]] = [:]
 
@@ -85,8 +106,8 @@ final class MultiHighlighter: HighlightProviding {
     private var lastUsed: [CacheKey: UInt64] = [:]
     private static let maxCachedParses = 24
 
-    init(anchor: @escaping (Int) -> (source: SourceID, side: DiffSide, line: Int)?,
-         textForSource: @escaping (SourceID, DiffSide) -> String,
+    init(anchor: @escaping (Int) -> (source: SourceID, variant: HighlightVariant, line: Int)?,
+         textForSource: @escaping (SourceID, HighlightVariant) -> String,
          rangeForStitchedLine: @escaping (Int) -> NSRange?,
          stitchedLineRange: @escaping (NSRange) -> Range<Int>?) {
         self.anchor = anchor
@@ -95,19 +116,41 @@ final class MultiHighlighter: HighlightProviding {
         self.stitchedLineRange = stitchedLineRange
     }
 
-    /// Drop a file's cached highlights (both sides) — call when its buffer changes.
+    /// Drop a file's cached highlights, every variant — call when its buffer changes.
+    ///
+    /// A filter rather than removing two known keys: `.snippet` carries a block id, so the
+    /// variants belonging to a file are not enumerable up front, and a missed one leaves a
+    /// band wearing the colours of text that no longer exists.
     func invalidate(source: SourceID) {
-        cache.removeValue(forKey: CacheKey(source: source, side: .new))
-        cache.removeValue(forKey: CacheKey(source: source, side: .old))
+        cache = cache.filter { $0.key.source != source }
+        lastUsed = lastUsed.filter { $0.key.source != source }
     }
 
-    func invalidateAll() { cache.removeAll() }
+    /// Drop one variant, for a change that only affects that text — a resolution flip
+    /// rewrites a file's merge preview but not its working copy or its base blob.
+    func invalidate(source: SourceID, variant: HighlightVariant) {
+        let key = CacheKey(source: source, variant: variant)
+        cache.removeValue(forKey: key)
+        lastUsed.removeValue(forKey: key)
+    }
+
+    func invalidateAll() {
+        cache.removeAll()
+        lastUsed.removeAll()
+    }
 
     /// Highlights for one line of a file's **base** blob, for the deletion bands — removed
     /// lines are not in the stitched document, so they can't come through
     /// `queryHighlightsFor`, but they are still code and should read as code.
     func baseHighlights(source: SourceID, line: Int) -> [HighlightRange] {
-        highlights(for: source, side: .old, line: line)
+        highlights(for: source, variant: .old, line: line)
+    }
+
+    /// Highlights for one line of any variant — the same service `baseHighlights` gives
+    /// deletion bands, for the conflict-side bands.
+    func variantHighlights(source: SourceID, variant: HighlightVariant,
+                           line: Int) -> [HighlightRange] {
+        highlights(for: source, variant: variant, line: line)
     }
 
     // MARK: - HighlightProviding
@@ -139,7 +182,7 @@ final class MultiHighlighter: HighlightProviding {
         for stitched in lines {
             guard let loc = anchor(stitched),
                   let target = rangeForStitchedLine(stitched) else { continue }
-            for hl in highlights(for: loc.source, side: loc.side, line: loc.line) {
+            for hl in highlights(for: loc.source, variant: loc.variant, line: loc.line) {
                 // Re-base the file-local range onto this stitched line, clipping to it.
                 guard hl.range.location < target.length else { continue }
                 let length = min(hl.range.length, target.length - hl.range.location)
@@ -154,13 +197,14 @@ final class MultiHighlighter: HighlightProviding {
         completion(.success(out.sorted { $0.range.location < $1.range.location }))
     }
 
-    /// Per-file, per-side, per-line highlights, parsing and caching on first use.
-    private func highlights(for source: SourceID, side: DiffSide, line: Int) -> [HighlightRange] {
-        let key = CacheKey(source: source, side: side)
+    /// Per-file, per-variant, per-line highlights, parsing and caching on first use.
+    private func highlights(for source: SourceID, variant: HighlightVariant,
+                            line: Int) -> [HighlightRange] {
+        let key = CacheKey(source: source, variant: variant)
         useCounter += 1
         lastUsed[key] = useCounter
         if let cached = cache[key] { return cached[line] ?? [] }
-        let byLine = SourceHighlightCache.highlightsByLine(text: textForSource(source, side),
+        let byLine = SourceHighlightCache.highlightsByLine(text: textForSource(source, variant),
                                                            path: source.path)
         cache[key] = byLine
         evictIfNeeded()

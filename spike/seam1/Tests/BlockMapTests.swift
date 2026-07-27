@@ -68,10 +68,18 @@ final class BlockMapTests: XCTestCase {
         map.insert(Block(id: "d", kind: .deletedLines(source: fileA, lines: ["x"],
                                                       startingOldLine: 1),
                          beforeStitchedLine: 1, height: 22))
-        map.insert(Block(id: "c", kind: .conflictControls(fileA),
+        map.insert(Block(id: "c", kind: .conflictControls(source: fileA, conflictID: "a#1",
+                                                          index: 1, total: 1,
+                                                          resolution: nil, kind: .content,
+                                                          oursLabel: "main",
+                                                          theirsLabel: "feature"),
                          beforeStitchedLine: 2, height: 30))
+        map.insert(Block(id: "s", kind: .conflictMarker(source: fileA, conflictID: "a#1",
+                                                        label: "feature", side: .theirs,
+                                                        isEnd: true),
+                         beforeStitchedLine: 3, height: 22))
         map.insert(Block(id: "m", kind: .renderedMarkdown(fileA),
-                         beforeStitchedLine: 3, height: 90))
+                         beforeStitchedLine: 4, height: 90))
         map.removeAll(for: fileA)
         XCTAssertTrue(map.blocks.isEmpty, "every file-owning kind must report its source")
     }
