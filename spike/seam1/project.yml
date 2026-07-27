@@ -5,21 +5,31 @@ options:
     macOS: "13.0"
   createIntermediateGroups: true
 packages:
-  Highlighter:
-    url: https://github.com/smittytone/HighlighterSwift
-    from: 3.1.0
-  CodeEditSourceEditor:
-    url: https://github.com/CodeEditApp/CodeEditSourceEditor
-    revision: 1fa4d3c
   CodeEditLanguages:
     url: https://github.com/CodeEditApp/CodeEditLanguages
     exactVersion: 0.1.20
+  CodeEditSymbols:
+    url: https://github.com/CodeEditApp/CodeEditSymbols
+    exactVersion: 0.2.3
+  TextStory:
+    url: https://github.com/ChimeHQ/TextStory
+    from: 0.9.0
+  TextFormation:
+    url: https://github.com/ChimeHQ/TextFormation
+    from: 0.8.2
+  SwiftCollections:
+    url: https://github.com/apple/swift-collections
+    majorVersion: 1.0.0
   SwiftMarkdown:
     url: https://github.com/apple/swift-markdown
     from: 0.3.0
 settings:
   base:
     SWIFT_VERSION: "5.0"
+    # The vendored editor (Sources/Editor) keeps upstream's `package`-access
+    # declarations, which need a package name to compile outside SwiftPM.
+    SWIFT_PACKAGE_NAME: Shepherd
+    HEADER_SEARCH_PATHS: $(SRCROOT)/Sources/Editor/CodeEditTextViewObjC/include
     CLANG_CXX_LANGUAGE_STANDARD: "gnu++20"
     OTHER_LDFLAGS: "-lstdc++"
     CODE_SIGN_IDENTITY: "-"
@@ -38,11 +48,16 @@ targets:
     dependencies:
       - framework: ../../vendor/GhosttyKit.xcframework
         embed: false
-      - package: Highlighter
-      - package: CodeEditSourceEditor
-        product: CodeEditSourceEditor
       - package: CodeEditLanguages
         product: CodeEditLanguages
+      - package: CodeEditSymbols
+        product: CodeEditSymbols
+      - package: TextStory
+        product: TextStory
+      - package: TextFormation
+        product: TextFormation
+      - package: SwiftCollections
+        product: Collections
       - package: SwiftMarkdown
         product: Markdown
       - target: shepherdd
@@ -89,11 +104,16 @@ targets:
     dependencies:
       - framework: ../../vendor/GhosttyKit.xcframework
         embed: false
-      - package: Highlighter
-      - package: CodeEditSourceEditor
-        product: CodeEditSourceEditor
       - package: CodeEditLanguages
         product: CodeEditLanguages
+      - package: CodeEditSymbols
+        product: CodeEditSymbols
+      - package: TextStory
+        product: TextStory
+      - package: TextFormation
+        product: TextFormation
+      - package: SwiftCollections
+        product: Collections
       - package: SwiftMarkdown
         product: Markdown
       - target: shepherdd
@@ -118,12 +138,18 @@ targets:
     platform: macOS
     dependencies:
       # `@testable import Shepherd` pulls the app module's interface, which now
-      # imports CodeEditSourceEditor (CodeSurfaceView) — the test target must be
-      # able to resolve its transitive modules.
-      - package: CodeEditSourceEditor
-        product: CodeEditSourceEditor
+      # contains the vendored editor (Sources/Editor) — the test target must be
+      # able to resolve the editor's own package dependencies.
       - package: CodeEditLanguages
         product: CodeEditLanguages
+      - package: CodeEditSymbols
+        product: CodeEditSymbols
+      - package: TextStory
+        product: TextStory
+      - package: TextFormation
+        product: TextFormation
+      - package: SwiftCollections
+        product: Collections
       - package: SwiftMarkdown
         product: Markdown
     sources:
@@ -152,6 +178,12 @@ targets:
       - path: Sources/UpdateService.swift
       - path: Sources/UpdateInstaller.swift
       - path: Sources/DiffModel.swift
+      - path: Sources/Workbench/StitchMap.swift
+      - path: Sources/Workbench/BlockMap.swift
+      - path: Sources/Workbench/WordDiff.swift
+      - path: Sources/Workbench/LockPolicy.swift
+      - path: Sources/Workbench/PatchSynth.swift
+      - path: Sources/Workbench/StageSelection.swift
       - path: Sources/CodeSurfaceState.swift
       - path: Sources/Search.swift
       - path: Sources/NotificationRoutingPolicy.swift

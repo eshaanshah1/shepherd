@@ -30,8 +30,9 @@ struct ContentView: View {
                     // Diff and editor are mutually exclusive full-takeover overlays.
                     // One opacity transition keeps open/close/swap calm (sliding both
                     // from the same edge crossed and looked janky).
-                    if store.diffPanelOpen {
-                        DiffPanelView()
+                    if store.diffPanelOpen, let pid = store.diffPanelPaneID,
+                       let session = store.workbenchSession(forPane: pid) {
+                        WorkbenchView(session: session)
                             .environmentObject(store)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .background(Theme.ground)
