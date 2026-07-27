@@ -75,16 +75,16 @@ struct EphemeralOverlayView: View {
 
     private func titleBar(_ e: EphemeralPane, showButtons: Bool) -> some View {
         HStack(spacing: 8) {
+            if showButtons {
+                iconButton("xmark") { store.closeEphemeral(e.id) }
+                iconButton("minus") { store.collapseEphemeral(e.id) }
+            }
             Circle().fill(e.pane.state.color).frame(width: 7, height: 7)
             Text(e.pane.displayTitle)
                 .font(.ui(12.5))
                 .foregroundColor(Theme.textPrimary)
                 .lineLimit(1)
             Spacer(minLength: 0)
-            if showButtons {
-                iconButton("minus") { store.collapseEphemeral(e.id) }
-                iconButton("xmark") { store.closeEphemeral(e.id) }
-            }
         }
         .padding(.horizontal, 10)
         .frame(height: titleBarHeight)
@@ -103,8 +103,8 @@ struct EphemeralOverlayView: View {
     // MARK: Layout
 
     private func overlayFrame(in size: CGSize) -> CGRect {
-        let w = min(900, size.width * 0.65)
-        let h = min(620, size.height * 0.7)
+        let w = min(1400, size.width * 0.82)
+        let h = min(1000, size.height * 0.82)
         return CGRect(x: (size.width - w) / 2, y: (size.height - h) / 2, width: w, height: h)
     }
 
