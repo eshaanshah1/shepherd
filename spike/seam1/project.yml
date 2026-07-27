@@ -184,6 +184,7 @@ targets:
       - path: Sources/Workbench/LockPolicy.swift
       - path: Sources/Workbench/PatchSynth.swift
       - path: Sources/Workbench/StageSelection.swift
+      - path: Sources/Workbench/HunkGaps.swift
       - path: Sources/CodeSurfaceState.swift
       - path: Sources/Search.swift
       - path: Sources/NotificationRoutingPolicy.swift

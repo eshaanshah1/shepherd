@@ -44,6 +44,19 @@ final class DiffGutterView: NSView {
 
     override var isFlipped: Bool { true }
 
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        // `NSView.clipsToBounds` defaults to **false** since macOS 14. Rows are placed at
+        // `yPos - scrollY`, so scrolled-past rows have negative y and were painting
+        // straight over the workbench header above the gutter.
+        clipsToBounds = true
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        clipsToBounds = true
+    }
+
     private weak var observedClipView: NSClipView?
 
     /// Track the editor's scroll directly off its clip view.
@@ -56,11 +69,16 @@ final class DiffGutterView: NSView {
     /// has loaded its view — later than this gutter is first configured.
     var scrollViewProvider: (() -> NSScrollView?)?
 
-    /// Attach if the scroll view exists yet. Cheap and idempotent; the editor pushes this
-    /// once its controller has loaded. Also called from `draw` as a backstop — but only
-    /// as a backstop, since an unattached gutter never redraws on its own.
+    /// Attach to whatever scroll view exists *now*. Cheap and idempotent; the editor
+    /// pushes this once its controller has loaded, and `draw` calls it as a backstop.
+    ///
+    /// Deliberately does not skip when already attached. Rebuilding the document
+    /// re-inits the editor (`.id(session.revision)`), which brings a whole new scroll
+    /// view and clip view — so an "already attached" short-circuit left the gutter
+    /// observing a dead clip view and frozen from the first rebuild onward. `attach(to:)`
+    /// is the one that no-ops when the clip view really is unchanged.
     func attachIfNeeded() {
-        guard observedClipView == nil, let scrollView = scrollViewProvider?() else { return }
+        guard let scrollView = scrollViewProvider?() else { return }
         attach(to: scrollView)
     }
 
@@ -99,6 +117,19 @@ final class DiffGutterView: NSView {
     var lineMetrics: ((Int) -> (yPos: CGFloat, height: CGFloat)?)?
     /// Row index at a document y, so the visible window is found the same way.
     var lineIndex: ((CGFloat) -> Int?)?
+    /// Height of the blocks above a row. The layout manager folds that space into the
+    /// row's height, so without it the number would centre against the block band
+    /// instead of against its own line of text.
+    var blockHeightAbove: ((Int) -> CGFloat)?
+    /// The blocks above a row, so gap bands can put their expand arrows here.
+    ///
+    /// They live in the gutter — as GitHub's do — rather than in the band itself because
+    /// `TextView.hitTest` returns the text view for any point inside it, so line-fragment
+    /// subviews never receive a click. The gutter is our own view and already has mouse
+    /// handling.
+    var blocksAbove: ((Int) -> [Block])?
+    /// Reveal part of a gap: `(file, collapsed range, from the top)`.
+    var onExpandGap: ((SourceID, Range<Int>, Bool) -> Void)?
 
     /// A row's top edge in the gutter's own coordinates.
     private func yFor(_ index: Int) -> CGFloat {
@@ -219,8 +250,13 @@ final class DiffGutterView: NSView {
             guard let row = row?(index) else { continue }
             // One layout query per row, not one per geometry question.
             let metrics = lineMetrics?(index)
-            let y = (metrics?.yPos ?? CGFloat(index) * self.rowHeight) - scrollY
-            let rowHeight = metrics?.height ?? self.rowHeight
+            // The row's box includes any block band above it; the line itself is what's
+            // left underneath, and that is what the number and tint belong to.
+            let blockHeight = blockHeightAbove?(index) ?? 0
+            let blockTop = (metrics?.yPos ?? CGFloat(index) * self.rowHeight) - scrollY
+            let y = blockTop + blockHeight
+            let rowHeight = (metrics?.height ?? self.rowHeight) - blockHeight
+            drawExpandArrows(forRow: index, blockTop: blockTop, style: style)
             if let bg = tintColor(row.tint, style) {
                 bg.setFill()
                 NSRect(x: 0, y: y, width: bounds.width, height: rowHeight).fill()
@@ -249,6 +285,63 @@ final class DiffGutterView: NSView {
         }
     }
 
+    /// Expand arrows for any gap band above `row`, laid out by `expandTargets` so drawing
+    /// and hit testing cannot disagree.
+    private func drawExpandArrows(forRow row: Int, blockTop: CGFloat, style: Style) {
+        var y = blockTop
+        for block in blocksAbove?(row) ?? [] {
+            defer { y += block.height }
+            guard case .hunkGap(_, let collapsed) = block.kind else { continue }
+            let band = NSRect(x: 0, y: y, width: bounds.width, height: block.height)
+            for (glyph, target) in Self.expandTargets(collapsed, in: band) {
+                style.selectionTint.setFill()
+                NSBezierPath(roundedRect: target, xRadius: 3, yRadius: 3).fill()
+                let text = glyph as NSString
+                let size = text.size(withAttributes: style.numberAttributes)
+                text.draw(at: NSPoint(x: target.midX - size.width / 2,
+                                      y: target.midY - size.height / 2),
+                          withAttributes: style.numberAttributes)
+            }
+        }
+    }
+
+    /// Where a gap band's expand buttons sit, in gutter coordinates.
+    static func expandTargets(_ collapsed: Range<Int>, in band: NSRect)
+        -> [(glyph: String, rect: NSRect)] {
+        let side: CGFloat = 16
+        let y = band.midY - side / 2
+        if HunkGaps.isFullyExpandable(collapsed) {
+            return [("↕", NSRect(x: band.midX - side / 2, y: y, width: side, height: side))]
+        }
+        let gap: CGFloat = 3
+        let total = side * 2 + gap
+        return [
+            ("↓", NSRect(x: band.midX - total / 2, y: y, width: side, height: side)),
+            ("↑", NSRect(x: band.midX - total / 2 + side + gap, y: y, width: side, height: side)),
+        ]
+    }
+
+    /// A gap-band expand button at a point, if any.
+    private func expandTarget(at point: NSPoint)
+        -> (source: SourceID, collapsed: Range<Int>, fromTop: Bool)? {
+        guard rowHeight > 0, rowCount > 0 else { return nil }
+        let documentY = point.y + scrollY
+        guard let row = lineIndex?(documentY) ?? Int(exactly: (documentY / rowHeight).rounded(.down)),
+              row >= 0, row < rowCount,
+              let metrics = lineMetrics?(row) else { return nil }
+        var y = metrics.yPos - scrollY
+        for block in blocksAbove?(row) ?? [] {
+            defer { y += block.height }
+            guard case .hunkGap(let source, let collapsed) = block.kind else { continue }
+            let band = NSRect(x: 0, y: y, width: bounds.width, height: block.height)
+            for (glyph, target) in Self.expandTargets(collapsed, in: band)
+            where target.contains(point) {
+                return (source, collapsed, glyph != "↑")
+            }
+        }
+        return nil
+    }
+
     /// Softer than the text rows' tint — the gutter should read as chrome, not content.
     private func tintColor(_ tint: RowTint, _ style: Style) -> NSColor? {
         switch tint {
@@ -262,6 +355,11 @@ final class DiffGutterView: NSView {
     /// Click a row to select the whole line; drag to extend. The row index is arithmetic
     /// from the y, the inverse of `yFor`.
     override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        if let target = expandTarget(at: point) {
+            onExpandGap?(target.source, target.collapsed, target.fromTop)
+            return
+        }
         guard let index = rowIndex(at: event) else { return super.mouseDown(with: event) }
         dragAnchorRow = index
         onSelectRows?(index..<(index + 1))

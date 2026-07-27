@@ -306,18 +306,45 @@ What that unlocks, all of it currently blocked:
 - `BlockMap` gets its first real consumer, ahead of W3's conflict controls and ADR 0019's
   rendered markdown — both of which are block kinds waiting on the same mechanism.
 
-**The unproven part is rendering a block row**, since W0 never drew one. Confirmed
-feasible: `TextLayoutManager+Layout` takes a line's height from the fragments that
-`prepareForDisplay` builds, and a render delegate overriding `prepareForDisplay` controls
-them — so `BlockRenderer` can inflate the row that a block sits above and have
-`DiffRowView` draw the removed lines in that space. That is what `Block.height` and
-`BlockMap.totalHeight(aboveStitchedLine:)` were shaped for. Prove this on one file before
-building the rest of W2 on it.
+**Block rendering is now proven and shipped** (branch `workbench-w2`), on the
+`.fileHeader` blocks `rebuild()` was already emitting and nothing drew — so files get a
+named band instead of running together. `BlockRenderer.prepareForDisplay` inflates the
+line's first fragment, following `MinimapLineRenderer`'s pattern. Three things that
+mattered, all recorded as gotchas in `CLAUDE.md`: pair fragment mutation with
+`lineFragments.update(...)` (it is a sum tree); grow **both** `height` and `scaledHeight`
+so the text lands below the band rather than centred in it; and widen the fragment view,
+which is otherwise only as wide as its text.
 
-**Knock-on:** staging currently selects removed rows as text (`PatchSynth` needs them).
-Once they are blocks, a removal is staged via its block, not a text selection — plan the
-interaction before converting, or hunk-level staging silently loses the ability to stage
-a deletion.
+Still rough on block rows: the caret and selection rects use the fragment's full inflated
+height, so a row carrying a band gets a tall caret. Cosmetic, affects only those rows.
+
+### W2.1 — hunk gaps: "N lines skipped" + expand
+
+Hunks currently butt straight together — line 56 is followed by line 163 with nothing
+saying why. Add a `BlockKind.hunkGap(source:skipped:)` band between consecutive hunks of
+a file: the skipped count, and GitHub's expand-up / expand-down / expand-all controls.
+
+This is the block mechanism's second consumer and it needs no new plumbing to *render*.
+Expanding is where it gets interesting: the lines already exist in the file's
+`SourceBuffer`, and `ExcerptKind.context` is in `StitchMap` for exactly this and has
+never been emitted. So expansion is "insert a `.context` excerpt covering the requested
+range and rebuild" — which is also the same move W2's `⌘P` file finder makes when it
+opens a whole file into the buffer. Build it once here.
+
+**Knock-on — and this one is a correctness bug, not a UX gap.** `StageSelection.selections`
+derives `HunkSelection.lineIndices` from *selected rows*. If removals have no rows, they
+can never be selected, so `⌘⏎` on a hunk would build a patch containing only the
+additions — **silently staging half of a change**, which is worse than not staging it.
+`PatchSynth` is fine (it works from the `DiffHunk` model); the row→selection mapping is
+what breaks.
+
+Decide this before converting `rebuild()`. The cheapest correct answer: **a deletion band
+belongs to the row it sits above.** Selecting that row selects the band's removed line
+indices too, so `RowOrigin` grows from one `lineIndex` to "this line, plus these removed
+indices from the same hunk". Hunk staging then keeps working unchanged, and line-level
+staging of an individual deleted line is deferred rather than broken. Cover it with a
+`StageSelection` test *before* the conversion — the existing tests all assume removals are
+rows, so they will keep passing while the real behaviour regresses.
 
 - **File finder (`⌘P`)**: fuzzy-match repo files; opening one appends a `.context`
   excerpt covering the whole file to `StitchMap` and rebuilds. This is where `StitchMap`

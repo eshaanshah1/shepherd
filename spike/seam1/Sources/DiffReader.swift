@@ -2,6 +2,16 @@ import Foundation
 
 enum DiffMode: Equatable { case workingTree, branchVsBase }
 
+/// What the workbench rail is scoped to.
+///
+/// Wider than `DiffMode`, which is only the git comparison: `threads` is the vs-base
+/// comparison narrowed to the files that carry PR review threads.
+enum WorkbenchScope: Equatable {
+    case workingTree, vsBase, threads
+
+    var mode: DiffMode { self == .workingTree ? .workingTree : .branchVsBase }
+}
+
 struct DiffReadResult: Equatable {
     let files: [DiffFile]
     let baseLabel: String?   // e.g. "master"; nil in working-tree mode / not a repo

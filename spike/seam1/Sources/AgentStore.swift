@@ -39,6 +39,8 @@ final class AgentStore: ObservableObject {
 
     /// PR review threads per pane (keyed by pane id), fetched alongside PR status.
     @Published private(set) var reviewThreads: [String: [GHReviewThread]] = [:]
+    /// Full PR detail per pane, for the workbench's PR band. Same fetch as `prStatuses`.
+    @Published private(set) var prDetails: [String: PRDetail] = [:]
     private var reviewThreadsInFlight: Set<String> = []
 
     /// Set by the `+` button / ⌘⇧N to ask the UI for a name before creating a
@@ -588,17 +590,54 @@ final class AgentStore: ObservableObject {
               let cwd = cwd(forPane: paneID), !cwd.isEmpty else { return }
         prInFlight.insert(paneID)
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let status = GH.prStatus(inDir: cwd)
+            // One `gh` call feeds both: the sidebar's reduced status and the workbench
+            // band's detail.
+            let detail = GH.prDetail(inDir: cwd)
+            let status = detail.map(PR.reduce)
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.prInFlight.remove(paneID)
                 if let status {
                     self.prStatuses[paneID] = status
+                    self.prDetails[paneID] = detail
                     self.refreshReviewThreads(forPane: paneID)   // PR exists → pull its review threads
                 } else {
                     self.prStatuses.removeValue(forKey: paneID)
+                    self.prDetails.removeValue(forKey: paneID)
                     self.reviewThreads.removeValue(forKey: paneID)
                 }
+            }
+        }
+    }
+
+    /// Submit a review, then refetch so the band reflects it. Off-main.
+    func submitPRReview(_ verdict: PRReviewVerdict, body: String, forPane paneID: String,
+                        completion: @escaping (String?) -> Void) {
+        guard let cwd = cwd(forPane: paneID), !cwd.isEmpty else {
+            completion("This pane has no working directory.")
+            return
+        }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let error = GH.review(verdict, body: body, inDir: cwd).errorText
+            DispatchQueue.main.async {
+                completion(error)
+                if error == nil { self?.refreshPR(forPane: paneID) }
+            }
+        }
+    }
+
+    /// Merge the pane's PR, then refetch. Off-main.
+    func mergePR(method: PRMergeMethod, deleteBranch: Bool, forPane paneID: String,
+                 completion: @escaping (String?) -> Void) {
+        guard let cwd = cwd(forPane: paneID), !cwd.isEmpty else {
+            completion("This pane has no working directory.")
+            return
+        }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let error = GH.merge(method: method, deleteBranch: deleteBranch, inDir: cwd).errorText
+            DispatchQueue.main.async {
+                completion(error)
+                if error == nil { self?.refreshPR(forPane: paneID) }
             }
         }
     }

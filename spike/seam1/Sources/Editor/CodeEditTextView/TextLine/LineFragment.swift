@@ -53,6 +53,17 @@ public final class LineFragment: Identifiable, Equatable {
     public var descent: CGFloat
     public var scaledHeight: CGFloat
 
+    /// Space reserved above this fragment's text, for a decoration drawn in the row's
+    /// own space (Shepherd: diff block rows — file headers, hunk gaps, deleted lines).
+    ///
+    /// **Shepherd addition to the vendored editor.** The fragment is grown to make room,
+    /// so anything measuring the *text* — the caret, selection rects — has to discount
+    /// the reserved space or it covers the decoration too.
+    public var topInset: CGFloat = 0
+
+    /// The fragment's height excluding any reserved decoration space.
+    public var textHeight: CGFloat { scaledHeight - topInset }
+
     /// The difference between the real text height and the scaled height
     public var heightDifference: CGFloat {
         scaledHeight - height

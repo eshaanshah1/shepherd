@@ -6,6 +6,9 @@ enum BlockKind: Equatable {
     case fileHeader(SourceID)
     /// Removed lines, rendered as a block because they exist in no current file.
     case deletedLines(source: SourceID, lines: [String], startingOldLine: Int)
+    /// Unchanged lines the diff skipped between two hunks, still hidden. `collapsed` is
+    /// 0-based new-side file lines.
+    case hunkGap(source: SourceID, collapsed: Range<Int>)
     /// Alignment padding on the shorter side of a split diff.
     case spacer(rows: Int)
     case conflictControls(SourceID)
@@ -17,7 +20,7 @@ enum BlockKind: Equatable {
         switch self {
         case .fileHeader(let s), .conflictControls(let s), .renderedMarkdown(let s):
             return s
-        case .deletedLines(let s, _, _):
+        case .deletedLines(let s, _, _), .hunkGap(let s, _):
             return s
         case .spacer:
             return nil
