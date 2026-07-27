@@ -83,9 +83,13 @@ extension TextSelectionManager {
             if endOfLine && !(endOfDocument && !emptyLine) {
                 maxRect = CGRect(
                     x: rect.maxX,
-                    y: fragmentPosition.yPos + linePosition.yPos,
+                    // `topInset`/`textHeight`, not the fragment's own top and full height:
+                    // the inset is decoration space above the text (Shepherd's block rows),
+                    // so the raw height made a selection reaching the end of a line spill
+                    // over the whole band the line carries.
+                    y: fragmentPosition.yPos + linePosition.yPos + fragmentPosition.data.topInset,
                     width: 0,
-                    height: fragmentPosition.height
+                    height: fragmentPosition.data.textHeight
                 )
             } else if let maxFragmentRect = layoutManager.rectForOffset(intersectionRange.max) {
                 maxRect = maxFragmentRect

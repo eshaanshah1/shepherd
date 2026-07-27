@@ -38,6 +38,32 @@ enum GitStaging {
         return run(["restore", "--staged", "--"] + paths, cwd: cwd)
     }
 
+    /// Local branch names, current one first.
+    static func listBranches(cwd: String) -> [String] {
+        guard case .ok(let out) = run(["for-each-ref", "--sort=-committerdate",
+                                       "--format=%(refname:short)", "refs/heads"],
+                                      cwd: cwd) else { return [] }
+        return out.components(separatedBy: "\n").filter { !$0.isEmpty }
+    }
+
+    /// Switch branches. Git refuses on its own when the tree would be clobbered, and the
+    /// reason comes back on stderr rather than being swallowed.
+    static func checkout(branch: String, cwd: String) -> GitResult {
+        run(["checkout", branch], cwd: cwd)
+    }
+
+    /// Every file in the repo, for `⌘P` — tracked plus untracked-but-not-ignored.
+    ///
+    /// `git ls-files` rather than a directory walk: it is one process, it already honours
+    /// `.gitignore`, and it will not wander into `node_modules` or a vendored xcframework.
+    static func listFiles(cwd: String) -> [String] {
+        guard case .ok(let out) = run(["ls-files", "--cached", "--others",
+                                       "--exclude-standard"], cwd: cwd) else { return [] }
+        var seen = Set<String>()
+        return out.components(separatedBy: "\n")
+            .filter { !$0.isEmpty && seen.insert($0).inserted }
+    }
+
     /// Commit the index. The message goes in on stdin so quoting and newlines can't be
     /// mangled by argument construction.
     static func commit(message: String, cwd: String, amend: Bool = false) -> GitResult {

@@ -39,7 +39,12 @@ enum DiffParser {
     /// Parse `git diff` unified output (with `--git` headers) into files.
     static func parse(_ unified: String) -> [DiffFile] {
         var files: [DiffFile] = []
-        let lines = unified.components(separatedBy: "\n")
+        var lines = unified.components(separatedBy: "\n")
+        // `git diff` output ends with a newline, so the split leaves a trailing "" that is
+        // not a diff line at all. Inside the last hunk it read as a blank context line and
+        // became a phantom row — one line past the end of the file, with a line number that
+        // doesn't exist, and an extra context line in any patch synthesized from that hunk.
+        if lines.last?.isEmpty == true { lines.removeLast() }
         var i = 0
         while i < lines.count {
             guard lines[i].hasPrefix("diff --git ") else { i += 1; continue }
@@ -124,10 +129,17 @@ enum DiffParser {
 
     /// `@@ -1,3 +1,3 @@ optional section` → (1,3,1,3).
     private static func parseHunkRanges(_ header: String) -> (Int, Int, Int, Int) {
-        // Between the two "@@" markers: "-oldStart,oldCount +newStart,newCount"
-        let parts = header.components(separatedBy: " ")
+        // **Only** between the two "@@" markers. Scanning the whole header let the section
+        // heading git appends re-parse the ranges — `->` in a Swift signature starts with
+        // "-", so `oldStart` silently became 0 and every synthesized patch for that hunk
+        // was rejected by `git apply`.
+        var body = Substring(header)
+        if let open = header.range(of: "@@"),
+           let close = header.range(of: "@@", range: open.upperBound..<header.endIndex) {
+            body = header[open.upperBound..<close.lowerBound]
+        }
         var os = 0, oc = 1, ns = 0, nc = 1
-        for p in parts {
+        for p in body.split(separator: " ") {
             if p.hasPrefix("-") { (os, oc) = parseRange(p.dropFirst()) }
             else if p.hasPrefix("+") { (ns, nc) = parseRange(p.dropFirst()) }
         }

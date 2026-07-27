@@ -23,6 +23,7 @@ enum ShortcutID: CaseIterable {
     case newWorkspace, nextWorkspace, prevWorkspace
     case find, reviewDiff, openEditor, saveFile
     case nextHunk, prevHunk, stageHunk, unstageHunk, focusCommitMessage, commentOnLine, selectScope
+    case openFileFinder
     case nextAlert
     case reloadConfig, showShortcuts
 }
@@ -63,7 +64,7 @@ enum ShortcutCatalog {
         .init(id: .find,       title: "Find",        key: "f", modifiers: .command, category: .tools, display: "⌘F"),
         .init(id: .reviewDiff, title: "Review Diff", key: "g", modifiers: .command, category: .tools, display: "⌘G"),
         .init(id: .openEditor, title: "Open Editor", key: "o", modifiers: .command, category: .tools, display: "⌘O"),
-        .init(id: .saveFile,   title: "Save File",   key: "s", modifiers: .command, category: .tools, display: "⌘S"),
+        .init(id: .saveFile,   title: "Save",        key: "s", modifiers: .command, category: .tools, display: "⌘S"),
 
         // Workbench keys are declared inside `WorkbenchView`, not the menu bar: a menu
         // key equivalent wins over the key window's responder chain, so binding ⌥↓ or
@@ -76,6 +77,7 @@ enum ShortcutCatalog {
         .init(id: .unstageHunk,        title: "Unstage Selection",  key: nil, modifiers: [], category: .workbench, display: "⌘⌥⏎"),
         .init(id: .focusCommitMessage, title: "Focus Commit Box",   key: nil, modifiers: [], category: .workbench, display: "⌘K"),
         .init(id: .commentOnLine,      title: "Comment on Line",    key: nil, modifiers: [], category: .workbench, display: "⌘⇧C"),
+        .init(id: .openFileFinder,     title: "Open File…",        key: nil, modifiers: [], category: .workbench, display: "⌘P"),
         .init(id: .selectScope,        title: "Select Scope N",     key: nil, modifiers: [], category: .workbench, display: "⌃1–⌃4"),
 
         .init(id: .nextAlert, title: "Jump to Next Alert", key: "a", modifiers: [.command, .shift], category: .attention, display: "⌘⇧A"),

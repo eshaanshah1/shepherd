@@ -76,7 +76,7 @@ spike/
 
 `Tests/` holds the **`ShepherdModelTests`** target (a `bundle.unit-test` in `project.yml`: `SplitTreeTests.swift`, `WorkspaceTests.swift`, `PersistenceTests.swift`, `SleepPolicyTests.swift`, `StopPolicyTests.swift`, `WorktreeArchiveTests.swift`, `PRStatusTests.swift`, `ShortcutCatalogTests.swift`, `ShepherdConfigWriterTests.swift`, `WorktreeHookRunnerTests.swift`, `VersionTests.swift`, `IdlePolicyTests.swift`, `UpdateServiceTests.swift`, `UpdateInstallerTests.swift`, plus the workbench's
 `StitchMapTests`/`BlockMapTests`/`WordDiffTests`(+`HunkPairingTests`)/`LockPolicyTests`/
-`PatchSynthTests`/`StageSelectionTests`) — pure-model coverage of the `SplitNode` tree ops, the `Workspace`/`locatePane` helpers, the persistence snapshot/restore/migration (incl. `worktreeHook`), the sleep policy, the `applyEvent` lifecycle/background-`Stop` suppression, the worktree-archive expiry/age math, the PR-status classify/parse reduction, the shortcut-catalog integrity (no dupe glyphs/ids, full `ShortcutID` coverage), the config-writer key round-trip (preserve/insert/update), and the worktree-hook env map, compiling `SplitTree`/`Tab`/`AgentState`/`Theme`/`Workspace`/`Persistence`/`SleepPolicy`/`StopPolicy`/`WorktreeService`/`WorktreeArchive`/`PRStatus`/`ShortcutCatalog`/`ShepherdConfigWriter`/`WorktreeHookRunner` without the AppKit surface. Test files added under `Tests/` are picked up by the `- path: Tests` glob, but a new compiled **source** must be added to the target's explicit `sources:` list in `project.yml`.
+`PatchSynthTests`/`StageSelectionTests`/`RowPlanTests`/`HunkGapsTests`) — pure-model coverage of the `SplitNode` tree ops, the `Workspace`/`locatePane` helpers, the persistence snapshot/restore/migration (incl. `worktreeHook`), the sleep policy, the `applyEvent` lifecycle/background-`Stop` suppression, the worktree-archive expiry/age math, the PR-status classify/parse reduction, the shortcut-catalog integrity (no dupe glyphs/ids, full `ShortcutID` coverage), the config-writer key round-trip (preserve/insert/update), and the worktree-hook env map, compiling `SplitTree`/`Tab`/`AgentState`/`Theme`/`Workspace`/`Persistence`/`SleepPolicy`/`StopPolicy`/`WorktreeService`/`WorktreeArchive`/`PRStatus`/`ShortcutCatalog`/`ShepherdConfigWriter`/`WorktreeHookRunner` without the AppKit surface. Test files added under `Tests/` are picked up by the `- path: Tests` glob, but a new compiled **source** must be added to the target's explicit `sources:` list in `project.yml`.
 
 ---
 
@@ -322,6 +322,11 @@ Roadmap + everything the first live run taught:
   per-row tables (`rowStyles` / `gutterRows` / `rowOrigins`), staging state, comments,
   and the git actions (all off-main). **Also owns the `MultiHighlighter` and
   `BlockRenderer`** — they must be the *same objects* across view updates (see gotchas).
+- **`RowPlan`** — pure, and the **single authority on the document layout**: `RowPlanner
+  .plan(files:revealed:)` decides which diff line each text row shows (`RowOrigin`, which also
+  carries that row's gutter numbers) and where every band goes (`PlannedBlock`: file header /
+  hunk gap / deletion). `WorkbenchSession.rebuild` only materializes the text + styles it
+  implies, so the tested walk and the real one can't drift.
 - **`StitchMap` / `BlockMap` / `WordDiff` + `HunkPairing` / `LockPolicy` /
   `PatchSynth` / `StageSelection`** — pure, unit-tested.
 - **`SourceBuffer`** — one watched file; text, lazy base blob, dirty/live-follow.
@@ -329,12 +334,36 @@ Roadmap + everything the first live run taught:
 - **`DiffGutter` / `BlockRenderer` / `MultiHighlighter` / `EditorHost`** — the AppKit half.
 - **`WorkbenchView` / `WorkbenchThreads` / `WorkbenchComments`** — the SwiftUI chrome.
 
+**The buffer is editable.** `WriteBackCoordinator` maps each change onto the file its row
+came from (`EditMap`, pure + tested) and keeps `rowOrigins`/`rowStyles`/`lineStarts`/blocks in
+step; nothing reaches disk until ⌘S. Two guards: an edit must cover **one contiguous run of a
+single file's lines** (a file's rows are discontinuous, so an edit across a hunk gap would
+rewrite the hidden lines and is refused via `shouldReplaceContentsIn`, which this fork
+forwards to coordinators), and the file's own lines must still match what the document shows
+or the write offsets are stale. Typed rows carry `lineIndex: -1` so they can never reach
+`PatchSynth`; staging a file with unsaved edits is refused. `⌘P` (`FileFinder`) opens any repo
+file whole as a `.context` excerpt.
+
+**The text buffer is new-side only.** Every row is a real line of a real file — added,
+context, or context revealed out of a hunk gap. **Removals are `.deletedLines` blocks**, not
+rows, because a removed line exists in no file on disk and so has nowhere for an edit to be
+written back to; that invariant is what W2's write-back rests on. A band is **owned by the row
+it abuts** (`RowOrigin.deletedRefs`), so `⌘⏎` on a hunk still stages its deletions instead of
+silently staging only the additions. A run at the end of a hunk is owned by that hunk's *last*
+row (drawn after it, on the trailing empty line if the hunk ends the document); an all-removal
+hunk — a deleted file — has no owning row and is whole-file staging only. Bands render as code:
+base-blob syntax colours (`MultiHighlighter.baseHighlights`, parsed lazily per band, cached),
+removed tint, word-diff spans, and old numbers + `-` in the gutter.
+
 **Scope** is working-tree or vs-base. Clicking a file in the rail **narrows the buffer to
 that file** (`session.focus(file:)`); the header chip / "All N files" row restores it.
 The rail splits **STAGED / UNSTAGED / COMMITTED** — vs-base lists files that are already
 committed, and `git add` on those does nothing, so they get no stage button.
 **Line selection is the editor's text selection** (or a gutter click/drag), not a
-checkbox column; `⌘⏎` stages exactly that, falling back to the cursor's hunk.
+checkbox column; `⌘⏎` stages exactly that, falling back to the cursor's hunk. The gutter
+deliberately does **not** mirror that selection — tinting selected line numbers made a
+text drag look like a gutter drag. A removed line can't be selected at all (a band isn't
+text), so `⌘C` doesn't yield removals; copy-over-bands is a recorded follow-up.
 
 **PR status on idle agents:** when a pane is `.idle` and its checkout has a PR, the
 leading state dot is replaced by a clickable **PR-status icon** (Tabler git-pull-request
@@ -413,7 +442,12 @@ falls back to a plain shell. Requires the plugin reporting `session_id` — afte
 - **Workbench: a rebuild replaces the whole editor.** `EditorHost` keys `SourceEditor` on `.id(session.revision)`, so anything that rebuilds the document (focusing a file, staging, reloading) gives you a *new* `TextViewController`, scroll view, and clip view. Anything holding an editor-owned object must **re-resolve it, never cache once** — an "already attached, skip" short-circuit left the gutter observing a dead clip view and frozen from the first rebuild onward.
 - **Workbench: `NSView.clipsToBounds` defaults to `false` since macOS 14.** `DiffGutterView` places rows at `yPos - scrollY`, so scrolled-past rows have negative y and will paint straight over the chrome above unless the view sets `clipsToBounds = true`.
 - **Workbench: block rows are drawn by inflating a line fragment** (`BlockRenderer.prepareForDisplay`), following the pattern `MinimapLineRenderer` establishes. `TextLine.lineFragments` is a sum tree caching each fragment's height, so mutating a fragment **must** be paired with `update(atOffset:delta:deltaHeight:)`. Grow **both** `height` and `scaledHeight`: `LineFragmentRenderer` measures the baseline down from `height`, so raising it puts the text at the bottom and leaves the reserved space above — raising only `scaledHeight` centres the text and splits the space in two. A fragment view is sized to its *text* width, so anything full-bleed (bands, row tints) must widen it.
-- **Workbench: `Excerpt.lineRange` is in *stitched* coordinates, not source lines.** A hunk interleaves both sides, so it is not a contiguous range in either file. To map a row to a file line use `WorkbenchSession.sourceAnchor(atStitchedLine:)` → `(file, side, 0-based line)`; `StitchMap.sourceLocation` is only safe for its `.source`. Reading it as a source line is what painted every row with some other line's syntax colors.
+- **Workbench: `Excerpt.lineRange` is a *row* span, not source lines.** To map a row to a file line use `WorkbenchSession.sourceAnchor(atStitchedLine:)` → `(file, side, 0-based line)`, read off `rowOrigins`. Reading `lineRange` as source lines is what painted every row with some other line's syntax colors. Worse, `StitchMap.locate` (and so `sourceLocation` / `excerpt(atStitchedLine:)` / `stitchedLine(for:)`) resolves a row by **summing excerpt lengths**, which silently stops matching the document as soon as a hunk gap is expanded — those rows belong to no excerpt. Those lookups currently have **no callers**; don't become the first.
+- **Workbench: never build a `Range` straight out of hunk arithmetic.** An inverted `Range` *traps*, and `(prev.newStart - 1 + prev.newCount)..<(hunk.newStart - 1)` inverts the moment hunks aren't strictly ascending. Real `git diff` output is, so it never fired in the app — it crashed the test runner instead. `RowPlanner` clamps with `max(start, end)`; keep any new hunk-span math clamped too.
+- **A SwiftUI `Menu`'s custom label rescales image content.** macOS renders it through an NSPopUpButton, which scales images to the control's height — a `TablerIcon(size: 8)` in a `Menu { } label: { }` measured **18pt** of ink, and no `size:` had any effect. Put icons in the enclosing `HStack` and give the `Menu` only its text. Cost three rounds of "make it smaller" on a value that was being discarded; when a size change appears to do nothing, measure the rendered window before touching the number again (`screencapture -l <id>` + a raw-buffer ink scan).
+- **Workbench: a dirty buffer is the source of truth for its own rows.** `rebuild()` materializes row text from the *diff*, which describes **disk**. For a file with unsaved edits that silently replaces the edited lines with the saved ones while `SourceBuffer` still holds the edit — and then `canApplyEdit`'s staleness guard correctly refuses every further edit to those lines, so they go read-only for no visible reason. `rebuild` reads rows of `dirtyPaths` files from the buffer instead. Known gap: after inserting/deleting lines the diff's hunk boundaries for that file are stale until ⌘S (line numbers stay right — `absorbEdit` renumbers), so its +/− tinting can be off by the number of lines added.
+- **Workbench: bound block drawing by `visibleRect`, never by `dirtyRect` alone.** A deletion band makes one line fragment as tall as the run it shows (a 40-line deletion ⇒ ~1000pt), and AppKit hands a view that tall a *partial* dirty rect. A fragment view that has just scrolled into existence has no earlier content to preserve, so every row skipped stayed permanently blank — the band drew its first 30 rows and nothing else, while the gutter (viewport-sized, fully invalidated per scroll) drew all 40. `DiffRowView.draw` uses `visibleRect.union(dirtyRect)` so a pass can only ever paint more than asked, never less.
+- **Workbench: a block's internal rows divide the block's own height.** A deletion band's line height is `block.height / lines.count`, in both `DiffRowView` and `DiffGutterView` — never `WorkbenchMetrics.rowHeight`, which is an estimate of the *text's* line height and drifts against a long run. Same rule as the gutter one above: exactly one opinion about where a row sits.
 - **`xcodegen generate` after any file add/remove** — else the new file isn't compiled (`cannot find X in scope` at *build* time).
 - **SourceKit lies in this repo** — "Cannot find type AgentState/…" and "'main' attribute…" diagnostics are stale because the editor sees loose files, not the generated project. `xcodebuild` is ground truth; ignore SourceKit "cannot find" noise.
 - **App version is stamped at release time, not in `project.yml`**: `project.yml` ships a `CFBundleShortVersionString: "0.0.0-dev"` sentinel (so local/dev builds read as a prerelease and the updater stays dormant). The real version is stamped into the built bundle by the release workflow (`PlistBuddy Set :CFBundleShortVersionString ${VERSION#v}`, before `codesign`). Don't hardcode a real version in `project.yml`. Update failures/relaunch log to `/tmp/shepherd-update.log`.
@@ -449,10 +483,13 @@ live control session, `DataReady{cols,rows}`, ring replay then raw duplex PTY by
 resizer. Dark-shipped (live only when serving + a helper exists). Pure `RemoteProtocol`/`PtyRing`
 unit-tested; loopback E2E in `ShepherdRemoteTests`; tap in `ShepherdHelperTests`. Android terminal
 client (sub-project B) is the next slice. See `docs/superpowers/specs/2026-07-02-android-phase2-data-channels-design.md`.
-**Unified workbench (⌘G, branch `unified-workbench-spec`):** W0 (editor vendored, stitched
-multibuffer, gutter, one tokenizer) + W1 (review, line/hunk staging, commit box, PR review
-threads) done and live-run. **W2–W5 remain** — editing in anger, merge resolver, PR
-surface, history/blame/rebase. See the roadmap for the deviations from plan and the
+**Unified workbench (⌘G):** W0 (editor vendored, stitched multibuffer, gutter, one
+tokenizer) + W1 (review, line/hunk staging, commit box, PR review threads) done and
+live-run. **W2 done**: W2.0 (rows new-side only, removals as `.deletedLines` blocks) +
+W2.1 (hunk-gap bands + expand), both live-run; W2.2 (**edit write-back** via `EditMap`,
+⌘S save, reconcile choice, ⌘P open-any-file via `FileFinder`, branch menu + worktree),
+compile+tests only — **not yet run**. Remaining: W3 merge resolver, the rest of W4,
+W5 history. See the roadmap for the deviations from plan and the
 eleven defects the first live run turned up.
 
 **Deferred (see SPEC §6):** generic non-Claude agents (Tier-B), sidebar auto-hide at ≤1 tab, debug-log flag, IME/selection polish, multi-window, navigator popup, and **full remote control** (the big future bet).

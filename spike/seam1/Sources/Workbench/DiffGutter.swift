@@ -8,7 +8,6 @@ struct GutterRow: Equatable {
     let lineNumber: Int?
     let sign: Character?      // "+", "-", or nil for context
     let tint: RowTint
-    let selected: Bool
 }
 
 /// The workbench gutter: `[line no] [sign]`.
@@ -23,6 +22,10 @@ struct GutterRow: Equatable {
 /// **No checkbox column.** Per-line staging selection is the editor's own text selection
 /// (drag in the text, or drag here to take whole lines); a permanently reserved tick box
 /// on every row was a lot of chrome for something used occasionally.
+///
+/// **The gutter does not mirror that selection.** It used to tint selected rows so both
+/// surfaces agreed, but dragging in the text then lit up the line numbers alongside it,
+/// which reads as the gutter being dragged too. The text selection is its own feedback.
 ///
 /// The sign gets its own column instead of being prefixed into the text. The old diff
 /// panel prefixed it, which pushed changed lines one character right of context lines.
@@ -256,13 +259,9 @@ final class DiffGutterView: NSView {
             let blockTop = (metrics?.yPos ?? CGFloat(index) * self.rowHeight) - scrollY
             let y = blockTop + blockHeight
             let rowHeight = (metrics?.height ?? self.rowHeight) - blockHeight
-            drawExpandArrows(forRow: index, blockTop: blockTop, style: style)
+            drawBands(forRow: index, blockTop: blockTop, style: style, dirtyRect: dirtyRect)
             if let bg = tintColor(row.tint, style) {
                 bg.setFill()
-                NSRect(x: 0, y: y, width: bounds.width, height: rowHeight).fill()
-            }
-            if row.selected {
-                style.selectionTint.setFill()
                 NSRect(x: 0, y: y, width: bounds.width, height: rowHeight).fill()
             }
 
@@ -285,23 +284,64 @@ final class DiffGutterView: NSView {
         }
     }
 
-    /// Expand arrows for any gap band above `row`, laid out by `expandTargets` so drawing
-    /// and hit testing cannot disagree.
-    private func drawExpandArrows(forRow row: Int, blockTop: CGFloat, style: Style) {
+    /// The gutter's share of the bands above `row`: a gap band's expand arrows, and a
+    /// deletion band's old-side numbers. Laid out by `expandTargets` so drawing and hit
+    /// testing cannot disagree.
+    private func drawBands(forRow row: Int, blockTop: CGFloat, style: Style,
+                          dirtyRect: NSRect) {
         var y = blockTop
         for block in blocksAbove?(row) ?? [] {
-            defer { y += block.height }
-            guard case .hunkGap(_, let collapsed) = block.kind else { continue }
             let band = NSRect(x: 0, y: y, width: bounds.width, height: block.height)
-            for (glyph, target) in Self.expandTargets(collapsed, in: band) {
-                style.selectionTint.setFill()
-                NSBezierPath(roundedRect: target, xRadius: 3, yRadius: 3).fill()
-                let text = glyph as NSString
-                let size = text.size(withAttributes: style.numberAttributes)
-                text.draw(at: NSPoint(x: target.midX - size.width / 2,
-                                      y: target.midY - size.height / 2),
-                          withAttributes: style.numberAttributes)
+            y += block.height
+            guard band.intersects(dirtyRect) else { continue }
+            switch block.kind {
+            case .hunkGap(_, let collapsed):
+                for (glyph, target) in Self.expandTargets(collapsed, in: band) {
+                    style.selectionTint.setFill()
+                    NSBezierPath(roundedRect: target, xRadius: 3, yRadius: 3).fill()
+                    let text = glyph as NSString
+                    let size = text.size(withAttributes: style.numberAttributes)
+                    text.draw(at: NSPoint(x: target.midX - size.width / 2,
+                                          y: target.midY - size.height / 2),
+                              withAttributes: style.numberAttributes)
+                }
+            case .deletedLines(_, let lines, let startingOldLine):
+                drawDeletedNumbers(count: lines.count, startingOldLine: startingOldLine,
+                                   in: band, style: style, dirtyRect: dirtyRect)
+            default:
+                continue
             }
+        }
+    }
+
+    /// Old-side numbers and `-` signs beside a deletion band, one per removed line.
+    ///
+    /// The row height comes from dividing the band, exactly as the band's own renderer
+    /// divides it — never from `rowHeight`, which is only an estimate of the text's real
+    /// line height and would drift down a long run.
+    private func drawDeletedNumbers(count: Int, startingOldLine: Int, in band: NSRect,
+                                   style: Style, dirtyRect: NSRect) {
+        guard count > 0 else { return }
+        let rowHeight = band.height / CGFloat(count)
+        let glyphHeight = ("0" as NSString).size(withAttributes: style.numberAttributes).height
+        let numberWidth = CGFloat(String(max(1, maxLineNumber)).count) * style.digitAdvance
+
+        for index in 0..<count {
+            let rect = NSRect(x: 0, y: band.minY + CGFloat(index) * rowHeight,
+                              width: band.width, height: rowHeight)
+            guard rect.intersects(dirtyRect) else { continue }
+            style.removedTint.setFill()
+            rect.fill()
+
+            let textY = rect.minY + (rowHeight - glyphHeight) / 2
+            let number = String(startingOldLine + index)
+            let width = CGFloat(number.count) * style.digitAdvance
+            (number as NSString).draw(
+                at: NSPoint(x: Self.leadingPad + numberWidth - width, y: textY),
+                withAttributes: style.numberAttributes)
+            ("-" as NSString).draw(
+                at: NSPoint(x: Self.leadingPad + numberWidth + Self.gap, y: textY),
+                withAttributes: style.removeSignAttributes)
         }
     }
 

@@ -10,6 +10,9 @@ struct WorkbenchView: View {
     /// The line being commented on, resolved from the editor's cursor.
     @State private var composing: (file: String, line: Int, side: DiffSide)?
     @FocusState private var commitFocused: Bool
+    /// Name for a new worktree, collected before handing off to the existing flow.
+    @State private var worktreePrompt = false
+    @State private var worktreeName = ""
 
     var body: some View {
         HStack(spacing: 0) {
@@ -31,14 +34,28 @@ struct WorkbenchView: View {
         }
         .background(Theme.ground)
         .overlay { composerOverlay }
+        .overlay { if session.finderOpen { WorkbenchFinder(session: session) } }
+        .alert("New worktree", isPresented: $worktreePrompt) {
+            TextField("Branch name", text: $worktreeName)
+            Button("Create") { createWorktree() }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Creates a worktree off origin's default branch and opens it in a new tab.")
+        }
         .background { keyBindings }
         .onAppear {
             session.load()
+            // Once per open, not per glance at the header: the old `.onTapGesture` on the
+            // Menu was also unreliable, since the menu consumes the tap.
+            session.loadBranches()
             // The pane may never have gone idle (so the periodic PR sweep never ran),
             // and vs-base review is the reason to be here.
             store.refreshPR(forPane: session.paneID)
         }
         .onChange(of: session.mode) { _ in session.load() }
+        // The store owns the threads; the session needs them to place the inline notes.
+        .onChange(of: paneThreads) { session.threads = $0 }
+        .onAppear { session.threads = paneThreads }
         .onChange(of: store.diffTurnTick) { _ in
             if store.diffTurnPane == session.paneID { session.load() }
         }
@@ -59,6 +76,7 @@ struct WorkbenchView: View {
             key(.return, [.command]) { session.stageSelection() }
             key(.return, [.command, .option]) { session.unstageSelection() }
             key("k", [.command]) { commitFocused = true }
+            key("p", [.command]) { session.openFinder() }
             key("1", [.control]) { session.mode = .workingTree }
             key("2", [.control]) { session.mode = .branchVsBase }
         }
@@ -113,6 +131,7 @@ struct WorkbenchView: View {
         HStack(spacing: 10) {
             summary
             Spacer()
+            branchMenu
             threadsButton
             stagingButtons
             commentButton
@@ -121,6 +140,58 @@ struct WorkbenchView: View {
             GhostIconButton(systemName: "xmark", help: "Close (⌘G)") { store.diffPanelOpen = false }
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
+    }
+
+    /// Hands off to the existing worktree flow, which resolves the repo from the
+    /// workspace's default directory rather than from this pane.
+    private func createWorktree() {
+        let name = worktreeName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, let located = locatePane(session.paneID, in: store.workspaces)
+        else { return }
+        let workspace = store.workspaces[located.ws]
+        guard workspace.defaultPath != nil else {
+            session.lastError = "Set the workspace's directory first (right-click the "
+                + "workspace in the sidebar → Set Directory…) — worktrees are created from it."
+            return
+        }
+        store.newWorktreeTab(inWorkspace: workspace.id, name: name)
+    }
+
+    /// Current branch, with the branch list and "new worktree tab" behind it.
+    ///
+    /// The list is read once when the workbench opens (see `onAppear`), not per render.
+    @ViewBuilder private var branchMenu: some View {
+        if let branch = session.branchName {
+            HStack(spacing: 4) {
+                // **Outside** the Menu, not in its label. macOS renders a SwiftUI `Menu`'s
+                // custom label through an NSPopUpButton, which scales image content to the
+                // control's height — inside the label this glyph measured 18pt of ink
+                // whatever frame it was given, so no `size:` had any effect at all.
+                //
+                // 11 matches the text's ink height: 8.25pt of glyph against 8.25pt of
+                // DM Sans at 11pt. Sizing to the x-height instead (8, ~6pt of ink) reads as
+                // obviously undersized. Measured, and eyeballed at 8/9/10/11/12 — see
+                // scratchpad/menu.
+                TablerIcon(paths: Tabler.gitBranch, size: 11)
+                Menu {
+                    Section("Switch to") {
+                        ForEach(session.branches.filter { $0 != branch }, id: \.self) { name in
+                            Button(name) { session.checkout(branch: name) }
+                        }
+                    }
+                    Divider()
+                    Button("New Worktree Tab…") { worktreeName = ""; worktreePrompt = true }
+                } label: {
+                    Text(branch).font(.ui(11, .medium)).lineLimit(1)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .focusable(false)
+                .disabled(session.writing)
+            }
+            .foregroundStyle(Theme.textSecondary)
+            .help("Branch — switch, or start a worktree")
+        }
     }
 
     /// The dense one-line summary: magnitude, file count, and what we're comparing to.
@@ -373,44 +444,52 @@ struct WorkbenchView: View {
         .padding(.horizontal, 10).padding(.vertical, 8)
     }
 
+    /// Scope as one segmented pill rather than a stack of rows with a tick.
+    ///
+    /// Segments share the width equally instead of sizing to their text, so a long base
+    /// label (`origin/feature/…`) truncates inside its own segment rather than pushing the
+    /// others off the rail.
     private var scopeList: some View {
-        VStack(spacing: 0) {
-            scopeRow("Working tree", active: session.scope == .workingTree) {
+        HStack(spacing: 2) {
+            scopeSegment("Working tree", active: session.scope == .workingTree) {
                 session.setScope(.workingTree)
             }
-            scopeRow("Against \(session.baseLabel ?? "base")", active: session.scope == .vsBase) {
+            scopeSegment("vs \(session.baseLabel ?? "base")", active: session.scope == .vsBase) {
                 session.setScope(.vsBase)
             }
             // Only when there are threads to scope to — an always-present "Threads 0"
-            // would be a permanent dead row on every non-PR branch.
+            // would be a permanent dead segment on every non-PR branch.
             if !paneThreads.isEmpty {
                 let unresolved = PRThreads.unresolvedCount(paneThreads)
-                scopeRow("Threads \(unresolved > 0 ? "\(unresolved)" : "")",
-                         active: session.scope == .threads,
-                         tint: unresolved > 0 ? Theme.prMerged : nil) {
+                scopeSegment("Threads\(unresolved > 0 ? " \(unresolved)" : "")",
+                             active: session.scope == .threads,
+                             tint: unresolved > 0 ? Theme.prMerged : nil) {
                     session.setScope(.threads)
                 }
             }
         }
-        .padding(.vertical, 6)
+        .padding(2)
+        .background(Theme.surface2)
+        .clipShape(Capsule())
+        .padding(.horizontal, 10).padding(.vertical, 6)
     }
 
-    private func scopeRow(_ title: String, active: Bool, tint: Color? = nil,
-                          _ action: @escaping () -> Void) -> some View {
+    /// One segment. The filled capsule *is* the selected state, so there's no tick to carry.
+    private func scopeSegment(_ title: String, active: Bool, tint: Color? = nil,
+                              _ action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: 6) {
-                Text(title).font(.ui(12, active ? .semibold : .medium))
-                    .foregroundStyle(tint ?? (active ? Theme.textPrimary : Theme.textSecondary))
-                Spacer(minLength: 0)
-                if active {
-                    Image(systemName: "checkmark").font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(Theme.working)
-                }
-            }
-            .padding(.horizontal, 12).padding(.vertical, 5)
-            .contentShape(Rectangle())
+            Text(title)
+                .font(.ui(11, active ? .semibold : .medium))
+                .foregroundStyle(tint ?? (active ? Theme.textPrimary : Theme.textSecondary))
+                .lineLimit(1)
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .frame(maxWidth: .infinity)
+                .background(active ? Theme.surface3 : Color.clear)
+                .clipShape(Capsule())
+                .contentShape(Capsule())
         }
         .buttonStyle(.plain).focusable(false)
+        .help(title)
     }
 
     /// Changed files, split Staged / Unstaged, and grouped inside each split under dim
@@ -423,6 +502,7 @@ struct WorkbenchView: View {
         let flags = (dirty: session.dirtySources, stale: session.staleSources)
         return ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
+                openedFilesSection
                 allFilesRow
                 ForEach(sections, id: \.kind) { section in
                     sectionHeader(section)
@@ -437,12 +517,58 @@ struct WorkbenchView: View {
                             .padding(.horizontal, 12).padding(.top, 6).padding(.bottom, 3)
                         ForEach(group.files, id: \.path) { file in
                             fileRow(file, kind: section.kind, flags: flags)
+                            // The reconcile choice rides under the row that already carries
+                            // the "changed on disk" marker. It can't go on the file header
+                            // band, where the roadmap put it: `TextView.hitTest` returns the
+                            // text view for any point inside it, so a block never sees a
+                            // click (the same reason the gap arrows live in the gutter).
+                            if flags.stale.contains(sourceID(of: file.path)) {
+                                reconcileRow(path: file.path)
+                            }
                         }
                     }
                 }
             }
             .padding(.bottom, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// Files opened through ⌘P — listed separately because they are not part of the diff,
+    /// and each needs a way out or you are stuck with it in the document.
+    @ViewBuilder private var openedFilesSection: some View {
+        if !session.openedPaths.isEmpty {
+            Text("OPEN").font(.ui(9.5, .semibold)).foregroundStyle(Theme.textDim)
+                .padding(.horizontal, 12).padding(.top, 6).padding(.bottom, 3)
+            ForEach(session.openedPaths, id: \.self) { path in
+                HStack(spacing: 6) {
+                    Button {
+                        if let row = session.firstStitchedLine(ofFile: path) {
+                            session.requestScroll(toStitchedLine: row)
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            TablerIcon(paths: Tabler.squareDot, size: 12)
+                                .foregroundStyle(Theme.textDim)
+                            Text((path as NSString).lastPathComponent)
+                                .font(.ui(12)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                            Spacer(minLength: 4)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).focusable(false)
+                    .help(path)
+                    Button { session.closeOpenedFile(path: path) } label: {
+                        Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(Theme.textDim)
+                            .frame(width: 18, height: 18).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).focusable(false)
+                    .help("Close this file")
+                }
+                .padding(.horizontal, 12).padding(.vertical, 3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
     }
 
@@ -620,6 +746,34 @@ struct WorkbenchView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(focused ? Theme.surface3 : Color.clear)
         .contentShape(Rectangle())
+    }
+
+    private func sourceID(of path: String) -> SourceID {
+        SourceID((session.cwd as NSString).appendingPathComponent(path))
+    }
+
+    /// The one state that needs a decision: unsaved edits *and* someone wrote the file
+    /// underneath them.
+    ///
+    /// Two choices, not the three the roadmap listed — "merge" opens the W3 resolver, which
+    /// doesn't exist yet, and a button that does nothing is worse than no button.
+    private func reconcileRow(path: String) -> some View {
+        HStack(spacing: 6) {
+            Text("changed on disk").font(.ui(9.5, .medium))
+                .foregroundStyle(Color(hex: Theme.Diff.modified))
+            Button("Keep mine") { session.keepMine(path: path) }
+                .buttonStyle(.plain).focusable(false)
+                .font(.ui(10, .medium)).foregroundStyle(Theme.textPrimary)
+                .help("Write your edits over what's on disk")
+            Text("·").foregroundStyle(Theme.textDim)
+            Button("Take theirs") { session.takeTheirs(path: path) }
+                .buttonStyle(.plain).focusable(false)
+                .font(.ui(10, .medium)).foregroundStyle(Theme.textPrimary)
+                .help("Discard your edits and reload the file")
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12).padding(.top, 1).padding(.bottom, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// Colored glyph rather than a bare A/M/D letter.

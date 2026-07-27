@@ -1,0 +1,261 @@
+import Foundation
+
+/// One removed line, addressed the way `PatchSynth` addresses it.
+///
+/// Removals are not text rows — a removed line exists in no file on disk, so there is no
+/// position to write an edit back to — so they are drawn as a band and referenced from
+/// the row the band abuts.
+struct DeletedRef: Equatable {
+    let hunkIndex: Int
+    /// Index into the hunk's `lines`.
+    let lineIndex: Int
+    /// 1-based old-side line number, for the gutter and for anchoring review threads.
+    let oldLineNumber: Int
+}
+
+/// Where one text row came from: which file, which hunk, which line inside it, and the
+/// numbers the gutter shows for it.
+///
+/// Every row is a **real line of the new side** — added, context, or unchanged context
+/// revealed out of a gap. That invariant is what makes an edit mappable back to a
+/// `SourceBuffer`; it is why removals became bands.
+struct RowOrigin: Equatable {
+    let path: String
+    let hunkIndex: Int
+    /// Index into the hunk's `lines`, or -1 for a gap-context row the diff never listed.
+    let lineIndex: Int
+    let kind: DiffLineKind
+    let oldLineNumber: Int?
+    let newLineNumber: Int?
+    /// Removed lines drawn as a band adjacent to this row. The row owns them for
+    /// selection, so staging a hunk still stages its deletions.
+    var deletedRefs: [DeletedRef]
+
+    init(path: String, hunkIndex: Int, lineIndex: Int, kind: DiffLineKind,
+         oldLineNumber: Int? = nil, newLineNumber: Int? = nil,
+         deletedRefs: [DeletedRef] = []) {
+        self.path = path
+        self.hunkIndex = hunkIndex
+        self.lineIndex = lineIndex
+        self.kind = kind
+        self.oldLineNumber = oldLineNumber
+        self.newLineNumber = newLineNumber
+        self.deletedRefs = deletedRefs
+    }
+
+    /// Whether this row's own line can go into a patch. Context lines carry no change, so
+    /// they only ride along as context in whatever patch their neighbours produce (a context
+    /// row carrying `deletedRefs` still contributes those, handled separately). A
+    /// `lineIndex` of -1 means the row belongs to no hunk at all — a gap-revealed line, or
+    /// one the user just typed — and feeding -1 to `PatchSynth` as a line index would
+    /// synthesize nonsense.
+    var isStageable: Bool { kind != .context && lineIndex >= 0 }
+}
+
+/// A file opened whole through `⌘P`, rather than because it changed.
+struct OpenedFile: Equatable {
+    let path: String
+    let lineCount: Int
+}
+
+/// A non-text band, positioned but not yet measured — height is an AppKit concern.
+enum PlannedBand: Equatable {
+    case fileHeader(path: String)
+    /// Unchanged lines still hidden between two hunks. 0-based new-side file lines.
+    case hunkGap(path: String, collapsed: Range<Int>)
+    /// A run of removed lines, contiguous in both the hunk and the old file.
+    case deletedLines(path: String, hunkIndex: Int, lineIndices: [Int], startingOldLine: Int)
+}
+
+/// A band and the text row it sits immediately above. `beforeRow == rows.count` means it
+/// trails the whole document, which the trailing empty line hosts.
+struct PlannedBlock: Equatable, Identifiable {
+    let band: PlannedBand
+    let beforeRow: Int
+
+    /// Stable across rebuilds, so caches keyed by it survive a reveal or a restage.
+    var id: String {
+        switch band {
+        case .fileHeader(let path):
+            return "hdr-\(path)"
+        case .hunkGap(let path, let collapsed):
+            return "gap-\(path)-\(collapsed.lowerBound)"
+        case .deletedLines(let path, let hunkIndex, let lineIndices, _):
+            return "del-\(path)-\(hunkIndex)-\(lineIndices.first ?? 0)"
+        }
+    }
+}
+
+/// One contiguous slice of one file's **new side**, and the rows showing it.
+///
+/// Excerpts **tile the document**: they are ordered, contiguous, and together cover every
+/// row, and each one's `rows` and `sourceLines` have the same length. That holds only
+/// because rows are new-side only — while removals were rows, a hunk interleaved both sides
+/// and was a contiguous range in neither file, which is why `StitchMap` was being fed row
+/// spans and every lookup on it silently drifted.
+struct PlannedExcerpt: Equatable {
+    let path: String
+    /// nil for a stretch revealed out of a hunk gap, which belongs to no hunk.
+    let hunkIndex: Int?
+    /// The hunk header, for the excerpt id. nil for revealed context.
+    let header: String?
+    let kind: ExcerptKind
+    let rows: Range<Int>
+    /// 0-based new-side file lines. Same count as `rows`.
+    let sourceLines: Range<Int>
+
+    var id: String {
+        header.map { "\(path)#\($0)" } ?? "\(path)#context-\(sourceLines.lowerBound)"
+    }
+}
+
+/// The whole document layout, decided without touching a byte of text.
+struct RowPlan: Equatable {
+    var origins: [RowOrigin] = []
+    /// In document order, and within a position in the order they must be drawn: a file's
+    /// header before its first band.
+    var blocks: [PlannedBlock] = []
+    var excerpts: [PlannedExcerpt] = []
+}
+
+/// Decides which text rows the stitched document has and where every band goes.
+///
+/// Pure, and the **single** authority on that mapping. It used to be an inline walk in
+/// `WorkbenchSession.rebuild`, duplicated by a second walk in `StageSelection` that only
+/// tests ever called — so the tested walk and the real one could disagree about what a
+/// row index means, which is precisely the class of bug that mangled syntax highlighting.
+enum RowPlanner {
+
+    /// - Parameters:
+    ///   - files: the files to show, in presentation order. Binary files contribute a
+    ///     header band and no rows.
+    ///   - revealed: per path, the 0-based new-side lines expanded out of hunk gaps.
+    ///   - opened: files opened whole through `⌘P`, appended after the diff. Every line is
+    ///     a row, so these are the first excerpts that aren't about a change at all.
+    static func plan(files: [DiffFile], revealed: [String: Set<Int>] = [:],
+                     opened: [OpenedFile] = []) -> RowPlan {
+        var plan = RowPlan()
+
+        for file in files {
+            plan.blocks.append(PlannedBlock(band: .fileHeader(path: file.path),
+                                            beforeRow: plan.origins.count))
+            guard !file.isBinary else { continue }
+            let revealedLines = revealed[file.path] ?? []
+
+            for (hunkIndex, hunk) in file.hunks.enumerated() {
+                if hunkIndex > 0 {
+                    appendGap(between: file.hunks[hunkIndex - 1], and: hunk,
+                              file: file, hunkIndex: hunkIndex,
+                              revealed: revealedLines, into: &plan)
+                }
+
+                let start = plan.origins.count
+                // Removals accumulate until the next new-side row closes the run, so a
+                // band is anchored on the row it sits above — the row a reader's eye
+                // pairs it with, and the row selection has to route it through.
+                var pending: [DeletedRef] = []
+
+                for (lineIndex, line) in hunk.lines.enumerated() {
+                    guard line.kind != .removed else {
+                        pending.append(DeletedRef(hunkIndex: hunkIndex, lineIndex: lineIndex,
+                                                  oldLineNumber: line.oldLineNo ?? 0))
+                        continue
+                    }
+                    plan.origins.append(RowOrigin(path: file.path, hunkIndex: hunkIndex,
+                                                  lineIndex: lineIndex, kind: line.kind,
+                                                  oldLineNumber: line.oldLineNo,
+                                                  newLineNumber: line.newLineNo,
+                                                  deletedRefs: pending))
+                    if !pending.isEmpty {
+                        plan.blocks.append(band(pending, file: file, hunkIndex: hunkIndex,
+                                                beforeRow: plan.origins.count - 1))
+                        pending = []
+                    }
+                }
+
+                if !pending.isEmpty {
+                    // A run at the end of a hunk has no following row of its own hunk, so
+                    // it draws above whatever comes next and is owned by the hunk's last
+                    // row — the only row that can carry it back into a patch. A hunk that
+                    // is *nothing but* removals (a deleted file) has no such row, and its
+                    // deletions are stageable only whole-file; the rail's button does that.
+                    plan.blocks.append(band(pending, file: file, hunkIndex: hunkIndex,
+                                            beforeRow: plan.origins.count))
+                    if plan.origins.count > start {
+                        plan.origins[plan.origins.count - 1].deletedRefs += pending
+                    }
+                }
+
+                if plan.origins.count > start, // swiftlint:disable:this empty_count
+                   let first = plan.origins[start].newLineNumber {
+                    // Derived from the rows actually emitted, not from the header's
+                    // `newCount`: the parser numbers new-side lines sequentially itself, so
+                    // the rows are consecutive whatever the header claims.
+                    let lower = first - 1
+                    plan.excerpts.append(PlannedExcerpt(
+                        path: file.path, hunkIndex: hunkIndex, header: hunk.header, kind: .hunk,
+                        rows: start..<plan.origins.count,
+                        sourceLines: lower..<(lower + plan.origins.count - start)))
+                }
+            }
+        }
+
+        for file in opened {
+            plan.blocks.append(PlannedBlock(band: .fileHeader(path: file.path),
+                                            beforeRow: plan.origins.count))
+            guard file.lineCount > 0 else { continue }
+            let start = plan.origins.count
+            for line in 0..<file.lineCount {
+                // No hunk and no old side: these rows describe no change, they are just the
+                // file. `lineIndex` -1 keeps them out of any patch.
+                plan.origins.append(RowOrigin(path: file.path, hunkIndex: 0, lineIndex: -1,
+                                              kind: .context, oldLineNumber: nil,
+                                              newLineNumber: line + 1))
+            }
+            plan.excerpts.append(PlannedExcerpt(
+                path: file.path, hunkIndex: nil, header: nil, kind: .context,
+                rows: start..<plan.origins.count, sourceLines: 0..<file.lineCount))
+        }
+        return plan
+    }
+
+    private static func band(_ refs: [DeletedRef], file: DiffFile, hunkIndex: Int,
+                             beforeRow: Int) -> PlannedBlock {
+        PlannedBlock(band: .deletedLines(path: file.path, hunkIndex: hunkIndex,
+                                         lineIndices: refs.map(\.lineIndex),
+                                         startingOldLine: refs[0].oldLineNumber),
+                     beforeRow: beforeRow)
+    }
+
+    /// The unchanged lines the diff skipped since the previous hunk: a band for what is
+    /// still hidden, real rows for whatever the user expanded.
+    private static func appendGap(between previous: DiffHunk, and hunk: DiffHunk,
+                                 file: DiffFile, hunkIndex: Int,
+                                 revealed: Set<Int>, into plan: inout RowPlan) {
+        // Clamped: `Range` traps on an inverted bound, and while git emits hunks in
+        // ascending order, nothing in the model enforces it — a zero-count hunk or a diff
+        // read from anywhere but `git diff` would have taken the whole app down here.
+        let start = previous.newStart - 1 + previous.newCount
+        let gap = start..<max(start, hunk.newStart - 1)
+        for segment in HunkGaps.segments(gap: gap, revealed: revealed) {
+            switch segment {
+            case .collapsed(let range):
+                plan.blocks.append(PlannedBlock(band: .hunkGap(path: file.path, collapsed: range),
+                                                beforeRow: plan.origins.count))
+            case .revealed(let range):
+                let start = plan.origins.count
+                for index in range {
+                    // Unchanged, so both sides carry a number; the old side is offset by
+                    // however much the diff has added above here.
+                    plan.origins.append(RowOrigin(
+                        path: file.path, hunkIndex: hunkIndex, lineIndex: -1, kind: .context,
+                        oldLineNumber: index + 1 - (hunk.newStart - hunk.oldStart),
+                        newLineNumber: index + 1))
+                }
+                plan.excerpts.append(PlannedExcerpt(
+                    path: file.path, hunkIndex: nil, header: nil, kind: .context,
+                    rows: start..<plan.origins.count, sourceLines: range))
+            }
+        }
+    }
+}

@@ -11,6 +11,16 @@ struct RowStyle: Equatable {
     static let plain = RowStyle(tint: .none, wordSpans: [])
 }
 
+/// One line of a deletion band, measured and coloured once so `draw` does no layout.
+struct DeletedLineRow {
+    let text: NSAttributedString
+    let tint: RowTint
+    /// Changed-word spans as x offsets in points, measured against `text` itself — the
+    /// theme gives each token its own font, so multiplying a character index by one
+    /// character's advance drifts further right the longer the line.
+    let wordSpans: [(x: CGFloat, width: CGFloat)]
+}
+
 /// A line fragment that paints a full-width diff tint behind its text, plus stronger
 /// word-level tints for the parts that actually changed.
 ///
@@ -29,6 +39,8 @@ final class DiffRowView: LineFragmentView {
     var blockProvider: ((LineFragment) -> [Block])?
     /// Display name for a block's file, resolved by the session (repo-relative).
     var displayName: ((SourceID) -> String)?
+    /// A deletion band's lines, already coloured and measured.
+    var deletedLines: ((Block) -> [DeletedLineRow])?
     /// Full document width, so bands and row tints bleed the whole row instead of
     /// stopping where the line's text happens to end.
     var rowWidth: (() -> CGFloat)?
@@ -72,24 +84,79 @@ final class DiffRowView: LineFragmentView {
             NSRect(x: 0, y: textTop, width: bounds.width, height: bounds.height - textTop).fill()
             drawWordSpans(below: textTop)
         }
-        drawBlocks()
+        // A deletion band is as tall as the run it shows, so deleting a hundred lines makes
+        // one row a hundred lines tall. Bound the work to what is on screen — but by
+        // `visibleRect`, **never** by `dirtyRect` alone: AppKit hands a view this tall a
+        // partial dirty rect, and on a fragment view that has just scrolled into existence
+        // there is no earlier content to preserve, so everything skipped stayed blank. The
+        // union means a pass can only ever paint more than asked, never less.
+        let onscreen = visibleRect.isEmpty ? bounds : visibleRect.union(dirtyRect)
+        drawBlocks(in: onscreen)
         super.draw(dirtyRect)   // text last, so it sits on top of the tint
     }
 
-    private func drawBlocks() {
+    private func drawBlocks(in onscreen: NSRect) {
         var y: CGFloat = 0
         for block in blocks {
             let rect = NSRect(x: 0, y: y, width: bounds.width, height: block.height)
+            y += block.height
+            guard rect.intersects(onscreen) else { continue }
             switch block.kind {
             case .fileHeader(let source):
                 drawFileHeader(source, in: rect)
             case .hunkGap(_, let collapsed):
                 drawHunkGap(collapsed, in: rect)
+            case .deletedLines:
+                drawDeletedLines(block, in: rect, onscreen: onscreen)
+            case .reviewNote(_, let origin, let header, let body):
+                drawReviewNote(origin: origin, header: header, body: body, in: rect)
             default:
-                break   // other kinds arrive with W2/W3
+                break   // conflict controls + rendered markdown arrive with W3 / ADR 0019
             }
-            y += block.height
         }
+    }
+
+    /// A run of removed lines: one tinted row each, drawn as text rather than as document
+    /// lines because a removed line exists in no file on disk and so has no row of its own.
+    private func drawDeletedLines(_ block: Block, in band: NSRect, onscreen: NSRect) {
+        let lines = deletedLines?(block) ?? []
+        guard !lines.isEmpty else { return }
+        // Divide the reserved space rather than re-deriving a row height, so the band's
+        // own rows, and the gutter numbers beside them, cannot disagree about where a
+        // line sits — the mistake that put the gutter and the text out of step once.
+        let rowHeight = band.height / CGFloat(lines.count)
+        // Resolved once for the band, never per line: this method runs per frame, and this
+        // was a font lookup plus a text measurement.
+        let glyphHeight = Self.bandGlyphHeight
+        let strong = Self.wordColor(for: .removed)
+
+        for (index, line) in lines.enumerated() {
+            let rect = NSRect(x: 0, y: band.minY + CGFloat(index) * rowHeight,
+                              width: band.width, height: rowHeight)
+            guard rect.intersects(onscreen) else { continue }
+            if let bg = Self.rowColor(for: line.tint) {
+                bg.setFill()
+                rect.fill()
+            }
+            if let strong, !line.wordSpans.isEmpty {
+                strong.setFill()
+                for span in line.wordSpans {
+                    NSRect(x: span.x, y: rect.minY, width: span.width, height: rect.height).fill()
+                }
+            }
+            line.text.draw(at: NSPoint(x: 0, y: rect.midY - glyphHeight / 2))
+        }
+    }
+
+    /// Glyph height for band text, cached against the font.
+    private static var cachedGlyphHeight: (font: NSFont, height: CGFloat)?
+
+    private static var bandGlyphHeight: CGFloat {
+        let font = WorkbenchMetrics.font
+        if let cached = cachedGlyphHeight, cached.font == font { return cached.height }
+        let height = ("0" as NSString).size(withAttributes: [.font: font]).height
+        cachedGlyphHeight = (font, height)
+        return height
     }
 
     /// "N lines skipped", with the click targets that reveal them ten at a time.
@@ -109,6 +176,38 @@ final class DiffRowView: LineFragmentView {
         let text = label as NSString
         let size = text.size(withAttributes: attributes)
         text.draw(at: NSPoint(x: 12, y: rect.midY - size.height / 2), withAttributes: attributes)
+    }
+
+    /// A review note under the line it is about.
+    ///
+    /// The two origins are told apart three ways, not one — colour alone fails for the ~8%
+    /// of men with a colour vision deficiency, and these two are a blue and a violet:
+    /// `mine` gets a square marker and a "you" label, `github` an octagonal one and the
+    /// author's handle. The accent bar and tint reinforce it.
+    private func drawReviewNote(origin: ReviewNoteOrigin, header: String, body: String,
+                               in band: NSRect) {
+        let accent = origin == .mine
+            ? NSColor(hex24: Theme.Diff.modified)      // blue — bound for the agent
+            : NSColor(hex24: 0xA371F7)                 // violet — somebody else's review
+        let width = min(band.width, WorkbenchSession.noteWrapWidth)
+        let card = NSRect(x: 0, y: band.minY, width: width, height: band.height)
+
+        accent.withAlphaComponent(0.10).setFill()
+        card.fill()
+        accent.setFill()
+        NSRect(x: 0, y: card.minY, width: 2, height: card.height).fill()
+
+        let marker = origin == .mine ? "▪" : "⬢"
+        let headerText = "\(marker) \(origin == .mine ? "you" : "")\(header)" as NSString
+        headerText.draw(at: NSPoint(x: 10, y: card.minY + 4), withAttributes: [
+            .font: NSFont.systemFont(ofSize: 10, weight: .semibold),
+            .foregroundColor: accent,
+        ])
+        (body as NSString).draw(
+            with: NSRect(x: 10, y: card.minY + 16, width: width - 24, height: card.height - 20),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: NSFont.systemFont(ofSize: 11),
+                         .foregroundColor: NSColor(hex24: Theme.Code.text)])
     }
 
     /// A full-bleed band naming the file, so files don't run into each other.
@@ -184,6 +283,8 @@ final class BlockRenderer: TextLayoutManagerRenderDelegate {
     private let blocksForStitchedLine: (Int) -> [Block]
     /// Repo-relative name for a block's file.
     private let displayName: (SourceID) -> String
+    /// A deletion band's rendered lines.
+    private let deletedLines: (Block) -> [DeletedLineRow]
     private let rowWidth: () -> CGFloat
     /// Reveal part of a gap: `(file, collapsed range, from the top)`.
     private let onExpandGap: (SourceID, Range<Int>, Bool) -> Void
@@ -192,6 +293,7 @@ final class BlockRenderer: TextLayoutManagerRenderDelegate {
          styleForStitchedLine: @escaping (Int) -> RowStyle,
          blocksForStitchedLine: @escaping (Int) -> [Block] = { _ in [] },
          displayName: @escaping (SourceID) -> String = { $0.path },
+         deletedLines: @escaping (Block) -> [DeletedLineRow] = { _ in [] },
          rowWidth: @escaping () -> CGFloat = { 0 },
          onExpandGap: @escaping (SourceID, Range<Int>, Bool) -> Void = { _, _, _ in }) {
         self.onExpandGap = onExpandGap
@@ -199,6 +301,7 @@ final class BlockRenderer: TextLayoutManagerRenderDelegate {
         self.styleForStitchedLine = styleForStitchedLine
         self.blocksForStitchedLine = blocksForStitchedLine
         self.displayName = displayName
+        self.deletedLines = deletedLines
         self.rowWidth = rowWidth
     }
 
@@ -250,6 +353,7 @@ final class BlockRenderer: TextLayoutManagerRenderDelegate {
             return blocksForStitchedLine(line)
         }
         view.displayName = displayName
+        view.deletedLines = deletedLines
         view.rowWidth = rowWidth
         return view
     }

@@ -928,6 +928,19 @@ enum Tabler {
         "M17 12m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0",
         "M7 8l0 8",
         "M7 8a4 4 0 0 0 4 4h4"]
+    /// `gitMerge` mirrored about y = 12, so the arm leaves the trunk low and curves up and
+    /// *out* instead of coming down into it — a branch rather than a merge.
+    ///
+    /// Every dot is shared with `gitMerge` (the trunk pair is symmetric at y 6/18 and the
+    /// third sits dead centre at y 12), so only the arc changes: same start x, mirrored
+    /// y-delta, and the sweep flag flips with the mirror. Deriving it this way keeps it
+    /// exactly on-family instead of being a hand-drawn approximation.
+    static let gitBranch = [
+        "M7 18m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0",
+        "M7 6m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0",
+        "M17 12m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0",
+        "M7 8l0 8",
+        "M7 16a4 4 0 0 1 4 -4h4"]
     static let pullRequestClosed = [
         "M6 6m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0",
         "M6 18m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0",

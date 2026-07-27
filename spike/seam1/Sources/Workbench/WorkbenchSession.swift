@@ -44,7 +44,9 @@ final class WorkbenchSession: ObservableObject {
     @Published private(set) var loading = false
     @Published private(set) var stitchMap = StitchMap(excerpts: [])
     @Published private(set) var blockMap = BlockMap()
-    @Published var comments: [ReviewComment] = []
+    @Published var comments: [ReviewComment] = [] {
+        didSet { if comments != oldValue { refreshNotes() } }
+    }
     /// Stitched line the editor's cursor sits on, so the chrome can act on "this line"
     /// without reaching into the text view.
     @Published var cursorStitchedLine: Int?
@@ -137,8 +139,10 @@ final class WorkbenchSession: ObservableObject {
     /// Row style per stitched line, precomputed at build time — the render delegate and
     /// the gutter both read this, and it must be a cheap lookup (it runs per fragment).
     private(set) var rowStyles: [RowStyle] = []
-    /// Gutter metadata per stitched line, in the same order.
-    private(set) var gutterRows: [(old: Int?, new: Int?)] = []
+
+    /// Per deletion band, the tint + word spans for each of its removed lines. Keyed by
+    /// block id, which is stable across rebuilds.
+    private(set) var deletionStyles: [String: [RowStyle]] = [:]
 
     private var buffers: [SourceID: SourceBuffer] = [:]
 
@@ -165,6 +169,10 @@ final class WorkbenchSession: ObservableObject {
         stitchedLineRange: { [weak self] range in self?.stitchedLines(in: range) }
     )
 
+    /// Owned here for the same reason as the highlighter and the renderer: a fresh instance
+    /// per `body` evaluation would reinstall itself on every scroll tick.
+    lazy var writeBack: WriteBackCoordinator = WriteBackCoordinator(session: self)
+
     lazy var renderer: BlockRenderer = BlockRenderer(
         stitchedLineForOffset: { [weak self] offset in self?.stitchedLine(forOffset: offset) },
         styleForStitchedLine: { [weak self] line in self?.style(atStitchedLine: line) ?? .plain },
@@ -172,6 +180,7 @@ final class WorkbenchSession: ObservableObject {
             self?.blockMap.blocks(beforeStitchedLine: line) ?? []
         },
         displayName: { [weak self] source in self?.relativePath(of: source) ?? source.path },
+        deletedLines: { [weak self] block in self?.deletedLineRows(for: block) ?? [] },
         rowWidth: { [weak self] in
             self?.editorScrollViewProvider?()?.documentView?.frame.width ?? 0
         },
@@ -239,24 +248,20 @@ final class WorkbenchSession: ObservableObject {
         return side == .new ? buffer.text : (buffer.baseText ?? "")
     }
 
-    /// The file, side, and **0-based source line** a stitched row shows.
+    /// The file and **0-based source line** a stitched row shows.
     ///
-    /// Not derived from `StitchMap`: an excerpt's `lineRange` holds *stitched* indices
-    /// (a hunk interleaves both sides, so it is not a contiguous range in either file),
-    /// and reading them as source lines fed the highlighter arbitrary lines of the file —
-    /// which is what painted syntax colors on unrelated words. The gutter's per-row
-    /// numbers are the real mapping, and they are 1-based.
+    /// Always the new side: every text row is a real line of a file on disk (removals are
+    /// bands, not rows). A band's own lines are highlighted from the base blob through
+    /// `baseHighlights(source:line:)` instead.
+    ///
+    /// Not derived from `StitchMap`: an excerpt's `lineRange` holds *row* indices, and
+    /// reading them as source lines fed the highlighter arbitrary lines of the file — which
+    /// is what painted syntax colors on unrelated words. The per-row numbers are the real
+    /// mapping, and they are 1-based.
     func sourceAnchor(atStitchedLine line: Int) -> (source: SourceID, side: DiffSide, line: Int)? {
-        guard rowOrigins.indices.contains(line), line < gutterRows.count else { return nil }
-        let origin = rowOrigins[line]
-        let row = gutterRows[line]
-        let source = SourceID((cwd as NSString).appendingPathComponent(origin.path))
-        switch origin.kind {
-        case .removed:
-            return row.old.map { (source, DiffSide.old, $0 - 1) }
-        case .added, .context:
-            return row.new.map { (source, DiffSide.new, $0 - 1) }
-        }
+        guard rowOrigins.indices.contains(line),
+              let new = rowOrigins[line].newLineNumber else { return nil }
+        return (source(of: rowOrigins[line].path), .new, new - 1)
     }
 
     /// Read the diff off the main thread, then rebuild the stitched document.
@@ -307,86 +312,120 @@ final class WorkbenchSession: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: work)
     }
 
-    /// Turn the parsed diff into excerpts, blocks, a stitched string, and the per-line
-    /// style/gutter tables.
+    /// Turn the parsed diff into excerpts, blocks, a stitched string, and the per-row
+    /// style table.
+    ///
+    /// The row layout is `RowPlanner`'s, not this method's: what each row is and where
+    /// each band sits is the mapping every W2 feature depends on, so it lives in a pure,
+    /// tested type. This walk only materializes the text and the styles the plan implies.
     private func rebuild() {
-        var excerpts: [Excerpt] = []
-        var blocks: [Block] = []
-        var styles: [RowStyle] = []
-        var gutter: [(old: Int?, new: Int?)] = []
-        // Built in this same walk, not by a second pass over `files`: revealed gap
-        // context rows exist only here, so a separate walk would silently disagree about
-        // what every row index means.
-        var origins: [RowOrigin] = []
-        var stitched = ""
-        var line = 0
-
-        let rowHeight = WorkbenchMetrics.rowHeight
-        var maxOld = 0, maxNew = 0
         let shown = displayedFiles
-        for file in shown {
-            let source = SourceID((cwd as NSString).appendingPathComponent(file.path))
-            blocks.append(Block(id: "hdr-\(file.path)", kind: .fileHeader(source),
-                                beforeStitchedLine: line, height: rowHeight + 12))
-
-            guard !file.isBinary else { continue }
-
-            let revealed = revealedLines[file.path] ?? []
-            for (hunkIndex, hunk) in file.hunks.enumerated() {
-                // Unchanged lines the diff skipped since the previous hunk: a band saying
-                // how many, plus any stretches the user has expanded, read from the file.
-                if hunkIndex > 0 {
-                    let previous = file.hunks[hunkIndex - 1]
-                    let gap = (previous.newStart - 1 + previous.newCount)..<(hunk.newStart - 1)
-                    for segment in HunkGaps.segments(gap: gap, revealed: revealed) {
-                        switch segment {
-                        case .collapsed(let range):
-                            blocks.append(Block(id: "gap-\(file.path)-\(range.lowerBound)",
-                                                kind: .hunkGap(source: source, collapsed: range),
-                                                beforeStitchedLine: line, height: rowHeight + 8))
-                        case .revealed(let range):
-                            let text = self.text(for: source)
-                            let fileLines = text.components(separatedBy: "\n")
-                            for index in range where index < fileLines.count {
-                                stitched += fileLines[index] + "\n"
-                                styles.append(.plain)
-                                // Unchanged, so both sides carry a number; the old side is
-                                // offset by however much the diff has added above here.
-                                let oldNumber = index + 1 - (hunk.newStart - hunk.oldStart)
-                                gutter.append((old: oldNumber, new: index + 1))
-                                origins.append(RowOrigin(path: file.path, hunkIndex: hunkIndex,
-                                                         lineIndex: -1, kind: .context))
-                                maxOld = max(maxOld, oldNumber)
-                                maxNew = max(maxNew, index + 1)
-                                line += 1
-                            }
-                        }
-                    }
-                }
-
-                let start = line
-                // Paired once per hunk, not per line: the old per-line lookup rebuilt
-                // both side arrays every time, so a 1000-line hunk did a million array
-                // appends before drawing anything.
-                let pairing = HunkPairing(kinds: hunk.lines.map(\.kind),
-                                          texts: hunk.lines.map(\.text))
-                for (lineIndex, diffLine) in hunk.lines.enumerated() {
-                    stitched += diffLine.text + "\n"
-                    styles.append(Self.style(for: diffLine,
-                                             counterpart: pairing.counterpart(atLineIndex: lineIndex)))
-                    gutter.append((old: diffLine.oldLineNo, new: diffLine.newLineNo))
-                    origins.append(RowOrigin(path: file.path, hunkIndex: hunkIndex,
-                                             lineIndex: lineIndex, kind: diffLine.kind))
-                    maxOld = max(maxOld, diffLine.oldLineNo ?? 0)
-                    maxNew = max(maxNew, diffLine.newLineNo ?? 0)
-                    line += 1
-                }
-                guard line > start else { continue }
-                // One excerpt per hunk. The line range is the *stitched* span here
-                // because a hunk interleaves both sides; W1 splits old/new per side.
-                excerpts.append(Excerpt(id: "\(file.path)#\(hunk.header)", source: source,
-                                        lineRange: start..<line, kind: .hunk))
+        let plan = RowPlanner.plan(files: shown, revealed: revealedLines, opened: openedFiles)
+        var hunks: [HunkKey: DiffHunk] = [:]
+        for file in shown where !file.isBinary {
+            for (index, hunk) in file.hunks.enumerated() {
+                hunks[HunkKey(path: file.path, hunkIndex: index)] = hunk
             }
+        }
+
+        // One pairing per hunk, built on first use: the pre-hunk version rebuilt both side
+        // arrays per line, so a 1000-line hunk did ~1M array appends before drawing.
+        var pairings: [HunkKey: HunkPairing] = [:]
+        func pairing(_ key: HunkKey) -> HunkPairing? {
+            if let existing = pairings[key] { return existing }
+            guard let hunk = hunks[key] else { return nil }
+            let made = HunkPairing(kinds: hunk.lines.map(\.kind), texts: hunk.lines.map(\.text))
+            pairings[key] = made
+            return made
+        }
+
+        var stitched = ""
+        var styles: [RowStyle] = []
+        var maxOld = 0, maxNew = 0
+        // Gap-revealed rows are read out of the working copy; split once per file, not
+        // once per revealed stretch.
+        var fileLines: [String: [String]] = [:]
+        // A file holding unsaved edits reads from its **buffer**, never from the diff.
+        //
+        // The diff describes what is on disk. Rebuilding an edited file's rows from it —
+        // which is what reopening the workbench does — silently replaces your unsaved lines
+        // with the saved ones, while the buffer still holds the edit. The document and the
+        // buffer then disagree, and `canApplyEdit`'s staleness guard correctly refuses every
+        // further edit to those lines: the line goes read-only for no visible reason.
+        let dirty = dirtyPaths
+
+        for origin in plan.origins {
+            let key = HunkKey(path: origin.path, hunkIndex: origin.hunkIndex)
+            if origin.lineIndex >= 0, !dirty.contains(origin.path), let hunk = hunks[key],
+               hunk.lines.indices.contains(origin.lineIndex) {
+                let diffLine = hunk.lines[origin.lineIndex]
+                stitched += diffLine.text + "\n"
+                styles.append(Self.style(
+                    for: diffLine.kind,
+                    text: diffLine.text,
+                    counterpart: pairing(key)?.counterpart(atLineIndex: origin.lineIndex)))
+            } else {
+                // A gap-revealed row, or any row of an edited file: read the live text.
+                if fileLines[origin.path] == nil {
+                    fileLines[origin.path] = text(for: source(of: origin.path))
+                        .components(separatedBy: "\n")
+                }
+                let lines = fileLines[origin.path] ?? []
+                let index = (origin.newLineNumber ?? 1) - 1
+                stitched += (lines.indices.contains(index) ? lines[index] : "") + "\n"
+                // Keep the diff's tint on an edited row so the hunk still reads as changed;
+                // the word spans can't be trusted against text the diff never saw.
+                if origin.lineIndex >= 0, let hunk = hunks[key],
+                   hunk.lines.indices.contains(origin.lineIndex) {
+                    let kind = hunk.lines[origin.lineIndex].kind
+                    styles.append(RowStyle(tint: kind == .added ? .added
+                                             : (kind == .removed ? .removed : .none),
+                                           wordSpans: []))
+                } else {
+                    styles.append(.plain)
+                }
+            }
+            maxOld = max(maxOld, origin.oldLineNumber ?? 0)
+            maxNew = max(maxNew, origin.newLineNumber ?? 0)
+        }
+
+        var blocks: [Block] = []
+        var bandStyles: [String: [RowStyle]] = [:]
+        let rowHeight = WorkbenchMetrics.rowHeight
+        for planned in plan.blocks {
+            switch planned.band {
+            case .fileHeader(let path):
+                blocks.append(Block(id: planned.id, kind: .fileHeader(source(of: path)),
+                                    beforeStitchedLine: planned.beforeRow, height: rowHeight + 12))
+            case .hunkGap(let path, let collapsed):
+                blocks.append(Block(id: planned.id,
+                                    kind: .hunkGap(source: source(of: path), collapsed: collapsed),
+                                    beforeStitchedLine: planned.beforeRow, height: rowHeight + 8))
+            case .deletedLines(let path, let hunkIndex, let lineIndices, let startingOldLine):
+                let key = HunkKey(path: path, hunkIndex: hunkIndex)
+                guard let hunk = hunks[key] else { continue }
+                let removed = lineIndices.filter { hunk.lines.indices.contains($0) }
+                guard !removed.isEmpty else { continue }
+                blocks.append(Block(
+                    id: planned.id,
+                    kind: .deletedLines(source: source(of: path),
+                                        lines: removed.map { hunk.lines[$0].text },
+                                        startingOldLine: startingOldLine),
+                    beforeStitchedLine: planned.beforeRow,
+                    height: rowHeight * CGFloat(removed.count)))
+                bandStyles[planned.id] = removed.map { index in
+                    Self.style(for: .removed, text: hunk.lines[index].text,
+                               counterpart: pairing(key)?.counterpart(atLineIndex: index))
+                }
+                maxOld = max(maxOld, startingOldLine + removed.count - 1)
+            }
+        }
+
+        // Real 0-based new-side source ranges, which they could not be while removals were
+        // rows. `StitchMap`'s lookups are consistent with the document again.
+        let excerpts = plan.excerpts.map {
+            Excerpt(id: $0.id, source: source(of: $0.path),
+                    lineRange: $0.sourceLines, kind: $0.kind)
         }
 
         storage.setAttributedString(NSAttributedString(string: stitched,
@@ -395,27 +434,44 @@ final class WorkbenchSession: ObservableObject {
         stitchMap = StitchMap(excerpts: excerpts)
         blockMap = BlockMap(blocks: blocks)
         rowStyles = styles
-        gutterRows = gutter
-        rowOrigins = origins
+        deletionStyles = bandStyles
+        deletionRows.removeAll()
+        rowOrigins = plan.origins
+        // Notes are placed after the walk, not during it: an anchor is resolved against the
+        // finished row table. Emitted at `row + 1` so the band draws *under* the line it is
+        // about (a block renders above the row it is attached to), and appended last so it
+        // sits below any deletion band sharing that position.
+        for note in placedNotes() { blockMap.insert(noteBlock(note)) }
         maxOldLineNumber = maxOld
         maxNewLineNumber = maxNew
         selectedLines.removeAll()   // row indices don't survive a rebuild
         revision += 1
     }
 
+    /// A hunk's identity across the walk. Two files can each have a hunk 0.
+    private struct HunkKey: Hashable {
+        let path: String
+        let hunkIndex: Int
+    }
+
+    func source(of path: String) -> SourceID {
+        SourceID((cwd as NSString).appendingPathComponent(path))
+    }
+
     /// Row tint plus word spans, against the hunk's precomputed pairing.
-    private static func style(for line: DiffLine, counterpart: String?) -> RowStyle {
-        switch line.kind {
+    private static func style(for kind: DiffLineKind, text: String,
+                              counterpart: String?) -> RowStyle {
+        switch kind {
         case .context:
             return .plain
         case .added, .removed:
             guard let counterpart else {
-                return RowStyle(tint: line.kind == .added ? .added : .removed, wordSpans: [])
+                return RowStyle(tint: kind == .added ? .added : .removed, wordSpans: [])
             }
-            let (old, new) = line.kind == .added ? (counterpart, line.text) : (line.text, counterpart)
+            let (old, new) = kind == .added ? (counterpart, text) : (text, counterpart)
             let spans = WordDiff.spans(old: old, new: new)
-            return RowStyle(tint: line.kind == .added ? .added : .removed,
-                            wordSpans: line.kind == .added ? spans.new : spans.old)
+            return RowStyle(tint: kind == .added ? .added : .removed,
+                            wordSpans: kind == .added ? spans.new : spans.old)
         }
     }
 
@@ -434,6 +490,86 @@ final class WorkbenchSession: ObservableObject {
     func style(atStitchedLine line: Int) -> RowStyle {
         line >= 0 && line < rowStyles.count ? rowStyles[line] : .plain
     }
+
+    /// Rows the gutter draws for, which is one more than the text rows when the document
+    /// ends in a newline: the storage carries a final empty line there, and a band that
+    /// trails the whole document (a hunk ending in removals) is hosted by it. Without the
+    /// extra row the gutter would skip that band's numbers entirely.
+    var gutterRowCount: Int {
+        rowOrigins.count + (lineStarts.count > rowOrigins.count ? 1 : 0)
+    }
+
+    /// A deletion band's rows: each removed line syntax-coloured from the base blob, with
+    /// the tint and word spans `rebuild` computed for it.
+    ///
+    /// Built on demand and cached rather than at rebuild time: colouring one is a
+    /// tree-sitter parse of the *old* side of a file, and a 287-file diff must not pay for
+    /// the bands nobody scrolls to. The whole array is cached, not just the text, because
+    /// this is read from `draw` — rezipping it per frame is exactly the kind of per-frame
+    /// allocation the first live run was full of. Cleared on rebuild, and bounded, since
+    /// scrolling a big diff end to end would otherwise retain every removed line in it.
+    func deletedLineRows(for block: Block) -> [DeletedLineRow] {
+        if let cached = deletionRows[block.id] { return cached }
+        guard case .deletedLines(let source, let lines, let startingOldLine) = block.kind else {
+            return []
+        }
+        let theme = WorkbenchEditorTheme.current
+        let font = WorkbenchMetrics.font
+        let styles = deletionStyles[block.id] ?? []
+        let rendered = lines.enumerated().map { offset, text -> DeletedLineRow in
+            let string = NSMutableAttributedString(string: text,
+                                                   attributes: WorkbenchMetrics.baseAttributes)
+            for highlight in highlighter.baseHighlights(source: source,
+                                                        line: startingOldLine - 1 + offset) {
+                let location = highlight.range.location
+                let length = min(highlight.range.length, string.length - location)
+                guard location >= 0, location < string.length, length > 0 else { continue }
+                string.addAttributes([.font: theme.fontFor(for: highlight.capture, from: font),
+                                      .foregroundColor: theme.colorFor(highlight.capture)],
+                                     range: NSRange(location: location, length: length))
+            }
+            let style = offset < styles.count ? styles[offset]
+                                             : RowStyle(tint: .removed, wordSpans: [])
+            return DeletedLineRow(text: string, tint: style.tint,
+                                  wordSpans: Self.spanOffsets(in: string, style.wordSpans))
+        }
+        if deletionRows.count > Self.maxCachedBands { deletionRows.removeAll() }
+        deletionRows[block.id] = rendered
+        return rendered
+    }
+
+    /// Turn character-indexed word spans into x offsets, measured against the attributed
+    /// text itself.
+    ///
+    /// Measured rather than `characterIndex × advance`: each token carries whatever font the
+    /// theme gave its capture, so a uniform-advance assumption drifts further right the
+    /// longer the line — and it is wrong outright for anything that isn't one cell wide.
+    /// Done here, once per band, because `draw` runs per frame.
+    private static func spanOffsets(in text: NSAttributedString,
+                                    _ spans: [WordSpan]) -> [(x: CGFloat, width: CGFloat)] {
+        guard !spans.isEmpty, text.length > 0 else { return [] }
+        let string = text.string
+        // `WordSpan.range` counts Characters; an NSAttributedString range counts UTF-16.
+        func utf16Offset(_ characterIndex: Int) -> Int {
+            guard let index = string.index(string.startIndex, offsetBy: characterIndex,
+                                           limitedBy: string.endIndex) else { return text.length }
+            return string.utf16.distance(from: string.utf16.startIndex, to: index)
+        }
+        func width(upTo offset: Int) -> CGFloat {
+            offset <= 0 ? 0
+                : text.attributedSubstring(from: NSRange(location: 0, length: offset)).size().width
+        }
+        return spans.filter(\.changed).compactMap { span in
+            let lower = utf16Offset(span.range.lowerBound)
+            let upper = min(utf16Offset(span.range.upperBound), text.length)
+            guard lower < upper else { return nil }
+            let x = width(upTo: lower)
+            return (x: x, width: max(1, width(upTo: upper) - x))
+        }
+    }
+
+    private var deletionRows: [String: [DeletedLineRow]] = [:]
+    private static let maxCachedBands = 400
 
     /// Line-start offsets, computed once per rebuild. These lookups run per text
     /// fragment per layout pass, so recomputing them per call would be quadratic.
@@ -462,6 +598,375 @@ final class WorkbenchSession: ObservableObject {
         guard let lower = stitchedLine(forOffset: range.location) else { return nil }
         let upper = stitchedLine(forOffset: max(range.location, range.location + range.length - 1)) ?? lower
         return lower..<(upper + 1)
+    }
+
+    // MARK: - Edit write-back
+
+    /// Bumped when an edit changed the row tables, so the gutter re-reads them. Distinct
+    /// from `revision`, which remounts the editor — doing that per keystroke would throw
+    /// away the cursor you are typing with.
+    @Published private(set) var editRevision = 0
+
+    /// Whether an edit can be written back, asked by the editor **before** it changes text.
+    ///
+    /// Refused when the rows aren't one contiguous run of a single file's lines (see
+    /// `EditMap.fileEdit`), or when the file on disk no longer matches what the document
+    /// shows — in which case the offsets we'd write at are stale and we'd corrupt the file.
+    func canApplyEdit(range: NSRange) -> Bool {
+        guard let rows = stitchedLines(in: range),
+              let edit = EditMap.fileEdit(rows: rows, origins: rowOrigins) else { return false }
+        return documentMatchesFile(rows: rows, edit: edit)
+    }
+
+    /// Absorb an edit the editor has already applied to `storage`.
+    ///
+    /// Called from `didReplaceContentsIn`, so `storage` is new but `rowOrigins`/`lineStarts`
+    /// still describe the document as it was — which is exactly what resolving the edit's
+    /// old position needs.
+    func absorbEdit(range: NSRange, replacement: String) {
+        guard let rows = stitchedLines(in: range),
+              let edit = EditMap.fileEdit(rows: rows, origins: rowOrigins),
+              let (fileRange, buffer) = fileRange(forRows: rows, edit: edit, range: range)
+        else { return }
+
+        let updated = (buffer.text as NSString)
+            .replacingCharacters(in: fileRange, with: replacement)
+        buffer.replaceText(updated)
+
+        let delta = EditMap.rowDelta(replacing: rows, with: replacement)
+        let newRowCount = rows.count + delta
+        // The tint survives so a line doesn't flicker grey as you type in it, but the word
+        // spans cannot: they index into the text that was just replaced.
+        let template = style(atStitchedLine: rows.lowerBound)
+        let carried = RowStyle(tint: template.tint, wordSpans: [])
+        rowStyles.replaceSubrange(rows, with: Array(repeating: carried, count: newRowCount))
+        rowOrigins = EditMap.rowsAfterEdit(rowOrigins, replacing: rows,
+                                           withRowCount: newRowCount)
+        lineStarts = EditMap.lineStartsAfterEdit(lineStarts, replacing: rows,
+                                                 editStart: range.location,
+                                                 removedLength: range.length,
+                                                 replacement: replacement)
+        if delta != 0 {
+            blockMap.shift(fromStitchedLine: rows.upperBound, by: delta)
+            stitchMap.applyEdit(in: buffer.source, atLine: edit.lines.lowerBound,
+                                lineDelta: delta)
+            // Only ever widens: the gutter's number column twitching narrower while you
+            // type would shift the whole document sideways.
+            if delta > 0 { maxNewLineNumber += delta }
+        }
+        highlighter.invalidate(source: buffer.source)
+        editRevision += 1
+    }
+
+    /// The file offsets an edit over `rows` maps to, plus the buffer holding them.
+    private func fileRange(forRows rows: Range<Int>, edit: FileEdit,
+                           range: NSRange) -> (NSRange, SourceBuffer)? {
+        let buffer = buffer(for: source(of: edit.path))
+        let starts = EditMap.lineStartOffsets(buffer.text)
+        let last = edit.lines.upperBound - 1
+        guard edit.lines.lowerBound < starts.count, last < starts.count,
+              rows.lowerBound < lineStarts.count, rows.upperBound - 1 < lineStarts.count
+        else { return nil }
+
+        // Columns are the same on both sides: a row *is* its file line.
+        let startColumn = range.location - lineStarts[rows.lowerBound]
+        let endColumn = range.location + range.length - lineStarts[rows.upperBound - 1]
+        let start = starts[edit.lines.lowerBound] + startColumn
+        let end = starts[last] + endColumn
+        guard startColumn >= 0, endColumn >= 0, start <= end,
+              end <= (buffer.text as NSString).length else { return nil }
+        return (NSRange(location: start, length: end - start), buffer)
+    }
+
+    /// Whether the file still reads the way the document says it does.
+    ///
+    /// The diff was taken at some point in the past; if an agent has rewritten the file
+    /// since, the row we think is line 40 may not be, and writing at that offset would
+    /// scramble the file. Compared over the edited lines only, so it costs the edit's size.
+    private func documentMatchesFile(rows: Range<Int>, edit: FileEdit) -> Bool {
+        let buffer = buffer(for: source(of: edit.path))
+        let fileText = buffer.text as NSString
+        let starts = EditMap.lineStartOffsets(buffer.text)
+        let last = edit.lines.upperBound - 1
+        guard edit.lines.lowerBound < starts.count, last < starts.count,
+              rows.upperBound - 1 < lineStarts.count else { return false }
+
+        let fileStart = starts[edit.lines.lowerBound]
+        let fileEnd = last + 1 < starts.count ? starts[last + 1] - 1 : fileText.length
+        let docStart = lineStarts[rows.lowerBound]
+        let docEnd = rows.upperBound < lineStarts.count
+            ? lineStarts[rows.upperBound] - 1 : storage.length
+        guard fileStart <= fileEnd, fileEnd <= fileText.length,
+              docStart <= docEnd, docEnd <= storage.length else { return false }
+
+        return fileText.substring(with: NSRange(location: fileStart, length: fileEnd - fileStart))
+            == (storage.string as NSString)
+                .substring(with: NSRange(location: docStart, length: docEnd - docStart))
+    }
+
+    /// Save the file the cursor is in, or every file holding edits when there isn't one.
+    ///
+    /// Re-diffs afterwards: the displayed diff was taken before the edit, so until it is
+    /// re-read the hunks and their line numbers describe the old file.
+    func saveEdits() {
+        let cursorPath = cursorStitchedLine.flatMap { line -> String? in
+            rowOrigins.indices.contains(line) ? rowOrigins[line].path : nil
+        }
+        let targets = buffers.values.filter {
+            $0.isDirty && (cursorPath == nil || relativePath(of: $0.source) == cursorPath)
+        }
+        guard !targets.isEmpty else { return }
+        lastError = nil
+        var failure: String?
+        for buffer in targets {
+            do {
+                try buffer.save()
+            } catch {
+                failure = "Couldn't save \(relativePath(of: buffer.source)): \(error.localizedDescription)"
+            }
+        }
+        lastError = failure
+        load()
+    }
+
+    /// Files holding unsaved edits, by repo-relative path.
+    var dirtyPaths: Set<String> {
+        Set(buffers.values.filter(\.isDirty).map { relativePath(of: $0.source) })
+    }
+
+    // MARK: - Inline review notes
+
+    /// The pane's PR review threads, pushed in by the view (the store owns them).
+    /// Held here so `rebuild` can place them inline without reaching for the store.
+    @Published var threads: [GHReviewThread] = [] {
+        didSet { if threads != oldValue { refreshNotes() } }
+    }
+
+    /// Asks the editor to re-lay-out without rebuilding the document. Installed by the
+    /// editor's coordinator, like the other text-view reaches.
+    var requestRelayout: (() -> Void)?
+
+    /// Re-place the inline notes in the existing document.
+    ///
+    /// Deliberately **not** a `rebuild()`: that replaces the storage and bumps `revision`,
+    /// which remounts the editor — so adding a comment would throw away your cursor and
+    /// scroll position every time. Only the block heights change, so re-laying-out is
+    /// enough.
+    func refreshNotes() {
+        var map = BlockMap()
+        for block in blockMap.blocks {
+            if case .reviewNote = block.kind { continue }
+            map.insert(block)
+        }
+        for note in placedNotes() { map.insert(noteBlock(note)) }
+        blockMap = map
+        requestRelayout?()
+        editRevision += 1
+    }
+
+    private func noteBlock(_ note: PlacedNote) -> Block {
+        Block(id: "note-\(note.id)",
+              kind: .reviewNote(id: note.id, origin: note.origin,
+                                header: note.header, body: note.body),
+              // `+ 1` so the band draws *under* the line it is about: a block renders above
+              // the row it is attached to.
+              beforeStitchedLine: note.afterRow + 1,
+              height: Self.noteHeight(header: note.header, body: note.body))
+    }
+
+    /// One note to draw under the line it is about.
+    private struct PlacedNote {
+        let id: String
+        let origin: ReviewNoteOrigin
+        let header: String
+        let body: String
+        /// The row it belongs under.
+        let afterRow: Int
+    }
+
+    /// Resolve every note to the row it sits under, dropping the ones whose line isn't in
+    /// the current document — those stay reachable in the rail and the threads panel.
+    private func placedNotes() -> [PlacedNote] {
+        var placed: [PlacedNote] = []
+        for comment in comments {
+            guard let row = stitchedLine(forFile: comment.file, line: comment.line,
+                                         side: comment.side) else { continue }
+            let name = (comment.file as NSString).lastPathComponent
+            placed.append(PlacedNote(
+                id: comment.id.uuidString,
+                origin: comment.githubAuthor == nil ? .mine : .github,
+                header: comment.githubAuthor.map { "@\($0)  \(name):\(comment.line)" }
+                    ?? "\(name):\(comment.line)",
+                body: comment.text, afterRow: row))
+        }
+        for thread in threads {
+            guard let line = thread.line, let root = thread.comments.first,
+                  let row = stitchedLine(forFile: thread.path, line: line,
+                                         side: thread.side) else { continue }
+            let replies = thread.comments.count - 1
+            var header = "@\(root.author)"
+            if replies > 0 { header += "  ·  \(replies) repl\(replies == 1 ? "y" : "ies")" }
+            if thread.isResolved { header += "  ·  resolved" }
+            if thread.isOutdated { header += "  ·  outdated" }
+            placed.append(PlacedNote(id: thread.id, origin: .github, header: header,
+                                     body: root.body, afterRow: row))
+        }
+        return placed
+    }
+
+    /// Width the inline note text wraps at. Fixed rather than the document width: the
+    /// document is as wide as its longest line, which on a diff is far wider than anything
+    /// readable, and the band would have to re-measure on every horizontal resize.
+    static let noteWrapWidth: CGFloat = 560
+
+    /// Height of a note band, measured off the wrapped body.
+    private static func noteHeight(header: String, body: String) -> CGFloat {
+        let bodyRect = (body as NSString).boundingRect(
+            with: CGSize(width: noteWrapWidth - 24, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: NSFont.systemFont(ofSize: 11)])
+        // header line + measured body + padding
+        return ceil(bodyRect.height) + 15 + 12
+    }
+
+    // MARK: - Branches
+
+    @Published private(set) var branches: [String] = []
+
+    /// Read the branch list when the menu is about to be shown, not on every load.
+    func loadBranches() {
+        let cwd = self.cwd
+        DispatchQueue.global(qos: .userInitiated).async {
+            let names = GitStaging.listBranches(cwd: cwd)
+            DispatchQueue.main.async { self.branches = names }
+        }
+    }
+
+    /// Switch branches, then re-read everything — the diff, the file list and every buffer
+    /// describe the old checkout.
+    ///
+    /// Refused outright while any buffer holds unsaved edits: `git checkout` would either
+    /// fail or succeed and leave the editor holding text for a file that no longer says
+    /// that, and quietly losing someone's edits is not a thing to risk for a convenience.
+    func checkout(branch: String) {
+        guard !writing, branch != branchName else { return }
+        let dirty = dirtyPaths
+        guard dirty.isEmpty else {
+            lastError = "Unsaved edits in \(dirty.sorted().joined(separator: ", ")) — save (⌘S) or discard before switching branch."
+            return
+        }
+        let cwd = self.cwd
+        lastError = nil
+        writing = true
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = GitStaging.checkout(branch: branch, cwd: cwd)
+            DispatchQueue.main.async {
+                self.writing = false
+                self.lastError = result.errorText
+                if result.isOK {
+                    self.openedPaths.removeAll()   // may not exist on the new branch
+                    self.repoFiles = []
+                    self.revealedLines = [:]
+                    self.highlighter.invalidateAll()
+                    self.dropBuffers()
+                }
+                self.load()
+            }
+        }
+    }
+
+    /// Forget every buffer, so the next read comes from the new checkout.
+    private func dropBuffers() {
+        buffers.values.forEach { $0.stopWatching() }
+        buffers.removeAll()
+    }
+
+    // MARK: - File finder (⌘P)
+
+    /// Files opened whole, in the order they were opened. Appended after the diff.
+    @Published private(set) var openedPaths: [String] = []
+    /// Every file git knows about, for the finder. Read once per open.
+    @Published private(set) var repoFiles: [String] = []
+    @Published var finderOpen = false
+
+    /// Show the finder, loading the repo's file list on first use.
+    func openFinder() {
+        finderOpen = true
+        guard repoFiles.isEmpty else { return }
+        let cwd = self.cwd
+        DispatchQueue.global(qos: .userInitiated).async {
+            let files = GitStaging.listFiles(cwd: cwd)
+            DispatchQueue.main.async { self.repoFiles = files }
+        }
+    }
+
+    /// Open a file in full.
+    ///
+    /// A file that is *in* the diff is focused instead of opened: it already has rows, and
+    /// appending a second copy would give it two headers and two sets of row origins for the
+    /// same lines.
+    func openFile(path: String) {
+        finderOpen = false
+        if files.contains(where: { $0.path == path }) {
+            focusedFile = path
+            rebuild()
+            if let row = firstStitchedLine(ofFile: path) { requestScroll(toStitchedLine: row) }
+            return
+        }
+        guard !openedPaths.contains(path) else {
+            if let row = firstStitchedLine(ofFile: path) { requestScroll(toStitchedLine: row) }
+            return
+        }
+        openedPaths.append(path)
+        // Focus narrows the document to one *changed* file, which would hide the file just
+        // asked for.
+        focusedFile = nil
+        rebuild()
+        if let row = firstStitchedLine(ofFile: path) { requestScroll(toStitchedLine: row) }
+    }
+
+    func closeOpenedFile(path: String) {
+        guard openedPaths.contains(path) else { return }
+        openedPaths.removeAll { $0 == path }
+        rebuild()
+    }
+
+    /// The opened files with their line counts, which is what the planner needs.
+    private var openedFiles: [OpenedFile] {
+        openedPaths.map { path in
+            let text = text(for: source(of: path))
+            // A file ending in a newline has a trailing empty line; count rows the way the
+            // document does, so the excerpt's length matches its rows.
+            return OpenedFile(path: path, lineCount: EditMap.lineStartOffsets(text).count)
+        }
+    }
+
+    // MARK: - Reconciliation
+
+    /// Keep the unsaved edits, overwriting whatever was written underneath them.
+    func keepMine(path: String) {
+        guard let buffer = liveBuffer(forPath: path) else { return }
+        lastError = nil
+        do {
+            try buffer.save()
+        } catch {
+            lastError = "Couldn't save \(path): \(error.localizedDescription)"
+        }
+        load()
+    }
+
+    /// Drop the unsaved edits and take what is on disk now.
+    func takeTheirs(path: String) {
+        guard let buffer = liveBuffer(forPath: path) else { return }
+        buffer.apply(.userDiscarded)
+        highlighter.invalidate(source: buffer.source)
+        load()
+    }
+
+    /// An **already-created** buffer, never a new one: a file with no buffer was never
+    /// opened, so it has no edits to reconcile and reading it would only cost a file read.
+    private func liveBuffer(forPath path: String) -> SourceBuffer? {
+        buffers[source(of: path)]
     }
 
     // MARK: - Staging actions
@@ -506,6 +1011,13 @@ final class WorkbenchSession: ObservableObject {
         guard !allGroups.isEmpty, !writing else { return }
         // A committed file has nothing in the working tree to move; the patch would be
         // rejected with git's "does not apply", which explains nothing.
+        // An edited file's diff is the one read before the edit, so its hunk line numbers
+        // describe the old file — a patch built from them would apply somewhere else.
+        let dirty = dirtyPaths
+        if let edited = allGroups.first(where: { dirty.contains($0.path) }) {
+            lastError = "\(edited.path) has unsaved edits — save (⌘S) before staging it."
+            return
+        }
         let groups = allGroups.filter {
             unstagedPaths.contains($0.path) || stagedPaths.contains($0.path)
         }
@@ -594,16 +1106,18 @@ final class WorkbenchSession: ObservableObject {
 
     // MARK: - Comments
 
-    /// The reviewable anchor a stitched line points at: which file, which line, and
-    /// which side of the diff. Added/context lines anchor to the new side, removals to
-    /// the old — the same mapping the old panel's `HighlightMap` used.
+    /// The reviewable anchor a stitched line points at: which file, which line, and which
+    /// side of the diff.
+    ///
+    /// Read off `rowOrigins`, not `StitchMap`: `locate` resolves a row by *summing excerpt
+    /// lengths*, which stops matching the document the moment a hunk gap is expanded (those
+    /// rows belong to no excerpt), and it would have started anchoring comments to the wrong
+    /// file.
     func anchor(atStitchedLine line: Int) -> (file: String, line: Int, side: DiffSide)? {
-        guard line >= 0, line < gutterRows.count,
-              let excerpt = stitchMap.excerpt(atStitchedLine: line) else { return nil }
-        let row = gutterRows[line]
-        let relative = relativePath(of: excerpt.source)
-        if let new = row.new { return (relative, new, .new) }
-        if let old = row.old { return (relative, old, .old) }
+        guard rowOrigins.indices.contains(line) else { return nil }
+        let origin = rowOrigins[line]
+        if let new = origin.newLineNumber { return (origin.path, new, .new) }
+        if let old = origin.oldLineNumber { return (origin.path, old, .old) }
         return nil
     }
 
@@ -642,12 +1156,20 @@ final class WorkbenchSession: ObservableObject {
 
     /// The stitched row showing `file`'s `line` on `side`, or nil when the current diff
     /// doesn't show it — which is also how a review thread is judged unanchored.
+    ///
+    /// An old-side line that was removed has no row of its own, so it resolves to the row
+    /// owning the band that shows it: jumping there still puts the deleted line on screen.
     func stitchedLine(forFile file: String, line: Int, side: DiffSide) -> Int? {
         for (idx, origin) in rowOrigins.enumerated() where origin.path == file {
-            guard idx < gutterRows.count else { break }
-            let row = gutterRows[idx]
-            if side == .new, row.new == line { return idx }
-            if side == .old, row.old == line { return idx }
+            switch side {
+            case .new where origin.newLineNumber == line:
+                return idx
+            case .old where origin.oldLineNumber == line
+                || origin.deletedRefs.contains(where: { $0.oldLineNumber == line }):
+                return idx
+            default:
+                continue
+            }
         }
         return nil
     }

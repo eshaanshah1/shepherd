@@ -129,11 +129,20 @@ enum ShortcutActions {
         case .find:          s.openSearch()
         case .reviewDiff:    s.toggleDiffPanel()
         case .openEditor:    s.openEditor()
-        case .saveFile:      NotificationCenter.default.post(name: .shepherdSaveCodeSurface, object: nil)
+        // One ⌘S, dispatched by what is on screen. It has to be the menu command rather
+        // than a binding inside the workbench: a menu key equivalent beats the key window's
+        // responder chain, so a view-local ⌘S could never fire while this one exists.
+        case .saveFile:
+            if s.diffPanelOpen, let pane = s.diffPanelPaneID,
+               let session = s.workbenchSession(forPane: pane) {
+                session.saveEdits()
+            } else {
+                NotificationCenter.default.post(name: .shepherdSaveCodeSurface, object: nil)
+            }
         // Declared inside `WorkbenchView` so the terminal keeps these keys whenever the
         // workbench is closed; display-only here.
         case .nextHunk, .prevHunk, .stageHunk, .unstageHunk,
-             .focusCommitMessage, .commentOnLine, .selectScope: break
+             .focusCommitMessage, .commentOnLine, .selectScope, .openFileFinder: break
         case .nextAlert:     s.selectNextAttention()
         case .reloadConfig:  GhosttyApp.shared.reloadConfig()
         case .showShortcuts: s.showShortcuts.toggle()

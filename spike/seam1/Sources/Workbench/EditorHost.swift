@@ -44,6 +44,38 @@ final class RenderDelegateInstaller: TextViewCoordinator {
     }
 }
 
+/// Routes the editor's text changes back to the files they came from.
+///
+/// A `TextViewDelegate` rather than a plain coordinator because write-back needs both hooks
+/// upstream only gives the delegate: the range and replacement of each change, and the
+/// chance to **refuse** one. Refusing matters — a row is a real line of a real file, but a
+/// file's rows are discontinuous, so an edit spanning two of them (backspacing the first
+/// line of a hunk into the last line of the one above) would rewrite everything hidden in
+/// the gap between them.
+final class WriteBackCoordinator: TextViewCoordinator, TextViewDelegate {
+    private weak var session: WorkbenchSession?
+
+    init(session: WorkbenchSession) { self.session = session }
+
+    func prepareCoordinator(controller: TextViewController) { }
+
+    /// `assumeIsolated` rather than `@MainActor`: these callbacks come from AppKit's text
+    /// editing path, which is main-thread by construction, but the upstream protocol is not
+    /// isolated and conforming with isolated methods doesn't type-check.
+    func textView(_ textView: TextView, shouldReplaceContentsIn range: NSRange,
+                  with string: String) -> Bool {
+        MainActor.assumeIsolated { session?.canApplyEdit(range: range) ?? false }
+    }
+
+    /// Applied after the fact, deliberately: `storage` already holds the new text, while
+    /// the row tables still describe the old document — which is what resolving where the
+    /// edit *was* requires.
+    func textView(_ textView: TextView, didReplaceContentsIn range: NSRange,
+                  with string: String) {
+        MainActor.assumeIsolated { session?.absorbEdit(range: range, replacement: string) }
+    }
+}
+
 /// The workbench's text surface: our gutter beside CESE's editor over a shared storage.
 ///
 /// Wrapping is off deliberately — a diff scrolls horizontally rather than reflowing, so
@@ -62,13 +94,10 @@ struct EditorHost: View {
                 lineHeightMultiple: Theme.lineHeightMultiple,
                 wrapLines: false
             ),
-            // Read-only until W2's edit write-back lands. Nothing maps typed text back to
-            // a `SourceBuffer`, so edits would not persist — and worse, `rowStyles` /
-            // `gutterRows` / `rowOrigins` are indexed by stitched line, so one typed
-            // newline shifts every row after it and silently corrupts the gutter numbers,
-            // row tints, and staging targets. Selection is unaffected (`isSelectable`
-            // defaults true), which is what line staging runs on.
-            behavior: .init(isEditable: false),
+            // Editable: `WriteBackCoordinator` maps each change onto the file it came from
+            // and keeps the row tables in step. Edits stay in memory until ⌘S — nothing
+            // touches disk before that, which bounds what a mapping bug can cost.
+            behavior: .init(isEditable: true),
             // Our own gutter replaces CESE's (which can't show dual line numbers), and
             // a minimap over a stitched multibuffer would map to nothing meaningful.
             peripherals: .init(showGutter: false, showMinimap: false, showFoldingRibbon: false)
@@ -91,7 +120,7 @@ struct EditorHost: View {
                 // evaluation reads as a provider change and re-runs the full
                 // re-highlight plus `reloadUI()` on every scroll tick.
                 highlightProviders: [session.highlighter],
-                coordinators: [RenderDelegateInstaller(
+                coordinators: [session.writeBack, RenderDelegateInstaller(
                     renderer: session.renderer,
                     onLayoutChanged: {},
                     onReady: { [weak session] controller in
@@ -106,6 +135,11 @@ struct EditorHost: View {
                         session?.editorLineIndex = { [weak controller] documentY in
                             controller?.textView.layoutManager
                                 .textLineForPosition(documentY)?.index
+                        }
+                        // Re-lay-out without replacing the document, for block changes that
+                        // aren't a rebuild (inline review notes appearing/disappearing).
+                        session?.requestRelayout = { [weak controller] in
+                            controller?.textView.layoutManager.setNeedsLayout()
                         }
                         // `prepareCoordinator` runs inside the controller's `init`;
                         // `loadView()` — which builds the scroll view — only happens once
@@ -200,7 +234,7 @@ private struct WorkbenchGutter: NSViewRepresentable {
 
     func updateNSView(_ view: DiffGutterView, context: Context) {
         view.rowHeight = WorkbenchMetrics.rowHeight
-        view.rowCount = session.gutterRows.count
+        view.rowCount = session.gutterRowCount
         // Resolved through the session on every attempt, never snapshotted: on the pass
         // that mounts the editor this gutter updates *first*, so the provider isn't set
         // yet — and `load()` publishes everything in one runloop turn, so SwiftUI
@@ -222,16 +256,19 @@ private struct WorkbenchGutter: NSViewRepresentable {
         session.requestGutterAttach = { [weak view] in view?.attachIfNeeded() }
         view.attachIfNeeded()
         view.row = { [weak session] idx in
-            guard let session, idx < session.gutterRows.count,
-                  idx < session.rowOrigins.count else { return nil }
-            let row = session.gutterRows[idx]
+            guard let session, idx < session.gutterRowCount else { return nil }
+            // The trailing empty line past the last text row. It hosts a band that trails
+            // the document, so it must report a row — but it shows nothing of its own.
+            guard idx < session.rowOrigins.count else {
+                return GutterRow(lineNumber: nil, sign: nil, tint: .none)
+            }
+            let origin = session.rowOrigins[idx]
             return GutterRow(
-                // One number: the new-side one, or the old on a removal. The sign column
-                // says which side it is, so showing both only stutters on context lines.
-                lineNumber: row.new ?? row.old,
-                sign: WorkbenchSession.sign(for: session.rowOrigins[idx].kind),
-                tint: session.style(atStitchedLine: idx).tint,
-                selected: session.selectedLines.contains(idx)
+                // One number. Every row is a new-side line now, so the old number only
+                // shows where there is no new one — which the sign column disambiguates.
+                lineNumber: origin.newLineNumber ?? origin.oldLineNumber,
+                sign: WorkbenchSession.sign(for: origin.kind),
+                tint: session.style(atStitchedLine: idx).tint
             )
         }
         view.maxLineNumber = max(session.maxOldLineNumber, session.maxNewLineNumber)
@@ -246,7 +283,7 @@ private struct WorkbenchGutter: NSViewRepresentable {
 /// Cached against the theme mode: it was a computed global, so every SwiftUI body
 /// evaluation allocated fourteen `NSColor`s to build a value whose only use is an
 /// equality check in `SourceEditor.paramsAreEqual`.
-private enum WorkbenchEditorTheme {
+enum WorkbenchEditorTheme {
     private static var cached: (mode: ThemeMode, theme: EditorTheme)?
 
     static var current: EditorTheme {
