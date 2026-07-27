@@ -17,12 +17,26 @@ final class WorkbenchSession: ObservableObject {
     @Published private(set) var scope: WorkbenchScope = .workingTree
 
     func setScope(_ next: WorkbenchScope) {
-        guard next != scope else { return }
+        let previous = scope
+        guard next != previous else { return }
         scope = next
         if next == .threads { threadsPanelOpen = true }
+        if next == .files {
+            // Re-reads the unmerged index: this scope carries the conflicts too, and they
+            // are the one thing that can have changed under us since the last look.
+            loadConflicts()
+            return
+        }
+        guard let nextMode = next.mode else { return }
         // Only reload when the underlying git comparison actually changes; switching
-        // between vs-base and threads is a filter over the same diff.
-        if mode != next.mode { mode = next.mode }
+        // between vs-base and threads is a filter over the same diff. Leaving the Files
+        // scope always reloads, though — the document on screen is a merge preview and some
+        // hand-opened files, so an unchanged `mode` would leave it there.
+        if mode != nextMode {
+            mode = nextMode
+        } else if previous == .files {
+            load()
+        }
     }
     @Published private(set) var files: [DiffFile] = []
     /// The one file the editor is scoped to, or nil for the whole diff.
@@ -40,6 +54,9 @@ final class WorkbenchSession: ObservableObject {
         rebuild()
     }
     @Published private(set) var baseLabel: String?
+    /// The base branch's name whatever the mode, so the scope pill's label never changes
+    /// out from under the pointer.
+    @Published private(set) var baseName: String?
     @Published private(set) var isRepo = true
     @Published private(set) var loading = false
     @Published private(set) var stitchMap = StitchMap(excerpts: [])
@@ -128,7 +145,11 @@ final class WorkbenchSession: ObservableObject {
     }
 
     /// The files the stitched document currently covers — the focused one, or all.
+    ///
+    /// Empty in the Files scope: that scope is not showing a diff at all, so the document is
+    /// built purely from whatever `⌘P` has opened.
     var displayedFiles: [DiffFile] {
+        if scope == .files { return [] }
         guard let focusedFile else { return files }
         return files.filter { $0.path == focusedFile }
     }
@@ -164,7 +185,9 @@ final class WorkbenchSession: ObservableObject {
     /// symptom.
     lazy var highlighter: MultiHighlighter = MultiHighlighter(
         anchor: { [weak self] line in self?.sourceAnchor(atStitchedLine: line) },
-        textForSource: { [weak self] source, side in self?.text(for: source, side: side) ?? "" },
+        textForSource: { [weak self] source, variant in
+            self?.text(for: source, variant: variant) ?? ""
+        },
         rangeForStitchedLine: { [weak self] line in self?.range(forStitchedLine: line) },
         stitchedLineRange: { [weak self] range in self?.stitchedLines(in: range) }
     )
@@ -172,6 +195,32 @@ final class WorkbenchSession: ObservableObject {
     /// Owned here for the same reason as the highlighter and the renderer: a fresh instance
     /// per `body` evaluation would reinstall itself on every scroll tick.
     lazy var writeBack: WriteBackCoordinator = WriteBackCoordinator(session: self)
+
+    /// The band-control layer. Owned here rather than built in a `body` for the same reason
+    /// as the highlighter — and because it must survive the editor remount a rebuild causes,
+    /// re-parenting itself into the new scroll view rather than being recreated.
+    lazy var overlay: WorkbenchOverlayView = {
+        let view = WorkbenchOverlayView()
+        view.scrollViewProvider = { [weak self] in self?.editorScrollViewProvider?() }
+        view.lineMetrics = { [weak self] index in self?.editorLineMetrics?(index) }
+        view.lineIndex = { [weak self] documentY in self?.editorLineIndex?(documentY) }
+        view.blocksAbove = { [weak self] index in
+            self?.blockMap.blocks(beforeStitchedLine: index) ?? []
+        }
+        view.onResolve = { [weak self] conflictID, resolution in
+            self?.resolve(conflictID: conflictID, as: resolution)
+        }
+        return view
+    }()
+
+    /// Push the current document's shape at the overlay. Called wherever the gutter is
+    /// refreshed, since the two track the same geometry.
+    func refreshOverlay() {
+        overlay.rowCount = gutterRowCount
+        overlay.rowHeight = WorkbenchMetrics.rowHeight
+        overlay.attachIfNeeded()
+        overlay.needsDisplay = true
+    }
 
     lazy var renderer: BlockRenderer = BlockRenderer(
         stitchedLineForOffset: { [weak self] offset in self?.stitchedLine(forOffset: offset) },
@@ -242,26 +291,45 @@ final class WorkbenchSession: ObservableObject {
 
     func text(for source: SourceID) -> String { buffer(for: source).text }
 
-    /// A file's text on one side of the diff: the working copy, or the base blob.
-    func text(for source: SourceID, side: DiffSide) -> String {
-        let buffer = buffer(for: source)
-        return side == .new ? buffer.text : (buffer.baseText ?? "")
+    /// The text behind a highlight variant.
+    ///
+    /// The merge variants read from memory, never from disk: a conflicted file on disk holds
+    /// git's markers, which is neither what the document shows nor anything worth colouring.
+    func text(for source: SourceID, variant: HighlightVariant) -> String {
+        switch variant {
+        case .new:
+            return buffer(for: source).text
+        case .old:
+            return buffer(for: source).baseText ?? ""
+        case .mergePreview:
+            return MergeText.blob(mergePreviews[relativePath(of: source)] ?? [])
+        case .snippet:
+            // No band parses a loose fragment any more — both sides of a conflict are real
+            // rows of the merge preview now, so they highlight through `.mergePreview`.
+            return ""
+        }
     }
 
-    /// The file and **0-based source line** a stitched row shows.
+    /// The file, text variant, and **0-based line** a stitched row shows.
     ///
-    /// Always the new side: every text row is a real line of a file on disk (removals are
-    /// bands, not rows). A band's own lines are highlighted from the base blob through
-    /// `baseHighlights(source:line:)` instead.
+    /// In a diff this is always the working copy: every text row is a real line of a file on
+    /// disk (removals are bands, not rows). In a **conflicted** file it is the merge preview
+    /// — the file on disk still holds git's markers, so nothing in the document sits at the
+    /// line number the document claims, and asking for `.new` would paint each row with
+    /// whatever line happens to be there.
     ///
     /// Not derived from `StitchMap`: an excerpt's `lineRange` holds *row* indices, and
     /// reading them as source lines fed the highlighter arbitrary lines of the file — which
     /// is what painted syntax colors on unrelated words. The per-row numbers are the real
     /// mapping, and they are 1-based.
-    func sourceAnchor(atStitchedLine line: Int) -> (source: SourceID, side: DiffSide, line: Int)? {
+    func sourceAnchor(atStitchedLine line: Int)
+        -> (source: SourceID, variant: HighlightVariant, line: Int)? {
         guard rowOrigins.indices.contains(line),
               let new = rowOrigins[line].newLineNumber else { return nil }
-        return (source(of: rowOrigins[line].path), .new, new - 1)
+        let origin = rowOrigins[line]
+        let variant: HighlightVariant =
+            mergePreviews[origin.path] != nil ? .mergePreview : .new
+        return (source(of: origin.path), variant, new - 1)
     }
 
     /// Read the diff off the main thread, then rebuild the stitched document.
@@ -287,6 +355,7 @@ final class WorkbenchSession: ObservableObject {
                     self.focusedFile = nil
                 }
                 self.baseLabel = result.baseLabel
+                if let name = result.baseName { self.baseName = name }
                 self.isRepo = result.isRepo
                 self.stagedPaths = staged
                 self.unstagedPaths = unstaged
@@ -319,6 +388,15 @@ final class WorkbenchSession: ObservableObject {
     /// each band sits is the mapping every W2 feature depends on, so it lives in a pure,
     /// tested type. This walk only materializes the text and the styles the plan implies.
     private func rebuild() {
+        // Neither a merge nor a hand-opened file is a diff, so they materialize from their
+        // own plan. Conflicted files live in the Files scope alongside the ones you opened —
+        // a file you have to fix is still a file, and a separate tab for it meant the thing
+        // most demanding your attention was one click out of sight.
+        if scope == .files {
+            rebuildFiles()
+            return
+        }
+        mergePreviews.removeAll()
         let shown = displayedFiles
         let plan = RowPlanner.plan(files: shown, revealed: revealedLines, opened: openedFiles)
         var hunks: [HunkKey: DiffHunk] = [:]
@@ -418,6 +496,10 @@ final class WorkbenchSession: ObservableObject {
                                counterpart: pairing(key)?.counterpart(atLineIndex: index))
                 }
                 maxOld = max(maxOld, startingOldLine + removed.count - 1)
+            case .conflictControls, .conflictMarker:
+                // Only `RowPlanner.planConflicts` emits these, and that plan is
+                // materialized by `rebuildConflicts`. A diff can't produce one.
+                continue
             }
         }
 
@@ -446,6 +528,285 @@ final class WorkbenchSession: ObservableObject {
         maxNewLineNumber = maxNew
         selectedLines.removeAll()   // row indices don't survive a rebuild
         revision += 1
+    }
+
+    // MARK: - Merge conflicts
+
+    @Published private(set) var mergeFiles: [MergeFile] = []
+    @Published private(set) var mergeState: MergeState = .idle
+    /// Paths where our diff3 disagreed with the marker count git wrote — the tripwire for
+    /// our merge diverging from git's.
+    @Published private(set) var divergentFiles: [String] = []
+    /// Per-conflict decisions, held in memory until a whole file is settled. Nothing reaches
+    /// disk before that, so a half-triaged file is left exactly as git left it.
+    @Published private(set) var resolutions: [String: Resolution] = [:]
+
+    /// The merge preview each conflicted file's rows were materialized from, so the
+    /// highlighter colours the text the document is actually showing.
+    private var mergePreviews: [String: [String]] = [:]
+
+    var hasConflicts: Bool { !mergeFiles.isEmpty }
+    var conflictPaths: Set<String> { Set(mergeFiles.map(\.path)) }
+
+    /// Conflicted files, narrowed to the focused one.
+    var displayedConflictFiles: [MergeFile] {
+        guard let focusedFile else { return mergeFiles }
+        return mergeFiles.filter { $0.path == focusedFile }
+    }
+
+    func unresolvedCount(inFile path: String) -> Int {
+        guard let file = mergeFiles.first(where: { $0.path == path }) else { return 0 }
+        return MergeOutput.unresolved(file, resolutions: resolutions).count
+    }
+
+    var totalUnresolved: Int {
+        mergeFiles.reduce(0) { $0 + MergeOutput.unresolved($1, resolutions: resolutions).count }
+    }
+
+    func canResolveFile(_ path: String) -> Bool {
+        !writing && mergeFiles.contains { $0.path == path } && unresolvedCount(inFile: path) == 0
+    }
+
+    /// Read the unmerged index. Cheap enough to run on every load — `ls-files -u` on a clean
+    /// repo returns nothing and costs one process.
+    func loadConflicts() {
+        loading = true
+        let cwd = self.cwd
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = ConflictReader.read(cwd: cwd)
+            DispatchQueue.main.async {
+                let paths = Set(result.files.map(\.path))
+                self.mergeFiles = result.files
+                self.mergeState = result.state
+                self.divergentFiles = result.divergent
+                // Choices for conflicts that no longer exist are dropped. Ids embed the
+                // path and the region's ordinal, so a file whose regions changed shape
+                // loses its decisions rather than silently applying them to a different
+                // region — the safe direction.
+                self.resolutions = self.resolutions.filter { entry in
+                    guard let path = entry.key.components(separatedBy: "#").first,
+                          paths.contains(path) else { return false }
+                    return result.files.contains { file in
+                        file.conflicts.contains { $0.id == entry.key }
+                    }
+                }
+                if let focused = self.focusedFile, !paths.contains(focused) {
+                    self.focusedFile = nil
+                }
+                self.rebuild()
+                self.loading = false
+            }
+        }
+    }
+
+    /// Materialize the Files document: every unmerged file as a three-way merge, then the
+    /// files opened by hand through `⌘P`.
+    private func rebuildFiles() {
+        let shown = displayedConflictFiles
+        let plan = RowPlanner.planConflicts(shown, resolutions: resolutions,
+                                            opened: openedFiles)
+
+        var previews: [String: [String]] = [:]
+        for file in shown {
+            previews[file.path] = MergeOutput.preview(file, resolutions: resolutions)
+        }
+
+        var stitched = ""
+        var styles: [RowStyle] = []
+        var maxNew = 0
+        // An opened file has no merge preview; its rows are read off disk.
+        var fileLines: [String: [String]] = [:]
+        for origin in plan.origins {
+            let lines: [String]
+            if let preview = previews[origin.path] {
+                lines = preview
+            } else {
+                if fileLines[origin.path] == nil {
+                    fileLines[origin.path] = text(for: source(of: origin.path))
+                        .components(separatedBy: "\n")
+                }
+                lines = fileLines[origin.path] ?? []
+            }
+            let index = (origin.newLineNumber ?? 1) - 1
+            stitched += (lines.indices.contains(index) ? lines[index] : "") + "\n"
+            // Only rows inside a conflict are tinted, and the two sides differently. An
+            // auto-resolved region is not a decision and must read as ordinary code.
+            let tint: RowTint
+            switch origin.conflictSide {
+            case .some(.ours):   tint = .conflictOurs
+            case .some(.theirs): tint = .conflictTheirs
+            case .none:          tint = .none
+            }
+            styles.append(RowStyle(tint: tint, wordSpans: []))
+            maxNew = max(maxNew, origin.newLineNumber ?? 0)
+        }
+
+        var blocks: [Block] = []
+        let rowHeight = WorkbenchMetrics.rowHeight
+        let byPath = Dictionary(uniqueKeysWithValues: shown.map { ($0.path, $0) })
+
+        for planned in plan.blocks {
+            switch planned.band {
+            case .fileHeader(let path):
+                blocks.append(Block(id: planned.id, kind: .fileHeader(source(of: path)),
+                                    beforeStitchedLine: planned.beforeRow,
+                                    height: rowHeight + 12))
+            case .conflictControls(let path, let conflictID, let index, let total):
+                guard let file = byPath[path] else { continue }
+                blocks.append(Block(
+                    id: planned.id,
+                    kind: .conflictControls(source: source(of: path), conflictID: conflictID,
+                                            index: index, total: total,
+                                            resolution: resolutions[conflictID],
+                                            kind: file.kind, oursLabel: file.oursLabel,
+                                            theirsLabel: file.theirsLabel),
+                    beforeStitchedLine: planned.beforeRow,
+                    height: ConflictBandMetrics.controlsHeight))
+            case .conflictMarker(let path, let conflictID, let label, let side, let isEnd):
+                blocks.append(Block(
+                    id: planned.id,
+                    kind: .conflictMarker(source: source(of: path), conflictID: conflictID,
+                                          label: label, side: side, isEnd: isEnd),
+                    beforeStitchedLine: planned.beforeRow,
+                    height: ConflictBandMetrics.markerHeight))
+            case .hunkGap, .deletedLines:
+                continue
+            }
+        }
+
+        let excerpts = plan.excerpts.map {
+            Excerpt(id: $0.id, source: source(of: $0.path),
+                    lineRange: $0.sourceLines, kind: $0.kind)
+        }
+
+        storage.setAttributedString(NSAttributedString(string: stitched,
+                                                       attributes: WorkbenchMetrics.baseAttributes))
+        lineStarts = SourceHighlightCache.lineStartOffsets(stitched)
+        stitchMap = StitchMap(excerpts: excerpts)
+        blockMap = BlockMap(blocks: blocks)
+        rowStyles = styles
+        rowOrigins = plan.origins
+        deletionStyles = [:]
+        deletionRows.removeAll()
+        mergePreviews = previews
+        maxOldLineNumber = 0
+        maxNewLineNumber = maxNew
+        selectedLines.removeAll()
+        revision += 1
+    }
+
+    /// Take a side for one conflict.
+    ///
+    /// Rebuilds — which rows exist depends on the choice — and that remounts the editor, so
+    /// it scrolls back to the conflict afterwards. Landing back on the thing you just
+    /// decided is what you want anyway.
+    func resolve(conflictID: String, as resolution: Resolution) {
+        guard resolutions[conflictID] != resolution else { return }
+        resolutions[conflictID] = resolution
+        invalidatePreview(forConflict: conflictID)
+        rebuild()
+        if let row = rowOrigins.firstIndex(where: { $0.conflictID == conflictID }) {
+            requestScroll(toStitchedLine: row)
+        }
+    }
+
+    /// Take the same side for every conflict in a file — the common move in a rebase where
+    /// one branch is simply the one you want.
+    func resolveAll(inFile path: String, as resolution: Resolution) {
+        guard let file = mergeFiles.first(where: { $0.path == path }) else { return }
+        for conflict in file.conflicts { resolutions[conflict.id] = resolution }
+        highlighter.invalidate(source: source(of: path), variant: .mergePreview)
+        rebuild()
+    }
+
+    /// A resolution rewrites that file's preview, but nothing about its working copy or its
+    /// base blob — so only that one parse is dropped.
+    private func invalidatePreview(forConflict conflictID: String) {
+        guard let path = conflictID.components(separatedBy: "#").first else { return }
+        highlighter.invalidate(source: source(of: path), variant: .mergePreview)
+    }
+
+    /// Write a fully decided file and stage it.
+    ///
+    /// Whole-file conflicts never take this path: they have no line list, and reconstructing
+    /// one so it could be written would make the fabrication real. Those go to git.
+    func resolveFile(path: String) {
+        guard !writing, let file = mergeFiles.first(where: { $0.path == path }) else { return }
+        guard MergeOutput.unresolved(file, resolutions: resolutions).isEmpty else {
+            lastError = "\(path) still has undecided conflicts."
+            return
+        }
+
+        let cwd = self.cwd
+        lastError = nil
+        writing = true
+
+        if file.kind.isWholeFile {
+            let side: MergeSide = resolutions[file.conflicts.first?.id ?? ""] == .theirs
+                ? .theirs : .ours
+            let commands = WholeFileResolve.commands(kind: file.kind, side: side, path: path)
+            DispatchQueue.global(qos: .userInitiated).async {
+                var failure: String?
+                for args in commands {
+                    if let error = GitStaging.run(args, cwd: cwd).errorText {
+                        failure = error
+                        break
+                    }
+                }
+                DispatchQueue.main.async {
+                    self.writing = false
+                    self.lastError = failure
+                    self.loadConflicts()
+                }
+            }
+            return
+        }
+
+        guard let text = MergeOutput.text(file, resolutions: resolutions) else {
+            writing = false
+            lastError = "Couldn't build the merged text for \(path)."
+            return
+        }
+        let absolute = (cwd as NSString).appendingPathComponent(path)
+        DispatchQueue.global(qos: .userInitiated).async {
+            var failure: String?
+            do {
+                try text.write(toFile: absolute, atomically: true, encoding: .utf8)
+                failure = GitStaging.stageFiles([path], cwd: cwd).errorText
+            } catch {
+                failure = "Couldn't write \(path): \(error.localizedDescription)"
+            }
+            DispatchQueue.main.async {
+                self.writing = false
+                self.lastError = failure
+                self.highlighter.invalidate(source: self.source(of: path))
+                self.loadConflicts()
+            }
+        }
+    }
+
+    /// Abandon the whole operation. A resolver without an escape hatch is a trap.
+    func abortOperation() {
+        guard !writing, mergeState.isActive else { return }
+        let verb: String
+        switch mergeState.operation {
+        case .merge:      verb = "merge"
+        case .rebase:     verb = "rebase"
+        case .cherryPick: verb = "cherry-pick"
+        case .none:       return
+        }
+        let cwd = self.cwd
+        lastError = nil
+        writing = true
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = GitStaging.run([verb, "--abort"], cwd: cwd)
+            DispatchQueue.main.async {
+                self.writing = false
+                self.lastError = result.errorText
+                self.resolutions.removeAll()
+                self.loadConflicts()
+            }
+        }
     }
 
     /// A hunk's identity across the walk. Two files can each have a hunk 0.
@@ -615,7 +976,24 @@ final class WorkbenchSession: ObservableObject {
     func canApplyEdit(range: NSRange) -> Bool {
         guard let rows = stitchedLines(in: range),
               let edit = EditMap.fileEdit(rows: rows, origins: rowOrigins) else { return false }
+        // A conflicted file's rows are a merge preview. The file on disk still holds git's
+        // markers, so no row sits at the offset it claims and there is nothing to write
+        // back to. Refused here, explicitly, rather than left to the staleness guard below
+        // — that would refuse silently, and "the line went read-only for no visible reason"
+        // is exactly the defect W2.2's live run turned up. `editBlockedReason` says so.
+        guard !conflictPaths.contains(edit.path) else { return false }
         return documentMatchesFile(rows: rows, edit: edit)
+    }
+
+    /// Why the cursor's file can't be edited, or nil when it can. Shown in the header, so a
+    /// refusal is never mysterious.
+    var editBlockedReason: String? {
+        guard let line = cursorStitchedLine, rowOrigins.indices.contains(line) else {
+            return nil
+        }
+        let path = rowOrigins[line].path
+        guard conflictPaths.contains(path) else { return nil }
+        return "\((path as NSString).lastPathComponent) is conflicted — resolve it to edit."
     }
 
     /// Absorb an edit the editor has already applied to `storage`.

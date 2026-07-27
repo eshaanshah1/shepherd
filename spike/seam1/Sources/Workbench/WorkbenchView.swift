@@ -13,6 +13,7 @@ struct WorkbenchView: View {
     /// Name for a new worktree, collected before handing off to the existing flow.
     @State private var worktreePrompt = false
     @State private var worktreeName = ""
+    @State private var abortConfirm = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -35,6 +36,13 @@ struct WorkbenchView: View {
         .background(Theme.ground)
         .overlay { composerOverlay }
         .overlay { if session.finderOpen { WorkbenchFinder(session: session) } }
+        .alert("Abort \(abortVerb)?", isPresented: $abortConfirm) {
+            Button("Abort \(abortVerb)", role: .destructive) { session.abortOperation() }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Throws away every resolution and returns the repo to where it was before "
+                 + "the \(abortVerb) started.")
+        }
         .alert("New worktree", isPresented: $worktreePrompt) {
             TextField("Branch name", text: $worktreeName)
             Button("Create") { createWorktree() }
@@ -45,6 +53,9 @@ struct WorkbenchView: View {
         .background { keyBindings }
         .onAppear {
             session.load()
+            // Cheap on a clean repo — `ls-files -u` returns nothing for one process — and
+            // it is the only way the Files segment can know it has conflicts to show.
+            session.loadConflicts()
             // Once per open, not per glance at the header: the old `.onTapGesture` on the
             // Menu was also unreliable, since the menu consumes the tap.
             session.loadBranches()
@@ -53,6 +64,11 @@ struct WorkbenchView: View {
             store.refreshPR(forPane: session.paneID)
         }
         .onChange(of: session.mode) { _ in session.load() }
+        // Landing on a diff while the repo is mid-merge buries the thing you have to deal
+        // with; the conflicts are the reason the workbench is open.
+        .onChange(of: session.hasConflicts) { hasConflicts in
+            if hasConflicts, session.scope != .files { session.setScope(.files) }
+        }
         // The store owns the threads; the session needs them to place the inline notes.
         .onChange(of: paneThreads) { session.threads = $0 }
         .onAppear { session.threads = paneThreads }
@@ -77,10 +93,22 @@ struct WorkbenchView: View {
             key(.return, [.command, .option]) { session.unstageSelection() }
             key("k", [.command]) { commitFocused = true }
             key("p", [.command]) { session.openFinder() }
-            key("1", [.control]) { session.mode = .workingTree }
-            key("2", [.control]) { session.mode = .branchVsBase }
+            key("1", [.control]) { session.setScope(.workingTree) }
+            key("2", [.control]) { session.setScope(.vsBase) }
+            key("3", [.control]) { session.setScope(.files) }
+            key("o", [.control, .shift]) { acceptAtCursor(.ours) }
+            key("t", [.control, .shift]) { acceptAtCursor(.theirs) }
+            key("b", [.control, .shift]) { acceptAtCursor(.bothOursFirst) }
         }
         .opacity(0).frame(width: 0, height: 0)
+    }
+
+    /// Take a side for the conflict the cursor is sitting in.
+    private func acceptAtCursor(_ resolution: Resolution) {
+        guard let line = session.cursorStitchedLine,
+              session.rowOrigins.indices.contains(line),
+              let id = session.rowOrigins[line].conflictID else { return }
+        session.resolve(conflictID: id, as: resolution)
     }
 
     private func key(_ k: KeyEquivalent, _ mods: EventModifiers,
@@ -130,6 +158,19 @@ struct WorkbenchView: View {
     private var header: some View {
         HStack(spacing: 10) {
             summary
+            if let reason = session.editBlockedReason {
+                // Said out loud, because the alternative is a line that silently stops
+                // accepting keystrokes — the defect W2.2's live run turned up.
+                HStack(spacing: 4) {
+                    Image(systemName: "lock.fill").font(.system(size: 9))
+                    Text(reason).font(.ui(10, .medium)).lineLimit(1)
+                }
+                .foregroundStyle(Theme.blocked)
+                .padding(.horizontal, 7).padding(.vertical, 2)
+                .background(Theme.blocked.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .help(reason)
+            }
             Spacer()
             branchMenu
             threadsButton
@@ -195,7 +236,20 @@ struct WorkbenchView: View {
     }
 
     /// The dense one-line summary: magnitude, file count, and what we're comparing to.
-    private var summary: some View {
+    @ViewBuilder private var summary: some View {
+        if session.scope == .files {
+            HStack(spacing: 6) {
+                Text("\(session.openedPaths.count) open")
+                    .font(.ui(11)).foregroundStyle(Theme.textSecondary)
+                Text("·").foregroundStyle(Theme.textDim)
+                Text("⌘P to open a file").font(.ui(11)).foregroundStyle(Theme.textDim)
+            }
+        } else {
+            diffSummary
+        }
+    }
+
+    private var diffSummary: some View {
         HStack(spacing: 6) {
             Text("+\(totalAdded)").font(.mono(11, .medium)).foregroundStyle(Color(hex: Theme.Diff.addition))
             Text("−\(totalRemoved)").font(.mono(11, .medium)).foregroundStyle(Color(hex: Theme.Diff.deletion))
@@ -279,7 +333,7 @@ struct WorkbenchView: View {
     /// ticked. Hidden entirely when there is nothing either could act on, rather than
     /// sitting there permanently greyed.
     @ViewBuilder private var stagingButtons: some View {
-        if session.hasStagingTarget {
+        if session.hasStagingTarget, session.scope != .files {
             let count = session.selectedLines.count
             HStack(spacing: 4) {
                 pill(count > 0 ? "Stage \(count)" : "Stage hunk",
@@ -330,7 +384,7 @@ struct WorkbenchView: View {
         VStack(spacing: 0) {
             scopeList
             Rectangle().fill(Theme.divider).frame(height: 1)
-            fileList
+            if session.scope == .files { plainFilesList } else { fileList }
             if !session.comments.isEmpty {
                 Rectangle().fill(Theme.divider).frame(height: 1)
                 pendingComments
@@ -449,47 +503,298 @@ struct WorkbenchView: View {
     /// Segments share the width equally instead of sizing to their text, so a long base
     /// label (`origin/feature/…`) truncates inside its own segment rather than pushing the
     /// others off the rail.
+    /// One selectable scope.
+    private struct ScopeOption: Identifiable {
+        let id: WorkbenchScope
+        let title: String
+        let tint: Color?
+        /// A count of things needing attention, shown as a filled badge. Deliberately not
+        /// folded into the title: "Files 3" reads as *three files*, when the scope holds
+        /// your open files as well and the number is really "three of these are broken".
+        var badge: Int? = nil
+    }
+
+    private var scopeOptions: [ScopeOption] {
+        var options: [ScopeOption] = [
+            ScopeOption(id: .workingTree, title: "Working", tint: nil),
+            ScopeOption(id: .vsBase, title: "vs \(session.baseName ?? "base")", tint: nil),
+            // Conflicts live here rather than in a scope of their own: a file you have to
+            // fix is still a file, and hiding it behind a second tab put the most urgent
+            // thing in the workbench one click out of sight.
+            ScopeOption(id: .files, title: "Files",
+                        tint: session.hasConflicts ? Theme.error : nil,
+                        badge: session.hasConflicts ? session.mergeFiles.count : nil),
+        ]
+        if !paneThreads.isEmpty {
+            let unresolved = PRThreads.unresolvedCount(paneThreads)
+            options.append(ScopeOption(
+                id: .threads, title: "Threads",
+                tint: unresolved > 0 ? Theme.prMerged : nil,
+                badge: unresolved > 0 ? unresolved : nil))
+        }
+        return options
+    }
+
+    /// Scope as a segmented pill, wrapped onto two rows once there are more than three.
+    ///
+    /// Segments share width equally within a row so a long base label (`origin/feature/…`)
+    /// truncates inside its own segment rather than pushing the others off the rail. That
+    /// alone was fine at two scopes and unreadable at five — 260pt split five ways leaves
+    /// about seven characters, so every segment ellipsised at once. Wrapping keeps the equal
+    /// widths *and* the labels.
     private var scopeList: some View {
-        HStack(spacing: 2) {
-            scopeSegment("Working tree", active: session.scope == .workingTree) {
-                session.setScope(.workingTree)
-            }
-            scopeSegment("vs \(session.baseLabel ?? "base")", active: session.scope == .vsBase) {
-                session.setScope(.vsBase)
-            }
-            // Only when there are threads to scope to — an always-present "Threads 0"
-            // would be a permanent dead segment on every non-PR branch.
-            if !paneThreads.isEmpty {
-                let unresolved = PRThreads.unresolvedCount(paneThreads)
-                scopeSegment("Threads\(unresolved > 0 ? " \(unresolved)" : "")",
-                             active: session.scope == .threads,
-                             tint: unresolved > 0 ? Theme.prMerged : nil) {
-                    session.setScope(.threads)
+        let options = scopeOptions
+        let rows: [[ScopeOption]] = options.count > 3
+            ? stride(from: 0, to: options.count, by: 2).map {
+                Array(options[$0..<min($0 + 2, options.count)])
+              }
+            : [options]
+        return VStack(spacing: 3) {
+            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                HStack(spacing: 2) {
+                    ForEach(row) { option in
+                        scopeSegment(option.title, active: session.scope == option.id,
+                                     tint: option.tint, badge: option.badge) {
+                            session.setScope(option.id)
+                        }
+                    }
+                    // A trailing odd segment keeps its half-width rather than stretching to
+                    // fill the row, so the grid still reads as a grid.
+                    if row.count == 1, rows.count > 1 { Color.clear.frame(maxWidth: .infinity) }
                 }
+                .padding(2)
+                .background(Theme.surface2)
+                .clipShape(Capsule())
             }
         }
-        .padding(2)
-        .background(Theme.surface2)
-        .clipShape(Capsule())
         .padding(.horizontal, 10).padding(.vertical, 6)
     }
 
     /// One segment. The filled capsule *is* the selected state, so there's no tick to carry.
     private func scopeSegment(_ title: String, active: Bool, tint: Color? = nil,
+                              badge: Int? = nil,
                               _ action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text(title)
-                .font(.ui(11, active ? .semibold : .medium))
-                .foregroundStyle(tint ?? (active ? Theme.textPrimary : Theme.textSecondary))
-                .lineLimit(1)
-                .padding(.horizontal, 8).padding(.vertical, 3)
-                .frame(maxWidth: .infinity)
-                .background(active ? Theme.surface3 : Color.clear)
-                .clipShape(Capsule())
-                .contentShape(Capsule())
+            HStack(spacing: 4) {
+                Text(title)
+                    .font(.ui(11, active ? .semibold : .medium))
+                    .foregroundStyle(tint ?? (active ? Theme.textPrimary : Theme.textSecondary))
+                    .lineLimit(1)
+                if let badge {
+                    Text("\(badge)")
+                        .font(.ui(9, .bold))
+                        .foregroundStyle(Theme.ground)
+                        .padding(.horizontal, 4).padding(.vertical, 1)
+                        .background(tint ?? Theme.textSecondary)
+                        .clipShape(Capsule())
+                }
+            }
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .frame(maxWidth: .infinity)
+            .background(active ? Theme.surface3 : Color.clear)
+            .clipShape(Capsule())
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain).focusable(false)
-        .help(title)
+        .help(badge.map { "\(title) — \($0) conflicted" } ?? title)
+    }
+
+    // MARK: - Files scope
+
+    /// The workbench as a plain editor: no diff, no staging sections, just what is open.
+    ///
+    /// The rail deliberately does **not** grow a file browser. `⌘P` already fuzzy-matches
+    /// every file git knows about, and a second, worse browser beside it would be two ways
+    /// to do one thing.
+    private var plainFilesList: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                if session.hasConflicts { conflictsSection }
+                Button { session.openFinder() } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "magnifyingglass").font(.system(size: 10))
+                        Text("Open File…").font(.ui(11, .medium))
+                        Spacer(minLength: 0)
+                        Text("⌘P").font(.mono(9.5)).foregroundStyle(Theme.textDim)
+                    }
+                    .foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 10).padding(.vertical, 6)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).focusable(false)
+
+                if session.openedPaths.isEmpty {
+                    if !session.hasConflicts {
+                        Text("Nothing open yet.")
+                            .font(.ui(10)).foregroundStyle(Theme.textDim)
+                            .padding(.horizontal, 12).padding(.top, 4)
+                    }
+                } else {
+                    openedFilesSection
+                }
+            }
+            .padding(.bottom, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    // MARK: - Conflicts
+
+    /// The unmerged files, at the top of the Files rail: the operation banner, one row per
+    /// conflicted file with the bulk actions that carry a rebase, and the escape hatch.
+    @ViewBuilder private var conflictsSection: some View {
+        Group {
+            if let summary = session.mergeState.summary {
+                HStack(alignment: .top, spacing: 6) {
+                    TablerIcon(paths: Tabler.gitBranch, size: 11)
+                        .foregroundStyle(Theme.blocked)
+                    Text(summary)
+                        .font(.ui(10.5, .medium)).foregroundStyle(Theme.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.blocked.opacity(0.10))
+            }
+
+            ForEach(session.divergentFiles, id: \.self) { path in
+                divergentRow(path)
+            }
+
+            Text("CONFLICTED \(session.mergeFiles.count)")
+                .font(.ui(10, .semibold)).foregroundStyle(Theme.error)
+                .padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 2)
+
+            ForEach(session.mergeFiles, id: \.path) { file in
+                conflictRow(file)
+            }
+
+            if session.mergeState.isActive { abortRow }
+            Rectangle().fill(Theme.divider).frame(height: 1).padding(.top, 10)
+        }
+    }
+
+    /// Our diff3 found a different number of regions than git wrote markers for.
+    ///
+    /// Surfaced rather than swallowed: computing our own three-way merge instead of scraping
+    /// git's markers is the right call, but the one thing it can get wrong is silently
+    /// auto-resolving something git asked about. If the counts disagree, say so.
+    private func divergentRow(_ path: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 10)).foregroundStyle(Theme.blocked)
+            Text("\((path as NSString).lastPathComponent): our region count differs from "
+                 + "git's markers — check this one carefully.")
+                .font(.ui(9.5)).foregroundStyle(Theme.blocked)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 6)
+        .background(Theme.blocked.opacity(0.08))
+    }
+
+    private func conflictRow(_ file: MergeFile) -> some View {
+        let unresolved = session.unresolvedCount(inFile: file.path)
+        let focused = session.focusedFile == file.path
+        return VStack(alignment: .leading, spacing: 3) {
+            Button { session.focus(file: file.path) } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: unresolved == 0
+                          ? "checkmark.circle.fill" : "exclamationmark.circle")
+                        .font(.system(size: 11))
+                        .foregroundStyle(unresolved == 0
+                                         ? Color(hex: Theme.Diff.addition) : Theme.error)
+                    Text((file.path as NSString).lastPathComponent)
+                        .font(.ui(12, focused ? .semibold : .regular))
+                        .foregroundStyle(unresolved == 0 ? Theme.textPrimary : Theme.error)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    Text(conflictSummary(file, unresolved: unresolved))
+                        .font(.mono(9.5)).foregroundStyle(Theme.textDim)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).focusable(false)
+            .help(file.path)
+
+            HStack(spacing: 4) {
+                // Named for the branches, not "ours"/"theirs" — mid-rebase those words mean
+                // the opposite of what a reader expects.
+                miniButton(file.oursLabel) {
+                    session.resolveAll(inFile: file.path, as: .ours)
+                }
+                miniButton(file.theirsLabel) {
+                    session.resolveAll(inFile: file.path, as: .theirs)
+                }
+                Spacer(minLength: 0)
+                Button("Resolve") { session.resolveFile(path: file.path) }
+                    .buttonStyle(.plain).focusable(false)
+                    .font(.ui(10, .semibold))
+                    .foregroundStyle(session.canResolveFile(file.path)
+                                     ? Color(hex: Theme.Diff.addition) : Theme.textDim)
+                    .disabled(!session.canResolveFile(file.path))
+                    .help(unresolved > 0
+                          ? "Decide every conflict in this file first"
+                          : "Write the merged file and stage it")
+            }
+            .padding(.leading, 17)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(focused ? Theme.surface3 : Color.clear)
+    }
+
+    private func conflictSummary(_ file: MergeFile, unresolved: Int) -> String {
+        if file.kind.isWholeFile {
+            switch file.kind {
+            case .deletedByThem: return "deleted by \(file.theirsLabel)"
+            case .deletedByUs:   return "deleted by \(file.oursLabel)"
+            case .binary:        return "binary"
+            default:             return "whole file"
+            }
+        }
+        return unresolved == 0 ? "ready" : "\(unresolved)/\(file.conflicts.count)"
+    }
+
+    private func miniButton(_ title: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text("All \(title)")
+                .font(.ui(9.5, .medium)).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                .padding(.horizontal, 6).padding(.vertical, 2)
+                .background(Theme.surface2)
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).focusable(false).disabled(session.writing)
+        .help("Take every conflict in this file from \(title)")
+    }
+
+    /// The escape hatch. A resolver without one is a trap.
+    private var abortRow: some View {
+        HStack(spacing: 0) {
+            Button(role: .destructive) { abortConfirm = true } label: {
+                Text("Abort \(abortVerb)")
+                    .font(.ui(10, .medium)).foregroundStyle(Theme.error)
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(Theme.error.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).focusable(false).disabled(session.writing)
+            .help("Throw away the whole \(abortVerb) and go back")
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12).padding(.top, 12)
+    }
+
+    private var abortVerb: String {
+        switch session.mergeState.operation {
+        case .merge:      return "merge"
+        case .rebase:     return "rebase"
+        case .cherryPick: return "cherry-pick"
+        case .none:       return "operation"
+        }
     }
 
     /// Changed files, split Staged / Unstaged, and grouped inside each split under dim
@@ -800,6 +1105,16 @@ struct WorkbenchView: View {
     @ViewBuilder private var content: some View {
         if !session.isRepo {
             centered("Not a git repository")
+        } else if session.scope == .files {
+            if session.rowOrigins.isEmpty {
+                // Either nothing is open, or every conflicted file is whole-file (a binary
+                // or a delete/modify) and has no lines to show — those settle in the rail.
+                centered(session.hasConflicts
+                         ? "Nothing to show — settle these in the rail"
+                         : "No files open — ⌘P to open one")
+            } else {
+                EditorHost(session: session)
+            }
         } else if session.loading && session.files.isEmpty {
             centered("Loading…")
         } else if session.files.isEmpty {

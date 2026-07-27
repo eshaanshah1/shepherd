@@ -17,16 +17,35 @@ enum BlockKind: Equatable {
     case hunkGap(source: SourceID, collapsed: Range<Int>)
     /// Alignment padding on the shorter side of a split diff.
     case spacer(rows: Int)
-    case conflictControls(SourceID)
+    /// The accept ours / theirs / both strip above a merge conflict.
+    ///
+    /// A nil `resolution` means undecided. The document previews such a region as ours, so
+    /// the strip must show *no* segment selected — "showing you ours because you haven't
+    /// picked" and "you picked ours" must not look the same.
+    ///
+    /// **Drawn by `WorkbenchOverlay`, not by `DiffRowView`.** It is the one band with click
+    /// targets, and having one view paint it while another hit-tests it would be two
+    /// opinions about where its buttons are.
+    case conflictControls(source: SourceID, conflictID: String, index: Int, total: Int,
+                          resolution: Resolution?, kind: ConflictKind,
+                          oursLabel: String, theirsLabel: String)
+    /// A `=======` or `>>>>>>> branch` rule between or after the sides of a conflict.
+    ///
+    /// Drawn, never typed. The document is what `Resolve` writes, so a marker that was a
+    /// real text row could reach a file; as a band it cannot.
+    case conflictMarker(source: SourceID, conflictID: String, label: String,
+                        side: MergeSide?, isEnd: Bool)
     /// Hosts the rendered-markdown diff views (ADR 0019).
     case renderedMarkdown(SourceID)
 
     /// The file this block belongs to, or nil for file-agnostic blocks (spacers).
     var source: SourceID? {
         switch self {
-        case .fileHeader(let s), .conflictControls(let s), .renderedMarkdown(let s):
+        case .fileHeader(let s), .renderedMarkdown(let s):
             return s
         case .deletedLines(let s, _, _), .hunkGap(let s, _):
+            return s
+        case .conflictControls(let s, _, _, _, _, _, _, _), .conflictMarker(let s, _, _, _, _):
             return s
         case .spacer, .reviewNote:
             return nil

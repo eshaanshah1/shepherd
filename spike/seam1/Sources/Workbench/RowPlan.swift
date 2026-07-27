@@ -30,10 +30,16 @@ struct RowOrigin: Equatable {
     /// Removed lines drawn as a band adjacent to this row. The row owns them for
     /// selection, so staging a hunk still stages its deletions.
     var deletedRefs: [DeletedRef]
+    /// The merge conflict this row is inside, for a conflicted file. Lets the chrome act on
+    /// "the conflict the cursor is in" and tells the tint which rows are undecided.
+    let conflictID: String?
+    /// Which side of that conflict the row came from, so the two read differently.
+    let conflictSide: MergeSide?
 
     init(path: String, hunkIndex: Int, lineIndex: Int, kind: DiffLineKind,
          oldLineNumber: Int? = nil, newLineNumber: Int? = nil,
-         deletedRefs: [DeletedRef] = []) {
+         deletedRefs: [DeletedRef] = [], conflictID: String? = nil,
+         conflictSide: MergeSide? = nil) {
         self.path = path
         self.hunkIndex = hunkIndex
         self.lineIndex = lineIndex
@@ -41,6 +47,8 @@ struct RowOrigin: Equatable {
         self.oldLineNumber = oldLineNumber
         self.newLineNumber = newLineNumber
         self.deletedRefs = deletedRefs
+        self.conflictID = conflictID
+        self.conflictSide = conflictSide
     }
 
     /// Whether this row's own line can go into a patch. Context lines carry no change, so
@@ -65,6 +73,14 @@ enum PlannedBand: Equatable {
     case hunkGap(path: String, collapsed: Range<Int>)
     /// A run of removed lines, contiguous in both the hunk and the old file.
     case deletedLines(path: String, hunkIndex: Int, lineIndices: [Int], startingOldLine: Int)
+    /// The accept ours / theirs / both strip above a merge conflict.
+    case conflictControls(path: String, conflictID: String, index: Int, total: Int)
+    /// A `=======` or `>>>>>>> branch` rule between or after the sides of a conflict.
+    ///
+    /// Drawn, never typed: the document is what gets written on Resolve, so a marker that
+    /// was a real text row could end up in a file. As a band it physically cannot.
+    case conflictMarker(path: String, conflictID: String, label: String,
+                        side: MergeSide?, isEnd: Bool)
 }
 
 /// A band and the text row it sits immediately above. `beforeRow == rows.count` means it
@@ -82,6 +98,10 @@ struct PlannedBlock: Equatable, Identifiable {
             return "gap-\(path)-\(collapsed.lowerBound)"
         case .deletedLines(let path, let hunkIndex, let lineIndices, _):
             return "del-\(path)-\(hunkIndex)-\(lineIndices.first ?? 0)"
+        case .conflictControls(_, let conflictID, _, _):
+            return "cc-\(conflictID)"
+        case .conflictMarker(_, let conflictID, _, _, let isEnd):
+            return "mark-\(conflictID)-\(isEnd ? "end" : "sep")"
         }
     }
 }
@@ -200,6 +220,16 @@ enum RowPlanner {
             }
         }
 
+        appendOpened(opened, into: &plan)
+        return plan
+    }
+
+    /// Files opened whole through `⌘P`, appended after whatever else the plan holds.
+    ///
+    /// Shared by the diff plan and the conflict plan: a conflicted repo still wants the files
+    /// you opened by hand in the same document, and duplicating this walk is how the tested
+    /// one and the real one drift apart.
+    private static func appendOpened(_ opened: [OpenedFile], into plan: inout RowPlan) {
         for file in opened {
             plan.blocks.append(PlannedBlock(band: .fileHeader(path: file.path),
                                             beforeRow: plan.origins.count))
@@ -216,6 +246,109 @@ enum RowPlanner {
                 path: file.path, hunkIndex: nil, header: nil, kind: .context,
                 rows: start..<plan.origins.count, sourceLines: 0..<file.lineCount))
         }
+    }
+
+    /// The document for a set of unmerged files.
+    ///
+    /// A separate entry point from `plan(files:)` rather than another argument to it: a
+    /// merge is three-way and has no hunks, no old/new sides and no staging, so threading it
+    /// through the diff walk would mean a second meaning for almost every field.
+    ///
+    /// **Every row here is synthetic.** Its `newLineNumber` is a line of the merge *preview*,
+    /// not of the file on disk — which mid-merge still holds git's markers, so nothing in the
+    /// preview sits where the preview would claim. That is why these rows carry
+    /// `lineIndex: -1` (never stageable, never reaching `PatchSynth`) and why the session
+    /// refuses to write edits through them.
+    static func planConflicts(_ files: [MergeFile],
+                              resolutions: [String: Resolution],
+                              opened: [OpenedFile] = []) -> RowPlan {
+        var plan = RowPlan()
+
+        for file in files {
+            plan.blocks.append(PlannedBlock(band: .fileHeader(path: file.path),
+                                            beforeRow: plan.origins.count))
+
+            // A conflict with no line-level answer — a binary blob, or a file one side
+            // deleted. There is nothing to show as rows and nothing we would ever write, so
+            // it contributes one controls strip and no document at all; the decision goes to
+            // git (`WholeFileResolve`).
+            guard !file.kind.isWholeFile else {
+                if let conflict = file.conflicts.first {
+                    plan.blocks.append(PlannedBlock(
+                        band: .conflictControls(path: file.path, conflictID: conflict.id,
+                                                index: 1, total: 1),
+                        beforeRow: plan.origins.count))
+                }
+                continue
+            }
+
+            let start = plan.origins.count
+            var conflictIndex = 0
+            var previewLine = 1
+
+            for region in file.regions {
+                switch region {
+                case .stable(let lines):
+                    for _ in lines {
+                        plan.origins.append(RowOrigin(
+                            path: file.path, hunkIndex: 0, lineIndex: -1, kind: .context,
+                            newLineNumber: previewLine))
+                        previewLine += 1
+                    }
+
+                case .conflict:
+                    guard conflictIndex < file.conflicts.count else { continue }
+                    let conflict = file.conflicts[conflictIndex]
+                    conflictIndex += 1
+                    let resolution = resolutions[conflict.id]
+                    let segments = MergeOutput.display(for: conflict, resolution: resolution)
+                    let split = MergeOutput.isSplit(resolution: resolution)
+
+                    // The opening marker doubles as the controls strip: `<<<<<<< main`
+                    // with the accept buttons on it, which is where a reader already looks.
+                    plan.blocks.append(PlannedBlock(
+                        band: .conflictControls(path: file.path, conflictID: conflict.id,
+                                                index: conflict.index,
+                                                total: file.conflicts.count),
+                        beforeRow: plan.origins.count))
+
+                    for (offset, segment) in segments.enumerated() {
+                        // `=======` between the two sides.
+                        if split, offset > 0 {
+                            plan.blocks.append(PlannedBlock(
+                                band: .conflictMarker(path: file.path, conflictID: conflict.id,
+                                                      label: "", side: nil, isEnd: false),
+                                beforeRow: plan.origins.count))
+                        }
+                        for _ in segment.lines {
+                            plan.origins.append(RowOrigin(
+                                path: file.path, hunkIndex: 0, lineIndex: -1, kind: .context,
+                                newLineNumber: previewLine, conflictID: conflict.id,
+                                conflictSide: segment.side))
+                            previewLine += 1
+                        }
+                    }
+
+                    // `>>>>>>> feature` closing the region.
+                    if split, let last = segments.last {
+                        plan.blocks.append(PlannedBlock(
+                            band: .conflictMarker(path: file.path, conflictID: conflict.id,
+                                                  label: last.side == .ours
+                                                      ? file.oursLabel : file.theirsLabel,
+                                                  side: last.side, isEnd: true),
+                            beforeRow: plan.origins.count))
+                    }
+                }
+            }
+
+            if plan.origins.count > start {
+                plan.excerpts.append(PlannedExcerpt(
+                    path: file.path, hunkIndex: nil, header: nil, kind: .conflict,
+                    rows: start..<plan.origins.count,
+                    sourceLines: 0..<(plan.origins.count - start)))
+            }
+        }
+        appendOpened(opened, into: &plan)
         return plan
     }
 

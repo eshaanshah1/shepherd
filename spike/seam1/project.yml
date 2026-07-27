@@ -179,6 +179,11 @@ targets:
       - path: Sources/UpdateService.swift
       - path: Sources/UpdateInstaller.swift
       - path: Sources/DiffModel.swift
+      - path: Sources/Workbench/Diff3.swift
+      - path: Sources/Workbench/MergeModel.swift
+      - path: Sources/Workbench/ConflictParse.swift
+      - path: Sources/Workbench/ConflictReader.swift
+      - path: Sources/Workbench/GitStaging.swift
       - path: Sources/Workbench/StitchMap.swift
       - path: Sources/Workbench/BlockMap.swift
       - path: Sources/Workbench/WordDiff.swift

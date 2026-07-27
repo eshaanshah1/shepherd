@@ -388,7 +388,8 @@ final class DiffGutterView: NSView {
         case .none:     return nil
         case .added:    return style.addedTint
         case .removed:  return style.removedTint
-        case .conflict: return style.conflictTint
+        case .conflict, .conflictTheirs: return style.conflictTint
+        case .conflictOurs:               return style.addedTint
         }
     }
 

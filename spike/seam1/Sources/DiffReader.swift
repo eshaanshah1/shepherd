@@ -7,17 +7,37 @@ enum DiffMode: Equatable { case workingTree, branchVsBase }
 /// Wider than `DiffMode`, which is only the git comparison: `threads` is the vs-base
 /// comparison narrowed to the files that carry PR review threads.
 enum WorkbenchScope: Equatable {
-    case workingTree, vsBase, threads
+    case workingTree, vsBase, threads, files
 
-    var mode: DiffMode { self == .workingTree ? .workingTree : .branchVsBase }
+    /// The git comparison behind this scope, or **nil** for a scope that is not a diff.
+    ///
+    /// Conflicts come from the unmerged index, not from `git diff`. Mapping them onto a
+    /// `DiffMode` anyway — which a two-case ternary silently did — makes
+    /// `WorkbenchView`'s `.onChange(of: session.mode)` fire a full tree diff every time
+    /// you enter the scope, and the merge document is not a diff to begin with.
+    var mode: DiffMode? {
+        switch self {
+        case .workingTree:      return .workingTree
+        case .vsBase, .threads: return .branchVsBase
+        // Neither the unmerged index nor a hand-opened file is a `git diff`.
+        case .files:            return nil
+        }
+    }
 }
 
 struct DiffReadResult: Equatable {
     let files: [DiffFile]
-    let baseLabel: String?   // e.g. "master"; nil in working-tree mode / not a repo
+    /// The base this read actually compared against — nil in working-tree mode, where the
+    /// comparison is HEAD.
+    let baseLabel: String?
+    /// The base branch's name, resolved **whatever** the mode. The scope pill names the
+    /// vs-base segment from this: deriving it from `baseLabel` meant the segment read
+    /// "vs base" until you visited it and "vs main" afterwards, so a label changed under
+    /// the pointer for no reason the user could see.
+    let baseName: String?
     let isRepo: Bool
 
-    static let notRepo = DiffReadResult(files: [], baseLabel: nil, isRepo: false)
+    static let notRepo = DiffReadResult(files: [], baseLabel: nil, baseName: nil, isRepo: false)
 }
 
 enum DiffReader {
@@ -29,14 +49,15 @@ enum DiffReader {
         case .workingTree:
             var text = git(cwd, ["diff", "-M", "HEAD"]) ?? ""
             text += untrackedDiff(cwd)
-            return DiffReadResult(files: DiffParser.parse(text), baseLabel: nil, isRepo: true)
+            return DiffReadResult(files: DiffParser.parse(text), baseLabel: nil,
+                                  baseName: detectBase(cwd), isRepo: true)
         case .branchVsBase:
             let base = detectBase(cwd)
             // Committed-since-base ∪ uncommitted, so the mode reads as "total vs base".
             let committed = git(cwd, ["diff", "-M", "\(base)...HEAD"]) ?? ""
             let working = (git(cwd, ["diff", "-M", "HEAD"]) ?? "") + untrackedDiff(cwd)
             let merged = mergeByPath(DiffParser.parse(committed) + DiffParser.parse(working))
-            return DiffReadResult(files: merged, baseLabel: base, isRepo: true)
+            return DiffReadResult(files: merged, baseLabel: base, baseName: base, isRepo: true)
         }
     }
 

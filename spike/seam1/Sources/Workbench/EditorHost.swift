@@ -147,6 +147,9 @@ struct EditorHost: View {
                         // hop later it exists, so that is when the gutter can hook up.
                         DispatchQueue.main.async { [weak session] in
                             session?.requestGutterAttach?()
+                            // Same hop, same reason: the overlay re-parents into the scroll
+                            // view this remount just built.
+                            session?.refreshOverlay()
                         }
                         session?.scrollToStitchedLine = { [weak session, weak controller] line in
                             guard let session, let controller else { return }
@@ -274,6 +277,9 @@ private struct WorkbenchGutter: NSViewRepresentable {
         view.maxLineNumber = max(session.maxOldLineNumber, session.maxNewLineNumber)
         view.onSelectRows = { [weak session] rows in session?.setSelectedRows?(rows) }
         view.needsDisplay = true
+        // The overlay tracks the same geometry as the gutter, so it is refreshed on the
+        // same pass rather than through a second observer that could fall out of step.
+        session.refreshOverlay()
     }
 }
 

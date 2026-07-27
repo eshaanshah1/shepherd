@@ -328,7 +328,9 @@ Roadmap + everything the first live run taught:
   hunk gap / deletion). `WorkbenchSession.rebuild` only materializes the text + styles it
   implies, so the tested walk and the real one can't drift.
 - **`StitchMap` / `BlockMap` / `WordDiff` + `HunkPairing` / `LockPolicy` /
-  `PatchSynth` / `StageSelection`** — pure, unit-tested.
+  `PatchSynth` / `StageSelection` / `Diff3` + `MergeModel` / `ConflictParse`** — pure,
+  unit-tested.
+- **`ConflictReader` / `WorkbenchOverlay`** — the merge resolver's git and AppKit halves.
 - **`SourceBuffer`** — one watched file; text, lazy base blob, dirty/live-follow.
   Created **on demand** (a 287-file diff must not open 287 fds).
 - **`DiffGutter` / `BlockRenderer` / `MultiHighlighter` / `EditorHost`** — the AppKit half.
@@ -355,7 +357,33 @@ hunk — a deleted file — has no owning row and is whole-file staging only. Ba
 base-blob syntax colours (`MultiHighlighter.baseHighlights`, parsed lazily per band, cached),
 removed tint, word-diff spans, and old numbers + `-` in the gutter.
 
-**Scope** is working-tree or vs-base. Clicking a file in the rail **narrows the buffer to
+**Scope** is working-tree, vs-base, or **Files** (`⌃3`) — the last one is not a diff at
+all: unmerged files at the top of the rail in red, then anything opened with `⌘P`, all
+editable through W2.2's write-back.
+
+**Merge conflicts (W3)** live in the Files scope. `ConflictReader` reads `git ls-files -u`
+and `Diff3.merge`s the index's three stage blobs — **never** a parse of the worktree file's
+markers (marker text depends on `merge.conflictStyle`, content can contain marker-shaped
+lines, and a rebase writes sides the reverse of what a reader expects). It *draws* git's
+markers, which is a different thing: an undecided region shows both sides between
+`<<<<<<< main` / `=======` / `>>>>>>> feature`, and **those markers are bands, never text
+rows** — the document is what `Resolve` writes, so a marker that was a row could reach a
+file. Choosing a side collapses the region to that side and drops the markers. Auto-merged
+regions come back as `.stable` and render as ordinary context, so "silent auto-resolution"
+is the algorithm, not a rendering case.
+
+Three things about it that are easy to get wrong:
+- **Every label is a ref name, never "ours"/"theirs".** Mid-rebase git checks out the
+  upstream and replays your commits onto it, so stage 2 (git's "ours") is the branch you are
+  rebasing **onto** and stage 3 is your own work. `ConflictIntegrationTests` pins this.
+- **Whole-file conflicts** (binary, delete/modify) produce **no rows and no write** —
+  `MergeOutput.text` returns nil for them and `WholeFileResolve` hands the decision to
+  `git checkout --ours/--theirs` / `git rm`. Reconstructing a binary blob so it could flow
+  through the normal write path would make the fabrication real.
+- **Conflicted files are read-only**, with a reason in the header. Their rows are a merge
+  preview; the file on disk still holds git's markers, so no row sits where it claims and
+  `documentMatchesFile` would refuse *silently* — the W2.2 "read-only for no visible reason"
+  defect. Resolve, and it becomes an ordinary editable file. Clicking a file in the rail **narrows the buffer to
 that file** (`session.focus(file:)`); the header chip / "All N files" row restores it.
 The rail splits **STAGED / UNSTAGED / COMMITTED** — vs-base lists files that are already
 committed, and `git add` on those does nothing, so they get no stage button.
@@ -436,6 +464,8 @@ falls back to a plain shell. Requires the plugin reporting `session_id` — afte
 - **Background-`Stop` suppression** ([ADR 0015](.claude/adr/0015-background-stop-suppression-via-background-tasks.md)): `Stop` fires *while a backgrounded agent is still running*, so `report.sh` reduces the `Stop` payload's `background_tasks` (Claude Code v2.1.145+) to a count of tasks the turn is paused on — allow-list **subagent/workflow/shell** hold the notification; a **monitor** does not — and `applyEvent` holds the pane at `working` when that count > 0. This **replaces** ADR 0014's launch-vs-`SubagentStop` counter, which was unreliable because those events don't pair 1:1 (seen 1 `Start` vs 6 `Stop`s). Fails safe: empty/unparseable `detail` → treated as 0 → plain finish-on-`Stop`. Decide payload questions from the **raw payload**, not `/tmp/shepherd-events.log` (it logs transitions, not payloads — the false premise behind ADR 0014).
 - **Notification icon needs an asset catalog**: macOS Notification Center renders the app icon from the compiled asset catalog (`CFBundleIconName` → `Assets.car`), **not** a loose `CFBundleIconFile`/`.icns` (which the Dock reads fine). `Resources/Assets.xcassets/AppIcon.appiconset` + `CFBundleIconName: AppIcon` in `project.yml` is what makes notifications show the Shepherd icon. After changing the icon, a stale system cache may need `lsregister` / a logout to refresh.
 - **`AskUserQuestion` is detected via `PreToolUse`** ([ADR 0008](.claude/adr/0008-askuserquestion-via-pretooluse.md)) — `PreToolUse[AskUserQuestion]` → blocked. (`Elicitation`/`Notification` don't fire for it, but `PreToolUse` does — `report.sh` parses `tool_name` via `jq`.)
+- **Workbench: a row's colours come from a `HighlightVariant`, not always the working copy.** `MultiHighlighter` caches by `(SourceID, HighlightVariant)` — `.new` / `.old` / `.mergePreview` / `.snippet(id)`. A conflicted file's rows are a merge preview that exists only in memory, so anchoring them to `.new` and indexing the file on disk paints each row with whatever line sits at that number — and mid-merge that file is the marker-laden one. This is the same mapping bug that mangled highlighting on the first live run, one layer along. `invalidate(source:)` is a **filter**, not two key removals: `.snippet` ids aren't enumerable up front.
+- **Workbench: clicks cannot reach a band; there are now three answers and you must pick the right one.** `TextView.hitTest` returns the text view for any point inside it, so a line-fragment subview never receives a click. Hunk-gap arrows → the **gutter**; the reconcile row → the **rail**; the conflict accept buttons → **`WorkbenchOverlay`**, a transparent `NSView` over the text view that draws *and* hit-tests its own targets and returns nil from `hitTest` everywhere else. The overlay is the `WidgetLayer` seed and is written against "blocks with targets" — reach for it rather than a fourth answer. It repeats every rule the gutter learned: clip-view `boundsDidChangeNotification` (never `scrollPosition`), geometry from `editorLineMetrics`, `clipsToBounds`, a visible-window-bounded walk, and **re-parent on every rebuild with no "already attached" short-circuit**.
 - **Workbench: never construct the highlighter or render delegate in `body`.** `SourceEditor` compares highlight providers by `ObjectIdentifier`, so a fresh instance per SwiftUI body evaluation reads as a provider change and re-runs `setHighlightProviders` (dropping every cached tree-sitter parse) **plus `reloadUI()` — on every scroll tick**. They live on `WorkbenchSession` (`highlighter`, `renderer`), built once. The same rule applies to anything else an `NSViewRepresentable` hands the editor.
 - **Workbench: the gutter must not have its own opinion about line geometry.** `DiffGutterView` reads each row's real `(yPos, height)` from `layoutManager.textLineForIndex` and resolves the visible window / hit tests via `textLineForPosition`. Computing it arithmetically from `NSLayoutManager.defaultLineHeight` drifts against the text, because CETV types lines with CoreText — `(ascent + descent + leading) × multiplier`. `WorkbenchMetrics.rowHeight` is a fallback for before the editor exists, nothing more.
 - **Workbench: the gutter lives *outside* the scroll view** (CESE's own gutter is a floating subview and moves for free). It tracks scroll by observing the clip view's `boundsDidChangeNotification` — never `SourceEditorState.scrollPosition`, which lands a run-loop pass late and makes the gutter slide against the text. Two traps around that: `prepareCoordinator` runs inside `TextViewController.init`, **before `loadView()` builds `scrollView`**, so the editor pushes `session.requestGutterAttach` one hop later; and everything in `draw` runs per scroll event, so `visibleRange` caps its walk at the rows that fit the dirty rect.
@@ -484,12 +514,13 @@ resizer. Dark-shipped (live only when serving + a helper exists). Pure `RemotePr
 unit-tested; loopback E2E in `ShepherdRemoteTests`; tap in `ShepherdHelperTests`. Android terminal
 client (sub-project B) is the next slice. See `docs/superpowers/specs/2026-07-02-android-phase2-data-channels-design.md`.
 **Unified workbench (⌘G):** W0 (editor vendored, stitched multibuffer, gutter, one
-tokenizer) + W1 (review, line/hunk staging, commit box, PR review threads) done and
-live-run. **W2 done**: W2.0 (rows new-side only, removals as `.deletedLines` blocks) +
-W2.1 (hunk-gap bands + expand), both live-run; W2.2 (**edit write-back** via `EditMap`,
-⌘S save, reconcile choice, ⌘P open-any-file via `FileFinder`, branch menu + worktree),
-compile+tests only — **not yet run**. Remaining: W3 merge resolver, the rest of W4,
-W5 history. See the roadmap for the deviations from plan and the
-eleven defects the first live run turned up.
+tokenizer) + W1 (review, line/hunk staging, commit box, PR review threads) + W2 (rows
+new-side only with removals as blocks, hunk-gap expansion, edit write-back via `EditMap`,
+⌘S, ⌘P) + W4 (PR band, checks, `gh` actions, inline review threads) done and live-run.
+**W3 done**: a pure `Diff3` three-way merge over the index's stage blobs, VSCode-style
+marker rendering, accept controls on the new `WorkbenchOverlay`, and a **Files scope**
+(`⌃3`) that carries both conflicts and `⌘P`-opened files. Only **W5** (history & power
+tools) remains — its own spec, roughly W1–W4 combined. See the roadmap for every deviation
+from plan and the defects each live run turned up.
 
 **Deferred (see SPEC §6):** generic non-Claude agents (Tier-B), sidebar auto-hide at ≤1 tab, debug-log flag, IME/selection polish, multi-window, navigator popup, and **full remote control** (the big future bet).
