@@ -279,9 +279,45 @@ exhaustive switch — every new `ShortcutID` needs a case.
 > maps typed text back to a `SourceBuffer` — and `rowStyles` / `gutterRows` /
 > `rowOrigins` are all indexed by stitched line, so one typed newline shifts every row
 > after it and silently corrupts the gutter numbers, tints, and staging targets. It was
-> turned off rather than left as a footgun. **Edit write-back is what turns it back on**,
-> and re-enabling it without also keeping the per-row tables in step is the trap.
-> Selection is unaffected (`isSelectable` is independent), so staging still works.
+> turned off rather than left as a footgun. Selection is unaffected (`isSelectable` is
+> independent), so staging still works.
+
+### W2.0 — deleted lines must become blocks *before* write-back is possible
+
+**The current document cannot be edited, and no amount of bookkeeping fixes that.**
+`rebuild()` emits every diff line as a text row, removals included — so the buffer is a
+unified interleaved diff. A removed row corresponds to no position in any file on disk,
+so there is nowhere to write an edit to it back to. Keeping the row tables in step with
+typing (the obvious first instinct) solves the wrong problem.
+
+The spec already anticipated this and W0 half-built it. `BlockKind.deletedLines(source:
+lines:startingOldLine:)` exists, and its own comment says *"Removed lines, rendered as a
+block because they exist in no current file."* Nothing emits it — `rebuild()` only ever
+appends `.fileHeader` blocks, and `BlockMap` is built and then never rendered.
+
+**So W2 starts here:** the text buffer becomes **new-side only** (added + context), and
+each run of removals becomes a `.deletedLines` block anchored at the row that follows it.
+What that unlocks, all of it currently blocked:
+
+- Every text row is a real line in the working file, so write-back is a direct mapping
+  and `StitchMap.applyEdit` works as designed.
+- `sourceAnchor` is always `.new`; the base-blob highlight path becomes block-only.
+- The gutter's single number column is exactly right by construction.
+- `BlockMap` gets its first real consumer, ahead of W3's conflict controls and ADR 0019's
+  rendered markdown — both of which are block kinds waiting on the same mechanism.
+
+**The unproven part is rendering a block row**, since W0 never drew one. Confirmed
+feasible: `TextLayoutManager+Layout` takes a line's height from the fragments that
+`prepareForDisplay` builds, and a render delegate overriding `prepareForDisplay` controls
+them — so `BlockRenderer` can inflate the row that a block sits above and have
+`DiffRowView` draw the removed lines in that space. That is what `Block.height` and
+`BlockMap.totalHeight(aboveStitchedLine:)` were shaped for. Prove this on one file before
+building the rest of W2 on it.
+
+**Knock-on:** staging currently selects removed rows as text (`PatchSynth` needs them).
+Once they are blocks, a removal is staged via its block, not a text selection — plan the
+interaction before converting, or hunk-level staging silently loses the ability to stage
+a deletion.
 
 - **File finder (`⌘P`)**: fuzzy-match repo files; opening one appends a `.context`
   excerpt covering the whole file to `StitchMap` and rebuilds. This is where `StitchMap`
