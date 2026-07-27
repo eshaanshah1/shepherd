@@ -11,6 +11,7 @@ enum ShortcutCategory: String, CaseIterable {
     case focusNav   = "Focus & Navigation"
     case workspaces = "Workspaces"
     case tools      = "Tools"
+    case workbench  = "Workbench (⌘G)"
     case attention  = "Attention"
     case config     = "Config"
 }
@@ -21,6 +22,7 @@ enum ShortcutID: CaseIterable {
     case focusLeft, focusRight, focusUp, focusDown, prevTab, nextTab, jumpTab
     case newWorkspace, nextWorkspace, prevWorkspace
     case find, reviewDiff, openEditor, saveFile
+    case nextHunk, prevHunk, stageHunk, unstageHunk, focusCommitMessage, commentOnLine, selectScope
     case nextAlert
     case reloadConfig, showShortcuts
 }
@@ -62,6 +64,19 @@ enum ShortcutCatalog {
         .init(id: .reviewDiff, title: "Review Diff", key: "g", modifiers: .command, category: .tools, display: "⌘G"),
         .init(id: .openEditor, title: "Open Editor", key: "o", modifiers: .command, category: .tools, display: "⌘O"),
         .init(id: .saveFile,   title: "Save File",   key: "s", modifiers: .command, category: .tools, display: "⌘S"),
+
+        // Workbench keys are declared inside `WorkbenchView`, not the menu bar: a menu
+        // key equivalent wins over the key window's responder chain, so binding ⌥↓ or
+        // ⌘⏎ globally would steal them from the terminal whenever the workbench is
+        // closed. They live here as display-only rows so the ⌘/ cheatsheet still lists
+        // them.
+        .init(id: .nextHunk,           title: "Next Hunk",          key: nil, modifiers: [], category: .workbench, display: "⌥↓"),
+        .init(id: .prevHunk,           title: "Previous Hunk",      key: nil, modifiers: [], category: .workbench, display: "⌥↑"),
+        .init(id: .stageHunk,          title: "Stage Selection",    key: nil, modifiers: [], category: .workbench, display: "⌘⏎"),
+        .init(id: .unstageHunk,        title: "Unstage Selection",  key: nil, modifiers: [], category: .workbench, display: "⌘⌥⏎"),
+        .init(id: .focusCommitMessage, title: "Focus Commit Box",   key: nil, modifiers: [], category: .workbench, display: "⌘K"),
+        .init(id: .commentOnLine,      title: "Comment on Line",    key: nil, modifiers: [], category: .workbench, display: "⌘⇧C"),
+        .init(id: .selectScope,        title: "Select Scope N",     key: nil, modifiers: [], category: .workbench, display: "⌃1–⌃4"),
 
         .init(id: .nextAlert, title: "Jump to Next Alert", key: "a", modifiers: [.command, .shift], category: .attention, display: "⌘⇧A"),
 

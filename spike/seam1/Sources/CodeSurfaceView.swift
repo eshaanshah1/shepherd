@@ -1,6 +1,5 @@
 import SwiftUI
 import AppKit
-import CodeEditSourceEditor
 import CodeEditLanguages
 
 /// The code surface: a VSCode-style mini editor — file tree, open-file tabs, and
@@ -130,6 +129,7 @@ struct CodeEditorView: View {
             appearance: .init(
                 theme: shepherdEditorTheme,
                 font: editorFont,
+                lineHeightMultiple: Theme.lineHeightMultiple,
                 wrapLines: Theme.editorWrapLines
             ),
             behavior: .init(isEditable: true),
@@ -168,7 +168,8 @@ struct CodeFieldView: View {
 
     private var configuration: SourceEditorConfiguration {
         SourceEditorConfiguration(
-            appearance: .init(theme: shepherdEditorTheme, font: editorFont, wrapLines: true),
+            appearance: .init(theme: shepherdEditorTheme, font: editorFont,
+                              lineHeightMultiple: Theme.lineHeightMultiple, wrapLines: true),
             behavior: .init(isEditable: true),
             peripherals: .init(showGutter: false, showFoldingRibbon: false)
         )
@@ -188,7 +189,7 @@ private var shepherdEditorTheme: EditorTheme {
         text: attr(Theme.Code.text),
         insertionPoint: NSColor(hex: Theme.Code.keyword),
         invisibles: attr(Theme.pickHex(dark: 0x3B4048, light: 0xC8C8C4, warm: 0xCFC6B0)),
-        background: NSColor(hex: Theme.pickHex(dark: 0x0F0F11, light: 0xFBFBF9, warm: 0xFAF4E6)),
+        background: NSColor(hex: Theme.Diff.buffer),
         lineHighlight: NSColor(hex: Theme.pickHex(dark: 0x1A1A1E, light: 0xEEEEEC, warm: 0xECE3CD)),
         selection: NSColor(hex: Theme.pickHex(dark: 0x2E2E36, light: 0xD6E4FB, warm: 0xE0D3B4)),
         keywords: attr(Theme.Code.keyword),

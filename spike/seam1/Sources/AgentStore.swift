@@ -68,6 +68,9 @@ final class AgentStore: ObservableObject {
     /// Diff-review panel: whether it's open, and which pane it reviews (⌘G).
     @Published var diffPanelOpen = false
     @Published var diffPanelPaneID: String? = nil
+    /// One workbench session per pane, kept across close/reopen so scope, comments, and
+    /// unsaved buffer edits survive. Staging needs no entry here — that's git's index.
+    private var workbenchSessions: [String: WorkbenchSession] = [:]
     /// Code surface overlay (⌘O edit mode; diff mode is Phase 2).
     @Published var codeSurface: CodeSurfaceState? = nil
     /// Bumped when the reviewed pane finishes a turn, so an open panel can offer a refresh.
@@ -974,6 +977,21 @@ final class AgentStore: ObservableObject {
         codeSurface = nil          // one code surface at a time: diff replaces edit
         diffPanelPaneID = tab.focusedPaneID
         diffPanelOpen = true
+    }
+
+    /// The workbench session for a pane, created on first use. Returns nil when the
+    /// pane has no cwd (nothing to review).
+    func workbenchSession(forPane paneID: String) -> WorkbenchSession? {
+        if let existing = workbenchSessions[paneID] { return existing }
+        guard let cwd = cwd(forPane: paneID) else { return nil }
+        let session = WorkbenchSession(paneID: paneID, cwd: cwd)
+        workbenchSessions[paneID] = session
+        return session
+    }
+
+    /// Tear a pane's workbench down — its file watchers must not outlive the pane.
+    func discardWorkbenchSession(forPane paneID: String) {
+        workbenchSessions.removeValue(forKey: paneID)?.stopWatching()
     }
 
     /// ⌘O — toggle the code surface (edit mode); mirrors ⌘G for the diff.

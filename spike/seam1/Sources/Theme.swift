@@ -104,6 +104,47 @@ enum Theme {
         static var variable : UInt32 { pickHex(dark: 0xC8C8CE, light: 0x2A2A30, warm: 0x5A564C) }   // text
         static var builtin  : UInt32 { pickHex(dark: 0x5B9DF8, light: 0x2F7DE1, warm: 0x4A7996) }   // working
     }
+
+    /// Diff colors, deliberately independent of the state-dot ramp. Deriving them
+    /// from `needsCheck`/`error` made "line added" the same green as "agent is
+    /// done" — a semantic collision, and the reason the old tints read washed out.
+    enum Diff {
+        static var addition  : UInt32 { pickHex(dark: 0x3FB950, light: 0x1A7F37, warm: 0x5C8A2E) }
+        static var deletion  : UInt32 { pickHex(dark: 0xF85149, light: 0xCF222E, warm: 0xA83A2C) }
+        static var modified  : UInt32 { pickHex(dark: 0x58A6FF, light: 0x0969DA, warm: 0x3F6E91) }
+        static var buffer    : UInt32 { pickHex(dark: 0x0F0F11, light: 0xFBFBF9, warm: 0xFAF4E6) }
+        static var hover     : UInt32 { pickHex(dark: 0x1F1F24, light: 0xEAEAE7, warm: 0xE8DFC7) }
+        static var separator : UInt32 { pickHex(dark: 0x232327, light: 0xDEDEDA, warm: 0xC9BFA8) }
+        static var gutterFg  : UInt32 { pickHex(dark: 0x5F5F66, light: 0x9A9AA2, warm: 0xA39A86) }
+        /// Word-level tints, sitting on top of the row tint for the parts that changed.
+        static var wordAdd   : UInt32 { pickHex(dark: 0x2B5B33, light: 0xAEE0B8, warm: 0xC3D6A4) }
+        static var wordDel   : UInt32 { pickHex(dark: 0x6E2B28, light: 0xF3B7B3, warm: 0xE0B4AA) }
+    }
+
+    /// Shared row rhythm. The editor, the diff, and the gutter all read this — its
+    /// absence is why the old diff panel needed a hand-computed padding fudge to
+    /// approximate the editor's line height.
+    static let lineHeightMultiple: CGFloat = 1.5
+
+    /// Every derived token for a mode, keyed by name. Exists so a test can assert
+    /// the chain has no holes in any theme. Restores the active mode on the way out.
+    static func derivedTokens(for mode: ThemeMode) -> [String: UInt32] {
+        let previous = self.mode
+        self.mode = mode
+        defer { self.mode = previous }
+        return [
+            "code.text": Code.text, "code.comment": Code.comment,
+            "code.keyword": Code.keyword, "code.string": Code.string,
+            "code.number": Code.number, "code.type": Code.type,
+            "code.function": Code.function, "code.variable": Code.variable,
+            "code.builtin": Code.builtin,
+            "diff.addition": Diff.addition, "diff.deletion": Diff.deletion,
+            "diff.modified": Diff.modified, "diff.buffer": Diff.buffer,
+            "diff.hover": Diff.hover, "diff.separator": Diff.separator,
+            "diff.gutterFg": Diff.gutterFg,
+            "diff.wordAdd": Diff.wordAdd, "diff.wordDel": Diff.wordDel,
+        ]
+    }
 }
 
 extension Font {

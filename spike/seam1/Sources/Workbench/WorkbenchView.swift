@@ -1,0 +1,639 @@
+import SwiftUI
+import AppKit
+
+/// The unified workbench: one rail (scope · files · commit) beside one editable text
+/// surface. Replaces the old review panel and the separate code-surface editor, which
+/// were mutually exclusive full-window overlays with different chrome.
+struct WorkbenchView: View {
+    @EnvironmentObject var store: AgentStore
+    @ObservedObject var session: WorkbenchSession
+    /// The line being commented on, resolved from the editor's cursor.
+    @State private var composing: (file: String, line: Int, side: DiffSide)?
+    @FocusState private var commitFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 0) {
+            rail
+                .frame(width: 260)
+            Rectangle().fill(Theme.hairline).frame(width: 1)
+            VStack(spacing: 0) {
+                header
+                Rectangle().fill(Theme.hairline).frame(height: 1)
+                content
+            }
+            if session.threadsPanelOpen, !paneThreads.isEmpty {
+                Rectangle().fill(Theme.hairline).frame(width: 1)
+                WorkbenchThreadsPanel(session: session)
+                    .environmentObject(store)
+                    .frame(width: 340)
+            }
+        }
+        .background(Theme.ground)
+        .overlay { composerOverlay }
+        .background { keyBindings }
+        .onAppear {
+            session.load()
+            // The pane may never have gone idle (so the periodic PR sweep never ran),
+            // and vs-base review is the reason to be here.
+            store.refreshPR(forPane: session.paneID)
+        }
+        .onChange(of: session.mode) { _ in session.load() }
+        .onChange(of: store.diffTurnTick) { _ in
+            if store.diffTurnPane == session.paneID { session.load() }
+        }
+    }
+
+    // MARK: - Keys
+
+    /// The workbench's own shortcuts, as zero-sized buttons.
+    ///
+    /// Deliberately *not* menu commands (see `ShortcutCatalog`): a menu key equivalent
+    /// wins over the key window's responder chain, so binding ⌥↓ or ⌘⏎ in the menu bar
+    /// would steal them from the terminal whenever the workbench is closed. Declared
+    /// here, they exist exactly as long as this view does.
+    @ViewBuilder private var keyBindings: some View {
+        Group {
+            key(.downArrow, [.option]) { moveToHunk(forward: true) }
+            key(.upArrow, [.option]) { moveToHunk(forward: false) }
+            key(.return, [.command]) { session.stageSelection() }
+            key(.return, [.command, .option]) { session.unstageSelection() }
+            key("k", [.command]) { commitFocused = true }
+            key("1", [.control]) { session.mode = .workingTree }
+            key("2", [.control]) { session.mode = .branchVsBase }
+        }
+        .opacity(0).frame(width: 0, height: 0)
+    }
+
+    private func key(_ k: KeyEquivalent, _ mods: EventModifiers,
+                    _ action: @escaping () -> Void) -> some View {
+        Button("", action: action)
+            .keyboardShortcut(k, modifiers: mods)
+            .focusable(false)
+    }
+
+    /// Move the cursor to the next/previous hunk by selecting its first row, which is
+    /// also what the gutter and the staging default read as "this hunk".
+    private func moveToHunk(forward: Bool) {
+        let origins = session.rowOrigins
+        let target = forward
+            ? StageSelection.hunkStart(after: session.cursorStitchedLine, origins: origins)
+            : StageSelection.hunkStart(before: session.cursorStitchedLine, origins: origins)
+        guard let target else { return }
+        session.requestScroll(toStitchedLine: target)
+    }
+
+    // MARK: - Header
+
+    /// The composer, over a click-to-dismiss backdrop. Esc cancels via `.cancelAction`.
+    @ViewBuilder private var composerOverlay: some View {
+        if let target = composing {
+            ZStack {
+                Color.black.opacity(0.35)
+                    .contentShape(Rectangle())
+                    .onTapGesture { composing = nil }
+                CommentComposer(
+                    file: target.file, line: target.line, side: target.side,
+                    onSubmit: { text in
+                        session.addComment(file: target.file, line: target.line,
+                                           side: target.side, text: text)
+                        composing = nil
+                    },
+                    onCancel: { composing = nil }
+                )
+                Button("") { composing = nil }
+                    .keyboardShortcut(.cancelAction)
+                    .opacity(0).frame(width: 0, height: 0).focusable(false)
+            }
+            .transition(.opacity)
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            summary
+            Spacer()
+            threadsButton
+            stagingButtons
+            commentButton
+            if !session.comments.isEmpty { sendButton }
+            GhostIconButton(systemName: "arrow.clockwise", help: "Refresh") { session.load() }
+            GhostIconButton(systemName: "xmark", help: "Close (⌘G)") { store.diffPanelOpen = false }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+    }
+
+    /// The dense one-line summary: magnitude, file count, and what we're comparing to.
+    private var summary: some View {
+        HStack(spacing: 6) {
+            Text("+\(totalAdded)").font(.mono(11, .medium)).foregroundStyle(Color(hex: Theme.Diff.addition))
+            Text("−\(totalRemoved)").font(.mono(11, .medium)).foregroundStyle(Color(hex: Theme.Diff.deletion))
+            Text("·").foregroundStyle(Theme.textDim)
+            if let focused = session.focusedFile {
+                Button { session.focus(file: nil) } label: {
+                    HStack(spacing: 4) {
+                        Text((focused as NSString).lastPathComponent).font(.ui(11, .medium))
+                        Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
+                    }
+                    .foregroundStyle(Theme.textPrimary)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(Theme.surface3)
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).focusable(false)
+                .help("Showing one file — click to show all \(session.files.count)")
+            } else {
+                Text("\(session.files.count) file\(session.files.count == 1 ? "" : "s")")
+                    .font(.ui(11)).foregroundStyle(Theme.textSecondary)
+            }
+            if let base = session.baseLabel {
+                Text("·").foregroundStyle(Theme.textDim)
+                Text("→ \(base)").font(.ui(11)).foregroundStyle(Theme.textSecondary)
+            }
+        }
+    }
+
+    private var totalAdded: Int { session.files.reduce(0) { $0 + $1.addedCount } }
+    private var totalRemoved: Int { session.files.reduce(0) { $0 + $1.removedCount } }
+
+    /// Comment on the cursor's line. Disabled when the cursor isn't on a reviewable
+    /// line (a file header block, or before the diff has loaded).
+    @ViewBuilder private var commentButton: some View {
+        let anchor = session.cursorStitchedLine.flatMap { session.anchor(atStitchedLine: $0) }
+        Button {
+            if let anchor { composing = anchor }
+        } label: {
+            HStack(spacing: 4) {
+                TablerIcon(paths: Tabler.message, size: 11)
+                Text("Comment").font(.ui(11, .medium))
+            }
+            .foregroundStyle(anchor == nil ? Theme.textDim : Theme.textSecondary)
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).focusable(false).disabled(anchor == nil)
+        .help(anchor == nil ? "Put the cursor on a diff line to comment" : "Comment on this line (⌘⇧C)")
+        .keyboardShortcut("c", modifiers: [.command, .shift])
+    }
+
+    /// The pane's PR review threads. Vs-base mode only — they anchor to the PR's diff,
+    /// and a working-tree diff has nothing to anchor them to.
+    private var paneThreads: [GHReviewThread] {
+        guard session.mode == .branchVsBase else { return [] }
+        return store.reviewThreads[session.paneID] ?? []
+    }
+
+    @ViewBuilder private var threadsButton: some View {
+        if !paneThreads.isEmpty {
+            let unresolved = PRThreads.unresolvedCount(paneThreads)
+            Button { session.threadsPanelOpen.toggle() } label: {
+                HStack(spacing: 4) {
+                    TablerIcon(paths: Tabler.brandGithub, size: 11)
+                    Text(unresolved > 0 ? "\(unresolved) unresolved" : "\(paneThreads.count) threads")
+                        .font(.ui(11, .medium))
+                }
+                .foregroundStyle(Theme.prMerged)
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(Theme.prMerged.opacity(session.threadsPanelOpen ? 0.18 : 0.10))
+                .clipShape(RoundedRectangle(cornerRadius: 5))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).focusable(false)
+            .help("Show PR review threads")
+        }
+    }
+
+    /// Stage / unstage what the gutter ticks say, or the cursor's hunk when nothing is
+    /// ticked. Hidden entirely when there is nothing either could act on, rather than
+    /// sitting there permanently greyed.
+    @ViewBuilder private var stagingButtons: some View {
+        if session.hasStagingTarget {
+            let count = session.selectedLines.count
+            HStack(spacing: 4) {
+                pill(count > 0 ? "Stage \(count)" : "Stage hunk",
+                     hint: "⌘⏎", color: Color(hex: Theme.Diff.addition)) {
+                    session.stageSelection()
+                }
+                pill("Unstage", hint: "⌘⌥⏎", color: Color(hex: Theme.Diff.deletion)) {
+                    session.unstageSelection()
+                }
+            }
+        }
+    }
+
+    private func pill(_ title: String, hint: String, color: Color,
+                     _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.ui(11, .medium))
+                .foregroundStyle(session.writing ? Theme.textDim : color)
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(color.opacity(session.writing ? 0.05 : 0.14))
+                .clipShape(RoundedRectangle(cornerRadius: 5))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).focusable(false).disabled(session.writing)
+        .help("\(title) (\(hint))")
+    }
+
+    private var sendButton: some View {
+        Button {
+            store.submitReview(session.comments, toPane: session.paneID)
+            session.comments.removeAll()
+            store.diffPanelOpen = false
+        } label: {
+            Text("Send to agent \(session.comments.count)")
+                .font(.ui(11, .semibold)).foregroundStyle(Theme.working)
+                .padding(.horizontal, 10).padding(.vertical, 4)
+                .background(Theme.working.opacity(0.16))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).focusable(false)
+    }
+
+    // MARK: - Rail
+
+    private var rail: some View {
+        VStack(spacing: 0) {
+            scopeList
+            Rectangle().fill(Theme.divider).frame(height: 1)
+            fileList
+            if !session.comments.isEmpty {
+                Rectangle().fill(Theme.divider).frame(height: 1)
+                pendingComments
+            }
+            if let error = session.lastError {
+                Rectangle().fill(Theme.divider).frame(height: 1)
+                errorRow(error)
+            }
+            Rectangle().fill(Theme.divider).frame(height: 1)
+            commitBox
+        }
+        .background(Theme.surface1)
+    }
+
+    /// Git's own words, inline. A rejected patch or a failed push has a reason and the
+    /// rail is where it stays visible until acted on — a toast would vanish unread.
+    private func errorRow(_ error: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 10)).foregroundStyle(Theme.error)
+            Text(error)
+                .font(.mono(10)).foregroundStyle(Theme.error)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            GhostIconButton(systemName: "xmark", help: "Dismiss") { session.lastError = nil }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 7)
+        .background(Theme.error.opacity(0.08))
+    }
+
+    // MARK: - Commit
+
+    private var commitBox: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            TextEditor(text: $session.commitDraft)
+                .font(.mono(11))
+                .scrollContentBackground(.hidden)
+                .foregroundStyle(Theme.textPrimary)
+                .frame(height: 56)
+                .padding(.horizontal, 5).padding(.vertical, 4)
+                .background(Theme.surface2)
+                .clipShape(RoundedRectangle(cornerRadius: 5))
+                .overlay(alignment: .topLeading) {
+                    if session.commitDraft.isEmpty {
+                        Text("Commit message")
+                            .font(.mono(11)).foregroundStyle(Theme.textDim)
+                            .padding(.horizontal, 10).padding(.vertical, 8)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .focused($commitFocused)
+
+            HStack(spacing: 6) {
+                commitButton("Commit", prominent: true) { session.commit(push: false) }
+                commitButton("& Push", prominent: false, blocked: session.pushBlockedReason) {
+                    session.commit(push: true)
+                }
+                Spacer(minLength: 0)
+                if let branch = session.branchName {
+                    Text(branch).font(.mono(9.5)).foregroundStyle(Theme.textDim).lineLimit(1)
+                }
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 8)
+    }
+
+    /// `blocked` is a reason string: the button still renders, disabled, and says why on
+    /// hover — never a dead control with no explanation.
+    private func commitButton(_ title: String, prominent: Bool, blocked: String? = nil,
+                              _ action: @escaping () -> Void) -> some View {
+        let enabled = session.canCommit && blocked == nil
+        return Button(action: action) {
+            Text(title)
+                .font(.ui(11, .semibold))
+                .foregroundStyle(enabled ? (prominent ? Theme.working : Theme.textSecondary)
+                                         : Theme.textDim)
+                .padding(.horizontal, 10).padding(.vertical, 4)
+                .background((prominent ? Theme.working : Theme.textSecondary)
+                    .opacity(enabled ? 0.16 : 0.06))
+                .clipShape(RoundedRectangle(cornerRadius: 5))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).focusable(false).disabled(!enabled)
+        .help(blocked ?? commitHint)
+    }
+
+    private var commitHint: String {
+        if session.writing { return "A git write is in flight…" }
+        if session.stagedPaths.isEmpty { return "Stage something first (⌘⏎ on a hunk)" }
+        if session.commitDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Write a commit message (⌘K)"
+        }
+        return "Commit the staged changes"
+    }
+
+    /// The outgoing review batch. Lives in the rail rather than inline under each row
+    /// until overlay anchoring lands, so a comment is never invisible after scrolling.
+    private var pendingComments: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("PENDING \(session.comments.count)")
+                .font(.ui(9.5, .semibold)).foregroundStyle(Theme.textDim)
+            ScrollView {
+                VStack(spacing: 5) {
+                    ForEach(session.comments) { comment in
+                        CommentBubble(comment: comment) { session.removeComment(comment.id) }
+                    }
+                }
+            }
+            .frame(maxHeight: 200)
+        }
+        .padding(.horizontal, 10).padding(.vertical, 8)
+    }
+
+    private var scopeList: some View {
+        VStack(spacing: 0) {
+            scopeRow("Working tree", active: session.mode == .workingTree) {
+                session.mode = .workingTree
+            }
+            scopeRow("Against \(session.baseLabel ?? "base")", active: session.mode == .branchVsBase) {
+                session.mode = .branchVsBase
+            }
+        }
+        .padding(.vertical, 6)
+    }
+
+    private func scopeRow(_ title: String, active: Bool, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Text(title).font(.ui(12, active ? .semibold : .medium))
+                    .foregroundStyle(active ? Theme.textPrimary : Theme.textSecondary)
+                Spacer(minLength: 0)
+                if active {
+                    Image(systemName: "checkmark").font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Theme.working)
+                }
+            }
+            .padding(.horizontal, 12).padding(.vertical, 5)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).focusable(false)
+    }
+
+    /// Changed files, split Staged / Unstaged, and grouped inside each split under dim
+    /// uppercase directory headers rather than shown as flat full paths — much easier to
+    /// scan on a wide diff.
+    private var fileList: some View {
+        // Built once per render and threaded down. They were computed properties that
+        // rebuilt a Set from every buffer, and `fileRow` asked for both — 287 rows meant
+        // 574 set constructions per body evaluation.
+        let flags = (dirty: session.dirtySources, stale: session.staleSources)
+        return ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                allFilesRow
+                ForEach(sections, id: \.kind) { section in
+                    sectionHeader(section)
+                    ForEach(section.groups, id: \.directory) { group in
+                        // One line, head-truncated: a vendored path like
+                        // spike/seam1/Sources/Editor/CodeEditSourceEditor/Extensions
+                        // wrapped to three lines and buried the only useful part.
+                        Text(group.directory.isEmpty ? "ROOT" : group.directory.uppercased())
+                            .font(.ui(9.5, .semibold)).foregroundStyle(Theme.textDim)
+                            .lineLimit(1).truncationMode(.head)
+                            .help(group.directory)
+                            .padding(.horizontal, 12).padding(.top, 6).padding(.bottom, 3)
+                        ForEach(group.files, id: \.path) { file in
+                            fileRow(file, kind: section.kind, flags: flags)
+                        }
+                    }
+                }
+            }
+            .padding(.bottom, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// Back to the whole diff. Shown only while a file is focused, so the rail doesn't
+    /// carry a permanently-selected row for the default state.
+    @ViewBuilder private var allFilesRow: some View {
+        if session.focusedFile != nil {
+            Button { session.focus(file: nil) } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.left").font(.system(size: 9, weight: .semibold))
+                    Text("All \(session.files.count) files").font(.ui(11, .medium))
+                    Spacer(minLength: 0)
+                }
+                .foregroundStyle(Theme.textSecondary)
+                .padding(.horizontal, 12).padding(.vertical, 5)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).focusable(false)
+        }
+    }
+
+    /// Where a listed file stands relative to the index. `committed` exists because
+    /// vs-base mode lists everything changed since the base branch, most of which is
+    /// already committed — calling those "unstaged" was a lie, and the stage button on
+    /// them ran a `git add` that succeeded while moving nothing.
+    private enum SectionKind {
+        case staged, unstaged, committed
+
+        var title: String {
+            switch self {
+            case .staged:    return "STAGED"
+            case .unstaged:  return "UNSTAGED"
+            case .committed: return "COMMITTED"
+            }
+        }
+        /// nil ⇒ no bulk action; the files can't move.
+        var bulkAction: (title: String, staged: Bool)? {
+            switch self {
+            case .staged:    return ("Unstage all", false)
+            case .unstaged:  return ("Stage all", true)
+            case .committed: return nil
+            }
+        }
+    }
+
+    private struct FileSection {
+        let kind: SectionKind
+        let groups: [(directory: String, files: [DiffFile])]
+        var files: [DiffFile] { groups.flatMap(\.files) }
+    }
+
+    /// A file lands in exactly one section — Staged when the index holds anything for it,
+    /// then Unstaged when the working tree does, else Committed. A partially staged file
+    /// shows once, under Staged; the gutter is where its individual lines are settled.
+    private var sections: [FileSection] {
+        var byKind: [SectionKind: [DiffFile]] = [:]
+        for file in session.files {
+            let kind: SectionKind
+            if session.stagedPaths.contains(file.path) { kind = .staged }
+            else if session.unstagedPaths.contains(file.path) { kind = .unstaged }
+            else { kind = .committed }
+            byKind[kind, default: []].append(file)
+        }
+        return [SectionKind.staged, .unstaged, .committed].compactMap { kind in
+            guard let files = byKind[kind], !files.isEmpty else { return nil }
+            return FileSection(kind: kind, groups: byDirectory(files))
+        }
+    }
+
+    /// Section header with a bulk stage/unstage for everything under it.
+    private func sectionHeader(_ section: FileSection) -> some View {
+        HStack(spacing: 6) {
+            Text("\(section.kind.title) \(section.files.count)")
+                .font(.ui(10, .semibold))
+                .foregroundStyle(sectionColor(section.kind))
+            if section.kind == .committed, let base = session.baseLabel {
+                Text("· in HEAD, not in \(base)")
+                    .font(.ui(9)).foregroundStyle(Theme.textDim).lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            if let bulk = section.kind.bulkAction {
+                Button(bulk.title) {
+                    session.setStaged(bulk.staged, paths: section.files.map(\.path))
+                }
+                .buttonStyle(.plain).focusable(false)
+                .font(.ui(9.5, .medium)).foregroundStyle(Theme.textDim)
+                .disabled(session.writing)
+            }
+        }
+        .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 2)
+    }
+
+    private func sectionColor(_ kind: SectionKind) -> Color {
+        switch kind {
+        case .staged:    return Color(hex: Theme.Diff.addition)
+        case .unstaged:  return Theme.textSecondary
+        case .committed: return Theme.textDim
+        }
+    }
+
+    private func byDirectory(_ files: [DiffFile]) -> [(directory: String, files: [DiffFile])] {
+        var order: [String] = []
+        var byDir: [String: [DiffFile]] = [:]
+        for file in files {
+            let dir = (file.path as NSString).deletingLastPathComponent
+            if byDir[dir] == nil { order.append(dir) }
+            byDir[dir, default: []].append(file)
+        }
+        return order.map { (directory: $0, files: byDir[$0] ?? []) }
+    }
+
+    private func fileRow(_ file: DiffFile, kind: SectionKind,
+                        flags: (dirty: Set<SourceID>, stale: Set<SourceID>)) -> some View {
+        let source = SourceID((session.cwd as NSString).appendingPathComponent(file.path))
+        let stale = flags.stale.contains(source)
+        let dirty = flags.dirty.contains(source)
+        let focused = session.focusedFile == file.path
+        return HStack(spacing: 6) {
+            // Clicking the name scopes the editor to this file; clicking it again goes
+            // back to the whole diff.
+            Button { session.focus(file: file.path) } label: {
+                HStack(spacing: 6) {
+                    TablerIcon(paths: statusGlyph(file.status), size: 12)
+                        .foregroundStyle(statusColor(file.status))
+                    Text((file.path as NSString).lastPathComponent)
+                        .font(.ui(12, focused ? .semibold : .regular))
+                        .foregroundStyle(Theme.textPrimary).lineLimit(1)
+                    if stale {
+                        Text("changed on disk").font(.ui(9.5, .medium))
+                            .foregroundStyle(Color(hex: Theme.Diff.modified))
+                    } else if dirty {
+                        Circle().fill(Theme.blocked).frame(width: 5, height: 5)
+                    }
+                    Spacer(minLength: 4)
+                    if file.addedCount > 0 {
+                        Text("+\(file.addedCount)").font(.mono(10))
+                            .foregroundStyle(Color(hex: Theme.Diff.addition))
+                    }
+                    if file.removedCount > 0 {
+                        Text("−\(file.removedCount)").font(.mono(10))
+                            .foregroundStyle(Color(hex: Theme.Diff.deletion))
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).focusable(false)
+            .help(file.path)
+            // Committed files get no button — `git add` on one succeeds and moves
+            // nothing, which reads as a broken control.
+            if let bulk = kind.bulkAction {
+                Button {
+                    session.setStaged(bulk.staged, path: file.path)
+                } label: {
+                    TablerIcon(paths: bulk.staged ? Tabler.squarePlus : Tabler.squareMinus, size: 12)
+                        .foregroundStyle(Theme.textDim)
+                        .frame(width: 18, height: 18)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).focusable(false).disabled(session.writing)
+                .help(bulk.staged ? "Stage this file" : "Unstage this file")
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 3)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(focused ? Theme.surface3 : Color.clear)
+        .contentShape(Rectangle())
+    }
+
+    /// Colored glyph rather than a bare A/M/D letter.
+    private func statusGlyph(_ status: DiffStatus) -> [String] {
+        switch status {
+        case .added:    return Tabler.squarePlus
+        case .deleted:  return Tabler.squareMinus
+        case .modified: return Tabler.squareDot
+        case .renamed:  return Tabler.squareArrow
+        }
+    }
+
+    private func statusColor(_ status: DiffStatus) -> Color {
+        switch status {
+        case .added:    return Color(hex: Theme.Diff.addition)
+        case .deleted:  return Color(hex: Theme.Diff.deletion)
+        case .modified: return Theme.blocked
+        case .renamed:  return Theme.textSecondary
+        }
+    }
+
+    // MARK: - Content
+
+    @ViewBuilder private var content: some View {
+        if !session.isRepo {
+            centered("Not a git repository")
+        } else if session.loading && session.files.isEmpty {
+            centered("Loading…")
+        } else if session.files.isEmpty {
+            centered("No changes")
+        } else {
+            EditorHost(session: session)
+        }
+    }
+
+    private func centered(_ s: String) -> some View {
+        VStack { Spacer(); Text(s).foregroundStyle(Theme.textDim).font(.ui(12)); Spacer() }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}

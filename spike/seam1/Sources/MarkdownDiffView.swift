@@ -223,7 +223,7 @@ private func appendInline(_ markup: Markup, into out: inout AttributedString, st
         switch child {
         case let t as Markdown.Text: appendText(t.string, &out, style, cursor)
         case let c as InlineCode:     appendText(c.code, &out, style.monospaced(), cursor)
-        case let e as Emphasis:       appendInline(e, into: &out, style: style.italicized(), cursor: cursor)
+        case let e as Markdown.Emphasis: appendInline(e, into: &out, style: style.italicized(), cursor: cursor)
         case let s as Strong:         appendInline(s, into: &out, style: style.bolded(), cursor: cursor)
         case let s as Strikethrough:  appendInline(s, into: &out, style: style, cursor: cursor)
         case let l as Markdown.Link:  appendInline(l, into: &out, style: style.linked(), cursor: cursor)
@@ -282,7 +282,7 @@ private func walkInline(_ markup: Markup, style: InlineStyle, emit: (String, Inl
         switch child {
         case let t as Markdown.Text: emit(t.string, style)
         case let c as InlineCode:    emit(c.code, style.monospaced())
-        case let e as Emphasis:      walkInline(e, style: style.italicized(), emit: emit)
+        case let e as Markdown.Emphasis: walkInline(e, style: style.italicized(), emit: emit)
         case let s as Strong:        walkInline(s, style: style.bolded(), emit: emit)
         case let s as Strikethrough: walkInline(s, style: style, emit: emit)
         case let l as Markdown.Link: walkInline(l, style: style.linked(), emit: emit)

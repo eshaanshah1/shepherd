@@ -130,6 +130,10 @@ enum ShortcutActions {
         case .reviewDiff:    s.toggleDiffPanel()
         case .openEditor:    s.openEditor()
         case .saveFile:      NotificationCenter.default.post(name: .shepherdSaveCodeSurface, object: nil)
+        // Declared inside `WorkbenchView` so the terminal keeps these keys whenever the
+        // workbench is closed; display-only here.
+        case .nextHunk, .prevHunk, .stageHunk, .unstageHunk,
+             .focusCommitMessage, .commentOnLine, .selectScope: break
         case .nextAlert:     s.selectNextAttention()
         case .reloadConfig:  GhosttyApp.shared.reloadConfig()
         case .showShortcuts: s.showShortcuts.toggle()

@@ -74,7 +74,9 @@ spike/
   - `UpdateController.swift` — `@MainActor` state machine (`UpdatePhase`) the UI binds to: daily cadence (`shepherd.update.lastCheck`), skip (`shepherd.update.skippedVersion`), auto-check toggle (`shepherd.update.autoCheckEnabled`), background download, restart-now / restart-when-idle 10s countdown. **Dormant** unless `isEligible` (real release build — not `-dev`/`.dev` — in a writable `/Applications`).
   - `UpdatePillView.swift` — the sidebar-footer pill (`updater.hasSidebarPill`) + popover: notes + Download & Install, then Restart now / when idle; `×` = skip this version. Settings → General "Software update" section mirrors it (Check for Updates / notes panel / auto-check toggle).
 
-`Tests/` holds the **`ShepherdModelTests`** target (a `bundle.unit-test` in `project.yml`: `SplitTreeTests.swift`, `WorkspaceTests.swift`, `PersistenceTests.swift`, `SleepPolicyTests.swift`, `StopPolicyTests.swift`, `WorktreeArchiveTests.swift`, `PRStatusTests.swift`, `ShortcutCatalogTests.swift`, `ShepherdConfigWriterTests.swift`, `WorktreeHookRunnerTests.swift`, `VersionTests.swift`, `IdlePolicyTests.swift`, `UpdateServiceTests.swift`, `UpdateInstallerTests.swift`) — pure-model coverage of the `SplitNode` tree ops, the `Workspace`/`locatePane` helpers, the persistence snapshot/restore/migration (incl. `worktreeHook`), the sleep policy, the `applyEvent` lifecycle/background-`Stop` suppression, the worktree-archive expiry/age math, the PR-status classify/parse reduction, the shortcut-catalog integrity (no dupe glyphs/ids, full `ShortcutID` coverage), the config-writer key round-trip (preserve/insert/update), and the worktree-hook env map, compiling `SplitTree`/`Tab`/`AgentState`/`Theme`/`Workspace`/`Persistence`/`SleepPolicy`/`StopPolicy`/`WorktreeService`/`WorktreeArchive`/`PRStatus`/`ShortcutCatalog`/`ShepherdConfigWriter`/`WorktreeHookRunner` without the AppKit surface. Test files added under `Tests/` are picked up by the `- path: Tests` glob, but a new compiled **source** must be added to the target's explicit `sources:` list in `project.yml`.
+`Tests/` holds the **`ShepherdModelTests`** target (a `bundle.unit-test` in `project.yml`: `SplitTreeTests.swift`, `WorkspaceTests.swift`, `PersistenceTests.swift`, `SleepPolicyTests.swift`, `StopPolicyTests.swift`, `WorktreeArchiveTests.swift`, `PRStatusTests.swift`, `ShortcutCatalogTests.swift`, `ShepherdConfigWriterTests.swift`, `WorktreeHookRunnerTests.swift`, `VersionTests.swift`, `IdlePolicyTests.swift`, `UpdateServiceTests.swift`, `UpdateInstallerTests.swift`, plus the workbench's
+`StitchMapTests`/`BlockMapTests`/`WordDiffTests`(+`HunkPairingTests`)/`LockPolicyTests`/
+`PatchSynthTests`/`StageSelectionTests`) — pure-model coverage of the `SplitNode` tree ops, the `Workspace`/`locatePane` helpers, the persistence snapshot/restore/migration (incl. `worktreeHook`), the sleep policy, the `applyEvent` lifecycle/background-`Stop` suppression, the worktree-archive expiry/age math, the PR-status classify/parse reduction, the shortcut-catalog integrity (no dupe glyphs/ids, full `ShortcutID` coverage), the config-writer key round-trip (preserve/insert/update), and the worktree-hook env map, compiling `SplitTree`/`Tab`/`AgentState`/`Theme`/`Workspace`/`Persistence`/`SleepPolicy`/`StopPolicy`/`WorktreeService`/`WorktreeArchive`/`PRStatus`/`ShortcutCatalog`/`ShepherdConfigWriter`/`WorktreeHookRunner` without the AppKit surface. Test files added under `Tests/` are picked up by the `- path: Tests` glob, but a new compiled **source** must be added to the target's explicit `sources:` list in `project.yml`.
 
 ---
 
@@ -226,6 +228,15 @@ a tab's title is derived from its focused pane.
 | `⌃⇥` / `⌃⇧⇥` | next / previous workspace (wrap) |
 | `⌘⇧R` | reload config live (re-read `~/.config/shepherd/config`; repaints chrome + terminal grid, agents stay alive) |
 | `⌘/` | toggle the keyboard-shortcut cheatsheet HUD (also under Help; Esc / click-out / ⌘/ dismiss) |
+| `⌘G` | toggle the workbench for the focused pane |
+
+Inside the workbench only: `⌥↓`/`⌥↑` next/prev hunk, `⌘⏎`/`⌘⌥⏎` stage/unstage the
+selection (or the cursor's hunk), `⌘K` focus the commit box, `⌘⇧C` comment on the line,
+`⌃1`/`⌃2` scope. These are declared in `WorkbenchView.keyBindings`, **not** the menu bar —
+a menu key equivalent beats the key window's responder chain, so binding them globally
+would steal them from the terminal whenever the workbench is closed. `ShortcutCatalog`
+carries them as display-only rows (`key: nil`, category `.workbench`) so `⌘/` still lists
+them, and `ShortcutActions` `break`s on each.
 
 A new pane inherits its parent pane's cwd. Splitting clears the tab's zoom.
 
@@ -297,6 +308,34 @@ the branch, and resumes the Claude `sessionID`. Archives persist under
 collapsible **"Archived (N)"** subsection (`ArchivedSection`). Pure bits in
 `WorktreeArchive.swift`; local workspaces only (v1).
 
+### The workbench (⌘G) — `Sources/Workbench/`
+
+The unified code surface: **one rail (scope · files · commit) beside one editable text
+buffer**, on a vendored CodeEdit text stack (`Sources/Editor/**`, in-module). It replaced
+`DiffPanelView` + the HighlighterSwift dependency, so there is now one tokenizer, one
+layout engine, one row rhythm, one palette. Spec:
+[`docs/superpowers/specs/2026-07-26-unified-workbench-design.md`](docs/superpowers/specs/2026-07-26-unified-workbench-design.md).
+Roadmap + everything the first live run taught:
+[`docs/superpowers/plans/2026-07-26-unified-workbench-w1-w5-roadmap.md`](docs/superpowers/plans/2026-07-26-unified-workbench-w1-w5-roadmap.md).
+
+- **`WorkbenchSession`** — per-pane owner: the diff, the stitched `NSTextStorage`, the
+  per-row tables (`rowStyles` / `gutterRows` / `rowOrigins`), staging state, comments,
+  and the git actions (all off-main). **Also owns the `MultiHighlighter` and
+  `BlockRenderer`** — they must be the *same objects* across view updates (see gotchas).
+- **`StitchMap` / `BlockMap` / `WordDiff` + `HunkPairing` / `LockPolicy` /
+  `PatchSynth` / `StageSelection`** — pure, unit-tested.
+- **`SourceBuffer`** — one watched file; text, lazy base blob, dirty/live-follow.
+  Created **on demand** (a 287-file diff must not open 287 fds).
+- **`DiffGutter` / `BlockRenderer` / `MultiHighlighter` / `EditorHost`** — the AppKit half.
+- **`WorkbenchView` / `WorkbenchThreads` / `WorkbenchComments`** — the SwiftUI chrome.
+
+**Scope** is working-tree or vs-base. Clicking a file in the rail **narrows the buffer to
+that file** (`session.focus(file:)`); the header chip / "All N files" row restores it.
+The rail splits **STAGED / UNSTAGED / COMMITTED** — vs-base lists files that are already
+committed, and `git add` on those does nothing, so they get no stage button.
+**Line selection is the editor's text selection** (or a gutter click/drag), not a
+checkbox column; `⌘⏎` stages exactly that, falling back to the cursor's hunk.
+
 **PR status on idle agents:** when a pane is `.idle` and its checkout has a PR, the
 leading state dot is replaced by a clickable **PR-status icon** (Tabler git-pull-request
 family; color = state: merged=violet, open=blue, ready=green, review/checks-pending=amber,
@@ -307,8 +346,8 @@ run in the pane's cwd (`GitHubService.swift`), fetched when a pane enters `.idle
 since a GUI `.app` misses Homebrew's PATH) — no `gh` ⇒ the normal state dot stays. Pure
 reduce/parse in `PRStatus.swift` (`enum PR`, unit-tested); single-pane tabs only (v1).
 
-**PR review comments in the diff panel:** a PR's inline **review threads** are pulled into
-the diff panel (vs-base mode only) via `gh api graphql` (`GH.reviewThreads`/`replyToThread`/
+**PR review comments in the workbench:** a PR's inline **review threads** are pulled in
+(vs-base mode only) via `gh api graphql` (`GH.reviewThreads`/`replyToThread`/
 `setThreadResolved`), cached per-pane in `AgentStore.reviewThreads` (approach B, next to
 `prStatuses`, fetched on the same triggers). They render as **violet octocat cards** with
 **Reply / Resolve / Send-to-agent** — distinct from local comments (blue, agent-bound);
@@ -368,6 +407,10 @@ falls back to a plain shell. Requires the plugin reporting `session_id` — afte
 - **Background-`Stop` suppression** ([ADR 0015](.claude/adr/0015-background-stop-suppression-via-background-tasks.md)): `Stop` fires *while a backgrounded agent is still running*, so `report.sh` reduces the `Stop` payload's `background_tasks` (Claude Code v2.1.145+) to a count of tasks the turn is paused on — allow-list **subagent/workflow/shell** hold the notification; a **monitor** does not — and `applyEvent` holds the pane at `working` when that count > 0. This **replaces** ADR 0014's launch-vs-`SubagentStop` counter, which was unreliable because those events don't pair 1:1 (seen 1 `Start` vs 6 `Stop`s). Fails safe: empty/unparseable `detail` → treated as 0 → plain finish-on-`Stop`. Decide payload questions from the **raw payload**, not `/tmp/shepherd-events.log` (it logs transitions, not payloads — the false premise behind ADR 0014).
 - **Notification icon needs an asset catalog**: macOS Notification Center renders the app icon from the compiled asset catalog (`CFBundleIconName` → `Assets.car`), **not** a loose `CFBundleIconFile`/`.icns` (which the Dock reads fine). `Resources/Assets.xcassets/AppIcon.appiconset` + `CFBundleIconName: AppIcon` in `project.yml` is what makes notifications show the Shepherd icon. After changing the icon, a stale system cache may need `lsregister` / a logout to refresh.
 - **`AskUserQuestion` is detected via `PreToolUse`** ([ADR 0008](.claude/adr/0008-askuserquestion-via-pretooluse.md)) — `PreToolUse[AskUserQuestion]` → blocked. (`Elicitation`/`Notification` don't fire for it, but `PreToolUse` does — `report.sh` parses `tool_name` via `jq`.)
+- **Workbench: never construct the highlighter or render delegate in `body`.** `SourceEditor` compares highlight providers by `ObjectIdentifier`, so a fresh instance per SwiftUI body evaluation reads as a provider change and re-runs `setHighlightProviders` (dropping every cached tree-sitter parse) **plus `reloadUI()` — on every scroll tick**. They live on `WorkbenchSession` (`highlighter`, `renderer`), built once. The same rule applies to anything else an `NSViewRepresentable` hands the editor.
+- **Workbench: the gutter must not have its own opinion about line geometry.** `DiffGutterView` reads each row's real `(yPos, height)` from `layoutManager.textLineForIndex` and resolves the visible window / hit tests via `textLineForPosition`. Computing it arithmetically from `NSLayoutManager.defaultLineHeight` drifts against the text, because CETV types lines with CoreText — `(ascent + descent + leading) × multiplier`. `WorkbenchMetrics.rowHeight` is a fallback for before the editor exists, nothing more.
+- **Workbench: the gutter lives *outside* the scroll view** (CESE's own gutter is a floating subview and moves for free). It tracks scroll by observing the clip view's `boundsDidChangeNotification` — never `SourceEditorState.scrollPosition`, which lands a run-loop pass late and makes the gutter slide against the text. Two traps around that: `prepareCoordinator` runs inside `TextViewController.init`, **before `loadView()` builds `scrollView`**, so the editor pushes `session.requestGutterAttach` one hop later; and everything in `draw` runs per scroll event, so `visibleRange` caps its walk at the rows that fit the dirty rect.
+- **Workbench: `Excerpt.lineRange` is in *stitched* coordinates, not source lines.** A hunk interleaves both sides, so it is not a contiguous range in either file. To map a row to a file line use `WorkbenchSession.sourceAnchor(atStitchedLine:)` → `(file, side, 0-based line)`; `StitchMap.sourceLocation` is only safe for its `.source`. Reading it as a source line is what painted every row with some other line's syntax colors.
 - **`xcodegen generate` after any file add/remove** — else the new file isn't compiled (`cannot find X in scope` at *build* time).
 - **SourceKit lies in this repo** — "Cannot find type AgentState/…" and "'main' attribute…" diagnostics are stale because the editor sees loose files, not the generated project. `xcodebuild` is ground truth; ignore SourceKit "cannot find" noise.
 - **App version is stamped at release time, not in `project.yml`**: `project.yml` ships a `CFBundleShortVersionString: "0.0.0-dev"` sentinel (so local/dev builds read as a prerelease and the updater stays dormant). The real version is stamped into the built bundle by the release workflow (`PlistBuddy Set :CFBundleShortVersionString ${VERSION#v}`, before `codesign`). Don't hardcode a real version in `project.yml`. Update failures/relaunch log to `/tmp/shepherd-update.log`.
@@ -403,4 +446,10 @@ live control session, `DataReady{cols,rows}`, ring replay then raw duplex PTY by
 resizer. Dark-shipped (live only when serving + a helper exists). Pure `RemoteProtocol`/`PtyRing`
 unit-tested; loopback E2E in `ShepherdRemoteTests`; tap in `ShepherdHelperTests`. Android terminal
 client (sub-project B) is the next slice. See `docs/superpowers/specs/2026-07-02-android-phase2-data-channels-design.md`.
+**Unified workbench (⌘G, branch `unified-workbench-spec`):** W0 (editor vendored, stitched
+multibuffer, gutter, one tokenizer) + W1 (review, line/hunk staging, commit box, PR review
+threads) done and live-run. **W2–W5 remain** — editing in anger, merge resolver, PR
+surface, history/blame/rebase. See the roadmap for the deviations from plan and the
+eleven defects the first live run turned up.
+
 **Deferred (see SPEC §6):** generic non-Claude agents (Tier-B), sidebar auto-hide at ≤1 tab, debug-log flag, IME/selection polish, multi-window, navigator popup, and **full remote control** (the big future bet).

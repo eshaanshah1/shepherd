@@ -1,0 +1,30 @@
+CodeEditTextView d7ac3f11f22ec2e820187acce8f3a3fb7aa8ddec
+CodeEditSourceEditor 1fa4d3c3ffba007482111466cb9721416f97ae00
+
+Divergences from upstream (one module means filenames must be unique):
+- deleted CodeEditSourceEditor/Extensions/NSRange+/NSRange+isEmpty.swift
+  (identical to CodeEditTextView's, whose copy is public and covers both)
+- renamed CodeEditSourceEditor/Extensions/TextView+/TextView+Menu.swift
+  -> TextView+ContextMenu.swift (contents unchanged; CodeEditTextView has a
+  file of the same name)
+- removed both Documentation.docc catalogs
+- stripped `import CodeEditTextView` / `import CodeEditSourceEditor` /
+  `import CodeEditTextViewObjC`; the ObjC header comes in via
+  Sources/Shepherd-Bridging.h
+- deleted CodeEditTextView/Extensions/NSColor+Hex.swift (its sole
+  init(hex:alpha:) duplicates CodeEditSourceEditor/Extensions/Color+Hex.swift,
+  whose copy is public and covers both)
+- replaced CodeEditSourceEditor/Extensions/TextView+/TextView+TextFormation.swift's
+  retroactive TextView conformances with a TextViewInterface forwarder, because
+  TextInterface's `var selectedRange` collides with NSTextInputClient's
+  `func selectedRange()` once the modules merge (call site updated in
+  Controller/TextViewController+TextFormation.swift)
+- renamed CodeEditSourceEditor's internal `Highlighter` class -> `SyntaxHighlighter`
+  (file Highlighting/Highlighter.swift -> SyntaxHighlighter.swift). The type name
+  shadowed the HighlighterSwift *module* of the same name, making
+  `Highlighter.Highlighter` unresolvable from app code. Retire this rename if
+  HighlighterSwift is ever dropped.
+- TreeSitter/TreeSitterClient+Temporary.swift: extracted
+  `highlightRanges(string:language:)` out of `quickHighlight(...)` and refactored
+  quickHighlight to call it, so the workbench's MultiHighlighter can reuse the
+  capture-precedence filtering rather than duplicating it. Behavior unchanged.
