@@ -151,9 +151,10 @@ private struct ThreadCard: View {
                             Text(Self.relative(comment.createdAt))
                                 .font(.ui(10)).foregroundStyle(Theme.textDim)
                         }
-                        Text(comment.body).font(.ui(12)).foregroundStyle(Theme.textPrimary)
+                        // Rendered, not raw: review comments are full of code fences and
+                        // lists, and showing their source is the worst version of this.
+                        MarkdownText(source: comment.body)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
                     }
                 }
                 if session.replyingToThread == thread.id {
