@@ -243,7 +243,11 @@ extension TextLayoutManager {
             rects.append(
                 CGRect(
                     x: fragmentRect.minX + edgeInsets.left,
-                    y: fragmentPosition.yPos + line.yPos,
+                    // `characterRect` places the rect at the fragment's `topInset` —
+                    // decoration space above the text (Shepherd's block rows). Dropping it
+                    // and using the fragment's own top put every rect built from this
+                    // (bracket emphasis, find highlights) a whole band above its character.
+                    y: fragmentPosition.yPos + line.yPos + fragmentRect.minY,
                     width: fragmentRect.width,
                     height: fragmentRect.height
                 )

@@ -1,9 +1,15 @@
 import Foundation
 import CoreGraphics
 
+/// Who a review note came from. Drives how it reads inline: a pending note of your own is
+/// bound for the agent, a GitHub thread is somebody else's review.
+enum ReviewNoteOrigin: Equatable { case mine, github }
+
 /// What a non-text row shows.
 enum BlockKind: Equatable {
     case fileHeader(SourceID)
+    /// A review note under the line it is about — a local pending comment or a PR thread.
+    case reviewNote(id: String, origin: ReviewNoteOrigin, header: String, body: String)
     /// Removed lines, rendered as a block because they exist in no current file.
     case deletedLines(source: SourceID, lines: [String], startingOldLine: Int)
     /// Unchanged lines the diff skipped between two hunks, still hidden. `collapsed` is
@@ -22,7 +28,7 @@ enum BlockKind: Equatable {
             return s
         case .deletedLines(let s, _, _), .hunkGap(let s, _):
             return s
-        case .spacer:
+        case .spacer, .reviewNote:
             return nil
         }
     }

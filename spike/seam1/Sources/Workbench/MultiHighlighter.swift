@@ -32,17 +32,9 @@ enum SourceHighlightCache {
         return byLine
     }
 
-    /// UTF-16 offset of each line's first character.
-    static func lineStartOffsets(_ text: String) -> [Int] {
-        var starts = [0]
-        let ns = text as NSString
-        ns.enumerateSubstrings(in: NSRange(location: 0, length: ns.length),
-                               options: [.byLines, .substringNotRequired]) { _, range, _, _ in
-            let next = range.location + range.length + 1
-            if next <= ns.length { starts.append(next) }
-        }
-        return starts
-    }
+    /// UTF-16 offset of each line's first character. Lives on `EditMap`, which also has to
+    /// maintain these incrementally as the user types.
+    static func lineStartOffsets(_ text: String) -> [Int] { EditMap.lineStartOffsets(text) }
 
     /// Binary search for the line containing a UTF-16 offset.
     private static func lineIndex(for offset: Int, in starts: [Int]) -> Int? {
@@ -110,6 +102,13 @@ final class MultiHighlighter: HighlightProviding {
     }
 
     func invalidateAll() { cache.removeAll() }
+
+    /// Highlights for one line of a file's **base** blob, for the deletion bands — removed
+    /// lines are not in the stitched document, so they can't come through
+    /// `queryHighlightsFor`, but they are still code and should read as code.
+    func baseHighlights(source: SourceID, line: Int) -> [HighlightRange] {
+        highlights(for: source, side: .old, line: line)
+    }
 
     // MARK: - HighlightProviding
 

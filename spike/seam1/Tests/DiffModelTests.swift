@@ -140,6 +140,40 @@ final class DiffModelTests: XCTestCase {
         XCTAssertEqual(f.hunks[0].lines.map(\.kind), [.removed, .added])
     }
 
+    /// The section heading git appends to a hunk header is arbitrary source text, and the
+    /// parser used to scan the *whole* header for ranges — so `->` in a Swift signature
+    /// re-parsed the old range and `oldStart` became 0. Every patch synthesized from such a
+    /// hunk carried `@@ -0,…` and was rejected by `git apply`, which is most hunks in a
+    /// Swift file.
+    func test_hunkHeaderSectionHeadingDoesNotOverwriteTheRanges() {
+        let diff = """
+        diff --git a/a.swift b/a.swift
+        --- a/a.swift
+        +++ b/a.swift
+        @@ -167,7 +167,7 @@ func f(count: Int) -> String { "x + y" }
+         context
+        -old
+        +new
+        """
+        let hunk = DiffParser.parse(diff)[0].hunks[0]
+        XCTAssertEqual(hunk.oldStart, 167)
+        XCTAssertEqual(hunk.oldCount, 7)
+        XCTAssertEqual(hunk.newStart, 167)
+        XCTAssertEqual(hunk.newCount, 7)
+        XCTAssertEqual(hunk.lines.first(where: { $0.kind == .removed })?.oldLineNo, 168)
+    }
+
+    /// `git diff` output ends with a newline, so splitting it leaves a trailing "" that is
+    /// not a diff line. It read as a blank context line and became a phantom row on the
+    /// last hunk of every diff — one line past the end of the file.
+    func test_trailingNewlineDoesNotBecomeAPhantomContextLine() {
+        let diff = "diff --git a/a.swift b/a.swift\n--- a/a.swift\n+++ b/a.swift\n"
+            + "@@ -1,2 +1,1 @@\n ctx\n-gone\n"
+        let hunk = DiffParser.parse(diff)[0].hunks[0]
+        XCTAssertEqual(hunk.lines.map(\.kind), [.context, .removed])
+        XCTAssertEqual(hunk.lines.filter { $0.kind == .context }.map(\.newLineNo), [1])
+    }
+
     func test_emptyDiffReturnsNoFiles() {
         XCTAssertTrue(DiffParser.parse("").isEmpty)
         XCTAssertTrue(DiffParser.parse("\n\n").isEmpty)

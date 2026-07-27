@@ -31,6 +31,17 @@ extension TextViewController: TextViewDelegate {
     }
 
     public func textView(_ textView: TextView, shouldReplaceContentsIn range: NSRange, with string: String) -> Bool {
+        // Forwarded to coordinators, unlike upstream, so one can refuse an edit outright.
+        // Shepherd's stitched multibuffer needs this: a row belongs to a real file, but a
+        // file's rows are discontinuous, so an edit spanning two of them has nowhere to be
+        // written back to and must be rejected rather than guessed at.
+        for coordinator in self.textCoordinators.values() {
+            if let coordinator = coordinator as? TextViewDelegate,
+               !coordinator.textView(textView, shouldReplaceContentsIn: range, with: string) {
+                return false
+            }
+        }
+
         let mutation = TextMutation(
             string: string,
             range: range,

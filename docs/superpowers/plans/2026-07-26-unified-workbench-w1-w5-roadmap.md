@@ -7,17 +7,17 @@
 
 ## Progress
 
-Last updated 2026-07-27 · branch `unified-workbench-spec` · 32 commits · 357 tests, 0 failures
+Last updated 2026-07-27 · branch `workbench-w2-deleted-line-blocks` · 452 model tests, 0 failures
 
 ```
 W0  editor foundation      ██████████████████████  100%   run + hardened
 W1  review & staging       ██████████████████████  100%   run + hardened
-W2  editing in anger       ░░░░░░░░░░░░░░░░░░░░░░    0%
-W3  merge resolver         ░░░░░░░░░░░░░░░░░░░░░░    0%
-W4  PR surface             ░░░░░░░░░░░░░░░░░░░░░░    0%
-W5  history & power tools  ░░░░░░░░░░░░░░░░░░░░░░    0%
+W2  editing in anger       ██████████████████████  100%   W2.0/W2.1 + write-back live-run
+W3  merge resolver         ░░░░░░░░░░░░░░░░░░░░░░    0%   ← in progress
+W4  PR surface             ██████████████████████  100%   band, checks, gh actions, threads
+W5  history & power tools  ░░░░░░░░░░░░░░░░░░░░░░    0%   own spec; ~= W1–W4 combined
                            ──────────────────────
-    overall                ████████░░░░░░░░░░░░░░   40%
+    overall                ████████████████░░░░░░   72%
 ```
 
 **W0 — done (11 tasks).** Editor vendored (247 files / 23,946 lines in-module,
@@ -102,7 +102,10 @@ select in the text, or click/drag in the gutter to take whole lines, and `⌘⏎
 exactly that (still falling back to the cursor's hunk when nothing is selected).
 `session.selectedLines` is derived from `editorState.cursorPositions` in
 `EditorHost.onChange`; multi-cursor selections union, so a non-contiguous pick still
-works. Selected rows tint in the gutter so the two surfaces agree.
+works. Selected rows **used to** tint in the gutter so the two surfaces agreed; that was
+removed after the W2.0 live run — dragging in the text lit up the line numbers with it,
+which reads as though the gutter is being dragged too. The text selection is its own
+feedback.
 
 Cost of that choice: the selection lives in the text view, so it clears when you click
 elsewhere — you cannot build one up across a long scroll the way ticks allowed. If that
@@ -282,69 +285,153 @@ exhaustive switch — every new `ShortcutID` needs a case.
 > turned off rather than left as a footgun. Selection is unaffected (`isSelectable` is
 > independent), so staging still works.
 
-### W2.0 — deleted lines must become blocks *before* write-back is possible
+### W2.0 — deleted lines became blocks — **DONE**
 
-**The current document cannot be edited, and no amount of bookkeeping fixes that.**
-`rebuild()` emits every diff line as a text row, removals included — so the buffer is a
-unified interleaved diff. A removed row corresponds to no position in any file on disk,
-so there is nowhere to write an edit to it back to. Keeping the row tables in step with
-typing (the obvious first instinct) solves the wrong problem.
+> The gate for everything else in W2. Kept in full because the *shape* of the solution is
+> what the remaining tasks build on.
 
-The spec already anticipated this and W0 half-built it. `BlockKind.deletedLines(source:
-lines:startingOldLine:)` exists, and its own comment says *"Removed lines, rendered as a
-block because they exist in no current file."* Nothing emits it — `rebuild()` only ever
-appends `.fileHeader` blocks, and `BlockMap` is built and then never rendered.
+**Why it had to come first.** `rebuild()` emitted every diff line as a text row, removals
+included, so the buffer was a unified interleaved diff. A removed row corresponds to no
+position in any file on disk, so there was nowhere to write an edit to it back to. Keeping
+the row tables in step with typing — the obvious first instinct — solves the wrong problem.
 
-**So W2 starts here:** the text buffer becomes **new-side only** (added + context), and
-each run of removals becomes a `.deletedLines` block anchored at the row that follows it.
-What that unlocks, all of it currently blocked:
+**What shipped.** The text buffer is **new-side only** (added + context + gap-revealed
+context); each run of removals is a `.deletedLines` block anchored on the row it sits
+above. Concretely:
 
-- Every text row is a real line in the working file, so write-back is a direct mapping
-  and `StitchMap.applyEdit` works as designed.
-- `sourceAnchor` is always `.new`; the base-blob highlight path becomes block-only.
-- The gutter's single number column is exactly right by construction.
-- `BlockMap` gets its first real consumer, ahead of W3's conflict controls and ADR 0019's
-  rendered markdown — both of which are block kinds waiting on the same mechanism.
+- **`RowPlan.swift` (pure, 20 tests) is now the single authority on the document layout** —
+  which diff line each row shows, and where every band (header, gap, deletion) goes. It was
+  an inline walk in `rebuild()` plus a second walk in `StageSelection` that only tests
+  called, so the tested walk and the real one could disagree about what a row index means.
+  That is the exact class of bug that mangled highlighting on the first live run. `rebuild()`
+  now only materializes the text and styles the plan implies.
+- **`RowOrigin` absorbed the gutter numbers** (`gutterRows` is gone — three parallel
+  per-row arrays are down to two) and gained `deletedRefs`.
+- **Deletion bands render as code**: base-blob syntax colours (`MultiHighlighter
+  .baseHighlights`, parsed lazily per band and cached on the session), the removed tint, and
+  word-diff spans; the gutter draws each band line's old number and `-`.
+- `sourceAnchor` is always `.new` by construction, and the gutter's single number column is
+  right for free.
 
-**Block rendering is now proven and shipped** (branch `workbench-w2`), on the
-`.fileHeader` blocks `rebuild()` was already emitting and nothing drew — so files get a
-named band instead of running together. `BlockRenderer.prepareForDisplay` inflates the
-line's first fragment, following `MinimapLineRenderer`'s pattern. Three things that
+**The selection knock-on, resolved as planned.** A band belongs to the row it abuts, so
+selecting that row selects its removals too and `⌘⏎` still stages a whole hunk rather than
+silently staging only its additions. Two edges the plan didn't name:
+
+- A run at the **end of a hunk** has no following row of its own, so it draws above whatever
+  comes next but is owned by the hunk's **last** row — the only row that can carry it into a
+  patch. When that "whatever comes next" is the end of the document, the band is hosted by
+  the zero-length trailing line the editor appends for a document ending in a newline
+  (`TextLineStorage.buildFromTextStorage`); `gutterRowCount` counts it so the gutter still
+  draws its numbers.
+- A hunk that is **nothing but removals** (a deleted file) has no row at all, so its band
+  exists and is visible but no row can own it: whole-file staging only, which the rail's
+  button already does.
+
+**Two bugs found on the way, both pre-existing:**
+
+- The gap computation built `(prev.newStart - 1 + prev.newCount)..<(hunk.newStart - 1)` with
+  **no clamp**. Real `git diff` output is ascending so it never fired, but nothing in the
+  model enforces that and an inverted `Range` **traps** — it would have taken the whole app
+  down. Found because a test fixture with unrealistic hunk numbering crashed the test runner.
+- `anchor(atStitchedLine:)` resolved a row through `StitchMap.locate`, which finds an excerpt
+  by **summing excerpt lengths** — so it stopped matching the document the moment a hunk gap
+  was expanded (those rows belong to no excerpt), and review comments would have anchored to
+  the wrong file. It reads `rowOrigins` now.
+
+**Block rendering itself was proven earlier** on the `.fileHeader` blocks. Three things
 mattered, all recorded as gotchas in `CLAUDE.md`: pair fragment mutation with
-`lineFragments.update(...)` (it is a sum tree); grow **both** `height` and `scaledHeight`
-so the text lands below the band rather than centred in it; and widen the fragment view,
-which is otherwise only as wide as its text.
+`lineFragments.update(...)` (it is a sum tree); grow **both** `height` and `scaledHeight` so
+the text lands below the band rather than centred in it; and widen the fragment view, which
+is otherwise only as wide as its text.
 
-Still rough on block rows: the caret and selection rects use the fragment's full inflated
-height, so a row carrying a band gets a tall caret. Cosmetic, affects only those rows.
+**Deliberately deferred, so it isn't mistaken for done:**
 
-### W2.1 — hunk gaps: "N lines skipped" + expand
+- **Staging one removed line out of a run.** The row owns the whole band, so `⌘⏎` takes all
+  of it. `PatchSynth` supports finer than that; only the row→selection mapping doesn't.
+- **Commenting on a removed line.** No row means no anchor, so `⌘⇧C` reaches new-side lines
+  only. A GitHub thread on a removed line still *resolves* — `stitchedLine(forFile:line:
+  side:)` maps an old-side line to the row owning the band that shows it, so jumping to the
+  thread still puts the deleted line on screen.
+- **Selecting or copying a removed line.** The biggest live-run finding that is *not* a bug:
+  a band is not text, so the editor cannot select it. Dragging across a hunk visibly steps
+  over the deletion band, and **`⌘C` no longer yields removed lines at all** — a regression
+  from before W2.0, when they were real rows. The honest fix is copy support first
+  (reconstruct a band's text for a selection that spans it, off `rowOrigins` + `blockMap`),
+  and only then tint the band as selected so the continuity isn't lying about what you'd
+  get. Tinting alone would look right and copy nothing.
+- **Word-diff tint contrast.** `wordAdd` (`0x2B5B33`) / `wordDel` (`0x6E2B28`) are dark fills
+  at 55% alpha. They read behind plain identifier text and disappear behind a bright
+  string-literal colour, so one changed word in a line can look highlighted while another
+  doesn't. Pre-existing W0 palette, unchanged by W2.0; the span geometry itself was verified
+  exact (measured vs arithmetic drift 0.00pt in JetBrainsMono NF).
+- **`git show` from `draw`.** A band's colours are parsed on first paint, which reads the
+  base blob — a `Process` on the main thread. Same cost the removed-row highlight path
+  already paid, and cached after, but it belongs off-main with a redraw callback.
+- **`StitchMap.locate` is still misleading** and now has **no live callers**. `Excerpt
+  .lineRange` holds absolute row spans, which is not what `locate`/`sourceLocation`/
+  `stitchedLine(for:)` assume. Fix or delete it before W2's `⌘P` file finder makes it
+  load-bearing — that is the third caller the last note warned about.
+- Caret and selection rects use the fragment's full inflated height, so a row carrying a
+  band gets a tall caret. Cosmetic, and worse now that bands can be tall.
 
-Hunks currently butt straight together — line 56 is followed by line 163 with nothing
-saying why. Add a `BlockKind.hunkGap(source:skipped:)` band between consecutive hunks of
-a file: the skipped count, and GitHub's expand-up / expand-down / expand-all controls.
+**Run on a real diff** against a fixture repo built to hit every shape at once: two hunks far
+apart (gap band), a 40-line deletion run, a whole-file delete, removals at EOF of the last
+file, and an added file. Verified two ways — a headless harness over the real `DiffParser` +
+`RowPlanner` asserting the invariants (excerpts tile every row; no row is a removal; row
+numbers agree with their excerpt; every removed line is owned by a row or in an all-removal
+hunk), with **`git apply --cached --check` judging every synthesized patch**; then visually in
+`ShepherdDev`. It found three defects, none of which 413 green unit tests could have caught:
 
-This is the block mechanism's second consumer and it needs no new plumbing to *render*.
-Expanding is where it gets interesting: the lines already exist in the file's
-`SourceBuffer`, and `ExcerptKind.context` is in `StitchMap` for exactly this and has
-never been emitted. So expansion is "insert a `.context` excerpt covering the requested
-range and rebuild" — which is also the same move W2's `⌘P` file finder makes when it
-opens a whole file into the buffer. Build it once here.
+1. **A tall band drew only its first 30 rows.** Clipping block drawing to `dirtyRect` is
+   unsound for a fragment ~1000pt tall — see the `visibleRect` gotcha in `CLAUDE.md`.
+2. **`DiffParser.parseHunkRanges` scanned the whole hunk header**, so the section heading git
+   appends re-parsed the ranges: `->` in a Swift signature starts with `-`, so `oldStart`
+   became 0. **This broke `⌘⏎` hunk staging for most hunks in a Swift file** — `PatchSynth`
+   emitted `@@ -0,7` and `git apply` rejected it. Confirmed both ways: git accepts the fixed
+   patches and rejects the pre-fix form. Pre-existing, shipped since W1.
+3. **The trailing `""` from splitting `git diff` output became a blank context line**, so the
+   last hunk of every diff carried a phantom row one line past the end of the file — with a
+   line number that doesn't exist, and an extra context line in any patch built from that
+   hunk. It also masked the document-trailing-band case, which now genuinely exercises the
+   editor's zero-length trailing line.
 
-**Knock-on — and this one is a correctness bug, not a UX gap.** `StageSelection.selections`
-derives `HunkSelection.lineIndices` from *selected rows*. If removals have no rows, they
-can never be selected, so `⌘⏎` on a hunk would build a patch containing only the
-additions — **silently staging half of a change**, which is worse than not staging it.
-`PatchSynth` is fine (it works from the `DiffHunk` model); the row→selection mapping is
-what breaks.
+### W2.1 — hunk gaps: "N lines skipped" + expand — **DONE**
 
-Decide this before converting `rebuild()`. The cheapest correct answer: **a deletion band
-belongs to the row it sits above.** Selecting that row selects the band's removed line
-indices too, so `RowOrigin` grows from one `lineIndex` to "this line, plus these removed
-indices from the same hunk". Hunk staging then keeps working unchanged, and line-level
-staging of an individual deleted line is deferred rather than broken. Cover it with a
-`StageSelection` test *before* the conversion — the existing tests all assume removals are
-rows, so they will keep passing while the real behaviour regresses.
+A `.hunkGap` band between consecutive hunks of a file carries the skipped count, and the
+gutter carries GitHub-style expand-down / expand-up / expand-all arrows (`HunkGaps`, pure +
+tested; the arrows live in the gutter because `TextView.hitTest` swallows clicks aimed at a
+line-fragment subview). Revealed lines are tracked per file as a **set** of 0-based new-side
+lines, so two expansions meeting in the middle merge for free, and `RowPlanner` emits them
+as ordinary context rows read out of the working copy.
+
+It did **not** end up going through `ExcerptKind.context` as planned — revealing is a row
+concern, and rows come from `RowPlanner`, not from `StitchMap`. `⌘P` opening a whole file
+into the buffer is still the move that will need `.context` excerpts, and it is still
+unemitted.
+
+### W2.2 — the rest of "editing in anger" — **DONE**
+
+**Verified in real use:** typing/editing with write-back, `⌘S` to disk, `⌘P`. **Not yet
+exercised** — secondary, verify when convenient: reconcile's Keep mine / Take theirs, branch
+switching (incl. its refusal while dirty), and the inline review notes.
+
+**What the live run found (fixed):** edit a line, `⌘G` out, `⌘G` back, and the line went
+read-only. The session and its dirty `SourceBuffer` survive the close, but reopening runs
+`load()` → `rebuild()`, which materialized every row from the **diff** — and the diff
+describes disk. The document silently reverted to the saved text while the buffer still held
+the edit, so `canApplyEdit`'s staleness guard correctly refused every further edit to those
+lines. Rows of a file in `dirtyPaths` now read from the buffer; see the gotcha in `CLAUDE.md`
+and the remaining stale-hunk-boundary caveat there.
+
+**A fixture that hits every band shape at once** — worth rebuilding rather than re-deriving.
+A git repo with: a 200-line file modified at line 5 **and** ~line 170 (two hunks with a
+158-line gap ⇒ gap band + expand, and word-diff inside a modified line); a file whose middle
+40 lines are deleted (a tall deletion band, which is what caught the `dirtyRect` clipping
+bug); a file deleted outright (all-removal hunk, no owning row); a file whose **last** lines
+are deleted and which sorts **last** (the document-trailing band, hosted by the editor's
+zero-length trailing line); and an untracked file sorting first as an all-additions control.
+`git diff HEAD | <driver>` over `DiffParser` + `RowPlanner`, with `git apply --cached --check`
+judging every synthesized patch, is what surfaced the two parser bugs below.
 
 - **File finder (`⌘P`)**: fuzzy-match repo files; opening one appends a `.context`
   excerpt covering the whole file to `StitchMap` and rebuilds. This is where `StitchMap`
@@ -358,11 +445,16 @@ rows, so they will keep passing while the real behaviour regresses.
   maps those edits back to `SourceBuffer`s. Add a `TextViewCoordinator` implementing
   `textViewDidChangeText`, map the changed range to `(source, lineRange)`, and call
   `SourceBuffer.replaceText`. **This is the largest single piece of W2** and the point at
-  which the buffer becomes genuinely editable rather than editable-looking.
+  which the buffer becomes genuinely editable rather than editable-looking. W2.0 cleared
+  the way: every row is a real new-side line, so the mapping is direct.
   **Map through `sourceAnchor(atStitchedLine:)`, not `StitchMap`** — excerpt line ranges
-  are stitched coordinates, which is exactly the bug that mangled highlighting (see "What
-  the first live run cost"). `StitchMap.sourceLocation` is misleading for hunk excerpts;
-  consider deleting or renaming it before it catches a third caller.
+  are row spans, which is exactly the bug that mangled highlighting (see "What the first
+  live run cost") and, separately, what `anchor()` was quietly doing until W2.0.
+  `StitchMap`'s `locate`-based lookups now have **no callers at all**; fix or delete them
+  here rather than letting `⌘P` become the third victim.
+  The other half of this task is the row tables: `rowStyles` / `rowOrigins` are indexed by
+  row, so a typed newline shifts everything below it. `BlockMap.shift(fromStitchedLine:by:)`
+  and `StitchMap.applyEdit` exist for exactly this and are both still unexercised.
 - **Branch + worktree ops**: reuse `WorktreeService` / `WorktreeArchive`; a branch menu in
   the header, "new worktree tab from here" wired to the existing flow.
 
@@ -377,13 +469,20 @@ rows, so they will keep passing while the real behaviour regresses.
   pre-checking them.
 - Scope row `Conflicts (n)`, auto-selected when the repo is mid-merge.
 
-## W4 — PR surface
+## W4 — PR surface — **DONE**
 
-- Header PR band: checks rollup, mergeability, review decision — from the existing
-  `PRStatus` / `PRThreads` and `store.prStatuses[paneID]`. All gated on `GH.isInstalled`.
-- Expandable checks list; click through to the run.
-- Actions via `gh`: approve, request changes, merge (respecting `mergeStateStatus`).
-- Scope row `Threads (n)` for W1.4's threads.
+Shipped in `WorkbenchPRBand` (it landed early, alongside the block-row work, which is why
+the progress bar above under-reported it for a while):
+
+- Header PR band: checks rollup chip, mergeability, review decision, all gated on
+  `GH.isInstalled`. A merged/closed PR hides its review decision and checks — stale trivia.
+- Expandable checks list, each row clicking through to its run when the payload carries a
+  URL.
+- Actions via `gh`: Approve, Request changes, and Merge with a squash/merge/rebase picker.
+- Scope segment `Threads (n)`, in the segmented scope pill, shown only when threads exist.
+- Review threads render **inline** under their line as violet `.reviewNote` bands as well as
+  in the threads panel; local pending comments render the same way in blue. Distinguished by
+  marker shape and label as well as colour.
 
 ## W5 — History & power tools (last; blocks nothing)
 
@@ -414,8 +513,14 @@ Roughly the size of W1–W4 combined. Do it as its own spec.
 - **Per-line staged state in working-tree mode.** `git diff HEAD` shows staged ∪
   unstaged with no way to tell which a line is. Needs a second index-based diff
   correlated by line — the same `DiffReader` change as the partial-staging limitation.
-- **Block-map performance.** Untested under load; Zed had to profile theirs. Nothing
-  emits block rows yet, so the gutter's variable-height path is also unexercised.
+- **Block-map performance.** Untested under load; Zed had to profile theirs. Three kinds
+  emit now (header / gap / deletion), so the gutter's variable-height path is exercised —
+  but `blocks(beforeStitchedLine:)` and `totalHeight(above:)` are both **linear scans over
+  every block**, called per row per draw. On a 287-file diff that is hundreds of blocks
+  scanned per visible row. Index it by row before it shows up as scroll jank.
+- **Tall deletion bands.** A 500-line deletion inflates one line fragment to 500 rows tall.
+  Drawing is clipped to `visibleRect` so the cost is bounded, but the fragment view itself
+  is that tall and stays mounted while any part of it is on screen.
 - **Workbench as a `Pane.kind`** instead of a takeover, so it can sit beside a live
   terminal. `Pane.provisioning`/`stowing` are the precedent for a non-PTY pane.
 - **Rendered-markdown rehosting.** `MarkdownDiffView` still renders standalone;
