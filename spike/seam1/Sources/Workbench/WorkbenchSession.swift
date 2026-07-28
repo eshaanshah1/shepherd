@@ -19,12 +19,22 @@ final class WorkbenchSession: ObservableObject {
     func setScope(_ next: WorkbenchScope) {
         let previous = scope
         guard next != previous else { return }
-        // A repo mid-merge is in a broken state: comparing it to a base is meaningless and
-        // editing around it invites making things worse. While anything is unmerged the
-        // workbench *is* the resolver, and nothing else is reachable.
-        guard !hasConflicts || next == .files else { return }
+        // A repo mid-sequence is in a broken state: comparing it to a base is meaningless and
+        // editing around it invites making things worse. While one is in flight the workbench
+        // *is* the resolver, and nothing else is reachable — including after the last conflict
+        // is settled but before the sequence has been continued or aborted.
+        guard !isMidSequence || next == .files else { return }
         scope = next
+        // Leaving Commits drops the historical document. Done before anything reloads, so the
+        // rows a commit put on screen cannot outlive the scope that explains them.
+        if next != .commits { selectCommit(nil) }
         if next == .threads { threadsPanelOpen = true }
+        if next == .commits {
+            // The list is the landing state: no commit is selected, so the buffer is empty
+            // until one is picked. `selectCommit(nil)` above already emptied it on the way in
+            // from another scope, and `load()` keeps the list itself up to date.
+            return
+        }
         if next == .files {
             // Re-reads the unmerged index: this scope carries the conflicts too, and they
             // are the one thing that can have changed under us since the last look.
@@ -33,12 +43,12 @@ final class WorkbenchSession: ObservableObject {
         }
         guard let nextMode = next.mode else { return }
         // Only reload when the underlying git comparison actually changes; switching
-        // between vs-base and threads is a filter over the same diff. Leaving the Files
-        // scope always reloads, though — the document on screen is a merge preview and some
-        // hand-opened files, so an unchanged `mode` would leave it there.
+        // between vs-base and threads is a filter over the same diff. Leaving Files or
+        // Commits always reloads, though — the document on screen is a merge preview, some
+        // hand-opened files, or a commit, so an unchanged `mode` would leave it there.
         if mode != nextMode {
             mode = nextMode
-        } else if previous == .files {
+        } else if previous == .files || previous == .commits {
             load()
         }
     }
@@ -48,6 +58,119 @@ final class WorkbenchSession: ObservableObject {
     @Published private(set) var stagedFiles: [DiffFile] = []
     /// The one file the editor is scoped to, or nil for the whole diff.
     @Published private(set) var focusedFile: String?
+    /// The branch's commits, for the Commits scope. Empty until `loadCommits` runs.
+    @Published private(set) var commits: [Commit] = []
+    /// The commit the buffer is showing, and **the** definition of historical provenance.
+    ///
+    /// One piece of state, not a commit plus a flag: two things meaning "this document is
+    /// history" is two things that can disagree, and a document coloured from the wrong text
+    /// is exactly what that disagreement looks like.
+    @Published private(set) var selectedCommit: Commit?
+
+    /// Sha of the shown commit, which is what every provenance decision keys off.
+    var historicalSha: String? { selectedCommit?.sha }
+
+    // MARK: - Blame
+
+    /// Per stitched row, its lane cell — empty unless the buffer is narrowed to one file.
+    @Published private(set) var blameRows: [BlameRow?] = []
+    /// Per-sha details, for the header annotation.
+    @Published private(set) var blameMeta: [String: BlameCommitMeta] = [:]
+    private var blameCache: [String: BlameResult] = [:]
+
+    /// The one file blame is available for, or nil.
+    ///
+    /// Narrowed-to-one-file only, and never for a historical or conflicted document. Running
+    /// it across a whole diff would be one `git blame` per file — the same mistake
+    /// `SourceBuffer.init` made with `git show`, which cost 287 main-thread spawns before the
+    /// first row drew.
+    var blameFilePath: String? {
+        guard selectedCommit == nil, !hasConflicts else { return nil }
+        if let focusedFile { return focusedFile }
+        let paths = Set(rowOrigins.map(\.path))
+        return paths.count == 1 ? paths.first : nil
+    }
+
+    /// Read blame for the narrowed file, then project it onto the rows.
+    func loadBlame() {
+        guard let path = blameFilePath else {
+            blameRows = []
+            blameMeta = [:]
+            return
+        }
+        if let cached = blameCache[path] {
+            projectBlame(cached)
+            return
+        }
+        let cwd = self.cwd
+        DispatchQueue.global(qos: .userInitiated).async {
+            let out: String
+            if case .ok(let text) = GitStaging.run(BlameParse.arguments(path: path),
+                                                  cwd: cwd) { out = text } else { out = "" }
+            let parsed = BlameParse.parse(out)
+            DispatchQueue.main.async {
+                self.blameCache[path] = parsed
+                // Narrowed away while git was running: projecting now would hang one file's
+                // blame on another file's rows.
+                guard self.blameFilePath == path else { return }
+                self.projectBlame(parsed)
+            }
+        }
+    }
+
+    private func projectBlame(_ result: BlameResult) {
+        blameRows = BlameLane.rows(lineNumbers: rowOrigins.map(\.newLineNumber),
+                                  blame: result, now: Date())
+        blameMeta = result.meta
+    }
+
+    /// Blame goes stale when the file changes or HEAD moves. Nil path ⇒ drop everything.
+    func invalidateBlame(path: String? = nil) {
+        if let path { blameCache.removeValue(forKey: path) } else { blameCache.removeAll() }
+        blameRows = []
+    }
+
+    /// The lane row the pointer is over. Overrides the cursor row in the header.
+    @Published var hoveredBlameRow: Int?
+
+    /// The blame line the header shows: the hovered row if there is one, else the cursor's.
+    ///
+    /// The lane encodes shape and no facts, and hover-only text is never actually on screen.
+    /// Sourcing this from the cursor by default is what makes the information readable without
+    /// a per-row text column; hover is then an accelerator rather than the only path to it.
+    /// The row the blame strip is reporting — hovered, else the cursor's.
+    ///
+    /// Published so the gutter can mark the same row the strip describes. One derivation, so the
+    /// bar and the text cannot point at different lines.
+    var blameSelectedRow: Int? {
+        let row = hoveredBlameRow ?? cursorStitchedLine
+        guard let row, blameRows.indices.contains(row), blameRows[row] != nil else { return nil }
+        return row
+    }
+
+    var blameAnnotation: String? {
+        guard let row = blameSelectedRow, let cell = blameRows[row] else {
+            return nil
+        }
+        if cell.shade == .uncommitted { return "not committed yet" }
+        guard let meta = blameMeta[cell.sha] else { return nil }
+        let age = CommitHistory.relativeAge(meta.timestamp, now: Date())
+        return "\(cell.sha.prefix(7)) · \(meta.author) · \(age) · \(meta.summary)"
+    }
+
+    /// Jump to a commit in the Commits scope — the loop from a blamed line back to history.
+    ///
+    /// A sha outside `<base>..HEAD` is not in the list, and an old line's commit usually
+    /// predates the branch, so the switch is refused **with a reason** rather than landing on
+    /// a list that does not contain what was clicked.
+    func revealCommit(sha: String) {
+        guard let commit = commits.first(where: { $0.sha == sha }) else {
+            lastError = "\(sha.prefix(7)) is not one of this branch's commits"
+            return
+        }
+        setScope(.commits)
+        selectCommit(commit)
+    }
     /// Per file, the 0-based new-side lines revealed out of the gaps between hunks.
     @Published private(set) var revealedLines: [String: Set<Int>] = [:]
 
@@ -85,7 +208,9 @@ final class WorkbenchSession: ObservableObject {
     }
 
     /// True while the workbench is locked to resolving. Nothing else is reachable.
-    var resolveOnly: Bool { hasConflicts }
+    ///
+    /// Covers the whole sequence, not just its conflicts — see `isMidSequence`.
+    var resolveOnly: Bool { isMidSequence }
 
     /// Where two columns mean something: any scope that is a diff.
     ///
@@ -351,9 +476,51 @@ final class WorkbenchSession: ObservableObject {
         }
     )
 
+    private lazy var blobCache: BlobCache = {
+        let cache = BlobCache(cwd: cwd)
+        cache.onLoaded = { [weak self] _, path in
+            guard let self else { return }
+            self.highlighter.invalidate(source: self.source(of: path))
+            self.rebuild()
+        }
+        return cache
+    }()
+
     init(paneID: String, cwd: String) {
         self.paneID = paneID
         self.cwd = cwd
+    }
+
+    /// Drill into a commit, or nil to go back to the list.
+    func selectCommit(_ commit: Commit?) {
+        guard selectedCommit?.sha != commit?.sha else { return }
+        selectedCommit = commit
+        focusedFile = nil
+        // Blobs are keyed by sha so they could survive, but the highlighter's parses are
+        // keyed by variant and the old commit's are now dead weight.
+        blobCache.clear()
+        highlighter.invalidateAll()
+        guard let commit else {
+            files = []
+            rebuild()
+            return
+        }
+        loadCommitDiff(commit)
+    }
+
+    private func loadCommitDiff(_ commit: Commit) {
+        loading = true
+        let cwd = self.cwd
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = DiffReader.readCommit(cwd: cwd, sha: commit.sha)
+            DispatchQueue.main.async {
+                self.files = result.files
+                self.stagedFiles = []
+                self.baseLabel = result.baseLabel
+                self.rebuild()
+                self.loading = false
+            }
+        }
     }
 
     /// The buffer for a file, created (and watched) on first use.
@@ -371,8 +538,12 @@ final class WorkbenchSession: ObservableObject {
         let buffer = SourceBuffer(source: source, cwd: cwd, baseLabel: baseLabel)
         buffer.lastUsed = bufferUseCounter
         buffer.onExternalWrite = { [weak self] in
-            self?.highlighter.invalidate(source: source)
-            self?.scheduleReload()
+            guard let self else { return }
+            self.highlighter.invalidate(source: source)
+            // The file's lines moved, so its blame no longer maps. Dropped per path rather
+            // than wholesale: another file's blame is still good.
+            self.invalidateBlame(path: self.relativePath(of: source))
+            self.scheduleReload()
         }
         buffer.startWatching()
         buffers[source] = buffer
@@ -415,6 +586,13 @@ final class WorkbenchSession: ObservableObject {
             return buffer(for: source).baseText ?? ""
         case .mergePreview:
             return MergeText.blob(mergePreviews[relativePath(of: source)] ?? [])
+        case .commit(let sha):
+            // An absent blob means "not here yet" and colours arrive on `onLoaded`. Falling
+            // back to the working copy here is the entire bug this design exists to prevent.
+            let path = relativePath(of: source)
+            if let text = blobCache.cached(sha: sha, path: path) { return text }
+            blobCache.request(sha: sha, path: path)
+            return ""
         case .snippet:
             // No band parses a loose fragment any more — both sides of a conflict are real
             // rows of the merge preview now, so they highlight through `.mergePreview`.
@@ -439,8 +617,9 @@ final class WorkbenchSession: ObservableObject {
         guard rowOrigins.indices.contains(line),
               let new = rowOrigins[line].newLineNumber else { return nil }
         let origin = rowOrigins[line]
-        let variant: HighlightVariant =
-            mergePreviews[origin.path] != nil ? .mergePreview : .new
+        let variant = DocumentProvenance.variant(
+            hasMergePreview: mergePreviews[origin.path] != nil,
+            commitSha: historicalSha)
         return (source(of: origin.path), variant, new - 1)
     }
 
@@ -449,6 +628,10 @@ final class WorkbenchSession: ObservableObject {
     /// `DiffReader.read` spawns `git`, and running a `Process` during a SwiftUI layout
     /// pass wedges the update cycle — the same discipline the old panel used.
     func load() {
+        // A commit's diff is immutable, and its rows are historical. A tree diff here would
+        // replace them with the working copy's — which is what an agent saving a file would
+        // otherwise do underneath you while you are reading history.
+        if let commit = selectedCommit { loadCommitDiff(commit); return }
         loading = true
         let mode = self.mode
         let cwd = self.cwd
@@ -458,7 +641,16 @@ final class WorkbenchSession: ObservableObject {
             let unstaged = result.isRepo ? GitStaging.unstagedPaths(cwd: cwd) : []
             let branch = result.isRepo ? GitStaging.currentBranch(cwd: cwd) : nil
             let upstream = result.isRepo ? GitStaging.upstream(cwd: cwd) : nil
+            // Read here rather than in its own dispatch: the range needs the base this same
+            // read just resolved, and asking beforehand raced it into the `main` fallback.
+            let log = result.isRepo
+                ? GitStaging.run(CommitHistory.logArguments(base: result.baseName ?? "main"),
+                                 cwd: cwd)
+                : GitResult.ok("")
+            let commits: [Commit]
+            if case .ok(let text) = log { commits = CommitHistory.parse(text) } else { commits = [] }
             DispatchQueue.main.async {
+                self.commits = commits
                 self.files = result.files
                 self.stagedFiles = result.stagedFiles
                 // A focused file that fell out of the diff would leave an empty editor
@@ -569,9 +761,27 @@ final class WorkbenchSession: ObservableObject {
                     counterpart: pairing(key)?.counterpart(atLineIndex: origin.lineIndex)))
             } else {
                 // A gap-revealed row, or any row of an edited file: read the live text.
+                //
+                // Gap-revealed and edited rows are the **only** rows whose text is not in the
+                // diff, so this is the one place provenance decides where lines come from.
+                // Reading the working copy for a historical document splices *today's* lines
+                // into an old commit — the same wrong-provenance bug as colouring from the
+                // wrong file, entering by a different door.
                 if fileLines[origin.path] == nil {
-                    fileLines[origin.path] = text(for: source(of: origin.path))
-                        .components(separatedBy: "\n")
+                    let live: String
+                    switch DocumentProvenance.lineSource(commitSha: historicalSha) {
+                    case .workingCopy:
+                        live = text(for: source(of: origin.path))
+                    case .commitBlob(let sha):
+                        let path = origin.path
+                        if let blob = blobCache.cached(sha: sha, path: path) {
+                            live = blob
+                        } else {
+                            blobCache.request(sha: sha, path: path)
+                            live = ""
+                        }
+                    }
+                    fileLines[origin.path] = live.components(separatedBy: "\n")
                 }
                 let lines = fileLines[origin.path] ?? []
                 let index = (origin.newLineNumber ?? 1) - 1
@@ -663,6 +873,9 @@ final class WorkbenchSession: ObservableObject {
         maxNewLineNumber = maxNew
         selectedLines.removeAll()   // row indices don't survive a rebuild
         revision += 1
+        // Cells are indexed by row, so they are re-projected against the table this rebuild
+        // just produced. Cached per path, so this is a re-map and not another `git blame`.
+        loadBlame()
     }
 
     // MARK: - Merge conflicts
@@ -704,6 +917,18 @@ final class WorkbenchSession: ObservableObject {
     }
 
     var hasConflicts: Bool { !mergeFiles.isEmpty }
+
+    /// Mid-merge, mid-rebase or mid-cherry-pick — whether or not anything is unmerged.
+    ///
+    /// **The lock is this, not `hasConflicts`.** Resolving the last file used to unlock the
+    /// whole workbench *mid-rebase*, where HEAD is a detached replay state and "vs base" is a
+    /// comparison against nothing meaningful. A half-applied sequence is exactly as broken a
+    /// tree as a conflicted one, so the only doors out are Continue and Abort.
+    ///
+    /// Failure mode, bounded on purpose: a stale `rebase-merge` directory locks the workbench
+    /// with nothing to resolve. Abort is always enabled, and this is re-derived from git's own
+    /// files on every load — so it clears the instant git's state does.
+    var isMidSequence: Bool { hasConflicts || mergeState.isActive }
     var conflictPaths: Set<String> { Set(mergeFiles.map(\.path)) }
 
     /// Conflicted files, narrowed to the focused one.
@@ -752,6 +977,9 @@ final class WorkbenchSession: ObservableObject {
                     self.focusedFile = nil
                 }
                 self.rebuild()
+                // Read after `mergeState` is assigned, since which file holds the message
+                // depends on which operation is in flight.
+                self.loadPendingMessage()
                 self.loading = false
             }
         }
@@ -877,6 +1105,9 @@ final class WorkbenchSession: ObservableObject {
         maxNewLineNumber = maxNew
         selectedLines.removeAll()
         revision += 1
+        // Conflicted files get no lane (`blameFilePath` refuses mid-merge), so in practice
+        // this clears it — but it keeps the two rebuild paths saying the same thing.
+        loadBlame()
     }
 
     /// Run a band's control.
@@ -1024,6 +1255,72 @@ final class WorkbenchSession: ObservableObject {
                 self.lastError = failure
                 self.highlighter.invalidate(source: self.source(of: path))
                 self.loadConflicts()
+            }
+        }
+    }
+
+    /// The message git will commit when the sequence continues, comments stripped. Nil when
+    /// there is no pending commit — a rebase stopped on `break` shows no field at all rather
+    /// than an empty box implying one.
+    @Published private(set) var pendingSequenceMessage: String?
+    /// The editable copy. Equal to `pendingSequenceMessage` means "keep it verbatim".
+    @Published var sequenceMessageDraft = ""
+
+    func loadPendingMessage() {
+        guard mergeState.isActive else {
+            pendingSequenceMessage = nil
+            sequenceMessageDraft = ""
+            return
+        }
+        let cwd = self.cwd
+        let operation = mergeState.operation
+        DispatchQueue.global(qos: .userInitiated).async {
+            let raw = SequenceRunner.pendingMessage(cwd: cwd, operation: operation)
+            let shown = raw.map(SequencePolicy.displayMessage)
+            DispatchQueue.main.async {
+                // Never clobber a draft the user is part-way through typing.
+                guard self.pendingSequenceMessage != shown else { return }
+                self.pendingSequenceMessage = shown
+                self.sequenceMessageDraft = shown ?? ""
+            }
+        }
+    }
+
+    /// Finish the current step of the operation.
+    ///
+    /// Then just `loadConflicts()`. If the next commit conflicts, `mergeFiles` fills, the lock
+    /// re-engages and the progress counter advances on its own; if the sequence finished,
+    /// `MergeState.idle` clears the banner and a full `load()` runs because the tree changed
+    /// under every row on screen. **No sequence state of ours is cached** —
+    /// `ConflictReader.readState` re-reads git's files every time, so our position cannot drift
+    /// from git's.
+    func continueOperation() {
+        guard SequencePolicy.canContinue(isActive: mergeState.isActive,
+                                        unresolved: totalUnresolved,
+                                        writing: writing) else { return }
+        let cwd = self.cwd
+        let operation = mergeState.operation
+        // An untouched draft means "keep git's message verbatim" — nil, so `--continue` runs
+        // under GIT_EDITOR=true and nothing rewrites the message file.
+        let reword = sequenceMessageDraft != (pendingSequenceMessage ?? "")
+            ? sequenceMessageDraft : nil
+        lastError = nil
+        writing = true
+        // HEAD is about to move, so every file's blame is against the wrong history.
+        invalidateBlame()
+        DispatchQueue.global(qos: .userInitiated).async {
+            let outcome = SequenceRunner.cont(cwd: cwd, operation: operation, message: reword)
+            DispatchQueue.main.async {
+                self.writing = false
+                // Only a real refusal is an error. Stopping at the next conflict exits
+                // non-zero, and surfacing that would put `error: could not apply …` in front
+                // of the user every time the loop worked.
+                if case .failed(let reason) = outcome { self.lastError = reason }
+                self.resolutions.removeAll()
+                self.pendingSequenceMessage = nil
+                self.sequenceMessageDraft = ""
+                self.loadConflicts()
+                if case .finished = outcome { self.load() }
             }
         }
     }
@@ -1224,6 +1521,8 @@ final class WorkbenchSession: ObservableObject {
     /// `EditMap.fileEdit`), or when the file on disk no longer matches what the document
     /// shows — in which case the offsets we'd write at are stale and we'd corrupt the file.
     func canApplyEdit(range: NSRange) -> Bool {
+        // History is not editable. Structural rather than a flag, and the header says so.
+        guard DocumentProvenance.isEditable(commitSha: historicalSha) else { return false }
         guard let rows = stitchedLines(in: range),
               let edit = EditMap.fileEdit(rows: rows, origins: rowOrigins) else { return false }
         // A conflicted file's rows are a merge preview. The file on disk still holds git's
@@ -1243,6 +1542,11 @@ final class WorkbenchSession: ObservableObject {
     /// Why the cursor's line can't be edited, or nil when it can. Shown in the header, so a
     /// refusal is never mysterious.
     var editBlockedReason: String? {
+        // History first: a commit view is read-only whatever else is true, and this chip is
+        // the only thing that says so.
+        if let reason = DocumentProvenance.readOnlyReason(commitSha: historicalSha) {
+            return reason
+        }
         guard resolveOnly else { return nil }
         guard let line = cursorStitchedLine, rowOrigins.indices.contains(line) else {
             return "\(mergeFiles.count) conflict\(mergeFiles.count == 1 ? "" : "s") to resolve"
@@ -1436,6 +1740,8 @@ final class WorkbenchSession: ObservableObject {
         for buffer in targets {
             do {
                 try buffer.save()
+                // Saved lines are new lines as far as blame is concerned.
+                invalidateBlame(path: relativePath(of: buffer.source))
             } catch {
                 failure = "Couldn't save \(relativePath(of: buffer.source)): \(error.localizedDescription)"
             }
@@ -1590,6 +1896,8 @@ final class WorkbenchSession: ObservableObject {
                     self.repoFilesLoaded = false
                     self.revealedLines = [:]
                     self.highlighter.invalidateAll()
+                    // HEAD moved, so every file's blame is against the wrong history.
+                    self.invalidateBlame()
                     self.dropBuffers()
                 }
                 self.load()
@@ -1855,7 +2163,12 @@ final class WorkbenchSession: ObservableObject {
             DispatchQueue.main.async {
                 self.writing = false
                 self.lastError = failure
-                if failure == nil { self.commitDraft = "" }
+                if failure == nil {
+                    self.commitDraft = ""
+                    // Lines that were uncommitted now belong to a commit, and there is a new
+                    // commit for the list.
+                    self.invalidateBlame()
+                }
                 self.load()
             }
         }

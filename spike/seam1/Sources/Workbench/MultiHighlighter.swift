@@ -57,24 +57,8 @@ enum SourceHighlightCache {
 /// tokenizer feeding both.
 /// Which text a row's colours come from.
 ///
-/// A row is not always a line of a file on disk. A removed line lives in the base blob; a
-/// row of a conflicted file lives in a merge preview that exists nowhere but memory, because
-/// the file on disk still holds git's markers. Asking for `.new` and indexing the working
-/// copy — which is what every anchor did before W3 — paints those rows with whatever line
-/// happens to sit at that number, which is the bug that mangled highlighting on the first
-/// live run.
-enum HighlightVariant: Hashable {
-    /// The working copy.
-    case new
-    /// The base blob, for deletion bands.
-    case old
-    /// The merged text a conflicted file's document is showing.
-    case mergePreview
-    /// A fragment with no file position at all — the hidden side of a conflict. Keyed by
-    /// the block id so each band parses and caches on its own.
-    case snippet(String)
-}
-
+/// `HighlightVariant` — which text a row's colours come from — lives in its own AppKit-free
+/// file so `DocumentProvenance` can decide it under test.
 final class MultiHighlighter: HighlightProviding {
     /// The file, variant, and 0-based line a stitched row shows.
     ///

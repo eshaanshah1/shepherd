@@ -194,6 +194,13 @@ targets:
       - path: Sources/Workbench/RowPlan.swift
       - path: Sources/Workbench/SideBySidePlan.swift
       - path: Sources/Workbench/EditMap.swift
+      - path: Sources/Workbench/CommitHistory.swift
+      - path: Sources/Workbench/HighlightVariant.swift
+      - path: Sources/Workbench/DocumentProvenance.swift
+      - path: Sources/Workbench/BlameParse.swift
+      - path: Sources/Workbench/BlameLane.swift
+      - path: Sources/Workbench/SequencePolicy.swift
+      - path: Sources/Workbench/SequenceRunner.swift
       - path: Sources/Workbench/FileFinder.swift
       - path: Sources/Workbench/FileLister.swift
       - path: Sources/Workbench/HunkGaps.swift

@@ -125,10 +125,17 @@ enum GitStaging {
     /// handing git the argument lists `WholeFileResolve` picks, and those have no business
     /// each becoming a named wrapper here.
     @discardableResult
-    static func run(_ args: [String], cwd: String, stdin: String? = nil) -> GitResult {
+    static func run(_ args: [String], cwd: String, stdin: String? = nil,
+                    env: [String: String]? = nil) -> GitResult {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         p.arguments = ["-C", cwd] + args
+        if let env {
+            // **Merged** into the inherited environment, never replacing it: git needs `HOME`
+            // to find its config and `PATH` to find its helpers, so a bare dictionary would
+            // quietly change what git *is* when all we wanted was to set an editor.
+            p.environment = ProcessInfo.processInfo.environment.merging(env) { _, new in new }
+        }
         let out = Pipe(), err = Pipe()
         p.standardOutput = out
         p.standardError = err

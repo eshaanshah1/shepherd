@@ -48,6 +48,13 @@ enum DiffParser {
         var i = 0
         while i < lines.count {
             guard isFileHeader(lines[i]) else { i += 1; continue }
+            // Paths from the `diff --git a/X b/Y` line, as the fallback.
+            //
+            // A **binary** file's diff has no `---`/`+++` lines — git writes `Binary files …
+            // differ` instead — so reading paths only from those two left the file with none
+            // and the rail listed it as `?`. Seen live as 49 untracked `.pcm` rows, each
+            // called `?` and each offering a stage button. The header always carries the path.
+            let (headerOld, headerNew) = gitHeaderPaths(lines[i])
             var oldPath: String? = nil
             var newPath: String? = nil
             var status: DiffStatus = .modified
@@ -74,7 +81,8 @@ enum DiffParser {
                 let (hunk, a, r, next) = parseHunk(lines, from: i)
                 hunks.append(hunk); added += a; removed += r; i = next
             }
-            let path = newPath ?? oldPath ?? "?"
+            // The `---`/`+++` paths still win where they exist, so text diffs are unaffected.
+            let path = newPath ?? oldPath ?? headerNew ?? headerOld ?? "?"
             files.append(DiffFile(
                 path: path,
                 oldPath: (status == .renamed) ? oldPath : nil,
@@ -92,6 +100,23 @@ enum DiffParser {
     /// `--cc` is the **combined** form git emits for an unmerged path mid-merge. Without it
     /// the whole file was skipped, so working-tree and vs-base modes showed nothing at all
     /// during a merge.
+    /// The two paths on a `diff --git a/X b/Y` line.
+    ///
+    /// A path can contain spaces, so the split point cannot be found by scanning for one.
+    /// git writes both sides with the same name whenever it is not a rename, and for a rename
+    /// the `rename from`/`rename to` lines carry the truth — so splitting on the **` b/`** that
+    /// begins the second half is enough, and taking the *last* occurrence keeps a path that
+    /// itself contains ` b/` intact.
+    private static func gitHeaderPaths(_ line: String) -> (old: String?, new: String?) {
+        guard let range = line.range(of: "diff --git ") else { return (nil, nil) }
+        let body = line[range.upperBound...]
+        guard let split = body.range(of: " b/", options: .backwards) else { return (nil, nil) }
+        let old = body[body.startIndex..<split.lowerBound]
+        let new = body[split.upperBound...]
+        return (old.hasPrefix("a/") ? String(old.dropFirst(2)) : String(old),
+                new.isEmpty ? nil : String(new))
+    }
+
     private static func isFileHeader(_ line: String) -> Bool {
         line.hasPrefix("diff --git ") || line.hasPrefix("diff --cc ")
             || line.hasPrefix("diff --combined ")

@@ -216,6 +216,67 @@ final class DiffModelTests: XCTestCase {
         XCTAssertEqual(ReviewPrompt.compose(comments), expected)
     }
 
+    /// A **binary** file's diff has no `---`/`+++` lines at all — git writes
+    /// `Binary files … differ` instead — so a parser that reads paths only from those two lines
+    /// ends up with none and the rail shows a file called `?`. The path is right there on the
+    /// `diff --git` line.
+    ///
+    /// Seen live with untracked `.pcm` files: 49 rows all named `?`, each with a stage button.
+    func test_binaryFileTakesItsPathFromTheGitHeader() {
+        let unified = """
+        diff --git a/assets/icon.png b/assets/icon.png
+        new file mode 100644
+        index 0000000..9b224e0
+        Binary files /dev/null and b/assets/icon.png differ
+        """
+        let files = DiffParser.parse(unified)
+        XCTAssertEqual(files.count, 1)
+        XCTAssertEqual(files.first?.path, "assets/icon.png")
+        XCTAssertEqual(files.first?.status, .added)
+        XCTAssertTrue(files.first?.isBinary == true)
+    }
+
+    /// A modified binary, where neither side is `/dev/null`.
+    func test_modifiedBinaryTakesItsPathFromTheGitHeader() {
+        let unified = """
+        diff --git a/docs/diagram.pdf b/docs/diagram.pdf
+        index 1111111..2222222 100644
+        Binary files a/docs/diagram.pdf and b/docs/diagram.pdf differ
+        """
+        let files = DiffParser.parse(unified)
+        XCTAssertEqual(files.first?.path, "docs/diagram.pdf")
+        XCTAssertTrue(files.first?.isBinary == true)
+    }
+
+    /// A path with spaces still resolves, since the `b/` side is taken from the end.
+    func test_binaryPathWithSpaces() {
+        let unified = """
+        diff --git a/my docs/big file.png b/my docs/big file.png
+        new file mode 100644
+        Binary files /dev/null and b/my docs/big file.png differ
+        """
+        XCTAssertEqual(DiffParser.parse(unified).first?.path, "my docs/big file.png")
+    }
+
+    /// The `---`/`+++` lines still win when present, so nothing about text diffs changes.
+    func test_textDiffStillPrefersTheTripleDashPaths() {
+        let unified = """
+        diff --git a/old/name.txt b/new/name.txt
+        similarity index 90%
+        rename from old/name.txt
+        rename to new/name.txt
+        --- a/old/name.txt
+        +++ b/new/name.txt
+        @@ -1,1 +1,1 @@
+        -a
+        +b
+        """
+        let file = DiffParser.parse(unified).first
+        XCTAssertEqual(file?.path, "new/name.txt")
+        XCTAssertEqual(file?.oldPath, "old/name.txt")
+        XCTAssertEqual(file?.status, .renamed)
+    }
+
     func test_highlightMapPicksCorrectSide() {
         let added = DiffLine(kind: .added, text: "x", oldLineNo: nil, newLineNo: 7)
         let removed = DiffLine(kind: .removed, text: "y", oldLineNo: 3, newLineNo: nil)
