@@ -47,7 +47,7 @@ enum DiffParser {
         if lines.last?.isEmpty == true { lines.removeLast() }
         var i = 0
         while i < lines.count {
-            guard lines[i].hasPrefix("diff --git ") else { i += 1; continue }
+            guard isFileHeader(lines[i]) else { i += 1; continue }
             var oldPath: String? = nil
             var newPath: String? = nil
             var status: DiffStatus = .modified
@@ -58,7 +58,7 @@ enum DiffParser {
             // File header lines until the first hunk (@@) or the next file.
             while i < lines.count,
                   !lines[i].hasPrefix("@@"),
-                  !lines[i].hasPrefix("diff --git ") {
+                  !isFileHeader(lines[i]) {
                 let l = lines[i]
                 if l.hasPrefix("new file") { status = .added }
                 else if l.hasPrefix("deleted file") { status = .deleted }
@@ -87,6 +87,25 @@ enum DiffParser {
         return files
     }
 
+    /// Whether a line opens a file's diff.
+    ///
+    /// `--cc` is the **combined** form git emits for an unmerged path mid-merge. Without it
+    /// the whole file was skipped, so working-tree and vs-base modes showed nothing at all
+    /// during a merge.
+    private static func isFileHeader(_ line: String) -> Bool {
+        line.hasPrefix("diff --git ") || line.hasPrefix("diff --cc ")
+            || line.hasPrefix("diff --combined ")
+    }
+
+    /// How many marker columns a hunk body carries: one per parent.
+    ///
+    /// An ordinary diff opens `@@` and has one column; a two-parent combined diff opens
+    /// `@@@` and has two. Read from the header rather than assumed, since an octopus merge
+    /// can have more.
+    private static func markerColumns(_ header: String) -> Int {
+        max(1, header.prefix(while: { $0 == "@" }).count - 1)
+    }
+
     /// `a/foo.txt` / `b/foo.txt` / `/dev/null` → `foo.txt` / nil.
     private static func headerPath<S: StringProtocol>(_ s: S) -> String? {
         let t = s.trimmingCharacters(in: .whitespaces)
@@ -101,14 +120,20 @@ enum DiffParser {
         -> (DiffHunk, Int, Int, Int) {
         let header = lines[start]
         let (os, oc, ns, nc) = parseHunkRanges(header)
+        // A combined diff carries one marker column per parent. Reduced to the **first**
+        // parent's column, which turns it into an ordinary two-way diff against HEAD —
+        // which is what working-tree mode means. The conflict markers git wrote into the
+        // file show up as added lines, correctly: they really are in the file.
+        let columns = markerColumns(header)
         var body: [DiffLine] = []
         var oldNo = os, newNo = ns, added = 0, removed = 0
         var i = start + 1
         while i < lines.count,
               !lines[i].hasPrefix("@@"),
-              !lines[i].hasPrefix("diff --git ") {
-            let l = lines[i]
-            if l.hasPrefix("\\") { i += 1; continue }   // "\ No newline at end of file"
+              !isFileHeader(lines[i]) {
+            let raw = lines[i]
+            if raw.hasPrefix("\\") { i += 1; continue }   // "\ No newline at end of file"
+            let l = columns == 1 ? raw : String(raw.prefix(1)) + String(raw.dropFirst(columns))
             let text = l.isEmpty ? "" : String(l.dropFirst())
             if l.hasPrefix("+") {
                 body.append(DiffLine(kind: .added, text: text, oldLineNo: nil, newLineNo: newNo))
@@ -139,8 +164,12 @@ enum DiffParser {
             body = header[open.upperBound..<close.lowerBound]
         }
         var os = 0, oc = 1, ns = 0, nc = 1
+        var haveOld = false
         for p in body.split(separator: " ") {
-            if p.hasPrefix("-") { (os, oc) = parseRange(p.dropFirst()) }
+            // A combined header lists one `-` range per parent. Only the first is kept:
+            // the rest describe the other parents, and taking the last (which is what
+            // overwriting did) silently reported parent N's numbers as HEAD's.
+            if p.hasPrefix("-"), !haveOld { (os, oc) = parseRange(p.dropFirst()); haveOld = true }
             else if p.hasPrefix("+") { (ns, nc) = parseRange(p.dropFirst()) }
         }
         return (os, oc, ns, nc)

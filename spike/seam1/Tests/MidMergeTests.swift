@@ -50,24 +50,47 @@ final class MidMergeWorkingTreeTests: XCTestCase {
                    atomically: true, encoding: .utf8)
     }
 
-    /// The exact sequence ⌘G runs, and what it actually yields.
+    /// The exact sequence ⌘G runs.
     ///
-    /// **Both halves come back empty mid-merge**, and that is git being explicit rather than
-    /// a fault here: for an unmerged path `git diff` emits a `diff --cc` combined diff, whose
-    /// header `DiffParser` does not recognise (it looks for `diff --git`), and `git diff
-    /// --cached` emits the literal line `* Unmerged path App.swift` with no diff at all.
-    ///
-    /// Pre-existing — the old single `git diff HEAD` query hit the same wall — and not worth
-    /// fixing here, because a conflicted repo auto-selects the Files scope, which reads the
-    /// index directly and shows the conflicts properly. Pinned so that if combined-diff
-    /// parsing ever lands, this says out loud what changes.
-    func testWorkingTreeModeIsEmptyMidMergeRatherThanWrong() {
+    /// `git diff` emits a `diff --cc` combined diff for an unmerged path, which the parser
+    /// used to skip outright — so working-tree mode showed nothing at all during a merge.
+    /// It reduces to the first parent's column now, giving an ordinary diff against HEAD.
+    func testWorkingTreeModeShowsTheConflictedFileMidMerge() {
         let result = DiffReader.read(cwd: repo, mode: .workingTree)
-        XCTAssertTrue(result.files.isEmpty, "`git diff` emits `diff --cc`, which we skip")
-        XCTAssertTrue(result.stagedFiles.isEmpty, "`git diff --cached` emits no diff at all")
-        // The point of the test: it produces nothing, and does not trap producing it.
+        XCTAssertEqual(result.files.map(\.path), ["App.swift"])
         let plan = RowPlanner.plan(files: result.files, staged: result.stagedFiles)
-        XCTAssertTrue(plan.origins.isEmpty)
+        XCTAssertFalse(plan.origins.isEmpty)
+        // The staged half stays empty: `git diff --cached` emits only `* Unmerged path`.
+        XCTAssertTrue(result.stagedFiles.isEmpty)
+    }
+
+    /// The markers git wrote into the worktree file are real lines of it, so they show as
+    /// added — which is honest, and is what tells you the file is mid-merge.
+    func testTheConflictMarkersAppearAsAddedLines() {
+        let result = DiffReader.read(cwd: repo, mode: .workingTree)
+        let texts = result.files.flatMap { $0.hunks.flatMap { $0.lines } }
+        XCTAssertTrue(texts.contains { $0.kind == .added && $0.text.hasPrefix("<<<<<<<") })
+        XCTAssertTrue(texts.contains { $0.kind == .added && $0.text.hasPrefix(">>>>>>>") })
+        XCTAssertTrue(texts.contains { $0.kind == .added && $0.text == "=======" })
+    }
+
+    /// Both sides' content survives the reduction, with our line kept as context (it is in
+    /// HEAD) and theirs as an addition (it is not).
+    func testBothSidesOfTheConflictSurviveTheReduction() {
+        let result = DiffReader.read(cwd: repo, mode: .workingTree)
+        let texts = result.files.flatMap { $0.hunks.flatMap { $0.lines } }.map(\.text)
+        XCTAssertTrue(texts.contains { $0.contains("OURS") })
+        XCTAssertTrue(texts.contains { $0.contains("THEIRS") })
+    }
+
+    /// A combined header lists a `-` range per parent; the first is HEAD's. Taking the last
+    /// reported another parent's numbers as HEAD's, which would misplace every row.
+    func testTheHunkHeaderTakesTheFirstParentsRange() {
+        let parsed = DiffParser.parse(git("diff"))
+        for hunk in parsed.flatMap(\.hunks) {
+            XCTAssertGreaterThan(hunk.oldStart, 0, "a zero start means the ranges misparsed")
+            XCTAssertGreaterThan(hunk.newStart, 0)
+        }
     }
 
     /// So the empty working tree above is never what a user is looking at.

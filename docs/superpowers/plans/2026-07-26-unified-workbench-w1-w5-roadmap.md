@@ -580,12 +580,20 @@ Roughly the size of W1–W4 combined. Do it as its own spec.
   each row knowing its side — depends on W1's staging model.
 - **`WidgetLayer`.** Comments live in the rail because anchoring overlays via
   `rectsFor(range:)` during scroll is unbuilt. W1.4's threads will want it too.
-- **Excerpt virtualization.** Spec §9: N live tree-sitter parses on a 50-file diff.
-  `SourceHighlightCache` is deliberately separate so it can be swapped. **Now the top
-  outstanding perf item** — the whole-diff view still stitches every hunk of every file
-  into one 32k-row document. Parses and `SourceBuffer`s are lazy, so only painted files
-  cost anything, but the document itself is built eagerly. Focusing a file (deviation 4)
-  is the stopgap.
+- **Excerpt virtualization — measured, and NOT worth doing.** This was called the top
+  outstanding perf item on the reasoning that the document is stitched eagerly. It was
+  never measured. `WholeDiffCostTests` does: on a 287-file / 24k-row diff, in a **Debug**
+  build, the whole eager build is **68ms** — parse 23ms, plan 28ms, stitch + styles 12ms,
+  line starts 4ms. Once per load. Release is several times faster, and focusing one file
+  is 0.3ms.
+
+  Virtualizing would touch every row-indexed table in the workbench — `rowOrigins`,
+  `rowStyles`, `lineStarts`, `blockMap`, the gutter, the overlay, `StageSelection` — which
+  is precisely the class of change that has produced this project's worst bugs. Trading
+  that for 68ms is a bad deal. If a big diff ever *feels* slow, measure again before
+  reaching for this: the likely culprits are the editor laying out 24k lines or the memory
+  held by ~9k blocks, not our build of the document. The per-frame cost that was real —
+  `BlockMap`'s linear scans, hit three times per row per scroll event — is fixed.
 - **Per-line staged state in working-tree mode.** `git diff HEAD` shows staged ∪
   unstaged with no way to tell which a line is. Needs a second index-based diff
   correlated by line — the same `DiffReader` change as the partial-staging limitation.
@@ -597,7 +605,7 @@ Roughly the size of W1–W4 combined. Do it as its own spec.
 - **Tall deletion bands.** A 500-line deletion inflates one line fragment to 500 rows tall.
   Drawing is clipped to `visibleRect` so the cost is bounded, but the fragment view itself
   is that tall and stays mounted while any part of it is on screen.
-- **Workbench as a `Pane.kind`** instead of a takeover, so it can sit beside a live
-  terminal. `Pane.provisioning`/`stowing` are the precedent for a non-PTY pane.
+- ~~**Workbench as a `Pane.kind`**~~ — **rejected 2026-07-28.** The workbench stays a
+  full-window overlay. Don't revive this; it is a decision, not a backlog item.
 - **Rendered-markdown rehosting.** `MarkdownDiffView` still renders standalone;
   `BlockKind.renderedMarkdown` exists but nothing emits it yet. ADR 0019 stands.

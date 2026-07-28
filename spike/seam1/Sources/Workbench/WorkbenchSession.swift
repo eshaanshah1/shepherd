@@ -219,13 +219,15 @@ final class WorkbenchSession: ObservableObject {
         }
         view.controlBands = { [weak self] in
             (self?.blockMap.blocks ?? []).compactMap { block in
-                guard case .conflictControls = block.kind else { return nil }
-                return (block, block.beforeStitchedLine)
+                switch block.kind {
+                case .conflictControls, .reviewNote:
+                    return (block, block.beforeStitchedLine)
+                default:
+                    return nil
+                }
             }
         }
-        view.onResolve = { [weak self] conflictID, resolution in
-            self?.resolve(conflictID: conflictID, as: resolution)
-        }
+        view.onAction = { [weak self] action in self?.perform(action) }
         return view
     }()
 
@@ -581,6 +583,29 @@ final class WorkbenchSession: ObservableObject {
     /// The merge preview each conflicted file's rows were materialized from, so the
     /// highlighter colours the text the document is actually showing.
     private var mergePreviews: [String: [String]] = [:]
+    /// Hand-edited merge text, per conflicted file, once the user has typed into it.
+    ///
+    /// A conflicted file has no on-disk backing to write an edit to — the file on disk holds
+    /// git's markers — so an edit lands here instead of in a `SourceBuffer`, and this is what
+    /// `Resolve` writes. Editing is only offered once every conflict in the file is decided:
+    /// while a region shows both sides, its rows interleave ours and theirs around a
+    /// `=======` marker and an edit spanning that means nothing.
+    @Published private(set) var editedPreviews: [String: [String]] = [:]
+
+    /// Whether a conflicted file's text has been hand-edited.
+    func isEdited(_ path: String) -> Bool { editedPreviews[path] != nil }
+
+    /// Drop a hand-edit and go back to what the accept controls produce.
+    func revertEdit(inFile path: String) {
+        guard editedPreviews.removeValue(forKey: path) != nil else { return }
+        highlighter.invalidate(source: source(of: path), variant: .mergePreview)
+        rebuild()
+    }
+
+    /// Whether the cursor's conflicted file will accept typing.
+    func conflictFileAcceptsEdits(_ path: String) -> Bool {
+        conflictPaths.contains(path) && unresolvedCount(inFile: path) == 0
+    }
 
     var hasConflicts: Bool { !mergeFiles.isEmpty }
     var conflictPaths: Set<String> { Set(mergeFiles.map(\.path)) }
@@ -645,7 +670,10 @@ final class WorkbenchSession: ObservableObject {
 
         var previews: [String: [String]] = [:]
         for file in shown {
-            previews[file.path] = MergeOutput.preview(file, resolutions: resolutions)
+            // A hand-edit replaces what the accept controls produce, and is what Resolve
+            // writes; the controls are disabled for that file until it is reverted.
+            previews[file.path] = editedPreviews[file.path]
+                ?? MergeOutput.preview(file, resolutions: resolutions)
         }
 
         var stitched = ""
@@ -653,6 +681,13 @@ final class WorkbenchSession: ObservableObject {
         var maxNew = 0
         // An opened file has no merge preview; its rows are read off disk.
         var fileLines: [String: [String]] = [:]
+        // Conflicts by id, and how many rows of each side have gone by — the word diff
+        // pairs a side's nth line with the other side's nth.
+        var conflictsByID: [String: MergeConflict] = [:]
+        for file in shown {
+            for conflict in file.conflicts { conflictsByID[conflict.id] = conflict }
+        }
+        var sideRowCount: [String: Int] = [:]
         for origin in plan.origins {
             let lines: [String]
             if let preview = previews[origin.path] {
@@ -664,8 +699,8 @@ final class WorkbenchSession: ObservableObject {
                 }
                 lines = fileLines[origin.path] ?? []
             }
-            let index = (origin.newLineNumber ?? 1) - 1
-            stitched += (lines.indices.contains(index) ? lines[index] : "") + "\n"
+            let idx = (origin.newLineNumber ?? 1) - 1
+            stitched += (lines.indices.contains(idx) ? lines[idx] : "") + "\n"
             // Only rows inside a conflict are tinted, and the two sides differently. An
             // auto-resolved region is not a decision and must read as ordinary code.
             let tint: RowTint
@@ -674,7 +709,23 @@ final class WorkbenchSession: ObservableObject {
             case .some(.theirs): tint = .conflictTheirs
             case .none:          tint = .none
             }
-            styles.append(RowStyle(tint: tint, wordSpans: []))
+            // Brighten the words that actually differ between the two sides, so a one-word
+            // disagreement inside a long region is visible rather than something to spot.
+            var spans: [WordSpan] = []
+            if let id = origin.conflictID, let side = origin.conflictSide,
+               let conflict = conflictsByID[id] {
+                let key = "\(id)#\(side == .ours ? "o" : "t")"
+                let index = sideRowCount[key] ?? 0
+                sideRowCount[key] = index + 1
+                if let other = MergeOutput.counterpart(in: conflict, side: side, index: index) {
+                    let mine = lines.indices.contains(idx) ? lines[idx] : ""
+                    let pair = side == .ours
+                        ? WordDiff.spans(old: mine, new: other)
+                        : WordDiff.spans(old: other, new: mine)
+                    spans = side == .ours ? pair.old : pair.new
+                }
+            }
+            styles.append(RowStyle(tint: tint, wordSpans: spans))
             maxNew = max(maxNew, origin.newLineNumber ?? 0)
         }
 
@@ -731,6 +782,30 @@ final class WorkbenchSession: ObservableObject {
         selectedLines.removeAll()
         revision += 1
     }
+
+    /// Run a band's control.
+    ///
+    /// The review-note cases are why this layer was generalised: an inline note could be
+    /// read but not answered, so Reply and Resolve lived in a side panel away from the line
+    /// they were about. `onReviewAction` is installed by the view, which owns the store.
+    func perform(_ action: OverlayAction) {
+        switch action {
+        case .take(let conflictID, let resolution):
+            resolve(conflictID: conflictID, as: resolution)
+        case .removeComment(let id):
+            comments.removeAll { $0.id.uuidString == id }
+        case .replyToThread(let id):
+            replyingToThread = id
+            threadsPanelOpen = true
+        case .setThreadResolved(let id, let resolved):
+            onReviewAction?(.setThreadResolved(id: id, resolved))
+        case .sendNoteToAgent(let id):
+            onReviewAction?(.sendNoteToAgent(id: id))
+        }
+    }
+
+    /// Review actions that need the store — installed by `WorkbenchView`, which has it.
+    var onReviewAction: ((OverlayAction) -> Void)?
 
     /// Take a side for one conflict.
     ///
@@ -799,7 +874,9 @@ final class WorkbenchSession: ObservableObject {
             return
         }
 
-        guard let text = MergeOutput.text(file, resolutions: resolutions) else {
+        let merged = editedPreviews[path].map(MergeText.blob)
+            ?? MergeOutput.text(file, resolutions: resolutions)
+        guard let text = merged else {
             writing = false
             lastError = "Couldn't build the merged text for \(path)."
             return
@@ -1025,7 +1102,12 @@ final class WorkbenchSession: ObservableObject {
         // back to. Refused here, explicitly, rather than left to the staleness guard below
         // — that would refuse silently, and "the line went read-only for no visible reason"
         // is exactly the defect W2.2's live run turned up. `editBlockedReason` says so.
-        guard !conflictPaths.contains(edit.path) else { return false }
+        if conflictPaths.contains(edit.path) {
+            // A conflicted file has no on-disk text to compare against or write to, so the
+            // staleness guard below is meaningless for it; the merge preview in memory is
+            // the document. Allowed only once nothing in the file is still undecided.
+            return conflictFileAcceptsEdits(edit.path)
+        }
         return documentMatchesFile(rows: rows, edit: edit)
     }
 
@@ -1036,8 +1118,9 @@ final class WorkbenchSession: ObservableObject {
             return nil
         }
         let path = rowOrigins[line].path
-        guard conflictPaths.contains(path) else { return nil }
-        return "\((path as NSString).lastPathComponent) is conflicted — resolve it to edit."
+        guard conflictPaths.contains(path), !conflictFileAcceptsEdits(path) else { return nil }
+        let name = (path as NSString).lastPathComponent
+        return "\(name) — decide every conflict in it before editing."
     }
 
     /// Absorb an edit the editor has already applied to `storage`.
@@ -1047,13 +1130,20 @@ final class WorkbenchSession: ObservableObject {
     /// old position needs.
     func absorbEdit(range: NSRange, replacement: String) {
         guard let rows = stitchedLines(in: range),
-              let edit = EditMap.fileEdit(rows: rows, origins: rowOrigins),
-              let (fileRange, buffer) = fileRange(forRows: rows, edit: edit, range: range)
-        else { return }
+              let edit = EditMap.fileEdit(rows: rows, origins: rowOrigins) else { return }
 
-        let updated = (buffer.text as NSString)
-            .replacingCharacters(in: fileRange, with: replacement)
-        buffer.replaceText(updated)
+        let source: SourceID
+        if conflictPaths.contains(edit.path) {
+            guard absorbConflictEdit(rows: rows, edit: edit) else { return }
+            source = self.source(of: edit.path)
+        } else {
+            guard let (fileRange, buffer) = fileRange(forRows: rows, edit: edit, range: range)
+            else { return }
+            let updated = (buffer.text as NSString)
+                .replacingCharacters(in: fileRange, with: replacement)
+            buffer.replaceText(updated)
+            source = buffer.source
+        }
 
         let delta = EditMap.rowDelta(replacing: rows, with: replacement)
         let newRowCount = rows.count + delta
@@ -1070,14 +1160,39 @@ final class WorkbenchSession: ObservableObject {
                                                  replacement: replacement)
         if delta != 0 {
             blockMap.shift(fromStitchedLine: rows.upperBound, by: delta)
-            stitchMap.applyEdit(in: buffer.source, atLine: edit.lines.lowerBound,
-                                lineDelta: delta)
+            stitchMap.applyEdit(in: source, atLine: edit.lines.lowerBound, lineDelta: delta)
             // Only ever widens: the gutter's number column twitching narrower while you
             // type would shift the whole document sideways.
             if delta > 0 { maxNewLineNumber += delta }
         }
-        highlighter.invalidate(source: buffer.source)
+        highlighter.invalidate(source: source)
         editRevision += 1
+    }
+
+    /// Fold an edit into a conflicted file's merge preview.
+    ///
+    /// Read back out of the live document rather than applied to a stored string: `storage`
+    /// already holds the new text when this runs, and the rows are the preview, so taking
+    /// the rows *is* the answer. Deriving it any other way would be a second opinion about
+    /// what the buffer says.
+    private func absorbConflictEdit(rows: Range<Int>, edit: FileEdit) -> Bool {
+        guard conflictFileAcceptsEdits(edit.path) else { return false }
+        let document = storage.string as NSString
+        var lines: [String] = []
+        var row = 0
+        var start = 0
+        // One pass over the document, collecting the rows belonging to this file.
+        document.enumerateSubstrings(in: NSRange(location: 0, length: document.length),
+                                     options: [.byLines, .substringNotRequired]) { _, r, _, _ in
+            if row < self.rowOrigins.count, self.rowOrigins[row].path == edit.path {
+                lines.append(document.substring(with: r))
+            }
+            row += 1
+            start = r.location
+        }
+        _ = start
+        editedPreviews[edit.path] = lines
+        return true
     }
 
     /// The file offsets an edit over `rows` maps to, plus the buffer holding them.
@@ -1293,9 +1408,14 @@ final class WorkbenchSession: ObservableObject {
             with: CGSize(width: noteWrapWidth - 24, height: .greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading],
             attributes: [.font: NSFont.systemFont(ofSize: 11)])
-        // header line + measured body + padding
-        return ceil(bodyRect.height) + 15 + 12
+        // header line + measured body + padding + the inline action row the overlay draws
+        // along the bottom. Reserved here because the card and its controls are measured by
+        // different views, and the actions must not land on the body text.
+        return ceil(bodyRect.height) + 15 + 12 + noteActionRowHeight
     }
+
+    /// Height the note card reserves for its inline Reply / Resolve / Send-to-agent row.
+    static let noteActionRowHeight: CGFloat = 21
 
     // MARK: - Branches
 

@@ -805,6 +805,13 @@ final class AgentStore: ObservableObject {
     /// their views to tear down now — SwiftUI won't deinit them deterministically.
     private func postPaneClosed(_ ids: [String]) {
         for id in ids {
+            // A workbench session holds a `SourceBuffer` per file it has touched, each with
+            // an open descriptor and a `DispatchSource` watcher. `discardWorkbenchSession`
+            // was written to release them and then never called from anywhere, so every
+            // closed pane leaked its whole set for the lifetime of the app. This is the one
+            // funnel every teardown path goes through, including quit.
+            if diffPanelPaneID == id { diffPanelOpen = false }
+            discardWorkbenchSession(forPane: id)
             NotificationCenter.default.post(name: .shepherdPaneClosed, object: nil, userInfo: ["paneID": id])
             remoteServer?.broadcast(.paneRemoved(paneID: id))
         }

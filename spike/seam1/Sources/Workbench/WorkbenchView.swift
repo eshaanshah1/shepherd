@@ -72,6 +72,24 @@ struct WorkbenchView: View {
         // The store owns the threads; the session needs them to place the inline notes.
         .onChange(of: paneThreads) { session.threads = $0 }
         .onAppear { session.threads = paneThreads }
+        // The store-backed half of a note's inline actions. The session owns the band layer
+        // but not the store, so it hands these back up.
+        .onAppear {
+            session.onReviewAction = { action in
+                switch action {
+                case .setThreadResolved(let id, let resolved):
+                    store.setThreadResolved(id: id, resolved, forPane: session.paneID)
+                case .sendNoteToAgent(let id):
+                    guard let thread = paneThreads.first(where: { $0.id == id }),
+                          let root = thread.comments.first else { return }
+                    session.addGitHubComment(file: thread.path, line: thread.line ?? 0,
+                                             side: thread.side, author: root.author,
+                                             body: root.body)
+                default:
+                    break
+                }
+            }
+        }
         .onChange(of: store.diffTurnTick) { _ in
             if store.diffTurnPane == session.paneID { session.load() }
         }
