@@ -125,7 +125,8 @@ struct EditorHost: View {
             }
             WorkbenchGutter(session: session)
                 .frame(width: DiffGutterView.width(
-                    maxLineNumber: max(session.maxOldLineNumber, session.maxNewLineNumber)))
+                    maxLineNumber: max(session.maxOldLineNumber, session.maxNewLineNumber),
+                    hasBlame: !session.blameRows.isEmpty))
             Rectangle().fill(Color(hex: Theme.Diff.separator)).frame(width: 1)
             SourceEditor(
                 session.storage,
@@ -305,6 +306,13 @@ private struct WorkbenchGutter: NSViewRepresentable {
     func updateNSView(_ view: DiffGutterView, context: Context) {
         view.rowHeight = WorkbenchMetrics.rowHeight
         view.rowCount = session.gutterRowCount
+        // A materialized array here, unlike the rows: it is one small value per row, only
+        // exists when the buffer is narrowed to a single file, and the lane's width depends on
+        // whether it is empty — which a closure could not answer without calling it.
+        view.blameRows = session.blameRows
+        // The same row the status strip is reporting, so the two cannot disagree about which
+        // line the blame belongs to.
+        view.blameSelectedRow = session.blameSelectedRow
         // Resolved through the session on every attempt, never snapshotted: on the pass
         // that mounts the editor this gutter updates *first*, so the provider isn't set
         // yet — and `load()` publishes everything in one runloop turn, so SwiftUI
@@ -322,6 +330,12 @@ private struct WorkbenchGutter: NSViewRepresentable {
         view.onExpandGap = { [weak session] source, collapsed, fromTop in
             guard let session else { return }
             session.reveal(collapsed, inFile: session.relativePath(of: source), fromTop: fromTop)
+        }
+        view.onHoverBlameRow = { [weak session] row in session?.hoveredBlameRow = row }
+        view.onClickBlame = { [weak session] row in
+            guard let session, session.blameRows.indices.contains(row),
+                  let cell = session.blameRows[row] else { return }
+            session.revealCommit(sha: cell.sha)
         }
         session.requestGutterAttach = { [weak view] in view?.attachIfNeeded() }
         view.attachIfNeeded()

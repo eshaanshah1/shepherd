@@ -119,6 +119,13 @@ enum Theme {
         /// Word-level tints, sitting on top of the row tint for the parts that changed.
         static var wordAdd   : UInt32 { pickHex(dark: 0x2B5B33, light: 0xAEE0B8, warm: 0xC3D6A4) }
         static var wordDel   : UInt32 { pickHex(dark: 0x6E2B28, light: 0xF3B7B3, warm: 0xE0B4AA) }
+        /// The blame lane's hue, shaded by age through alpha. One token rather than four:
+        /// a colour per age bucket is four values to keep in tune across three themes for
+        /// nothing the alpha steps don't already give.
+        static var blameHeat        : UInt32 { pickHex(dark: 0x58A6FF, light: 0x0969DA, warm: 0x3F6E91) }
+        /// A line that is not committed yet. Deliberately not the heat hue: it is a
+        /// different kind of fact, not a fresher version of the same one.
+        static var blameUncommitted : UInt32 { pickHex(dark: 0x8B949E, light: 0x8C959F, warm: 0x9A8F79) }
     }
 
     /// Shared row rhythm. The editor, the diff, and the gutter all read this — its
@@ -143,6 +150,8 @@ enum Theme {
             "diff.hover": Diff.hover, "diff.separator": Diff.separator,
             "diff.gutterFg": Diff.gutterFg,
             "diff.wordAdd": Diff.wordAdd, "diff.wordDel": Diff.wordDel,
+            "diff.blameHeat": Diff.blameHeat,
+            "diff.blameUncommitted": Diff.blameUncommitted,
         ]
     }
 }

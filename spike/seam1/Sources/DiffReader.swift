@@ -7,20 +7,21 @@ enum DiffMode: Equatable { case workingTree, branchVsBase }
 /// Wider than `DiffMode`, which is only the git comparison: `threads` is the vs-base
 /// comparison narrowed to the files that carry PR review threads.
 enum WorkbenchScope: Equatable {
-    case workingTree, vsBase, threads, files
+    case workingTree, vsBase, threads, files, commits
 
-    /// The git comparison behind this scope, or **nil** for a scope that is not a diff.
+    /// The **live tree comparison** behind this scope, or nil for a scope that is not one.
     ///
-    /// Conflicts come from the unmerged index, not from `git diff`. Mapping them onto a
-    /// `DiffMode` anyway — which a two-case ternary silently did — makes
-    /// `WorkbenchView`'s `.onChange(of: session.mode)` fire a full tree diff every time
-    /// you enter the scope, and the merge document is not a diff to begin with.
+    /// Conflicts come from the unmerged index and a commit comes from `git show`; neither is
+    /// a comparison of the working tree. Mapping them onto a `DiffMode` anyway — which a
+    /// two-case ternary silently did — makes `WorkbenchView`'s `.onChange(of: session.mode)`
+    /// fire a full tree diff every time you enter the scope, and neither document is that
+    /// diff to begin with.
     var mode: DiffMode? {
         switch self {
         case .workingTree:      return .workingTree
         case .vsBase, .threads: return .branchVsBase
-        // Neither the unmerged index nor a hand-opened file is a `git diff`.
-        case .files:            return nil
+        // Neither the unmerged index, a hand-opened file, nor a commit is a tree diff.
+        case .files, .commits:  return nil
         }
     }
 }
@@ -75,6 +76,24 @@ enum DiffReader {
             return DiffReadResult(files: merged, stagedFiles: [], baseLabel: base,
                                   baseName: base, isRepo: true)
         }
+    }
+
+    /// One commit as a diff, for the Commits scope.
+    ///
+    /// `--format=` prints the diff and nothing else, so `DiffParser` sees exactly what it
+    /// sees for `git diff`. **`-m --first-parent` is not optional:** without it, `git show`
+    /// on a *merge* commit emits a combined `@@@` diff, which it suppresses entirely at
+    /// default verbosity — so the buffer would render blank with no error anywhere
+    /// (measured on git 2.55). `--first-parent` also picks the one side worth showing for a
+    /// merge, and is a no-op for the ordinary single-parent case.
+    static func readCommit(cwd: String, sha: String) -> DiffReadResult {
+        guard isGitRepo(cwd) else { return .notRepo }
+        let out = git(cwd, ["show", "-M", "-m", "--first-parent", "--format=", sha]) ?? ""
+        // `baseLabel` is the old side for blob reads. A root commit has no `<sha>^`, in which
+        // case the read simply returns nil and the old side is empty — which is what an
+        // all-additions commit shows anyway.
+        return DiffReadResult(files: DiffParser.parse(out), stagedFiles: [],
+                              baseLabel: "\(sha)^", baseName: detectBase(cwd), isRepo: true)
     }
 
     /// Whole-file text for syntax highlighting. New side = the file on disk; old side

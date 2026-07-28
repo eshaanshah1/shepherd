@@ -7,7 +7,7 @@
 
 ## Progress
 
-Last updated 2026-07-27 · branch `workbench-w3-merge-resolver` · 545 model tests, 0 failures
+Last updated 2026-07-28 · branch `workbench-w5a-history` · 0 failures
 
 ```
 W0  editor foundation      ██████████████████████  100%   run + hardened
@@ -15,9 +15,10 @@ W1  review & staging       █████████████████�
 W2  editing in anger       ██████████████████████  100%   W2.0/W2.1 + write-back live-run
 W3  merge resolver         ██████████████████████  100%   run + reshaped from that run
 W4  PR surface             ██████████████████████  100%   band, checks, gh actions, threads
-W5  history & power tools  ░░░░░░░░░░░░░░░░░░░░░░    0%   own spec; ~= W1–W4 combined
+W5a history & commits      ██████████████████████  100%   built + green; NOT yet live-run
+W5b power tools            ░░░░░░░░░░░░░░░░░░░░░░    0%   stash, cherry-pick, rebase -i
                            ──────────────────────
-    overall                ██████████████████░░░░   84%
+    overall                ███████████████████░░░   90%
 ```
 
 **W0 — done (11 tasks).** Editor vendored (247 files / 23,946 lines in-module,
@@ -560,17 +561,96 @@ this scope so the document is built from `openedPaths` plus the merge files, whi
 The rail deliberately grows no file browser — `⌘P` already fuzzy-matches every file git
 knows about, and a second worse one beside it would be two ways to do one thing.
 
-## W5 — History & power tools (last; blocks nothing)
+## W5 split in two
 
-Roughly the size of W1–W4 combined. Do it as its own spec.
+W5 as scoped here was five subsystems. It split on a read/write seam: reading history
+mutates nothing and reuses the existing machinery, while stash / cherry-pick / interactive
+rebase mutate the repo and carry sequence state.
 
-- `Commits (n)` scope — **not present before W5**; the rail must not reserve space for it.
-- Commit list + graph renderer; any commit viewable as a diff in the same multibuffer.
-- Blame gutter — extends `DiffGutterView` with a column, which is why it was built as a
-  sibling view rather than a fork of CESE's. It is now a **one**-number-column gutter, and
-  every row already has real layout geometry to hang a blame column off.
-- Stash, cherry-pick, interactive rebase (reorderable todo). Rebase conflicts recurse
-  into W3 mid-sequence — design that seam before starting.
+## W5a — History & commits — **BUILT, NOT YET LIVE-RUN**
+
+Spec: [`2026-07-28-workbench-w5a-history-design.md`](../specs/2026-07-28-workbench-w5a-history-design.md).
+Plan: [`2026-07-28-workbench-w5a-history.md`](2026-07-28-workbench-w5a-history.md).
+
+**There is no graph renderer, and that is a decision.** The Commits scope is `<base>..HEAD`
+— "what has this branch done", which is the question you have when reviewing an agent's
+work. That range is linear by construction, so lane assignment and merge curves would be
+decoration; they were also most of what made this phase look W1–W4-sized. Full-history
+exploration (any ref, pagination, multi-parent lanes) is **out of scope and not a deferred
+promise**.
+
+**A commit is a document whose text is not on disk**, which is the shape W3 already solved
+for conflicted files. The commit view extends that provenance rather than adding a source
+type, so `RowPlanner`, the gutter, the overlay, staging and write-back are untouched. Three
+points became provenance-aware, all routed through the pure `DocumentProvenance`:
+
+1. the highlight variant (`.commit(sha)`, so two commits touching one file cannot share a
+   parse),
+2. **the single `fileLines` lookup in `rebuild()`** — the easy miss, and the reason this is
+   called out first in `CLAUDE.md`: it is the only path for gap-revealed and edited rows, so
+   left alone, expanding a hunk gap inside a three-week-old commit splices *today's* lines
+   into it,
+3. editability — read-only by construction, surfaced through `editBlockedReason` because
+   silent read-only was the W2.2 defect.
+
+**Blame** is a 5pt lane in the existing gutter: age by alpha, grouping by a hairline at each
+run start. It exists only when the buffer is narrowed to one file — a lane across a whole
+diff would be one `git blame` per file, which is the spawn-per-file mistake `SourceBuffer`
+already made once. The facts live in a **header annotation sourced from the cursor row**,
+with hover overriding it, because a lane alone encodes shape and no facts and hover-only text
+is never actually on screen.
+
+### Five git behaviours probed rather than assumed
+
+W3 lost time to assuming `rebase-merge/onto_name` exists for a plain `git rebase`. These were
+measured against **git 2.55** before being coded against:
+
+| Fact | Consequence |
+|---|---|
+| `git show -M --format=` on a **merge** commit prints **nothing** | `readCommit` must pass `-m --first-parent`, or drilling into a merge renders a blank buffer with no error |
+| rebase parks its message in `rebase-merge/message`; merge and cherry-pick in `MERGE_MSG` | `SequencePolicy.messageFileName`, resolved via `rev-parse --git-path` so worktrees work |
+| all three message files carry a trailing `# Conflicts:` block | `displayMessage` strips leading-`#` lines only — `fix: issue #42` is content |
+| `GIT_EDITOR="cp '<file>'"` substitutes a commit message with no tty | the reword path; verified end to end |
+| **`--continue` exits non-zero when it stops at the next commit's conflict** | see below — this one changed the design |
+
+### The sequence seam, and what the integration test caught
+
+The hole W3 left: nothing ran `--continue`, so a rebase started in a terminal and resolved in
+the workbench sat half-applied until you went back to the terminal. W5a adds one Continue
+control, and widens the lock from `hasConflicts` to **`isMidSequence`** — a half-applied
+rebase gates every scope, because mid-rebase HEAD is a detached replay and "vs base" compares
+against nothing meaningful.
+
+`--continue` opens `$GIT_EDITOR`, and an app-spawned `Process` has no tty, so left alone it
+**hangs forever** holding `writing` — an unkillable spinner rather than an error. Keep-as-is
+passes `GIT_EDITOR=true`; rewording passes `GIT_EDITOR="cp '<file>'"`.
+
+**The finding that reshaped it:** git exits non-zero when `--continue` commits and then stops
+at the *next* commit's conflict, so the loop working correctly looked like a failed command
+and would have shown `error: could not apply …` every time a multi-commit rebase behaved as
+designed. Both obvious discriminators are wrong — a refused continue *also* exits non-zero
+and *also* leaves unmerged files. What separates them is **whether a commit got made**, so
+`cont` returns a `ContinueOutcome` classified by `SequencePolicy.outcome` off whether HEAD
+moved. No unit test could have found this; only real git knows.
+
+### Deferred from W5a, recorded so it is not mistaken for done
+
+- **Blame inside a commit view** (`git blame <sha>`) and **on deletion bands**
+  (`git blame <sha>^`, a different revision's blame). Both draw nothing today.
+- **Adopting `BlobCache` in the deletion-band path**, retiring the `git show`-from-`draw`
+  defect. The cache is the correct shape for it.
+- **Rewording an arbitrary past commit.** W5a rewords only the commit a sequence has stopped
+  on, because that is the one git is already asking about.
+
+## W5b — Power tools (remaining)
+
+Stash, cherry-pick, interactive rebase (reorderable todo).
+
+The conflict recursion W5's original note warned about **is already handled**: it is not
+recursion, just the same load path arriving at a new conflict set, and the Continue seam
+exists for the todo editor to drive. One thing to carry over: `rebase -i` will need
+`GIT_SEQUENCE_EDITOR` given the same treatment `GIT_EDITOR` got, and for the same reason —
+no tty means a hang, not an error.
 
 ---
 

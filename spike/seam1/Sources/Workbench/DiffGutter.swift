@@ -164,6 +164,41 @@ final class DiffGutterView: NSView {
     private static let trailingPad: CGFloat = 8
     private static let fontSize: CGFloat = 12
 
+    /// The blame lane: a thin bar, not a text column.
+    ///
+    /// W1 took this gutter from ~138pt to ~66pt by deleting a second number column, and
+    /// removed the staging checkbox column outright — per-row width reserved for an
+    /// occasional job is not worth it. The facts live in the header annotation instead.
+    static let blameLaneWidth: CGFloat = 5
+    private static let blameLaneGap: CGFloat = 4
+
+    /// Per stitched row, its blame cell. Empty ⇒ no lane, and no width taken for one.
+    var blameRows: [BlameRow?] = [] {
+        didSet {
+            let laneAppeared = oldValue.isEmpty != blameRows.isEmpty
+            // The hover tracking area is sized to the lane, so it must be rebuilt when the
+            // lane appears or disappears — `updateTrackingAreas` only fires by itself on a
+            // bounds change, which this is not.
+            if laneAppeared { updateTrackingAreas() }
+            needsDisplay = true
+        }
+    }
+
+    /// How far everything else shifts right to make room for the lane.
+    private var laneOffset: CGFloat {
+        blameRows.isEmpty ? 0 : Self.blameLaneWidth + Self.blameLaneGap
+    }
+
+    /// The row whose blame the status strip is showing.
+    ///
+    /// Marked so the strip's text is traceable to a line — otherwise it reports a commit with no
+    /// indication of *which* row it came from. Scoped to the lane only, never the line numbers:
+    /// tinting those made a text drag look like a gutter drag, which is why the gutter stopped
+    /// mirroring the text selection.
+    var blameSelectedRow: Int? {
+        didSet { if oldValue != blameSelectedRow { needsDisplay = true } }
+    }
+
     /// Everything the gutter draws with, resolved once per theme/font change.
     ///
     /// All of this used to be rebuilt inside `draw` — which runs per scroll event — and
@@ -225,8 +260,9 @@ final class DiffGutterView: NSView {
 
     /// Total width for a document whose largest line number is `maxLineNumber`. Measured
     /// from the digits rather than guessed, so it doesn't clip past line 1000.
-    static func width(maxLineNumber: Int) -> CGFloat {
-        leadingPad + digitWidth(maxLineNumber) + gap + signColumn + trailingPad
+    static func width(maxLineNumber: Int, hasBlame: Bool = false) -> CGFloat {
+        let lane = hasBlame ? blameLaneWidth + blameLaneGap : 0
+        return leadingPad + lane + digitWidth(maxLineNumber) + gap + signColumn + trailingPad
     }
 
     private static func digitWidth(_ maxLineNumber: Int) -> CGFloat {
@@ -264,23 +300,55 @@ final class DiffGutterView: NSView {
                 bg.setFill()
                 NSRect(x: 0, y: y, width: bounds.width, height: rowHeight).fill()
             }
+            // The line's own box, so a row carrying a band gets its cell beside the text
+            // rather than stretched up through the band.
+            drawBlameCell(index, y: y, height: rowHeight)
 
             let textY = y + (rowHeight - glyphHeight) / 2
             if let value = row.lineNumber {
                 let text = String(value)
                 // Right-aligned by digit count rather than by measuring the string.
                 let width = CGFloat(text.count) * style.digitAdvance
-                (text as NSString).draw(at: NSPoint(x: Self.leadingPad + numberWidth - width,
-                                                    y: textY),
-                                        withAttributes: style.numberAttributes)
+                (text as NSString).draw(
+                    at: NSPoint(x: Self.leadingPad + laneOffset + numberWidth - width, y: textY),
+                    withAttributes: style.numberAttributes)
             }
 
             if let sign = row.sign {
                 let attributes = sign == "+" ? style.addSignAttributes : style.removeSignAttributes
                 (String(sign) as NSString).draw(
-                    at: NSPoint(x: Self.leadingPad + numberWidth + Self.gap, y: textY),
+                    at: NSPoint(x: Self.leadingPad + laneOffset + numberWidth + Self.gap,
+                                y: textY),
                     withAttributes: attributes)
             }
+        }
+    }
+
+    /// One row's lane cell: an age-shaded bar, with a hairline at each run start.
+    ///
+    /// Age gives the heat, the separator gives the grouping — so "this whole block is one
+    /// change" reads without two encodings fighting over the same 5pt.
+    private func drawBlameCell(_ row: Int, y: CGFloat, height: CGFloat) {
+        guard blameRows.indices.contains(row), let cell = blameRows[row] else { return }
+        let alpha: CGFloat
+        var hex = Theme.Diff.blameHeat
+        switch cell.shade {
+        case .fresh:       alpha = 0.85
+        case .recent:      alpha = 0.60
+        case .stale:       alpha = 0.38
+        case .old:         alpha = 0.20
+        case .uncommitted: alpha = 0.35; hex = Theme.Diff.blameUncommitted
+        }
+        let selected = row == blameSelectedRow
+        // The selected row's cell goes full-strength and widens into its gap, so it reads as
+        // picked out of the lane rather than merely a fresher commit.
+        NSColor(hex24: hex).withAlphaComponent(selected ? 1.0 : alpha).setFill()
+        NSRect(x: Self.leadingPad, y: y,
+               width: Self.blameLaneWidth + (selected ? Self.blameLaneGap - 1 : 0),
+               height: height).fill()
+        if cell.isRunStart, !selected {
+            NSColor(hex24: Theme.Diff.buffer).setFill()
+            NSRect(x: Self.leadingPad, y: y, width: Self.blameLaneWidth, height: 1).fill()
         }
     }
 
@@ -375,11 +443,14 @@ final class DiffGutterView: NSView {
             let textY = rect.minY + (rowHeight - glyphHeight) / 2
             let number = String(startingOldLine + index)
             let width = CGFloat(number.count) * style.digitAdvance
+            // Shifted by the lane like every other number, so a band's old numbers stay in
+            // the same column as the rows' new ones. A band itself gets no lane cell: its
+            // lines are old-side, and blaming those is a different revision's blame.
             (number as NSString).draw(
-                at: NSPoint(x: Self.leadingPad + numberWidth - width, y: textY),
+                at: NSPoint(x: Self.leadingPad + laneOffset + numberWidth - width, y: textY),
                 withAttributes: style.numberAttributes)
             ("-" as NSString).draw(
-                at: NSPoint(x: Self.leadingPad + numberWidth + Self.gap, y: textY),
+                at: NSPoint(x: Self.leadingPad + laneOffset + numberWidth + Self.gap, y: textY),
                 withAttributes: style.removeSignAttributes)
         }
     }
@@ -440,9 +511,73 @@ final class DiffGutterView: NSView {
             onExpandGap?(target.source, target.collapsed, target.fromTop)
             return
         }
+        // The lane is tested by **x first**: a gutter click or drag already means "select
+        // these lines for staging", and the lane must not steal it.
+        if isInBlameLane(point), let index = rowIndex(at: event) {
+            onClickBlame?(index)
+            return
+        }
         guard let index = rowIndex(at: event) else { return super.mouseDown(with: event) }
         dragAnchorRow = index
         onSelectRows?(index..<(index + 1))
+    }
+
+    // MARK: - Blame hover
+
+    /// The lane row the pointer is over, or nil on the way out.
+    var onHoverBlameRow: ((Int?) -> Void)?
+    /// A click on a lane cell.
+    var onClickBlame: ((Int) -> Void)?
+
+    private var blameTrackingArea: NSTrackingArea?
+
+    private func isInBlameLane(_ point: NSPoint) -> Bool {
+        guard !blameRows.isEmpty else { return false }
+        return point.x >= Self.leadingPad
+            && point.x <= Self.leadingPad + Self.blameLaneWidth
+    }
+
+    /// Re-installed on every bounds change, and whenever the lane appears or disappears.
+    ///
+    /// **No "already installed, skip" short-circuit.** A rebuild hands us a new editor, scroll
+    /// view and clip view, and that exact short-circuit is what once left the gutter observing
+    /// a dead clip view — frozen from the first rebuild onward.
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let existing = blameTrackingArea { removeTrackingArea(existing) }
+        blameTrackingArea = nil
+        guard !blameRows.isEmpty else { return }
+        let area = NSTrackingArea(
+            rect: NSRect(x: Self.leadingPad, y: 0,
+                         width: Self.blameLaneWidth, height: bounds.height),
+            options: [.mouseEnteredAndExited, .mouseMoved, .activeInKeyWindow],
+            owner: self, userInfo: nil)
+        addTrackingArea(area)
+        blameTrackingArea = area
+    }
+
+    /// Scrolling over the gutter scrolls the text.
+    ///
+    /// The gutter sits **outside** the scroll view (that is what lets it float beside the text
+    /// rather than inside it), so a wheel event over it has no scrollable ancestor and dies in
+    /// the responder chain — the document just doesn't move. Forwarded by hand. The blame lane
+    /// widened the gutter, which is why this went from rarely-noticed to constant.
+    override func scrollWheel(with event: NSEvent) {
+        if let scrollView = scrollViewProvider?() {
+            scrollView.scrollWheel(with: event)
+        } else {
+            super.scrollWheel(with: event)
+        }
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        // Through `rowIndex`, so hover resolves a row exactly the way a click does — a row
+        // carrying a band is not one row tall, and arithmetic here would drift from the text.
+        onHoverBlameRow?(rowIndex(at: event))
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        onHoverBlameRow?(nil)
     }
 
     override func mouseDragged(with event: NSEvent) {

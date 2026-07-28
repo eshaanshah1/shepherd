@@ -76,7 +76,9 @@ spike/
 
 `Tests/` holds the **`ShepherdModelTests`** target (a `bundle.unit-test` in `project.yml`: `SplitTreeTests.swift`, `WorkspaceTests.swift`, `PersistenceTests.swift`, `SleepPolicyTests.swift`, `StopPolicyTests.swift`, `WorktreeArchiveTests.swift`, `PRStatusTests.swift`, `ShortcutCatalogTests.swift`, `ShepherdConfigWriterTests.swift`, `WorktreeHookRunnerTests.swift`, `VersionTests.swift`, `IdlePolicyTests.swift`, `UpdateServiceTests.swift`, `UpdateInstallerTests.swift`, plus the workbench's
 `StitchMapTests`/`BlockMapTests`/`WordDiffTests`(+`HunkPairingTests`)/`LockPolicyTests`/
-`PatchSynthTests`/`StageSelectionTests`/`RowPlanTests`/`HunkGapsTests`) — pure-model coverage of the `SplitNode` tree ops, the `Workspace`/`locatePane` helpers, the persistence snapshot/restore/migration (incl. `worktreeHook`), the sleep policy, the `applyEvent` lifecycle/background-`Stop` suppression, the worktree-archive expiry/age math, the PR-status classify/parse reduction, the shortcut-catalog integrity (no dupe glyphs/ids, full `ShortcutID` coverage), the config-writer key round-trip (preserve/insert/update), and the worktree-hook env map, compiling `SplitTree`/`Tab`/`AgentState`/`Theme`/`Workspace`/`Persistence`/`SleepPolicy`/`StopPolicy`/`WorktreeService`/`WorktreeArchive`/`PRStatus`/`ShortcutCatalog`/`ShepherdConfigWriter`/`WorktreeHookRunner` without the AppKit surface. Test files added under `Tests/` are picked up by the `- path: Tests` glob, but a new compiled **source** must be added to the target's explicit `sources:` list in `project.yml`.
+`PatchSynthTests`/`StageSelectionTests`/`RowPlanTests`/`HunkGapsTests`, plus W5a's
+`CommitHistoryTests`/`DocumentProvenanceTests`/`BlameParseTests`/`BlameLaneTests`/`SequencePolicyTests`
+and the **real-git** `CommitDiffIntegrationTests`/`SequenceIntegrationTests`) — pure-model coverage of the `SplitNode` tree ops, the `Workspace`/`locatePane` helpers, the persistence snapshot/restore/migration (incl. `worktreeHook`), the sleep policy, the `applyEvent` lifecycle/background-`Stop` suppression, the worktree-archive expiry/age math, the PR-status classify/parse reduction, the shortcut-catalog integrity (no dupe glyphs/ids, full `ShortcutID` coverage), the config-writer key round-trip (preserve/insert/update), and the worktree-hook env map, compiling `SplitTree`/`Tab`/`AgentState`/`Theme`/`Workspace`/`Persistence`/`SleepPolicy`/`StopPolicy`/`WorktreeService`/`WorktreeArchive`/`PRStatus`/`ShortcutCatalog`/`ShepherdConfigWriter`/`WorktreeHookRunner` without the AppKit surface. Test files added under `Tests/` are picked up by the `- path: Tests` glob, but a new compiled **source** must be added to the target's explicit `sources:` list in `project.yml`.
 
 ---
 
@@ -232,7 +234,7 @@ a tab's title is derived from its focused pane.
 
 Inside the workbench only: `⌥↓`/`⌥↑` next/prev hunk, `⌘⏎`/`⌘⌥⏎` stage/unstage the
 selection (or the cursor's hunk), `⌘K` focus the commit box, `⌘⇧C` comment on the line,
-`⌃1`/`⌃2` scope. These are declared in `WorkbenchView.keyBindings`, **not** the menu bar —
+`⌃1`–`⌃4` scope (working / vs-base / Files / Commits). These are declared in `WorkbenchView.keyBindings`, **not** the menu bar —
 a menu key equivalent beats the key window's responder chain, so binding them globally
 would steal them from the terminal whenever the workbench is closed. `ShortcutCatalog`
 carries them as display-only rows (`key: nil`, category `.workbench`) so `⌘/` still lists
@@ -374,9 +376,26 @@ the right height. A **paired** removal emits no band in split mode — it is dra
 addition, and a band would reserve a second row for a line already on screen. See the
 [design](docs/superpowers/specs/2026-07-28-workbench-side-by-side-design.md).
 
-**Scope** is working-tree, vs-base, or **Files** (`⌃3`) — the last one is not a diff at
-all: unmerged files at the top of the rail in red, then anything opened with `⌘P`, all
+**Scope** is working-tree, vs-base, **Files** (`⌃3`), or **Commits** (`⌃4`). Files is not a
+diff at all: unmerged files at the top of the rail in red, then anything opened with `⌘P`, all
 editable through W2.2's write-back.
+
+**Commits (`⌃4`)** is the branch's own commits — `<base>..HEAD`, so linear by construction and
+**deliberately without a graph renderer** (lanes for your own branch are decoration; see the
+[W5a spec](docs/superpowers/specs/2026-07-28-workbench-w5a-history-design.md)). The segment
+appears only once there are commits. Clicking one **narrows** the rail to its files with a
+breadcrumb back — the same shape `focus(file:)` has — and its diff comes from
+`DiffReader.readCommit`. A commit view is read-only, has no stage buttons (its `SectionKind
+.inCommit` carries no bulk action), and says why in the header. A **blame lane** (5pt, age by
+alpha, hairline per run) sits in the gutter whenever the buffer is narrowed to one file, with
+the cursor row's blame as text in the header; clicking a cell reveals that commit. Pure bits:
+`CommitHistory`, `DocumentProvenance`, `BlameParse`, `BlameLane`.
+
+**A stopped rebase / cherry-pick / merge is finished from the rail.** `SequenceRunner.cont`
+runs `<verb> --continue`, and the lock is **`isMidSequence`** (`hasConflicts ||
+mergeState.isActive`) — so a half-applied sequence gates every scope until Continue or Abort,
+not just until the last conflict is resolved. The pending commit message is shown editable;
+leaving it alone keeps git's verbatim.
 
 **Merge conflicts (W3)** live in the Files scope. `ConflictReader` reads `git ls-files -u`
 and `Diff3.merge`s the index's three stage blobs — **never** a parse of the worktree file's
@@ -482,6 +501,11 @@ falls back to a plain shell. Requires the plugin reporting `session_id` — afte
 - **Notification icon needs an asset catalog**: macOS Notification Center renders the app icon from the compiled asset catalog (`CFBundleIconName` → `Assets.car`), **not** a loose `CFBundleIconFile`/`.icns` (which the Dock reads fine). `Resources/Assets.xcassets/AppIcon.appiconset` + `CFBundleIconName: AppIcon` in `project.yml` is what makes notifications show the Shepherd icon. After changing the icon, a stale system cache may need `lsregister` / a logout to refresh.
 - **`AskUserQuestion` is detected via `PreToolUse`** ([ADR 0008](.claude/adr/0008-askuserquestion-via-pretooluse.md)) — `PreToolUse[AskUserQuestion]` → blocked. (`Elicitation`/`Notification` don't fire for it, but `PreToolUse` does — `report.sh` parses `tool_name` via `jq`.)
 - **Workbench: a row's colours come from a `HighlightVariant`, not always the working copy.** `MultiHighlighter` caches by `(SourceID, HighlightVariant)` — `.new` / `.old` / `.mergePreview` / `.snippet(id)`. A conflicted file's rows are a merge preview that exists only in memory, so anchoring them to `.new` and indexing the file on disk paints each row with whatever line sits at that number — and mid-merge that file is the marker-laden one. This is the same mapping bug that mangled highlighting on the first live run, one layer along. `invalidate(source:)` is a **filter**, not two key removals: `.snippet` ids aren't enumerable up front.
+- **`git show -M --format=` on a merge commit prints NOTHING.** It defaults to a combined `@@@` diff and suppresses it at default verbosity, so a commit view without `-m --first-parent` renders a blank buffer with no error anywhere (measured on git 2.55). `DiffReader.readCommit` passes both; `CommitDiffIntegrationTests` pins it.
+- **Workbench: a document's provenance is one decision, in `DocumentProvenance`.** Colours, the text of rows the diff does not carry, and editability all follow from `selectedCommit` — one piece of state, never a commit *plus* a flag, since two things meaning "this is history" can disagree. **The `fileLines` lookup in `rebuild()` is the easy miss**: it is the only path for gap-revealed and edited rows, so reading the working copy there splices *today's* lines into a three-week-old commit. Same class of bug as colouring from the wrong file, entering by a different door.
+- **Workbench: `load()` must not clobber a historical document.** It is fired by the refresh button *and* by every agent disk write through `scheduleReload`, so while a commit is selected it re-reads that commit instead of the tree — otherwise an agent saving a file swaps the old rows for the working copy's diff underneath you. Related: read the commit list inside `load()`'s existing background hop, because asking beforehand races `baseName` into its `"main"` fallback and silently returns nothing on a `master` repo.
+- **`git <verb> --continue` wants an editor, and an app-spawned `Process` has no tty** — so left alone it *hangs forever* rather than failing. `SequenceRunner` passes `GIT_EDITOR=true` to keep the message and `GIT_EDITOR="cp '<file>'"` to reword (git appends the message path to that command string). `GitStaging.run(env:)` **merges** into the inherited environment — replacing it loses `HOME`, and so git's config.
+- **`--continue` exits non-zero when it stops at the NEXT commit's conflict.** The loop working correctly looks like a failed command, and surfacing it would show `error: could not apply …` on every well-behaved multi-commit rebase. Neither the exit status nor the unmerged count can tell that apart from a refusal — a refused continue also exits non-zero and also leaves unmerged files. **Whether HEAD moved** is the discriminator; `SequencePolicy.outcome` owns it, and `SequenceIntegrationTests` pins it.
 - **Workbench: clicks cannot reach a band; there are now three answers and you must pick the right one.** `TextView.hitTest` returns the text view for any point inside it, so a line-fragment subview never receives a click. Hunk-gap arrows → the **gutter**; the reconcile row → the **rail**; the conflict accept buttons → **`WorkbenchOverlay`**, a transparent `NSView` over the text view that draws *and* hit-tests its own targets and returns nil from `hitTest` everywhere else. The overlay is the `WidgetLayer` seed and is written against "blocks with targets" — reach for it rather than a fourth answer. It repeats every rule the gutter learned: clip-view `boundsDidChangeNotification` (never `scrollPosition`), geometry from `editorLineMetrics`, `clipsToBounds`, a visible-window-bounded walk, and **re-parent on every rebuild with no "already attached" short-circuit**.
 - **Workbench: never construct the highlighter or render delegate in `body`.** `SourceEditor` compares highlight providers by `ObjectIdentifier`, so a fresh instance per SwiftUI body evaluation reads as a provider change and re-runs `setHighlightProviders` (dropping every cached tree-sitter parse) **plus `reloadUI()` — on every scroll tick**. They live on `WorkbenchSession` (`highlighter`, `renderer`), built once. The same rule applies to anything else an `NSViewRepresentable` hands the editor.
 - **Workbench: the gutter must not have its own opinion about line geometry.** `DiffGutterView` reads each row's real `(yPos, height)` from `layoutManager.textLineForIndex` and resolves the visible window / hit tests via `textLineForPosition`. Computing it arithmetically from `NSLayoutManager.defaultLineHeight` drifts against the text, because CETV types lines with CoreText — `(ascent + descent + leading) × multiplier`. `WorkbenchMetrics.rowHeight` is a fallback for before the editor exists, nothing more.
@@ -497,6 +521,7 @@ falls back to a plain shell. Requires the plugin reporting `session_id` — afte
 - **Workbench: bound block drawing by `visibleRect`, never by `dirtyRect` alone.** A deletion band makes one line fragment as tall as the run it shows (a 40-line deletion ⇒ ~1000pt), and AppKit hands a view that tall a *partial* dirty rect. A fragment view that has just scrolled into existence has no earlier content to preserve, so every row skipped stayed permanently blank — the band drew its first 30 rows and nothing else, while the gutter (viewport-sized, fully invalidated per scroll) drew all 40. `DiffRowView.draw` uses `visibleRect.union(dirtyRect)` so a pass can only ever paint more than asked, never less.
 - **Workbench: a block's internal rows divide the block's own height.** A deletion band's line height is `block.height / lines.count`, in both `DiffRowView` and `DiffGutterView` — never `WorkbenchMetrics.rowHeight`, which is an estimate of the *text's* line height and drifts against a long run. Same rule as the gutter one above: exactly one opinion about where a row sits.
 - **`xcodegen generate` after any file add/remove** — else the new file isn't compiled (`cannot find X in scope` at *build* time).
+- **`-only-testing:` on a suite the project doesn't know about reports `** TEST SUCCEEDED **`.** It matches nothing and vacuously passes, so a *brand-new* test file that hasn't been through `xcodegen generate` looks green while never compiling. Two habits kill it: run `xcodegen generate` before the first run of any new test file, and treat a pass as real only once the **test count moves** (`grep -c "Test Case .* passed"`).
 - **SourceKit lies in this repo** — "Cannot find type AgentState/…" and "'main' attribute…" diagnostics are stale because the editor sees loose files, not the generated project. `xcodebuild` is ground truth; ignore SourceKit "cannot find" noise.
 - **App version is stamped at release time, not in `project.yml`**: `project.yml` ships a `CFBundleShortVersionString: "0.0.0-dev"` sentinel (so local/dev builds read as a prerelease and the updater stays dormant). The real version is stamped into the built bundle by the release workflow (`PlistBuddy Set :CFBundleShortVersionString ${VERSION#v}`, before `codesign`). Don't hardcode a real version in `project.yml`. Update failures/relaunch log to `/tmp/shepherd-update.log`.
 - **Debug log:** the app appends every state transition to `/tmp/shepherd-events.log` — invaluable for debugging the state machine (`tail -f`). Currently always-on; a deferred cleanup is to put it behind a flag.
@@ -537,8 +562,11 @@ new-side only with removals as blocks, hunk-gap expansion, edit write-back via `
 ⌘S, ⌘P) + W4 (PR band, checks, `gh` actions, inline review threads) done and live-run.
 **W3 done**: a pure `Diff3` three-way merge over the index's stage blobs, VSCode-style
 marker rendering, accept controls on the new `WorkbenchOverlay`, and a **Files scope**
-(`⌃3`) that carries both conflicts and `⌘P`-opened files. Only **W5** (history & power
-tools) remains — its own spec, roughly W1–W4 combined. See the roadmap for every deviation
-from plan and the defects each live run turned up.
+(`⌃3`) that carries both conflicts and `⌘P`-opened files.
+**W5a built (not yet live-run)**: a `Commits` scope (`⌃4`) with no graph renderer by
+decision, commit-as-diff off a blob-backed provenance, the blame lane, and the Continue
+control that finishes a stopped rebase/cherry-pick/merge. Only **W5b** (stash, cherry-pick,
+interactive rebase) remains. See the roadmap for every deviation from plan and the defects
+each live run turned up.
 
 **Deferred (see SPEC §6):** generic non-Claude agents (Tier-B), sidebar auto-hide at ≤1 tab, debug-log flag, IME/selection polish, multi-window, navigator popup, and **full remote control** (the big future bet).

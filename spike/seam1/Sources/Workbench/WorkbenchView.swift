@@ -25,6 +25,7 @@ struct WorkbenchView: View {
                 Rectangle().fill(Theme.hairline).frame(height: 1)
                 WorkbenchPRBand(session: session).environmentObject(store)
                 content
+                blameStatusStrip
             }
             if session.threadsPanelOpen, !paneThreads.isEmpty {
                 Rectangle().fill(Theme.hairline).frame(width: 1)
@@ -66,8 +67,10 @@ struct WorkbenchView: View {
         .onChange(of: session.mode) { _ in session.load() }
         // Landing on a diff while the repo is mid-merge buries the thing you have to deal
         // with; the conflicts are the reason the workbench is open.
-        .onChange(of: session.hasConflicts) { hasConflicts in
-            if hasConflicts, session.scope != .files { session.setScope(.files) }
+        // Widened from `hasConflicts` to the whole sequence: resolving the last file used to
+        // unlock the workbench while the rebase was still half-applied.
+        .onChange(of: session.isMidSequence) { midSequence in
+            if midSequence, session.scope != .files { session.setScope(.files) }
         }
         // The store owns the threads; the session needs them to place the inline notes.
         .onChange(of: paneThreads) { session.threads = $0 }
@@ -114,6 +117,7 @@ struct WorkbenchView: View {
             key("1", [.control]) { if session.isRepo { session.setScope(.workingTree) } }
             key("2", [.control]) { if session.isRepo { session.setScope(.vsBase) } }
             key("3", [.control]) { session.setScope(.files) }
+            key("4", [.control]) { if session.isRepo { session.setScope(.commits) } }
             key("\\", [.command, .option]) {
                 if session.splitAvailable { session.splitView.toggle() }
             }
@@ -205,6 +209,36 @@ struct WorkbenchView: View {
         .padding(.horizontal, 12).padding(.vertical, 8)
     }
 
+    /// Who last touched the line under the cursor, along the bottom of the editor.
+    ///
+    /// Not in the header. The header already carries the summary, the focused-file chip and
+    /// eight controls, and squeezing a fourth text element in there both broke the chip onto
+    /// two lines and made the blame read as more summary — unlabelled metadata floating after
+    /// `→ master`. Down here it has the full width, it is where every editor puts current-line
+    /// blame, and it costs nothing when there is none: the strip only exists while the buffer
+    /// is narrowed to a blameable file.
+    @ViewBuilder private var blameStatusStrip: some View {
+        if let annotation = session.blameAnnotation {
+            VStack(spacing: 0) {
+                Rectangle().fill(Theme.hairline).frame(height: 1)
+                HStack(spacing: 8) {
+                    Text("BLAME")
+                        .font(.ui(9, .semibold)).foregroundStyle(Theme.textDim)
+                        .padding(.horizontal, 5).padding(.vertical, 2)
+                        .background(Theme.surface3)
+                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                    Text(annotation)
+                        .font(.mono(11)).foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1).truncationMode(.tail)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 7)
+                .background(Theme.surface1)
+            }
+            .help(annotation)
+        }
+    }
+
     /// Hands off to the existing worktree flow, which resolves the repo from the
     /// workspace's default directory rather than from this pane.
     private func createWorktree() {
@@ -265,6 +299,23 @@ struct WorkbenchView: View {
                 Text(session.mergeState.summary ?? "Resolving")
                     .font(.ui(11, .medium)).foregroundStyle(Theme.textSecondary).lineLimit(1)
             }
+        } else if let commit = session.selectedCommit {
+            HStack(spacing: 6) {
+                Text(commit.shortSha).font(.mono(11, .medium))
+                    .foregroundStyle(Theme.textSecondary)
+                Text(commit.subject)
+                    .font(.ui(11, .medium)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                Text("·").foregroundStyle(Theme.textDim)
+                Text("\(commit.author) · \(CommitHistory.relativeAge(commit.timestamp, now: Date()))")
+                    .font(.ui(11)).foregroundStyle(Theme.textDim).lineLimit(1)
+            }
+        } else if session.scope == .commits {
+            HStack(spacing: 6) {
+                Text("\(session.commits.count) commit\(session.commits.count == 1 ? "" : "s")")
+                    .font(.ui(11)).foregroundStyle(Theme.textSecondary)
+                Text("·").foregroundStyle(Theme.textDim)
+                Text("pick one to see its diff").font(.ui(11)).foregroundStyle(Theme.textDim)
+            }
         } else if session.scope == .files {
             HStack(spacing: 6) {
                 Text("\(session.openedPaths.count) open")
@@ -285,7 +336,17 @@ struct WorkbenchView: View {
             if let focused = session.focusedFile {
                 Button { session.focus(file: nil) } label: {
                     HStack(spacing: 4) {
-                        Text((focused as NSString).lastPathComponent).font(.ui(11, .medium))
+                        // Capped and truncated, not merely un-wrapped. With no line limit a
+                        // crowded header broke the name mid-word (`CommitHistory.s / wift`);
+                        // `fixedSize` then fixed that by making the chip refuse to shrink, so
+                        // its neighbours broke instead (`→ mas / ter`, `+5, / 256`). A max width
+                        // makes the chip the thing that gives. Middle truncation because the
+                        // extension is worth more than the middle of a long dated filename.
+                        Text((focused as NSString).lastPathComponent)
+                            .font(.ui(11, .medium))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .frame(maxWidth: 190, alignment: .leading)
                         Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
                     }
                     .foregroundStyle(Theme.textPrimary)
@@ -433,14 +494,28 @@ struct WorkbenchView: View {
 
     private var rail: some View {
         VStack(spacing: 0) {
+            // No strip reserved for the traffic lights: the sidebar stays visible beside the
+            // workbench and already reserves its own, so the lights never reach this rail.
             // No scope pill while unmerged: there is one scope, so the segmented control is
             // a label wearing a button's clothes — and the rail's own CONFLICTED header says
             // the same thing an inch below it.
             if !session.resolveOnly {
+                // A header between the reserved strip and the first row, exactly as the sidebar
+                // puts `Workspaces` there. Without it the first scope row butts against the
+                // strip, and when that row is the selected one the two read as a single grey
+                // block welded to the top of the window.
+                Text("SCOPE")
+                    .font(.ui(9.5, .semibold)).foregroundStyle(Theme.textDim)
+                    // 8pt top, matching the header's own vertical padding across the divider, so
+                    // the rail's first line sits on the same baseline as the diff summary.
+                    .padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 scopeList
                 Rectangle().fill(Theme.divider).frame(height: 1)
             }
-            if session.scope == .files { plainFilesList } else { fileList }
+            if session.scope == .commits { commitsRail }
+            else if session.scope == .files { plainFilesList }
+            else { fileList }
             if !session.comments.isEmpty {
                 Rectangle().fill(Theme.divider).frame(height: 1)
                 pendingComments
@@ -453,6 +528,85 @@ struct WorkbenchView: View {
             commitBox
         }
         .background(Theme.surface1)
+    }
+
+    // MARK: - Commits
+
+    /// The Commits scope's rail: the branch's commits, or the selected commit's files.
+    ///
+    /// Clicking a commit narrows rather than scrolling, which is the same shape
+    /// `focus(file:)` already has — so "clicking in the rail scopes the buffer" is one
+    /// behaviour, not two.
+    @ViewBuilder private var commitsRail: some View {
+        if session.selectedCommit != nil {
+            fileList   // its own breadcrumb trail carries the way back up
+        } else {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(session.commits) { commit in
+                        commitRow(commit)
+                    }
+                    baseRow
+                }
+                .padding(.bottom, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .background(ThinScrollers())
+        }
+    }
+
+    /// Two lines: the subject, then its metadata dimmed beneath.
+    ///
+    /// One line could not work. The subject is the only part you actually read, and sharing a
+    /// ~220pt row with an 8-character sha and an age left it about twenty characters —
+    /// `docs: -only-testing on…`. Giving the subject the full width and dropping sha and age to
+    /// a second line costs about a third of the visible rows and is the trade worth making.
+    private func commitRow(_ commit: Commit) -> some View {
+        let active = session.selectedCommit?.sha == commit.sha
+        return Button { session.selectCommit(commit) } label: {
+            HStack(alignment: .top, spacing: 7) {
+                Circle().fill(Color(hex: Theme.Diff.modified))
+                    .frame(width: 5, height: 5)
+                    .padding(.top, 4)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(commit.subject)
+                        .font(.ui(11.5, active ? .semibold : .regular))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .multilineTextAlignment(.leading)
+                    HStack(spacing: 5) {
+                        Text(commit.shortSha).font(.mono(9.5))
+                        Text("·")
+                        Text(CommitHistory.relativeAge(commit.timestamp, now: Date()))
+                            .font(.mono(9.5))
+                    }
+                    .foregroundStyle(Theme.textDim)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 5)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(active ? Theme.surface3 : Color.clear)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).focusable(false)
+        .help("\(commit.subject)\n\(commit.author)")
+    }
+
+    /// Where the branch started. Not clickable — it is the boundary of the range, not a
+    /// commit of yours, and its diff is the vs-base scope.
+    @ViewBuilder private var baseRow: some View {
+        if let base = session.baseName {
+            HStack(spacing: 7) {
+                Circle().strokeBorder(Theme.textDim, lineWidth: 1)
+                    .frame(width: 5, height: 5)
+                Text(base).font(.mono(10)).foregroundStyle(Theme.textDim)
+                Text("base").font(.ui(10)).foregroundStyle(Theme.textDim)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12).padding(.top, 4).padding(.bottom, 3)
+        }
     }
 
     /// Git's own words, inline. A rejected patch or a failed push has a reason and the
@@ -549,46 +703,65 @@ struct WorkbenchView: View {
                     }
                 }
             }
+            .background(ThinScrollers())
             .frame(maxHeight: 200)
         }
         .padding(.horizontal, 10).padding(.vertical, 8)
     }
 
-    /// Scope as one segmented pill rather than a stack of rows with a tick.
+    /// One selectable scope, as a row.
     ///
-    /// Segments share the width equally instead of sizing to their text, so a long base
-    /// label (`origin/feature/…`) truncates inside its own segment rather than pushing the
-    /// others off the rail.
-    /// One selectable scope.
+    /// Rows rather than a segmented pill. The pill sized every segment equally, so a long base
+    /// label truncated inside its own segment; past three scopes it wrapped to a second line,
+    /// and at four — which a repo now always has — it cost two rows *and* ellipsised. A row per
+    /// scope gives each label the full rail width and scales to five without wrapping. This is
+    /// also what the original spec mockup had.
     private struct ScopeOption: Identifiable {
         let id: WorkbenchScope
         let title: String
         let tint: Color?
-        /// A count of things needing attention, shown as a filled badge. Deliberately not
-        /// folded into the title: "Files 3" reads as *three files*, when the scope holds
-        /// your open files as well and the number is really "three of these are broken".
-        var badge: Int? = nil
+        /// Right-aligned, out of the label's way — so it can be a plain count of what the scope
+        /// holds rather than only ever meaning "this many things are wrong".
+        var count: Int? = nil
+        var help: String = ""
     }
 
     private var scopeOptions: [ScopeOption] {
         // Outside a repo there is nothing to diff against, so Files is the only scope —
         // and there it is the whole workbench.
+        // Working and vs-base carry **no** count. `session.files` holds whatever the *current*
+        // scope loaded, so a number on either would show the other's file count while you stood
+        // in the other one. Only the counts that are scope-independent — conflicts, commits,
+        // threads, all loaded regardless of where you are — can be shown honestly.
         var options: [ScopeOption] = session.isRepo ? [
-            ScopeOption(id: .workingTree, title: "Working", tint: nil),
-            ScopeOption(id: .vsBase, title: "vs \(session.baseName ?? "base")", tint: nil),
+            ScopeOption(id: .workingTree, title: "Working", tint: nil,
+                        help: "Uncommitted changes (⌃1)"),
+            ScopeOption(id: .vsBase, title: "vs \(session.baseName ?? "base")", tint: nil,
+                        help: "Everything since the base branch (⌃2)"),
         ] : []
         options += [
             // Conflicts live here rather than in a scope of their own: a file you have to
             // fix is still a file, and hiding it behind a second tab put the most urgent
             // thing in the workbench one click out of sight.
-            ScopeOption(id: .files, title: "Files", tint: nil),
+            ScopeOption(id: .files, title: "Files", tint: nil,
+                        count: session.hasConflicts ? session.mergeFiles.count : nil,
+                        help: "Conflicts and files opened with ⌘P (⌃3)"),
         ]
+        // Only once there are commits to show: the rail must not reserve space for a scope
+        // that does not exist yet. Gated on `isRepo` like Working and vs-base — outside a repo
+        // there is no history, and Files is the whole workbench.
+        if session.isRepo, !session.commits.isEmpty {
+            options.append(ScopeOption(id: .commits, title: "Commits", tint: nil,
+                                       count: session.commits.count,
+                                       help: "This branch's commits (⌃4)"))
+        }
         if !paneThreads.isEmpty {
             let unresolved = PRThreads.unresolvedCount(paneThreads)
             options.append(ScopeOption(
                 id: .threads, title: "Threads",
                 tint: unresolved > 0 ? Theme.prMerged : nil,
-                badge: unresolved > 0 ? unresolved : nil))
+                count: unresolved > 0 ? unresolved : nil,
+                help: "PR review threads still to address"))
         }
         return options
     }
@@ -601,60 +774,67 @@ struct WorkbenchView: View {
     /// about seven characters, so every segment ellipsised at once. Wrapping keeps the equal
     /// widths *and* the labels.
     private var scopeList: some View {
-        let options = scopeOptions
-        let rows: [[ScopeOption]] = options.count > 3
-            ? stride(from: 0, to: options.count, by: 2).map {
-                Array(options[$0..<min($0 + 2, options.count)])
-              }
-            : [options]
-        return VStack(spacing: 3) {
-            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-                HStack(spacing: 2) {
-                    ForEach(row) { option in
-                        scopeSegment(option.title, active: session.scope == option.id,
-                                     tint: option.tint, badge: option.badge) {
-                            session.setScope(option.id)
-                        }
-                    }
-                    // A trailing odd segment keeps its half-width rather than stretching to
-                    // fill the row, so the grid still reads as a grid.
-                    if row.count == 1, rows.count > 1 { Color.clear.frame(maxWidth: .infinity) }
-                }
-                .padding(2)
-                .background(Theme.surface2)
-                .clipShape(Capsule())
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(scopeOptions) { option in
+                scopeRow(option)
             }
         }
-        .padding(.horizontal, 10).padding(.vertical, 6)
+        .padding(.vertical, 4)
+        // **The list must never flex vertically.** The rail is a `VStack`, which hands out
+        // leftover height to whichever child will take it; without this the active row absorbed
+        // it — the highlight grew to cover two and a half rows and shoved `Working` out of
+        // sight. Per-row heights cannot win that argument, because the stretch arrives from the
+        // parent. `fixedSize` makes the list state its height and refuse the offer.
+        .fixedSize(horizontal: false, vertical: true)
     }
 
-    /// One segment. The filled capsule *is* the selected state, so there's no tick to carry.
-    private func scopeSegment(_ title: String, active: Bool, tint: Color? = nil,
-                              badge: Int? = nil,
-                              _ action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 4) {
-                Text(title)
-                    .font(.ui(11, active ? .semibold : .medium))
-                    .foregroundStyle(tint ?? (active ? Theme.textPrimary : Theme.textSecondary))
-                    .lineLimit(1)
-                if let badge {
-                    Text("\(badge)")
-                        .font(.ui(9, .bold))
-                        .foregroundStyle(Theme.ground)
-                        .padding(.horizontal, 4).padding(.vertical, 1)
-                        .background(tint ?? Theme.textSecondary)
-                        .clipShape(Capsule())
+    /// One scope, as a row.
+    ///
+    /// A leading bar marks the active one — no capsule, no equal-width segments, so the label
+    /// gets the whole rail and a long base name (`origin/feature/…`) has room instead of
+    /// ellipsising. The count sits right-aligned, where it does not compete with the name.
+    private func scopeRow(_ option: ScopeOption) -> some View {
+        let active = session.scope == option.id
+        return Button { session.setScope(option.id) } label: {
+            HStack(spacing: 6) {
+                Text(option.title)
+                    .font(.ui(11.5, active ? .semibold : .regular))
+                    .foregroundStyle(option.tint ?? (active ? Theme.textPrimary
+                                                           : Theme.textSecondary))
+                    .lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 4)
+                if let count = option.count {
+                    Text("\(count)")
+                        .font(.mono(10))
+                        .foregroundStyle(option.tint ?? Theme.textDim)
                 }
             }
-            .padding(.horizontal, 8).padding(.vertical, 3)
-            .frame(maxWidth: .infinity)
+            .padding(.leading, 10).padding(.trailing, 12)
+            // Exact height, and **clipped**. Every row is one line of text, so nothing about the
+            // height should be emergent — and the selected row's fill was reaching a good 30pt
+            // above its own row, up over the reserved strip, which is what made the first scope
+            // look like it had a grey block welded to the top of the window.
+            .frame(height: 22)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(active ? Theme.surface3 : Color.clear)
-            .clipShape(Capsule())
-            .contentShape(Capsule())
+            // The active bar is an **overlay**, not a sibling. As a sibling in the HStack, a
+            // `Rectangle().frame(width: 2)` has only its width constrained — a shape is
+            // infinitely flexible on the free axis, so it claimed every available point of
+            // height and stretched each row to ~200pt. An overlay is bounded by the row it
+            // sits on, so the text decides the height and the bar follows.
+            .overlay(alignment: .leading) {
+                Rectangle()
+                    .fill(active ? (option.tint ?? Theme.working) : Color.clear)
+                    .frame(width: 2)
+            }
+            // Clipped, because the selected row's fill was reaching ~30pt above its own row and
+            // I could not identify what was drawing it. This makes the question moot: whatever
+            // the row draws, it cannot escape the row.
+            .clipped()
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain).focusable(false)
-        .help(badge.map { "\(title) — \($0) conflicted" } ?? title)
+        .help(option.help)
     }
 
     // MARK: - Files scope
@@ -678,6 +858,7 @@ struct WorkbenchView: View {
             .padding(.bottom, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .background(ThinScrollers())
     }
 
     @ViewBuilder private var plainFilesBody: some View {
@@ -754,15 +935,28 @@ struct WorkbenchView: View {
                 divergentRow(path)
             }
 
-            Text("CONFLICTED \(session.mergeFiles.count)")
-                .font(.ui(10, .semibold)).foregroundStyle(Theme.error)
-                .padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 2)
+            // Only when there is something unmerged. Since the lock now covers a settled
+            // sequence too, an unguarded header would read "CONFLICTED 0" over an empty list.
+            if session.hasConflicts {
+                Text("CONFLICTED \(session.mergeFiles.count)")
+                    .font(.ui(10, .semibold)).foregroundStyle(Theme.error)
+                    .padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 2)
 
-            ForEach(session.mergeFiles, id: \.path) { file in
-                conflictRow(file)
+                ForEach(session.mergeFiles, id: \.path) { file in
+                    conflictRow(file)
+                }
+            } else if session.mergeState.isActive {
+                Text("Everything is resolved — continue when you're ready.")
+                    .font(.ui(10.5)).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 12).padding(.top, 8)
             }
 
-            if session.mergeState.isActive { abortRow }
+            if session.mergeState.isActive {
+                sequenceMessageBox
+                continueRow
+                abortRow
+            }
             Rectangle().fill(Theme.divider).frame(height: 1).padding(.top, 10)
         }
     }
@@ -918,6 +1112,61 @@ struct WorkbenchView: View {
     }
 
     /// The escape hatch. A resolver without one is a trap.
+    /// Finish the stopped step, or abandon the operation.
+    ///
+    /// Continue is what closes the loop: before this, a rebase resolved in the workbench sat
+    /// half-applied until you went back to the terminal, because nothing here ran
+    /// `--continue`.
+    private var continueRow: some View {
+        let reason = SequencePolicy.blockedReason(isActive: session.mergeState.isActive,
+                                                 unresolved: session.totalUnresolved,
+                                                 writing: session.writing)
+        return HStack(spacing: 8) {
+            Button { session.continueOperation() } label: {
+                Text("Continue \(abortVerb)")
+                    .font(.ui(10, .medium))
+                    .foregroundStyle(reason == nil ? Theme.textPrimary : Theme.textDim)
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    // The diff palette's green, not the agent-state one: `Theme.Diff` exists
+                    // precisely to keep "an addition" and "an agent is done" apart.
+                    .background((reason == nil ? Color(hex: Theme.Diff.addition) : Theme.textDim)
+                        .opacity(0.14))
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).focusable(false).disabled(reason != nil)
+            .help(reason ?? "Commit this step and carry on with the \(abortVerb)")
+            // A disabled button always says why — never a dead control.
+            if let reason {
+                Text(reason).font(.ui(9.5)).foregroundStyle(Theme.textDim)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12).padding(.top, 10)
+    }
+
+    /// The message git is about to commit, editable.
+    ///
+    /// Shown only when a commit is actually pending: a rebase stopped on `break` has no message
+    /// file, and an empty box there would imply one.
+    @ViewBuilder private var sequenceMessageBox: some View {
+        if session.pendingSequenceMessage != nil {
+            VStack(alignment: .leading, spacing: 3) {
+                TextEditor(text: $session.sequenceMessageDraft)
+                    .font(.mono(10))
+                    .scrollContentBackground(.hidden)
+                    .foregroundStyle(Theme.textPrimary)
+                    .frame(height: 44)
+                    .padding(.horizontal, 5).padding(.vertical, 4)
+                    .background(Theme.surface2)
+                    .clipShape(RoundedRectangle(cornerRadius: 5))
+                Text("edit to reword this commit")
+                    .font(.ui(9)).foregroundStyle(Theme.textDim)
+            }
+            .padding(.horizontal, 12).padding(.top, 8)
+        }
+    }
+
     private var abortRow: some View {
         HStack(spacing: 0) {
             Button(role: .destructive) { abortConfirm = true } label: {
@@ -955,7 +1204,7 @@ struct WorkbenchView: View {
         return ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 openedFilesSection
-                allFilesRow
+                breadcrumbTrail
                 ForEach(sections, id: \.kind) { section in
                     sectionHeader(section)
                     ForEach(section.groups, id: \.directory) { group in
@@ -984,6 +1233,7 @@ struct WorkbenchView: View {
             .padding(.bottom, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .background(ThinScrollers())
     }
 
     /// Files opened through ⌘P — listed separately because they are not part of the diff,
@@ -1027,20 +1277,108 @@ struct WorkbenchView: View {
 
     /// Back to the whole diff. Shown only while a file is focused, so the rail doesn't
     /// carry a permanently-selected row for the default state.
-    @ViewBuilder private var allFilesRow: some View {
-        if session.focusedFile != nil {
-            Button { session.focus(file: nil) } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.left").font(.system(size: 9, weight: .semibold))
-                    Text("All \(uniqueFileCount) files").font(.ui(11, .medium))
-                    Spacer(minLength: 0)
-                }
-                .foregroundStyle(Theme.textSecondary)
-                .padding(.horizontal, 12).padding(.vertical, 5)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain).focusable(false)
+    /// Forces the enclosing scroll view to macOS's **thin overlay** scroller.
+    ///
+    /// With "Show scroll bars: Always" set system-wide, AppKit gives every scroll view the
+    /// *legacy* scroller — a permanently visible bar wide enough to read as a UI column of its
+    /// own, which in a 260pt rail is a real cost. Overlay scrollers are the thin
+    /// auto-hiding kind. Set per scroll view, so it does not fight the user's global preference
+    /// anywhere else.
+    ///
+    /// Deferred to the next runloop turn because the SwiftUI `ScrollView` has not attached this
+    /// background view to its `NSScrollView` ancestor yet during `updateNSView`.
+    private struct ThinScrollers: NSViewRepresentable {
+        func makeNSView(context: Context) -> NSView { NSView(frame: .zero) }
+
+        func updateNSView(_ view: NSView, context: Context) {
+            // Retried: the ancestor `NSScrollView` does not exist yet on the first pass, and a
+            // single deferred attempt was landing too early — the scrollers stayed legacy-thick.
+            apply(from: view, attemptsLeft: 6)
         }
+
+        private func apply(from view: NSView, attemptsLeft: Int) {
+            var ancestor = view.superview
+            while let current = ancestor, !(current is NSScrollView) {
+                ancestor = current.superview
+            }
+            guard let scrollView = ancestor as? NSScrollView else {
+                guard attemptsLeft > 0 else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    apply(from: view, attemptsLeft: attemptsLeft - 1)
+                }
+                return
+            }
+            scrollView.scrollerStyle = .overlay
+            scrollView.autohidesScrollers = true
+            // Belt as well as braces: AppKit re-asserts the *system* scroller style on its own
+            // notifications, and a legacy scroller at least gets narrower at a smaller control
+            // size rather than staying a 15pt column.
+            scrollView.verticalScroller?.controlSize = .small
+            scrollView.horizontalScroller?.controlSize = .small
+        }
+    }
+
+    /// One breadcrumb trail instead of a stack of back-rows.
+    ///
+    /// Drilling into a commit and then into a file used to produce two separate rows — a
+    /// `‹ COMMITS <sha>` above a `‹ All 3 files` — each an independent way back up one level.
+    /// A trail says the same thing in one line and makes the hierarchy visible rather than
+    /// implied: every segment but the last is a button that pops to that level.
+    @ViewBuilder private var breadcrumbTrail: some View {
+        let crumbs = breadcrumbs
+        if crumbs.count > 1 {
+            HStack(spacing: 4) {
+                ForEach(Array(crumbs.enumerated()), id: \.offset) { index, crumb in
+                    if index > 0 {
+                        Text("‹").font(.ui(10)).foregroundStyle(Theme.textDim)
+                    }
+                    // The last crumb is where you already are, so it is a label, not a control.
+                    if let pop = crumb.pop {
+                        Button(action: pop) {
+                            Text(crumb.title)
+                                .font(.ui(11)).foregroundStyle(Theme.textSecondary)
+                                .lineLimit(1)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).focusable(false)
+                        .help("Back to \(crumb.title)")
+                    } else {
+                        Text(crumb.title)
+                            .font(.ui(11, .semibold)).foregroundStyle(Theme.textPrimary)
+                            .lineLimit(1).truncationMode(.middle)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 5)
+        }
+    }
+
+    private struct Crumb {
+        let title: String
+        /// nil for the crumb you are standing on.
+        let pop: (() -> Void)?
+    }
+
+    /// Root → commit → file, with only the levels that currently exist.
+    private var breadcrumbs: [Crumb] {
+        var crumbs: [Crumb] = []
+        if session.scope == .commits {
+            if let commit = session.selectedCommit {
+                crumbs.append(Crumb(title: "Commits") { session.selectCommit(nil) })
+                crumbs.append(Crumb(title: commit.shortSha,
+                                    pop: session.focusedFile == nil ? nil
+                                                                    : { session.focus(file: nil) }))
+            }
+        } else {
+            crumbs.append(Crumb(title: "All \(uniqueFileCount) files",
+                                pop: session.focusedFile == nil ? nil
+                                                                : { session.focus(file: nil) }))
+        }
+        if let focused = session.focusedFile {
+            crumbs.append(Crumb(title: (focused as NSString).lastPathComponent, pop: nil))
+        }
+        return crumbs
     }
 
     /// Where a listed file stands relative to the index. `committed` exists because
@@ -1048,13 +1386,14 @@ struct WorkbenchView: View {
     /// already committed — calling those "unstaged" was a lie, and the stage button on
     /// them ran a `git add` that succeeded while moving nothing.
     private enum SectionKind {
-        case staged, unstaged, committed
+        case staged, unstaged, committed, inCommit
 
         var title: String {
             switch self {
             case .staged:    return "STAGED"
             case .unstaged:  return "UNSTAGED"
             case .committed: return "COMMITTED"
+            case .inCommit:  return "FILES"
             }
         }
         /// nil ⇒ no bulk action; the files can't move.
@@ -1062,7 +1401,9 @@ struct WorkbenchView: View {
             switch self {
             case .staged:    return ("Unstage all", false)
             case .unstaged:  return ("Stage all", true)
-            case .committed: return nil
+            // Nothing in history can be staged, so no row under it gets a button — the same
+            // rule as Committed, for the same reason.
+            case .committed, .inCommit: return nil
             }
         }
     }
@@ -1088,6 +1429,13 @@ struct WorkbenchView: View {
     }
 
     private var sections: [FileSection] {
+        // A commit's files are one list: the staged/unstaged/committed split describes where a
+        // change sits relative to the index, and history sits nowhere relative to it.
+        if session.selectedCommit != nil {
+            let files = scopedFiles
+            guard !files.isEmpty else { return [] }
+            return [FileSection(kind: .inCommit, groups: byDirectory(files))]
+        }
         var byKind: [SectionKind: [DiffFile]] = [:]
         // In working-tree mode the split is no longer a guess from `stagedPaths`: each file
         // is here because it appeared in one diff or the other, and a partially staged one
@@ -1139,9 +1487,9 @@ struct WorkbenchView: View {
 
     private func sectionColor(_ kind: SectionKind) -> Color {
         switch kind {
-        case .staged:    return Color(hex: Theme.Diff.addition)
-        case .unstaged:  return Theme.textSecondary
-        case .committed: return Theme.textDim
+        case .staged:              return Color(hex: Theme.Diff.addition)
+        case .unstaged:            return Theme.textSecondary
+        case .committed, .inCommit: return Theme.textDim
         }
     }
 
@@ -1190,6 +1538,11 @@ struct WorkbenchView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            // Without this the row gets macOS's default bordered button style: a rounded bezel
+            // around every filename, with its label **centred**, which is what pushed the
+            // status glyphs out of line. The stage button beside it always had `.plain`, so only
+            // this one showed it.
+            .buttonStyle(.plain).focusable(false)
             // Committed files get no button — `git add` on one succeeds and moves
             // nothing, which reads as a broken control.
             if let bulk = kind.bulkAction {
