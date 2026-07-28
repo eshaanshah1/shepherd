@@ -349,8 +349,14 @@ final class DiffRowView: LineFragmentView {
         case .none:     return nil
         case .added:    return NSColor(hex24: Theme.Diff.wordAdd).withAlphaComponent(0.55)
         case .removed:  return NSColor(hex24: Theme.Diff.wordDel).withAlphaComponent(0.55)
-        case .conflict, .conflictOurs, .conflictTheirs:
+        case .conflict:
             return NSColor(hex24: Theme.Diff.modified).withAlphaComponent(0.28)
+        // Each side's changed words brighten in that side's own colour, so the highlight
+        // reinforces which block you are reading rather than fighting it.
+        case .conflictOurs:
+            return NSColor(hex24: Theme.Diff.wordAdd).withAlphaComponent(0.55)
+        case .conflictTheirs:
+            return NSColor(hex24: Theme.Diff.modified).withAlphaComponent(0.34)
         }
     }
 }

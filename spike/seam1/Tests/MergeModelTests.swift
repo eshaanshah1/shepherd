@@ -82,6 +82,40 @@ final class MergeModelTests: XCTestCase {
         XCTAssertTrue(MergeOutput.isSplit(resolution: .bothTheirsFirst))
     }
 
+    // MARK: - Word-diff pairing
+
+    func testEqualLengthSidesPairLineForLine() {
+        let conflict = MergeConflict(id: "x", index: 1, base: [],
+                                     ours: ["let a = 1", "let b = 2"],
+                                     theirs: ["let a = 9", "let b = 8"])
+        XCTAssertEqual(MergeOutput.counterpart(in: conflict, side: .ours, index: 0),
+                       "let a = 9")
+        XCTAssertEqual(MergeOutput.counterpart(in: conflict, side: .theirs, index: 1),
+                       "let b = 2")
+    }
+
+    /// The rule `HunkPairing` had to learn: pairing by ordinal across runs of different
+    /// lengths lines up unrelated lines, and the word diff then brightens words that never
+    /// changed. Better a flat tint than a confident lie.
+    func testUnequalLengthSidesDoNotPair() {
+        let conflict = MergeConflict(id: "x", index: 1, base: [],
+                                     ours: ["one"], theirs: ["one", "two"])
+        XCTAssertNil(MergeOutput.counterpart(in: conflict, side: .ours, index: 0))
+        XCTAssertNil(MergeOutput.counterpart(in: conflict, side: .theirs, index: 0))
+    }
+
+    func testAnIndexPastTheEndPairsWithNothing() {
+        let conflict = MergeConflict(id: "x", index: 1, base: [],
+                                     ours: ["a"], theirs: ["b"])
+        XCTAssertNil(MergeOutput.counterpart(in: conflict, side: .ours, index: 5))
+    }
+
+    func testAnEmptySideNeverPairs() {
+        let conflict = MergeConflict(id: "x", index: 1, base: ["was"],
+                                     ours: [], theirs: ["b"])
+        XCTAssertNil(MergeOutput.counterpart(in: conflict, side: .theirs, index: 0))
+    }
+
     // MARK: - preview vs text
 
     func testAnUndecidedRegionPreviewsBothSides() {

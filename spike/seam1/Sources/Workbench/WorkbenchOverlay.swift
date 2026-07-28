@@ -1,13 +1,26 @@
 import AppKit
 
+/// What clicking a band's control does.
+///
+/// An enum rather than a conflict-shaped tuple, because this layer exists to serve any band
+/// with something to click — the inline review notes were stuck being decorative, with their
+/// Reply and Resolve living in a side panel, purely because a band could not receive a click.
+enum OverlayAction: Equatable {
+    case take(conflictID: String, Resolution)
+    case replyToThread(id: String)
+    case setThreadResolved(id: String, Bool)
+    case sendNoteToAgent(id: String)
+    case removeComment(id: String)
+}
+
 /// One clickable control on a band.
 struct OverlayTarget: Equatable {
-    let conflictID: String
-    let resolution: Resolution
+    let action: OverlayAction
     let title: String
     let rect: NSRect
-    /// The choice already taken. Nil resolution on the block means undecided, and then
-    /// nothing is active — the document previews ours, but that is not a decision.
+    /// The choice already taken, for a control that represents one. A nil resolution on a
+    /// conflict block means undecided, and then nothing is active — the document previews
+    /// ours, but that is not a decision.
     let isActive: Bool
 }
 
@@ -45,7 +58,7 @@ final class WorkbenchOverlayView: NSView {
     var lineIndex: ((CGFloat) -> Int?)?
     var rowCount = 0
     var rowHeight: CGFloat = 16
-    var onResolve: ((String, Resolution) -> Void)?
+    var onAction: ((OverlayAction) -> Void)?
 
     /// The scroll view the editor built, resolved live.
     var scrollViewProvider: (() -> NSScrollView?)?
@@ -170,7 +183,40 @@ final class WorkbenchOverlayView: NSView {
     /// Read by both `draw` and `hitTest`, so a button is clickable exactly where it is
     /// painted — the rule `DiffGutterView.expandTargets` set.
     static func targets(for kind: BlockKind, in band: NSRect) -> [OverlayTarget] {
-        guard case .conflictControls(_, let conflictID, let index, let total,
+        switch kind {
+        case .conflictControls:  return conflictTargets(kind, in: band)
+        case .reviewNote:        return noteTargets(kind, in: band)
+        default:                 return []
+        }
+    }
+
+    /// A review note's actions, along the bottom of its card.
+    ///
+    /// These lived only in the threads panel because an inline band could not be clicked.
+    /// A note you are reading is where you want to answer it.
+    private static func noteTargets(_ kind: BlockKind, in band: NSRect) -> [OverlayTarget] {
+        guard case .reviewNote(let id, let origin, _, _) = kind else { return [] }
+        let actions: [(OverlayAction, String)] = origin == .github
+            ? [(.replyToThread(id: id), "Reply"),
+               (.setThreadResolved(id: id, true), "Resolve"),
+               (.sendNoteToAgent(id: id), "Send to agent")]
+            : [(.removeComment(id: id), "Remove")]
+
+        let height: CGFloat = 15
+        // Bottom-left of the card, under the body text.
+        var x: CGFloat = 10
+        let y = band.maxY - height - 4
+        return actions.map { action, title in
+            let width = (title as NSString)
+                .size(withAttributes: [.font: font]).width + 12
+            let rect = NSRect(x: x, y: y, width: width, height: height)
+            x += width + 6
+            return OverlayTarget(action: action, title: title, rect: rect, isActive: false)
+        }
+    }
+
+    private static func conflictTargets(_ kind: BlockKind, in band: NSRect) -> [OverlayTarget] {
+        guard case .conflictControls(_, let conflictID, _, _,
                                      let resolution, let conflictKind,
                                      let oursLabel, let theirsLabel) = kind else { return [] }
 
@@ -201,7 +247,7 @@ final class WorkbenchOverlayView: NSView {
                 .size(withAttributes: [.font: font]).width + 16
             let rect = NSRect(x: x, y: y, width: width, height: height)
             x += width + 5
-            return OverlayTarget(conflictID: conflictID, resolution: resolution_,
+            return OverlayTarget(action: .take(conflictID: conflictID, resolution_),
                                  title: title, rect: rect,
                                  isActive: resolution == resolution_)
         }
@@ -266,6 +312,13 @@ final class WorkbenchOverlayView: NSView {
     }
 
     private func drawBand(_ kind: BlockKind, in band: NSRect) {
+        // A review note draws only its actions; `DiffRowView` still paints the card, and the
+        // two never overlap — the actions sit in the padding the card reserves for them.
+        if case .reviewNote = kind {
+            drawTargets(Self.targets(for: kind, in: band),
+                        accent: NSColor(hex24: 0xA371F7))
+            return
+        }
         let accent = NSColor(hex24: Self.leadingSide(of: kind) == .theirs
                              ? Theme.Diff.modified : Theme.Diff.addition)
         let layout = ConflictBandMetrics.controlsLayout(band)
@@ -288,7 +341,11 @@ final class WorkbenchOverlayView: NSView {
                       withAttributes: attributes)
         }
 
-        for target in Self.targets(for: kind, in: band) {
+        drawTargets(Self.targets(for: kind, in: band), accent: accent)
+    }
+
+    private func drawTargets(_ targets: [OverlayTarget], accent: NSColor) {
+        for target in targets {
             let path = NSBezierPath(roundedRect: target.rect, xRadius: 4, yRadius: 4)
             if target.isActive {
                 accent.setFill()
@@ -330,7 +387,7 @@ final class WorkbenchOverlayView: NSView {
         guard let target = visibleTargets().first(where: { $0.rect.contains(point) }) else {
             return
         }
-        onResolve?(target.conflictID, target.resolution)
+        onAction?(target.action)
     }
 
     override func mouseMoved(with event: NSEvent) {

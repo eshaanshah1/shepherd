@@ -119,6 +119,20 @@ enum MergeOutput {
         }
     }
 
+    /// The line on the other side that a conflict line should word-diff against.
+    ///
+    /// **Only when the two sides have the same number of lines.** That is the same rule
+    /// `HunkPairing` settled on for a hunk, and for the same reason: pairing by ordinal
+    /// across runs of different lengths lines up unrelated lines, and the word diff then
+    /// brightens words that never changed. Anything else renders with a flat tint, which
+    /// says "these differ" without claiming to know how.
+    static func counterpart(in conflict: MergeConflict, side: MergeSide,
+                            index: Int) -> String? {
+        guard conflict.ours.count == conflict.theirs.count else { return nil }
+        let other = side == .ours ? conflict.theirs : conflict.ours
+        return other.indices.contains(index) ? other[index] : nil
+    }
+
     /// Whether a conflict is showing both sides, and so wants the `=======` / `>>>>>>>`
     /// markers between and after them.
     ///
