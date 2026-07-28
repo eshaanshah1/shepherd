@@ -16,13 +16,10 @@ the new side on the right, aligned row for row.
 a sibling view that *draws* its text, positioned from the editor's own layout manager.
 
 The roadmap's phrasing — "needs two synchronized multibuffers" — describes the obvious
-implementation, not the right one here. Two editors means two layout managers that must
-agree about the height of every row, kept in step by scroll synchronisation and alignment
-spacers. This project's most expensive bugs have all been **two opinions about where a row
-sits**: the gutter drifting against the text (two days), the highlighter reading excerpt row
-spans as source lines, the overlay estimating its visible window from the text's line height.
-The standing rule since is exactly one opinion, and `DiffGutter` and `WorkbenchOverlay` both
-already work this way — they read `editorLineMetrics` and position themselves against it.
+implementation, and it is what VSCode does. The case against it here is narrower than it
+first looks, and §"How VSCode does it" states it accurately; **alignment is not the
+problem.** `DiffGutter` and `WorkbenchOverlay` both already read `editorLineMetrics` and
+position themselves against it, which is the pattern this reuses.
 
 A third option, one editor rendering two columns per line fragment, was rejected outright: a
 row would no longer be one piece of text, which breaks the cursor, selection, and the entire
@@ -42,25 +39,42 @@ with synchronized scrolling and *view zones* (blank spacers) keeping them aligne
 original is set read-only for a git diff but remains a real editor. That is option B above,
 and it is worth being clear that the industry-standard answer is the one this spec rejects.
 
-The case for diverging is specific rather than general:
+**We already have view zones, and the alignment objection is weak.** The first draft of this
+spec argued that two editors means "two layout managers that must agree about every row's
+height", citing the four geometry bugs this project has had. That argument does not hold and
+is recorded here so nobody rebuilds it:
 
-- Our left side has **no editing requirement at all**, so the benefit a real editor buys is
-  *selection*, not editing.
-- Two layout managers that must agree about every row's height is, by construction, the
-  failure this project has hit four times — the gutter drifting against the text, the
-  highlighter reading row spans as source lines, the overlay estimating its window from the
-  wrong line height, and the overlay parented into a dead scroll view. Every one was two
-  components disagreeing about geometry.
-- `DiffGutter` and `WorkbenchOverlay` already demonstrate the drawn-sibling pattern working
-  against the single layout manager.
-- VSCode has spent years making scroll-sync and view zones not jitter. We would be starting
-  that from nothing.
+- Our **block system is a view-zone system**. `BlockRenderer.prepareForDisplay` inflates a
+  line fragment by the height of the blocks above it — exactly what a Monaco view zone does.
+  It already carries file headers, hunk gaps, deletion bands, review notes and the conflict
+  controls, and `BlockKind.spacer(rows:)` has existed since W0 for this precise purpose.
+- With wrapping off and a fixed line-height multiple, one row **is** one line, and both
+  editors would compute height from the same font by the same formula. They agree
+  deterministically, not by negotiation. Spacer heights are exact multiples of that.
+- The four bugs cited were all cases of two components deriving geometry *differently* —
+  arithmetic against the layout manager, row spans read as source lines. Two editors running
+  the same code on the same inputs is not that failure.
+
+The case that actually stands:
+
+- Our left side has **no editing requirement at all** — it is committed history — so a real
+  editor there buys *selection*, not editing.
+- **Scroll synchronisation** has to be built and is the classic jitter source. The drawn
+  column needs none: there is one scroll view, and the column reads its offset.
+- Two editors means **two of every peripheral** — gutter, overlay, highlighter, block map —
+  and two documents in memory for a 24k-row diff.
+- The write-back guard would have to know which editor an edit came from; today it cannot
+  receive one from the wrong place because there is only one.
 
 **The concrete thing given up against VSCode parity: visible text selection in the left
 pane.** `⌘C` over a selection spanning it works through the `stringForCopyOf` hook, but there
-is no highlight and no drag-select confined to the left column. If that turns out to matter
-in use, the upgrade path is option B, and nothing in §1, §2 or §4 is wasted — the pairing
-model and the row plan are what a two-editor version would need anyway.
+is no highlight and no drag-select confined to the left column.
+
+**Decision, 2026-07-28: keep the drawn column**, knowing the above — the trade is left-pane
+selection against building scroll sync and doubling four peripheral systems, for a pane whose
+content can never be edited. If selection turns out to matter in use, the upgrade to two
+editors wastes nothing: the pairing model (§1), the row plan (§2) and the word diff (§4) are
+exactly what that version needs, and the spacer blocks it would align with already exist.
 
 ### What this costs
 
