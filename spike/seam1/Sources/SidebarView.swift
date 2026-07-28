@@ -42,7 +42,6 @@ struct SidebarView: View {
             .onPreferenceChange(FolderRegionsKey.self) { folderRegions = $0 }
 
             if updater.hasSidebarPill {
-                Divider().overlay(Theme.hairline)
                 UpdatePillView()
             }
             if !store.archivedWorktrees.isEmpty {
