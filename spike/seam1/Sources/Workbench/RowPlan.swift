@@ -39,11 +39,15 @@ struct RowOrigin: Equatable {
     /// unstaged one. Decides which diff a patch for it is synthesized from — the whole
     /// point of reading the two separately.
     let isStaged: Bool
+    /// The hunk line the left column shows opposite this row in split mode, when the two
+    /// sides paired. nil where the row is an insertion with nothing opposite it.
+    let pairedOldLineIndex: Int?
 
     init(path: String, hunkIndex: Int, lineIndex: Int, kind: DiffLineKind,
          oldLineNumber: Int? = nil, newLineNumber: Int? = nil,
          deletedRefs: [DeletedRef] = [], conflictID: String? = nil,
-         conflictSide: MergeSide? = nil, isStaged: Bool = false) {
+         conflictSide: MergeSide? = nil, isStaged: Bool = false,
+         pairedOldLineIndex: Int? = nil) {
         self.path = path
         self.hunkIndex = hunkIndex
         self.lineIndex = lineIndex
@@ -54,6 +58,7 @@ struct RowOrigin: Equatable {
         self.conflictID = conflictID
         self.conflictSide = conflictSide
         self.isStaged = isStaged
+        self.pairedOldLineIndex = pairedOldLineIndex
     }
 
     /// Whether this row's own line can go into a patch. Context lines carry no change, so
@@ -162,15 +167,19 @@ enum RowPlanner {
     ///   - revealed: per path, the 0-based new-side lines expanded out of hunk gaps.
     ///   - opened: files opened whole through `⌘P`, appended after the diff. Every line is
     ///     a row, so these are the first excerpts that aren't about a change at all.
+    /// - Parameter split: two-column mode. A removal that **pairs** with an addition is
+    ///   shown opposite it in the left column, so it must not also become a band — the band
+    ///   would reserve a second row's height for a line already on screen, and draw it
+    ///   twice. Only unpaired removals still need space of their own.
     static func plan(files: [DiffFile], staged: [DiffFile] = [],
                      revealed: [String: Set<Int>] = [:],
-                     opened: [OpenedFile] = []) -> RowPlan {
+                     opened: [OpenedFile] = [], split: Bool = false) -> RowPlan {
         var plan = RowPlan()
-        appendDiff(files, staged: false, revealed: revealed, into: &plan)
+        appendDiff(files, staged: false, revealed: revealed, split: split, into: &plan)
         if !staged.isEmpty {
             plan.blocks.append(PlannedBlock(band: .sectionHeader(title: "STAGED"),
                                             beforeRow: plan.origins.count))
-            appendDiff(staged, staged: true, revealed: revealed, into: &plan)
+            appendDiff(staged, staged: true, revealed: revealed, split: split, into: &plan)
         }
         appendOpened(opened, into: &plan)
         return plan
@@ -179,7 +188,7 @@ enum RowPlanner {
     /// One diff's files. Called twice in working-tree mode — once for what is staged and
     /// once for what is not — so a row can be traced back to the diff it came from.
     private static func appendDiff(_ files: [DiffFile], staged: Bool,
-                                   revealed: [String: Set<Int>],
+                                   revealed: [String: Set<Int>], split: Bool = false,
                                    into plan: inout RowPlan) {
         for file in files {
             plan.blocks.append(PlannedBlock(band: .fileHeader(path: file.path),
@@ -188,6 +197,16 @@ enum RowPlanner {
             let revealedLines = revealed[file.path] ?? []
 
             for (hunkIndex, hunk) in file.hunks.enumerated() {
+                // What the left column shows opposite each new-side row. Computed here
+                // rather than in the view so the pairing is decided once, by the same type
+                // that decides every other thing a row index means.
+                var pairedOld: [Int: Int] = [:]
+                var pairedRemovals: Set<Int> = []
+                for pair in SideBySidePlan.pairs(hunk) {
+                    guard let new = pair.new, let old = pair.old else { continue }
+                    pairedOld[new] = old
+                    if hunk.lines[old].kind == .removed { pairedRemovals.insert(old) }
+                }
                 if hunkIndex > 0 {
                     appendGap(between: file.hunks[hunkIndex - 1], and: hunk,
                               file: file, hunkIndex: hunkIndex, staged: staged,
@@ -199,18 +218,33 @@ enum RowPlanner {
                 // band is anchored on the row it sits above — the row a reader's eye
                 // pairs it with, and the row selection has to route it through.
                 var pending: [DeletedRef] = []
+                // Paired removals: no band, but still stageable through the row they pair to.
+                var pairedOnly: [DeletedRef] = []
 
                 for (lineIndex, line) in hunk.lines.enumerated() {
                     guard line.kind != .removed else {
-                        pending.append(DeletedRef(hunkIndex: hunkIndex, lineIndex: lineIndex,
-                                                  oldLineNumber: line.oldLineNo ?? 0))
+                        // A paired removal is drawn opposite its partner in the left column,
+                        // so in split mode it contributes no band and reserves no height.
+                        // It still rides along as a `deletedRef` so `⌘⏎` stages it.
+                        if !(split && pairedRemovals.contains(lineIndex)) {
+                            pending.append(DeletedRef(hunkIndex: hunkIndex,
+                                                      lineIndex: lineIndex,
+                                                      oldLineNumber: line.oldLineNo ?? 0))
+                        } else {
+                            pairedOnly.append(DeletedRef(hunkIndex: hunkIndex,
+                                                         lineIndex: lineIndex,
+                                                         oldLineNumber: line.oldLineNo ?? 0))
+                        }
                         continue
                     }
                     plan.origins.append(RowOrigin(path: file.path, hunkIndex: hunkIndex,
                                                   lineIndex: lineIndex, kind: line.kind,
                                                   oldLineNumber: line.oldLineNo,
                                                   newLineNumber: line.newLineNo,
-                                                  deletedRefs: pending, isStaged: staged))
+                                                  deletedRefs: pending + pairedOnly,
+                                                  isStaged: staged,
+                                                  pairedOldLineIndex: pairedOld[lineIndex]))
+                    pairedOnly = []
                     if !pending.isEmpty {
                         plan.blocks.append(band(pending, file: file, hunkIndex: hunkIndex,
                                                 beforeRow: plan.origins.count - 1))

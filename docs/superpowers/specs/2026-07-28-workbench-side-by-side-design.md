@@ -179,10 +179,12 @@ A header toggle (inline ⇄ split) and `⌥⌘\`, matching what every other diff
 mode is per-pane session state, persisted with the other workbench settings so it survives a
 reopen.
 
-Split mode is **inline-only in one place**: a conflicted file. A three-way merge has no
-meaningful two-column form — there are three sides, not two — so entering the Files scope
-with conflicts falls back to inline and says so in the header rather than rendering
-something misleading.
+Split is unavailable while anything is unmerged, and so is everything else — **conflicts lock
+the workbench to the resolver** (decided 2026-07-28, after seeing a conflicted repo offered
+alongside a vs-base diff). A tree mid-merge is broken: diffing it against a base is
+meaningless and editing around it makes the state worse. One scope, no editing, no `⌘P`, no
+staging, until nothing is unmerged. A three-way merge would have had no two-column form
+anyway — three sides, not two — but the gate is the stronger reason.
 
 ## 6. What does not change
 
@@ -204,9 +206,15 @@ pairing holds over `DiffParser` output rather than hand-written hunks.
 
 **Run it.** The drawn column is a coordinate mapping against a live layout manager, which is
 the category `xcodebuild` and a green suite cannot see — every defect of that shape this
-project has had was found by looking at it. Specifically: scroll far and check the columns do
-not drift; a tall deletion run; a file whose last hunk ends the document; and the empty-row
-hatch on a pure insertion.
+project has had was found by looking at it.
+
+The first run found six, recorded because they are the shape the next one will take: a paired
+removal drawn twice (as a band *and* as the old line opposite its addition, the band also
+reserving height for a line already on screen); the new side's word spans measured against the
+old string; band backgrounds stopping at the gutter so a full-width strip read as three pieces;
+the old column placed left of the *new* side's gutter; invisible spacer rows; and rows only
+clickable across their text, because a `Button`'s label sizes to its content and
+`contentShape` cannot widen it.
 
 ---
 

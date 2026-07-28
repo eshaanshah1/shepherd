@@ -357,6 +357,23 @@ hunk — a deleted file — has no owning row and is whole-file staging only. Ba
 base-blob syntax colours (`MultiHighlighter.baseHighlights`, parsed lazily per band, cached),
 removed tint, word-diff spans, and old numbers + `-` in the gutter.
 
+**Conflicts lock the workbench.** While `git ls-files -u` reports anything unmerged, the
+workbench *is* the resolver: one scope, no diffing against a base, no editing anywhere, `⌘P`
+and Open… inert, no split, no staging — `setScope` refuses to leave. A tree mid-merge is
+broken; diffing it is meaningless and editing around it makes it worse. The gate lifts by
+itself once nothing is unmerged. Don't add a second way to resolve (an in-editor
+marker-scraping path existed briefly and was deleted: it would fire on any file merely
+*containing* `<<<<<<<` text and offer buttons that rewrite it).
+
+**Side-by-side (`⌥⌘\`)** is **one editor, not two** — the new side is the real
+`SourceEditor` and `OldSideColumnView` draws the old side, reading that editor's layout
+manager so the columns cannot drift. The document is byte-identical in both modes, so
+`RowPlanner`, write-back, staging and the overlay cannot tell them apart; only where the old
+text lands differs, and a deletion band needs no new kind because it already reserves exactly
+the right height. A **paired** removal emits no band in split mode — it is drawn opposite its
+addition, and a band would reserve a second row for a line already on screen. See the
+[design](docs/superpowers/specs/2026-07-28-workbench-side-by-side-design.md).
+
 **Scope** is working-tree, vs-base, or **Files** (`⌃3`) — the last one is not a diff at
 all: unmerged files at the top of the rail in red, then anything opened with `⌘P`, all
 editable through W2.2's write-back.

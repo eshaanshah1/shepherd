@@ -192,6 +192,7 @@ targets:
       - path: Sources/Workbench/PatchSynth.swift
       - path: Sources/Workbench/StageSelection.swift
       - path: Sources/Workbench/RowPlan.swift
+      - path: Sources/Workbench/SideBySidePlan.swift
       - path: Sources/Workbench/EditMap.swift
       - path: Sources/Workbench/FileFinder.swift
       - path: Sources/Workbench/FileLister.swift

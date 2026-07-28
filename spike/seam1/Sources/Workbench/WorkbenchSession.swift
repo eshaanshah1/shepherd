@@ -19,6 +19,10 @@ final class WorkbenchSession: ObservableObject {
     func setScope(_ next: WorkbenchScope) {
         let previous = scope
         guard next != previous else { return }
+        // A repo mid-merge is in a broken state: comparing it to a base is meaningless and
+        // editing around it invites making things worse. While anything is unmerged the
+        // workbench *is* the resolver, and nothing else is reachable.
+        guard !hasConflicts || next == .files else { return }
         scope = next
         if next == .threads { threadsPanelOpen = true }
         if next == .files {
@@ -72,6 +76,95 @@ final class WorkbenchSession: ObservableObject {
     @Published var cursorStitchedLine: Int?
     /// Bumped whenever the stitched document is rebuilt, so views re-read it.
     @Published private(set) var revision = 0
+
+    /// Two columns instead of one. The document is **identical** in both modes — only where
+    /// the old side's text is drawn differs — which is what keeps write-back, staging, the
+    /// conflict resolver and the overlay from noticing.
+    @Published var splitView = false {
+        didSet { if splitView != oldValue { rebuildForSplitChange() } }
+    }
+
+    /// True while the workbench is locked to resolving. Nothing else is reachable.
+    var resolveOnly: Bool { hasConflicts }
+
+    /// Where two columns mean something: any scope that is a diff.
+    ///
+    /// Only the Files scope is excluded, and it covers both cases on its own — a conflicted
+    /// file has three sides rather than two, and a hand-opened file has no old side at all.
+    /// Gating on `hasConflicts` as well was wrong: it hid the toggle across the *whole repo*
+    /// whenever anything in it was unmerged, including on an ordinary vs-base diff that has
+    /// nothing to do with the merge.
+    var splitAvailable: Bool { scope != .files && !resolveOnly }
+    var showingSplit: Bool { splitView && splitAvailable }
+
+    private func rebuildForSplitChange() {
+        // A full rebuild, because the bands genuinely differ: a paired removal is a band
+        // inline and is not one in split mode, so the row plan itself changes.
+        rebuild()
+    }
+
+    /// The left column's content for a row: the paired old line, syntax-coloured from the
+    /// base blob the way a deletion band is.
+    func sideRow(_ index: Int) -> SideRow? {
+        guard showingSplit, rowOrigins.indices.contains(index) else { return nil }
+        let origin = rowOrigins[index]
+        guard let lineIndex = origin.pairedOldLineIndex,
+              let hunk = hunkFor(origin), hunk.lines.indices.contains(lineIndex)
+        else { return nil }
+        let line = hunk.lines[lineIndex]
+        if let cached = sideRowCache[index] { return cached }
+
+        let source = self.source(of: origin.path)
+        let string = NSMutableAttributedString(string: line.text,
+                                               attributes: WorkbenchMetrics.baseAttributes)
+        let theme = WorkbenchEditorTheme.current
+        let font = WorkbenchMetrics.font
+        // Context lines are identical on both sides, so they colour from the working copy;
+        // a removed line only exists in the base blob.
+        let variant: HighlightVariant = line.kind == .context ? .new : .old
+        let sourceLine = (line.oldLineNo ?? 1) - 1
+        for highlight in highlighter.variantHighlights(source: source, variant: variant,
+                                                       line: sourceLine) {
+            let location = highlight.range.location
+            let length = min(highlight.range.length, string.length - location)
+            guard location >= 0, location < string.length, length > 0 else { continue }
+            string.addAttributes([.font: theme.fontFor(for: highlight.capture, from: font),
+                                  .foregroundColor: theme.colorFor(highlight.capture)],
+                                 range: NSRange(location: location, length: length))
+        }
+        // The **old** side's spans, measured against the **old** string. Reusing the row's
+        // own style here took the new side's spans and measured them against this text, which
+        // put a highlight box at an offset belonging to a different line entirely.
+        var spans: [WordSpan] = []
+        if line.kind == .removed, let new = origin.lineIndex >= 0
+            ? hunk.lines[safe: origin.lineIndex]?.text : nil {
+            spans = WordDiff.spans(old: line.text, new: new).old
+        }
+        let made = SideRow(text: string, number: line.oldLineNo,
+                           tint: line.kind == .context ? .none : .removed,
+                           wordSpans: Self.spanOffsets(in: string, spans))
+        if sideRowCache.count > Self.maxCachedBands { sideRowCache.removeAll() }
+        sideRowCache[index] = made
+        return made
+    }
+
+    private var sideRowCache: [Int: SideRow] = [:]
+
+    private func hunkFor(_ origin: RowOrigin) -> DiffHunk? {
+        let list = origin.isStaged ? stagedFiles : files
+        guard let file = list.first(where: { $0.path == origin.path }),
+              file.hunks.indices.contains(origin.hunkIndex) else { return nil }
+        return file.hunks[origin.hunkIndex]
+    }
+
+    /// The deletion bands above a row, rendered for the **left** column in split mode.
+    func sideBandRows(_ index: Int) -> [DeletedLineRow] {
+        guard showingSplit else { return [] }
+        return blockMap.blocks(beforeStitchedLine: index).flatMap { block -> [DeletedLineRow] in
+            guard case .deletedLines = block.kind else { return [] }
+            return deletedLineRows(for: block)
+        }
+    }
 
     // MARK: - Staging
 
@@ -248,6 +341,7 @@ final class WorkbenchSession: ObservableObject {
         },
         displayName: { [weak self] source in self?.relativePath(of: source) ?? source.path },
         deletedLines: { [weak self] block in self?.deletedLineRows(for: block) ?? [] },
+        splitMode: { [weak self] in self?.showingSplit ?? false },
         rowWidth: { [weak self] in
             self?.editorScrollViewProvider?()?.documentView?.frame.width ?? 0
         },
@@ -423,7 +517,8 @@ final class WorkbenchSession: ObservableObject {
         let shown = displayedFiles
         let shownStaged = displayedStagedFiles
         let plan = RowPlanner.plan(files: shown, staged: shownStaged,
-                                   revealed: revealedLines, opened: openedFiles)
+                                   revealed: revealedLines, opened: openedFiles,
+                                   split: showingSplit)
         // Keyed by side as well as path: working-tree mode shows a partially staged file
         // twice, once per diff, and its hunk 0 is a different hunk in each.
         var hunks: [HunkKey: DiffHunk] = [:]
@@ -557,6 +652,7 @@ final class WorkbenchSession: ObservableObject {
         rowStyles = styles
         deletionStyles = bandStyles
         deletionRows.removeAll()
+        sideRowCache.removeAll()
         rowOrigins = plan.origins
         // Notes are placed after the walk, not during it: an anchor is resolved against the
         // finished row table. Emitted at `row + 1` so the band draws *under* the line it is
@@ -838,6 +934,39 @@ final class WorkbenchSession: ObservableObject {
         highlighter.invalidate(source: source(of: path), variant: .mergePreview)
     }
 
+    /// Settle a whole-file conflict in one click.
+    ///
+    /// A binary or a delete/modify has exactly one decision, so making you pick a side and
+    /// *then* press Resolve is ceremony — and worse, picking a side changed nothing visible,
+    /// so Resolve silently became enabled and there was no way to tell it had.
+    func resolveWholeFile(path: String, keeping side: MergeSide) {
+        guard let file = mergeFiles.first(where: { $0.path == path }),
+              let conflict = file.conflicts.first else { return }
+        resolutions[conflict.id] = side == .ours ? .ours : .theirs
+        resolveFile(path: path)
+    }
+
+    /// What keeping each side of a whole-file conflict actually does, in words. "Keep ours"
+    /// is meaningless when ours *is* the deletion.
+    func wholeFileChoices(_ file: MergeFile) -> [(side: MergeSide, title: String, help: String)] {
+        switch file.kind {
+        case .deletedByThem:
+            return [(.ours, "Keep the file",
+                     "Keep \(file.oursLabel)'s version; \(file.theirsLabel) deleted it"),
+                    (.theirs, "Delete it",
+                     "Accept \(file.theirsLabel)'s deletion and drop your changes")]
+        case .deletedByUs:
+            return [(.theirs, "Keep the file",
+                     "Take \(file.theirsLabel)'s version; \(file.oursLabel) deleted it"),
+                    (.ours, "Delete it",
+                     "Keep the deletion and drop \(file.theirsLabel)'s changes")]
+        default:
+            return [(.ours, "Keep \(file.oursLabel)", "Take \(file.oursLabel)'s version"),
+                    (.theirs, "Keep \(file.theirsLabel)",
+                     "Take \(file.theirsLabel)'s version")]
+        }
+    }
+
     /// Write a fully decided file and stage it.
     ///
     /// Whole-file conflicts never take this path: they have no line list, and reconstructing
@@ -1102,25 +1231,28 @@ final class WorkbenchSession: ObservableObject {
         // back to. Refused here, explicitly, rather than left to the staleness guard below
         // — that would refuse silently, and "the line went read-only for no visible reason"
         // is exactly the defect W2.2's live run turned up. `editBlockedReason` says so.
-        if conflictPaths.contains(edit.path) {
-            // A conflicted file has no on-disk text to compare against or write to, so the
-            // staleness guard below is meaningless for it; the merge preview in memory is
-            // the document. Allowed only once nothing in the file is still undecided.
-            return conflictFileAcceptsEdits(edit.path)
+        if resolveOnly {
+            // Nothing in the workbench is editable while the repo is unmerged. A conflicted
+            // file has no on-disk text to write to, and editing its *neighbours* mid-merge
+            // is a good way to make a bad state worse.
+            return conflictPaths.contains(edit.path) && conflictFileAcceptsEdits(edit.path)
         }
         return documentMatchesFile(rows: rows, edit: edit)
     }
 
-    /// Why the cursor's file can't be edited, or nil when it can. Shown in the header, so a
+    /// Why the cursor's line can't be edited, or nil when it can. Shown in the header, so a
     /// refusal is never mysterious.
     var editBlockedReason: String? {
+        guard resolveOnly else { return nil }
         guard let line = cursorStitchedLine, rowOrigins.indices.contains(line) else {
-            return nil
+            return "\(mergeFiles.count) conflict\(mergeFiles.count == 1 ? "" : "s") to resolve"
         }
         let path = rowOrigins[line].path
-        guard conflictPaths.contains(path), !conflictFileAcceptsEdits(path) else { return nil }
+        guard !conflictFileAcceptsEdits(path) else { return nil }
         let name = (path as NSString).lastPathComponent
-        return "\(name) — decide every conflict in it before editing."
+        return conflictPaths.contains(path)
+            ? "\(name) — decide every conflict in it before editing"
+            : "resolve the conflicts first"
     }
 
     /// Absorb an edit the editor has already applied to `storage`.
@@ -1487,6 +1619,7 @@ final class WorkbenchSession: ObservableObject {
 
     /// Show the finder, loading the repo's file list on first use.
     func openFinder() {
+        guard !resolveOnly else { return }
         finderOpen = true
         guard repoFiles.isEmpty else { return }
         let cwd = self.cwd
@@ -1845,5 +1978,14 @@ enum WorkbenchMetrics {
 
     static var baseAttributes: [NSAttributedString.Key: Any] {
         [.font: font, .foregroundColor: NSColor(hex24: Theme.Code.text)]
+    }
+}
+
+
+extension Array {
+    /// Bounds-checked read, for the places where an index comes from a diff rather than from
+    /// this array.
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }

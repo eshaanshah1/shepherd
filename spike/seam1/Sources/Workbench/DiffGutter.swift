@@ -294,6 +294,18 @@ final class DiffGutterView: NSView {
             let band = NSRect(x: 0, y: y, width: bounds.width, height: block.height)
             y += block.height
             guard band.intersects(dirtyRect) else { continue }
+
+            // Every band gets its own background here first. Without it the gutter kept its
+            // plain fill while the text and the old-side column carried the band's colour,
+            // so a full-width strip like "N lines skipped" read as three separate pieces
+            // with the gutter looking like a gap in it.
+            if let fill = Self.bandBackground(block.kind) {
+                fill.setFill()
+                band.fill()
+                if case .fileHeader = block.kind { Self.drawBandRule(band) }
+                if case .sectionHeader = block.kind { Self.drawBandRule(band) }
+            }
+
             switch block.kind {
             case .hunkGap(_, let collapsed):
                 for (glyph, target) in Self.expandTargets(collapsed, in: band) {
@@ -312,6 +324,33 @@ final class DiffGutterView: NSView {
                 continue
             }
         }
+    }
+
+    /// The background a band paints across the gutter, matching what the text side does with
+    /// it. nil for a band the gutter should leave alone.
+    private static func bandBackground(_ kind: BlockKind) -> NSColor? {
+        switch kind {
+        case .hunkGap, .fileHeader, .sectionHeader:
+            return NSColor(hex24: Theme.Diff.hover)
+        case .conflictControls(_, _, _, _, let resolution, _, _, _):
+            // Matches the overlay, which paints the opener in the leading side's colour.
+            let ours = resolution != .theirs && resolution != .bothTheirsFirst
+            return NSColor(hex24: ours ? Theme.Diff.addition : Theme.Diff.modified)
+                .withAlphaComponent(0.22)
+        case .conflictMarker(_, _, _, let side, _):
+            return NSColor(hex24: side == .ours ? Theme.Diff.addition : Theme.Diff.modified)
+                .withAlphaComponent(side == nil ? 0.10 : 0.22)
+        case .reviewNote(_, let origin, _, _):
+            return (origin == .mine ? NSColor(hex24: Theme.Diff.modified)
+                                    : NSColor(hex24: 0xA371F7)).withAlphaComponent(0.10)
+        case .deletedLines, .spacer, .renderedMarkdown:
+            return nil   // deletion bands fill per line; the rest want the plain gutter
+        }
+    }
+
+    private static func drawBandRule(_ band: NSRect) {
+        NSColor(hex24: Theme.Diff.separator).setFill()
+        NSRect(x: 0, y: band.maxY - 1, width: band.width, height: 1).fill()
     }
 
     /// Old-side numbers and `-` signs beside a deletion band, one per removed line.
