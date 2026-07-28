@@ -73,6 +73,9 @@ final class DiffRowView: LineFragmentView {
     var displayName: ((SourceID) -> String)?
     /// A deletion band's lines, already coloured and measured.
     var deletedLines: ((Block) -> [DeletedLineRow])?
+    /// In split mode the removed lines are drawn by `OldSideColumnView` instead, in the very
+    /// space this band reserves — so the band keeps its height and draws nothing.
+    var splitMode: (() -> Bool)?
     /// Full document width, so bands and row tints bleed the whole row instead of
     /// stopping where the line's text happens to end.
     var rowWidth: (() -> CGFloat)?
@@ -141,6 +144,7 @@ final class DiffRowView: LineFragmentView {
             case .hunkGap(_, let collapsed):
                 drawHunkGap(collapsed, in: rect)
             case .deletedLines:
+                guard splitMode?() != true else { break }
                 drawDeletedLines(block, in: rect, onscreen: onscreen)
             case .conflictMarker(_, _, let label, let side, let isEnd):
                 drawConflictMarker(label: label, side: side, isEnd: isEnd, in: rect)
@@ -378,6 +382,7 @@ final class BlockRenderer: TextLayoutManagerRenderDelegate {
     private let displayName: (SourceID) -> String
     /// A deletion band's rendered lines.
     private let deletedLines: (Block) -> [DeletedLineRow]
+    private let splitMode: () -> Bool
     private let rowWidth: () -> CGFloat
     /// Reveal part of a gap: `(file, collapsed range, from the top)`.
     private let onExpandGap: (SourceID, Range<Int>, Bool) -> Void
@@ -387,6 +392,7 @@ final class BlockRenderer: TextLayoutManagerRenderDelegate {
          blocksForStitchedLine: @escaping (Int) -> [Block] = { _ in [] },
          displayName: @escaping (SourceID) -> String = { $0.path },
          deletedLines: @escaping (Block) -> [DeletedLineRow] = { _ in [] },
+         splitMode: @escaping () -> Bool = { false },
          rowWidth: @escaping () -> CGFloat = { 0 },
          onExpandGap: @escaping (SourceID, Range<Int>, Bool) -> Void = { _, _, _ in }) {
         self.onExpandGap = onExpandGap
@@ -395,6 +401,7 @@ final class BlockRenderer: TextLayoutManagerRenderDelegate {
         self.blocksForStitchedLine = blocksForStitchedLine
         self.displayName = displayName
         self.deletedLines = deletedLines
+        self.splitMode = splitMode
         self.rowWidth = rowWidth
     }
 
@@ -447,6 +454,7 @@ final class BlockRenderer: TextLayoutManagerRenderDelegate {
         }
         view.displayName = displayName
         view.deletedLines = deletedLines
+        view.splitMode = splitMode
         view.rowWidth = rowWidth
         return view
     }

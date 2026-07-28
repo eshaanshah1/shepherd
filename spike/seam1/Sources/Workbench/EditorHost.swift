@@ -91,6 +91,9 @@ final class WriteBackCoordinator: TextViewCoordinator, TextViewDelegate {
 struct EditorHost: View {
     @ObservedObject var session: WorkbenchSession
     @State private var editorState = SourceEditorState()
+    /// Half the content area by default. Not persisted yet — a drag handle and a
+    /// `# shepherd:` key are the follow-up the design records.
+    @State private var splitWidth: CGFloat = 420
 
     private var configuration: SourceEditorConfiguration {
         SourceEditorConfiguration(
@@ -112,6 +115,14 @@ struct EditorHost: View {
 
     var body: some View {
         HStack(spacing: 0) {
+            // The old side leads, and the gutter stays with the text it numbers — a
+            // new-side gutter sitting to the left of the *old* column reads as the old
+            // side's numbers and is two numbering systems deep before any code appears.
+            if session.showingSplit {
+                OldSideColumnHost(session: session)
+                    .frame(width: max(220, splitWidth))
+                Rectangle().fill(Color(hex: Theme.Diff.separator)).frame(width: 1)
+            }
             WorkbenchGutter(session: session)
                 .frame(width: DiffGutterView.width(
                     maxLineNumber: max(session.maxOldLineNumber, session.maxNewLineNumber)))
@@ -233,6 +244,35 @@ struct EditorHost: View {
         }
     }
 
+}
+
+/// The old side of a split diff, beside the editor.
+///
+/// Owned by the session for the same reason the gutter's closures and the overlay are: it
+/// must be the same view across SwiftUI passes, and it reads the editor's layout manager.
+private struct OldSideColumnHost: NSViewRepresentable {
+    @ObservedObject var session: WorkbenchSession
+
+    func makeNSView(context: Context) -> OldSideColumnView { OldSideColumnView() }
+
+    func updateNSView(_ view: OldSideColumnView, context: Context) {
+        view.rowCount = session.gutterRowCount
+        view.rowHeight = WorkbenchMetrics.rowHeight
+        view.maxLineNumber = max(session.maxOldLineNumber, session.maxNewLineNumber)
+        view.scrollViewProvider = { [weak session] in session?.editorScrollViewProvider?() }
+        view.lineMetrics = { [weak session] index in session?.editorLineMetrics?(index) }
+        view.lineIndex = { [weak session] y in session?.editorLineIndex?(y) }
+        view.blockHeightAbove = { [weak session] index in
+            session?.blockMap.height(beforeStitchedLine: index) ?? 0
+        }
+        view.row = { [weak session] index in session?.sideRow(index) }
+        view.bandLines = { [weak session] block in session?.deletedLineRows(for: block) ?? [] }
+        view.blocksAbove = { [weak session] index in
+            session?.blockMap.blocks(beforeStitchedLine: index) ?? []
+        }
+        view.observeScroll()
+        view.needsDisplay = true
+    }
 }
 
 /// Bridges the band-control layer into SwiftUI, over the editor.

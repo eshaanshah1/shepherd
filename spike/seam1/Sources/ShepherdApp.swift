@@ -143,7 +143,7 @@ enum ShortcutActions {
         // workbench is closed; display-only here.
         case .nextHunk, .prevHunk, .stageHunk, .unstageHunk,
              .focusCommitMessage, .commentOnLine, .selectScope, .openFileFinder,
-             .acceptOurs, .acceptTheirs, .acceptBoth: break
+             .acceptOurs, .acceptTheirs, .acceptBoth, .toggleSplitDiff: break
         case .nextAlert:     s.selectNextAttention()
         case .reloadConfig:  GhosttyApp.shared.reloadConfig()
         case .showShortcuts: s.showShortcuts.toggle()
