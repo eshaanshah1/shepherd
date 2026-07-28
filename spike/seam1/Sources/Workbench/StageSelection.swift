@@ -23,13 +23,19 @@ enum StageSelection {
     /// the removals of any band it owns. Without that, removals — which have no rows of
     /// their own — could never be selected, and staging a hunk would build a patch of only
     /// its additions: half a change, silently.
+    /// `staged` picks which half of the working tree to collect: rows from the staged diff
+    /// or rows from the unstaged one. A patch must be synthesized from the same diff its
+    /// rows came from — building one from `git diff HEAD` is what gets rejected the moment
+    /// the index differs from HEAD for that file.
     static func selections(forStitchedLines lines: Set<Int>,
                            origins: [RowOrigin],
-                           files: [DiffFile]) -> [FileStageSelection] {
+                           files: [DiffFile],
+                           staged: Bool = false) -> [FileStageSelection] {
         var byPath: [String: [Int: Set<Int>]] = [:]
         for line in lines {
             guard origins.indices.contains(line) else { continue }
             let origin = origins[line]
+            guard origin.isStaged == staged else { continue }
             if origin.isStageable {
                 byPath[origin.path, default: [:]][origin.hunkIndex, default: []]
                     .insert(origin.lineIndex)

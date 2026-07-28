@@ -74,6 +74,12 @@ final class WriteBackCoordinator: TextViewCoordinator, TextViewDelegate {
                   with string: String) {
         MainActor.assumeIsolated { session?.absorbEdit(range: range, replacement: string) }
     }
+
+    /// Copy has to reconstruct the removed lines a selection spans — they are bands, not
+    /// characters in the document, so the editor's own copy drops them.
+    func textView(_ textView: TextView, stringForCopyOf range: NSRange) -> String? {
+        MainActor.assumeIsolated { session?.copyText(forRange: range) }
+    }
 }
 
 /// The workbench's text surface: our gutter beside CESE's editor over a shared storage.
@@ -147,8 +153,8 @@ struct EditorHost: View {
                         // hop later it exists, so that is when the gutter can hook up.
                         DispatchQueue.main.async { [weak session] in
                             session?.requestGutterAttach?()
-                            // Same hop, same reason: the overlay re-parents into the scroll
-                            // view this remount just built.
+                            // Same hop, same reason: the overlay has to find the clip view
+                            // this remount just built, to know when to repaint.
                             session?.refreshOverlay()
                         }
                         session?.scrollToStitchedLine = { [weak session, weak controller] line in
@@ -202,6 +208,10 @@ struct EditorHost: View {
                 )]
             )
             .id(session.revision)   // a rebuilt document re-inits the editor
+            // Deliberately **outside** that `.id`: the overlay must survive the remount a
+            // rebuild causes, or resolving one conflict takes the accept controls off every
+            // conflict in the document.
+            .overlay { WorkbenchOverlayHost(session: session) }
         }
         .background(Color(hex: Theme.Diff.buffer))
         .onChange(of: editorState.cursorPositions) { positions in
@@ -223,6 +233,23 @@ struct EditorHost: View {
         }
     }
 
+}
+
+/// Bridges the band-control layer into SwiftUI, over the editor.
+///
+/// A representable rather than a hand-parented subview so SwiftUI owns the view's lifetime
+/// and re-runs `updateNSView` on every pass — including the one after a rebuild replaces the
+/// editor. The view itself lives on the session (like the highlighter and the renderer) so
+/// it is the *same* view across those passes.
+private struct WorkbenchOverlayHost: NSViewRepresentable {
+    @ObservedObject var session: WorkbenchSession
+
+    func makeNSView(context: Context) -> WorkbenchOverlayView { session.overlay }
+
+    func updateNSView(_ view: WorkbenchOverlayView, context: Context) {
+        view.scrollViewProvider = { [weak session] in session?.editorScrollViewProvider?() }
+        session.refreshOverlay()
+    }
 }
 
 /// Bridges `DiffGutterView` into SwiftUI.
@@ -247,7 +274,7 @@ private struct WorkbenchGutter: NSViewRepresentable {
         view.lineMetrics = { [weak session] index in session?.editorLineMetrics?(index) }
         view.lineIndex = { [weak session] documentY in session?.editorLineIndex?(documentY) }
         view.blockHeightAbove = { [weak session] index in
-            session?.blockMap.blocks(beforeStitchedLine: index).reduce(0) { $0 + $1.height } ?? 0
+            session?.blockMap.height(beforeStitchedLine: index) ?? 0
         }
         view.blocksAbove = { [weak session] index in
             session?.blockMap.blocks(beforeStitchedLine: index) ?? []

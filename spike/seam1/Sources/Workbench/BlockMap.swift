@@ -8,6 +8,9 @@ enum ReviewNoteOrigin: Equatable { case mine, github }
 /// What a non-text row shows.
 enum BlockKind: Equatable {
     case fileHeader(SourceID)
+    /// A full-width divider naming a group of files — "STAGED" between the two halves of
+    /// the working tree. Belongs to no file.
+    case sectionHeader(title: String)
     /// A review note under the line it is about — a local pending comment or a PR thread.
     case reviewNote(id: String, origin: ReviewNoteOrigin, header: String, body: String)
     /// Removed lines, rendered as a block because they exist in no current file.
@@ -47,7 +50,7 @@ enum BlockKind: Equatable {
             return s
         case .conflictControls(let s, _, _, _, _, _, _, _), .conflictMarker(let s, _, _, _, _):
             return s
-        case .spacer, .reviewNote:
+        case .spacer, .reviewNote, .sectionHeader:
             return nil
         }
     }
@@ -69,8 +72,18 @@ struct Block: Equatable, Identifiable {
 struct BlockMap: Equatable {
     private(set) var blocks: [Block]
 
+    /// Running total of block heights: `prefixHeights[i]` is the combined height of
+    /// `blocks[0..<i]`. Always `blocks.count + 1` long.
+    ///
+    /// Derived state, rebuilt on every mutation. Mutations happen once per document
+    /// rebuild or per keystroke; the lookups below run **per row per draw**, which is the
+    /// asymmetry the whole index exists for.
+    private var prefixHeights: [CGFloat]
+
     init(blocks: [Block] = []) {
         self.blocks = blocks.sorted { $0.beforeStitchedLine < $1.beforeStitchedLine }
+        self.prefixHeights = []
+        reindex()
     }
 
     /// Insert, preserving sort order. Blocks at the same position keep insertion
@@ -79,26 +92,78 @@ struct BlockMap: Equatable {
         let idx = blocks.firstIndex { $0.beforeStitchedLine > block.beforeStitchedLine }
             ?? blocks.count
         blocks.insert(block, at: idx)
+        reindex()
     }
 
     /// Drop every block belonging to a file. Spacers belong to no file and survive.
     mutating func removeAll(for source: SourceID) {
         blocks.removeAll { $0.kind.source == source }
+        reindex()
     }
 
+    /// The blocks sitting immediately above a row.
+    ///
+    /// Binary search, not a filter. This is called once per visible row by the gutter, the
+    /// overlay **and** the render delegate, every one of which redraws on every scroll
+    /// event — so a linear scan meant hundreds of blocks examined per row per frame on a
+    /// 287-file diff, and W3 added two more band kinds to scan past.
     func blocks(beforeStitchedLine line: Int) -> [Block] {
-        blocks.filter { $0.beforeStitchedLine == line }
+        var index = lowerBound(line)
+        guard index < blocks.count, blocks[index].beforeStitchedLine == line else { return [] }
+        var out: [Block] = []
+        while index < blocks.count, blocks[index].beforeStitchedLine == line {
+            out.append(blocks[index])
+            index += 1
+        }
+        return out
+    }
+
+    /// Combined height of the blocks immediately above a row — the space the layout
+    /// manager folded into that row's height.
+    ///
+    /// Separate from `blocks(beforeStitchedLine:)` so the gutter can ask for the number
+    /// without materializing the array it used to reduce over.
+    func height(beforeStitchedLine line: Int) -> CGFloat {
+        var index = lowerBound(line)
+        var total: CGFloat = 0
+        while index < blocks.count, blocks[index].beforeStitchedLine == line {
+            total += blocks[index].height
+            index += 1
+        }
+        return total
     }
 
     /// Combined height of every block strictly above a stitched line — the y-offset
     /// the text at that line has been pushed down by.
     func totalHeight(aboveStitchedLine line: Int) -> CGFloat {
-        blocks.reduce(0) { $0 + ($1.beforeStitchedLine < line ? $1.height : 0) }
+        prefixHeights[lowerBound(line)]
+    }
+
+    /// Index of the first block at or after `line`. The array is kept sorted by position,
+    /// which is what makes this valid.
+    private func lowerBound(_ line: Int) -> Int {
+        var low = 0, high = blocks.count
+        while low < high {
+            let mid = (low + high) / 2
+            if blocks[mid].beforeStitchedLine < line { low = mid + 1 } else { high = mid }
+        }
+        return low
+    }
+
+    private mutating func reindex() {
+        prefixHeights = [0]
+        prefixHeights.reserveCapacity(blocks.count + 1)
+        var running: CGFloat = 0
+        for block in blocks {
+            running += block.height
+            prefixHeights.append(running)
+        }
     }
 
     /// Slide blocks at or below an edit point. Positions clamp at 0.
     mutating func shift(fromStitchedLine line: Int, by delta: Int) {
         guard delta != 0 else { return }
+        defer { reindex() }
         for idx in blocks.indices where blocks[idx].beforeStitchedLine >= line {
             blocks[idx].beforeStitchedLine = max(0, blocks[idx].beforeStitchedLine + delta)
         }

@@ -162,15 +162,31 @@ final class ConflictRowPlanTests: XCTestCase {
 
     // MARK: - Whole-file conflicts
 
-    func testAWholeFileConflictGetsControlsAndNoRows() {
+    /// A whole-file conflict contributes nothing to the document — not even a header.
+    ///
+    /// It has no rows, so anything it emitted attached at the end and piled up past the
+    /// last file's text; scrolling far enough dropped you off the document into a stack of
+    /// orphaned controls belonging to files you could not see.
+    func testAWholeFileConflictContributesNothingToTheDocument() {
         let subject = MergeFile.wholeFile(path: "logo.png", kind: .binary,
                                           oursLabel: "main", theirsLabel: "feature")
         let plan = RowPlanner.planConflicts([subject], resolutions: [:])
         XCTAssertTrue(plan.origins.isEmpty)
         XCTAssertTrue(plan.excerpts.isEmpty)
-        XCTAssertEqual(bands(plan).count, 2)   // header + controls
-        XCTAssertTrue(bands(plan).contains { if case .conflictControls = $0 { return true }
-                                             else { return false } })
+        XCTAssertTrue(plan.blocks.isEmpty, "the rail settles these, not the buffer")
+    }
+
+    /// And it must not displace the files that do have rows.
+    func testAWholeFileConflictDoesNotDisturbItsNeighbours() {
+        let whole = MergeFile.wholeFile(path: "logo.png", kind: .binary,
+                                        oursLabel: "main", theirsLabel: "feature")
+        let text = file(conflicted, path: "App.swift")
+        let plan = RowPlanner.planConflicts([whole, text, whole], resolutions: [:])
+        XCTAssertEqual(Set(plan.origins.map(\.path)), ["App.swift"])
+        XCTAssertTrue(bands(plan).allSatisfy { band in
+            if case .fileHeader(let path) = band { return path == "App.swift" }
+            return true
+        })
     }
 
     // MARK: - Multiple files

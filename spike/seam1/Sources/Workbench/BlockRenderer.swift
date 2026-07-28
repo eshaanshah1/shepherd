@@ -136,6 +136,8 @@ final class DiffRowView: LineFragmentView {
             switch block.kind {
             case .fileHeader(let source):
                 drawFileHeader(source, in: rect)
+            case .sectionHeader(let title):
+                drawSectionHeader(title, in: rect)
             case .hunkGap(_, let collapsed):
                 drawHunkGap(collapsed, in: rect)
             case .deletedLines:
@@ -271,6 +273,23 @@ final class DiffRowView: LineFragmentView {
             options: [.usesLineFragmentOrigin, .usesFontLeading],
             attributes: [.font: NSFont.systemFont(ofSize: 11),
                          .foregroundColor: NSColor(hex24: Theme.Code.text)])
+    }
+
+    /// A divider naming the group of files below it, louder than a file header so the two
+    /// halves of the working tree read as separate.
+    private func drawSectionHeader(_ title: String, in rect: NSRect) {
+        let accent = NSColor(hex24: Theme.Diff.addition)
+        accent.withAlphaComponent(0.14).setFill()
+        rect.fill()
+        accent.setFill()
+        NSRect(x: 0, y: rect.maxY - 1, width: rect.width, height: 1).fill()
+        let text = title as NSString
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 10, weight: .bold),
+            .foregroundColor: accent,
+        ]
+        let size = text.size(withAttributes: attributes)
+        text.draw(at: NSPoint(x: 10, y: rect.midY - size.height / 2), withAttributes: attributes)
     }
 
     /// A full-bleed band naming the file, so files don't run into each other.

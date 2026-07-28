@@ -13,15 +13,54 @@ struct FileMatch: Equatable {
 /// Pure and scored by properties rather than a single number pulled out of the air: the
 /// tests assert the *ordering* a file finder has to get right (basename over directory,
 /// consecutive over scattered, shorter over longer), not the weights.
+/// A repo's paths, pre-chewed into the form `FileFinder.match` actually scans.
+///
+/// Built once when the file list arrives, not per keystroke. `match` needs each path as two
+/// `[Character]` arrays — lowercased for comparison, original for camelCase boundaries — and
+/// building those inside the scan meant **two array allocations per file per keystroke**.
+/// On a repo of any size that is the whole cost of typing.
+struct FileIndex {
+    struct Entry {
+        let path: String
+        let lower: [Character]
+        let original: [Character]
+        let basenameStart: Int
+    }
+
+    let entries: [Entry]
+
+    init(_ paths: [String] = []) {
+        entries = paths.map { path in
+            let original = Array(path)
+            let lower = Array(path.lowercased())
+            return Entry(path: path, lower: lower, original: original,
+                         basenameStart: (lower.lastIndex(of: "/").map { $0 + 1 }) ?? 0)
+        }
+    }
+
+    var isEmpty: Bool { entries.isEmpty }
+    var count: Int { entries.count }
+}
+
 enum FileFinder {
 
     /// Rank paths against a query, best first. An empty query keeps the input order.
+    ///
+    /// Convenience over the indexed form, for callers holding a bare list — it pays the
+    /// index cost on every call, so it is not the one the UI uses.
     static func rank(_ paths: [String], query: String, limit: Int = 50) -> [FileMatch] {
+        rank(FileIndex(paths), query: query, limit: limit)
+    }
+
+    static func rank(_ index: FileIndex, query: String, limit: Int = 50) -> [FileMatch] {
         let trimmed = query.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else {
-            return paths.prefix(limit).map { FileMatch(path: $0, score: 0, matched: []) }
+            return index.entries.prefix(limit).map {
+                FileMatch(path: $0.path, score: 0, matched: [])
+            }
         }
-        return paths.compactMap { match(path: $0, query: trimmed) }
+        let needle = Array(trimmed.lowercased())
+        return index.entries.compactMap { match($0, needle: needle) }
             // Ties broken by path so the list doesn't reshuffle between identical scores.
             .sorted { $0.score != $1.score ? $0.score > $1.score : $0.path < $1.path }
             .prefix(limit)
@@ -39,10 +78,15 @@ enum FileFinder {
     static func match(path: String, query: String) -> FileMatch? {
         let needle = Array(query.lowercased())
         guard !needle.isEmpty else { return FileMatch(path: path, score: 0, matched: []) }
-        let haystack = Array(path.lowercased())
-        let original = Array(path)
-        let basenameStart = (haystack.lastIndex(of: "/").map { $0 + 1 }) ?? 0
+        return match(FileIndex([path]).entries[0], needle: needle)
+    }
 
+    private static func match(_ entry: FileIndex.Entry, needle: [Character]) -> FileMatch? {
+        let haystack = entry.lower
+        let original = entry.original
+        let basenameStart = entry.basenameStart
+        let path = entry.path
+        guard !needle.isEmpty else { return FileMatch(path: path, score: 0, matched: []) }
         let starts = basenameStart > 0 ? [0, basenameStart] : [0]
         let candidates = starts.compactMap {
             greedy(haystack, needle: needle, original: original,

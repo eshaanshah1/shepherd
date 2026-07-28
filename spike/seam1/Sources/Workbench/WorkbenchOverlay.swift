@@ -27,9 +27,10 @@ struct OverlayTarget: Equatable {
 ///   overlay against the text.
 /// - Row geometry comes from the editor's layout manager via `lineMetrics`. There is exactly
 ///   one opinion about where a line sits, shared with the gutter and the band renderer.
-/// - `attachIfNeeded` never short-circuits on "already attached": a rebuild re-inits the
-///   editor and brings a whole new scroll view, and an early return leaves this observing a
-///   dead clip view.
+/// - **SwiftUI owns its lifetime**, mounted beside the editor rather than parented into the
+///   scroll view by hand. Hand-parenting meant every rebuild — which is exactly what
+///   resolving a conflict causes, via `.id(session.revision)` — left it inside a scroll view
+///   nobody displays, and the bands vanished from the entire document.
 /// - `clipsToBounds = true`. It defaults to false since macOS 14, and rows are placed at
 ///   `yPos - scrollY`, so scrolled-past bands would paint over the chrome above.
 /// - Controls are **drawn**, not hosted as `NSButton`s, so scrolling causes no view churn.
@@ -45,9 +46,19 @@ final class WorkbenchOverlayView: NSView {
     var rowCount = 0
     var rowHeight: CGFloat = 16
     var onResolve: ((String, Resolution) -> Void)?
+
+    /// The scroll view the editor built, resolved live.
     var scrollViewProvider: (() -> NSScrollView?)?
 
-    private var scrollY: CGFloat = 0
+    /// Read from the clip view on demand, never cached.
+    ///
+    /// A stored copy is only as fresh as the last notification that updated it, and one
+    /// missed notification — a clip view swapped by a re-tile, an attach that landed after
+    /// the scroll — leaves every band positioned as though the document were at the top,
+    /// which puts all of them off screen. The notification now only triggers a redraw; it
+    /// is not the source of truth for where anything is.
+    private var scrollY: CGFloat { scrollViewProvider?()?.contentView.bounds.origin.y ?? 0 }
+
     private weak var observedClipView: NSClipView?
     private var hovered: OverlayTarget?
     private var trackingAreaInstalled: NSTrackingArea?
@@ -66,20 +77,21 @@ final class WorkbenchOverlayView: NSView {
 
     deinit { NotificationCenter.default.removeObserver(self) }
 
-    // MARK: - Attach
+    // MARK: - Scroll
 
-    func attachIfNeeded() {
-        guard let scrollView = scrollViewProvider?() else { return }
-        // Re-parent as well as re-observe: a rebuild builds a new scroll view, and staying
-        // in the old one leaves the overlay in a view nobody displays.
-        if superview !== scrollView {
-            removeFromSuperview()
-            frame = scrollView.bounds
-            autoresizingMask = [.width, .height]
-            scrollView.addSubview(self)
-        }
-        let clipView = scrollView.contentView
-        guard clipView !== observedClipView else { return }
+    /// Observe the editor's scroll so a scroll repaints the bands.
+    ///
+    /// **Only** a repaint trigger. Where a band sits is read from the clip view live (see
+    /// `scrollY`), so a missed notification costs a stale frame, never a wrong position.
+    ///
+    /// This view is no longer parented into the scroll view by hand. It was, and every
+    /// rebuild — which is what resolving a conflict causes — replaced the editor via
+    /// `.id(session.revision)`, leaving the overlay attached to a scroll view nobody
+    /// displays; the bands then vanished from the whole document. SwiftUI owns its lifetime
+    /// now, and this only has to find the clip view to listen to.
+    func observeScroll() {
+        guard let clipView = scrollViewProvider?()?.contentView,
+              clipView !== observedClipView else { return }
         if let observedClipView {
             NotificationCenter.default.removeObserver(
                 self, name: NSView.boundsDidChangeNotification, object: observedClipView)
@@ -89,16 +101,16 @@ final class WorkbenchOverlayView: NSView {
         NotificationCenter.default.addObserver(
             self, selector: #selector(clipViewDidScroll(_:)),
             name: NSView.boundsDidChangeNotification, object: clipView)
-        scrollY = clipView.bounds.origin.y
         needsDisplay = true
+        window?.invalidateCursorRects(for: self)
     }
 
     @objc private func clipViewDidScroll(_ notification: Notification) {
-        guard let clipView = notification.object as? NSClipView else { return }
-        scrollY = clipView.bounds.origin.y
         // A control under the pointer can scroll out from under it.
         if hovered != nil { hovered = nil }
         needsDisplay = true
+        // Cursor rects are in view coordinates, so scrolling invalidates every one of them.
+        window?.invalidateCursorRects(for: self)
     }
 
     override func updateTrackingAreas() {
@@ -114,33 +126,38 @@ final class WorkbenchOverlayView: NSView {
 
     // MARK: - Layout
 
-    /// Every control currently on screen.
+    /// The control bands the document holds, with the row each sits above.
     ///
-    /// The walk is bounded by how many rows could physically fit, exactly as the gutter's is:
-    /// each step queries the layout manager, and an unbounded walk over a 32k-row document
-    /// runs that query thousands of times per scroll event.
-    private func visibleTargets() -> [OverlayTarget] {
-        guard rowHeight > 0, rowCount > 0 else { return [] }
-        let top = bounds.minY + scrollY
-        let first = min(max(0, lineIndex?(top) ?? Int((top / rowHeight).rounded(.down))),
-                        rowCount - 1)
-        let capacity = Int((bounds.height / rowHeight).rounded(.up)) * 2 + 4
+    /// Supplied whole rather than discovered by walking rows. The row walk it replaced
+    /// estimated its window from `rowHeight`, which is the *text's* line height — but a
+    /// controls band is twice that and a conflict's rows sit between two of them, so the
+    /// estimate overshot and skipped bands that were on screen. It also depended on the
+    /// layout manager being ready, which it briefly is not right after a rebuild remounts
+    /// the editor — which is precisely when a resolution happens. There are a handful of
+    /// these per document; asking for them directly cannot miss one.
+    var controlBands: (() -> [(block: Block, row: Int)])?
 
-        var out: [OverlayTarget] = []
-        var index = first
-        while index < min(rowCount, first + capacity) {
-            let rowTop = (lineMetrics?(index)?.yPos ?? CGFloat(index) * rowHeight) - scrollY
-            if rowTop > bounds.maxY { break }
-            var y = rowTop
-            for block in blocksAbove?(index) ?? [] {
-                let band = NSRect(x: 0, y: y, width: bounds.width, height: block.height)
-                y += block.height
-                guard band.intersects(bounds) else { continue }
-                out += Self.targets(for: block.kind, in: band)
+    /// Every control on screen, with the band it belongs to positioned from real geometry.
+    private func visibleBands() -> [(kind: BlockKind, rect: NSRect)] {
+        guard let metrics = lineMetrics else { return [] }
+        var out: [(BlockKind, NSRect)] = []
+        for (block, row) in controlBands?() ?? [] {
+            guard let rowTop = metrics(row)?.yPos else { continue }
+            // A row can host several bands; this one starts below whichever precede it.
+            var y = rowTop - scrollY
+            for above in blocksAbove?(row) ?? [] {
+                if above.id == block.id { break }
+                y += above.height
             }
-            index += 1
+            let band = NSRect(x: 0, y: y, width: bounds.width, height: block.height)
+            guard band.intersects(bounds) else { continue }
+            out.append((block.kind, band))
         }
         return out
+    }
+
+    private func visibleTargets() -> [OverlayTarget] {
+        visibleBands().flatMap { Self.targets(for: $0.kind, in: $0.rect) }
     }
 
     private static let font = NSFont.systemFont(ofSize: 10, weight: .medium)
@@ -236,29 +253,15 @@ final class WorkbenchOverlayView: NSView {
 
     // MARK: - Draw
 
+    /// Draws only. **Never** attaches.
+    ///
+    /// It used to attach here too, and `attachIfNeeded` could `removeFromSuperview()` —
+    /// tearing a view out of the hierarchy part-way through its own draw pass, which is not
+    /// survivable and was crashing the app.
     override func draw(_ dirtyRect: NSRect) {
-        attachIfNeeded()
-        guard rowHeight > 0, rowCount > 0 else { return }
-
-        let top = bounds.minY + scrollY
-        let first = min(max(0, lineIndex?(top) ?? Int((top / rowHeight).rounded(.down))),
-                        rowCount - 1)
-        let capacity = Int((bounds.height / rowHeight).rounded(.up)) * 2 + 4
-
-        var index = first
-        while index < min(rowCount, first + capacity) {
-            let rowTop = (lineMetrics?(index)?.yPos ?? CGFloat(index) * rowHeight) - scrollY
-            if rowTop > bounds.maxY { break }
-            var y = rowTop
-            for block in blocksAbove?(index) ?? [] {
-                let band = NSRect(x: 0, y: y, width: bounds.width, height: block.height)
-                y += block.height
-                guard case .conflictControls = block.kind, band.intersects(dirtyRect) else {
-                    continue
-                }
-                drawBand(block.kind, in: band)
-            }
-            index += 1
+        let bands = visibleBands()
+        for band in bands where band.rect.intersects(dirtyRect) {
+            drawBand(band.kind, in: band.rect)
         }
     }
 

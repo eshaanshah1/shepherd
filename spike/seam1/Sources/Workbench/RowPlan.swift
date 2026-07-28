@@ -35,11 +35,15 @@ struct RowOrigin: Equatable {
     let conflictID: String?
     /// Which side of that conflict the row came from, so the two read differently.
     let conflictSide: MergeSide?
+    /// Whether this row came from the **staged** diff (index vs HEAD) rather than the
+    /// unstaged one. Decides which diff a patch for it is synthesized from — the whole
+    /// point of reading the two separately.
+    let isStaged: Bool
 
     init(path: String, hunkIndex: Int, lineIndex: Int, kind: DiffLineKind,
          oldLineNumber: Int? = nil, newLineNumber: Int? = nil,
          deletedRefs: [DeletedRef] = [], conflictID: String? = nil,
-         conflictSide: MergeSide? = nil) {
+         conflictSide: MergeSide? = nil, isStaged: Bool = false) {
         self.path = path
         self.hunkIndex = hunkIndex
         self.lineIndex = lineIndex
@@ -49,6 +53,7 @@ struct RowOrigin: Equatable {
         self.deletedRefs = deletedRefs
         self.conflictID = conflictID
         self.conflictSide = conflictSide
+        self.isStaged = isStaged
     }
 
     /// Whether this row's own line can go into a patch. Context lines carry no change, so
@@ -69,6 +74,9 @@ struct OpenedFile: Equatable {
 /// A non-text band, positioned but not yet measured — height is an AppKit concern.
 enum PlannedBand: Equatable {
     case fileHeader(path: String)
+    /// A full-width divider naming a group of files — "STAGED" between the two halves of
+    /// the working tree.
+    case sectionHeader(title: String)
     /// Unchanged lines still hidden between two hunks. 0-based new-side file lines.
     case hunkGap(path: String, collapsed: Range<Int>)
     /// A run of removed lines, contiguous in both the hunk and the old file.
@@ -94,6 +102,8 @@ struct PlannedBlock: Equatable, Identifiable {
         switch band {
         case .fileHeader(let path):
             return "hdr-\(path)"
+        case .sectionHeader(let title):
+            return "section-\(title)"
         case .hunkGap(let path, let collapsed):
             return "gap-\(path)-\(collapsed.lowerBound)"
         case .deletedLines(let path, let hunkIndex, let lineIndices, _):
@@ -152,10 +162,25 @@ enum RowPlanner {
     ///   - revealed: per path, the 0-based new-side lines expanded out of hunk gaps.
     ///   - opened: files opened whole through `⌘P`, appended after the diff. Every line is
     ///     a row, so these are the first excerpts that aren't about a change at all.
-    static func plan(files: [DiffFile], revealed: [String: Set<Int>] = [:],
+    static func plan(files: [DiffFile], staged: [DiffFile] = [],
+                     revealed: [String: Set<Int>] = [:],
                      opened: [OpenedFile] = []) -> RowPlan {
         var plan = RowPlan()
+        appendDiff(files, staged: false, revealed: revealed, into: &plan)
+        if !staged.isEmpty {
+            plan.blocks.append(PlannedBlock(band: .sectionHeader(title: "STAGED"),
+                                            beforeRow: plan.origins.count))
+            appendDiff(staged, staged: true, revealed: revealed, into: &plan)
+        }
+        appendOpened(opened, into: &plan)
+        return plan
+    }
 
+    /// One diff's files. Called twice in working-tree mode — once for what is staged and
+    /// once for what is not — so a row can be traced back to the diff it came from.
+    private static func appendDiff(_ files: [DiffFile], staged: Bool,
+                                   revealed: [String: Set<Int>],
+                                   into plan: inout RowPlan) {
         for file in files {
             plan.blocks.append(PlannedBlock(band: .fileHeader(path: file.path),
                                             beforeRow: plan.origins.count))
@@ -165,7 +190,7 @@ enum RowPlanner {
             for (hunkIndex, hunk) in file.hunks.enumerated() {
                 if hunkIndex > 0 {
                     appendGap(between: file.hunks[hunkIndex - 1], and: hunk,
-                              file: file, hunkIndex: hunkIndex,
+                              file: file, hunkIndex: hunkIndex, staged: staged,
                               revealed: revealedLines, into: &plan)
                 }
 
@@ -185,7 +210,7 @@ enum RowPlanner {
                                                   lineIndex: lineIndex, kind: line.kind,
                                                   oldLineNumber: line.oldLineNo,
                                                   newLineNumber: line.newLineNo,
-                                                  deletedRefs: pending))
+                                                  deletedRefs: pending, isStaged: staged))
                     if !pending.isEmpty {
                         plan.blocks.append(band(pending, file: file, hunkIndex: hunkIndex,
                                                 beforeRow: plan.origins.count - 1))
@@ -219,9 +244,6 @@ enum RowPlanner {
                 }
             }
         }
-
-        appendOpened(opened, into: &plan)
-        return plan
     }
 
     /// Files opened whole through `⌘P`, appended after whatever else the plan holds.
@@ -265,22 +287,17 @@ enum RowPlanner {
         var plan = RowPlan()
 
         for file in files {
+            // A conflict with no line-level answer — a binary blob, or a file one side
+            // deleted — contributes **nothing to the document at all**, not even a header.
+            //
+            // It has no rows, so every band it emitted attached at `origins.count` and the
+            // whole set piled up past the end of the last file's text: scroll far enough
+            // and you fell off the document into a stack of orphaned controls. The rail
+            // already carries these, which is where a decision handed to git belongs.
+            guard !file.kind.isWholeFile else { continue }
+
             plan.blocks.append(PlannedBlock(band: .fileHeader(path: file.path),
                                             beforeRow: plan.origins.count))
-
-            // A conflict with no line-level answer — a binary blob, or a file one side
-            // deleted. There is nothing to show as rows and nothing we would ever write, so
-            // it contributes one controls strip and no document at all; the decision goes to
-            // git (`WholeFileResolve`).
-            guard !file.kind.isWholeFile else {
-                if let conflict = file.conflicts.first {
-                    plan.blocks.append(PlannedBlock(
-                        band: .conflictControls(path: file.path, conflictID: conflict.id,
-                                                index: 1, total: 1),
-                        beforeRow: plan.origins.count))
-                }
-                continue
-            }
 
             let start = plan.origins.count
             var conflictIndex = 0
@@ -363,7 +380,7 @@ enum RowPlanner {
     /// The unchanged lines the diff skipped since the previous hunk: a band for what is
     /// still hidden, real rows for whatever the user expanded.
     private static func appendGap(between previous: DiffHunk, and hunk: DiffHunk,
-                                 file: DiffFile, hunkIndex: Int,
+                                 file: DiffFile, hunkIndex: Int, staged: Bool,
                                  revealed: Set<Int>, into plan: inout RowPlan) {
         // Clamped: `Range` traps on an inverted bound, and while git emits hunks in
         // ascending order, nothing in the model enforces it — a zero-count hunk or a diff
@@ -383,7 +400,7 @@ enum RowPlanner {
                     plan.origins.append(RowOrigin(
                         path: file.path, hunkIndex: hunkIndex, lineIndex: -1, kind: .context,
                         oldLineNumber: index + 1 - (hunk.newStart - hunk.oldStart),
-                        newLineNumber: index + 1))
+                        newLineNumber: index + 1, isStaged: staged))
                 }
                 plan.excerpts.append(PlannedExcerpt(
                     path: file.path, hunkIndex: nil, header: nil, kind: .context,

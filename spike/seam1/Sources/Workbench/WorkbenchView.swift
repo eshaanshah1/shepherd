@@ -93,8 +93,8 @@ struct WorkbenchView: View {
             key(.return, [.command, .option]) { session.unstageSelection() }
             key("k", [.command]) { commitFocused = true }
             key("p", [.command]) { session.openFinder() }
-            key("1", [.control]) { session.setScope(.workingTree) }
-            key("2", [.control]) { session.setScope(.vsBase) }
+            key("1", [.control]) { if session.isRepo { session.setScope(.workingTree) } }
+            key("2", [.control]) { if session.isRepo { session.setScope(.vsBase) } }
             key("3", [.control]) { session.setScope(.files) }
             key("o", [.control, .shift]) { acceptAtCursor(.ours) }
             key("t", [.control, .shift]) { acceptAtCursor(.theirs) }
@@ -267,9 +267,9 @@ struct WorkbenchView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain).focusable(false)
-                .help("Showing one file — click to show all \(session.files.count)")
+                .help("Showing one file — click to show all \(uniqueFileCount)")
             } else {
-                Text("\(session.files.count) file\(session.files.count == 1 ? "" : "s")")
+                Text("\(uniqueFileCount) file\(uniqueFileCount == 1 ? "" : "s")")
                     .font(.ui(11)).foregroundStyle(Theme.textSecondary)
             }
             if let base = session.baseLabel {
@@ -279,11 +279,17 @@ struct WorkbenchView: View {
         }
     }
 
-    private var totalAdded: Int { session.files.reduce(0) { $0 + $1.addedCount } }
-    private var totalRemoved: Int { session.files.reduce(0) { $0 + $1.removedCount } }
+    // Both halves: staging everything empties `files`, and a header reading +0 −0 over a
+    // full index is a lie.
+    private var allShownFiles: [DiffFile] { session.files + session.stagedFiles }
+    private var totalAdded: Int { allShownFiles.reduce(0) { $0 + $1.addedCount } }
+    private var totalRemoved: Int { allShownFiles.reduce(0) { $0 + $1.removedCount } }
 
     /// Comment on the cursor's line. Disabled when the cursor isn't on a reviewable
     /// line (a file header block, or before the diff has loaded).
+    /// A partially staged file appears in both halves; it is still one file.
+    private var uniqueFileCount: Int { Set(allShownFiles.map(\.path)).count }
+
     @ViewBuilder private var commentButton: some View {
         let anchor = session.cursorStitchedLine.flatMap { session.anchor(atStitchedLine: $0) }
         Button {
@@ -515,9 +521,13 @@ struct WorkbenchView: View {
     }
 
     private var scopeOptions: [ScopeOption] {
-        var options: [ScopeOption] = [
+        // Outside a repo there is nothing to diff against, so Files is the only scope —
+        // and there it is the whole workbench.
+        var options: [ScopeOption] = session.isRepo ? [
             ScopeOption(id: .workingTree, title: "Working", tint: nil),
             ScopeOption(id: .vsBase, title: "vs \(session.baseName ?? "base")", tint: nil),
+        ] : []
+        options += [
             // Conflicts live here rather than in a scope of their own: a file you have to
             // fix is still a file, and hiding it behind a second tab put the most urgent
             // thing in the workbench one click out of sight.
@@ -613,9 +623,21 @@ struct WorkbenchView: View {
                 Button { session.openFinder() } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "magnifyingglass").font(.system(size: 10))
-                        Text("Open File…").font(.ui(11, .medium))
+                        Text("Find File…").font(.ui(11, .medium))
                         Spacer(minLength: 0)
                         Text("⌘P").font(.mono(9.5)).foregroundStyle(Theme.textDim)
+                    }
+                    .foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 10).padding(.vertical, 6)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).focusable(false)
+                // ⌘P only reaches files under the pane's directory. This reaches anything.
+                Button(action: openAnyFile) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "folder").font(.system(size: 10))
+                        Text("Open…").font(.ui(11, .medium))
+                        Spacer(minLength: 0)
                     }
                     .foregroundStyle(Theme.textSecondary)
                     .padding(.horizontal, 10).padding(.vertical, 6)
@@ -636,6 +658,17 @@ struct WorkbenchView: View {
             .padding(.bottom, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    /// Open any file on disk, including one nowhere near the pane's directory.
+    private func openAnyFile() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.directoryURL = URL(fileURLWithPath: session.cwd, isDirectory: true)
+        guard panel.runModal() == .OK else { return }
+        for url in panel.urls { session.openFile(absolutePath: url.path) }
     }
 
     // MARK: - Conflicts
@@ -700,9 +733,8 @@ struct WorkbenchView: View {
         return VStack(alignment: .leading, spacing: 3) {
             Button { session.focus(file: file.path) } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: unresolved == 0
-                          ? "checkmark.circle.fill" : "exclamationmark.circle")
-                        .font(.system(size: 11))
+                    TablerIcon(paths: unresolved == 0 ? Tabler.check : Tabler.gitMerge,
+                               size: 12)
                         .foregroundStyle(unresolved == 0
                                          ? Color(hex: Theme.Diff.addition) : Theme.error)
                     Text((file.path as NSString).lastPathComponent)
@@ -884,7 +916,7 @@ struct WorkbenchView: View {
             Button { session.focus(file: nil) } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "chevron.left").font(.system(size: 9, weight: .semibold))
-                    Text("All \(session.files.count) files").font(.ui(11, .medium))
+                    Text("All \(uniqueFileCount) files").font(.ui(11, .medium))
                     Spacer(minLength: 0)
                 }
                 .foregroundStyle(Theme.textSecondary)
@@ -934,21 +966,33 @@ struct WorkbenchView: View {
         // Falls back to everything if the threads went away (resolved, or the PR closed)
         // while the scope was still selected — an empty rail with no explanation is worse
         // than showing the diff.
-        guard session.scope == .threads, !paneThreads.isEmpty else { return session.files }
+        guard session.scope == .threads, !paneThreads.isEmpty else { return allShownFiles }
         let withThreads = Set(paneThreads.map(\.path))
-        return session.files.filter { withThreads.contains($0.path) }
+        return allShownFiles.filter { withThreads.contains($0.path) }
     }
 
     private var sections: [FileSection] {
         var byKind: [SectionKind: [DiffFile]] = [:]
-        for file in scopedFiles {
-            let kind: SectionKind
-            if session.stagedPaths.contains(file.path) { kind = .staged }
-            else if session.unstagedPaths.contains(file.path) { kind = .unstaged }
-            else { kind = .committed }
-            byKind[kind, default: []].append(file)
+        // In working-tree mode the split is no longer a guess from `stagedPaths`: each file
+        // is here because it appeared in one diff or the other, and a partially staged one
+        // is genuinely in both.
+        if session.scope == .workingTree {
+            let shown = Set(scopedFiles.map(\.path))
+            byKind[.unstaged] = session.files.filter { shown.contains($0.path) }
+            byKind[.staged] = session.stagedFiles.filter { shown.contains($0.path) }
+        } else {
+            for file in scopedFiles {
+                let kind: SectionKind
+                if session.stagedPaths.contains(file.path) { kind = .staged }
+                else if session.unstagedPaths.contains(file.path) { kind = .unstaged }
+                else { kind = .committed }
+                byKind[kind, default: []].append(file)
+            }
         }
-        return [SectionKind.staged, .unstaged, .committed].compactMap { kind in
+        // Unstaged first in working-tree mode, matching the document's order.
+        let order: [SectionKind] = session.scope == .workingTree
+            ? [.unstaged, .staged] : [.staged, .unstaged, .committed]
+        return order.compactMap { kind in
             guard let files = byKind[kind], !files.isEmpty else { return nil }
             return FileSection(kind: kind, groups: byDirectory(files))
         }
@@ -1103,9 +1147,9 @@ struct WorkbenchView: View {
     // MARK: - Content
 
     @ViewBuilder private var content: some View {
-        if !session.isRepo {
-            centered("Not a git repository")
-        } else if session.scope == .files {
+        // Files first, and deliberately ahead of the repo check: it is a plain editor, and
+        // a directory that isn't a repo is still full of files worth editing.
+        if session.scope == .files {
             if session.rowOrigins.isEmpty {
                 // Either nothing is open, or every conflicted file is whole-file (a binary
                 // or a delete/modify) and has no lines to show — those settle in the rail.
@@ -1115,9 +1159,11 @@ struct WorkbenchView: View {
             } else {
                 EditorHost(session: session)
             }
-        } else if session.loading && session.files.isEmpty {
+        } else if !session.isRepo {
+            centered("Not a git repository")
+        } else if session.loading && !session.hasAnyChanges {
             centered("Loading…")
-        } else if session.files.isEmpty {
+        } else if !session.hasAnyChanges {
             centered("No changes")
         } else {
             EditorHost(session: session)
