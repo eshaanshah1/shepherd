@@ -39,6 +39,9 @@ final class WorkbenchSession: ObservableObject {
         }
     }
     @Published private(set) var files: [DiffFile] = []
+    /// Working-tree mode's staged half. Its rows sit below a STAGED divider and their
+    /// patches are built from this diff, never the unstaged one.
+    @Published private(set) var stagedFiles: [DiffFile] = []
     /// The one file the editor is scoped to, or nil for the whole diff.
     @Published private(set) var focusedFile: String?
     /// Per file, the 0-based new-side lines revealed out of the gaps between hunks.
@@ -154,6 +157,13 @@ final class WorkbenchSession: ObservableObject {
         return files.filter { $0.path == focusedFile }
     }
 
+    /// The staged half, narrowed the same way. Empty outside working-tree mode.
+    var displayedStagedFiles: [DiffFile] {
+        if scope == .files { return [] }
+        guard let focusedFile else { return stagedFiles }
+        return stagedFiles.filter { $0.path == focusedFile }
+    }
+
     /// The stitched document. One storage, shared with the editor.
     let storage = NSTextStorage()
 
@@ -207,6 +217,12 @@ final class WorkbenchSession: ObservableObject {
         view.blocksAbove = { [weak self] index in
             self?.blockMap.blocks(beforeStitchedLine: index) ?? []
         }
+        view.controlBands = { [weak self] in
+            (self?.blockMap.blocks ?? []).compactMap { block in
+                guard case .conflictControls = block.kind else { return nil }
+                return (block, block.beforeStitchedLine)
+            }
+        }
         view.onResolve = { [weak self] conflictID, resolution in
             self?.resolve(conflictID: conflictID, as: resolution)
         }
@@ -218,7 +234,7 @@ final class WorkbenchSession: ObservableObject {
     func refreshOverlay() {
         overlay.rowCount = gutterRowCount
         overlay.rowHeight = WorkbenchMetrics.rowHeight
-        overlay.attachIfNeeded()
+        overlay.observeScroll()
         overlay.needsDisplay = true
     }
 
@@ -348,12 +364,17 @@ final class WorkbenchSession: ObservableObject {
             let upstream = result.isRepo ? GitStaging.upstream(cwd: cwd) : nil
             DispatchQueue.main.async {
                 self.files = result.files
+                self.stagedFiles = result.stagedFiles
                 // A focused file that fell out of the diff would leave an empty editor
                 // with nothing explaining why.
                 if let focused = self.focusedFile,
                    !result.files.contains(where: { $0.path == focused }) {
                     self.focusedFile = nil
                 }
+                // A directory that isn't a repo has no diff to show, so the editor is the
+                // only surface with anything on it. Landing on "Not a git repository" and
+                // having no scope offered to leave it for is a dead end.
+                if !result.isRepo, self.scope != .files { self.scope = .files }
                 self.baseLabel = result.baseLabel
                 if let name = result.baseName { self.baseName = name }
                 self.isRepo = result.isRepo
@@ -398,11 +419,17 @@ final class WorkbenchSession: ObservableObject {
         }
         mergePreviews.removeAll()
         let shown = displayedFiles
-        let plan = RowPlanner.plan(files: shown, revealed: revealedLines, opened: openedFiles)
+        let shownStaged = displayedStagedFiles
+        let plan = RowPlanner.plan(files: shown, staged: shownStaged,
+                                   revealed: revealedLines, opened: openedFiles)
+        // Keyed by side as well as path: working-tree mode shows a partially staged file
+        // twice, once per diff, and its hunk 0 is a different hunk in each.
         var hunks: [HunkKey: DiffHunk] = [:]
-        for file in shown where !file.isBinary {
-            for (index, hunk) in file.hunks.enumerated() {
-                hunks[HunkKey(path: file.path, hunkIndex: index)] = hunk
+        for (isStaged, list) in [(false, shown), (true, shownStaged)] {
+            for file in list where !file.isBinary {
+                for (index, hunk) in file.hunks.enumerated() {
+                    hunks[HunkKey(path: file.path, hunkIndex: index, isStaged: isStaged)] = hunk
+                }
             }
         }
 
@@ -433,7 +460,8 @@ final class WorkbenchSession: ObservableObject {
         let dirty = dirtyPaths
 
         for origin in plan.origins {
-            let key = HunkKey(path: origin.path, hunkIndex: origin.hunkIndex)
+            let key = HunkKey(path: origin.path, hunkIndex: origin.hunkIndex,
+                              isStaged: origin.isStaged)
             if origin.lineIndex >= 0, !dirty.contains(origin.path), let hunk = hunks[key],
                hunk.lines.indices.contains(origin.lineIndex) {
                 let diffLine = hunk.lines[origin.lineIndex]
@@ -480,7 +508,12 @@ final class WorkbenchSession: ObservableObject {
                                     kind: .hunkGap(source: source(of: path), collapsed: collapsed),
                                     beforeStitchedLine: planned.beforeRow, height: rowHeight + 8))
             case .deletedLines(let path, let hunkIndex, let lineIndices, let startingOldLine):
-                let key = HunkKey(path: path, hunkIndex: hunkIndex)
+                // Bands carry no side of their own; they belong to the row above them, and
+                // a file only ever shows one deletion band per (path, hunk) per side.
+                let key = HunkKey(path: path, hunkIndex: hunkIndex,
+                                  isStaged: plan.origins.indices.contains(planned.beforeRow)
+                                      ? plan.origins[planned.beforeRow].isStaged
+                                      : (plan.origins.last?.isStaged ?? false))
                 guard let hunk = hunks[key] else { continue }
                 let removed = lineIndices.filter { hunk.lines.indices.contains($0) }
                 guard !removed.isEmpty else { continue }
@@ -496,9 +529,13 @@ final class WorkbenchSession: ObservableObject {
                                counterpart: pairing(key)?.counterpart(atLineIndex: index))
                 }
                 maxOld = max(maxOld, startingOldLine + removed.count - 1)
+            case .sectionHeader(let title):
+                blocks.append(Block(id: planned.id, kind: .sectionHeader(title: title),
+                                    beforeStitchedLine: planned.beforeRow,
+                                    height: rowHeight + 10))
             case .conflictControls, .conflictMarker:
                 // Only `RowPlanner.planConflicts` emits these, and that plan is
-                // materialized by `rebuildConflicts`. A diff can't produce one.
+                // materialized by `rebuildFiles`. A diff can't produce one.
                 continue
             }
         }
@@ -669,7 +706,7 @@ final class WorkbenchSession: ObservableObject {
                                           label: label, side: side, isEnd: isEnd),
                     beforeStitchedLine: planned.beforeRow,
                     height: ConflictBandMetrics.markerHeight))
-            case .hunkGap, .deletedLines:
+            case .hunkGap, .deletedLines, .sectionHeader:
                 continue
             }
         }
@@ -813,10 +850,17 @@ final class WorkbenchSession: ObservableObject {
     private struct HunkKey: Hashable {
         let path: String
         let hunkIndex: Int
+        var isStaged = false
     }
 
+    /// The file a path names.
+    ///
+    /// An absolute path passes straight through: the Files scope is a plain editor and can
+    /// open anything, including files nowhere near the pane's directory. Joining one onto
+    /// `cwd` would produce `/Users/me/repo/Users/me/elsewhere.txt`.
     func source(of path: String) -> SourceID {
-        SourceID((cwd as NSString).appendingPathComponent(path))
+        path.hasPrefix("/") ? SourceID(path)
+                            : SourceID((cwd as NSString).appendingPathComponent(path))
     }
 
     /// Row tint plus word spans, against the hunk's precomputed pairing.
@@ -1082,6 +1126,52 @@ final class WorkbenchSession: ObservableObject {
                 .substring(with: NSRange(location: docStart, length: docEnd - docStart))
     }
 
+    // MARK: - Copy
+
+    /// What a copy of `range` should put on the pasteboard, or nil to let the editor copy
+    /// its own characters.
+    ///
+    /// Removed lines are bands, not rows — a removed line exists in no file, so it has no
+    /// position in the document — which means the editor's own copy silently omits them. A
+    /// selection dragged across a hunk looks like it took the whole thing and doesn't. This
+    /// was a regression from before W2.0, when removals were real rows.
+    ///
+    /// Removals come back **prefixed with `-`**, matching the sign the gutter draws beside
+    /// them, while everything else is bare. Reproducing the screen exactly would interleave
+    /// old and new lines with nothing to tell them apart, which pastes as text that looks
+    /// like code and isn't — a worse failure than the one being fixed.
+    func copyText(forRange range: NSRange) -> String? {
+        guard range.length > 0, let rows = stitchedLines(in: range) else { return nil }
+        // Only deviate when the selection really spans a band; otherwise the editor's own
+        // attributed copy should stand, so syntax colours survive a paste into a rich editor.
+        let spanned = rows.dropFirst().contains { !removedLines(above: $0).isEmpty }
+        guard spanned else { return nil }
+
+        let document = storage.string as NSString
+        var out: [String] = []
+        for row in rows {
+            // A band draws *above* its row, so the one attached to the first selected row
+            // sits above the selection and is not part of it.
+            if row > rows.lowerBound {
+                out += removedLines(above: row).map { "-" + $0 }
+            }
+            guard let rowRange = self.range(forStitchedLine: row) else { continue }
+            // Clip to the selection so a partial first or last line copies what was dragged
+            // over, not the whole line.
+            let clipped = NSIntersectionRange(rowRange, range)
+            out.append(document.substring(with: clipped.length > 0 ? clipped : rowRange))
+        }
+        return out.joined(separator: "\n")
+    }
+
+    /// The removed lines drawn immediately above a row.
+    private func removedLines(above row: Int) -> [String] {
+        blockMap.blocks(beforeStitchedLine: row).flatMap { block -> [String] in
+            guard case .deletedLines(_, let lines, _) = block.kind else { return [] }
+            return lines
+        }
+    }
+
     /// Save the file the cursor is in, or every file holding edits when there isn't one.
     ///
     /// Re-diffs afterwards: the displayed diff was taken before the edit, so until it is
@@ -1244,6 +1334,8 @@ final class WorkbenchSession: ObservableObject {
                 if result.isOK {
                     self.openedPaths.removeAll()   // may not exist on the new branch
                     self.repoFiles = []
+                    self.fileIndex = FileIndex()
+                    self.repoFilesLoaded = false
                     self.revealedLines = [:]
                     self.highlighter.invalidateAll()
                     self.dropBuffers()
@@ -1265,6 +1357,12 @@ final class WorkbenchSession: ObservableObject {
     @Published private(set) var openedPaths: [String] = []
     /// Every file git knows about, for the finder. Read once per open.
     @Published private(set) var repoFiles: [String] = []
+    /// The same paths, pre-chewed for matching. Built once here rather than per keystroke
+    /// in the finder — see `FileIndex`.
+    private(set) var fileIndex = FileIndex()
+    /// Whether the file list has been read yet, so the finder can tell "still reading" from
+    /// "read it, and there is nothing".
+    @Published private(set) var repoFilesLoaded = false
     @Published var finderOpen = false
 
     /// Show the finder, loading the repo's file list on first use.
@@ -1273,8 +1371,15 @@ final class WorkbenchSession: ObservableObject {
         guard repoFiles.isEmpty else { return }
         let cwd = self.cwd
         DispatchQueue.global(qos: .userInitiated).async {
-            let files = GitStaging.listFiles(cwd: cwd)
-            DispatchQueue.main.async { self.repoFiles = files }
+            let files = FileLister.list(cwd: cwd)
+            // Indexed off the main thread too: it allocates two character arrays per path,
+            // which on a large repo is not something to do during a layout pass.
+            let index = FileIndex(files)
+            DispatchQueue.main.async {
+                self.repoFiles = files
+                self.fileIndex = index
+                self.repoFilesLoaded = true
+            }
         }
     }
 
@@ -1301,6 +1406,14 @@ final class WorkbenchSession: ObservableObject {
         focusedFile = nil
         rebuild()
         if let row = firstStitchedLine(ofFile: path) { requestScroll(toStitchedLine: row) }
+    }
+
+    /// Open a file by absolute path, from outside the pane's directory.
+    ///
+    /// Stored `cwd`-relative when it happens to live under the pane, so it reads the same as
+    /// everything else in the rail, and absolute when it doesn't.
+    func openFile(absolutePath: String) {
+        openFile(path: FileLister.relative(absolutePath, to: cwd))
     }
 
     func closeOpenedFile(path: String) {
@@ -1382,13 +1495,23 @@ final class WorkbenchSession: ObservableObject {
     /// matches the patch's old side). Git says so on stderr and it surfaces in
     /// `lastError` rather than failing silently.
     func applyStaging(lines: Set<Int>, reverse: Bool) {
-        // `displayedFiles`, not `files` — the row origins were built from what is on
-        // screen, so the hunk indices only line up against the same list.
-        let allGroups = StageSelection.selections(forStitchedLines: lines,
-                                                  origins: rowOrigins, files: displayedFiles)
-        guard !allGroups.isEmpty, !writing else { return }
-        // A committed file has nothing in the working tree to move; the patch would be
-        // rejected with git's "does not apply", which explains nothing.
+        guard !writing else { return }
+        // Stage acts on rows from the **unstaged** diff, unstage on rows from the staged
+        // one, and each patch is synthesized from the diff its rows came from. Building
+        // both from a single `git diff HEAD` is what got a patch rejected the moment the
+        // index already differed from HEAD for that file: the patch's old side described
+        // HEAD, and `git apply --cached` was applying it to an index that didn't.
+        let side = reverse
+        let allGroups = StageSelection.selections(
+            forStitchedLines: lines, origins: rowOrigins,
+            files: side ? displayedStagedFiles : displayedFiles, staged: side)
+
+        guard !allGroups.isEmpty else {
+            lastError = reverse
+                ? "Nothing staged in that selection to unstage."
+                : "Nothing unstaged in that selection to stage."
+            return
+        }
         // An edited file's diff is the one read before the edit, so its hunk line numbers
         // describe the old file — a patch built from them would apply somewhere else.
         let dirty = dirtyPaths
@@ -1396,7 +1519,9 @@ final class WorkbenchSession: ObservableObject {
             lastError = "\(edited.path) has unsaved edits — save (⌘S) before staging it."
             return
         }
-        let groups = allGroups.filter {
+        // Branch mode still shows one HEAD-based diff, where a file can be neither staged
+        // nor unstaged — already committed, so `git add` would move nothing.
+        let groups = scope == .workingTree ? allGroups : allGroups.filter {
             unstagedPaths.contains($0.path) || stagedPaths.contains($0.path)
         }
         guard !groups.isEmpty else {
@@ -1405,6 +1530,7 @@ final class WorkbenchSession: ObservableObject {
                 : "Those lines are already committed — nothing to stage."
             return
         }
+
         let cwd = self.cwd
         lastError = nil
         writing = true
@@ -1551,6 +1677,12 @@ final class WorkbenchSession: ObservableObject {
         }
         return nil
     }
+
+    /// Whether the current scope has anything to show.
+    ///
+    /// **Both** halves, because in working-tree mode staging everything empties `files`
+    /// entirely — and reporting "no changes" over a full index is exactly backwards.
+    var hasAnyChanges: Bool { !files.isEmpty || !stagedFiles.isEmpty }
 
     /// Files whose buffer holds unsaved edits, for the rail's dirty markers.
     var dirtySources: Set<SourceID> {

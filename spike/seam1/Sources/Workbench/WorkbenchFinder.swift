@@ -9,10 +9,10 @@ struct WorkbenchFinder: View {
     @State private var query = ""
     @State private var selection = 0
     @FocusState private var fieldFocused: Bool
-
-    private var matches: [FileMatch] {
-        FileFinder.rank(session.repoFiles, query: query, limit: 40)
-    }
+    /// Held rather than computed in `body`: `body` reads it, `results` reads it, and the
+    /// arrow keys and `open()` read it — so a computed property ranked the whole repo four
+    /// times per render, i.e. four times per keystroke.
+    @State private var matches: [FileMatch] = []
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -25,6 +25,14 @@ struct WorkbenchFinder: View {
                 if !matches.isEmpty {
                     Rectangle().fill(Theme.hairline).frame(height: 1)
                     results
+                } else if session.repoFilesLoaded, !query.isEmpty {
+                    // Say it searched. An empty panel is indistinguishable from a finder
+                    // that is still reading, or broken.
+                    Rectangle().fill(Theme.hairline).frame(height: 1)
+                    Text("No file matches “\(query)”")
+                        .font(.ui(11)).foregroundStyle(Theme.textDim)
+                        .padding(.horizontal, 12).padding(.vertical, 10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
             .frame(width: 520)
@@ -36,7 +44,15 @@ struct WorkbenchFinder: View {
 
             keys
         }
-        .onAppear { fieldFocused = true }
+        .onAppear { fieldFocused = true; refresh() }
+        .onChange(of: session.repoFilesLoaded) { _ in refresh() }
+        // Esc, not a `.cancelAction` button: the text field has focus and a focused field
+        // handles `cancelOperation:` itself, so the zero-sized button never sees the key.
+        .onExitCommand { session.finderOpen = false }
+    }
+
+    private func refresh() {
+        matches = FileFinder.rank(session.fileIndex, query: query, limit: 40)
     }
 
     private var field: some View {
@@ -49,9 +65,16 @@ struct WorkbenchFinder: View {
                 .foregroundStyle(Theme.textPrimary)
                 .focused($fieldFocused)
                 .onSubmit(open)
-                .onChange(of: query) { _ in selection = 0 }
-            if session.repoFiles.isEmpty {
+                .onChange(of: query) { _ in
+                    selection = 0
+                    refresh()
+                }
+            if !session.repoFilesLoaded {
                 Text("reading…").font(.ui(10)).foregroundStyle(Theme.textDim)
+            } else if session.repoFiles.isEmpty {
+                Text("no files").font(.ui(10)).foregroundStyle(Theme.textDim)
+            } else {
+                Text("\(session.repoFiles.count)").font(.ui(10)).foregroundStyle(Theme.textDim)
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 10)

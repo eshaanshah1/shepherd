@@ -179,6 +179,7 @@ targets:
       - path: Sources/UpdateService.swift
       - path: Sources/UpdateInstaller.swift
       - path: Sources/DiffModel.swift
+      - path: Sources/DiffReader.swift
       - path: Sources/Workbench/Diff3.swift
       - path: Sources/Workbench/MergeModel.swift
       - path: Sources/Workbench/ConflictParse.swift
@@ -193,6 +194,7 @@ targets:
       - path: Sources/Workbench/RowPlan.swift
       - path: Sources/Workbench/EditMap.swift
       - path: Sources/Workbench/FileFinder.swift
+      - path: Sources/Workbench/FileLister.swift
       - path: Sources/Workbench/HunkGaps.swift
       - path: Sources/CodeSurfaceState.swift
       - path: Sources/Search.swift

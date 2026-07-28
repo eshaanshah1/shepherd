@@ -119,6 +119,90 @@ final class BlockMapTests: XCTestCase {
         XCTAssertEqual(map, before)
     }
 
+    // MARK: - The row index
+
+    /// The index is derived state rebuilt on mutation, so the cheap thing to assert is that
+    /// it never disagrees with the linear answer it replaced. Every mutation path is
+    /// exercised, because a missed `reindex()` is invisible until a band draws in the wrong
+    /// place.
+    private func assertIndexAgreesWithLinearScan(_ map: BlockMap,
+                                                 _ message: String,
+                                                 file: StaticString = #filePath,
+                                                 line: UInt = #line) {
+        let positions = Set(map.blocks.map(\.beforeStitchedLine))
+        for probe in (positions.union([0, 1, 999]).map { $0 } + positions.map { $0 + 1 }) {
+            XCTAssertEqual(map.blocks(beforeStitchedLine: probe).map(\.id),
+                           map.blocks.filter { $0.beforeStitchedLine == probe }.map(\.id),
+                           "\(message): blocks at \(probe)", file: file, line: line)
+            XCTAssertEqual(map.height(beforeStitchedLine: probe),
+                           map.blocks.filter { $0.beforeStitchedLine == probe }
+                               .reduce(0) { $0 + $1.height },
+                           accuracy: 0.001, "\(message): height at \(probe)",
+                           file: file, line: line)
+            XCTAssertEqual(map.totalHeight(aboveStitchedLine: probe),
+                           map.blocks.reduce(0) {
+                               $0 + ($1.beforeStitchedLine < probe ? $1.height : 0)
+                           },
+                           accuracy: 0.001, "\(message): total above \(probe)",
+                           file: file, line: line)
+        }
+    }
+
+    private func populated() -> BlockMap {
+        BlockMap(blocks: [
+            header("h1", fileA, at: 0),
+            Block(id: "d1", kind: .deletedLines(source: fileA, lines: ["a"],
+                                                startingOldLine: 1),
+                  beforeStitchedLine: 3, height: 22),
+            Block(id: "sp", kind: .spacer(rows: 1), beforeStitchedLine: 3, height: 15),
+            header("h2", fileB, at: 9),
+        ])
+    }
+
+    func testLookupsAgreeWithALinearScanAfterInit() {
+        assertIndexAgreesWithLinearScan(populated(), "after init")
+    }
+
+    func testLookupsAgreeWithALinearScanAfterInsert() {
+        var map = populated()
+        map.insert(header("mid", fileB, at: 5))
+        map.insert(header("first", fileA, at: 0))
+        assertIndexAgreesWithLinearScan(map, "after insert")
+    }
+
+    func testLookupsAgreeWithALinearScanAfterRemoveAll() {
+        var map = populated()
+        map.removeAll(for: fileA)
+        assertIndexAgreesWithLinearScan(map, "after removeAll")
+    }
+
+    func testLookupsAgreeWithALinearScanAfterShift() {
+        var map = populated()
+        map.shift(fromStitchedLine: 3, by: 4)
+        assertIndexAgreesWithLinearScan(map, "after a positive shift")
+        map.shift(fromStitchedLine: 0, by: -50)
+        assertIndexAgreesWithLinearScan(map, "after a clamping negative shift")
+    }
+
+    func testLookupsOnAnEmptyMapAreSafe() {
+        let map = BlockMap()
+        XCTAssertTrue(map.blocks(beforeStitchedLine: 0).isEmpty)
+        XCTAssertEqual(map.height(beforeStitchedLine: 0), 0, accuracy: 0.001)
+        XCTAssertEqual(map.totalHeight(aboveStitchedLine: 42), 0, accuracy: 0.001)
+    }
+
+    func testSeveralBlocksAtOnePositionComeBackInOrder() {
+        var map = BlockMap()
+        map.insert(header("first", fileA, at: 4))
+        map.insert(Block(id: "second", kind: .spacer(rows: 2),
+                         beforeStitchedLine: 4, height: 30))
+        map.insert(Block(id: "third", kind: .spacer(rows: 1),
+                         beforeStitchedLine: 4, height: 10))
+        XCTAssertEqual(map.blocks(beforeStitchedLine: 4).map(\.id),
+                       ["first", "second", "third"])
+        XCTAssertEqual(map.height(beforeStitchedLine: 4), 68, accuracy: 0.001)
+    }
+
     func testInitSortsBlocksGivenOutOfOrder() {
         let map = BlockMap(blocks: [header("late", fileB, at: 9), header("early", fileA, at: 1)])
         XCTAssertEqual(map.blocks.map(\.id), ["early", "late"])

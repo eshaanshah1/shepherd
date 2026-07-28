@@ -26,7 +26,16 @@ enum WorkbenchScope: Equatable {
 }
 
 struct DiffReadResult: Equatable {
+    /// In working-tree mode these are the **unstaged** changes (worktree vs index) plus
+    /// untracked files; in branch mode, everything since the base.
     let files: [DiffFile]
+    /// Working-tree mode only: the **staged** changes (index vs HEAD).
+    ///
+    /// Read separately rather than folded into one `git diff HEAD`, which is staged ∪
+    /// unstaged with no way to tell which a line is — so a patch synthesized from it is
+    /// rejected whenever the index already differs from HEAD for that file. Each row now
+    /// belongs to exactly one diff, and its patch is built from that same diff.
+    let stagedFiles: [DiffFile]
     /// The base this read actually compared against — nil in working-tree mode, where the
     /// comparison is HEAD.
     let baseLabel: String?
@@ -37,7 +46,8 @@ struct DiffReadResult: Equatable {
     let baseName: String?
     let isRepo: Bool
 
-    static let notRepo = DiffReadResult(files: [], baseLabel: nil, baseName: nil, isRepo: false)
+    static let notRepo = DiffReadResult(files: [], stagedFiles: [], baseLabel: nil,
+                                        baseName: nil, isRepo: false)
 }
 
 enum DiffReader {
@@ -47,9 +57,13 @@ enum DiffReader {
         guard isGitRepo(cwd) else { return .notRepo }
         switch mode {
         case .workingTree:
-            var text = git(cwd, ["diff", "-M", "HEAD"]) ?? ""
-            text += untrackedDiff(cwd)
-            return DiffReadResult(files: DiffParser.parse(text), baseLabel: nil,
+            // `git diff` with no ref is worktree-vs-index — the unstaged half.
+            var unstaged = git(cwd, ["diff", "-M"]) ?? ""
+            unstaged += untrackedDiff(cwd)
+            let staged = git(cwd, ["diff", "-M", "--cached"]) ?? ""
+            return DiffReadResult(files: DiffParser.parse(unstaged),
+                                  stagedFiles: DiffParser.parse(staged),
+                                  baseLabel: nil,
                                   baseName: detectBase(cwd), isRepo: true)
         case .branchVsBase:
             let base = detectBase(cwd)
@@ -57,7 +71,9 @@ enum DiffReader {
             let committed = git(cwd, ["diff", "-M", "\(base)...HEAD"]) ?? ""
             let working = (git(cwd, ["diff", "-M", "HEAD"]) ?? "") + untrackedDiff(cwd)
             let merged = mergeByPath(DiffParser.parse(committed) + DiffParser.parse(working))
-            return DiffReadResult(files: merged, baseLabel: base, baseName: base, isRepo: true)
+            // The index is not what branch mode is about, so it contributes no section.
+            return DiffReadResult(files: merged, stagedFiles: [], baseLabel: base,
+                                  baseName: base, isRepo: true)
         }
     }
 
