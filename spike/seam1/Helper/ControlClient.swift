@@ -29,6 +29,31 @@ func runControl(_ argv: [String]) -> Int32 {
     }
 }
 
+/// Resolve a path the way the caller means it. The app's own working directory is
+/// `/`, so a relative path has to be anchored here, in the process that shares the
+/// user's shell cwd.
+func absolutePath(_ path: String) -> String {
+    let expanded = (path as NSString).expandingTildeInPath
+    let anchored = expanded.hasPrefix("/")
+        ? expanded
+        : (FileManager.default.currentDirectoryPath as NSString).appendingPathComponent(expanded)
+    return (anchored as NSString).standardizingPath
+}
+
+/// `tell --file <path>`: the file's contents, or stdin for `-`.
+func readTellSource(_ path: String) -> String? {
+    if path == "-" {
+        let data = FileHandle.standardInput.readDataToEndOfFile()
+        return String(data: data, encoding: .utf8)
+    }
+    let resolved = absolutePath(path)
+    guard let contents = try? String(contentsOfFile: resolved, encoding: .utf8) else {
+        FileHandle.standardError.write(Data("shepherd: cannot read \(resolved)\n".utf8))
+        return nil
+    }
+    return contents
+}
+
 /// Verb -> request dict. Extended in later tasks; ping needs no args.
 func buildRequest(verb: String, rest: [String]) -> [String: Any]? {
     switch verb {
@@ -49,7 +74,16 @@ func buildRequest(verb: String, rest: [String]) -> [String: Any]? {
     case "tab":
         guard let sub = rest.first else { return nil }
         switch sub {
-        case "new":    return rest.count >= 2 ? ["cmd": "tab-new", "workspace": rest[1]] : ["cmd": "tab-new"]
+        case "new":
+            var req: [String: Any] = ["cmd": "tab-new"]
+            var positional: [String] = []
+            var i = 1
+            while i < rest.count {
+                if rest[i] == "--cwd", i + 1 < rest.count { req["cwd"] = absolutePath(rest[i + 1]); i += 2; continue }
+                positional.append(rest[i]); i += 1
+            }
+            if let ws = positional.first { req["workspace"] = ws }
+            return req
         case "rename": guard rest.count >= 3 else { return nil }; return ["cmd": "tab-rename", "tab": rest[1], "name": rest[2]]
         case "switch": guard rest.count >= 2 else { return nil }; return ["cmd": "tab-switch", "tab": rest[1]]
         case "close":  guard rest.count >= 2 else { return nil }; return ["cmd": "tab-close", "tab": rest[1], "force": rest.contains("--force"), "archive": rest.contains("--archive")]
@@ -67,8 +101,21 @@ func buildRequest(verb: String, rest: [String]) -> [String: Any]? {
     case "zoom":  guard let p = rest.first else { return nil }; return ["cmd": "zoom", "pane": p]
 
     case "tell":
-        guard rest.count >= 2 else { return nil }
-        return ["cmd": "tell", "pane": rest[0], "text": rest[1], "enter": !rest.contains("--no-enter")]
+        guard let pane = rest.first else { return nil }
+        let args = Array(rest.dropFirst())
+        var text: String
+        if let i = args.firstIndex(of: "--file"), i + 1 < args.count {
+            guard let contents = readTellSource(args[i + 1]) else { return nil }
+            text = contents
+        } else {
+            guard let literal = args.first, !literal.hasPrefix("--") else { return nil }
+            text = literal
+        }
+        // A file almost always ends in a newline, and Enter is the caller's choice.
+        while text.hasSuffix("\n") { text.removeLast() }
+        // Multi-line text has to be pasted, not typed — see `AgentStore.pasteText`.
+        return ["cmd": "tell", "pane": pane, "text": text,
+                "enter": !args.contains("--no-enter"), "paste": text.contains("\n")]
 
     case "view":
         guard let p = rest.first else { return nil }

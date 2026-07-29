@@ -16,6 +16,13 @@ final class GhosttyApp {
     func register(_ view: GhosttySurfaceView)   { surfaceViews.add(view) }
     func unregister(_ view: GhosttySurfaceView) { surfaceViews.remove(view) }
 
+    /// Paste text into one pane's PTY via libghostty's paste path. Main thread only.
+    func paste(text: String, intoPane paneID: String) -> PasteOutcome {
+        guard let view = surfaceViews.allObjects.first(where: { $0.paneID == paneID })
+        else { return .noSurface }
+        return view.paste(text: text)
+    }
+
     /// Pane ids whose live surface is running a foreground command. Main thread only.
     func paneIDsRunningProcess() -> Set<String> {
         var running = Set<String>()

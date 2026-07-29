@@ -24,6 +24,8 @@ claude-plugin/                # THE Claude Code plugin (install: symlink into ~/
   .claude-plugin/plugin.json  #   manifest (author MUST be an object, not a string)
   hooks/hooks.json            #   maps lifecycle events -> report.sh
   hooks/report.sh             #   pure bash; sends {tab_id,event,detail} to the app socket
+  skills/controlling-shepherd #   driving the app from inside a pane (the `shepherd` CLI)
+  skills/handoff              #   spawn a successor session + the brief it needs
 spike/
   seam1/                      # THE APP (xcodegen). This is the real Shepherd, despite "spike/".
     project.yml               #   xcodegen spec (links GhosttyKit, Carbon, GameController, -lstdc++)
@@ -180,10 +182,16 @@ Code is the only first-class agent** in v1 (see [ADR 0003](.claude/adr/0003-agen
 fire-and-forget hooks, `ControlServer.swift` is request→response) lets the
 `shepherdd` binary (symlinked as `shepherd`) drive the app: `ls`/`whoami`/`state`,
 workspace/tab/pane CRUD + `split`/`focus`/`zoom` (reusing `applyRemoteCommand`),
-`tell` (→ `injectText`), `view` (agent → session-transcript via `TranscriptReader`;
+`tell` (→ `injectText`, or `pasteText` for multi-line — see the gotcha below),
+`view` (agent → session-transcript via `TranscriptReader`;
 shell → `PtyBroker` ring via `AnsiText`), `config` (file + app backends), and
-`wait` (client-side state poll). Router = `AgentStore.controlRoute`; client =
+`wait` (client-side state poll). `tab new` takes `--cwd` (resolved client-side,
+since the app's own cwd is `/`); tab verbs accept a **pane** handle too, because
+`tab new`/`pane split` hand back a pane. Router = `AgentStore.controlRoute`; client =
 `Helper/ControlClient.swift`. Verb reference: [`docs/control-cli.md`](docs/control-cli.md).
+The two skills in `claude-plugin/skills/` are how an agent inside a pane learns
+this: `controlling-shepherd` (the verbs) and `handoff` (spawning a successor
+session + the brief it needs).
 
 ### Agent state lifecycle (`StopPolicy.applyEvent` + `AgentStore.apply`)
 The transition map is the pure `applyEvent` ([ADR 0015](.claude/adr/0015-background-stop-suppression-via-background-tasks.md));
@@ -498,6 +506,7 @@ falls back to a plain shell. Requires the plugin reporting `session_id` — afte
 - **`report.sh` is pure bash on purpose** ([ADR 0004](.claude/adr/0004-plugin-protocol-and-ordering.md)). Do NOT add `python3` back — its ~50ms startup delayed `PreToolUse` past `Stop` and flipped state. State is decided by event name + env; only 3 cosmetic events parse (via `jq`).
 - **Ordering guard** ([ADR 0004](.claude/adr/0004-plugin-protocol-and-ordering.md)): mid-turn events only apply while the tab is `working`/`blocked`. A finished turn (`need-to-check`) is only left by a new `UserPromptSubmit` or focus. This is deliberate; don't remove it.
 - **Background-`Stop` suppression** ([ADR 0015](.claude/adr/0015-background-stop-suppression-via-background-tasks.md)): `Stop` fires *while a backgrounded agent is still running*, so `report.sh` reduces the `Stop` payload's `background_tasks` (Claude Code v2.1.145+) to a count of tasks the turn is paused on — allow-list **subagent/workflow/shell** hold the notification; a **monitor** does not — and `applyEvent` holds the pane at `working` when that count > 0. This **replaces** ADR 0014's launch-vs-`SubagentStop` counter, which was unreliable because those events don't pair 1:1 (seen 1 `Start` vs 6 `Stop`s). Fails safe: empty/unparseable `detail` → treated as 0 → plain finish-on-`Stop`. Decide payload questions from the **raw payload**, not `/tmp/shepherd-events.log` (it logs transitions, not payloads — the false premise behind ADR 0014).
+- **A typed newline is an Enter press, so multi-line text must be pasted, not typed.** `injectText` writes through `ghostty_surface_key`, so a multi-line prompt reaches an agent as a first line plus a submit, and the rest lands in whatever comes next. `pasteText` routes through libghostty's own paste instead, which brackets the text iff the running program enabled bracketed paste — the mode is the program's to decide, and we can't read it, which is exactly why we don't wrap `ESC[200~` ourselves. Two traps in that path: it borrows the **clipboard-read callback** (`pendingPaste` is handed over in `readClipboard`, NSPasteboard untouched), so a paste that never arrives there would sit queued and hijack the user's next ⌘V — hence the type-it fallback and the non-zero exit that reports it; and `complete_clipboard_request` must pass **`confirmed: true`**, because multi-line text trips ghostty's unsafe-paste confirmation and our confirm callback is a no-op, so an unconfirmed request is dropped in silence.
 - **Notification icon needs an asset catalog**: macOS Notification Center renders the app icon from the compiled asset catalog (`CFBundleIconName` → `Assets.car`), **not** a loose `CFBundleIconFile`/`.icns` (which the Dock reads fine). `Resources/Assets.xcassets/AppIcon.appiconset` + `CFBundleIconName: AppIcon` in `project.yml` is what makes notifications show the Shepherd icon. After changing the icon, a stale system cache may need `lsregister` / a logout to refresh.
 - **`AskUserQuestion` is detected via `PreToolUse`** ([ADR 0008](.claude/adr/0008-askuserquestion-via-pretooluse.md)) — `PreToolUse[AskUserQuestion]` → blocked. (`Elicitation`/`Notification` don't fire for it, but `PreToolUse` does — `report.sh` parses `tool_name` via `jq`.)
 - **Workbench: a row's colours come from a `HighlightVariant`, not always the working copy.** `MultiHighlighter` caches by `(SourceID, HighlightVariant)` — `.new` / `.old` / `.mergePreview` / `.snippet(id)`. A conflicted file's rows are a merge preview that exists only in memory, so anchoring them to `.new` and indexing the file on disk paints each row with whatever line sits at that number — and mid-merge that file is the marker-laden one. This is the same mapping bug that mangled highlighting on the first live run, one layer along. `invalidate(source:)` is a **filter**, not two key removals: `.snippet` ids aren't enumerable up front.
