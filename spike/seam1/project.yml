@@ -5,9 +5,11 @@ options:
     macOS: "13.0"
   createIntermediateGroups: true
 packages:
+  # Vendored (blobless) rather than fetched: a full clone is 3.2G of historical
+  # parser.c blobs, paid again per worktree. Run scripts/vendor-codeedit-languages.sh
+  # to populate; the tag it checks out is the version pin.
   CodeEditLanguages:
-    url: https://github.com/CodeEditApp/CodeEditLanguages
-    exactVersion: 0.1.20
+    path: ../../vendor/CodeEditLanguages
   CodeEditSymbols:
     url: https://github.com/CodeEditApp/CodeEditSymbols
     exactVersion: 0.2.3
