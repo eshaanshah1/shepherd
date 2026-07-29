@@ -47,6 +47,12 @@ targets:
     sources:
       - path: Sources
       - path: Resources
+      # Ship the Claude Code plugin inside the bundle so an installed app can link
+      # it into ~/.claude/skills itself — a DMG user has no checkout to symlink.
+      # A folder reference, so hooks/ and .claude-plugin/ are copied verbatim.
+      - path: ../../claude-plugin
+        type: folder
+        buildPhase: resources
     dependencies:
       - framework: ../../vendor/GhosttyKit.xcframework
         embed: false
@@ -165,6 +171,7 @@ targets:
       - path: Sources/WorktreeService.swift
       - path: Sources/ShepherdConfigWriter.swift
       - path: Sources/WorktreeHookRunner.swift
+      - path: Sources/ClaudePluginInstaller.swift
       - path: Sources/WorktreeArchive.swift
       - path: Sources/PRStatus.swift
       - path: Sources/PRComments.swift
