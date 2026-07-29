@@ -20,7 +20,8 @@ SPEC.md                       # the v1 design record (state model, engine, scope
 README.md                     # short top-level intro
 scripts/build-libghostty.sh   # reproducible libghostty -> vendor/GhosttyKit.xcframework build
 vendor/GhosttyKit.xcframework # compiled libghostty (GITIGNORED, ~100MB; rebuild via the script)
-claude-plugin/                # THE Claude Code plugin (install: symlink into ~/.claude/skills)
+claude-plugin/                # THE Claude Code plugin (symlink into ~/.claude/skills for dev;
+                              #   also bundled into Shepherd.app/Contents/Resources for users)
   .claude-plugin/plugin.json  #   manifest (author MUST be an object, not a string)
   hooks/hooks.json            #   maps lifecycle events -> report.sh
   hooks/report.sh             #   pure bash; sends {tab_id,event,detail} to the app socket
@@ -54,7 +55,8 @@ spike/
 - `ShortcutCatalog.swift` — **pure model**: the single source of truth for keyboard shortcuts (`ShortcutID`/`ShortcutCategory`/`ShortcutCommand` + `ShortcutCatalog.all`/`menuCommands`). Both the menu bar and the `⌘/` cheatsheet render from it. In `ShepherdModelTests`.
 - `ShortcutCheatsheetView.swift` — the `⌘/` HUD overlay: a centered two-column reference card built from `ShortcutCatalog`, over a dimmed click-to-dismiss backdrop; Esc via a hidden `.cancelAction` button.
 - `SocketServer.swift` — in-app unix-domain socket server (receives `{tab_id,event,detail}` — `tab_id` is really the pane id).
-- `SettingsView.swift` — the unified **Settings window** (⌘,): a themed `TabView` (Appearance / Workspaces / Remote / Keybindings / General). Appearance round-trips theme/`font-family`/`font-size` into `~/.config/shepherd/config` via `ShepherdConfigWriter` + `reloadConfig()`; Workspaces edits the per-workspace `defaultPath` + the **worktree hook** editor (`store.setWorktreeHook`); Remote/General mirror existing serve/pairing + Stay-Awake/worktree-base/pane-collapse controls; Keybindings is a read-only `ShortcutCatalog` render (rebinding TBD).
+- `SettingsView.swift` — the unified **Settings window** (⌘,): a themed `TabView` (Appearance / Workspaces / Remote / Keybindings / General). Appearance round-trips theme/`font-family`/`font-size` into `~/.config/shepherd/config` via `ShepherdConfigWriter` + `reloadConfig()`; Workspaces edits the per-workspace `defaultPath` + the **worktree hook** editor (`store.setWorktreeHook`); Remote/General mirror existing serve/pairing + Stay-Awake/worktree-base/pane-collapse controls; Keybindings is a read-only `ShortcutCatalog` render (rebinding TBD). General also carries the **Claude Code plugin** installer row (`ClaudePluginInstaller`).
+- `ClaudePluginInstaller.swift` — **pure model** + Foundation IO: `state(entry:bundled:)` classifies what sits at `~/.claude/skills/shepherd` (ours / another checkout's link / a real dir / nothing / no bundled copy) and `install()` links it at the app's bundled `claude-plugin/`. **Creates, never replaces** — see [ADR 0005](.claude/adr/0005-plugin-install-via-skills-dir.md). In `ShepherdModelTests`.
 - `ShepherdConfigWriter.swift` — **pure model**: `apply(contents:sets:)` surgically updates specific keys (native ghostty keys + `# shepherd:` comment keys) in the config, preserving the hand-written file, + a Foundation file-IO `set(_:)`. In `ShepherdModelTests`.
 - `WorktreeHookRunner.swift` — **pure model**: `hookEnvironment(...)` (the `WORKTREE_*`/`REPO_NAME` map) + a Foundation `Process` `run(script:cwd:env:)` (`bash -lc`, off-main). In `ShepherdModelTests`.
 - `SidebarView.swift` — the **accordion** of workspaces: a top bar (`WORKSPACES` · `+` new-workspace · `⋯` overflow = serve-toggle + add-remote-host + pairing code) over a **custom `ScrollView`/`LazyVStack` (not `List`)** iterating every workspace as a collapsible **`WorkspaceFolderHeader`** (chevron · aggregate dot · name · hover-`+`; tap=collapse, right-click=rename/collapse/delete, drag=reorder via `FolderCentersKey`) followed by its indented tab rows. Unsplit tabs render a `TabRow` (leading glyph + name + status word, live drag-reorder, rename); split tabs render a **`SplitTabGroup`** — pip strip, zoom-dimmed. Rows carry their owning `workspaceID` and use workspace-scoped store ops ([ADR 0017](.claude/adr/0017-workspace-folders-accordion-sidebar.md)); T3-Code styling ([ADR 0009](.claude/adr/0009-sidebar-custom-rows-not-list.md)).
@@ -76,7 +78,7 @@ spike/
   - `UpdateController.swift` — `@MainActor` state machine (`UpdatePhase`) the UI binds to: daily cadence (`shepherd.update.lastCheck`), skip (`shepherd.update.skippedVersion`), auto-check toggle (`shepherd.update.autoCheckEnabled`), background download, restart-now / restart-when-idle 10s countdown. **Dormant** unless `isEligible` (real release build — not `-dev`/`.dev` — in a writable `/Applications`).
   - `UpdatePillView.swift` — the sidebar-footer pill (`updater.hasSidebarPill`) + popover: notes + Download & Install, then Restart now / when idle; `×` = skip this version. Settings → General "Software update" section mirrors it (Check for Updates / notes panel / auto-check toggle).
 
-`Tests/` holds the **`ShepherdModelTests`** target (a `bundle.unit-test` in `project.yml`: `SplitTreeTests.swift`, `WorkspaceTests.swift`, `PersistenceTests.swift`, `SleepPolicyTests.swift`, `StopPolicyTests.swift`, `WorktreeArchiveTests.swift`, `PRStatusTests.swift`, `ShortcutCatalogTests.swift`, `ShepherdConfigWriterTests.swift`, `WorktreeHookRunnerTests.swift`, `VersionTests.swift`, `IdlePolicyTests.swift`, `UpdateServiceTests.swift`, `UpdateInstallerTests.swift`, plus the workbench's
+`Tests/` holds the **`ShepherdModelTests`** target (a `bundle.unit-test` in `project.yml`: `SplitTreeTests.swift`, `WorkspaceTests.swift`, `PersistenceTests.swift`, `SleepPolicyTests.swift`, `StopPolicyTests.swift`, `WorktreeArchiveTests.swift`, `PRStatusTests.swift`, `ShortcutCatalogTests.swift`, `ShepherdConfigWriterTests.swift`, `WorktreeHookRunnerTests.swift`, `ClaudePluginInstallerTests.swift`, `VersionTests.swift`, `IdlePolicyTests.swift`, `UpdateServiceTests.swift`, `UpdateInstallerTests.swift`, plus the workbench's
 `StitchMapTests`/`BlockMapTests`/`WordDiffTests`(+`HunkPairingTests`)/`LockPolicyTests`/
 `PatchSynthTests`/`StageSelectionTests`/`RowPlanTests`/`HunkGapsTests`, plus W5a's
 `CommitHistoryTests`/`DocumentProvenanceTests`/`BlameParseTests`/`BlameLaneTests`/`SequencePolicyTests`
@@ -125,6 +127,17 @@ ln -s "$PWD/claude-plugin" ~/.claude/skills/shepherd   # auto-loads as shepherd@
 Then `/reload-plugins` in any Claude session. Because it's symlinked, edits to
 `claude-plugin/` apply on the next `/reload-plugins` — no reinstall. It's a
 **silent no-op outside Shepherd**, safe to leave installed globally.
+
+**Keep using the repo symlink when developing** — it's the only variant your edits
+reach. End users don't need it: the `Shepherd` target now bundles `claude-plugin/`
+into `Contents/Resources` and Settings → General → *Install plugin* links
+`~/.claude/skills/shepherd` at the copy inside the app
+(`ClaudePluginInstaller`, [ADR 0005](.claude/adr/0005-plugin-install-via-skills-dir.md)).
+Install only ever *creates* the link — a foreign link or a real directory at that
+path is reported and left alone, so it can't delete your checkout symlink. The
+**dev target deliberately doesn't bundle it** (its Resources are rebuilt every
+run, so a link into them would dangle), which is what `PluginInstallState
+.unavailable` renders.
 
 ### 4. Shepherd Dev — throwaway dev instance (`scripts/dev.sh`)
 Iterate on the app **without killing your daily driver**. `ShepherdDev` is a second

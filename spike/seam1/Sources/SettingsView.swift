@@ -526,6 +526,9 @@ struct GeneralSettings: View {
     @EnvironmentObject private var updater: UpdateController
     @State private var worktreeBase: String = ""
     @State private var panesCollapsed: Bool = UserDefaults.standard.bool(forKey: "shepherd.panes.defaultCollapsed")
+    @State private var pluginState: PluginInstallState = .unavailable
+    @State private var pluginJustInstalled = false
+    @State private var pluginError: String?
 
     private var configPath: String {
         (NSHomeDirectory() as NSString).appendingPathComponent(".config/shepherd/config")
@@ -578,6 +581,11 @@ struct GeneralSettings: View {
                 PathHint(path: worktreeBase)
             }
 
+            SettingsField(label: "Claude Code plugin",
+                          footnote: "Agent state comes from Claude Code's hooks — without the plugin, panes stay plain shells.") {
+                pluginPanel
+            }
+
             SettingsField(label: "Configuration") {
                 SettingsButton(title: "Open config file", systemImage: "doc.text") {
                     NSWorkspace.shared.open(URL(fileURLWithPath: configPath))
@@ -587,6 +595,53 @@ struct GeneralSettings: View {
         .onAppear {
             let contents = (try? String(contentsOfFile: configPath, encoding: .utf8)) ?? ""
             worktreeBase = parseShepherdConfig(contents).worktreeBase ?? ""
+            pluginState = ClaudePluginInstaller.currentState()
+        }
+    }
+
+    @ViewBuilder private var pluginPanel: some View {
+        switch pluginState {
+        case .notInstalled:
+            HStack(spacing: 10) {
+                SettingsButton(title: "Install plugin", systemImage: "arrow.down.circle", prominent: true) {
+                    do {
+                        try ClaudePluginInstaller.install()
+                        pluginError = nil
+                        pluginJustInstalled = true
+                    } catch {
+                        pluginError = error.localizedDescription
+                    }
+                    pluginState = ClaudePluginInstaller.currentState()
+                }
+                Text("Not installed").font(.ui(12)).foregroundStyle(Theme.blocked)
+            }
+        case .installed:
+            VStack(alignment: .leading, spacing: 6) {
+                Text(pluginJustInstalled
+                     ? "Installed — run /reload-plugins in any Claude session to pick it up."
+                     : "Installed")
+                    .font(.ui(12)).foregroundStyle(Theme.textSecondary)
+                SettingsButton(title: "Uninstall") {
+                    try? ClaudePluginInstaller.remove()
+                    pluginJustInstalled = false
+                    pluginState = ClaudePluginInstaller.currentState()
+                }
+            }
+        case .linkedElsewhere(let dest):
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Already installed from another location — left alone.")
+                    .font(.ui(12)).foregroundStyle(Theme.textSecondary)
+                PathHint(path: dest)
+            }
+        case .occupied:
+            Text("~/.claude/skills/shepherd already exists and isn't a link, so it wasn't touched.")
+                .font(.ui(12)).foregroundStyle(Theme.textSecondary)
+        case .unavailable:
+            Text("This build doesn't ship the plugin — install it from a source checkout.")
+                .font(.ui(12)).foregroundStyle(Theme.textSecondary)
+        }
+        if let pluginError {
+            Text(pluginError).font(.ui(11)).foregroundStyle(Theme.error)
         }
     }
 

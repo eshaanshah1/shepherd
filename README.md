@@ -23,8 +23,11 @@ an "unidentified developer". Either allow it under **System Settings → Privacy
 Security → Open Anyway**, or clear the quarantine flag directly:
 
 ```sh
-xattr -dr com.apple.quarantine /Applications/Shepherd.app
+xattr -d com.apple.quarantine /Applications/Shepherd.app
 ```
+
+(`-r` is not portable — some macOS builds ship an `xattr` without it. The flag on
+the bundle itself is the one Gatekeeper reads.)
 
 Shepherd asks for notification permission on first run — allow it, or agents can't
 pull you back when you're away.
@@ -39,13 +42,21 @@ updater stays dormant.
 Code's lifecycle hooks, so the plugin has to be installed for any pane to be
 tracked; otherwise every pane sits at `shell` forever.
 
-```sh
-git clone https://github.com/eshaanshah1/shepherd.git ~/.shepherd-src
-ln -s ~/.shepherd-src/claude-plugin ~/.claude/skills/shepherd
-```
+The plugin ships inside the app. Open **Settings (`⌘,`) → General → Claude Code
+plugin → Install plugin**, then run `/reload-plugins` in any Claude Code session.
 
-Then run `/reload-plugins` in any Claude Code session. The plugin is a **silent
-no-op outside Shepherd**, so it's safe to leave installed globally.
+It links `~/.claude/skills/shepherd` at the copy inside `Shepherd.app`, so updates
+carry it along. Nothing in your `~/.claude/settings.json` is touched, and if
+anything already exists at that path Shepherd leaves it alone rather than
+replacing it. Uninstall from the same place.
+
+The plugin is a **silent no-op outside Shepherd**, so it's safe to leave installed
+globally. From a source checkout you can link the repo copy instead, so your edits
+apply on the next `/reload-plugins`:
+
+```sh
+ln -s "$PWD/claude-plugin" ~/.claude/skills/shepherd
+```
 
 ### 3. Optional: the `shepherd` CLI
 
