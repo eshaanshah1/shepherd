@@ -21,4 +21,7 @@ xcuserdata/
 spike/seam1/Shepherd-Info.plist
 spike/seam1/ShepherdDev-Info.plist
 spike/seam1/build/
+# Any nested derived-data dir: a -derivedDataPath given relative to the wrong cwd
+# creates spike/seam1/spike/seam1/build, which the line above does not cover.
+**/build/
 .claude/worktrees/

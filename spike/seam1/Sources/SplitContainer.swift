@@ -79,6 +79,9 @@ struct SplitContainer: View {
                 }
             }
         }
+        // Only the visible tab claims the anchor slot; every tab stays mounted, so all
+        // of them publishing would leave the arrow pointing at a hidden one.
+        .onboardingAnchor(.terminalArea, shape: .panel, if: isTabSelected)
     }
 
     /// Frame of a pane within the container (the whole rect when zoomed).

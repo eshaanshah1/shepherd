@@ -43,6 +43,7 @@ struct SidebarView: View {
 
             if updater.hasSidebarPill {
                 UpdatePillView()
+                    .onboardingAnchor(.sidebarFooter, shape: .row)
             }
             if !store.archivedWorktrees.isEmpty {
                 Divider().overlay(Theme.hairline)
@@ -105,6 +106,8 @@ struct SidebarView: View {
                                   draggingWorkspaceID: $draggingWorkspaceID,
                                   wsDragOffset: $wsDragOffset,
                                   headerMids: $headerMids)
+                .onboardingAnchor(.folderHeader, shape: .row,
+                                  if: store.onboarding?.demoWorkspaceID == ws.id)
 
             if !ws.collapsed {
                 if ws.tabs.isEmpty {
@@ -115,7 +118,7 @@ struct SidebarView: View {
                         .padding(.vertical, 3)
                         .allowsHitTesting(false)
                 } else {
-                    ForEach(ws.tabs) { tab in
+                    ForEach(Array(ws.tabs.enumerated()), id: \.element.id) { tabIdx, tab in
                         Group {
                             if tab.isSplit {
                                 SplitTabGroup(tab: tab, workspaceID: ws.id)
@@ -126,6 +129,8 @@ struct SidebarView: View {
                                        dropTargetWorkspaceID: $dropTargetWorkspaceID)
                             }
                         }
+                        .onboardingAnchor(.tabRow(tabIdx), shape: .row,
+                                          if: store.onboarding?.demoWorkspaceID == ws.id && tabIdx <= 1)
                     }
                 }
             }
@@ -477,6 +482,8 @@ private struct TabRow: View {
                     }
                 } else {
                     LeadingIcon(state: state)
+                        .onboardingAnchor(.stateDot(0), shape: .pill,
+                                          if: store.onboarding?.demoTabID == tab.tabID)
                 }
 
                 if editing {
@@ -747,6 +754,8 @@ private struct SplitTabGroup: View {
                 }
                 ForEach(Array(panes.enumerated()), id: \.element.paneID) { idx, pane in
                     pip(pane, number: idx + 1)
+                        .onboardingAnchor(.stateDot(idx), shape: .pill,
+                                          if: store.onboarding?.demoTabID == tab.tabID && idx <= 1)
                 }
                 Spacer(minLength: 6)
             }

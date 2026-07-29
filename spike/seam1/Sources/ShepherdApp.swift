@@ -6,6 +6,7 @@ struct ShepherdApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var sleep = SleepGuard.shared
     @StateObject private var updater = UpdateController.shared
+    @StateObject private var onboarding = OnboardingController.shared
 
     init() {
         Self.scrubInheritedAgentEnv()   // before any pane spawns a shell
@@ -32,6 +33,7 @@ struct ShepherdApp: App {
             ContentView()
                 .environmentObject(AgentStore.shared)
                 .environmentObject(updater)
+                .environmentObject(onboarding)
                 .frame(minWidth: 900, minHeight: 560)
                 .preferredColorScheme(.dark)
         }
@@ -62,6 +64,7 @@ struct ShepherdApp: App {
             CommandGroup(replacing: .help) {
                 Button("Keyboard Shortcuts") { ShortcutActions.run(.showShortcuts) }
                     .keyboardShortcut("/", modifiers: .command)
+                Button("Shepherd Tour") { OnboardingController.shared.start() }
             }
             // ⌘1–9 jump to tab N.
             CommandGroup(after: .windowList) {
