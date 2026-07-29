@@ -643,9 +643,37 @@ final class AgentStore: ObservableObject {
     }
 
     /// Open a pane's PR in the browser (leading-icon click).
+    /// Open the pane's PR **inside** the workbench rather than in a browser.
+    ///
+    /// The workbench already holds everything the PR page would tell you — the checks rollup,
+    /// mergeability, review decision and the inline threads — next to the diff those comments are
+    /// about, and with Approve / Request-changes / Merge to hand. Bouncing to github.com left the
+    /// review context behind to go read a worse version of it. The band still carries a link out
+    /// for the things only the web page can do.
+    ///
+    /// Lands in the Threads scope when there are unresolved threads to work through, otherwise
+    /// vs-base — which is the diff the PR *is*.
     func openPR(forPane paneID: String) {
-        guard let url = prStatuses[paneID].flatMap({ URL(string: $0.url) }) else { return }
-        NSWorkspace.shared.open(url)
+        guard prStatuses[paneID] != nil else { return }
+        // The pane may live in another workspace or an unselected tab; the workbench renders the
+        // selected tab's session, so it has to be brought into view first.
+        revealPane(paneID)
+        codeSurface = nil          // one code surface at a time
+        diffPanelPaneID = paneID
+        diffPanelOpen = true
+        guard let session = workbenchSession(forPane: paneID) else { return }
+        let unresolved = PRThreads.unresolvedCount(reviewThreads[paneID] ?? [])
+        session.setScope(unresolved > 0 ? .threads : .vsBase)
+    }
+
+    /// The PR kind a pane's icon should show, with its unresolved review threads folded in.
+    ///
+    /// One place, because the two halves arrive from two different `gh` calls and the sidebar,
+    /// the tooltip and anything else asking must not each combine them their own way.
+    func prKind(forPane paneID: String) -> PRKind? {
+        guard let status = prStatuses[paneID] else { return nil }
+        return PR.withUnresolvedComments(
+            status.kind, count: PRThreads.unresolvedCount(reviewThreads[paneID] ?? []))
     }
 
     /// Fetch (off-main) the review threads for a pane's PR and cache them; clears the

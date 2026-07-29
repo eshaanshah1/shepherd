@@ -530,8 +530,9 @@ private struct TabRow: View {
                     .lineLimit(1)
                 Spacer(minLength: 6)
             } else {
-                if state == .idle, let pr = store.prStatuses[tab.focusedPaneID] {
-                    PRStatusIcon(status: pr,
+                if state == .idle, let pr = store.prStatuses[tab.focusedPaneID],
+                   let kind = store.prKind(forPane: tab.focusedPaneID) {
+                    PRStatusIcon(status: pr, kind: kind,
                                  unresolvedCount: PRThreads.unresolvedCount(store.reviewThreads[tab.focusedPaneID] ?? [])) {
                         store.openPR(forPane: tab.focusedPaneID)
                     }
@@ -1008,6 +1009,10 @@ struct TablerIcon: View {
 /// family conveys open/merged/closed/draft; color conveys the finer status.
 struct PRStatusIcon: View {
     let status: PRStatus
+    /// The kind to draw — `status.kind` with unresolved threads folded in by
+    /// `AgentStore.prKind(forPane:)`. Passed in rather than read off `status`, because the thread
+    /// count comes from a second `gh` call and only the store holds both halves.
+    var kind: PRKind
     var unresolvedCount: Int = 0
     let onOpen: () -> Void
     @State private var hovering = false
@@ -1032,11 +1037,11 @@ struct PRStatusIcon: View {
         .animation(.easeOut(duration: 0.12), value: hovering)
         .help(unresolvedCount > 0
               ? "PR #\(status.number) · \(unresolvedCount) unresolved review comment\(unresolvedCount == 1 ? "" : "s") — click to open"
-              : "PR #\(status.number) · \(Self.label(status.kind)) — click to open")
+              : "PR #\(status.number) · \(Self.label(kind)) — click to open")
     }
 
     @ViewBuilder private var glyph: some View {
-        let color = Self.color(status.kind)
+        let color = Self.color(kind)
         if unresolvedCount > 0 {
             // Unresolved review comments override the PR-kind glyph — a red comment icon + count.
             let label = unresolvedCount > 9 ? "9+" : "\(unresolvedCount)"
@@ -1050,7 +1055,7 @@ struct PRStatusIcon: View {
                         .background(Capsule().fill(Theme.ground))
                         .offset(x: 4, y: 3)
                 }
-        } else if status.kind == .checksFailing {
+        } else if kind == .checksFailing {
             // Keep the PR glyph, add a tiny Tabler-x badge bottom-right.
             TablerIcon(paths: Tabler.pullRequest, size: 13)
                 .foregroundStyle(color)
@@ -1062,18 +1067,19 @@ struct PRStatusIcon: View {
                         .offset(x: 3, y: 3)
                 }
         } else {
-            TablerIcon(paths: Self.paths(status.kind), size: 13)
+            TablerIcon(paths: Self.paths(kind), size: 13)
                 .foregroundStyle(color)
         }
     }
 
     static func paths(_ kind: PRKind) -> [String] {
         switch kind {
-        case .merged:           return Tabler.gitMerge
-        case .closed:           return Tabler.pullRequestClosed
-        case .draft:            return Tabler.pullRequestDraft
-        case .changesRequested: return Tabler.file
-        default:                return Tabler.pullRequest   // open, mergeReady, checksPending, checksFailing, reviewRequired (badge in glyph)
+        case .merged:             return Tabler.gitMerge
+        case .closed:             return Tabler.pullRequestClosed
+        case .draft:              return Tabler.pullRequestDraft
+        case .changesRequested:   return Tabler.file
+        case .commentsToAddress:  return Tabler.message
+        default:                  return Tabler.pullRequest   // open, mergeReady, checksPending, checksFailing, reviewRequired (badge in glyph)
         }
     }
 
@@ -1084,6 +1090,9 @@ struct PRStatusIcon: View {
              .changesRequested:                return Theme.error   // changes-requested reads red, GitHub-style
         case .draft:                           return Theme.textDim
         case .checksPending, .reviewRequired:  return Theme.blocked
+        // Your move, but not a failure — amber like the other "waiting on you" states rather
+        // than the red reserved for a broken build or a formal rejection.
+        case .commentsToAddress:               return Theme.blocked
         case .mergeReady:                      return Theme.needsCheck
         case .open:                            return Theme.working
         }
@@ -1096,6 +1105,7 @@ struct PRStatusIcon: View {
         case .draft: return "draft"
         case .checksFailing: return "checks failing"
         case .changesRequested: return "changes requested"
+        case .commentsToAddress: return "comments to address"
         case .checksPending: return "checks running"
         case .reviewRequired: return "review required"
         case .mergeReady: return "ready to merge"

@@ -5,7 +5,7 @@ import Foundation
 /// The single status bucket an idle agent's PR reduces to — drives one icon+color.
 enum PRKind: String, Equatable {
     case merged, closed, draft
-    case checksFailing, changesRequested, checksPending, reviewRequired
+    case checksFailing, changesRequested, commentsToAddress, checksPending, reviewRequired
     case mergeReady, open
 }
 
@@ -21,9 +21,32 @@ struct PRStatus: Equatable {
 /// Pure PR reduction/parsing. Namespaced (like `WorktreeArchive`/`StopPolicy`) so the
 /// symbols don't clash with the app module's copy under `@testable import`.
 enum PR {
+    /// Fold the unresolved-review-thread count into an already-classified kind.
+    ///
+    /// A separate step rather than a parameter on `classify`, because the two facts arrive from
+    /// two different `gh` calls: `classify` runs on `gh pr view`, while the thread count comes
+    /// from a later GraphQL fetch. Passing it to `classify` would mean a parameter that is
+    /// always zero in production.
+    ///
+    /// Unresolved comments rank **below** the two hard blocks — a red build and a formal
+    /// changes-requested, both of which already say "your move" — and **above** everything
+    /// softer, because waiting for CI is not something you can act on and an unaddressed comment
+    /// is. On a merged, closed or draft PR the threads are stale trivia, not a call to action.
+    static func withUnresolvedComments(_ kind: PRKind, count: Int) -> PRKind {
+        guard count > 0 else { return kind }
+        switch kind {
+        case .merged, .closed, .draft, .checksFailing, .changesRequested:
+            return kind
+        case .commentsToAddress, .checksPending, .reviewRequired, .mergeReady, .open:
+            return .commentsToAddress
+        }
+    }
+
     /// Reduce a PR's fields to one `PRKind`, most-urgent-wins:
     /// merged → closed → draft → checks failing → changes requested → checks pending →
     /// review required → merge-ready (clean) → open.
+    ///
+    /// Unresolved review threads are folded in afterwards by `withUnresolvedComments`.
     static func classify(state: String, isDraft: Bool, reviewDecision: String,
                          checks: ChecksVerdict, mergeState: String) -> PRKind {
         switch state.uppercased() {

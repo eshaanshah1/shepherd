@@ -1603,6 +1603,20 @@ final class WorkbenchSession: ObservableObject {
         }
         highlighter.invalidate(source: source)
         editRevision += 1
+        // Now that the row tables describe the document again, ask the editor to re-highlight
+        // the edited rows. Dropping our cache above is not enough on its own: the editor's own
+        // pass already ran, during the storage edit, against tables that still described the
+        // pre-edit document — so the line was left with no colours at all.
+        //
+        // Clamped rather than trusted: an inverted `Range` traps, and this arithmetic is exactly
+        // the shape that has done it before.
+        let lastRow = max(rows.lowerBound, rows.lowerBound + newRowCount - 1)
+        if let first = self.range(forStitchedLine: rows.lowerBound),
+           let last = self.range(forStitchedLine: lastRow) {
+            let start = first.location
+            let end = last.location + last.length
+            requestRehighlight?(start..<max(start, end))
+        }
     }
 
     /// Fold an edit into a conflicted file's merge preview.
@@ -1766,6 +1780,14 @@ final class WorkbenchSession: ObservableObject {
     /// Asks the editor to re-lay-out without rebuilding the document. Installed by the
     /// editor's coordinator, like the other text-view reaches.
     var requestRelayout: (() -> Void)?
+
+    /// Asks the editor to re-run syntax highlighting over a character range.
+    ///
+    /// The wire `editRevision` was supposed to be and never was. Highlighting is driven from an
+    /// `NSTextStorageDelegate`, which fires *inside* the storage edit — before write-back has
+    /// corrected `rowOrigins` and `lineStarts` — so the pass that runs on its own reads a
+    /// half-updated document. This is how the corrected one gets asked for.
+    var requestRehighlight: ((Range<Int>) -> Void)?
 
     /// Re-place the inline notes in the existing document.
     ///

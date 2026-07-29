@@ -159,6 +159,19 @@ struct EditorHost: View {
                         session?.requestRelayout = { [weak controller] in
                             controller?.textView.layoutManager.setNeedsLayout()
                         }
+                        // Re-run syntax highlighting over a range, after write-back has fixed
+                        // the row tables.
+                        //
+                        // `SyntaxHighlighter` is an `NSTextStorageDelegate`, so it re-queries
+                        // during the storage edit — *before* `didReplaceContentsIn` calls
+                        // `absorbEdit`. At that moment `rowOrigins` and `lineStarts` still
+                        // describe the pre-edit document while the storage already holds the new
+                        // text, so the row→line mapping is wrong and the edited line comes back
+                        // with no highlights at all. Nothing re-queried afterwards, which is why
+                        // typing in a diff row dropped its colours until the next rebuild.
+                        session?.requestRehighlight = { [weak controller] range in
+                            controller?.highlighter?.invalidate(IndexSet(integersIn: range))
+                        }
                         // `prepareCoordinator` runs inside the controller's `init`;
                         // `loadView()` — which builds the scroll view — only happens once
                         // SwiftUI installs the controller's view, after this pass. One
