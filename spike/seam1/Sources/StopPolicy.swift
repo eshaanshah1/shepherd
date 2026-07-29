@@ -9,6 +9,10 @@ struct StateTransition: Equatable {
     /// A `Stop` was kept at `working` because background work the turn is paused
     /// on is still in flight — drives the debug log only.
     var heldForBackground: Bool
+    /// The turn actually ended here, whether that reads as need-to-check or (when the
+    /// user was already watching) idle. Side effects that key off "a turn finished"
+    /// must use this, not `state == .needsCheck`.
+    var turnFinished: Bool = false
 }
 
 /// Whether a hook event belongs to the pane's owning agent session.
@@ -40,8 +44,15 @@ func sessionEventAccepted(sid: String, owner: String?) -> Bool {
 /// positive count is a pause, not a finish, so the pane stays `working`.
 /// An unparseable/empty count is treated as 0, reverting to plain
 /// finish-on-`Stop` (fail-safe, never sticks).
+///
+/// `viewing` is "the user is demonstrably looking at this pane right now" (app
+/// frontmost, pane on screen and focused). need-to-check means *you have not seen
+/// the result yet*, so a turn that ends under your eyes has nothing left to flag and
+/// lands on `idle` directly — otherwise the dot reads done until you click away and
+/// back, since `didFocus` only fires on a focus change. `blocked`/`error` ignore it:
+/// those want you whether or not you happen to be watching.
 func applyEvent(_ event: String, detail: String, current: AgentState,
-                reason: String?) -> StateTransition {
+                reason: String?, viewing: Bool = false) -> StateTransition {
     let midTurn = (current == .working || current == .blocked)
     var t = StateTransition(state: current, reason: reason, clearTitle: false,
                             applied: true, heldForBackground: false)
@@ -54,7 +65,7 @@ func applyEvent(_ event: String, detail: String, current: AgentState,
     case "Stop":
         if !midTurn { t.applied = false }
         else if (Int(detail) ?? 0) > 0 { set(.working); t.heldForBackground = true }  // paused on background work
-        else { set(.needsCheck) }
+        else { t.turnFinished = true; set(viewing ? .idle : .needsCheck) }
     case "StopFailure":
         if midTurn { set(.error, detail.isEmpty ? "API error" : detail) } else { t.applied = false }
     case "PermissionRequest":
