@@ -6,8 +6,9 @@ import XCTest
 final class EditMapTests: XCTestCase {
 
     /// A row of `path` showing new-side line `line`.
-    private func row(_ path: String, _ line: Int?, hunk: Int = 0) -> RowOrigin {
-        RowOrigin(path: path, hunkIndex: hunk, lineIndex: 0, kind: .context,
+    private func row(_ path: String, _ line: Int?, hunk: Int = 0,
+                     kind: DiffLineKind = .context) -> RowOrigin {
+        RowOrigin(path: path, hunkIndex: hunk, lineIndex: 0, kind: kind,
                   oldLineNumber: nil, newLineNumber: line)
     }
 
@@ -87,6 +88,39 @@ final class EditMapTests: XCTestCase {
         XCTAssertEqual(after[0].lineIndex, -1)
         XCTAssertEqual(after[1].lineIndex, -1)
         XCTAssertFalse(after[0].isStageable)
+    }
+
+    /// A typed row keeps the **kind** of the row it replaced.
+    ///
+    /// It was flattened to `.context`, which dropped the `+` from the gutter while
+    /// `absorbEdit` went on carrying the row's green tint forward in `rowStyles` — so an
+    /// edited added line showed as added and unmarked at the same time. `kind` feeds nothing
+    /// but the sign glyph (`EditorHost` → `WorkbenchSession.sign(for:)`); the guard that keeps
+    /// a typed row out of `PatchSynth` is `lineIndex: -1`, which is unchanged.
+    func testTypedRowsKeepTheKindOfTheRowTheyReplaced() {
+        let origins = [row("a.swift", 5, kind: .added), row("a.swift", 6, kind: .added)]
+        let after = EditMap.rowsAfterEdit(origins, replacing: 0..<1, withRowCount: 2)
+
+        XCTAssertEqual(after[0].kind, .added)
+        XCTAssertEqual(after[1].kind, .added, "a split added line is still two added lines")
+        // Still unstageable: the kind is cosmetic, `lineIndex` is the guard.
+        XCTAssertEqual(after[0].lineIndex, -1)
+        XCTAssertFalse(after[0].isStageable)
+    }
+
+    /// Editing a context row leaves it context, so sign and tint stay agreed the other way too.
+    func testTypedRowsOnAContextLineStayContext() {
+        let origins = [row("a.swift", 5, kind: .context)]
+        let after = EditMap.rowsAfterEdit(origins, replacing: 0..<1, withRowCount: 1)
+        XCTAssertEqual(after[0].kind, .context)
+    }
+
+    /// A removed line is a band, never a row, so it cannot be the template — but if one ever
+    /// reached here it must not be reborn as an addition.
+    func testTypedRowsOnARemovedTemplateStayRemoved() {
+        let origins = [row("a.swift", 5, kind: .removed)]
+        let after = EditMap.rowsAfterEdit(origins, replacing: 0..<1, withRowCount: 1)
+        XCTAssertEqual(after[0].kind, .removed)
     }
 
     func testRowsBelowTheEditAreRenumberedInTheSameFileOnly() {
