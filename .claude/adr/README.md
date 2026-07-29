@@ -44,3 +44,4 @@ Date: YYYY-MM-DD
 - [0017](0017-workspace-folders-accordion-sidebar.md) — Workspace folders: accordion sidebar (all tabs in one view)
 - [0018](0018-worktree-archive-and-provisioning.md) — Worktree archive/restore + optimistic provisioning feedback
 - [0019](0019-markdown-rendered-diff.md) — Rendered markdown diff in the review panel (block-level, per-file Rendered⇄Raw toggle)
+- [0020](0020-viewing-a-pane-is-one-predicate.md) — "The user is viewing this pane" is one predicate, and the state machine consults it (a turn that finishes under your eyes reads idle, not done)

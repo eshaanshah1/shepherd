@@ -1024,6 +1024,30 @@ final class AgentStore: ObservableObject {
         return tab.focusedPaneID == paneID
     }
 
+    /// The one pane whose terminal the user's eyes could be on, modulo app activation:
+    /// focused pane of the selected tab in the selected workspace (`tabs`/`selectedTab`
+    /// are already workspace-scoped), on screen rather than starved by a zoomed sibling,
+    /// and not covered by a full-takeover overlay. An ephemeral pane never qualifies.
+    func isFrontPane(_ paneID: String) -> Bool {
+        guard !diffPanelOpen, codeSurface == nil,
+              let tab = tabs.first(where: { $0.tabID == selectedTab }) else { return false }
+        return tab.focusedPaneID == paneID && tab.isShowing(paneID)
+    }
+
+    /// `isFrontPane` plus Shepherd being frontmost — the predicate for "they saw it",
+    /// shared by the state machine (`Stop` → idle, not need-to-check) and every alert
+    /// channel, so a dot and a banner can't tell different stories.
+    func isViewing(_ paneID: String) -> Bool { NSApp.isActive && isFrontPane(paneID) }
+
+    /// Coming back to Shepherd counts as looking: the pane in front of you has been
+    /// seen, so its finished turn clears without demanding a click. Only need-to-check
+    /// clears (`didFocus`), and the overlay teardown there is a no-op because
+    /// `isFrontPane` already required no overlay.
+    func didBecomeActive() {
+        guard let pid = focusedPaneID, isFrontPane(pid) else { return }
+        didFocus(paneID: pid)
+    }
+
     /// cwd to seed a restored pane's surface (consumed once at surface creation).
     func cwd(forPane paneID: String) -> String? {
         if let (w, t) = locatePane(paneID, in: workspaces) {
@@ -1193,13 +1217,14 @@ final class AgentStore: ObservableObject {
             return
         }
         let cur = current.state
-        let res = applyEvent(event, detail: detail, current: cur, reason: current.reason)
+        let viewing = isViewing(paneID)
+        let res = applyEvent(event, detail: detail, current: cur, reason: current.reason, viewing: viewing)
 
         let suffix: String
         if res.heldForBackground {
             suffix = "\(cur.rawValue) (held: \(detail) background task\(detail == "1" ? "" : "s"))"
         } else if res.applied {
-            suffix = "\(cur.rawValue)->\(res.state.rawValue)"
+            suffix = "\(cur.rawValue)->\(res.state.rawValue)" + (res.turnFinished && viewing ? " (viewing)" : "")
         } else {
             suffix = "\(cur.rawValue) (ignored: not mid-turn)"
         }
@@ -1211,7 +1236,7 @@ final class AgentStore: ObservableObject {
             $0.state = res.state
             $0.reason = res.reason
         }
-        if res.state == .needsCheck {
+        if res.turnFinished {
             diffTurnPane = paneID
             diffTurnTick += 1   // an open diff panel watches this to offer a refresh
         }
@@ -1225,10 +1250,12 @@ final class AgentStore: ObservableObject {
             _ = mutate { $0.sessionID = nil }
             save()
         }
-        if res.state != cur, res.state.wantsAttention, let updated {
+        // `viewing` is the single gate for every alert channel — banner, chime and push —
+        // so they can't disagree about whether the user already has eyes on the pane.
+        if res.state != cur, res.state.wantsAttention, let updated, !viewing {
             let routing = NotificationRoutingPolicy.decide(isAway: isAway())
             if routing.local {
-                notifyAttention(updated, hidden: wsID == nil || wsID != selectedWorkspaceID)
+                notifyAttention(updated)
                 playAttentionSound(for: res.state)
             }
             if routing.fcm { pushWake(paneID: paneID, state: res.state) }
@@ -1536,11 +1563,11 @@ final class AgentStore: ObservableObject {
         SleepGuard.shared.update(hasBusyAgent: hasBusyAgent)
     }
 
-    /// Fire a native notification when a pane needs you — while Shepherd is NOT
-    /// frontmost OR the pane's workspace isn't the active one (a hidden-workspace
-    /// agent has no visible sidebar dot to rely on).
-    private func notifyAttention(_ pane: Pane, hidden: Bool) {
-        guard !NSApp.isActive || hidden else { return }
+    /// Fire a native notification when a pane needs you. The caller decides whether
+    /// it's warranted (`!isViewing`) so the banner, the chime and the push can't
+    /// disagree — an unwatched pane has no dot in front of you, whether it's in
+    /// another workspace, another tab, or behind another app.
+    private func notifyAttention(_ pane: Pane) {
         let content = UNMutableNotificationContent()
         content.title = pane.displayTitle
         switch pane.state {
@@ -1999,10 +2026,10 @@ final class AgentStore: ObservableObject {
         }
         let ids = Set(NotificationRoutingPolicy.catchUpTargets(panes))
         guard !ids.isEmpty else { return }
-        for (w, ws) in workspaces.enumerated() {
+        for ws in workspaces {
             for tab in ws.tabs {
-                for pane in tab.root.panes where ids.contains(pane.paneID) {
-                    notifyAttention(pane, hidden: workspaces[w].id != selectedWorkspaceID)
+                for pane in tab.root.panes where ids.contains(pane.paneID) && !isViewing(pane.paneID) {
+                    notifyAttention(pane)
                 }
             }
         }

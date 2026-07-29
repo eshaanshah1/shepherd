@@ -63,6 +63,47 @@ final class StopPolicyTests: XCTestCase {
         XCTAssertEqual(t.state, .needsCheck)
     }
 
+    // MARK: Stop while the user is already watching the pane
+
+    func testStopWhileViewingGoesStraightToIdle() {
+        // need-to-check means "you haven't seen the result"; under your eyes there is
+        // nothing left to flag, and `didFocus` can't help — it only fires on a focus
+        // CHANGE, so an already-focused pane would sit at done until you clicked away.
+        let t = applyEvent("Stop", detail: "0", current: .working, reason: nil, viewing: true)
+        XCTAssertEqual(t.state, .idle)
+        XCTAssertTrue(t.applied)
+        XCTAssertTrue(t.turnFinished)
+    }
+
+    func testStopFinishSetsTurnFinishedEitherWay() {
+        // Side effects keyed off "a turn ended" (the workbench refresh signal) must fire
+        // for both landings, so they read `turnFinished`, never `state == .needsCheck`.
+        XCTAssertTrue(applyEvent("Stop", detail: "0", current: .working, reason: nil).turnFinished)
+        XCTAssertTrue(applyEvent("Stop", detail: "0", current: .working, reason: nil, viewing: true).turnFinished)
+    }
+
+    func testHeldBackgroundStopIsNotATurnEndEvenWhileViewing() {
+        let t = applyEvent("Stop", detail: "2", current: .working, reason: nil, viewing: true)
+        XCTAssertEqual(t.state, .working)
+        XCTAssertFalse(t.turnFinished)
+        XCTAssertTrue(t.heldForBackground)
+    }
+
+    func testIgnoredStopIsNotATurnEnd() {
+        XCTAssertFalse(applyEvent("Stop", detail: "0", current: .idle, reason: nil).turnFinished)
+    }
+
+    func testViewingDoesNotSoftenBlockedOrError() {
+        // These want you whether or not you happen to be looking — an unanswered
+        // question doesn't answer itself because the tab is on screen.
+        let blocked = applyEvent("PreToolUse", detail: "AskUserQuestion", current: .working,
+                                 reason: nil, viewing: true)
+        XCTAssertEqual(blocked.state, .blocked)
+        let failed = applyEvent("StopFailure", detail: "overloaded_error", current: .working,
+                                reason: nil, viewing: true)
+        XCTAssertEqual(failed.state, .error)
+    }
+
     // MARK: subagent / tool events no longer count anything
 
     func testAgentToolLaunchJustStaysWorking() {

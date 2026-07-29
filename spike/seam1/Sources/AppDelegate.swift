@@ -12,6 +12,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         SleepGuard.shared.reconcileAtLaunch()
     }
 
+    func applicationDidBecomeActive(_ notification: Notification) {
+        AgentStore.shared.didBecomeActive()
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         SleepGuard.shared.teardownAtQuit()
         AgentStore.shared.teardownAllPanes()   // close every PTY so helpers/shells don't orphan
