@@ -27,6 +27,44 @@ final class PRStatusTests: XCTestCase {
                                   checks: .pending, mergeState: ""), .changesRequested)
     }
 
+    // MARK: unresolved review comments
+
+    /// Unresolved inline review threads are the author's move, so they become their own state
+    /// rather than decoration on top of `open`.
+    func testUnresolvedCommentsBecomeTheirOwnState() {
+        XCTAssertEqual(PR.withUnresolvedComments(.mergeReady, count: 3), .commentsToAddress)
+        XCTAssertEqual(PR.withUnresolvedComments(.open, count: 1), .commentsToAddress)
+    }
+
+    /// Above pending checks and review-required: waiting on CI or a reviewer is not something
+    /// you can act on, an unaddressed comment is.
+    func testUnresolvedCommentsBeatTheSofterStates() {
+        XCTAssertEqual(PR.withUnresolvedComments(.checksPending, count: 1), .commentsToAddress)
+        XCTAssertEqual(PR.withUnresolvedComments(.reviewRequired, count: 1), .commentsToAddress)
+    }
+
+    /// Below the two hard blocks: a failing build and a formal changes-requested already say
+    /// "your move", and both are worse news than an individual thread.
+    func testFailingChecksAndChangesRequestedStillWin() {
+        XCTAssertEqual(PR.withUnresolvedComments(.checksFailing, count: 5), .checksFailing)
+        XCTAssertEqual(PR.withUnresolvedComments(.changesRequested, count: 5), .changesRequested)
+    }
+
+    /// On a merged, closed or draft PR the threads are stale trivia.
+    func testUnresolvedCommentsIrrelevantOnDeadOrDraftPRs() {
+        XCTAssertEqual(PR.withUnresolvedComments(.merged, count: 4), .merged)
+        XCTAssertEqual(PR.withUnresolvedComments(.closed, count: 4), .closed)
+        XCTAssertEqual(PR.withUnresolvedComments(.draft, count: 4), .draft)
+    }
+
+    /// Zero threads never changes a verdict.
+    func testNoUnresolvedCommentsLeavesEveryKindAlone() {
+        for kind in [PRKind.merged, .closed, .draft, .checksFailing, .changesRequested,
+                     .commentsToAddress, .checksPending, .reviewRequired, .mergeReady, .open] {
+            XCTAssertEqual(PR.withUnresolvedComments(kind, count: 0), kind)
+        }
+    }
+
     func testPendingChecksBeatReviewRequired() {
         XCTAssertEqual(PR.classify(state: "OPEN", isDraft: false, reviewDecision: "REVIEW_REQUIRED",
                                   checks: .pending, mergeState: ""), .checksPending)
