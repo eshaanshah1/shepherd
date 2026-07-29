@@ -58,8 +58,13 @@ enum EditMap {
         let firstLine = template.newLineNumber ?? 1
 
         let replacements = (0..<newRowCount).map { offset in
+            // **Keeps the template's kind.** Flattening to `.context` dropped the `+` from the
+            // gutter while `absorbEdit` carried the row's green tint forward in `rowStyles`, so
+            // an edited added line read as added and unmarked at once. `kind` feeds only the sign
+            // glyph; what keeps a typed row out of `PatchSynth` is `lineIndex: -1`, below.
             RowOrigin(path: template.path, hunkIndex: template.hunkIndex, lineIndex: -1,
-                      kind: .context, oldLineNumber: nil, newLineNumber: firstLine + offset)
+                      kind: template.kind, oldLineNumber: nil,
+                      newLineNumber: firstLine + offset)
         }
 
         var out = Array(origins[origins.startIndex..<rows.lowerBound])
