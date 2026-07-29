@@ -52,6 +52,7 @@ struct ShortcutCheatsheetView: View {
                     .strokeBorder(Theme.hairline, lineWidth: 1))
         )
         .shadow(color: .black.opacity(0.35), radius: 30, y: 16)
+        .onboardingAnchor(.shortcutCheatsheet, shape: .card)
     }
 
     private func column(_ cats: [ShortcutCategory]) -> some View {

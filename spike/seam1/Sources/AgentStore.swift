@@ -16,6 +16,9 @@ final class AgentStore: ObservableObject {
     /// Scratch panes owned by no workspace (spec: ephemeral panes). At most one is
     /// un-collapsed (the overlay); the rest are bottom-right PiP thumbnails.
     @Published var ephemeralPanes: [EphemeralPane] = []
+
+    /// The first-run tour, when one is running. Wired at construction; nil in tests.
+    weak var onboarding: OnboardingController?
     /// Bumped when a summon is blocked at the cap — drives a brief PiP-row flash.
     @Published private(set) var ephemeralCapFlash: Int = 0
 
@@ -364,7 +367,7 @@ final class AgentStore: ObservableObject {
 
     /// The base dir worktrees are created under: `# shepherd: worktree-base` from the config,
     /// else `~/.shepherd/worktrees`.
-    private func worktreeBaseDir() -> String {
+    func worktreeBaseDir() -> String {
         let cfgPath = (NSHomeDirectory() as NSString).appendingPathComponent(".config/shepherd/config")
         if let contents = try? String(contentsOfFile: cfgPath, encoding: .utf8),
            let base = parseShepherdConfig(contents).worktreeBase, !base.isEmpty {
@@ -1239,6 +1242,7 @@ final class AgentStore: ObservableObject {
         if res.turnFinished {
             diffTurnPane = paneID
             diffTurnTick += 1   // an open diff panel watches this to offer a refresh
+            onboarding?.noteTurnFinished(paneID: paneID, viewing: viewing)
         }
         if res.state == .idle { refreshPR(forPane: paneID) }   // idle agent → surface its PR status
         // Track the live Claude session id so we can resume it on relaunch: SessionStart carries
@@ -1591,7 +1595,7 @@ final class AgentStore: ObservableObject {
 
     // MARK: Persistence (workspaces.v1, with one-time v2 migration)
 
-    private func save() {
+    func save() {
         // Mirror (remote) workspaces are the host's truth — never persisted as local workspaces
         // (M3 persists them as reconnect pointers instead). Snapshot only the local ones.
         let state = snapshotState(workspaces.filter { !$0.isRemote },

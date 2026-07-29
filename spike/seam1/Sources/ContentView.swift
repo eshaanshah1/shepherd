@@ -3,6 +3,7 @@ import AppKit
 
 struct ContentView: View {
     @EnvironmentObject var store: AgentStore
+    @EnvironmentObject var onboarding: OnboardingController
     @AppStorage("shepherd.sidebarWidth") private var sidebarWidth: Double = 240
     // Live width while dragging the divider (nil when idle); committed
     // `sidebarWidth` lays out the terminal, so it's updated only on drop.
@@ -14,6 +15,26 @@ struct ContentView: View {
     private let dividerWidth: Double = 6
 
     private var displayWidth: Double { dragWidth ?? sidebarWidth }
+
+    /// A missing anchor degrades to a centred, arrow-less card — a view that forgot its
+    /// `.onboardingAnchor`, or one that simply isn't mounted for this step, is a cosmetic
+    /// regression rather than a crash. An empty rect counts as missing.
+    ///
+    /// Both ends measure in `OnboardingAnchorKey.space`, declared on this view, so the
+    /// only correction needed is the reader's own offset within it (normally zero).
+    private func spotRect(_ anchor: OnboardingAnchor,
+                          _ anchors: [OnboardingAnchor: OnboardingSpot],
+                          _ proxy: GeometryProxy) -> OnboardingSpot? {
+        guard anchor != .centered, var spot = anchors[anchor], !spot.rect.isEmpty else { return nil }
+        let named = proxy.frame(in: .named(OnboardingAnchorKey.space))
+        spot.rect = spot.rect.offsetBy(dx: -named.origin.x, dy: -named.origin.y)
+        // A full-height panel really does extend under the title bar (y = -32), so clip it
+        // to what is on screen or the ring's top edge is drawn where nobody can see it.
+        let visible = CGRect(origin: .zero, size: proxy.size)
+        guard spot.rect.intersects(visible) else { return nil }
+        spot.rect = spot.rect.intersection(visible)
+        return spot
+    }
 
     var body: some View {
         // Two layers so a divider drag never resizes the terminal mid-drag: the
@@ -107,6 +128,27 @@ struct ContentView: View {
             }
         }
         .animation(.easeOut(duration: 0.12), value: store.pendingApproval != nil)
+        // The first-run tour, above every sheet. Deliberately NOT part of isFrontPane's
+        // full-takeover check: the terminal really is visible behind it, which is what
+        // makes the watched-vs-unwatched steps honest rather than staged.
+        //
+        // The anchor reader has to be HERE, not inside the overlay: preferences travel up
+        // from a view's own children, so a reader on the overlay sees only the overlay.
+        // Attached last, so every sheet above is a descendant and can be pointed at too.
+        .overlayPreferenceValue(OnboardingAnchorKey.self) { anchors in
+            GeometryReader { proxy in
+                if let step = onboarding.currentStep {
+                    OnboardingOverlayView(step: step,
+                                          spot: spotRect(step.anchor, anchors, proxy),
+                                          container: proxy.size)
+                        .environmentObject(onboarding)
+                        .transition(.opacity)
+                }
+            }
+        }
+        .animation(.easeOut(duration: 0.16), value: onboarding.stepNumber)
+        // Outside the reader as well as the publishers, so both resolve the same space.
+        .coordinateSpace(name: OnboardingAnchorKey.space)
     }
 
     // Every workspace's surfaces stay mounted (background agents keep running);

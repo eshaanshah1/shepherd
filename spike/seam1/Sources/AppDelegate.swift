@@ -10,6 +10,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         center.delegate = self
         center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
         SleepGuard.shared.reconcileAtLaunch()
+
+        AgentStore.shared.onboarding = OnboardingController.shared
+        // Reconcile before the first-run check, or a fresh tour deletes the sandbox it
+        // is in the middle of building.
+        OnboardingController.shared.reconcileAtLaunch()
+        OnboardingController.shared.startIfFirstRun()
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
@@ -17,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        OnboardingController.shared.teardownNow()   // before the store saves
         SleepGuard.shared.teardownAtQuit()
         AgentStore.shared.teardownAllPanes()   // close every PTY so helpers/shells don't orphan
         AgentStore.shared.teardownSocket()     // unlink this launch's /tmp socket

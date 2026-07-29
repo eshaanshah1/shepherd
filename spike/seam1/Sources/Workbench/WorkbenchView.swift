@@ -19,12 +19,14 @@ struct WorkbenchView: View {
         HStack(spacing: 0) {
             rail
                 .frame(width: 260)
+                .onboardingAnchor(.workbenchRail, shape: .panel)
             Rectangle().fill(Theme.hairline).frame(width: 1)
             VStack(spacing: 0) {
                 header
                 Rectangle().fill(Theme.hairline).frame(height: 1)
                 WorkbenchPRBand(session: session).environmentObject(store)
                 content
+                    .onboardingAnchor(.workbenchBuffer, shape: .panel)
                 blameStatusStrip
             }
             if session.threadsPanelOpen, !paneThreads.isEmpty {

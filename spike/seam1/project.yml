@@ -177,6 +177,11 @@ targets:
       - path: Sources/PRComments.swift
       - path: Sources/MarkdownText.swift
       - path: Sources/ShortcutCatalog.swift
+      - path: Sources/OnboardingPolicy.swift
+      - path: Sources/OnboardingGoal.swift
+      - path: Sources/OnboardingPlacement.swift
+      - path: Sources/OnboardingDemoRepo.swift
+      - path: Sources/AppMode.swift
       - path: Sources/SequenceAlign.swift
       - path: Sources/MarkdownInlineDiff.swift
       - path: Sources/MarkdownFrontmatter.swift

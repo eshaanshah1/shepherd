@@ -24,8 +24,8 @@ struct EphemeralOverlayView: View {
                 }
 
                 // One mounted surface per ephemeral pane; size/position depends on state.
-                ForEach(store.ephemeralPanes, id: \.id) { e in
-                    paneContainer(e, in: geo.size)
+                ForEach(Array(store.ephemeralPanes.enumerated()), id: \.element.id) { idx, e in
+                    paneContainer(e, in: geo.size, isFirst: idx == 0)
                 }
             }
             .background(escHandler)
@@ -35,7 +35,8 @@ struct EphemeralOverlayView: View {
     }
 
     @ViewBuilder
-    private func paneContainer(_ e: EphemeralPane, in size: CGSize) -> some View {
+    private func paneContainer(_ e: EphemeralPane, in size: CGSize,
+                               isFirst: Bool = false) -> some View {
         let isOverlay = !e.collapsed
         let full = overlayFrame(in: size)               // the overlay's on-screen rect / logical size
         let scale = isOverlay ? 1 : (pipTargetWidth / full.width)
@@ -69,6 +70,8 @@ struct EphemeralOverlayView: View {
         // Collapsed: a real-NSView catcher (unscaled, at true PiP size) so the expand
         // tap wins AppKit hit-testing over the live terminal beneath it.
         .overlay { if !isOverlay { MouseCatcher { store.expandEphemeral(e.id) } } }
+        // Before .position, which would otherwise expand the measured frame to the parent.
+        .onboardingAnchor(.ephemeralPane, shape: .card, if: isFirst)
         .position(x: center.x, y: center.y)
         .modifier(FlashOnBump(trigger: store.ephemeralCapFlash, active: e.collapsed))
     }
