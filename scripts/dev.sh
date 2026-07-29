@@ -21,7 +21,9 @@ cd "$(dirname "$0")/../spike/seam1"
 build_and_run() {
   xcodegen generate
   xcodebuild -project Shepherd.xcodeproj -scheme ShepherdDev -configuration Debug \
-    -derivedDataPath ./build CODE_SIGNING_ALLOWED=NO \
+    -derivedDataPath ./build \
+    -clonedSourcePackagesDirPath "$HOME/Library/Caches/shepherd-spm" \
+    CODE_SIGNING_ALLOWED=NO \
     CLANG_MODULE_CACHE_PATH=./build/ModuleCache build
   local app=./build/Build/Products/Debug/ShepherdDev.app
   codesign --force --deep --sign - "$app"

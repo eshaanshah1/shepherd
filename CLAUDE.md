@@ -92,12 +92,25 @@ Prereqs (see [ADR 0002](.claude/adr/0002-libghostty-build-on-macos-26.md)): brew
 ./scripts/build-libghostty.sh    # clones Ghostty v1.3.1, builds, vendors the xcframework
 ```
 
+### 1b. CodeEditLanguages (only needed once, or to bump the tag)
+```sh
+./scripts/vendor-codeedit-languages.sh   # blobless clone -> vendor/CodeEditLanguages (~64M)
+```
+It is a **local path package** (`project.yml`), not a fetched one, so this must
+exist before `xcodegen generate`. Upstream's full history is 3.2G of regenerated
+`parser.c` blobs and SwiftPM has no `--filter`/`--depth`, so it would pay that
+once in `~/Library/Caches/org.swift.swiftpm` and again per worktree. The clone is
+blobless rather than shallow, so `git fetch && git merge` upstream still works in
+`vendor/CodeEditLanguages`; the **tag it checks out is the version pin**.
+
 ### 2. The app
 ```sh
 cd spike/seam1
 xcodegen generate                # REQUIRED after adding/removing any source file
 xcodebuild -project Shepherd.xcodeproj -scheme Shepherd -configuration Debug \
-  -derivedDataPath ./build CODE_SIGNING_ALLOWED=NO \
+  -derivedDataPath ./build \
+  -clonedSourcePackagesDirPath ~/Library/Caches/shepherd-spm \
+  CODE_SIGNING_ALLOWED=NO \
   CLANG_MODULE_CACHE_PATH=./build/ModuleCache build
 APP=./build/Build/Products/Debug/Shepherd.app
 codesign --force --deep --sign - "$APP"   # ad-hoc sign so it runs locally
@@ -530,6 +543,7 @@ falls back to a plain shell. Requires the plugin reporting `session_id` — afte
 - **Workbench: bound block drawing by `visibleRect`, never by `dirtyRect` alone.** A deletion band makes one line fragment as tall as the run it shows (a 40-line deletion ⇒ ~1000pt), and AppKit hands a view that tall a *partial* dirty rect. A fragment view that has just scrolled into existence has no earlier content to preserve, so every row skipped stayed permanently blank — the band drew its first 30 rows and nothing else, while the gutter (viewport-sized, fully invalidated per scroll) drew all 40. `DiffRowView.draw` uses `visibleRect.union(dirtyRect)` so a pass can only ever paint more than asked, never less.
 - **Workbench: a block's internal rows divide the block's own height.** A deletion band's line height is `block.height / lines.count`, in both `DiffRowView` and `DiffGutterView` — never `WorkbenchMetrics.rowHeight`, which is an estimate of the *text's* line height and drifts against a long run. Same rule as the gutter one above: exactly one opinion about where a row sits.
 - **`xcodegen generate` after any file add/remove** — else the new file isn't compiled (`cannot find X in scope` at *build* time).
+- **`CodeEditLanguages` is a vendored *path* package, so `xcodegen generate` fails until `scripts/vendor-codeedit-languages.sh` has run** (fresh clone, fresh worktree, CI). A path package also makes SwiftPM **ignore version requirements** — the tag that script checks out is the only pin, so bumping the version means editing `CEL_TAG`, not `project.yml`. Keep the clone **blobless, never shallow**: upstream's 3.2G of history is regenerated `parser.c` blobs (a 34M checkout), and `--filter=blob:none` drops them while keeping the full commit graph so `git merge` upstream still works — `--depth` would break that. Builds pass `-clonedSourcePackagesDirPath ~/Library/Caches/shepherd-spm` so the remaining packages are fetched **once**, not per worktree: SwiftPM otherwise caches every dependency globally *and* re-clones it into each `-derivedDataPath`.
 - **`-only-testing:` on a suite the project doesn't know about reports `** TEST SUCCEEDED **`.** It matches nothing and vacuously passes, so a *brand-new* test file that hasn't been through `xcodegen generate` looks green while never compiling. Two habits kill it: run `xcodegen generate` before the first run of any new test file, and treat a pass as real only once the **test count moves** (`grep -c "Test Case .* passed"`).
 - **SourceKit lies in this repo** — "Cannot find type AgentState/…" and "'main' attribute…" diagnostics are stale because the editor sees loose files, not the generated project. `xcodebuild` is ground truth; ignore SourceKit "cannot find" noise.
 - **App version is stamped at release time, not in `project.yml`**: `project.yml` ships a `CFBundleShortVersionString: "0.0.0-dev"` sentinel (so local/dev builds read as a prerelease and the updater stays dormant). The real version is stamped into the built bundle by the release workflow (`PlistBuddy Set :CFBundleShortVersionString ${VERSION#v}`, before `codesign`). Don't hardcode a real version in `project.yml`. Update failures/relaunch log to `/tmp/shepherd-update.log`.
