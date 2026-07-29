@@ -59,32 +59,26 @@ enum UpdateService {
         let tmp = URL(fileURLWithPath: UpdateInstaller.uniqueTempDir(), isDirectory: true)
         let zipPath = tmp.appendingPathComponent("Shepherd.zip")
 
-        // Stream download with progress against Content-Length.
-        let (bytes, resp) = try await URLSession.shared.bytes(from: update.zipURL)
-        guard (resp as? HTTPURLResponse)?.statusCode == 200 else { throw UpdateError.download }
-        let total = resp.expectedContentLength
-        FileManager.default.createFile(atPath: zipPath.path, contents: nil)
-        let handle = try FileHandle(forWritingTo: zipPath)
-        defer { try? handle.close() }
-        var buf = Data(); var received: Int64 = 0
-        for try await byte in bytes {
-            buf.append(byte); received += 1
-            if buf.count >= 64 * 1024 { try handle.write(contentsOf: buf); buf.removeAll(keepingCapacity: true) }
-            if total > 0 { progress(min(1.0, Double(received) / Double(total))) }
-        }
-        if !buf.isEmpty { try handle.write(contentsOf: buf) }
-        try handle.close()
+        let zip = try await ZipDownload(destination: zipPath, progress: progress).run(update.zipURL)
 
         // Unpack (ditto preserves the bundle's symlinks/permissions).
         let unpackDir = tmp.appendingPathComponent("unpacked", isDirectory: true)
         try FileManager.default.createDirectory(at: unpackDir, withIntermediateDirectories: true)
-        guard run("/usr/bin/ditto", ["-x", "-k", zipPath.path, unpackDir.path]) == 0 else { throw UpdateError.unpack }
+        guard run("/usr/bin/ditto", ["-x", "-k", zip.path, unpackDir.path]) == 0 else { throw UpdateError.unpack }
         let appPath = unpackDir.appendingPathComponent("Shepherd.app").path
         guard FileManager.default.fileExists(atPath: appPath) else { throw UpdateError.unpack }
 
         // Corruption check only (ad-hoc signature; no identity guarantee).
         guard run("/usr/bin/codesign", ["--verify", "--deep", appPath]) == 0 else { throw UpdateError.verify }
         return appPath
+    }
+
+    /// Whole-percent granularity: the progress handler hops to the main actor,
+    /// so reporting every callback would enqueue one task per received packet.
+    static func reportablePercent(written: Int64, total: Int64, last: Int) -> Int? {
+        guard total > 0, written >= 0 else { return nil }
+        let pct = min(100, Int(Double(written) / Double(total) * 100))
+        return pct > last ? pct : nil
     }
 
     @discardableResult
@@ -96,5 +90,68 @@ enum UpdateService {
         do { try p.run() } catch { return -1 }
         p.waitUntilExit()
         return p.terminationStatus
+    }
+}
+
+/// One `URLSessionDownloadTask` streamed to `destination` by URLSession itself.
+/// Never iterate the response as an `AsyncBytes` sequence for this: it yields one
+/// `UInt8` per suspension, and its progress callback then hops to the main actor
+/// once per *byte*.
+private final class ZipDownload: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    private let destination: URL
+    private let progress: (Double) -> Void
+    private var continuation: CheckedContinuation<URL, Error>?
+    private var session: URLSession?
+    private var lastPercent = -1
+
+    init(destination: URL, progress: @escaping (Double) -> Void) {
+        self.destination = destination
+        self.progress = progress
+    }
+
+    func run(_ url: URL) async throws -> URL {
+        try await withCheckedThrowingContinuation { c in
+            continuation = c
+            let s = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
+            session = s
+            s.downloadTask(with: url).resume()
+        }
+    }
+
+    private func finish(_ result: Result<URL, Error>) {
+        guard let c = continuation else { return }
+        continuation = nil
+        session?.finishTasksAndInvalidate()
+        session = nil
+        c.resume(with: result)
+    }
+
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
+                    didWriteData bytesWritten: Int64, totalBytesWritten written: Int64,
+                    totalBytesExpectedToWrite total: Int64) {
+        guard let pct = UpdateService.reportablePercent(written: written, total: total, last: lastPercent)
+        else { return }
+        lastPercent = pct
+        progress(Double(pct) / 100)
+    }
+
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
+                    didFinishDownloadingTo location: URL) {
+        // A non-200 still lands here with the error body as the payload.
+        guard (downloadTask.response as? HTTPURLResponse)?.statusCode == 200 else {
+            finish(.failure(UpdateService.UpdateError.download)); return
+        }
+        // `location` is removed the moment this returns, so move it synchronously.
+        do {
+            try? FileManager.default.removeItem(at: destination)
+            try FileManager.default.moveItem(at: location, to: destination)
+            finish(.success(destination))
+        } catch {
+            finish(.failure(error))
+        }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        finish(.failure(error ?? UpdateService.UpdateError.download))
     }
 }
