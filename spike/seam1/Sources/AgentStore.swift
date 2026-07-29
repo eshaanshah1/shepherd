@@ -1109,6 +1109,16 @@ final class AgentStore: ObservableObject {
         GhosttySurfaceView.perform(paneID: paneID, injectText: text)
     }
 
+    /// Paste text into a live pane's PTY, optionally following it with Enter. Use
+    /// this and not `injectText` for anything containing a newline: typed newlines
+    /// are Enter presses, so a prompt box would receive only the first line.
+    @discardableResult
+    func pasteText(_ text: String, intoPane paneID: String, thenEnter: Bool) -> PasteOutcome {
+        let outcome = GhosttyApp.shared.paste(text: text, intoPane: paneID)
+        if outcome != .noSurface, thenEnter { injectText("\n", intoPane: paneID) }
+        return outcome
+    }
+
     /// Compose review comments into one prompt and inject it into the pane's agent.
     /// `shepherd.diff.autoReviewSubmit` (default true) appends a newline to send it;
     /// false stages the text for the user to press Enter.
@@ -2095,7 +2105,11 @@ final class AgentStore: ObservableObject {
         case "tab-new":
             guard let ws = (req["workspace"] as? String).flatMap(resolveWorkspace) ?? selectedWorkspaceID
             else { return ["ok": false, "error": "no workspace"] }
-            let tabID = newTab(inWorkspace: ws)
+            let cwd = (req["cwd"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            if let cwd, !FileManager.default.fileExists(atPath: cwd) {
+                return ["ok": false, "error": "no such directory: \(cwd)"]
+            }
+            let tabID = newTab(inWorkspace: ws, cwd: cwd)
             _ = controlSnapshot()
             let paneID = workspaces.first { $0.id == ws }?.tabs.first { $0.tabID == tabID }?.root.firstLeafID
             return ["ok": true, "data": [
@@ -2155,8 +2169,17 @@ final class AgentStore: ObservableObject {
         case "tell":
             guard let p = (req["pane"] as? String).flatMap(resolvePane),
                   let text = req["text"] as? String else { return ["ok": false, "error": "bad args"] }
-            let payload = (req["enter"] as? Bool == false) ? text : text + "\n"
-            injectText(payload, intoPane: p)
+            let enter = (req["enter"] as? Bool) != false
+            if (req["paste"] as? Bool) == true {
+                switch pasteText(text, intoPane: p, thenEnter: enter) {
+                case .pasted: break
+                case .noSurface: return ["ok": false, "error": "pane has no live surface"]
+                case .typed:
+                    return ["ok": false, "error": "pane would not take a paste; the text was typed instead, so each newline submitted"]
+                }
+            } else {
+                injectText(enter ? text + "\n" : text, intoPane: p)
+            }
             return ["ok": true, "data": NSNull()]
 
         case "view":
@@ -2302,8 +2325,17 @@ final class AgentStore: ObservableObject {
         let uuid = controlHandles.uuid(for: token) ?? token
         return workspaces.contains { $0.id == uuid } ? uuid : nil
     }
+    /// A tab handle, or the tab owning a *pane* handle — `tab new` and `pane split`
+    /// hand back a pane, so tab verbs have to accept one or the caller is forced to
+    /// re-derive the tab out of `ls`.
     private func resolveTab(_ token: String) -> String? {
         let uuid = controlHandles.uuid(for: token) ?? token
-        return workspaces.contains { $0.tabs.contains { $0.tabID == uuid } } ? uuid : nil
+        if workspaces.contains(where: { $0.tabs.contains { $0.tabID == uuid } }) { return uuid }
+        for ws in workspaces {
+            if let tab = ws.tabs.first(where: { $0.root.panes.contains { $0.paneID == uuid } }) {
+                return tab.tabID
+            }
+        }
+        return nil
     }
 }

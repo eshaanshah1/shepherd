@@ -3,6 +3,15 @@ import AppKit
 import QuartzCore
 import GhosttyKit
 
+/// How a programmatic paste actually landed. `typed` means it degraded to
+/// keystrokes, so any newline in the text submitted instead of staying content —
+/// worth telling the caller about rather than swallowing.
+enum PasteOutcome {
+    case pasted
+    case typed
+    case noSurface
+}
+
 /// SwiftUI host for one libghostty terminal surface, identified by `paneID`.
 struct GhosttyTerminal: NSViewRepresentable {
     let paneID: String
@@ -44,6 +53,10 @@ final class GhosttySurfaceView: NSView {
         return ghostty_surface_needs_confirm_quit(surface)
     }
 
+    /// Text waiting to be handed to the next clipboard read, so a programmatic
+    /// paste can borrow libghostty's paste path without touching NSPasteboard.
+    private var pendingPaste: String?
+
     init(paneID: String) {
         self.paneID = paneID
         super.init(frame: .zero)
@@ -71,6 +84,7 @@ final class GhosttySurfaceView: NSView {
                                         userInfo: ["paneID": paneID, "text": text])
     }
 
+
     @objc private func performBinding(_ note: Notification) {
         guard note.userInfo?["paneID"] as? String == paneID,
               let action = note.userInfo?["action"] as? String,
@@ -82,8 +96,35 @@ final class GhosttySurfaceView: NSView {
 
     @objc private func injectText(_ note: Notification) {
         guard note.userInfo?["paneID"] as? String == paneID,
-              let text = note.userInfo?["text"] as? String,
-              let surface else { return }
+              let text = note.userInfo?["text"] as? String else { return }
+        inject(text: text)
+    }
+
+    /// Deliver text to this pane's PTY as a *paste* rather than as keystrokes.
+    /// Multi-line text typed key-by-key submits at every newline — a prompt box
+    /// would get the first line and nothing else — so anything containing a newline
+    /// has to ride libghostty's paste path, where the running program's
+    /// bracketed-paste mode decides whether a newline is content or Enter.
+    func paste(text: String) -> PasteOutcome {
+        guard let surface else { return .noSurface }
+        pendingPaste = text
+        let action = "paste_from_clipboard"
+        _ = action.withCString {
+            ghostty_surface_binding_action(surface, $0, UInt(action.utf8.count))
+        }
+        // Still queued ⇒ the action never came back through readClipboard. Type it
+        // instead: arriving mangled beats not arriving, and a paste left queued
+        // would hijack the user's next ⌘V.
+        guard pendingPaste == nil else {
+            pendingPaste = nil
+            inject(text: text)
+            return .typed
+        }
+        return .pasted
+    }
+
+    private func inject(text: String) {
+        guard let surface else { return }
         var key = ghostty_input_key_s()
         key.action = GHOSTTY_ACTION_PRESS
         key.mods = ghostty_input_mods_e(GHOSTTY_MODS_NONE.rawValue)
@@ -370,7 +411,16 @@ final class GhosttySurfaceView: NSView {
     // MARK: Clipboard — called from libghostty's runtime callbacks (copy/paste keybinds).
 
     func readClipboard(location: ghostty_clipboard_e, state: UnsafeMutableRawPointer?) -> Bool {
-        guard let surface, let str = NSPasteboard.general.string(forType: .string) else { return false }
+        guard let surface else { return false }
+        if let queued = pendingPaste {
+            pendingPaste = nil
+            // confirmed: true — multi-line text trips ghostty's unsafe-paste
+            // confirmation, and our confirm callback is a no-op, so an unconfirmed
+            // request would be dropped silently.
+            queued.withCString { ghostty_surface_complete_clipboard_request(surface, $0, state, true) }
+            return true
+        }
+        guard let str = NSPasteboard.general.string(forType: .string) else { return false }
         str.withCString { ptr in
             ghostty_surface_complete_clipboard_request(surface, ptr, state, false)
         }

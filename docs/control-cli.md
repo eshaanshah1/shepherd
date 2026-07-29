@@ -50,7 +50,7 @@ Reply:    { "ok": true,  "data": <any> }   |   { "ok": false, "error": "<message
 | `shepherd workspace rename <ws> <name>` | Rename. |
 | `shepherd workspace switch <ws>` | Make it active. |
 | `shepherd workspace rm <ws> [--force]` | Delete (refuses with live agents unless `--force`). |
-| `shepherd tab new [<ws>]` | New tab in `<ws>` (default: active). Prints tab + pane handles. |
+| `shepherd tab new [<ws>] [--cwd <dir>]` | New tab in `<ws>` (default: active). Prints tab + pane handles. `--cwd` opens the pane there instead of the workspace's default directory; relative paths and `~` resolve against *your* shell, and a missing directory is an error rather than a silent fallback. |
 | `shepherd tab rename <t> <name>` | Rename a tab. |
 | `shepherd tab switch <t>` | Switch to a tab. |
 | `shepherd tab close <t> [--force] [--archive]` | Close; refuses on live work unless `--force`; `--archive` keeps a resumable worktree archive. |
@@ -64,6 +64,16 @@ Reply:    { "ok": true,  "data": <any> }   |   { "ok": false, "error": "<message
 | Command | Description |
 |---|---|
 | `shepherd tell <p> "<text>" [--no-enter]` | Type text into a pane's PTY (+ Enter). Mid-turn agents queue it natively. `--no-enter` holds the newline. |
+| `shepherd tell <p> --file <path\|-> [--no-enter]` | Same, with the text read from a file (`-` = stdin). Trailing newlines are stripped so `--no-enter` really holds. |
+
+**Multi-line text is pasted, not typed.** Typed newlines *are* Enter presses, so a
+multi-line prompt typed into an agent submits its first line and orphans the rest.
+Any text containing a newline — from `--file` or from a quoted argument — goes
+through libghostty's paste path instead, so the receiving program's
+bracketed-paste mode decides whether a newline is content or a submit. `tell`
+then sends one Enter at the end (unless `--no-enter`). If a pane won't take a
+paste the text is typed as a fallback and `tell` **exits non-zero** saying so —
+it never silently mangles a long prompt.
 | `shepherd view <p> [--lines N] [--raw]` | Read a pane. Agent panes → clean session-transcript tail; shell panes → ANSI-stripped ring tail (requires *serve* on). `--raw` forces raw ring bytes. |
 
 ### Config
@@ -85,14 +95,18 @@ Spawn a pane, hand it a task, wait, read the result — the terminal as the
 conductor's bus:
 
 ```sh
-shepherd ls
-# note the pane handle that `tab new` prints:
-shepherd tab new
-shepherd tell p3 "cd ~/repo && claude"
-shepherd wait p3 --state idle --timeout 60
-shepherd tell p3 "run the test suite and fix the first failure"
-shepherd wait p3 --any-attention --timeout 900
-shepherd view p3 --lines 60
+p=$(shepherd tab new --cwd ~/repo)
+shepherd tell "$p" "claude"
+shepherd wait "$p" --state idle --timeout 60
+shepherd tell "$p" "run the test suite and fix the first failure"
+shepherd wait "$p" --any-attention --timeout 900
+shepherd view "$p" --lines 60
+```
+
+A brief too long for one line rides a file:
+
+```sh
+shepherd tell "$p" --file /tmp/brief.md
 ```
 
 ## v1 limitations
@@ -101,4 +115,6 @@ shepherd view p3 --lines 60
   only runs then). Agent-pane `view` always works (reads the session transcript).
 - `tell --raw` literal-keystroke injection, `view --follow`, and `view --screen`
   (rendered viewport) are deferred.
+- `tab new --cwd` is local-workspace only: a **mirror** workspace's tabs are
+  created by the host, which owns the directory, so the flag is ignored there.
 - Single running Shepherd instance (single-window v1).
