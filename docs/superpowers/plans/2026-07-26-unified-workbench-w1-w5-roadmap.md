@@ -656,8 +656,11 @@ no tty means a hang, not an error.
 
 ## Deferred, recorded so it isn't lost
 
-- **Side-by-side diff.** W0 ships inline only. Needs two synchronized multibuffers and
-  each row knowing its side — depends on W1's staging model.
+- ~~**Side-by-side diff.**~~ **Shipped** in `1271110` (`⌥⌘\`) — and *not* the way this entry
+  predicted. It is **one** editor, not two synchronized multibuffers: the new side is the real
+  `SourceEditor` and `OldSideColumnView` draws the old side off that editor's own layout
+  manager, so the columns cannot drift. See
+  [`2026-07-28-workbench-side-by-side-design.md`](../specs/2026-07-28-workbench-side-by-side-design.md).
 - **`WidgetLayer`.** Comments live in the rail because anchoring overlays via
   `rectsFor(range:)` during scroll is unbuilt. W1.4's threads will want it too.
 - **Excerpt virtualization — measured, and NOT worth doing.** This was called the top
