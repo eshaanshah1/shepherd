@@ -89,6 +89,18 @@ final class CommitHistoryTests: XCTestCase {
         XCTAssertTrue(format.contains("%x1e"), "records must be RS-terminated in the output")
     }
 
+    /// The Commits scope asks for `base..HEAD`; the cherry-pick picker asks for `HEAD..<ref>`
+    /// — what that branch has and this one does not. One builder, so the two cannot drift in
+    /// format, which matters because `parse` is shared.
+    func testLogArgumentsTakeAnArbitraryRange() {
+        let args = CommitHistory.logArguments(range: "HEAD..feature/auth")
+        XCTAssertEqual(args.first, "log")
+        XCTAssertTrue(args.contains("HEAD..feature/auth"))
+        XCTAssertEqual(args.first { $0.hasPrefix("--format=") },
+                       CommitHistory.logArguments(base: "master")
+                           .first { $0.hasPrefix("--format=") })
+    }
+
     /// The blob read must use `<sha>:<path>` — a path is never joined onto cwd here.
     func testBlobArguments() {
         XCTAssertEqual(CommitHistory.blobArguments(sha: "abc", path: "Sources/A.swift"),

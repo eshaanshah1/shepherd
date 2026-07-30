@@ -1,8 +1,22 @@
 import Foundation
 
-struct MergeProgress: Equatable {
-    let done: Int
-    let total: Int
+/// How far through a multi-commit operation git is.
+///
+/// Two shapes, because git only records a fraction for a rebase. A cherry-pick's
+/// `sequencer/todo` shrinks in place and nothing records what it started with (measured
+/// against git 2.55 — the directory holds only `todo`, `head`, `abort-safety`), so `remaining`
+/// is all that is recoverable. Inventing a denominator by remembering what we started with
+/// would be **cached sequence state**, which an abort in a terminal pane invalidates.
+enum MergeProgress: Equatable {
+    case counted(done: Int, total: Int)
+    case remaining(Int)
+
+    var text: String {
+        switch self {
+        case .counted(let done, let total): return "\(done) of \(total)"
+        case .remaining(let left):          return "\(left) remaining"
+        }
+    }
 }
 
 /// Which multi-commit operation git is part-way through, and what the two sides are called.
@@ -13,7 +27,8 @@ struct MergeState: Equatable {
     /// Real ref names for index stages 2 and 3.
     let oursLabel: String
     let theirsLabel: String
-    /// Rebase position. nil outside a rebase.
+    /// How far through the sequence git is. nil when it records nothing — a merge, or a
+    /// single-commit cherry-pick that writes no sequencer directory at all.
     let progress: MergeProgress?
 
     static let idle = MergeState(operation: .none, oursLabel: "ours",
@@ -29,11 +44,13 @@ struct MergeState: Equatable {
         case .merge:
             return "Merging \(theirsLabel) into \(oursLabel)"
         case .cherryPick:
-            return "Cherry-picking \(theirsLabel) onto \(oursLabel)"
+            let base = "Cherry-picking \(theirsLabel) onto \(oursLabel)"
+            guard let progress else { return base }
+            return "\(base) — \(progress.text)"
         case .rebase:
             let base = "Rebasing \(theirsLabel) onto \(oursLabel)"
             guard let progress else { return base }
-            return "\(base) — \(progress.done) of \(progress.total)"
+            return "\(base) — \(progress.text)"
         }
     }
 }
@@ -120,7 +137,7 @@ enum ConflictReader {
                 operation: .rebase,
                 oursLabel: onto,
                 theirsLabel: replayed ?? "your commits",
-                progress: (done.map { d in total.map { MergeProgress(done: d, total: $0) } }) ?? nil)
+                progress: done.flatMap { d in total.map { .counted(done: d, total: $0) } })
         }
 
         let head = GitStaging.currentBranch(cwd: cwd) ?? "HEAD"
@@ -130,10 +147,26 @@ enum ConflictReader {
         }
         if gitFile(cwd, "CHERRY_PICK_HEAD") != nil {
             return MergeState(operation: .cherryPick, oursLabel: head,
-                              theirsLabel: refName(cwd, "CHERRY_PICK_HEAD"), progress: nil)
+                              theirsLabel: refName(cwd, "CHERRY_PICK_HEAD"),
+                              progress: remainingPicks(cwd))
         }
         return MergeState(operation: .none, oursLabel: head, theirsLabel: "theirs",
                           progress: nil)
+    }
+
+    /// Picks still to apply, from `sequencer/todo`.
+    ///
+    /// Absent for a single-commit pick, which writes no sequencer directory — so this returns
+    /// nil rather than `.remaining(0)`, which would render "0 remaining" beside a live
+    /// conflict. Only the count is read: git writes `pick <sha> <subject>` there, and nothing
+    /// here depends on that format.
+    private static func remainingPicks(_ cwd: String) -> MergeProgress? {
+        guard let todo = gitFile(cwd, "sequencer/todo") else { return nil }
+        let count = todo.components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && !$0.hasPrefix("#") }
+            .count
+        return count > 0 ? .remaining(count) : nil
     }
 
     /// A readable name for a ref, falling back to a short sha.

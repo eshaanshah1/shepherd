@@ -75,7 +75,7 @@ final class SequenceIntegrationTests: XCTestCase {
         startTwoConflictRebase()
         let state = ConflictReader.read(cwd: repo).state
         XCTAssertEqual(state.operation, .rebase)
-        XCTAssertEqual(state.progress?.total, 2)
+        XCTAssertEqual(state.progress, .counted(done: 1, total: 2))
         XCTAssertGreaterThan(unmergedCount(), 0)
     }
 
@@ -99,7 +99,7 @@ final class SequenceIntegrationTests: XCTestCase {
         XCTAssertGreaterThan(unmergedCount(), 0)
         let mid = ConflictReader.read(cwd: repo).state
         XCTAssertEqual(mid.operation, .rebase)
-        XCTAssertEqual(mid.progress?.done, 2)
+        XCTAssertEqual(mid.progress, .counted(done: 2, total: 2))
 
         write("resolved two\n")
         git("add", "f.txt")

@@ -14,6 +14,11 @@ struct WorkbenchView: View {
     @State private var worktreePrompt = false
     @State private var worktreeName = ""
     @State private var abortConfirm = false
+    @State private var discardConfirm = false
+    @State private var stashesExpanded = true
+    /// Non-nil while the drop confirmation is up. A stash is the one thing here nothing
+    /// undoes, so it is the one action that asks.
+    @State private var stashToDrop: Stash?
 
     var body: some View {
         HStack(spacing: 0) {
@@ -45,6 +50,26 @@ struct WorkbenchView: View {
         } message: {
             Text("Throws away every resolution and returns the repo to where it was before "
                  + "the \(abortVerb) started.")
+        }
+        .alert("Discard this conflicted merge?", isPresented: $discardConfirm) {
+            Button("Discard changes", role: .destructive) { session.discardLooseConflicts() }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            // The stash line is information, never a claim that the top entry is your work:
+            // a conflicted pop does keep its entry, but nothing in git proves which one.
+            Text(SequencePolicy.discardConfirmation(paths: session.looseConflictPaths,
+                                                    stashTop: session.stashTopDescription))
+        }
+        .alert("Delete this stash?",
+               isPresented: Binding(get: { stashToDrop != nil },
+                                    set: { if !$0 { stashToDrop = nil } })) {
+            Button("Drop stash", role: .destructive) {
+                if let stash = stashToDrop { session.dropStash(stash) }
+                stashToDrop = nil
+            }
+            Button("Cancel", role: .cancel) { stashToDrop = nil }
+        } message: {
+            Text(stashToDrop.map { "\($0.ref) — \($0.message)\n\nThis cannot be undone." } ?? "")
         }
         .alert("New worktree", isPresented: $worktreePrompt) {
             TextField("Branch name", text: $worktreeName)
@@ -545,16 +570,407 @@ struct WorkbenchView: View {
         } else {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(session.commits) { commit in
-                        commitRow(commit)
+                    if let rows = session.planRows {
+                        rewriteHeader
+                        ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                            planRowView(row, index: index, count: rows.count)
+                        }
+                        rewriteFooter
+                    } else {
+                    sourcePicker
+                    if session.sourceRef == nil {
+                        rewriteEntryRow
+                        ForEach(session.commits) { commit in
+                            commitRow(commit)
+                        }
+                        baseRow
+                        stashSection
+                    } else {
+                        if session.sourceCommits.isEmpty {
+                            Text("Nothing here that this branch does not already have.")
+                                .font(.ui(10)).foregroundStyle(Theme.textDim)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.horizontal, 12).padding(.vertical, 8)
+                        }
+                        ForEach(session.sourceCommits) { commit in
+                            sourceCommitRow(commit)
+                        }
+                        pickBar
                     }
-                    baseRow
+                    }
                 }
                 .padding(.bottom, 10)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .background(ThinScrollers())
         }
+    }
+
+    // MARK: - Rewrite mode
+
+    /// Entering is a deliberate act, so it gets its own row rather than living on each commit.
+    @ViewBuilder private var rewriteEntryRow: some View {
+        if !session.commits.isEmpty, !session.isMidSequence {
+            HStack(spacing: 0) {
+                Button { session.beginRewrite() } label: {
+                    Text("Rewrite…")
+                        .font(.ui(10, .medium)).foregroundStyle(Theme.textSecondary)
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .background(Theme.surface2)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).focusable(false)
+                .help("Reorder, squash, reword or drop these commits")
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12).padding(.bottom, 6)
+        }
+    }
+
+    private var rewriteHeader: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text("REWRITE").font(.ui(9.5, .semibold)).foregroundStyle(Theme.blocked)
+            Text("Newest first, as always. Nothing runs until Apply.")
+                .font(.ui(9)).foregroundStyle(Theme.textDim)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 4)
+    }
+
+    /// One planned commit: move buttons, a verb menu, and a message field when the verb needs
+    /// one.
+    ///
+    /// Reordering is buttons rather than a drag gesture — the rail is a custom `ScrollView`,
+    /// not a `List` (deliberately; `List` was a keyboard-focus sink), so `onMove` does not
+    /// exist here and a hand-rolled drag is its own piece of work.
+    private func planRowView(_ row: PlanRow, index: Int, count: Int) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .top, spacing: 6) {
+                VStack(spacing: 0) {
+                    moveButton(up: true, enabled: index > 0) {
+                        session.movePlanRow(from: index, to: index - 1)
+                    }
+                    moveButton(up: false, enabled: index < count - 1) {
+                        session.movePlanRow(from: index, to: index + 2)
+                    }
+                }
+                Menu {
+                    ForEach(RebaseVerb.allCases, id: \.self) { verb in
+                        Button(verb.title) { session.setVerb(verb, forSha: row.commit.sha) }
+                    }
+                } label: {
+                    Text(row.verb.title)
+                        .font(.mono(10))
+                        .foregroundStyle(row.verb == .drop ? Theme.error : Theme.textSecondary)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .focusable(false)
+                .help(row.verb.help)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(row.commit.subject)
+                        .font(.ui(11, row.verb == .drop ? .regular : .medium))
+                        .foregroundStyle(row.verb == .drop ? Theme.textDim : Theme.textPrimary)
+                        .strikethrough(row.verb == .drop)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .multilineTextAlignment(.leading)
+                    Text(row.commit.shortSha).font(.mono(9)).foregroundStyle(Theme.textDim)
+                }
+                Spacer(minLength: 0)
+            }
+            // Collected before Apply, because `cp '<file>'` substitutes exactly one message —
+            // a rebase that stops to ask a question is the failure mode this avoids.
+            if row.verb.needsMessage {
+                TextField("new message", text: Binding(
+                    get: { row.message },
+                    set: { session.setPlanMessage($0, forSha: row.commit.sha) }
+                ))
+                .textFieldStyle(.plain)
+                .font(.mono(10))
+                .padding(.horizontal, 5).padding(.vertical, 3)
+                .background(Theme.surface2)
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 4)
+    }
+
+    private func moveButton(up: Bool, enabled: Bool,
+                            _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: up ? "chevron.up" : "chevron.down")
+                .font(.system(size: 7, weight: .semibold))
+                .foregroundStyle(enabled ? Theme.textSecondary : Theme.textDim.opacity(0.4))
+                .frame(width: 12, height: 10)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).focusable(false).disabled(!enabled)
+    }
+
+    private var rewriteFooter: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 8) {
+                Button { session.applyRewrite() } label: {
+                    Text("Apply")
+                        .font(.ui(11, .semibold))
+                        .foregroundStyle(session.rewriteBlockedReason == nil
+                                         ? Theme.working : Theme.textDim)
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .background((session.rewriteBlockedReason == nil
+                                     ? Theme.working : Theme.textDim).opacity(0.14))
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).focusable(false)
+                .disabled(session.rewriteBlockedReason != nil)
+                .help(session.rewriteBlockedReason ?? "Rewrite these commits")
+                Button { session.cancelRewrite() } label: {
+                    Text("Cancel").font(.ui(10)).foregroundStyle(Theme.textDim)
+                }
+                .buttonStyle(.plain).focusable(false)
+                Spacer(minLength: 0)
+            }
+            // The reason is visible, not only on hover: a disabled button whose explanation
+            // needs a mouse is a dead button to anyone driving by keyboard.
+            if let reason = session.rewriteBlockedReason, reason != "not rewriting" {
+                Text(reason)
+                    .font(.ui(9)).foregroundStyle(Theme.textDim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text("Every commit gets a new sha, which clears the branch's PR review state.")
+                .font(.ui(9)).foregroundStyle(Theme.textDim)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 4)
+    }
+
+    /// Where cherry-pick sources come from. One `for-each-ref`, sorted newest-first, with the
+    /// branches git has checked out somewhere marked — in Shepherd those are the agents.
+    ///
+    /// The `Menu` carries **text only**: macOS renders one through an NSPopUpButton, which
+    /// rescales image content to the control's height, so an icon in the label ignores `size:`.
+    @ViewBuilder private var sourcePicker: some View {
+        if !session.sourceRefs.isEmpty {
+            HStack(spacing: 6) {
+                Text("from").font(.ui(9.5)).foregroundStyle(Theme.textDim)
+                Menu {
+                    Button("This branch") { session.selectSourceRef(nil) }
+                    Divider()
+                    ForEach(session.sourceRefs) { ref in
+                        Button(ref.isCheckedOut ? "\(ref.name)  ·  checked out" : ref.name) {
+                            session.selectSourceRef(ref)
+                        }
+                    }
+                } label: {
+                    Text(session.sourceRef?.name ?? "this branch")
+                        .font(.ui(10.5, .medium)).foregroundStyle(Theme.textSecondary)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .focusable(false)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12).padding(.top, 6).padding(.bottom, 4)
+        }
+    }
+
+    /// A source commit: tick to pick, click the body to preview it read-only.
+    private func sourceCommitRow(_ commit: Commit) -> some View {
+        let ticked = session.pickSelection.contains(commit.sha)
+        let active = session.selectedCommit?.sha == commit.sha
+        return HStack(alignment: .top, spacing: 7) {
+            Button {
+                if ticked { session.pickSelection.remove(commit.sha) }
+                else { session.pickSelection.insert(commit.sha) }
+            } label: {
+                // The glyph shows the *action*, matching the staging buttons in this same rail:
+                // a plus adds this commit to the pick, a minus takes it back out.
+                TablerIcon(paths: ticked ? Tabler.squareMinus : Tabler.squarePlus, size: 12)
+                    .foregroundStyle(ticked ? Theme.working : Theme.textDim)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).focusable(false)
+            .help(ticked ? "Remove from the pick" : "Cherry-pick this commit")
+
+            Button { session.selectCommit(active ? nil : commit) } label: {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(commit.subject)
+                        .font(.ui(11.5, active ? .semibold : .regular))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .multilineTextAlignment(.leading)
+                    HStack(spacing: 5) {
+                        Text(commit.shortSha).font(.mono(9.5))
+                        Text("·")
+                        Text(CommitHistory.relativeAge(commit.timestamp, now: Date()))
+                            .font(.mono(9.5))
+                    }
+                    .foregroundStyle(Theme.textDim)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).focusable(false)
+            .help("\(commit.subject)\n\(commit.author)")
+        }
+        .padding(.horizontal, 12).padding(.vertical, 5)
+        .background(active ? Theme.surface3 : Color.clear)
+    }
+
+    @ViewBuilder private var pickBar: some View {
+        if !session.pickSelection.isEmpty {
+            HStack(spacing: 8) {
+                Button { session.cherryPickSelection() } label: {
+                    Text("Cherry-pick \(session.pickSelection.count)")
+                        .font(.ui(11, .semibold)).foregroundStyle(Theme.working)
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .background(Theme.working.opacity(0.14))
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).focusable(false).disabled(session.writing)
+                .help("Apply the ticked commits onto this branch, oldest first")
+                Button { session.pickSelection = [] } label: {
+                    Text("Clear").font(.ui(10)).foregroundStyle(Theme.textDim)
+                }
+                .buttonStyle(.plain).focusable(false)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 8)
+        }
+    }
+
+    /// Stashes live under the commit list rather than in a scope of their own. A stash is a
+    /// kind of history, which is what this scope is — and a fifth scope segment would cost a
+    /// second row of chrome for something used a few times a week.
+    @ViewBuilder private var stashSection: some View {
+        if !session.stashes.isEmpty {
+            Button { stashesExpanded.toggle() } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: stashesExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 8, weight: .semibold))
+                    Text("STASHES \(session.stashes.count)")
+                        .font(.ui(9.5, .semibold))
+                    Spacer(minLength: 0)
+                }
+                .foregroundStyle(Theme.textDim)
+                .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 3)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).focusable(false)
+
+            if stashesExpanded {
+                ForEach(session.stashes) { stash in
+                    stashRow(stash)
+                }
+            }
+        }
+    }
+
+    /// Two lines like `commitRow`, for the same reason: the message is the part you read, and
+    /// a ~220pt row cannot hold it beside a ref and an age.
+    private func stashRow(_ stash: Stash) -> some View {
+        let active = session.selectedStash?.sha == stash.sha
+        return VStack(alignment: .leading, spacing: 3) {
+            Button { session.selectStash(active ? nil : stash) } label: {
+                HStack(alignment: .top, spacing: 7) {
+                    Image(systemName: "archivebox")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Theme.textSecondary)
+                        .padding(.top, 2)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(stash.message)
+                            .font(.ui(11.5, active ? .semibold : .regular))
+                            .foregroundStyle(Theme.textPrimary)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .multilineTextAlignment(.leading)
+                        HStack(spacing: 5) {
+                            Text(stash.ref).font(.mono(9.5))
+                            Text("·")
+                            Text(CommitHistory.relativeAge(stash.timestamp, now: Date()))
+                                .font(.mono(9.5))
+                        }
+                        .foregroundStyle(Theme.textDim)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).focusable(false)
+            .help(stash.message)
+
+            // Actions only on the open one, so the list stays scannable.
+            if active {
+                HStack(spacing: 6) {
+                    stashAction("Apply", help: "Apply and keep the stash") {
+                        session.applyStash(stash, pop: false)
+                    }
+                    stashAction("Pop", help: "Apply and remove the stash") {
+                        session.applyStash(stash, pop: true)
+                    }
+                    stashAction("Drop", help: "Delete this stash", destructive: true) {
+                        stashToDrop = stash
+                    }
+                    Spacer(minLength: 0)
+                }
+                // Untracked files are in the stash's third parent, which the first-parent diff
+                // cannot show. Named, not fabricated into rows.
+                if !session.stashUntrackedPaths.isEmpty {
+                    Text("untracked (not previewed): "
+                         + session.stashUntrackedPaths.joined(separator: ", "))
+                        .font(.ui(9)).foregroundStyle(Theme.textDim)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 5)
+        .background(active ? Theme.surface3 : Color.clear)
+    }
+
+    /// Stashing is the neighbour of committing — both are "put this somewhere and clean the
+    /// tree" — and the box that already names the change is right here, so the draft becomes
+    /// the stash message.
+    ///
+    /// The `Menu` gets **text only**: macOS renders one through an NSPopUpButton, which
+    /// rescales image content to the control's height, so an icon inside the label ignores its
+    /// `size:` entirely.
+    @ViewBuilder private var stashMenu: some View {
+        if session.isRepo && !session.resolveOnly {
+            Menu {
+                Button("Stash all changes") { session.createStash(scope: .all) }
+                Button("Stash staged only") { session.createStash(scope: .stagedOnly) }
+                Button("Stash, including untracked") {
+                    session.createStash(scope: .includingUntracked)
+                }
+            } label: {
+                Text("Stash").font(.ui(11, .semibold)).foregroundStyle(Theme.textSecondary)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .focusable(false)
+            .disabled(session.writing)
+            .help("Park these changes; the commit message becomes the stash message")
+        }
+    }
+
+    private func stashAction(_ title: String, help: String, destructive: Bool = false,
+                             _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.ui(10, .medium))
+                .foregroundStyle(destructive ? Theme.error : Theme.textSecondary)
+                .padding(.horizontal, 7).padding(.vertical, 2)
+                .background((destructive ? Theme.error : Theme.textSecondary).opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).focusable(false).disabled(session.writing)
+        .help(help)
     }
 
     /// Two lines: the subject, then its metadata dimmed beneath.
@@ -654,6 +1070,7 @@ struct WorkbenchView: View {
                 commitButton("& Push", prominent: false, blocked: session.pushBlockedReason) {
                     session.commit(push: true)
                 }
+                stashMenu
                 Spacer(minLength: 0)
                 if let branch = session.branchName {
                     Text(branch).font(.mono(9.5)).foregroundStyle(Theme.textDim).lineLimit(1)
@@ -959,6 +1376,13 @@ struct WorkbenchView: View {
                 continueRow
                 abortRow
             }
+            // `.loose` — unmerged files with nothing in flight. No Continue and no Abort,
+            // because there is nothing to continue or abort; a disabled Continue reading
+            // "nothing in progress" beside a locked workbench is a contradiction the user
+            // would otherwise have to resolve on our behalf.
+            if case .loose = session.conflictContext {
+                looseConflictPanel
+            }
             Rectangle().fill(Theme.divider).frame(height: 1).padding(.top, 10)
         }
     }
@@ -1167,6 +1591,41 @@ struct WorkbenchView: View {
             }
             .padding(.horizontal, 12).padding(.top, 8)
         }
+    }
+
+    /// Conflicts with no operation behind them, and the one way out.
+    ///
+    /// The explanation is on screen rather than in a tooltip: the workbench is locked, which
+    /// implies a sequence, and the user has no other way to learn there isn't one.
+    private var looseConflictPanel: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10)).foregroundStyle(Theme.blocked)
+                Text(SequencePolicy.looseHeadline(unresolved: session.totalUnresolved))
+                    .font(.ui(10.5, .semibold)).foregroundStyle(Theme.blocked)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            Text(SequencePolicy.looseExplanation)
+                .font(.ui(9.5)).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 0) {
+                Button(role: .destructive) { discardConfirm = true } label: {
+                    Text("Discard changes…")
+                        .font(.ui(10, .medium)).foregroundStyle(Theme.error)
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .background(Theme.error.opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).focusable(false).disabled(session.writing)
+                .help("Restore the conflicted files to HEAD")
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 2)
+        }
+        .padding(.horizontal, 12).padding(.top, 10)
     }
 
     private var abortRow: some View {
