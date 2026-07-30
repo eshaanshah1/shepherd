@@ -1511,11 +1511,17 @@ final class AgentStore: ObservableObject {
         refocusActiveTerminal()
     }
 
+    /// True while a ⌘F find bar is on screen — it renders only for the selected
+    /// tab's focused pane. Top-right chrome (ephemeral PiPs) yields to it.
+    var searchOverlayVisible: Bool {
+        guard let pid = focusedPaneID else { return false }
+        return searches[pid] != nil
+    }
+
     /// Live needle update. An empty needle cancels the search in the core.
     func setSearchQuery(_ q: String, paneID: String) {
         guard searches[paneID] != nil else { return }
-        searches[paneID]?.query = q
-        if q.isEmpty { searches[paneID]?.total = 0; searches[paneID]?.selected = 0 }
+        searches[paneID]?.beginQuery(q)
         GhosttySurfaceView.perform(paneID: paneID, binding: "search:\(q)")
     }
 
@@ -1531,8 +1537,14 @@ final class AgentStore: ObservableObject {
     }
 
     // Core → app (from handleAction).
-    func setSearchTotal(_ n: Int, paneID: String) { searches[paneID]?.total = max(0, n) }
-    func setSearchSelected(_ n: Int, paneID: String) { searches[paneID]?.selected = max(0, n) }
+    func setSearchTotal(_ n: Int, paneID: String) {
+        guard searches[paneID] != nil else { return }
+        searches[paneID]?.applyTotal(n)
+        // First matches for a fresh needle: nothing is selected yet, so `.next`
+        // lands on the newest (bottom-most) match and scrolls it into view.
+        if searches[paneID]?.takeSeek() == true { navigateSearch(.next, paneID: paneID) }
+    }
+    func setSearchSelected(_ n: Int, paneID: String) { searches[paneID]?.applySelected(n) }
     func endSearchFromCore(paneID: String) {
         if searches.removeValue(forKey: paneID) != nil { refocusActiveTerminal() }
     }
