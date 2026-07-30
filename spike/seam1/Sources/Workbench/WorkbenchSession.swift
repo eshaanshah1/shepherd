@@ -27,9 +27,16 @@ final class WorkbenchSession: ObservableObject {
         scope = next
         // Leaving Commits drops the historical document. Done before anything reloads, so the
         // rows a commit put on screen cannot outlive the scope that explains them.
-        if next != .commits { selectCommit(nil) }
+        if next != .commits {
+            selectCommit(nil)
+            // A plan must not survive leaving the scope that shows it.
+            cancelRewrite()
+        }
         if next == .threads { threadsPanelOpen = true }
         if next == .commits {
+            // A source branch chosen last visit is not the landing state — the scope opens on
+            // this branch's own commits, which is what it is for.
+            if sourceRef != nil { selectSourceRef(nil) }
             // The list is the landing state: no commit is selected, so the buffer is empty
             // until one is picked. `selectCommit(nil)` above already emptied it on the way in
             // from another scope, and `load()` keeps the list itself up to date.
@@ -69,6 +76,55 @@ final class WorkbenchSession: ObservableObject {
 
     /// Sha of the shown commit, which is what every provenance decision keys off.
     var historicalSha: String? { selectedCommit?.sha }
+
+    // MARK: - Stashes
+
+    /// The stash list, for the Commits scope's STASHES section. Empty until `loadStashes`.
+    @Published private(set) var stashes: [Stash] = []
+
+    /// Which stash the buffer is showing, when it is showing one.
+    ///
+    /// **A label for the selection, never a source of provenance.** A stash is a real commit,
+    /// so a selected stash *is* a `selectedCommit` and `historicalSha` remains the single
+    /// thing colours, line text and editability follow from. Two pieces of state meaning
+    /// "this document is history" is two pieces that can disagree, which is the defect
+    /// `DocumentProvenance` exists to prevent.
+    @Published private(set) var selectedStash: Stash?
+
+    /// Paths this stash carries that its diff cannot show — they live in its third parent.
+    @Published private(set) var stashUntrackedPaths: [String] = []
+
+    /// The top stash, for the discard confirmation's informational line.
+    var stashTopDescription: String? {
+        guard let top = stashes.first else { return nil }
+        return "\(top.ref): \(top.message)"
+    }
+
+    // MARK: - Cherry-pick sources
+
+    /// Branches that could be a cherry-pick source. Read in `load()`'s hop.
+    @Published private(set) var sourceRefs: [Ref] = []
+    /// The branch being browsed, or nil for this branch's own commits.
+    @Published private(set) var sourceRef: Ref?
+    /// `HEAD..<sourceRef>` — what that branch has that this one does not.
+    @Published private(set) var sourceCommits: [Commit] = []
+    /// Shas ticked for picking, newest-first like the list they came from.
+    @Published var pickSelection: Set<String> = []
+
+    // MARK: - Rewrite mode
+
+    /// The rewrite plan, or nil when not rewriting.
+    ///
+    /// **An explicit mode, not an always-live affordance.** The list you scroll while reviewing
+    /// an agent's work must not be the list where a stray drag rewrites history, so entering
+    /// copies `commits` and Apply is the only thing that runs git.
+    @Published private(set) var planRows: [PlanRow]?
+
+    var isRewriting: Bool { planRows != nil }
+
+    /// The commits the plan started from, for no-op detection. Captured on entry so a
+    /// background `load()` cannot change what "unchanged" means mid-edit.
+    private var planOriginal: [Commit] = []
 
     // MARK: - Blame
 
@@ -494,6 +550,12 @@ final class WorkbenchSession: ObservableObject {
     /// Drill into a commit, or nil to go back to the list.
     func selectCommit(_ commit: Commit?) {
         guard selectedCommit?.sha != commit?.sha else { return }
+        // A commit picked from the list is not a stash. Cleared here rather than at each call
+        // site so no path can leave the label describing a document it no longer describes.
+        if selectedStash?.sha != commit?.sha {
+            selectedStash = nil
+            stashUntrackedPaths = []
+        }
         selectedCommit = commit
         focusedFile = nil
         // Blobs are keyed by sha so they could survive, but the highlighter's parses are
@@ -519,6 +581,233 @@ final class WorkbenchSession: ObservableObject {
                 self.baseLabel = result.baseLabel
                 self.rebuild()
                 self.loading = false
+            }
+        }
+    }
+
+    // MARK: - Stash actions
+
+    /// Show a stash as a diff, or nil to go back to the list.
+    ///
+    /// Funnelled *through* `selectCommit` rather than beside it: a stash is a commit, so this
+    /// inherits W5a's provenance, blob cache, read-only guard and breadcrumb for free, and
+    /// there is exactly one path by which the buffer becomes historical.
+    func selectStash(_ stash: Stash?) {
+        guard let stash else {
+            selectedStash = nil
+            stashUntrackedPaths = []
+            selectCommit(nil)
+            return
+        }
+        selectedStash = stash
+        // `author` reads as the document's *kind* rather than a person: the header prints
+        // `<sha> · <author> · <age>`, and "stash" there says what you are looking at.
+        selectCommit(Commit(sha: stash.sha,
+                            shortSha: String(stash.sha.prefix(7)),
+                            subject: stash.message,
+                            author: "stash",
+                            timestamp: stash.timestamp))
+        let cwd = self.cwd
+        let ref = stash.ref
+        DispatchQueue.global(qos: .userInitiated).async {
+            let paths = StashRunner.untrackedPaths(cwd: cwd, ref: ref)
+            DispatchQueue.main.async { self.stashUntrackedPaths = paths }
+        }
+    }
+
+    /// Stash the working tree, reusing the commit draft as the message.
+    func createStash(scope: StashScope) {
+        guard !writing else { return }
+        let cwd = self.cwd
+        let message = commitDraft
+        lastError = nil
+        writing = true
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = StashRunner.push(cwd: cwd, message: message, scope: scope)
+            DispatchQueue.main.async {
+                self.writing = false
+                self.lastError = result.errorText
+                if result.isOK { self.commitDraft = "" }
+                // `load()` re-reads the stash list in its own hop.
+                self.load()
+            }
+        }
+    }
+
+    /// Apply or pop a stash.
+    ///
+    /// A conflicted apply is an ordinary outcome, not a failure to hide: git's words go to
+    /// `lastError` and `loadConflicts()` settles the state, which `conflictContext` reports as
+    /// `.loose` — no operation, so no Continue, and the discard is the way out.
+    func applyStash(_ stash: Stash, pop: Bool) {
+        guard !writing else { return }
+        let cwd = self.cwd
+        let ref = stash.ref
+        lastError = nil
+        writing = true
+        // Drop the historical document first: after an apply the interesting thing is the
+        // working tree, not the stash that produced it. Also lets `load()` refresh the list.
+        selectStash(nil)
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = StashRunner.apply(cwd: cwd, ref: ref, pop: pop)
+            DispatchQueue.main.async {
+                self.writing = false
+                self.lastError = result.errorText
+                self.loadConflicts()
+                self.load()
+            }
+        }
+    }
+
+    func dropStash(_ stash: Stash) {
+        guard !writing else { return }
+        let cwd = self.cwd
+        let ref = stash.ref
+        lastError = nil
+        writing = true
+        if selectedStash?.sha == stash.sha { selectStash(nil) }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = StashRunner.drop(cwd: cwd, ref: ref)
+            DispatchQueue.main.async {
+                self.writing = false
+                self.lastError = result.errorText
+                self.load()
+            }
+        }
+    }
+
+    // MARK: - Cherry-pick actions
+
+    /// Browse another branch, or nil to go back to this branch's commits.
+    func selectSourceRef(_ ref: Ref?) {
+        sourceRef = ref
+        pickSelection = []
+        // Whatever historical document was on screen belonged to the previous list.
+        selectCommit(nil)
+        guard let ref else {
+            sourceCommits = []
+            return
+        }
+        let cwd = self.cwd
+        let name = ref.name
+        DispatchQueue.global(qos: .userInitiated).async {
+            let commits = CherryPickRunner.commits(cwd: cwd, ref: name)
+            DispatchQueue.main.async { self.sourceCommits = commits }
+        }
+    }
+
+    /// Apply the ticked commits onto this branch.
+    ///
+    /// **Reversed on the way out.** `sourceCommits` is newest-first and `git cherry-pick`
+    /// applies its arguments in the order given, so handing it the display order would land the
+    /// picks backwards — each applied to a tree its author never saw.
+    func cherryPickSelection() {
+        guard !writing, !pickSelection.isEmpty else { return }
+        let shas = sourceCommits.filter { pickSelection.contains($0.sha) }
+            .map(\.sha).reversed().map { $0 }
+        let cwd = self.cwd
+        lastError = nil
+        writing = true
+        // HEAD is about to move, so every file's blame is against the wrong history.
+        invalidateBlame()
+        selectCommit(nil)
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = CherryPickRunner.pick(cwd: cwd, shas: shas)
+            DispatchQueue.main.async {
+                self.writing = false
+                // A conflict is not a failure to hide, but git's words are worth showing —
+                // the lock and the counter explain the rest.
+                self.lastError = result.errorText
+                self.pickSelection = []
+                self.loadConflicts()
+                self.load()
+            }
+        }
+    }
+
+    // MARK: - Rewrite actions
+
+    /// Enter Rewrite mode. Nothing touches git.
+    func beginRewrite() {
+        // Rewriting a repo that is mid-sequence would stack one rebase on another, and the lock
+        // already forbids leaving Files — this is the same rule, stated where it is acted on.
+        guard !isMidSequence, !commits.isEmpty else { return }
+        selectCommit(nil)
+        planOriginal = commits
+        planRows = RebasePlan.rows(from: commits)
+    }
+
+    func cancelRewrite() {
+        planRows = nil
+        planOriginal = []
+    }
+
+    func setVerb(_ verb: RebaseVerb, forSha sha: String) {
+        guard var rows = planRows,
+              let index = rows.firstIndex(where: { $0.commit.sha == sha }) else { return }
+        rows[index].verb = verb
+        // A message only means something for an entry that opens an editor; clearing it on the
+        // way out stops a stale one being submitted if the verb comes back later.
+        if !verb.needsMessage { rows[index].message = "" }
+        planRows = rows
+    }
+
+    func setPlanMessage(_ message: String, forSha sha: String) {
+        guard var rows = planRows,
+              let index = rows.firstIndex(where: { $0.commit.sha == sha }) else { return }
+        rows[index].message = message
+        planRows = rows
+    }
+
+    /// Reorder. Indices are into the **displayed** (newest-first) order; `RebasePlan.todo`
+    /// inverts on the way out, and nothing here should second-guess that.
+    func movePlanRow(from source: Int, to destination: Int) {
+        guard var rows = planRows, rows.indices.contains(source) else { return }
+        let clamped = max(0, min(destination, rows.count))
+        let row = rows.remove(at: source)
+        rows.insert(row, at: clamped > source ? clamped - 1 : clamped)
+        planRows = rows
+    }
+
+    /// Why Apply is disabled, or nil when the plan may run. Never nil when it cannot.
+    var rewriteBlockedReason: String? {
+        guard let planRows else { return "not rewriting" }
+        if writing { return "git is running" }
+        return RebasePlan.blockedReason(rows: planRows, original: planOriginal)
+    }
+
+    /// Run the plan.
+    ///
+    /// Then `loadConflicts()`, which is the whole of the stop handling: a conflicting pick fills
+    /// `mergeFiles`, the lock re-engages, the scope forces to Files and the existing Continue
+    /// drives the rest. A stopped `rebase -i` is structurally identical to the stopped plain
+    /// rebase already handled — git 2.55 runs both through the merge backend and writes the same
+    /// `rebase-merge` directory.
+    func applyRewrite() {
+        guard let rows = planRows, rewriteBlockedReason == nil,
+              let base = baseName else { return }
+        let original = planOriginal
+        let cwd = self.cwd
+        lastError = nil
+        writing = true
+        // Every sha is about to change, so every file's blame is against the wrong history.
+        invalidateBlame()
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = RebaseRunner.apply(cwd: cwd, base: base, rows: rows, original: original)
+            // Read on this queue, not the main one: it spawns git, and `GitStaging`'s own rule
+            // is that a `Process` never runs during a SwiftUI layout pass.
+            let stopped = ConflictReader.read(cwd: cwd).state.isActive
+            DispatchQueue.main.async {
+                self.writing = false
+                // Not every non-zero exit deserves git's words: a rebase that stops at a
+                // conflict exits non-zero, and the panel about to appear explains it better.
+                self.lastError = stopped ? nil : result.errorText
+                // Rewrite mode is over either way. If the rebase stopped, the remaining todo is
+                // git's, not ours, and the sequence panel owns the screen.
+                self.planRows = nil
+                self.planOriginal = []
+                self.loadConflicts()
+                self.load()
             }
         }
     }
@@ -649,8 +938,25 @@ final class WorkbenchSession: ObservableObject {
                 : GitResult.ok("")
             let commits: [Commit]
             if case .ok(let text) = log { commits = CommitHistory.parse(text) } else { commits = [] }
+            // Same hop as the log, and for the same reason: one place that refreshes history
+            // means the stash list cannot go stale on a trigger the commit list handles.
+            let stashes = result.isRepo ? StashRunner.list(cwd: cwd) : []
+            let refs = result.isRepo ? CherryPickRunner.refs(cwd: cwd) : []
             DispatchQueue.main.async {
                 self.commits = commits
+                self.stashes = stashes
+                self.sourceRefs = refs
+                // A branch deleted elsewhere must not stay selected with a stale commit list.
+                if let current = self.sourceRef,
+                   !refs.contains(where: { $0.name == current.name }) {
+                    self.selectSourceRef(nil)
+                }
+                // A stash popped or dropped elsewhere must not stay selected, showing a
+                // document nothing can explain.
+                if let selected = self.selectedStash,
+                   !stashes.contains(where: { $0.sha == selected.sha }) {
+                    self.selectStash(nil)
+                }
                 self.files = result.files
                 self.stagedFiles = result.stagedFiles
                 // A focused file that fell out of the diff would leave an empty editor
@@ -930,6 +1236,41 @@ final class WorkbenchSession: ObservableObject {
     /// files on every load — so it clears the instant git's state does.
     var isMidSequence: Bool { hasConflicts || mergeState.isActive }
     var conflictPaths: Set<String> { Set(mergeFiles.map(\.path)) }
+
+    /// What kind of conflicted state this is, and therefore what the way out is.
+    ///
+    /// Derived, never stored: `mergeState` and `mergeFiles` are both re-read from git by
+    /// `loadConflicts()`, so this cannot drift from git's own idea of where we are.
+    var conflictContext: ConflictContext {
+        SequencePolicy.context(operation: mergeState.operation, hasConflicts: hasConflicts)
+    }
+
+    /// The paths a discard would restore. Only meaningful in `.loose`.
+    var looseConflictPaths: [String] { mergeFiles.map(\.path) }
+
+    /// Leave a conflicted state that has no operation to abort.
+    ///
+    /// The only exit that exists for it: git has nothing to `--continue` and nothing to
+    /// `--abort`, so either every file gets resolved or the merge is thrown away.
+    func discardLooseConflicts() {
+        guard !writing, case .loose = conflictContext else { return }
+        let paths = looseConflictPaths
+        guard !paths.isEmpty else { return }
+        let cwd = self.cwd
+        lastError = nil
+        writing = true
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = GitStaging.restoreFiles(paths, cwd: cwd)
+            DispatchQueue.main.async {
+                self.writing = false
+                self.lastError = result.errorText
+                self.resolutions.removeAll()
+                self.loadConflicts()
+                // The tree just changed under every row on screen.
+                if result.isOK { self.load() }
+            }
+        }
+    }
 
     /// Conflicted files, narrowed to the focused one.
     var displayedConflictFiles: [MergeFile] {

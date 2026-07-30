@@ -38,6 +38,18 @@ enum GitStaging {
         return run(["restore", "--staged", "--"] + paths, cwd: cwd)
     }
 
+    /// Restore paths to HEAD, clearing their unmerged stages.
+    ///
+    /// **Per path, never `reset --hard`.** This is the escape from a conflicted state with no
+    /// operation to abort, and the tree around it can hold modifications that were never at
+    /// risk — discarding those would be a second trap rather than an exit from the first.
+    /// Measured against git 2.55: this clears all three stages for the named paths and leaves
+    /// an unrelated modified file untouched.
+    static func restoreFiles(_ paths: [String], cwd: String) -> GitResult {
+        guard !paths.isEmpty else { return .ok("") }
+        return run(["checkout", "HEAD", "--"] + paths, cwd: cwd)
+    }
+
     /// Local branch names, current one first.
     static func listBranches(cwd: String) -> [String] {
         guard case .ok(let out) = run(["for-each-ref", "--sort=-committerdate",

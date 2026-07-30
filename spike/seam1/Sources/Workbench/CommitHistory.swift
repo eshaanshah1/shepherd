@@ -42,9 +42,18 @@ enum CommitHistory {
     /// answers. `%at` is the author date as a UNIX timestamp, so nothing has to parse a
     /// locale-dependent date string.
     static func logArguments(base: String) -> [String] {
+        logArguments(range: "\(base)..HEAD")
+    }
+
+    /// Commits in an arbitrary range, newest first.
+    ///
+    /// The Commits scope asks for `<base>..HEAD` — what this branch has done. The cherry-pick
+    /// picker asks for `HEAD..<ref>` — what another branch has that this one does not. One
+    /// builder, so the two cannot drift in format; `parse` is shared between them.
+    static func logArguments(range: String) -> [String] {
         ["log",
          "--format=%H\(fieldEscape)%h\(fieldEscape)%an\(fieldEscape)%at\(fieldEscape)%s\(recordEscape)",
-         "\(base)..HEAD"]
+         range]
     }
 
     /// A file's whole text as of a commit. `<sha>:<path>` takes a **repo-relative** path.

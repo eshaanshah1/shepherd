@@ -83,7 +83,9 @@ spike/
 `StitchMapTests`/`BlockMapTests`/`WordDiffTests`(+`HunkPairingTests`)/`LockPolicyTests`/
 `PatchSynthTests`/`StageSelectionTests`/`RowPlanTests`/`HunkGapsTests`, plus W5a's
 `CommitHistoryTests`/`DocumentProvenanceTests`/`BlameParseTests`/`BlameLaneTests`/`SequencePolicyTests`
-and the **real-git** `CommitDiffIntegrationTests`/`SequenceIntegrationTests`) — pure-model coverage of the `SplitNode` tree ops, the `Workspace`/`locatePane` helpers, the persistence snapshot/restore/migration (incl. `worktreeHook`), the sleep policy, the `applyEvent` lifecycle/background-`Stop` suppression, the worktree-archive expiry/age math, the PR-status classify/parse reduction, the shortcut-catalog integrity (no dupe glyphs/ids, full `ShortcutID` coverage), the config-writer key round-trip (preserve/insert/update), and the worktree-hook env map, compiling `SplitTree`/`Tab`/`AgentState`/`Theme`/`Workspace`/`Persistence`/`SleepPolicy`/`StopPolicy`/`WorktreeService`/`WorktreeArchive`/`PRStatus`/`ShortcutCatalog`/`ShepherdConfigWriter`/`WorktreeHookRunner` without the AppKit surface. Test files added under `Tests/` are picked up by the `- path: Tests` glob, but a new compiled **source** must be added to the target's explicit `sources:` list in `project.yml`.
+and the **real-git** `CommitDiffIntegrationTests`/`SequenceIntegrationTests`, plus W5b's
+`ConflictContextTests`/`StashListTests`/`RefListTests`/`RebasePlanTests` and the **real-git**
+`StashIntegrationTests`/`CherryPickIntegrationTests`/`RebasePlanIntegrationTests`) — pure-model coverage of the `SplitNode` tree ops, the `Workspace`/`locatePane` helpers, the persistence snapshot/restore/migration (incl. `worktreeHook`), the sleep policy, the `applyEvent` lifecycle/background-`Stop` suppression, the worktree-archive expiry/age math, the PR-status classify/parse reduction, the shortcut-catalog integrity (no dupe glyphs/ids, full `ShortcutID` coverage), the config-writer key round-trip (preserve/insert/update), and the worktree-hook env map, compiling `SplitTree`/`Tab`/`AgentState`/`Theme`/`Workspace`/`Persistence`/`SleepPolicy`/`StopPolicy`/`WorktreeService`/`WorktreeArchive`/`PRStatus`/`ShortcutCatalog`/`ShepherdConfigWriter`/`WorktreeHookRunner` without the AppKit surface. Test files added under `Tests/` are picked up by the `- path: Tests` glob, but a new compiled **source** must be added to the target's explicit `sources:` list in `project.yml`.
 
 ---
 
@@ -438,6 +440,19 @@ mergeState.isActive`) — so a half-applied sequence gates every scope until Con
 not just until the last conflict is resolved. The pending commit message is shown editable;
 leaving it alone keeps git's verbatim.
 
+**Power tools (W5b) — stash, cherry-pick, Rewrite mode.** All three land in the Commits scope
+and all three end in the sequence seam above, so they add starters rather than machinery.
+- **STASHES** is a collapsible section under the commit list (`StashList` pure + `StashRunner`),
+  and a **Stash** menu sits beside Commit reusing the commit draft as the message. Clicking a
+  stash shows it as a read-only diff — a stash is a commit, so `selectStash` funnels through
+  `selectCommit` and inherits provenance, the blob cache and the breadcrumb.
+- **Cherry-pick** adds a `from:` menu of local branches (`RefList`, sorted newest-first, the
+  checked-out ones marked) listing `HEAD..<ref>`; ticked commits go to `git cherry-pick`
+  **oldest-first**. Bounded browsing — one ref, no graph.
+- **Rewrite mode** turns the commit list into a `rebase -i` todo (`RebasePlan` pure,
+  `RebaseRunner`): an explicit mode behind a `Rewrite…` button, verbs pick/reword/squash/fixup/
+  drop, reorder by move buttons, and nothing runs until Apply.
+
 **Merge conflicts (W3)** live in the Files scope. `ConflictReader` reads `git ls-files -u`
 and `Diff3.merge`s the index's three stage blobs — **never** a parse of the worktree file's
 markers (marker text depends on `merge.conflictStyle`, content can contain marker-shaped
@@ -550,6 +565,12 @@ falls back to a plain shell. Requires the plugin reporting `session_id` — afte
 - **Workbench: a document's provenance is one decision, in `DocumentProvenance`.** Colours, the text of rows the diff does not carry, and editability all follow from `selectedCommit` — one piece of state, never a commit *plus* a flag, since two things meaning "this is history" can disagree. **The `fileLines` lookup in `rebuild()` is the easy miss**: it is the only path for gap-revealed and edited rows, so reading the working copy there splices *today's* lines into a three-week-old commit. Same class of bug as colouring from the wrong file, entering by a different door.
 - **Workbench: `load()` must not clobber a historical document.** It is fired by the refresh button *and* by every agent disk write through `scheduleReload`, so while a commit is selected it re-reads that commit instead of the tree — otherwise an agent saving a file swaps the old rows for the working copy's diff underneath you. Related: read the commit list inside `load()`'s existing background hop, because asking beforehand races `baseName` into its `"main"` fallback and silently returns nothing on a `master` repo.
 - **`git <verb> --continue` wants an editor, and an app-spawned `Process` has no tty** — so left alone it *hangs forever* rather than failing. `SequenceRunner` passes `GIT_EDITOR=true` to keep the message and `GIT_EDITOR="cp '<file>'"` to reword (git appends the message path to that command string). `GitStaging.run(env:)` **merges** into the inherited environment — replacing it loses `HOME`, and so git's config.
+- **A conflicted stash apply is not a sequence.** It leaves unmerged files with **no** `MERGE_HEAD` / `CHERRY_PICK_HEAD` / `rebase-merge` / `sequencer` at all (measured on git 2.55; `git checkout -m` and `git apply -3` do the same), so `mergeState.isActive` is false while `hasConflicts` is true. Shipped, that locked the workbench to Files with a Continue reading "nothing in progress" and an Abort that hit `guard mergeState.isActive` and returned silently — no exit but another app. `SequencePolicy.context` names it **`.loose`**: no Continue, and the way out is per-path `git checkout HEAD -- <paths>`, **never `reset --hard`**, which would take unrelated dirty files that were never at risk. `.loose` deliberately cannot name its cause — git records nothing that distinguishes those three.
+- **A stash is a 3-parent merge commit**, so `DiffReader.readCommit` reads one **unchanged** — the `-m --first-parent` above is exactly what a stash needs, which is the second time that fix has paid for itself. `selectStash` funnels through `selectCommit` so `historicalSha` stays the only provenance state. Files stashed with `-u` live in the **third** parent and appear nowhere in the first-parent diff, so they are **listed, not drawn** (`ls-tree <ref>^3`).
+- **`GIT_SEQUENCE_EDITOR` takes the same `cp '<file>'` substitution `GIT_EDITOR` does**, and left alone it **hangs** rather than failing — no tty. `RebaseRunner` sets both, `GIT_EDITOR` to `true` even when nothing should ask, so a surprise prompt exits 0 instead of waiting forever.
+- **A rebase todo's subject is decoration.** git 2.55 writes `pick <shortsha> # <subject>`, and a todo of bare `pick <sha>` lines rebases correctly — so `RebasePlan` only ever *writes* a todo and nothing parses git's format (which also means a subject containing `#` cannot comment out its own line). **It emits oldest-first, the reverse of the rail**: the `SplitAxis` trap again, pinned by a pure test *and* a real-git one. A related bug worth not repeating: `RebaseRunner.apply` first derived its no-op check's `original` from the rows themselves, which made **every reorder-only plan** read as "nothing to apply" while the no-op test passed. **A guard whose input is reconstructed from the thing it guards is not a guard.**
+- **One reword-or-squash per rewrite plan**, because one `cp` substitutes one message. `fixup` keeps the base commit's message, opens no editor, and is therefore unlimited.
+- **A cherry-pick sequence has no `msgnum`/`end` and no record of its original total** — `sequencer/todo` shrinks in place. `MergeProgress.remaining` exists for that, so the banner says `2 remaining`, never `2 of 5`; a denominator would be cached sequence state an abort in a terminal pane invalidates. A single-commit pick writes no sequencer dir at all, so it reports no progress rather than `0 remaining`.
 - **`--continue` exits non-zero when it stops at the NEXT commit's conflict.** The loop working correctly looks like a failed command, and surfacing it would show `error: could not apply …` on every well-behaved multi-commit rebase. Neither the exit status nor the unmerged count can tell that apart from a refusal — a refused continue also exits non-zero and also leaves unmerged files. **Whether HEAD moved** is the discriminator; `SequencePolicy.outcome` owns it, and `SequenceIntegrationTests` pins it.
 - **Workbench: clicks cannot reach a band; there are now three answers and you must pick the right one.** `TextView.hitTest` returns the text view for any point inside it, so a line-fragment subview never receives a click. Hunk-gap arrows → the **gutter**; the reconcile row → the **rail**; the conflict accept buttons → **`WorkbenchOverlay`**, a transparent `NSView` over the text view that draws *and* hit-tests its own targets and returns nil from `hitTest` everywhere else. The overlay is the `WidgetLayer` seed and is written against "blocks with targets" — reach for it rather than a fourth answer. It repeats every rule the gutter learned: clip-view `boundsDidChangeNotification` (never `scrollPosition`), geometry from `editorLineMetrics`, `clipsToBounds`, a visible-window-bounded walk, and **re-parent on every rebuild with no "already attached" short-circuit**.
 - **Workbench: never construct the highlighter or render delegate in `body`.** `SourceEditor` compares highlight providers by `ObjectIdentifier`, so a fresh instance per SwiftUI body evaluation reads as a provider change and re-runs `setHighlightProviders` (dropping every cached tree-sitter parse) **plus `reloadUI()` — on every scroll tick**. They live on `WorkbenchSession` (`highlighter`, `renderer`), built once. The same rule applies to anything else an `NSViewRepresentable` hands the editor.
@@ -617,9 +638,14 @@ marker rendering, accept controls on the new `WorkbenchOverlay`, and a **Files s
 (`⌃3`) that carries both conflicts and `⌘P`-opened files.
 **W5a built (not yet live-run)**: a `Commits` scope (`⌃4`) with no graph renderer by
 decision, commit-as-diff off a blob-backed provenance, the blame lane, and the Continue
-control that finishes a stopped rebase/cherry-pick/merge. Only **W5b** (stash, cherry-pick,
-interactive rebase) remains. See the roadmap for every deviation from plan and the defects
-each live run turned up.
+control that finishes a stopped rebase/cherry-pick/merge.
+**W5b built (not yet live-run)**: stash (a STASHES section reading through `readCommit`
+untouched, since a stash is a 3-parent merge commit), cherry-pick from a branch/worktree
+picker, **Rewrite mode** (the commit list as a `rebase -i` todo), and the `.loose` escape for
+conflicts with no operation — which was a live defect in the shipped build, not a new feature.
+The workbench is now feature-complete; **two phases owe a live run**, which is the bar every
+earlier phase was held to. See the roadmap for every deviation from plan and the defects each
+live run turned up.
 
 **Onboarding (first run):** a welcome card that installs the Claude Code plugin / reports
 notification permission / sets the theme, a locally generated git sandbox (bare origin +

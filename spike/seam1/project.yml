@@ -215,6 +215,11 @@ targets:
       - path: Sources/Workbench/BlameLane.swift
       - path: Sources/Workbench/SequencePolicy.swift
       - path: Sources/Workbench/SequenceRunner.swift
+      - path: Sources/Workbench/StashList.swift
+      - path: Sources/Workbench/StashRunner.swift
+      - path: Sources/Workbench/RefList.swift
+      - path: Sources/Workbench/RebasePlan.swift
+      - path: Sources/Workbench/RebaseRunner.swift
       - path: Sources/Workbench/FileFinder.swift
       - path: Sources/Workbench/FileLister.swift
       - path: Sources/Workbench/HunkGaps.swift

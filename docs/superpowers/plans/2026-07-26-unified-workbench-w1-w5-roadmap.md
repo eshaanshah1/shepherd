@@ -7,7 +7,7 @@
 
 ## Progress
 
-Last updated 2026-07-28 · branch `workbench-w5a-history` · 0 failures
+Last updated 2026-07-30 · branch `workbench-w5b-power-tools` · 788 tests, 0 failures
 
 ```
 W0  editor foundation      ██████████████████████  100%   run + hardened
@@ -16,10 +16,15 @@ W2  editing in anger       █████████████████�
 W3  merge resolver         ██████████████████████  100%   run + reshaped from that run
 W4  PR surface             ██████████████████████  100%   band, checks, gh actions, threads
 W5a history & commits      ██████████████████████  100%   built + green; NOT yet live-run
-W5b power tools            ░░░░░░░░░░░░░░░░░░░░░░    0%   stash, cherry-pick, rebase -i
+W5b power tools            ██████████████████████  100%   built + green; NOT yet live-run
                            ──────────────────────
-    overall                ███████████████████░░░   90%
+    overall                ██████████████████████  100%   two phases still owe a live run
 ```
+
+**The workbench is feature-complete and two phases are unverified by a human.** Every prior
+phase was finished by someone pressing something — eleven defects in W1's first run, nine
+across W3/W4 — so W5a and W5b are both "green, not proven". The gates are Task 13 of each
+plan.
 
 **W0 — done (11 tasks).** Editor vendored (247 files / 23,946 lines in-module,
 6 module collisions resolved); `Theme.Diff` + shared 1.5 line height; `StitchMap`,
@@ -642,15 +647,75 @@ moved. No unit test could have found this; only real git knows.
 - **Rewording an arbitrary past commit.** W5a rewords only the commit a sequence has stopped
   on, because that is the one git is already asking about.
 
-## W5b — Power tools (remaining)
+## W5b — Power tools — **BUILT, NOT YET LIVE-RUN**
 
-Stash, cherry-pick, interactive rebase (reorderable todo).
+Spec: [`2026-07-29-workbench-w5b-power-tools-design.md`](../specs/2026-07-29-workbench-w5b-power-tools-design.md).
+Plan: [`2026-07-29-workbench-w5b-power-tools.md`](2026-07-29-workbench-w5b-power-tools.md).
 
-The conflict recursion W5's original note warned about **is already handled**: it is not
-recursion, just the same load path arriving at a new conflict set, and the Continue seam
-exists for the todo editor to drive. One thing to carry over: `rebase -i` will need
-`GIT_SEQUENCE_EDITOR` given the same treatment `GIT_EDITOR` got, and for the same reason —
-no tty means a hang, not an error.
+**It adds starters, not an engine.** All three verbs end where W5a already ends — an operation
+that either completes or stops with conflicts — so `SequenceRunner.cont`,
+`SequencePolicy.outcome`, the `isMidSequence` lock and `loadConflicts()` are reused untouched.
+What W5b adds is ways to *start* that machine, plus one state it could not express.
+
+### The defect this found in the shipped build
+
+`hasConflicts && !mergeState.isActive` — the **mirror** of the state W5a called unrepresented.
+A conflicted `git stash pop` produces it: measured, three unmerged stages and **no**
+`MERGE_HEAD` / `CHERRY_PICK_HEAD` / `rebase-merge` / `sequencer` / `MERGE_MSG`. Run that
+through the shipped code and the workbench locks to Files, offers a Continue whose reason reads
+*"nothing in progress"*, and an Abort that hits `guard mergeState.isActive` and **returns
+silently**. The only exit was another application.
+
+`SequencePolicy.context` now names it `.loose`, derived every read and deliberately unable to
+name a *cause* — git records nothing distinguishing a conflicted stash apply from a conflicted
+`git checkout -m`. The escape is per-path `git checkout HEAD -- <paths>`, never `reset --hard`,
+which would take unrelated work that was never at risk.
+
+### Six git behaviours probed rather than assumed
+
+| Fact | Consequence |
+|---|---|
+| **A stash is a 3-parent merge commit**; `git show -M -m --first-parent --format=` yields its tracked changes vs HEAD-at-stash-time | `DiffReader.readCommit` reads a stash **unchanged**. The `-m --first-parent` W5a added for merge commits is what makes this work — the second time that fix has paid for itself |
+| `-u` files live in the stash's **third parent**, absent from the first-parent diff | untracked-in-stash paths are **listed, not previewed** (`ls-tree <ref>^3`) |
+| `GIT_SEQUENCE_EDITOR` is a command string with the todo path appended, so `cp '<file>'` substitutes a todo — path-with-spaces included | the todo writer is a temp file plus a `cp`; no shell script, no tty, no hang |
+| A todo of bare **`pick <sha>`** lines rebases correctly; git 2.55 itself writes `pick <shortsha> # <subject>` | **we only ever write a todo, never parse one.** The subject is decoration; identity is the sha |
+| An **empty todo** gives `error: nothing to do` and unwinds cleanly | the all-dropped plan needs a UI refusal for clarity, not a safety guard |
+| A cherry-pick sequence has **no `msgnum`/`end`** and keeps **no record of its original total** | progress is `N remaining`, never `N of M`; a denominator would be cached sequence state |
+
+### The inversion, and the guard that wasn't one
+
+`RebasePlan` emits the todo **oldest-first — the reverse of the rail**. git applies a todo
+top-down from the base while the rail lists newest first, so emitting the display order would
+silently reverse a branch. Same read-it-either-way trap as `SplitAxis`'s `.row`, and pinned by
+both a pure test and a real-git one.
+
+The bug worth remembering: `RebaseRunner.apply` originally derived its no-op check's `original`
+from the rows themselves. A reorder changes neither the verbs nor the set of shas, so that made
+**every reorder-only plan** read as "nothing to apply" — the feature's main case, refused
+before git ran. The no-op test passed the whole time; only the reversal test caught it.
+`original` is now a required parameter. **A guard whose input is reconstructed from the thing it
+guards is not a guard.**
+
+### One message-editing entry per plan
+
+`reword` and `squash` open an editor, and `cp '<file>'` can supply exactly one message, so a
+plan with two would give both commits the same subject. `fixup` keeps the base commit's message
+and opens nothing, so fixups are unlimited. Reorder + drop + any number of fixups + one
+reword-or-squash; more means applying and rewriting again. The alternative is a dispatcher
+script that pops messages in order — a follow-up, not a deferred promise.
+
+### Deferred from W5b, recorded so it is not mistaken for done
+
+- Several message-editing entries per plan (the dispatcher script).
+- `edit` / `break` verbs; `rebase --edit-todo` on a live todo; `--autosquash`; splitting a
+  commit; rebasing onto a different base.
+- Full-history browsing past one picked ref — W5a's decision, unchanged.
+- Previewing a stash's untracked files as rows.
+- Cherry-picking from a remote ref that is not a local branch (`origin/*` is not in
+  `refs/heads`).
+- `git stash branch <name>`, and `--index` on apply to restore staged-ness.
+- **A drag to reorder.** Rewrite mode uses move buttons because the rail is a custom
+  `ScrollView`, not a `List`, so `onMove` does not exist here.
 
 ---
 
