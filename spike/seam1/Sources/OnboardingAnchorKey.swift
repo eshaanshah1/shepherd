@@ -67,9 +67,8 @@ struct OnboardingAnchorKey: PreferenceKey {
         value.merge(nextValue(), uniquingKeysWith: { _, b in b })
     }
 
-    /// What an inactive publisher contributes is nothing — an empty dictionary merges
-    /// away, so gating the value is equivalent to not publishing, without the view-tree
-    /// surgery an `if` in a `ViewModifier` body performs (see `OnboardingAnchorIf`).
+    /// An inactive publisher contributes nothing: an empty dictionary merges away, so
+    /// gating the value is equivalent to not publishing at all.
     static func published(_ a: OnboardingAnchor,
                           shape: OnboardingSpotShape,
                           rect: CGRect,
@@ -80,11 +79,7 @@ struct OnboardingAnchorKey: PreferenceKey {
 
 extension View {
     func onboardingAnchor(_ a: OnboardingAnchor, shape: OnboardingSpotShape = .row) -> some View {
-        background(GeometryReader { g in
-            Color.clear.preference(key: OnboardingAnchorKey.self,
-                                   value: [a: OnboardingSpot(rect: g.frame(in: .named(OnboardingAnchorKey.space)),
-                                                             shape: shape)])
-        })
+        onboardingAnchor(a, shape: shape, if: true)
     }
 
     /// Each anchor is a single slot, so only the demo workspace's rows may claim one —
@@ -96,17 +91,9 @@ extension View {
     }
 }
 
-/// `active` gates the published VALUE, never the view tree. Writing this as
-/// `if active { content.onboardingAnchor(…) } else { content }` builds a
-/// `_ConditionalContent`, whose two branches are structurally different views — so
-/// flipping the flag makes SwiftUI tear the wrapped subtree down and rebuild it from
-/// scratch. `SplitContainer` applies this with `if: isTabSelected`, which flips on
-/// every workspace/tab switch, so the tab you left had its whole pane tree remounted:
-/// a fresh `GhosttySurfaceView` per pane, a fresh `ghostty_surface_t`, a fresh PTY —
-/// and the old shell (with its `claude`) hung up. It read as "switching workspace
-/// closes my agent and drops the pane to a shell prompt", because the prompt you were
-/// left looking at was a brand-new shell. Anything wrapping a live surface must keep
-/// ONE structural identity across the flag.
+/// The only publisher, so there is one implementation to keep right — and it gates the
+/// published VALUE, never the view tree. An `if` here remounts the wrapped content, and
+/// this wraps live terminal surfaces: see the view-identity gotcha in CLAUDE.md.
 struct OnboardingAnchorIf: ViewModifier {
     let anchor: OnboardingAnchor
     let shape: OnboardingSpotShape
