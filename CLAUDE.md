@@ -379,7 +379,9 @@ Roadmap + everything the first live run taught:
 - **`SourceBuffer`** — one watched file; text, lazy base blob, dirty/live-follow.
   Created **on demand** (a 287-file diff must not open 287 fds).
 - **`DiffGutter` / `BlockRenderer` / `MultiHighlighter` / `EditorHost`** — the AppKit half.
-- **`WorkbenchView` / `WorkbenchThreads` / `WorkbenchComments`** — the SwiftUI chrome.
+- **`WorkbenchView` / `WorkbenchComments` / `InlineNoteCard`** — the SwiftUI chrome. The last
+  is the inline review-note card (data model + card + its measured height), hosted over the
+  editor by `WorkbenchOverlay`.
 
 **The buffer is editable.** `WriteBackCoordinator` maps each change onto the file its row
 came from (`EditMap`, pure + tested) and keeps `rowOrigins`/`rowStyles`/`lineStarts`/blocks in
@@ -498,13 +500,30 @@ reduce/parse in `PRStatus.swift` (`enum PR`, unit-tested); single-pane tabs only
 **PR review comments in the workbench:** a PR's inline **review threads** are pulled in
 (vs-base mode only) via `gh api graphql` (`GH.reviewThreads`/`replyToThread`/
 `setThreadResolved`), cached per-pane in `AgentStore.reviewThreads` (approach B, next to
-`prStatuses`, fetched on the same triggers). They render as **violet octocat cards** with
-**Reply / Resolve / Send-to-agent** — distinct from local comments (blue, agent-bound);
-send-to-agent appends a GitHub-tagged `ReviewComment` (`githubAuthor`) to the same
-"Send to agent" batch. Threads whose line no longer maps surface in a per-file "N not on
-the current diff" disclosure. An idle agent's PR icon shows a **red `message` badge with the
+`prStatuses`, fetched on the same triggers). They render **inline under the line they are
+about, and nowhere else** — one **hosted SwiftUI card** per note (`InlineNoteCard.swift`),
+violet + octocat for a GitHub thread, blue for a local agent-bound note. The card is the whole
+surface: rendered markdown (`MarkdownText`, `wrapsCode` so no inner scroll view eats the
+wheel), the full reply chain, and real Reply / Resolve / Send-to-agent buttons, with the
+composer expanding **in place**. Send-to-agent appends a GitHub-tagged `ReviewComment`
+(`githubAuthor`) to the same "Send to agent" batch; that copy is a *local* note
+(`isThread: false`), so it offers Remove rather than Reply — its id is a UUID and would
+address no thread. A thread whose line no longer maps is **not dropped**: it lands at the head
+of its file flagged `not on this diff` (`fallbackRow`), because an unresolved thread you cannot
+see is one you will not address. Threads are placed only while the document is the branch diff
+(`showsReviewThreads`) — a commit view or a merge preview is not what they describe. The
+**`Threads` scope** (rail row, no key of its own) still narrows the file list to files carrying
+them.
+An idle agent's PR icon shows a **red `message` badge with the
 unresolved count** (`PRThreads.unresolvedCount`, overrides the PR-kind glyph). Pure parse in
 `PRComments.swift` (`PRThreads`, `PRCommentsTests`); the `reviewRequired` eye icon was removed.
+
+There was a right-hand `WorkbenchThreadsPanel` as well, and it is **deleted** — don't
+reintroduce it. It predated the inline bands and then duplicated them, badly: the band drew
+*raw markdown source* at 11pt with no leading, its actions were painted 15pt chips in a second
+view, and its Reply button's entire implementation was **opening the panel**. That last part is
+what made the panel look load-bearing. Deleting it required the card to first absorb the three
+things only it could do — the reply chain, the composer, and threads whose line no longer maps.
 **Remote (mirror) workspaces** are host-authoritative: the client forwards
 `cmdSetWorkspaceDirectory` / `cmdNewWorktreeTab` to the host (which owns the repo + runs
 git), and `defaultPath` rides `WorkspaceTree` back so the mirror knows it; the client's
@@ -572,7 +591,8 @@ falls back to a plain shell. Requires the plugin reporting `session_id` — afte
 - **One reword-or-squash per rewrite plan**, because one `cp` substitutes one message. `fixup` keeps the base commit's message, opens no editor, and is therefore unlimited.
 - **A cherry-pick sequence has no `msgnum`/`end` and no record of its original total** — `sequencer/todo` shrinks in place. `MergeProgress.remaining` exists for that, so the banner says `2 remaining`, never `2 of 5`; a denominator would be cached sequence state an abort in a terminal pane invalidates. A single-commit pick writes no sequencer dir at all, so it reports no progress rather than `0 remaining`.
 - **`--continue` exits non-zero when it stops at the NEXT commit's conflict.** The loop working correctly looks like a failed command, and surfacing it would show `error: could not apply …` on every well-behaved multi-commit rebase. Neither the exit status nor the unmerged count can tell that apart from a refusal — a refused continue also exits non-zero and also leaves unmerged files. **Whether HEAD moved** is the discriminator; `SequencePolicy.outcome` owns it, and `SequenceIntegrationTests` pins it.
-- **Workbench: clicks cannot reach a band; there are now three answers and you must pick the right one.** `TextView.hitTest` returns the text view for any point inside it, so a line-fragment subview never receives a click. Hunk-gap arrows → the **gutter**; the reconcile row → the **rail**; the conflict accept buttons → **`WorkbenchOverlay`**, a transparent `NSView` over the text view that draws *and* hit-tests its own targets and returns nil from `hitTest` everywhere else. The overlay is the `WidgetLayer` seed and is written against "blocks with targets" — reach for it rather than a fourth answer. It repeats every rule the gutter learned: clip-view `boundsDidChangeNotification` (never `scrollPosition`), geometry from `editorLineMetrics`, `clipsToBounds`, a visible-window-bounded walk, and **re-parent on every rebuild with no "already attached" short-circuit**.
+- **Workbench: clicks cannot reach a band; there are now three answers and you must pick the right one.** `TextView.hitTest` returns the text view for any point inside it, so a line-fragment subview never receives a click. Hunk-gap arrows → the **gutter**; the reconcile row → the **rail**; the conflict accept buttons → **`WorkbenchOverlay`**, a transparent `NSView` over the text view that draws *and* hit-tests its own targets and returns nil from `hitTest` everywhere else. The overlay is the `WidgetLayer` seed and is written against "blocks with targets" — reach for it rather than a fifth answer. It repeats every rule the gutter learned: clip-view `boundsDidChangeNotification` (never `scrollPosition`), geometry from `editorLineMetrics`, `clipsToBounds`, a visible-window-bounded walk, and **re-parent on every rebuild with no "already attached" short-circuit**.
+- **Workbench: the fourth answer is a hosted SwiftUI card, and it is only for a band that is a document rather than a strip of buttons.** A review note is prose, markdown, a reply chain and a text composer; drawn, it was raw source at a size nobody would read. `WorkbenchOverlay` mounts an `NSHostingView` per **visible** `.reviewNote` band, recycled by block id, positioned in `layout()` — **never in `draw`**, because attaching or removing a subview part-way through a draw pass is what was crashing this view before. Four consequences worth knowing before hosting anything else here: a hosted view is the only thing in this layer that can **swallow an event**, so it forwards the scroll wheel to the editor's scroll view and its markdown wraps code instead of scrolling it; `hitTest` must return a card subview (`super.hitTest(point)` where the result isn't `self`) or its buttons and text selection are dead; the band's height is **measured from the card itself** via `NSHostingView.fittingSize` at a fixed width, so the card and the band must be laid out at the **same** width (the overlay reports the viewport's width back, async, and rebuilds the cards it has already mounted — the width is baked into their root views); and because a card resolves its own note out of `WorkbenchSession.inlineNotes`, **that array must be set before any band is measured** — `placeNotes` is the single path that guarantees it, and measuring first yields an empty view whose zero height would then be *cached*.
 - **Workbench: never construct the highlighter or render delegate in `body`.** `SourceEditor` compares highlight providers by `ObjectIdentifier`, so a fresh instance per SwiftUI body evaluation reads as a provider change and re-runs `setHighlightProviders` (dropping every cached tree-sitter parse) **plus `reloadUI()` — on every scroll tick**. They live on `WorkbenchSession` (`highlighter`, `renderer`), built once. The same rule applies to anything else an `NSViewRepresentable` hands the editor.
 - **Workbench: the gutter must not have its own opinion about line geometry.** `DiffGutterView` reads each row's real `(yPos, height)` from `layoutManager.textLineForIndex` and resolves the visible window / hit tests via `textLineForPosition`. Computing it arithmetically from `NSLayoutManager.defaultLineHeight` drifts against the text, because CETV types lines with CoreText — `(ascent + descent + leading) × multiplier`. `WorkbenchMetrics.rowHeight` is a fallback for before the editor exists, nothing more.
 - **Workbench: the gutter lives *outside* the scroll view** (CESE's own gutter is a floating subview and moves for free). It tracks scroll by observing the clip view's `boundsDidChangeNotification` — never `SourceEditorState.scrollPosition`, which lands a run-loop pass late and makes the gutter slide against the text. Two traps around that: `prepareCoordinator` runs inside `TextViewController.init`, **before `loadView()` builds `scrollView`**, so the editor pushes `session.requestGutterAttach` one hop later; and everything in `draw` runs per scroll event, so `visibleRange` caps its walk at the rows that fit the dirty rect.
