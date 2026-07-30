@@ -148,13 +148,13 @@ final class DiffRowView: LineFragmentView {
                 drawDeletedLines(block, in: rect, onscreen: onscreen)
             case .conflictMarker(_, _, let label, let side, let isEnd):
                 drawConflictMarker(label: label, side: side, isEnd: isEnd, in: rect)
-            case .reviewNote(_, let origin, let header, let body):
-                drawReviewNote(origin: origin, header: header, body: body, in: rect)
-            case .conflictControls:
-                // Drawn by `WorkbenchOverlay`, which also hit-tests it. A line-fragment
-                // subview never receives a click (`TextView.hitTest` returns the text view
-                // for any point inside it), and painting it here while another view owned
-                // its buttons would be two opinions about where they are.
+            case .conflictControls, .reviewNote:
+                // Both belong to `WorkbenchOverlay`, which also hit-tests them. A
+                // line-fragment subview never receives a click (`TextView.hitTest` returns the
+                // text view for any point inside it), and painting one here while another view
+                // owned its buttons would be two opinions about where they are. A review note
+                // goes further and is a hosted SwiftUI card, since it is prose and markdown
+                // rather than a strip of buttons.
                 break
             default:
                 break   // rendered markdown arrives with ADR 0019
@@ -245,38 +245,6 @@ final class DiffRowView: LineFragmentView {
         let text = label as NSString
         let size = text.size(withAttributes: attributes)
         text.draw(at: NSPoint(x: 12, y: rect.midY - size.height / 2), withAttributes: attributes)
-    }
-
-    /// A review note under the line it is about.
-    ///
-    /// The two origins are told apart three ways, not one — colour alone fails for the ~8%
-    /// of men with a colour vision deficiency, and these two are a blue and a violet:
-    /// `mine` gets a square marker and a "you" label, `github` an octagonal one and the
-    /// author's handle. The accent bar and tint reinforce it.
-    private func drawReviewNote(origin: ReviewNoteOrigin, header: String, body: String,
-                               in band: NSRect) {
-        let accent = origin == .mine
-            ? NSColor(hex24: Theme.Diff.modified)      // blue — bound for the agent
-            : NSColor(hex24: 0xA371F7)                 // violet — somebody else's review
-        let width = min(band.width, WorkbenchSession.noteWrapWidth)
-        let card = NSRect(x: 0, y: band.minY, width: width, height: band.height)
-
-        accent.withAlphaComponent(0.10).setFill()
-        card.fill()
-        accent.setFill()
-        NSRect(x: 0, y: card.minY, width: 2, height: card.height).fill()
-
-        let marker = origin == .mine ? "▪" : "⬢"
-        let headerText = "\(marker) \(origin == .mine ? "you" : "")\(header)" as NSString
-        headerText.draw(at: NSPoint(x: 10, y: card.minY + 4), withAttributes: [
-            .font: NSFont.systemFont(ofSize: 10, weight: .semibold),
-            .foregroundColor: accent,
-        ])
-        (body as NSString).draw(
-            with: NSRect(x: 10, y: card.minY + 16, width: width - 24, height: card.height - 20),
-            options: [.usesLineFragmentOrigin, .usesFontLeading],
-            attributes: [.font: NSFont.systemFont(ofSize: 11),
-                         .foregroundColor: NSColor(hex24: Theme.Code.text)])
     }
 
     /// A divider naming the group of files below it, louder than a file header so the two

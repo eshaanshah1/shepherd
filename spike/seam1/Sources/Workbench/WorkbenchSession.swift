@@ -32,7 +32,6 @@ final class WorkbenchSession: ObservableObject {
             // A plan must not survive leaving the scope that shows it.
             cancelRewrite()
         }
-        if next == .threads { threadsPanelOpen = true }
         if next == .commits {
             // A source branch chosen last visit is not the landing state — the scope opens on
             // this branch's own commits, which is what it is for.
@@ -502,6 +501,15 @@ final class WorkbenchSession: ObservableObject {
             }
         }
         view.onAction = { [weak self] action in self?.perform(action) }
+        view.cardForNote = { [weak self] id, width in
+            self?.inlineNoteCardView(id: id, width: width)
+        }
+        // Async because this lands inside the overlay's `layout()`: mutating published state
+        // there is a change published from within a view update, and the width it reports
+        // depends on the viewport, never on the heights it feeds — so the next pass settles.
+        view.onCardWidth = { [weak self] width in
+            DispatchQueue.main.async { self?.setNoteCardWidth(width) }
+        }
         return view
     }()
 
@@ -512,6 +520,9 @@ final class WorkbenchSession: ObservableObject {
         overlay.rowHeight = WorkbenchMetrics.rowHeight
         overlay.observeScroll()
         overlay.needsDisplay = true
+        // The hosted note cards are positioned in `layout()`, so a document that just changed
+        // shape has to be re-laid-out as well as redrawn.
+        overlay.needsLayout = true
     }
 
     lazy var renderer: BlockRenderer = BlockRenderer(
@@ -1174,7 +1185,7 @@ final class WorkbenchSession: ObservableObject {
         // finished row table. Emitted at `row + 1` so the band draws *under* the line it is
         // about (a block renders above the row it is attached to), and appended last so it
         // sits below any deletion band sharing that position.
-        for note in placedNotes() { blockMap.insert(noteBlock(note)) }
+        placeNotes { self.blockMap.insert($0) }
         maxOldLineNumber = maxOld
         maxNewLineNumber = maxNew
         selectedLines.removeAll()   // row indices don't survive a rebuild
@@ -1451,24 +1462,16 @@ final class WorkbenchSession: ObservableObject {
         loadBlame()
     }
 
-    /// Run a band's control.
+    /// Run a band's drawn control.
     ///
-    /// The review-note cases are why this layer was generalised: an inline note could be
-    /// read but not answered, so Reply and Resolve lived in a side panel away from the line
-    /// they were about. `onReviewAction` is installed by the view, which owns the store.
+    /// Only the conflict strip now: a review note's controls are real buttons inside the
+    /// hosted card, which calls this session directly.
     func perform(_ action: OverlayAction) {
         switch action {
         case .take(let conflictID, let resolution):
             resolve(conflictID: conflictID, as: resolution)
-        case .removeComment(let id):
-            comments.removeAll { $0.id.uuidString == id }
-        case .replyToThread(let id):
-            replyingToThread = id
-            threadsPanelOpen = true
-        case .setThreadResolved(let id, let resolved):
-            onReviewAction?(.setThreadResolved(id: id, resolved))
-        case .sendNoteToAgent(let id):
-            onReviewAction?(.sendNoteToAgent(id: id))
+        case .setThreadResolved, .sendNoteToAgent, .postReply:
+            onReviewAction?(action)
         }
     }
 
@@ -2130,6 +2133,33 @@ final class WorkbenchSession: ObservableObject {
     /// half-updated document. This is how the corrected one gets asked for.
     var requestRehighlight: ((Range<Int>) -> Void)?
 
+    /// The notes on screen, as the cards render them. Published so a mounted card re-renders
+    /// when its thread changes under it.
+    @Published private(set) var inlineNotes: [InlineNote] = []
+
+    /// Reply drafts by thread id.
+    ///
+    /// Outside the view because a card is mounted only while its band is on screen, so a
+    /// draft in `@State` is lost the moment you scroll away from the comment you are
+    /// answering. Its own object, not a `@Published` here, because every keystroke publishes:
+    /// on the session that is the whole workbench — rail, header, gutter — re-rendering per
+    /// character typed.
+    let replyDrafts = ReplyDraftStore()
+
+    /// Measured card heights. Keyed by everything the card's height depends on, so a change
+    /// that grows it — a reply arriving, the composer opening — misses the cache.
+    var noteHeightCache: [NoteHeightKey: CGFloat] = [:]
+
+    /// Width the cards are laid out and measured at, pushed in by the overlay as the
+    /// viewport resizes. One value for both, or a card is clipped by its own band.
+    private(set) var noteCardWidth: CGFloat = InlineNoteMetrics.maxWidth
+
+    func setNoteCardWidth(_ width: CGFloat) {
+        guard abs(width - noteCardWidth) > 1 else { return }
+        noteCardWidth = width
+        refreshNotes()
+    }
+
     /// Re-place the inline notes in the existing document.
     ///
     /// Deliberately **not** a `rebuild()`: that replaces the storage and bumps `revision`,
@@ -2142,81 +2172,97 @@ final class WorkbenchSession: ObservableObject {
             if case .reviewNote = block.kind { continue }
             map.insert(block)
         }
-        for note in placedNotes() { map.insert(noteBlock(note)) }
+        placeNotes { map.insert($0) }
         blockMap = map
         requestRelayout?()
         editRevision += 1
     }
 
-    private func noteBlock(_ note: PlacedNote) -> Block {
-        Block(id: "note-\(note.id)",
-              kind: .reviewNote(id: note.id, origin: note.origin,
-                                header: note.header, body: note.body),
-              // `+ 1` so the band draws *under* the line it is about: a block renders above
-              // the row it is attached to.
-              beforeStitchedLine: note.afterRow + 1,
-              height: Self.noteHeight(header: note.header, body: note.body))
+    /// Resolve the notes and hand each one's band to `insert`.
+    ///
+    /// The **one** path that emits a note block, because of an ordering that is invisible at
+    /// the call site: a card resolves its own note out of `inlineNotes`, so measuring a band
+    /// before that array is updated measures an empty view — and caches the zero it gets.
+    private func placeNotes(_ insert: (Block) -> Void) {
+        let placed = placedNotes()
+        inlineNotes = placed.map(\.note)
+        for entry in placed { insert(noteBlock(entry)) }
     }
 
-    /// One note to draw under the line it is about.
+    private func noteBlock(_ entry: PlacedNote) -> Block {
+        Block(id: "note-\(entry.note.id)",
+              kind: .reviewNote(id: entry.note.id, origin: entry.note.origin),
+              // `+ 1` so the band draws *under* the line it is about: a block renders above
+              // the row it is attached to.
+              beforeStitchedLine: entry.afterRow + 1,
+              height: inlineNoteHeight(entry.note, width: noteCardWidth))
+    }
+
+    /// One note and the row it sits under.
     private struct PlacedNote {
-        let id: String
-        let origin: ReviewNoteOrigin
-        let header: String
-        let body: String
-        /// The row it belongs under.
+        let note: InlineNote
         let afterRow: Int
     }
 
-    /// Resolve every note to the row it sits under, dropping the ones whose line isn't in
-    /// the current document — those stay reachable in the rail and the threads panel.
+    /// Resolve every note to a row.
+    ///
+    /// A thread whose line isn't in the current diff is **not** dropped — it lands at the head
+    /// of its file, flagged `anchored: false`, and one whose file isn't shown at all lands at
+    /// the top of the document. Dropping them is what the side panel's "N not on the current
+    /// diff" disclosure existed to undo, and an unresolved thread you cannot see is one you
+    /// will not address.
     private func placedNotes() -> [PlacedNote] {
         var placed: [PlacedNote] = []
         for comment in comments {
-            guard let row = stitchedLine(forFile: comment.file, line: comment.line,
-                                         side: comment.side) else { continue }
-            let name = (comment.file as NSString).lastPathComponent
-            placed.append(PlacedNote(
+            let row = stitchedLine(forFile: comment.file, line: comment.line,
+                                   side: comment.side)
+            let note = InlineNote(
                 id: comment.id.uuidString,
-                origin: comment.githubAuthor == nil ? .mine : .github,
-                header: comment.githubAuthor.map { "@\($0)  \(name):\(comment.line)" }
-                    ?? "\(name):\(comment.line)",
-                body: comment.text, afterRow: row))
+                origin: comment.githubAuthor == nil ? .mine : .github, isThread: false,
+                file: comment.file, line: comment.line, anchored: row != nil,
+                isResolved: false, isOutdated: false,
+                comments: [InlineNoteComment(id: comment.id.uuidString,
+                                             author: comment.githubAuthor ?? "",
+                                             createdAt: "", body: comment.text)])
+            placed.append(PlacedNote(note: note,
+                                     afterRow: row ?? fallbackRow(forFile: comment.file)))
         }
-        for thread in threads {
-            guard let line = thread.line, let root = thread.comments.first,
-                  let row = stitchedLine(forFile: thread.path, line: line,
-                                         side: thread.side) else { continue }
-            let replies = thread.comments.count - 1
-            var header = "@\(root.author)"
-            if replies > 0 { header += "  ·  \(replies) repl\(replies == 1 ? "y" : "ies")" }
-            if thread.isResolved { header += "  ·  resolved" }
-            if thread.isOutdated { header += "  ·  outdated" }
-            placed.append(PlacedNote(id: thread.id, origin: .github, header: header,
-                                     body: root.body, afterRow: row))
+        for thread in threads where showsReviewThreads {
+            guard !thread.comments.isEmpty else { continue }
+            let row = thread.line.flatMap {
+                stitchedLine(forFile: thread.path, line: $0, side: thread.side)
+            }
+            let note = InlineNote(
+                id: thread.id, origin: .github, isThread: true,
+                file: thread.path, line: thread.line ?? 0,
+                anchored: row != nil, isResolved: thread.isResolved,
+                isOutdated: thread.isOutdated,
+                comments: thread.comments.map {
+                    InlineNoteComment(id: $0.id, author: $0.author,
+                                      createdAt: $0.createdAt, body: $0.body)
+                })
+            placed.append(PlacedNote(note: note,
+                                     afterRow: row ?? fallbackRow(forFile: thread.path)))
         }
         return placed
     }
 
-    /// Width the inline note text wraps at. Fixed rather than the document width: the
-    /// document is as wide as its longest line, which on a diff is far wider than anything
-    /// readable, and the band would have to re-measure on every horizontal resize.
-    static let noteWrapWidth: CGFloat = 560
-
-    /// Height of a note band, measured off the wrapped body.
-    private static func noteHeight(header: String, body: String) -> CGFloat {
-        let bodyRect = (body as NSString).boundingRect(
-            with: CGSize(width: noteWrapWidth - 24, height: .greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin, .usesFontLeading],
-            attributes: [.font: NSFont.systemFont(ofSize: 11)])
-        // header line + measured body + padding + the inline action row the overlay draws
-        // along the bottom. Reserved here because the card and its controls are measured by
-        // different views, and the actions must not land on the body text.
-        return ceil(bodyRect.height) + 15 + 12 + noteActionRowHeight
+    /// Where a note goes when its own line isn't on screen: the head of its file, or the top
+    /// of the document when the file isn't shown either.
+    private func fallbackRow(forFile file: String) -> Int {
+        rowOrigins.firstIndex { $0.path == file } ?? 0
     }
 
-    /// Height the note card reserves for its inline Reply / Resolve / Send-to-agent row.
-    static let noteActionRowHeight: CGFloat = 21
+    /// Whether the document on screen is the one a PR's threads describe.
+    ///
+    /// They anchor to the branch diff, so a commit, a merge preview or a hand-opened file is
+    /// not it. This used to be implicit — an unanchored thread was dropped, and in another
+    /// scope every thread was unanchored — but a thread is now *placed* when its line doesn't
+    /// resolve, so without this a commit view would open under a stack of somebody's review of
+    /// a different diff.
+    private var showsReviewThreads: Bool {
+        selectedCommit == nil && (scope == .vsBase || scope == .threads)
+    }
 
     // MARK: - Branches
 
@@ -2571,13 +2617,48 @@ final class WorkbenchSession: ObservableObject {
 
     /// Which thread has its reply composer open, and which resolved threads the user
     /// expanded — per-pane view state, so it belongs here rather than in the view.
-    @Published var threadsPanelOpen = false
+    ///
+    /// Both change a card's height, so both re-place the notes: the band reserves exactly
+    /// what the card measures, and a card that grew inside a band that didn't is clipped.
     @Published var replyingToThread: String?
     @Published var expandedResolvedThreads: Set<String> = []
 
     func toggleExpandedResolved(_ id: String) {
         if expandedResolvedThreads.contains(id) { expandedResolvedThreads.remove(id) }
         else { expandedResolvedThreads.insert(id) }
+        refreshNotes()
+    }
+
+    func beginReply(to id: String) {
+        replyingToThread = id
+        refreshNotes()
+    }
+
+    func cancelReply() {
+        replyingToThread = nil
+        refreshNotes()
+    }
+
+    /// Post a reply through the store, which owns `gh`.
+    func postReply(to id: String, body: String) {
+        guard !body.isEmpty else { return }
+        onReviewAction?(.postReply(id: id, body: body))
+        replyDrafts.drafts[id] = nil
+        replyingToThread = nil
+        refreshNotes()
+    }
+
+    func requestThreadResolved(_ id: String, _ resolved: Bool) {
+        onReviewAction?(.setThreadResolved(id: id, resolved))
+    }
+
+    func sendNoteToAgent(_ id: String) {
+        onReviewAction?(.sendNoteToAgent(id: id))
+    }
+
+    /// Drop a local pending note. GitHub threads are not ours to delete.
+    func removeInlineNote(_ id: String) {
+        comments.removeAll { $0.id.uuidString == id }
     }
 
     /// Append a GitHub review comment to the outgoing batch so it ships with the same

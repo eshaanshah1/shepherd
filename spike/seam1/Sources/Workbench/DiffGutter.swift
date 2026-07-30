@@ -408,9 +408,11 @@ final class DiffGutterView: NSView {
         case .conflictMarker(_, _, _, let side, _):
             return NSColor(hex24: side == .ours ? Theme.Diff.addition : Theme.Diff.modified)
                 .withAlphaComponent(side == nil ? 0.10 : 0.22)
-        case .reviewNote(_, let origin, _, _):
-            return (origin == .mine ? NSColor(hex24: Theme.Diff.modified)
-                                    : NSColor(hex24: 0xA371F7)).withAlphaComponent(0.10)
+        case .reviewNote:
+            // The note is a hosted card with its own border and background, inset from the
+            // text; a full-width tint across the gutter beside it was a stripe belonging to
+            // nothing on screen.
+            return nil
         case .deletedLines, .spacer, .renderedMarkdown:
             return nil   // deletion bands fill per line; the rest want the plain gutter
         }

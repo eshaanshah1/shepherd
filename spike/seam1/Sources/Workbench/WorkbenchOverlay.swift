@@ -7,10 +7,10 @@ import AppKit
 /// Reply and Resolve living in a side panel, purely because a band could not receive a click.
 enum OverlayAction: Equatable {
     case take(conflictID: String, Resolution)
-    case replyToThread(id: String)
     case setThreadResolved(id: String, Bool)
     case sendNoteToAgent(id: String)
-    case removeComment(id: String)
+    /// Post a reply to a PR review thread. Needs `gh`, which the store owns.
+    case postReply(id: String, body: String)
 }
 
 /// One clickable control on a band.
@@ -46,7 +46,12 @@ struct OverlayTarget: Equatable {
 ///   nobody displays, and the bands vanished from the entire document.
 /// - `clipsToBounds = true`. It defaults to false since macOS 14, and rows are placed at
 ///   `yPos - scrollY`, so scrolled-past bands would paint over the chrome above.
-/// - Controls are **drawn**, not hosted as `NSButton`s, so scrolling causes no view churn.
+/// - A band's *controls* are **drawn**, not hosted as `NSButton`s, so scrolling causes no
+///   view churn. The one exception is a review note, which is a whole card of prose,
+///   markdown and a composer: those are hosted SwiftUI views, mounted only while their band
+///   is on screen and recycled by block id, so the churn is bounded by what fits the
+///   viewport. A hosted view is also the only thing here that can swallow an event, which is
+///   why it forwards the scroll wheel back to the editor.
 /// - `targets(...)` lays out once and both `draw` and `hitTest` read it, so what is painted
 ///   and what is clickable cannot drift.
 final class WorkbenchOverlayView: NSView {
@@ -59,6 +64,15 @@ final class WorkbenchOverlayView: NSView {
     var rowCount = 0
     var rowHeight: CGFloat = 16
     var onAction: ((OverlayAction) -> Void)?
+    /// Builds the hosted card for a review note, at the width its band was measured at.
+    var cardForNote: ((String, CGFloat) -> NSView?)?
+    /// The width the cards should be measured at, reported as the viewport resizes.
+    var onCardWidth: ((CGFloat) -> Void)?
+
+    /// Mounted note cards by block id. Only what is on screen — a 200-thread PR must not
+    /// mount 200 hosting views.
+    private var hostedCards: [String: NSView] = [:]
+    private var reportedCardWidth: CGFloat = 0
 
     /// The scroll view the editor built, resolved live.
     var scrollViewProvider: (() -> NSScrollView?)?
@@ -122,6 +136,8 @@ final class WorkbenchOverlayView: NSView {
         // A control under the pointer can scroll out from under it.
         if hovered != nil { hovered = nil }
         needsDisplay = true
+        // Hosted cards are positioned in `layout()`, so they move with the document.
+        needsLayout = true
         // Cursor rects are in view coordinates, so scrolling invalidates every one of them.
         window?.invalidateCursorRects(for: self)
     }
@@ -150,10 +166,10 @@ final class WorkbenchOverlayView: NSView {
     /// these per document; asking for them directly cannot miss one.
     var controlBands: (() -> [(block: Block, row: Int)])?
 
-    /// Every control on screen, with the band it belongs to positioned from real geometry.
-    private func visibleBands() -> [(kind: BlockKind, rect: NSRect)] {
+    /// Every control band on screen, positioned from real geometry.
+    private func visibleBands() -> [(block: Block, rect: NSRect)] {
         guard let metrics = lineMetrics else { return [] }
-        var out: [(BlockKind, NSRect)] = []
+        var out: [(Block, NSRect)] = []
         for (block, row) in controlBands?() ?? [] {
             guard let rowTop = metrics(row)?.yPos else { continue }
             // A row can host several bands; this one starts below whichever precede it.
@@ -164,13 +180,61 @@ final class WorkbenchOverlayView: NSView {
             }
             let band = NSRect(x: 0, y: y, width: bounds.width, height: block.height)
             guard band.intersects(bounds) else { continue }
-            out.append((block.kind, band))
+            out.append((block, band))
         }
         return out
     }
 
     private func visibleTargets() -> [OverlayTarget] {
-        visibleBands().flatMap { Self.targets(for: $0.kind, in: $0.rect) }
+        visibleBands().flatMap { Self.targets(for: $0.block.kind, in: $0.rect) }
+    }
+
+    // MARK: - Hosted cards
+
+    /// Mount, position and retire the note cards.
+    ///
+    /// In `layout()`, never in `draw`: attaching or removing a subview part-way through a
+    /// draw pass is what was crashing this view when it used to parent itself there.
+    override func layout() {
+        super.layout()
+        layoutCards()
+    }
+
+    private func layoutCards() {
+        let width = InlineNoteMetrics.width(available: bounds.width)
+        if abs(width - reportedCardWidth) > 1 {
+            reportedCardWidth = width
+            // The width is baked into a card's root view, so the mounted ones are wrong at the
+            // new width and are rebuilt rather than resized.
+            for (id, card) in hostedCards {
+                card.removeFromSuperview()
+                hostedCards[id] = nil
+            }
+            onCardWidth?(width)
+        }
+        var live: Set<String> = []
+        for (block, band) in visibleBands() {
+            guard case .reviewNote(let noteID, _) = block.kind else { continue }
+            let card: NSView
+            if let existing = hostedCards[block.id] {
+                card = existing
+            } else if let made = cardForNote?(noteID, width) {
+                hostedCards[block.id] = made
+                addSubview(made)
+                card = made
+            } else {
+                continue
+            }
+            live.insert(block.id)
+            card.frame = NSRect(x: InlineNoteMetrics.insetX,
+                                y: band.minY + InlineNoteMetrics.insetY,
+                                width: width,
+                                height: max(0, band.height - InlineNoteMetrics.insetY * 2))
+        }
+        for (id, card) in hostedCards where !live.contains(id) {
+            card.removeFromSuperview()
+            hostedCards[id] = nil
+        }
     }
 
     private static let font = NSFont.systemFont(ofSize: 10, weight: .medium)
@@ -185,33 +249,8 @@ final class WorkbenchOverlayView: NSView {
     static func targets(for kind: BlockKind, in band: NSRect) -> [OverlayTarget] {
         switch kind {
         case .conflictControls:  return conflictTargets(kind, in: band)
-        case .reviewNote:        return noteTargets(kind, in: band)
+        // A review note's controls are real buttons inside its hosted card, not drawn chips.
         default:                 return []
-        }
-    }
-
-    /// A review note's actions, along the bottom of its card.
-    ///
-    /// These lived only in the threads panel because an inline band could not be clicked.
-    /// A note you are reading is where you want to answer it.
-    private static func noteTargets(_ kind: BlockKind, in band: NSRect) -> [OverlayTarget] {
-        guard case .reviewNote(let id, let origin, _, _) = kind else { return [] }
-        let actions: [(OverlayAction, String)] = origin == .github
-            ? [(.replyToThread(id: id), "Reply"),
-               (.setThreadResolved(id: id, true), "Resolve"),
-               (.sendNoteToAgent(id: id), "Send to agent")]
-            : [(.removeComment(id: id), "Remove")]
-
-        let height: CGFloat = 15
-        // Bottom-left of the card, under the body text.
-        var x: CGFloat = 10
-        let y = band.maxY - height - 4
-        return actions.map { action, title in
-            let width = (title as NSString)
-                .size(withAttributes: [.font: font]).width + 12
-            let rect = NSRect(x: x, y: y, width: width, height: height)
-            x += width + 6
-            return OverlayTarget(action: action, title: title, rect: rect, isActive: false)
         }
     }
 
@@ -307,18 +346,13 @@ final class WorkbenchOverlayView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         let bands = visibleBands()
         for band in bands where band.rect.intersects(dirtyRect) {
-            drawBand(band.kind, in: band.rect)
+            // A review note is a hosted card — a real subview, which draws itself.
+            if case .reviewNote = band.block.kind { continue }
+            drawBand(band.block.kind, in: band.rect)
         }
     }
 
     private func drawBand(_ kind: BlockKind, in band: NSRect) {
-        // A review note draws only its actions; `DiffRowView` still paints the card, and the
-        // two never overlap — the actions sit in the padding the card reserves for them.
-        if case .reviewNote = kind {
-            drawTargets(Self.targets(for: kind, in: band),
-                        accent: NSColor(hex24: 0xA371F7))
-            return
-        }
         let accent = NSColor(hex24: Self.leadingSide(of: kind) == .theirs
                              ? Theme.Diff.modified : Theme.Diff.addition)
         let layout = ConflictBandMetrics.controlsLayout(band)
@@ -370,16 +404,31 @@ final class WorkbenchOverlayView: NSView {
 
     // MARK: - Mouse
 
-    /// Transparent everywhere but its controls.
+    /// Transparent everywhere but its controls and its hosted cards.
     ///
     /// Returning nil lets text selection, clicks, drags and the scroll wheel reach the text
     /// view underneath as though this layer were not here — which for all but a few dozen
     /// points of the window, it isn't.
     override func hitTest(_ point: NSPoint) -> NSView? {
         let local = convert(point, from: superview)
-        guard bounds.contains(local),
-              visibleTargets().contains(where: { $0.rect.contains(local) }) else { return nil }
-        return self
+        guard bounds.contains(local) else { return nil }
+        // A hosted card is a real subview: its buttons, links and text selection are its own.
+        // `super` returns `self` for any point inside the bounds, so only a *different* view
+        // means a card was hit.
+        if let hit = super.hitTest(point), hit !== self { return hit }
+        return visibleTargets().contains(where: { $0.rect.contains(local) }) ? self : nil
+    }
+
+    /// Scrolling over this layer scrolls the document.
+    ///
+    /// The wheel reaches here two ways — over a drawn control, and bubbling up from a hosted
+    /// card that didn't consume it — and the default would hand it to this view's superview,
+    /// which is chrome. The editor's scroll view is not in this responder chain at all.
+    override func scrollWheel(with event: NSEvent) {
+        guard let scrollView = scrollViewProvider?() else {
+            return super.scrollWheel(with: event)
+        }
+        scrollView.scrollWheel(with: event)
     }
 
     override func mouseDown(with event: NSEvent) {

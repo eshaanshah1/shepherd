@@ -3,7 +3,7 @@ import CoreGraphics
 
 /// Who a review note came from. Drives how it reads inline: a pending note of your own is
 /// bound for the agent, a GitHub thread is somebody else's review.
-enum ReviewNoteOrigin: Equatable { case mine, github }
+enum ReviewNoteOrigin: Equatable, Hashable { case mine, github }
 
 /// What a non-text row shows.
 enum BlockKind: Equatable {
@@ -12,7 +12,12 @@ enum BlockKind: Equatable {
     /// the working tree. Belongs to no file.
     case sectionHeader(title: String)
     /// A review note under the line it is about — a local pending comment or a PR thread.
-    case reviewNote(id: String, origin: ReviewNoteOrigin, header: String, body: String)
+    ///
+    /// Carries only what positions and tints the band. Its *content* is a live SwiftUI card
+    /// hosted over this space by `WorkbenchOverlay`, resolved from `WorkbenchSession
+    /// .inlineNotes` by this id — so a reply arriving cannot leave the block holding a stale
+    /// copy of the text.
+    case reviewNote(id: String, origin: ReviewNoteOrigin)
     /// Removed lines, rendered as a block because they exist in no current file.
     case deletedLines(source: SourceID, lines: [String], startingOldLine: Int)
     /// Unchanged lines the diff skipped between two hunks, still hidden. `collapsed` is

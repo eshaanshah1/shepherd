@@ -34,12 +34,6 @@ struct WorkbenchView: View {
                     .onboardingAnchor(.workbenchBuffer, shape: .panel)
                 blameStatusStrip
             }
-            if session.threadsPanelOpen, !paneThreads.isEmpty {
-                Rectangle().fill(Theme.hairline).frame(width: 1)
-                WorkbenchThreadsPanel(session: session)
-                    .environmentObject(store)
-                    .frame(width: 340)
-            }
         }
         .background(Theme.ground)
         .overlay { composerOverlay }
@@ -109,6 +103,8 @@ struct WorkbenchView: View {
                 switch action {
                 case .setThreadResolved(let id, let resolved):
                     store.setThreadResolved(id: id, resolved, forPane: session.paneID)
+                case .postReply(let id, let body):
+                    store.replyToThread(id: id, body: body, forPane: session.paneID)
                 case .sendNoteToAgent(let id):
                     guard let thread = paneThreads.first(where: { $0.id == id }),
                           let root = thread.comments.first else { return }
@@ -225,7 +221,6 @@ struct WorkbenchView: View {
             }
             Spacer()
             branchMenu
-            threadsButton
             stagingButtons
             commentButton
             if !session.comments.isEmpty { sendButton }
@@ -446,26 +441,6 @@ struct WorkbenchView: View {
     private var paneThreads: [GHReviewThread] {
         guard session.mode == .branchVsBase else { return [] }
         return store.reviewThreads[session.paneID] ?? []
-    }
-
-    @ViewBuilder private var threadsButton: some View {
-        if !paneThreads.isEmpty {
-            let unresolved = PRThreads.unresolvedCount(paneThreads)
-            Button { session.threadsPanelOpen.toggle() } label: {
-                HStack(spacing: 4) {
-                    TablerIcon(paths: Tabler.brandGithub, size: 11)
-                    Text(unresolved > 0 ? "\(unresolved) unresolved" : "\(paneThreads.count) threads")
-                        .font(.ui(11, .medium))
-                }
-                .foregroundStyle(Theme.prMerged)
-                .padding(.horizontal, 8).padding(.vertical, 3)
-                .background(Theme.prMerged.opacity(session.threadsPanelOpen ? 0.18 : 0.10))
-                .clipShape(RoundedRectangle(cornerRadius: 5))
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain).focusable(false)
-            .help("Show PR review threads")
-        }
     }
 
     /// Stage / unstage what the gutter ticks say, or the cursor's hunk when nothing is
