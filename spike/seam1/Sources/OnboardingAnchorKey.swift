@@ -66,15 +66,20 @@ struct OnboardingAnchorKey: PreferenceKey {
                        nextValue: () -> [OnboardingAnchor: OnboardingSpot]) {
         value.merge(nextValue(), uniquingKeysWith: { _, b in b })
     }
+
+    /// An inactive publisher contributes nothing: an empty dictionary merges away, so
+    /// gating the value is equivalent to not publishing at all.
+    static func published(_ a: OnboardingAnchor,
+                          shape: OnboardingSpotShape,
+                          rect: CGRect,
+                          active: Bool) -> [OnboardingAnchor: OnboardingSpot] {
+        active ? [a: OnboardingSpot(rect: rect, shape: shape)] : [:]
+    }
 }
 
 extension View {
     func onboardingAnchor(_ a: OnboardingAnchor, shape: OnboardingSpotShape = .row) -> some View {
-        background(GeometryReader { g in
-            Color.clear.preference(key: OnboardingAnchorKey.self,
-                                   value: [a: OnboardingSpot(rect: g.frame(in: .named(OnboardingAnchorKey.space)),
-                                                             shape: shape)])
-        })
+        onboardingAnchor(a, shape: shape, if: true)
     }
 
     /// Each anchor is a single slot, so only the demo workspace's rows may claim one —
@@ -86,11 +91,22 @@ extension View {
     }
 }
 
+/// The only publisher, so there is one implementation to keep right — and it gates the
+/// published VALUE, never the view tree. An `if` here remounts the wrapped content, and
+/// this wraps live terminal surfaces: see the view-identity gotcha in CLAUDE.md.
 struct OnboardingAnchorIf: ViewModifier {
     let anchor: OnboardingAnchor
     let shape: OnboardingSpotShape
     let active: Bool
+
     func body(content: Content) -> some View {
-        if active { content.onboardingAnchor(anchor, shape: shape) } else { content }
+        content.background(GeometryReader { g in
+            Color.clear.preference(
+                key: OnboardingAnchorKey.self,
+                value: OnboardingAnchorKey.published(
+                    anchor, shape: shape,
+                    rect: g.frame(in: .named(OnboardingAnchorKey.space)),
+                    active: active))
+        })
     }
 }
