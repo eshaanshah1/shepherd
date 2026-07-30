@@ -254,7 +254,7 @@ final class GhosttyApp {
             return true
         case GHOSTTY_ACTION_SEARCH_SELECTED:
             guard let id = surfacePaneID(target) else { return false }
-            let sel = Int(action.action.search_selected.selected)   // 1-based; -1 = none
+            let sel = Int(action.action.search_selected.selected)   // 0-based; -1 = none
             DispatchQueue.main.async { AgentStore.shared.setSearchSelected(sel, paneID: id) }
             return true
         case GHOSTTY_ACTION_END_SEARCH:

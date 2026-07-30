@@ -10,6 +10,8 @@ struct EphemeralOverlayView: View {
     private let pipTargetWidth: CGFloat = 260   // PiP width; height follows the overlay's aspect
     private let pipGap: CGFloat = 12
     private let titleBarHeight: CGFloat = 30     // must match titleBar's .frame(height:)
+    /// The find bar shares this corner, so the stack drops below it while it's open.
+    private let searchBarClearance: CGFloat = 38
 
     var body: some View {
         GeometryReader { geo in
@@ -32,6 +34,7 @@ struct EphemeralOverlayView: View {
         }
         .animation(.easeOut(duration: 0.18), value: store.expandedEphemeralID)
         .animation(.easeOut(duration: 0.18), value: store.ephemeralPanes.map(\.id))
+        .animation(.easeOut(duration: 0.15), value: store.searchOverlayVisible)
     }
 
     @ViewBuilder
@@ -116,8 +119,9 @@ struct EphemeralOverlayView: View {
     private func pipCenter(for e: EphemeralPane, in size: CGSize, footprint: CGSize) -> CGPoint {
         let collapsed = store.ephemeralPanes.filter { $0.collapsed }
         let idx = collapsed.firstIndex { $0.id == e.id } ?? 0
+        let top = pipGap + (store.searchOverlayVisible ? searchBarClearance : 0)
         let x = size.width - footprint.width / 2 - pipGap
-        let y = footprint.height / 2 + pipGap + CGFloat(idx) * (footprint.height + pipGap)
+        let y = footprint.height / 2 + top + CGFloat(idx) * (footprint.height + pipGap)
         return CGPoint(x: x, y: y)
     }
 
