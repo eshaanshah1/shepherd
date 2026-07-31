@@ -178,8 +178,18 @@ extension PairingDecision {
 enum PairingDecision: Equatable {
     case accept(persistSecret: String?)   // nil = already known; non-nil = persist this new device
     case reject(reason: String)
-    case needsApproval(deviceID: String, name: String, proposedSecret: String)
+    case needsApproval(deviceID: String, name: String, proposedSecret: String, confirm: ConfirmKind)
 }
+
+/// Which link a connection arrived over. The tailnet carries a verifiable identity (source IP
+/// resolved against the peer list); a LAN connection carries none at all, so it must present
+/// the host's code and then have its channel confirmed by SAS compare.
+enum PeerOrigin: Equatable { case tailnet, lan }
+
+/// How the human must confirm an approval. `.trustedOrigin` is the tailnet's plain yes/no;
+/// `.compareSAS` is the three-way pick that makes a LAN pairing MITM-resistant. Carried by the
+/// decision so the policy — not the AppKit shell — decides which approval a peer deserves.
+enum ConfirmKind: Equatable { case trustedOrigin, compareSAS }
 
 /// A connecting peer's Tailscale-verified identity, resolved host-side from the
 /// connection's source IP (never from the self-reported `hello` name).
@@ -189,16 +199,33 @@ struct VerifiedPeer: Equatable { let userID: String; let name: String }
 /// admitted for approval only if its source IP resolves to a Tailscale peer owned by
 /// the same user as this host (`peer.userID == selfUserID`); the approval name is the
 /// VERIFIED name. `newSecret` is passed in so randomness stays out of the model.
+/// A LAN peer is admitted for approval only if it presents the host's live pairing code;
+/// the tailnet parameters keep their defaults so that path is byte-for-byte what it was.
 func pairingDecision(deviceID: String, secret: String?,
                      known: [PairedDevice], newSecret: String,
-                     peer: VerifiedPeer?, selfUserID: String?) -> PairingDecision {
+                     peer: VerifiedPeer?, selfUserID: String?,
+                     origin: PeerOrigin = .tailnet, deviceName: String? = nil,
+                     presentedCode: String? = nil, activeCode: String? = nil,
+                     codeAttemptsLeft: Int = 0) -> PairingDecision {
+    // A known device pairs by secret over either link — no code, no comparison, ever again.
     if let dev = known.first(where: { $0.deviceID == deviceID }) {
         return secret == dev.secret ? .accept(persistSecret: nil) : .reject(reason: "bad secret")
     }
-    if let peer, let selfUserID, peer.userID == selfUserID {
-        return .needsApproval(deviceID: deviceID, name: peer.name, proposedSecret: secret ?? newSecret)
+    switch origin {
+    case .tailnet:
+        if let peer, let selfUserID, peer.userID == selfUserID {
+            return .needsApproval(deviceID: deviceID, name: peer.name,
+                                  proposedSecret: secret ?? newSecret, confirm: .trustedOrigin)
+        }
+        return .reject(reason: "unverified peer")
+    case .lan:
+        guard let activeCode, codeAttemptsLeft > 0,
+              let presentedCode, presentedCode == activeCode else { return .reject(reason: "bad code") }
+        // The name is self-reported — a LAN peer has no verified one — so the approval sheet
+        // must label it as such rather than presenting it as an identity.
+        return .needsApproval(deviceID: deviceID, name: deviceName ?? deviceID,
+                              proposedSecret: secret ?? newSecret, confirm: .compareSAS)
     }
-    return .reject(reason: "unverified peer")
 }
 
 // MARK: - Tailscale interface selection

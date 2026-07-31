@@ -662,6 +662,28 @@ live control session, `DataReady{cols,rows}`, ring replay then raw duplex PTY by
 resizer. Dark-shipped (live only when serving + a helper exists). Pure `RemoteProtocol`/`PtyRing`
 unit-tested; loopback E2E in `ShepherdRemoteTests`; tap in `ShepherdHelperTests`. Android terminal
 client (sub-project B) is the next slice. See `docs/superpowers/specs/2026-07-02-android-phase2-data-channels-design.md`.
+**LAN serving over TLS (Mac half done, Android half not started):** a second listener — `LANListener`,
+`NWListener` + `NWProtocolTLS` 1.3 on **`0.0.0.0:8723`** (`AgentStore.defaultLANPort`), advertising
+`_shepherd._tcp` — serves this Mac over any local link with no Tailscale. It **terminates TLS and
+hands `RemoteServer` one end of a `socketpair`** (`LANBridge`) rather than abstracting the control
+path: `RemoteServer` is fd-keyed everywhere that matters (`clients[fd]`, a per-fd write queue, the
+`serveDataChannel` handoff of the raw fd, the broker's viewer fds), so bridging buys the encryption
+with **zero change to the tailnet path** — and the data channel therefore rides it for free.
+Identity splits in two: a host-shown **6-digit code** authorizes (`LANCode`: 5 min, 3 attempts, one
+device) and a **SAS** (`sasDigits` over SHA-256 of the whole certificate DER) authenticates the
+channel, confirmed by picking the client's digits out of **three** in `PairingApprovalView` — never
+an Allow button, which gets pressed without looking. `pairingDecision` gained `origin: PeerOrigin`
+with the tailnet parameters defaulted, so that path is byte-for-byte unchanged. Identity is a
+self-signed **RSA-2048** cert at `~/.shepherd/lan-identity.p12` (0600), minted by `/usr/bin/openssl`.
+Clients pin the cert hash; first pairing uses `LANBridge.Trust.learn` and stores the pin **only**
+after the SAS is confirmed. Four traps, each measured: an **EC** p12 from the system LibreSSL makes
+`SecPKCS12Import` *raise* from inside `SecIdentityCreate`; an **empty p12 passphrase** fails
+`-25293`; a pin rejection surfaces as **`.waiting`**, not `.failed`, and Network.framework *retries*
+it (so a mismatch would read as "connecting…" forever); and **`NWListener` binds asynchronously**, so
+`start()` returning true is not readiness — `waitUntilReady` is. Tests assert about bytes: a relay in
+front of the listener records the wire and the payload must not appear in it. See
+[design](docs/superpowers/specs/2026-07-31-lan-serving-tls-design.md) +
+[plan](docs/superpowers/plans/2026-07-31-lan-serving-tls.md).
 **Unified workbench (⌘G):** W0 (editor vendored, stitched multibuffer, gutter, one
 tokenizer) + W1 (review, line/hunk staging, commit box, PR review threads) + W2 (rows
 new-side only with removals as blocks, hunk-gap expansion, edit write-back via `EditMap`,

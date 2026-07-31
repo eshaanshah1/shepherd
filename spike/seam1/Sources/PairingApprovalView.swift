@@ -18,21 +18,25 @@ struct PairingApprovalView: View {
                     .font(.ui(15, .semibold))
                     .foregroundStyle(Theme.textPrimary)
 
-                Text("“\(store.pendingApproval?.name ?? "A device")” wants to monitor and control your agents.")
-                    .font(.ui(13))
-                    .foregroundStyle(Theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                if store.pendingApproval?.confirm == .compareSAS {
+                    sasBody
+                } else {
+                    Text("“\(store.pendingApproval?.name ?? "A device")” wants to monitor and control your agents.")
+                        .font(.ui(13))
+                        .foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
 
-                HStack(spacing: 8) {
-                    Spacer()
-                    button("Deny", weight: .medium, fg: Theme.textSecondary,
-                           bg: Theme.raised) { store.respondToApproval(false) }
-                    button("Allow", weight: .semibold, fg: Theme.textPrimary,
-                           bg: Theme.working) { store.respondToApproval(true) }
+                    HStack(spacing: 8) {
+                        Spacer()
+                        button("Deny", weight: .medium, fg: Theme.textSecondary,
+                               bg: Theme.raised) { store.respondToApproval(false) }
+                        button("Allow", weight: .semibold, fg: Theme.textPrimary,
+                               bg: Theme.working) { store.respondToApproval(true) }
+                    }
                 }
             }
             .padding(18)
-            .frame(width: 320)
+            .frame(width: store.pendingApproval?.confirm == .compareSAS ? 360 : 320)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(Theme.ground)
@@ -42,6 +46,51 @@ struct PairingApprovalView: View {
             .shadow(color: .black.opacity(0.55), radius: 30, x: 0, y: 16)
         }
         .onExitCommand { store.respondToApproval(false) }
+    }
+
+    /// The LAN variant: pick the code the other device is showing. Deliberately NOT an Allow
+    /// button — a button gets pressed without looking, and then a man in the middle on the
+    /// network is admitted. Picking out of three forces the comparison to actually happen.
+    @ViewBuilder private var sasBody: some View {
+        let name = store.pendingApproval?.name ?? "A device"
+        VStack(alignment: .leading, spacing: 12) {
+            Text("A device on your local network wants to pair. It gave its name as “\(name)”, which nothing has verified.")
+                .font(.ui(13))
+                .foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text("Tap the code that device is showing.")
+                .font(.ui(12, .medium))
+                .foregroundStyle(Theme.textPrimary)
+
+            HStack(spacing: 8) {
+                ForEach(store.pendingApproval?.sasChoices ?? [], id: \.self) { choice in
+                    Button { store.respondToSASPick(choice) } label: {
+                        Text(choice)
+                            .font(.system(size: 17, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(Theme.textPrimary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(Theme.raised))
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .focusable(false)
+                }
+            }
+
+            Text("If none of them match, something is intercepting the connection.")
+                .font(.ui(11))
+                .foregroundStyle(Theme.textDim)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 8) {
+                Spacer()
+                button("None of these match", weight: .medium, fg: Theme.textSecondary,
+                       bg: Theme.raised) { store.respondToSASPick(nil) }
+            }
+        }
     }
 
     private func button(_ title: String, weight: Font.Weight, fg: Color, bg: Color,

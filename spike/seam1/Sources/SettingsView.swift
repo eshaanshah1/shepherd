@@ -409,6 +409,9 @@ private struct HookResultView: View {
 struct RemoteSettings: View {
     @EnvironmentObject var store: AgentStore
     @State private var serving: Bool = false
+    @State private var servingLAN: Bool = false
+    @State private var lanCode: String?
+    @State private var confirmingReset = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
@@ -416,6 +419,40 @@ struct RemoteSettings: View {
                           footnote: "When on, paired devices can view and drive this Mac's sessions.") {
                 SettingsToggle(label: "Serve to remote devices", isOn: $serving)
                     .onChange(of: serving) { on in store.setServing(on) }
+            }
+
+            SettingsField(label: "Local network",
+                          footnote: "Serves this Mac over wifi, ethernet or a hotspot — no Tailscale needed. Always encrypted: a device must be shown the code below, and you confirm what it displays.") {
+                VStack(alignment: .leading, spacing: 10) {
+                    SettingsToggle(label: "Serve on local network", isOn: $servingLAN)
+                        .onChange(of: servingLAN) { on in
+                            store.setServingLAN(on)
+                            lanCode = on ? store.newLANCode() : nil
+                        }
+                    if servingLAN {
+                        HStack(spacing: 10) {
+                            Text(lanCode ?? "——————")
+                                .font(.system(size: 20, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(lanCode == nil ? Theme.textDim : Theme.textPrimary)
+                            SettingsButton(title: "New code", systemImage: "arrow.clockwise") {
+                                lanCode = store.newLANCode()
+                            }
+                            Spacer()
+                        }
+                        Text(lanCode == nil
+                             ? "The code expired or was used. Generate another to pair a device."
+                             : "Valid for 5 minutes, one device, three attempts.")
+                            .font(.ui(11))
+                            .foregroundStyle(Theme.textDim)
+                    }
+                }
+            }
+
+            SettingsField(label: "Local-network identity",
+                          footnote: "Devices remember this Mac's certificate. Resetting it makes every local-network device pair again.") {
+                SettingsButton(title: "Reset LAN identity", systemImage: "exclamationmark.arrow.circlepath") {
+                    confirmingReset = true
+                }
             }
 
             SettingsField(label: "Devices",
@@ -439,7 +476,17 @@ struct RemoteSettings: View {
                 }
             }
         }
-        .onAppear { serving = store.isServing }
+        .onAppear {
+            serving = store.isServing
+            servingLAN = store.isServingLAN
+            lanCode = store.lanCodeDigits
+        }
+        .alert("Reset the local-network identity?", isPresented: $confirmingReset) {
+            Button("Cancel", role: .cancel) { }
+            Button("Reset", role: .destructive) { store.resetLANIdentity(); lanCode = nil }
+        } message: {
+            Text("Every device paired over the local network will refuse to connect until it pairs again with a new code.")
+        }
     }
 
     @ViewBuilder private func pairedRow(_ dev: PairedDevice) -> some View {

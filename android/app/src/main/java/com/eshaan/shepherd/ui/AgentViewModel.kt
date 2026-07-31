@@ -6,6 +6,7 @@ import com.eshaan.shepherd.protocol.ControlMessage
 import com.eshaan.shepherd.terminal.RemoteTerminalSession
 import com.eshaan.shepherd.transport.ConnStatus
 import com.eshaan.shepherd.transport.DataChannel
+import com.eshaan.shepherd.transport.Pinning
 import com.eshaan.shepherd.transport.DataStatus
 import com.eshaan.shepherd.transport.RemoteConnection
 import kotlinx.coroutines.CoroutineScope
@@ -40,10 +41,16 @@ class AgentViewModel(
     private val host: String,
     private val port: Int,
     private val controlConn: RemoteConnection,
+    /** Base64 cert pin when this host was paired over the LAN; null on the tailnet. The data
+     *  channel carries PTY bytes — keystrokes — so it must be pinned exactly like the control one. */
+    private val lanPin: String? = null,
     val initialCols: Int = 80,
     val initialRows: Int = 24,
     private val channelFactory: (nonce: String, cols: Int, rows: Int, scope: CoroutineScope) -> DataChannel =
-        { nonce, cols, rows, scope -> DataChannel(host, port, nonce, paneId, cols, rows, scope) },
+        { nonce, cols, rows, scope ->
+            DataChannel(host, port, nonce, paneId, cols, rows, scope,
+                        connect = Pinning.connector(lanPin))
+        },
 ) : ViewModel() {
     private val _terminalSession = MutableStateFlow<RemoteTerminalSession?>(null)
     val terminalSession: StateFlow<RemoteTerminalSession?> = _terminalSession

@@ -18,7 +18,7 @@ final class RemoteClientTests: XCTestCase {
             bindAddress: "127.0.0.1", port: 0,
             knownDevices: { [PairedDevice(deviceID: "macB", secret: "S", name: "MacB")] },   // known → auto-accept
             persist: { _ in },
-            requestApproval: { _, _, decide in decide(true) },
+            requestApproval: { _, _, _, decide in decide(true) },
             workspaceTrees: trees,
             updateFCMToken: { _, _ in },
             makeSecret: { "S" }, makeNonce: { "NONCE" },
