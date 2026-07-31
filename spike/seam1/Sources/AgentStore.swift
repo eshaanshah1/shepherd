@@ -46,6 +46,21 @@ final class AgentStore: ObservableObject {
     @Published private(set) var prDetails: [String: PRDetail] = [:]
     private var reviewThreadsInFlight: Set<String> = []
 
+    /// Live git facts per pane, kept current by `repoWatcher`. Transient — never persisted.
+    @Published private(set) var repoSignals: [String: RepoSignals] = [:]
+    /// Nudge ids whose first-fire bar has been shown. Persisted so a tip appears once.
+    private var nudgesSeen: Set<String> =
+        Set(UserDefaults.standard.stringArray(forKey: "shepherd.nudge.seen") ?? [])
+    /// `paneID|nudgeID` pairs whose bar the user dismissed for this occurrence.
+    private var barsDismissed: Set<String> = []
+    private var nudgeTimer: Timer?
+
+    private lazy var repoWatcher = RepoWatcher { [weak self] paneID, signals in
+        guard let self else { return }
+        self.repoSignals[paneID] = signals   // nil (not a repo) drops the key
+        self.updateDockBadge()
+    }
+
     /// Set by the `+` button / ⌘⇧N to ask the UI for a name before creating a
     /// workspace; ContentView presents the naming modal off this.
     @Published var promptingNewWorkspace = false
@@ -205,6 +220,8 @@ final class AgentStore: ObservableObject {
         expireOldArchives()                // drop archives past the retention window
         startPRRefreshTimer()              // keep idle agents' PR status live-ish
         startRemoteServingIfEnabled()      // bind the control channel if serving is on
+        syncRepoWatches()                  // begin watching each restored pane's checkout
+        startNudgeTimer()
     }
 
     // MARK: Current-workspace accessors
@@ -887,6 +904,9 @@ final class AgentStore: ObservableObject {
         for ws in workspaces { for tab in ws.tabs { for pid in tab.paneIDs { flat.append(("ws", ws.id, pid)) } } }
         for e in ephemeralPanes { flat.append(("ephemeral", nil, e.id)) }
         guard !flat.isEmpty else { return }
+        // Computed once: it walks every pane's nudges, which is not something to redo inside
+        // the loop below.
+        let nudged = attentionNudgedPaneIDs
         let curPane = currentWorkspace.flatMap { ws in
             ws.tabs.first { $0.tabID == ws.selectedTabID }?.focusedPaneID
         }
@@ -895,7 +915,7 @@ final class AgentStore: ObservableObject {
             let e = flat[(start + off) % flat.count]
             let wants: Bool
             if e.kind == "ws" {
-                wants = locatePane(e.pane, in: workspaces).map {
+                wants = nudged.contains(e.pane) || locatePane(e.pane, in: workspaces).map {
                     workspaces[$0.ws].tabs[$0.tab].root.pane(e.pane)?.state.wantsAttention == true
                 } ?? false
             } else {
@@ -1095,6 +1115,146 @@ final class AgentStore: ObservableObject {
         workbenchSessions.removeValue(forKey: paneID)?.stopWatching()
     }
 
+    // MARK: - Nudges
+
+    /// Start/stop watching every pane's checkout. Cheap and idempotent.
+    ///
+    /// Driven by a timer plus the points where the user touches a pane, rather than a call at
+    /// each of a dozen mutation sites — one missed site there is a pane that silently never
+    /// reports a conflict, and this converges instead.
+    func syncRepoWatches() {
+        var live = Set<String>()
+        for ws in workspaces where !ws.isRemote {
+            for tab in ws.tabs {
+                for pane in tab.root.panes where !pane.provisioning {
+                    live.insert(pane.paneID)
+                    repoWatcher.watch(paneID: pane.paneID, cwd: pane.cwd ?? "")
+                }
+            }
+        }
+        for paneID in repoSignals.keys where !live.contains(paneID) {
+            repoWatcher.unwatch(paneID: paneID)
+            repoSignals.removeValue(forKey: paneID)
+        }
+    }
+
+    func refreshRepoSignals(forPane paneID: String) {
+        repoWatcher.watch(paneID: paneID, cwd: cwd(forPane: paneID) ?? "")
+        repoWatcher.refresh(paneID: paneID)
+    }
+
+    private func startNudgeTimer() {
+        // Not folded into `startPRRefreshTimer`, which returns early without `gh` — nudges
+        // must keep working on a machine that has never installed it.
+        nudgeTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.syncRepoWatches() }
+        }
+    }
+
+    func facts(forPane paneID: String) -> PaneFacts? {
+        guard let (w, t) = locatePane(paneID, in: workspaces),
+              let pane = workspaces[w].tabs[t].root.pane(paneID) else { return nil }
+        return PaneFacts(
+            agentState: pane.state,
+            repo: repoSignals[paneID],
+            hasPR: prStatuses[paneID] != nil,
+            workbenchOpen: diffPanelOpen && diffPanelPaneID == paneID,
+            isRemote: workspaces[w].isRemote,
+            provisioning: pane.provisioning,
+            ghInstalled: GH.isInstalled,
+            onboarding: onboarding != nil)
+    }
+
+    func nudges(forPane paneID: String) -> [Nudge] {
+        guard let facts = facts(forPane: paneID) else { return [] }
+        return NudgeRegistry.nudges(for: facts)
+    }
+
+    /// The nudge whose bar this pane should draw, if any.
+    func barNudge(forPane paneID: String) -> Nudge? {
+        nudges(forPane: paneID).first {
+            NudgeRegistry.showsBar($0, seen: nudgesSeen)
+                && !barsDismissed.contains("\(paneID)|\($0.id.rawValue)")
+        }
+    }
+
+    /// A first-fire bar is spent once drawn.
+    func markNudgeSeen(_ id: NudgeID) {
+        guard nudgesSeen.insert(id.rawValue).inserted else { return }
+        UserDefaults.standard.set(Array(nudgesSeen), forKey: "shepherd.nudge.seen")
+    }
+
+    /// Hide this pane's bar until the condition goes away and comes back. The sidebar glyph
+    /// is untouched: it reports a state, and a conflict you dismissed is still a conflict.
+    func dismissBar(_ id: NudgeID, forPane paneID: String) {
+        barsDismissed.insert("\(paneID)|\(id.rawValue)")
+        objectWillChange.send()
+    }
+
+    func run(_ action: NudgeAction, forPane paneID: String) {
+        switch action {
+        case .openWorkbench(let scope):
+            // Same funnel `openPR` uses: the workbench renders the selected tab's session, so
+            // the pane has to be brought into view first.
+            revealPane(paneID)
+            codeSurface = nil          // one code surface at a time
+            diffPanelPaneID = paneID
+            diffPanelOpen = true
+            workbenchSession(forPane: paneID)?.setScope(scope)
+        case .createPR:
+            presentPRCreateDialog(forPane: paneID)
+        }
+    }
+
+    /// Ask for a title and body, then create the PR and land in its workbench band.
+    func presentPRCreateDialog(forPane paneID: String) {
+        guard let (w, _) = locatePane(paneID, in: workspaces), !workspaces[w].isRemote,
+              let cwd = cwd(forPane: paneID), !cwd.isEmpty,
+              let signals = repoSignals[paneID] else { return }
+        let branch = signals.branch
+        let ahead = signals.ahead
+
+        Task.detached(priority: .userInitiated) {
+            let prefill = PRCreateDialog.prefill(cwd: cwd)
+            guard let draft = await MainActor.run(body: {
+                PRCreateDialog.prompt(prefill, branch: branch, ahead: ahead)
+            }) else { return }
+
+            let result = PRCreateDialog.create(draft, cwd: cwd)
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                switch result {
+                case .created:
+                    // Refresh before opening: the PR band renders from `prStatuses`, so
+                    // opening first would show an empty one.
+                    self.refreshPR(forPane: paneID)
+                    self.refreshRepoSignals(forPane: paneID)
+                    self.openPR(forPane: paneID)
+                case .failed(let message):
+                    let alert = NSAlert()
+                    alert.alertStyle = .warning
+                    alert.messageText = "Could not create the pull request"
+                    alert.informativeText = message
+                    alert.runModal()
+                }
+            }
+        }
+    }
+
+    /// Panes whose nudge is urgent enough to reach the badge, the folder dot and ⌘⇧A.
+    var attentionNudgedPaneIDs: Set<String> {
+        var out = Set<String>()
+        for ws in workspaces where !ws.isRemote {
+            for tab in ws.tabs {
+                for pane in tab.root.panes
+                where nudges(forPane: pane.paneID).contains(where: { $0.urgency == .attention }) {
+                    out.insert(pane.paneID)
+                }
+            }
+        }
+        return out
+    }
+
     /// ⌘O — toggle the code surface (edit mode); mirrors ⌘G for the diff.
     func openEditor() {
         if codeSurface != nil { codeSurface = nil; return }
@@ -1243,6 +1403,9 @@ final class AgentStore: ObservableObject {
             diffTurnPane = paneID
             diffTurnTick += 1   // an open diff panel watches this to offer a refresh
             onboarding?.noteTurnFinished(paneID: paneID, viewing: viewing)
+            // `turnFinished`, not `state == .needsCheck`: a turn that ends while you watch
+            // lands idle, and its changes are exactly the ones worth offering to review.
+            refreshRepoSignals(forPane: paneID)
         }
         if res.state == .idle { refreshPR(forPane: paneID) }   // idle agent → surface its PR status
         // Track the live Claude session id so we can resume it on relaunch: SessionStart carries
@@ -1346,6 +1509,10 @@ final class AgentStore: ObservableObject {
         // terminal — a full-takeover overlay would otherwise stay stale on top.
         if diffPanelOpen || codeSurface != nil { diffPanelOpen = false; codeSurface = nil }
         dismissNotifications(forPane: paneID)
+        // Above the state guards below, which return early for anything but need-to-check:
+        // arriving at a pane should re-read its repo whatever its agent is doing.
+        refreshRepoSignals(forPane: paneID)
+        syncRepoWatches()
         if let (w, t) = locatePane(paneID, in: workspaces) {
             guard workspaces[w].tabs[t].root.pane(paneID)?.state == .needsCheck else { return }
             _ = workspaces[w].tabs[t].root.updatePane(paneID) { $0.state = .idle }
@@ -1567,7 +1734,10 @@ final class AgentStore: ObservableObject {
         refocusActiveTerminal()
     }
 
-    var attentionCount: Int { totalAttentionCount(in: workspaces) + ephemeralAttentionCount(ephemeralPanes) }
+    var attentionCount: Int {
+        totalAttentionCount(in: workspaces, nudgedPaneIDs: attentionNudgedPaneIDs)
+            + ephemeralAttentionCount(ephemeralPanes)
+    }
 
     var hasBusyAgent: Bool { anyAgentBusy(in: workspaces) || anyEphemeralBusy(ephemeralPanes) }
 

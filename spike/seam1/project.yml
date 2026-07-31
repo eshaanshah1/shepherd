@@ -195,6 +195,11 @@ targets:
       - path: Sources/UpdateInstaller.swift
       - path: Sources/DiffModel.swift
       - path: Sources/DiffReader.swift
+      - path: Sources/Nudges/RepoSignals.swift
+      - path: Sources/Nudges/RepoSignalsReader.swift
+      - path: Sources/Nudges/NudgeRegistry.swift
+      - path: Sources/Nudges/PaneChrome.swift
+      - path: Sources/Nudges/PRTemplate.swift
       - path: Sources/Workbench/Diff3.swift
       - path: Sources/Workbench/MergeModel.swift
       - path: Sources/Workbench/ConflictParse.swift

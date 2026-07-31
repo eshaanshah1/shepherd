@@ -119,7 +119,9 @@ enum ConflictReader {
     /// the branch you are rebasing *onto*, and stage 3 ("theirs") is your own work. Showing
     /// git's words on the button that decides which side survives tells the user the exact
     /// opposite of the truth, which is why these are ref names.
-    private static func readState(cwd: String) -> MergeState {
+    /// Internal rather than private: `RepoSignalsReader` needs the operation without paying
+    /// for `read`, which loads three blobs and diff3-merges every conflicted file.
+    static func readState(cwd: String) -> MergeState {
         for dir in ["rebase-merge", "rebase-apply"] {
             // `onto_name` is the readable one but git only writes it on the interactive and
             // `--onto` paths; a plain `git rebase main` leaves just `onto`, a bare sha

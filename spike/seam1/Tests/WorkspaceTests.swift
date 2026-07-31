@@ -71,6 +71,23 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertNil(locatePane("nope", in: [a, b]))
     }
 
+    /// A nudged pane counts even though its AgentState is not an attention state — that is
+    /// the whole point of the second channel: a repo condition must not be written onto
+    /// `Pane.state`, where it would corrupt the hook lifecycle map.
+    func testNudgedPaneCountsTowardAttention() {
+        let w = ws([.idle])
+        let paneID = w.tabs[0].root.firstLeafID!
+        XCTAssertEqual(totalAttentionCount(in: [w]), 0)
+        XCTAssertEqual(totalAttentionCount(in: [w], nudgedPaneIDs: [paneID]), 1)
+    }
+
+    /// A pane already counted by its state must not be counted twice for also being nudged.
+    func testNudgedAndBlockedPaneCountsOnce() {
+        let w = ws([.blocked])
+        let paneID = w.tabs[0].root.firstLeafID!
+        XCTAssertEqual(totalAttentionCount(in: [w], nudgedPaneIDs: [paneID]), 1)
+    }
+
     func testRemovingWorkspaceGuardsLastOne() {
         let a = ws(), b = ws()
         XCTAssertNil(removingWorkspace(a.id, from: [a]))                 // last one — refuse

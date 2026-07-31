@@ -88,6 +88,16 @@ enum Git {
             .out.trimmingCharacters(in: .whitespacesAndNewlines) == "true"
     }
 
+    /// The git dir backing `dir`, resolved. For a linked worktree this is
+    /// `<common>/.git/worktrees/<name>` — where `MERGE_HEAD` and the sequence dirs
+    /// actually live — not the `.git` *file* that points at it.
+    static func gitDir(_ dir: String) -> String? {
+        let r = run(["rev-parse", "--absolute-git-dir"], in: dir)
+        guard r.code == 0 else { return nil }
+        let path = r.out.trimmingCharacters(in: .whitespacesAndNewlines)
+        return path.isEmpty ? nil : path
+    }
+
     static func branchExists(_ name: String, in dir: String) -> Bool {
         run(["show-ref", "--verify", "--quiet", "refs/heads/\(name)"], in: dir).code == 0
     }

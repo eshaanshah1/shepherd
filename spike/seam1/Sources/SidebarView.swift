@@ -202,9 +202,18 @@ private struct WorkspaceFolderHeader: View {
         return id.split(separator: ":").first.map(String.init) ?? id
     }
 
+    /// The folder dot, with nudges folded in at the **call site**: `aggregateState` is pure
+    /// and knows nothing about nudges, and a mid-merge pane is your move.
+    private var folderState: AgentState {
+        let nudged = store.attentionNudgedPaneIDs
+        guard ws.tabs.flatMap({ $0.root.panes }).contains(where: { nudged.contains($0.paneID) })
+        else { return ws.aggregateState }
+        return .blocked
+    }
+
     var body: some View {
         HStack(spacing: LeadingIcon.gutterGap) {
-            FolderIcon(open: !ws.collapsed, state: ws.aggregateState)
+            FolderIcon(open: !ws.collapsed, state: folderState)
 
             if ws.isRemote {
                 Image(systemName: "antenna.radiowaves.left.and.right")
@@ -442,6 +451,9 @@ private struct TabRow: View {
 
     // Single-pane tab: the row reflects its one (focused) pane, just like today.
     private var state: AgentState { tab.focusedPane()?.state ?? .shell }
+    /// Read once per body: the glyph and the trailing chip must agree about which nudge
+    /// they are showing.
+    private var topNudge: Nudge? { store.nudges(forPane: tab.focusedPaneID).first }
     private var isProvisioning: Bool { tab.focusedPane()?.provisioning ?? false }
     private var stowing: StowKind? { tab.focusedPane()?.stowing }
 
@@ -474,8 +486,18 @@ private struct TabRow: View {
                     .lineLimit(1)
                 Spacer(minLength: 6)
             } else {
-                if state == .idle, let pr = store.prStatuses[tab.focusedPaneID],
-                   let kind = store.prKind(forPane: tab.focusedPaneID) {
+                if let nudge = topNudge {
+                    Button { store.run(nudge.action, forPane: tab.focusedPaneID) } label: {
+                        TablerIcon(paths: Tabler.paths(for: nudge.glyph), size: 13)
+                            .foregroundStyle(nudge.urgency == .attention
+                                             ? Theme.blocked : Theme.textDim)
+                    }
+                    .buttonStyle(.plain)
+                    .focusable(false)
+                    .frame(width: 14, height: 14)
+                    .help(nudge.text)
+                } else if state == .idle, let pr = store.prStatuses[tab.focusedPaneID],
+                          let kind = store.prKind(forPane: tab.focusedPaneID) {
                     PRStatusIcon(status: pr, kind: kind,
                                  unresolvedCount: PRThreads.unresolvedCount(store.reviewThreads[tab.focusedPaneID] ?? [])) {
                         store.openPR(forPane: tab.focusedPaneID)
@@ -503,6 +525,15 @@ private struct TabRow: View {
                 }
 
                 Spacer(minLength: 6)
+
+                if let count = topNudge?.count {
+                    Text("\(count)")
+                        .font(.ui(10, .medium))
+                        .foregroundStyle(Theme.textDim)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(RoundedRectangle(cornerRadius: 3).fill(Theme.surface3))
+                }
             }
         }
         .padding(.horizontal, 10)
@@ -937,6 +968,18 @@ enum Tabler {
         "M8 9h8",
         "M8 13h6",
         "M18 4a3 3 0 0 1 3 3v8a3 3 0 0 1 -3 3h-5l-5 3v-3h-2a3 3 0 0 1 -3 -3v-8a3 3 0 0 1 3 -3h12z"]
+    /// `gitMerge` and `gitBranch` are deliberately the pair here: they share all three dots
+    /// and differ only in the arc, so a stopped merge and a half-applied sequence read as two
+    /// states of one operation rather than two unrelated glyphs.
+    static func paths(for glyph: NudgeGlyph) -> [String] {
+        switch glyph {
+        case .conflict:    return gitMerge
+        case .sequence:    return gitBranch
+        case .review:      return file
+        case .pullRequest: return pullRequest
+        }
+    }
+
     static let brandGithub = [
         "M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5"]
 }

@@ -35,7 +35,12 @@ struct SplitContainer: View {
                     ForEach(node.panes, id: \.paneID) { pane in
                         let isVisible = isTabSelected && (zoomedPaneID == nil || pane.paneID == zoomedPaneID)
                         let isFocused = pane.paneID == focusedPaneID
-                        Group {
+                        PaneChrome {
+                            // Only the pane you are looking at gets the bar; a starved
+                            // sibling is 0×0 and a background tab's bar would draw nothing
+                            // anyone can see.
+                            if isVisible { NudgeBarView(paneID: pane.paneID) }
+                        } content: {
                             // A provisioning pane has no directory yet — show the loading
                             // view and hold off mounting the surface until it clears.
                             if pane.provisioning {
