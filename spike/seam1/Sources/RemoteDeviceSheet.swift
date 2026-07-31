@@ -35,11 +35,19 @@ struct RemoteDeviceSheet: View {
                     ForEach(rows) { row in deviceRow(row) }
                 }
 
-                if !store.lanHosts.isEmpty || store.lanPairingSAS != nil {
+                if !store.lanHosts.isEmpty || store.lanPairingSAS != nil
+                    || store.lanPairingError != nil {
                     Divider().overlay(Theme.hairline)
                     Text("ON THIS NETWORK")
                         .font(.ui(10, .semibold)).foregroundStyle(Theme.textDim)
-                    if let sas = store.lanPairingSAS {
+                    if let err = store.lanPairingError {
+                        Text(err)
+                            .font(.ui(11)).foregroundStyle(Theme.error)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, 10).padding(.vertical, 8)
+                            .background(RoundedRectangle(cornerRadius: 7).fill(Theme.raised))
+                        ForEach(store.lanHosts) { host in lanRow(host) }
+                    } else if let sas = store.lanPairingSAS {
                         pairingInProgress(sas)
                     } else {
                         Text("Nothing here is verified — pair with the code shown on that Mac.")

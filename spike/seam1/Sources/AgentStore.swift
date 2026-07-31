@@ -2307,6 +2307,9 @@ final class AgentStore: ObservableObject {
     /// While a LAN pairing is in flight: the six digits derived from the certificate this Mac
     /// actually saw. The user compares it with the host's three choices.
     @Published var lanPairingSAS: String?
+    /// Why the last LAN attempt failed, in the host's words. A refused pairing produced no
+    /// workspace and no message before this, so it looked like nothing had happened at all.
+    @Published var lanPairingError: String?
     private let lanBrowser = LANBrowser()
 
     func startLANBrowsing() {
@@ -2326,6 +2329,7 @@ final class AgentStore: ObservableObject {
     /// this Mac displays against the host's three choices. Afterwards the stored pin is enforced
     /// and no code is needed.
     func addLANHost(host: String, port: UInt16 = AgentStore.defaultLANPort, code: String?) {
+        lanPairingError = nil
         let hostID = "\(host):\(port)"
         guard remoteClients[hostID] == nil else { return }
         let stored = UserDefaults.standard.data(forKey: lanPinKey(hostID))
@@ -2336,7 +2340,9 @@ final class AgentStore: ObservableObject {
         let secret = hostSecret(forHostID: hostID)
         let client = RemoteClient(
             host: host, port: port, deviceID: clientDeviceID, deviceName: clientDeviceName,
-            secret: secret, trust: trust, pairingCode: stored == nil ? code : nil,
+            // Send the code whenever the user supplied one — a stored pin does not mean the
+            // host still knows us, and re-pairing is exactly how a stale record is repaired.
+            secret: secret, trust: trust, pairingCode: code,
             onObservedCert: { [weak self] hash in
                 DispatchQueue.main.async { self?.lanPairingSAS = sasDigits(certHash: hash) }
             },
@@ -2357,8 +2363,24 @@ final class AgentStore: ObservableObject {
             onState: { [weak self] p, s, r in DispatchQueue.main.async { self?.applyRemoteState(paneID: p, state: s, reason: r) } },
             onStatus: { [weak self] conn in
                 DispatchQueue.main.async {
-                    if conn == .dead { self?.lanPairingSAS = nil }
+                    if conn == .dead {
+                        self?.lanPairingSAS = nil
+                        // A client that never got a workspace has nowhere to show a link state,
+                        // so drop it rather than leave a dead entry claiming to be attached.
+                        if self?.workspaces.contains(where: { $0.remoteHostID == hostID }) == false {
+                            self?.remoteClients[hostID]?.stop()
+                            self?.remoteClients[hostID] = nil
+                        }
+                    }
                     self?.applyRemoteStatus(hostID: hostID, conn: conn)
+                }
+            },
+            onRejected: { [weak self] reason in
+                DispatchQueue.main.async {
+                    self?.lanPairingError = reason == "bad secret"
+                        ? "That Mac still has an old record of this device. Forget it there "
+                          + "(Settings → Remote → Paired devices), or enter a fresh code to re-pair."
+                        : "The host refused: \(reason)"
                 }
             })
         remoteClients[hostID] = client
