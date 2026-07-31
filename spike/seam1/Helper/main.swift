@@ -404,7 +404,22 @@ func runAttach() -> Int32 {
         FileHandle.standardError.write(Data("shepherdd attach: missing SHEPHERD_ATTACH_* env\n".utf8)); return 64
     }
     var ws = winsize(); _ = sh_get_winsize(STDIN_FILENO, &ws)
-    let sock = dialTCP(host, port)
+    // A LAN host serves its data channel on the same TLS listener as its control channel, so a
+    // pin means "dial TLS and verify". LANBridge hands back the app side of a socketpair, so the
+    // poll-based pump below is unchanged either way.
+    var bridge: LANBridge?
+    let sock: Int32
+    if let pinB64 = env["SHEPHERD_ATTACH_PIN"], let pin = Data(base64Encoded: pinB64) {
+        guard let b = LANBridge.dialTLS(host: host, port: port, trust: .pinned(pin)) else {
+            FileHandle.standardError.write(
+                Data("shepherdd attach: \(host):\(port) is not the host we paired with\n".utf8))
+            return 69
+        }
+        bridge = b
+        sock = b.appFD
+    } else {
+        sock = dialTCP(host, port)
+    }
     guard sock >= 0 else {
         FileHandle.standardError.write(Data("shepherdd attach: cannot reach \(host):\(port)\n".utf8)); return 69
     }
@@ -417,6 +432,7 @@ func runAttach() -> Int32 {
     attachPump(sock)
     restoreOuter()
     shutdown(sock, SHUT_RDWR); close(sock)
+    bridge?.close()
     return 0
 }
 

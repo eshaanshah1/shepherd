@@ -256,6 +256,12 @@ private struct WorkspaceFolderHeader: View {
         }
         .gesture(reorderGesture)
         .contextMenu {
+            if let hostID = ws.remoteHostID {
+                // Stop mirroring without forgetting the device: the pairing (and, on a LAN host,
+                // the certificate pin) is kept, so reattaching needs no code and no approval.
+                Button("Disconnect from Host") { store.removeRemoteHost(hostID) }
+                Divider()
+            }
             Button("Rename") { beginRename() }
             Button("Set Directory…") { promptSetDirectory() }
             if ws.defaultPath?.isEmpty == false {
