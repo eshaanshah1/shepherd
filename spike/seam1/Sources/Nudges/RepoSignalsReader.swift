@@ -7,24 +7,34 @@ import Foundation
 /// write in the repo, so a single fetch would turn a rebase into a network storm.
 enum RepoSignalsReader {
 
-    static func read(cwd: String) -> RepoSignals? {
-        guard !cwd.isEmpty, case .ok = GitStaging.run(["rev-parse", "--is-inside-work-tree"],
-                                                     cwd: cwd) else { return nil }
+    /// `git status` **refreshes and rewrites `.git/index`**, and this read runs on a vnode
+    /// watch of that very directory — so left alone it wakes the watcher that ran it, and the
+    /// pair sustains each other with nothing happening in the repo at all. `GIT_OPTIONAL_LOCKS=0`
+    /// is git's own switch for a reader that must not write.
+    static let readOnly = ["GIT_OPTIONAL_LOCKS": "0"]
+
+    /// Pass `gitDir` when the caller already resolved it (`RepoWatcher` always has), so the
+    /// merge-state read costs no subprocess at all.
+    static func read(cwd: String, gitDir: String? = nil) -> RepoSignals? {
+        // One status carries branch, upstream, ahead, dirty and conflicts, and fails outside a
+        // work tree — which is what the `--is-inside-work-tree` probe used to be for.
+        guard !cwd.isEmpty,
+              case .ok(let out) = GitStaging.run(["status", "--porcelain=v2", "--branch"],
+                                                 cwd: cwd, env: readOnly) else { return nil }
+        let status = RepoSignals.parseStatusV2(out)
         var s = RepoSignals()
-        s.state = ConflictReader.readState(cwd: cwd)
-        s.branch = GitStaging.currentBranch(cwd: cwd)
+        s.branch = status.branch
+        s.conflicts = status.conflicts
+        s.dirty = status.dirty
+        s.hasUpstream = status.hasUpstream
+        s.state = ConflictReader.readState(cwd: cwd, gitDir: gitDir)
 
-        if case .ok(let z) = GitStaging.run(["ls-files", "-u", "-z"], cwd: cwd) {
-            s.conflicts = RepoSignals.unmergedCount(lsFilesZ: z)
-        }
-        if case .ok(let porcelain) = GitStaging.run(["status", "--porcelain"], cwd: cwd) {
-            s.dirty = RepoSignals.dirtyCount(porcelain: porcelain)
-        }
-
-        s.hasUpstream = GitStaging.upstream(cwd: cwd) != nil
-        if let base = s.hasUpstream ? "@{upstream}" : RepoSignals.localDefaultBase(cwd: cwd),
-           case .ok(let out) = GitStaging.run(["rev-list", "--count", "\(base)..HEAD"], cwd: cwd) {
-            s.ahead = RepoSignals.revCount(out)
+        if status.hasUpstream {
+            s.ahead = status.ahead   // `branch.ab`, already in hand
+        } else if let base = RepoSignals.localDefaultBase(cwd: cwd),
+                  case .ok(let count) = GitStaging.run(["rev-list", "--count", "\(base)..HEAD"],
+                                                       cwd: cwd, env: readOnly) {
+            s.ahead = RepoSignals.revCount(count)
         }
         return s
     }

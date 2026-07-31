@@ -121,19 +121,24 @@ enum ConflictReader {
     /// opposite of the truth, which is why these are ref names.
     /// Internal rather than private: `RepoSignalsReader` needs the operation without paying
     /// for `read`, which loads three blobs and diff3-merges every conflicted file.
-    static func readState(cwd: String) -> MergeState {
+    /// `gitDir` skips the resolution entirely — pass it from anything that already knows it.
+    /// Without it this costs one `rev-parse`, not one per file it looks for.
+    static func readState(cwd: String, gitDir: String? = nil) -> MergeState {
+        let git = gitDir ?? Git.gitDir(cwd)
+        func gitFile(_ name: String) -> String? { Self.gitFile(cwd, git, name) }
+
         for dir in ["rebase-merge", "rebase-apply"] {
             // `onto_name` is the readable one but git only writes it on the interactive and
             // `--onto` paths; a plain `git rebase main` leaves just `onto`, a bare sha
             // (checked against git 2.55). Resolving it keeps the label a branch name rather
             // than forty hex characters on the button that discards a side.
-            guard let onto = gitFile(cwd, "\(dir)/onto_name")
-                ?? gitFile(cwd, "\(dir)/onto").map({ refName(cwd, $0) }) else { continue }
-            let replayed = gitFile(cwd, "\(dir)/head-name")
+            guard let onto = gitFile("\(dir)/onto_name")
+                ?? gitFile("\(dir)/onto").map({ refName(cwd, $0) }) else { continue }
+            let replayed = gitFile("\(dir)/head-name")
                 .map { $0.replacingOccurrences(of: "refs/heads/", with: "") }
-            let done = (gitFile(cwd, "\(dir)/msgnum") ?? gitFile(cwd, "\(dir)/next"))
+            let done = (gitFile("\(dir)/msgnum") ?? gitFile("\(dir)/next"))
                 .flatMap(Int.init)
-            let total = (gitFile(cwd, "\(dir)/end") ?? gitFile(cwd, "\(dir)/last"))
+            let total = (gitFile("\(dir)/end") ?? gitFile("\(dir)/last"))
                 .flatMap(Int.init)
             return MergeState(
                 operation: .rebase,
@@ -142,15 +147,15 @@ enum ConflictReader {
                 progress: done.flatMap { d in total.map { .counted(done: d, total: $0) } })
         }
 
-        let head = GitStaging.currentBranch(cwd: cwd) ?? "HEAD"
-        if gitFile(cwd, "MERGE_HEAD") != nil {
+        let head = branchName(cwd, git) ?? "HEAD"
+        if gitFile("MERGE_HEAD") != nil {
             return MergeState(operation: .merge, oursLabel: head,
                               theirsLabel: refName(cwd, "MERGE_HEAD"), progress: nil)
         }
-        if gitFile(cwd, "CHERRY_PICK_HEAD") != nil {
+        if gitFile("CHERRY_PICK_HEAD") != nil {
             return MergeState(operation: .cherryPick, oursLabel: head,
                               theirsLabel: refName(cwd, "CHERRY_PICK_HEAD"),
-                              progress: remainingPicks(cwd))
+                              progress: remainingPicks(cwd, git))
         }
         return MergeState(operation: .none, oursLabel: head, theirsLabel: "theirs",
                           progress: nil)
@@ -162,8 +167,8 @@ enum ConflictReader {
     /// nil rather than `.remaining(0)`, which would render "0 remaining" beside a live
     /// conflict. Only the count is read: git writes `pick <sha> <subject>` there, and nothing
     /// here depends on that format.
-    private static func remainingPicks(_ cwd: String) -> MergeProgress? {
-        guard let todo = gitFile(cwd, "sequencer/todo") else { return nil }
+    private static func remainingPicks(_ cwd: String, _ gitDir: String?) -> MergeProgress? {
+        guard let todo = gitFile(cwd, gitDir, "sequencer/todo") else { return nil }
         let count = todo.components(separatedBy: "\n")
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty && !$0.hasPrefix("#") }
@@ -180,6 +185,31 @@ enum ConflictReader {
         }
         return text(git(cwd, ["rev-parse", "--short", ref]))?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ref
+    }
+
+    /// Contents of a file inside the git dir, read directly when the dir is known.
+    ///
+    /// Every name this reads is per-worktree, which is what `--absolute-git-dir` returns, so
+    /// `<gitDir>/<name>` is the same path `--git-path` would print — for a fraction of a
+    /// subprocess per lookup.
+    private static func gitFile(_ cwd: String, _ gitDir: String?, _ name: String) -> String? {
+        guard let gitDir else { return gitFile(cwd, name) }
+        return contents(of: "\(gitDir)/\(name)")
+    }
+
+    /// The checked-out branch, off `HEAD` when the git dir is known.
+    private static func branchName(_ cwd: String, _ gitDir: String?) -> String? {
+        guard let gitDir else { return GitStaging.currentBranch(cwd: cwd) }
+        guard let head = contents(of: "\(gitDir)/HEAD"),
+              head.hasPrefix("ref: refs/heads/") else { return nil }   // detached
+        let name = String(head.dropFirst("ref: refs/heads/".count))
+        return name.isEmpty ? nil : name
+    }
+
+    private static func contents(of path: String) -> String? {
+        guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     /// Contents of a file inside the git dir, resolved via `--git-path` so worktrees and
