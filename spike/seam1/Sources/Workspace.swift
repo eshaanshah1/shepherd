@@ -84,9 +84,16 @@ func removingWorkspace(_ id: String, from workspaces: [Workspace]) -> [Workspace
 }
 
 /// Count panes that want attention across every workspace (dock-badge source).
-func totalAttentionCount(in workspaces: [Workspace]) -> Int {
+///
+/// `nudgedPaneIDs` is the second channel: a repo condition (mid-merge, a half-applied rebase)
+/// is not an `AgentState`, so a pane reaches the badge this way rather than by having
+/// `.blocked` written onto it, which would corrupt the hook lifecycle map. The predicate is a
+/// union, so a pane that is both blocked and nudged still counts once.
+func totalAttentionCount(in workspaces: [Workspace],
+                         nudgedPaneIDs: Set<String> = []) -> Int {
     workspaces.flatMap { $0.tabs }.flatMap { $0.root.panes }
-        .filter { $0.state.wantsAttention }.count
+        .filter { $0.state.wantsAttention || nudgedPaneIDs.contains($0.paneID) }
+        .count
 }
 
 /// True if any pane in any workspace is busy (working/blocked/needsCheck/error) —
