@@ -21,7 +21,12 @@ final class RemoteServer {
     private let log: (String) -> Void
     private let knownDevices: () -> [PairedDevice]
     private let persist: (PairedDevice) -> Void
-    private let requestApproval: (String, String, @escaping (Bool) -> Void) -> Void
+    private let requestApproval: (String, String, ConfirmKind, @escaping (Bool) -> Void) -> Void
+    /// The host's live LAN pairing code, or nil when none is showing (⇒ no LAN pairing is open).
+    private let activeLANCode: () -> LANCode?
+    /// Called on every LAN hello that presented a code, right or wrong, so the host can spend
+    /// an attempt. Rate limiting lives with the code's owner, not in the policy.
+    private let noteLANCodeAttempt: () -> Void
     private let workspaceTrees: () -> [WorkspaceTree]
     // A paired client's structural command (cmd*). Forwarded verbatim to the app, which
     // applies it to the real store on main and re-broadcasts the affected workspace tree.
@@ -97,13 +102,16 @@ final class RemoteServer {
         var deviceID: String?
         var peerIP: String?
         var nonce: String?
+        /// Which link this connection arrived over. Set once at accept; the pairing policy
+        /// branches on it, so a LAN connection can never take the tailnet's identity path.
+        var origin: PeerOrigin = .tailnet
         let writeQueue = DispatchQueue(label: "shepherd.remote.write", qos: .utility)
     }
 
     init(bindAddress: String, port: UInt16,
          knownDevices: @escaping () -> [PairedDevice],
          persist: @escaping (PairedDevice) -> Void,
-         requestApproval: @escaping (String, String, @escaping (Bool) -> Void) -> Void,
+         requestApproval: @escaping (String, String, ConfirmKind, @escaping (Bool) -> Void) -> Void,
          workspaceTrees: @escaping () -> [WorkspaceTree],
          updateFCMToken: @escaping (String, String) -> Void,
          makeSecret: @escaping () -> String,
@@ -112,8 +120,11 @@ final class RemoteServer {
          selfUserID: @escaping () -> String? = { nil },
          lookupBroker: @escaping (String) -> PtyBroker? = { _ in nil },
          onCommand: @escaping (ControlMessage) -> Void = { _ in },
+         activeLANCode: @escaping () -> LANCode? = { nil },
+         noteLANCodeAttempt: @escaping () -> Void = { },
          log: @escaping (String) -> Void = { _ in }) {
         self.log = log
+        self.activeLANCode = activeLANCode; self.noteLANCodeAttempt = noteLANCodeAttempt
         self.bindAddress = bindAddress; self.port = port
         self.verifyPeer = verifyPeer; self.selfUserID = selfUserID
         self.knownDevices = knownDevices
@@ -225,8 +236,20 @@ final class RemoteServer {
             // this, write() returns EAGAIN and we drop the client (see rawWrite).
             var snd = timeval(tv_sec: sendTimeoutSeconds, tv_usec: 0)
             setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &snd, socklen_t(MemoryLayout<timeval>.size))
-            connQueue.async { [weak self] in self?.handleConnection(fd, peerIP: peerIP) }
+            connQueue.async { [weak self] in self?.handleConnection(fd, peerIP: peerIP, origin: .tailnet) }
         }
+    }
+
+    /// Entry point for a connection this server did not accept itself: the LAN listener
+    /// terminates TLS and hands over one end of a socketpair, so everything downstream —
+    /// handshake, admission, broadcast, the data-channel handoff, the broker's viewer fds —
+    /// is the same fd-keyed code the tailnet uses, with `origin` the only difference.
+    func acceptBridged(fd: Int32, peerIP: String?) {
+        var on: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
+        var snd = timeval(tv_sec: sendTimeoutSeconds, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &snd, socklen_t(MemoryLayout<timeval>.size))
+        connQueue.async { [weak self] in self?.handleConnection(fd, peerIP: peerIP, origin: .lan) }
     }
 
     /// Read exactly `count` bytes from `fd`, looping over partial reads. Returns nil on
@@ -248,9 +271,10 @@ final class RemoteServer {
     /// The single reader loop for one connection. Reads exactly one frame and sniffs it:
     /// a `DataMessage.dataHello` routes to the raw PTY data channel; anything else is a
     /// control frame and enters the control path seeded with that first message.
-    private func handleConnection(_ fd: Int32, peerIP: String?) {
+    private func handleConnection(_ fd: Int32, peerIP: String?, origin: PeerOrigin) {
         let conn = ConnState()
         conn.peerIP = peerIP
+        conn.origin = origin
         clientsLock.lock(); conns[fd] = conn; clientsLock.unlock()
 
         guard let lenBytes = readExactly(fd, 4) else { closeConn(fd, conn); return }
@@ -292,14 +316,23 @@ final class RemoteServer {
         conn.lock.lock(); let phase = conn.phase; conn.lock.unlock()
         if phase == .closed { closeConn(fd, conn); return .stop }
         switch m {
-        case let .hello(deviceID, _, _, secret, fcmToken, _) where phase == .unpaired:
-            conn.lock.lock(); conn.deviceID = deviceID; let ip = conn.peerIP; conn.lock.unlock()
-            let verified = ip.flatMap { verifyPeer($0) }
+        case let .hello(deviceID, deviceName, pairingCode, secret, fcmToken, _) where phase == .unpaired:
+            conn.lock.lock(); conn.deviceID = deviceID
+            let ip = conn.peerIP; let origin = conn.origin; conn.lock.unlock()
+            // A LAN connection has no resolvable identity, so don't even ask: verifyPeer would
+            // resolve the socketpair's blank address, and a hit would be meaningless anyway.
+            let verified = origin == .tailnet ? ip.flatMap { verifyPeer($0) } : nil
+            let code = origin == .lan ? activeLANCode() : nil
+            if origin == .lan, pairingCode != nil { noteLANCodeAttempt() }
             let decision = pairingDecision(deviceID: deviceID, secret: secret,
                                            known: knownDevices(), newSecret: makeSecret(),
-                                           peer: verified, selfUserID: selfUserID())
-            log("PAIR hello from \(ip ?? "?") device=\(deviceID.prefix(8)) "
-                + "verified=\(verified?.name ?? "nil") -> \(decision.logLabel)")
+                                           peer: verified, selfUserID: selfUserID(),
+                                           origin: origin, deviceName: deviceName,
+                                           presentedCode: pairingCode,
+                                           activeCode: code.map(\.digits),
+                                           codeAttemptsLeft: code?.attemptsLeft ?? 0)
+            log("PAIR hello from \(ip ?? "?") origin=\(origin == .lan ? "lan" : "tailnet") "
+                + "device=\(deviceID.prefix(8)) verified=\(verified?.name ?? "nil") -> \(decision.logLabel)")
             switch decision {
             case let .accept(persistSecret):
                 conn.lock.lock(); conn.phase = .paired; conn.lock.unlock()
@@ -311,14 +344,14 @@ final class RemoteServer {
                 admit(fd, conn)
             case .reject(let reason):
                 enqueueWriteThenClose(fd, encode(.rejected(reason: reason)), conn); return .stop
-            case let .needsApproval(approveID, approveName, proposedSecret):
+            case let .needsApproval(approveID, approveName, proposedSecret, confirm):
                 enqueueWrite(fd, encode(.pendingApproval), on: conn)
                 conn.lock.lock(); conn.phase = .pending; conn.lock.unlock()
                 // The decision may arrive on any thread (in production, the main
                 // queue after the user taps Approve). Phase transitions are
                 // lock-guarded and only one transition out of `.pending` wins, so
                 // exactly one admit/reject happens; the reader loop keeps owning the fd.
-                requestApproval(approveID, approveName) { [weak self] ok in
+                requestApproval(approveID, approveName, confirm) { [weak self] ok in
                     guard let self else { return }
                     conn.lock.lock()
                     guard conn.phase == .pending else { conn.lock.unlock(); return }

@@ -31,6 +31,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.eshaan.shepherd.data.EncryptedPairingStore
 import com.eshaan.shepherd.fcm.Notifications
 import com.eshaan.shepherd.fcm.fcmToken
+import com.eshaan.shepherd.transport.Pinning
 import com.eshaan.shepherd.transport.RemoteConnection
 import com.eshaan.shepherd.ui.AgentScreen
 import com.eshaan.shepherd.ui.AgentViewModel
@@ -68,7 +69,8 @@ class MainActivity : ComponentActivity() {
                         val fvm = remember {
                             FleetViewModel(store, fcmToken = { fcmToken() },
                                 connectionFactory = { scope, hello ->
-                                    store.load()?.let { RemoteConnection(it.host, it.port, hello, scope) }
+                                    store.load()?.let { RemoteConnection(it.host, it.port, hello, scope,
+                                        connect = Pinning.connector(it.lanPin)) }
                                 })
                         }
                         // Reconnect whenever the app comes to the foreground: a backgrounded socket

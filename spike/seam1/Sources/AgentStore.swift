@@ -137,7 +137,11 @@ final class AgentStore: ObservableObject {
 
     /// Set when a not-yet-known device passes the pairing code and is awaiting the
     /// user's approval; ContentView presents the approval sheet off this.
-    @Published var pendingApproval: (deviceID: String, name: String)?
+    /// A connection waiting on the user. `confirm` decides which approval UI is shown: the
+    /// tailnet's yes/no, or the LAN's three-way SAS pick. `sasChoices` is non-empty only for
+    /// the latter, and the real digits are `sas`.
+    @Published var pendingApproval: (deviceID: String, name: String, confirm: ConfirmKind,
+                                     sas: String, sasChoices: [String])?
     /// Drives the tailnet device-discovery sheet (⋯ menu → "Add remote device…").
     @Published var showingRemoteDevices = false
     /// Drives the phone-pairing QR sheet (⋯ menu → "Connect a phone…").
@@ -149,6 +153,17 @@ final class AgentStore: ObservableObject {
     private var remoteServeAddress: String?
     private var remoteServeTimer: Timer?
     private var loggedNoServeAddress = false
+    /// LAN role: a TLS listener on 0.0.0.0 that bridges plaintext frames into `remoteServer`.
+    /// Serving on the LAN is a separate toggle from serving on the tailnet, and neither implies
+    /// the other; the LAN one is off until asked for, and there is no plaintext variant of it.
+    private var lanListener: LANListener?
+    /// SHA-256 of the LAN certificate — the pin clients compare and the input the SAS is
+    /// derived from. Non-nil only while the LAN listener is up.
+    private(set) var lanCertHash: Data?
+    /// The 6-digit code currently showing in Settings, if any. Guarded because the accept
+    /// thread reads it while main mutates it.
+    private var lanCode: LANCode?
+    private let lanCodeLock = NSLock()
     /// Client role (M2): one RemoteClient per attached host, keyed by "host:port".
     private var remoteClients: [String: RemoteClient] = [:]
 
@@ -231,6 +246,7 @@ final class AgentStore: ObservableObject {
         startPRRefreshTimer()              // keep idle agents' PR status live-ish
         startRemoteServingIfEnabled()      // bind the control channel if serving is on
         startRemoteServeConvergeTimer()    // …and rebind it if the tailnet address changes
+        startLANServingIfEnabled()         // …and the TLS listener if LAN serving is on
         syncRepoWatches()                  // begin watching each restored pane's checkout
         startNudgeTimer()
     }
@@ -2010,6 +2026,98 @@ final class AgentStore: ObservableObject {
         remoteServer?.stop(); remoteServer = nil
         ptyHub?.stop(); ptyHub = nil
         remoteServeAddress = nil
+        stopLANServing()   // the LAN listener bridges into remoteServer; without it it is deaf
+    }
+
+    // MARK: LAN serving (TLS on 0.0.0.0, any local link)
+
+    /// The control port for LAN clients. Deliberately not 8722: a 0.0.0.0 listener sharing a
+    /// port with an address-specific one is SO_REUSEADDR behaviour whose delivery depends on
+    /// bind specificity, and that ambiguity is not worth saving a port number.
+    static let defaultLANPort: UInt16 = 8723
+
+    var isServingLAN: Bool { UserDefaults.standard.bool(forKey: "shepherd.remote.servingLAN") }
+
+    func setServingLAN(_ on: Bool) {
+        guard on != isServingLAN else { return }
+        objectWillChange.send()
+        UserDefaults.standard.set(on, forKey: "shepherd.remote.servingLAN")
+        if on { startLANServingIfEnabled() } else { stopLANServing() }
+    }
+
+    /// Bring up the TLS listener. Needs `remoteServer` (it bridges into it), so enabling LAN
+    /// serving turns tailnet serving on as well rather than silently doing nothing.
+    func startLANServingIfEnabled() {
+        guard isServingLAN, lanListener == nil else { return }
+        if remoteServer == nil {
+            if !isServing { setServing(true) } else { startRemoteServingIfEnabled() }
+        }
+        guard let got = LANIdentity.loadOrMint(dir: AppMode.supportDir) else {
+            shepherdLog("LAN identity unavailable — not serving on the local network"); return
+        }
+        lanCertHash = got.certHash
+        let l = LANListener(
+            port: AgentStore.defaultLANPort, identity: got.identity,
+            onBridgedFD: { [weak self] fd, ip in self?.remoteServer?.acceptBridged(fd: fd, peerIP: ip) },
+            log: { [weak self] line in self?.shepherdLog(line) })
+        guard l.start() else { lanCertHash = nil; return }
+        lanListener = l
+        objectWillChange.send()
+        // The bind is asynchronous, so failure (port in use) arrives after start() said yes.
+        // Reflect it rather than leaving the UI claiming to serve.
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let ok = l.waitUntilReady()
+            guard !ok else { return }
+            DispatchQueue.main.async {
+                guard let self, self.lanListener === l else { return }
+                self.stopLANServing()
+            }
+        }
+    }
+
+    func stopLANServing() {
+        lanListener?.stop(); lanListener = nil
+        lanCertHash = nil
+        clearLANCode()
+        objectWillChange.send()
+    }
+
+    /// The code to show in Settings, minted on demand. One device, 5 minutes, 3 attempts.
+    @discardableResult
+    func newLANCode() -> String {
+        let digits = String(format: "%06u", UInt32.random(in: 0..<1_000_000))
+        lanCodeLock.lock(); lanCode = LANCode.fresh(now: Date(), digits: digits); lanCodeLock.unlock()
+        objectWillChange.send()
+        return digits
+    }
+
+    /// The live code, or nil once it has expired / been spent — read off the accept thread.
+    func activeLANCode() -> LANCode? {
+        lanCodeLock.lock(); defer { lanCodeLock.unlock() }
+        guard let c = lanCode, c.isValid(now: Date()) else { return nil }
+        return c
+    }
+
+    /// Displayed digits for the Settings row, or nil when nothing is pairable right now.
+    var lanCodeDigits: String? { activeLANCode()?.digits }
+
+    /// Spend one of the three attempts on this code.
+    func noteLANCodeAttempt() {
+        lanCodeLock.lock()
+        if var c = lanCode { c.attemptsLeft -= 1; lanCode = c.attemptsLeft > 0 ? c : nil }
+        lanCodeLock.unlock()
+    }
+
+    func clearLANCode() {
+        lanCodeLock.lock(); lanCode = nil; lanCodeLock.unlock()
+    }
+
+    /// Forget the LAN identity and every LAN pin it handed out. Every paired device must pair
+    /// again — a kept pairing would compare against a certificate that no longer exists.
+    func resetLANIdentity() {
+        stopLANServing()
+        LANIdentity.reset(dir: AppMode.supportDir)
+        if isServingLAN { startLANServingIfEnabled() }
     }
 
     /// Start the control server on the address Tailscale reports for this node, when serving
@@ -2066,11 +2174,11 @@ final class AgentStore: ObservableObject {
                 return self.pairedDevices
             },
             persist: { [weak self] dev in self?.addPairedDevice(dev) },
-            requestApproval: { [weak self] deviceID, name, decide in
+            requestApproval: { [weak self] deviceID, name, confirm, decide in
                 DispatchQueue.main.async {
                     self?.showingPhonePairingQR = false   // the phone connected; the QR is spent
                     self?.approvalDecider = decide
-                    self?.pendingApproval = (deviceID, name)
+                    self?.presentApproval(deviceID: deviceID, name: name, confirm: confirm)
                 }
             },
             // workspaceTrees reads @Published workspaces, so it must run on main. This is
@@ -2101,6 +2209,8 @@ final class AgentStore: ObservableObject {
             onCommand: { [weak self] msg in
                 DispatchQueue.main.async { self?.applyRemoteCommand(msg) }
             },
+            activeLANCode: { [weak self] in self?.activeLANCode() },
+            noteLANCodeAttempt: { [weak self] in self?.noteLANCodeAttempt() },
             log: { [weak self] line in self?.shepherdLog(line) })
         if s.start() {
             remoteServer = s
@@ -2151,6 +2261,76 @@ final class AgentStore: ObservableObject {
             onStatus: { [weak self] conn in DispatchQueue.main.async { self?.applyRemoteStatus(hostID: hostID, conn: conn) } })
         remoteClients[hostID] = client
         client.start()
+    }
+
+    // MARK: LAN client role — attach to a host over the local link
+
+    /// Hosts currently advertising `_shepherd._tcp`. A claim, never an identity.
+    @Published var lanHosts: [LANHost] = []
+    /// While a LAN pairing is in flight: the six digits derived from the certificate this Mac
+    /// actually saw. The user compares it with the host's three choices.
+    @Published var lanPairingSAS: String?
+    private let lanBrowser = LANBrowser()
+
+    func startLANBrowsing() {
+        lanBrowser.onChange = { [weak self] hosts in self?.lanHosts = hosts }
+        lanBrowser.start()
+    }
+
+    func stopLANBrowsing() {
+        lanBrowser.stop()
+        lanHosts = []
+    }
+
+    private func lanPinKey(_ hostID: String) -> String { "shepherd.remote.lanPin.\(hostID)" }
+
+    /// Attach to a host over the local link. The first time, `code` is the six digits showing on
+    /// that host and the certificate is *learned* — safe because the user then confirms the SAS
+    /// this Mac displays against the host's three choices. Afterwards the stored pin is enforced
+    /// and no code is needed.
+    func addLANHost(host: String, port: UInt16 = AgentStore.defaultLANPort, code: String?) {
+        let hostID = "\(host):\(port)"
+        guard remoteClients[hostID] == nil else { return }
+        let stored = UserDefaults.standard.data(forKey: lanPinKey(hostID))
+        let trust: LANBridge.Trust = stored.map { .pinned($0) } ?? .learn
+        let secret = stored == nil ? nil : hostSecret(forHostID: hostID)
+        let client = RemoteClient(
+            host: host, port: port, deviceID: clientDeviceID, deviceName: clientDeviceName,
+            secret: secret, trust: trust, pairingCode: stored == nil ? code : nil,
+            onObservedCert: { [weak self] hash in
+                DispatchQueue.main.async { self?.lanPairingSAS = sasDigits(certHash: hash) }
+            },
+            // Acceptance means the host's user picked the digits this Mac showed, so the
+            // certificate it presented is the right one — only now is it worth remembering.
+            onAccepted: { [weak self] _ in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    if stored == nil, let sas = self.lanPairingSAS {
+                        self.rememberLANPin(hostID: hostID, matching: sas)
+                    }
+                    self.lanPairingSAS = nil
+                }
+            },
+            onWorkspaceTree: { [weak self] tree in DispatchQueue.main.async { self?.upsertMirrorWorkspace(tree, hostID: hostID) } },
+            onWorkspaceList: { [weak self] ids in DispatchQueue.main.async { self?.pruneMirrorWorkspaces(hostID: hostID, keep: ids) } },
+            onWorkspaceRemoved: { [weak self] id in DispatchQueue.main.async { self?.removeMirrorWorkspace(hostID: hostID, remoteWorkspaceID: id) } },
+            onState: { [weak self] p, s, r in DispatchQueue.main.async { self?.applyRemoteState(paneID: p, state: s, reason: r) } },
+            onStatus: { [weak self] conn in
+                DispatchQueue.main.async {
+                    if conn == .dead { self?.lanPairingSAS = nil }
+                    self?.applyRemoteStatus(hostID: hostID, conn: conn)
+                }
+            })
+        remoteClients[hostID] = client
+        client.start()
+    }
+
+    /// Store the learned certificate hash for a host. Keyed off the SAS we displayed so a late
+    /// second handshake can't overwrite the pin the user actually confirmed.
+    private func rememberLANPin(hostID: String, matching sas: String) {
+        guard let client = remoteClients[hostID], let hash = client.observedCertHash,
+              sasDigits(certHash: hash) == sas else { return }
+        UserDefaults.standard.set(hash, forKey: lanPinKey(hostID))
     }
 
     /// The QR bootstrap payload for a phone to reach this host, or nil if Tailscale is down.
@@ -2266,6 +2446,32 @@ final class AgentStore: ObservableObject {
     /// The user's verdict on a pending pairing request (from the approval sheet).
     func respondToApproval(_ ok: Bool) {
         approvalDecider?(ok); approvalDecider = nil; pendingApproval = nil
+        if ok { clearLANCode() }   // a code pairs one device; spend it on success
+    }
+
+    /// The user picked one of the three codes. Only the real SAS admits — a wrong pick means
+    /// the client is showing different digits, which means something is in the middle.
+    func respondToSASPick(_ picked: String?) {
+        let real = pendingApproval?.sas
+        respondToApproval(picked != nil && picked == real)
+    }
+
+    /// Stage the approval UI for a connection, deriving the SAS trio for a LAN pairing. Decoys
+    /// are random 6-digit strings that are never equal to the real one, so "none of these
+    /// match" is always a truthful option when a man in the middle is present.
+    private func presentApproval(deviceID: String, name: String, confirm: ConfirmKind) {
+        guard confirm == .compareSAS, let hash = lanCertHash else {
+            pendingApproval = (deviceID, name, .trustedOrigin, "", [])
+            return
+        }
+        let real = sasDigits(certHash: hash)
+        var decoys: [String] = []
+        while decoys.count < 2 {
+            let d = String(format: "%06u", UInt32.random(in: 0..<1_000_000))
+            if d != real, !decoys.contains(d) { decoys.append(d) }
+        }
+        pendingApproval = (deviceID, name, .compareSAS, real,
+                           sasChoices(real: real, decoys: decoys, insertAt: Int.random(in: 0...2)))
     }
 
     /// True when you're away from this Mac: lid shut AND no external display attached.

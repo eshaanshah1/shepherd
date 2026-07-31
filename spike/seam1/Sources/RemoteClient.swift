@@ -17,6 +17,20 @@ final class RemoteClient {
     private let deviceID: String
     private let deviceName: String
     private let secret: String?
+    /// LAN mode: how to judge the host's certificate. Nil ⇒ this is a tailnet client and dials
+    /// plain TCP inside WireGuard, exactly as before.
+    private let trust: LANBridge.Trust?
+    /// Fires with the certificate hash actually seen, so a first pairing can show its SAS and
+    /// store the pin once the user confirms it.
+    private let onObservedCert: ((Data) -> Void)?
+    /// The host's 6-digit code, sent once on a first LAN pairing. Nil for a known device.
+    private let pairingCode: String?
+    /// Strong ref to the TLS bridge whose socketpair `fd` points at — dropping it would tear
+    /// the connection down mid-session.
+    private var bridge: LANBridge?
+    /// The certificate hash this connection actually saw, for a first pairing to store as the
+    /// pin once the host's user confirms the SAS derived from it.
+    private var observedCert: Data?
 
     private let onAccepted: (String) -> Void            // sessionNonce (also seeds `shepherdd attach`)
     private let onWorkspaceTree: (WorkspaceTree) -> Void
@@ -33,7 +47,8 @@ final class RemoteClient {
     private let queue = DispatchQueue(label: "shepherd.remote.client", qos: .utility)
 
     init(host: String, port: UInt16, deviceID: String, deviceName: String,
-         secret: String?,
+         secret: String?, trust: LANBridge.Trust? = nil, pairingCode: String? = nil,
+         onObservedCert: ((Data) -> Void)? = nil,
          onAccepted: @escaping (String) -> Void,
          onWorkspaceTree: @escaping (WorkspaceTree) -> Void,
          onWorkspaceList: @escaping ([String]) -> Void = { _ in },
@@ -43,6 +58,8 @@ final class RemoteClient {
         self.host = host; self.port = port
         self.deviceID = deviceID; self.deviceName = deviceName
         self.secret = secret
+        self.trust = trust; self.pairingCode = pairingCode
+        self.onObservedCert = onObservedCert
         self.onAccepted = onAccepted
         self.onWorkspaceTree = onWorkspaceTree
         self.onWorkspaceList = onWorkspaceList
@@ -51,6 +68,9 @@ final class RemoteClient {
         self.onStatus = onStatus
     }
 
+    /// The certificate hash seen on this connection (LAN mode only), or nil.
+    var observedCertHash: Data? { lock.lock(); defer { lock.unlock() }; return observedCert }
+
     /// The session nonce issued at `accepted` — passed to each `shepherdd attach` so its data
     /// channel is admitted against this live control session. Nil until connected.
     var sessionNonce: String? { lock.lock(); defer { lock.unlock() }; return nonce }
@@ -58,8 +78,11 @@ final class RemoteClient {
     func start() { queue.async { [weak self] in self?.run() } }
 
     func stop() {
-        lock.lock(); stopped = true; let f = fd; fd = -1; nonce = nil; lock.unlock()
+        lock.lock(); stopped = true; let f = fd; fd = -1; nonce = nil
+        let b = bridge; bridge = nil
+        lock.unlock()
         if f >= 0 { shutdown(f, SHUT_RDWR); close(f) }
+        b?.close()
     }
 
     /// Frame and send a control message (a `cmd*` or `ping`) to the host. No-op if not connected.
@@ -81,7 +104,22 @@ final class RemoteClient {
 
     private func run() {
         onStatus(.reconnecting)   // connecting
-        let f = RemoteClient.dial(host, port)
+        var f: Int32 = -1
+        if let trust {
+            // A refused handshake means the host is not who it claimed. `.dead`, never a retry.
+            guard let b = LANBridge.dialTLS(host: host, port: port, trust: trust,
+                                            observed: { [weak self] hash in
+                                                self?.lock.lock(); self?.observedCert = hash
+                                                self?.lock.unlock()
+                                                self?.onObservedCert?(hash)
+                                            }) else {
+                onStatus(.dead); return
+            }
+            lock.lock(); bridge = b; lock.unlock()
+            f = b.appFD
+        } else {
+            f = RemoteClient.dial(host, port)
+        }
         guard f >= 0 else { onStatus(.dead); return }
         lock.lock()
         if stopped { lock.unlock(); shutdown(f, SHUT_RDWR); close(f); return }
@@ -89,7 +127,7 @@ final class RemoteClient {
         lock.unlock()
 
         let hello = ControlMessage.hello(deviceID: deviceID, deviceName: deviceName,
-                                         pairingCode: nil, secret: secret, fcmToken: nil,
+                                         pairingCode: pairingCode, secret: secret, fcmToken: nil,
                                          protocolVersion: kRemoteProtocolVersion)
         if let d = try? FrameCodec.encode(hello) {
             _ = d.withUnsafeBytes { write(f, $0.baseAddress, d.count) }

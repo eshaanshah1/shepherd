@@ -238,6 +238,7 @@ targets:
       - path: Sources/RemoteProtocol.swift
       - path: Sources/PairingPayload.swift
       - path: Sources/TailscaleDiscovery.swift
+      - path: Sources/LANIdentity.swift
       - path: Sources/PtyBroker.swift
       - path: Sources/EphemeralPane.swift
       - path: Sources/HandleRegistry.swift
@@ -251,6 +252,8 @@ targets:
       - path: RemoteTests
       - path: Sources/RemoteProtocol.swift
       - path: Sources/RemoteServer.swift
+      - path: Sources/LANIdentity.swift
+      - path: Sources/LANListener.swift
       - path: Sources/RemoteClient.swift
       - path: Sources/PtyBroker.swift
   shepherdd:

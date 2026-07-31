@@ -15,10 +15,12 @@ class EncryptedPairingStore(context: Context) : PairingStore {
     override fun load(): Pairing? {
         val host = prefs.getString("host", null) ?: return null
         return Pairing(host, prefs.getInt("port", 8722), prefs.getString("deviceId", "")!!,
-            prefs.getString("deviceName", "")!!, prefs.getString("secret", "")!!)
+            prefs.getString("deviceName", "")!!, prefs.getString("secret", "")!!,
+            prefs.getString("lanPin", null))
     }
     override fun save(p: Pairing) = prefs.edit()
         .putString("host", p.host).putInt("port", p.port).putString("deviceId", p.deviceId)
-        .putString("deviceName", p.deviceName).putString("secret", p.secret).apply()
+        .putString("deviceName", p.deviceName).putString("secret", p.secret)
+        .putString("lanPin", p.lanPin).apply()
     override fun clear() = prefs.edit().clear().apply()
 }

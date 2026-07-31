@@ -15,6 +15,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.eshaan.shepherd.pairing.PairingState
 import com.eshaan.shepherd.protocol.PairingPayload
+import androidx.compose.ui.platform.LocalContext
+import com.eshaan.shepherd.transport.LanDiscovery
+import com.eshaan.shepherd.transport.LanHost
 import com.eshaan.shepherd.ui.components.PrimaryButton
 import com.eshaan.shepherd.ui.theme.ShepherdPalette
 import com.journeyapps.barcodescanner.ScanContract
@@ -23,6 +26,17 @@ import com.journeyapps.barcodescanner.ScanOptions
 @Composable
 fun PairingScreen(vm: PairingViewModel, onPaired: () -> Unit) {
     val state by vm.state.collectAsState()
+    val sas by vm.sas.collectAsState()
+    val context = LocalContext.current
+    var lanHosts by remember { mutableStateOf<List<LanHost>>(emptyList()) }
+    var lanTarget by remember { mutableStateOf<LanHost?>(null) }
+    var lanCode by remember { mutableStateOf("") }
+    // Discovery runs only while this screen is up — a browser left running is a wakeup source.
+    DisposableEffect(Unit) {
+        val d = LanDiscovery(context)
+        d.start { hosts -> lanHosts = hosts }
+        onDispose { d.stop() }
+    }
     var showManual by remember { mutableStateOf(false) }
     var scanError by remember { mutableStateOf<String?>(null) }
     var host by remember { mutableStateOf("") }
@@ -73,6 +87,51 @@ fun PairingScreen(vm: PairingViewModel, onPaired: () -> Unit) {
                     label = { Text("Port") })
                 PrimaryButton("Pair", { vm.pair(host.trim(), null, port.toIntOrNull() ?: 8722) },
                     Modifier.fillMaxWidth(), enabled = host.isNotBlank())
+            }
+        }
+
+        // --- local network ---
+        if (sas != null) {
+            Spacer(Modifier.height(20.dp))
+            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                .background(Color(ShepherdPalette.surface2)).padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("Pick this code on the Mac", color = Color(ShepherdPalette.textPrimary),
+                     style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.height(6.dp))
+                Text(sas!!, color = Color(ShepherdPalette.textPrimary),
+                     style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(6.dp))
+                Text("If the Mac isn't offering it, cancel — something is intercepting the connection.",
+                     color = Color(ShepherdPalette.textDim), textAlign = TextAlign.Center,
+                     style = MaterialTheme.typography.bodySmall)
+            }
+        } else if (lanHosts.isNotEmpty()) {
+            Spacer(Modifier.height(20.dp))
+            Text("ON THIS NETWORK", color = Color(ShepherdPalette.textDim),
+                 style = MaterialTheme.typography.labelSmall)
+            Spacer(Modifier.height(2.dp))
+            Text("Nothing here is verified — pair with the code shown on that Mac.",
+                 color = Color(ShepherdPalette.textDim), textAlign = TextAlign.Center,
+                 style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.height(8.dp))
+            lanHosts.forEach { h ->
+                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                    .background(Color(ShepherdPalette.surface2)).padding(12.dp)) {
+                    TextButton(onClick = { lanTarget = h; lanCode = "" }) {
+                        Text(h.name, color = Color(ShepherdPalette.textPrimary))
+                    }
+                    if (lanTarget?.name == h.name) {
+                        OutlinedTextField(lanCode, { lanCode = it.filter(Char::isDigit).take(6) },
+                            singleLine = true, modifier = Modifier.fillMaxWidth(),
+                            label = { Text("6-digit code from that Mac") })
+                        Spacer(Modifier.height(8.dp))
+                        PrimaryButton("Pair over local network",
+                            { vm.pairOverLan(h.host, h.port, lanCode) },
+                            Modifier.fillMaxWidth(), enabled = lanCode.length == 6)
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
             }
         }
 

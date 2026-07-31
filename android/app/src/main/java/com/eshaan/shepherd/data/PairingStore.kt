@@ -6,6 +6,11 @@ data class Pairing(
     val deviceId: String,
     val deviceName: String,
     val secret: String,
+    /**
+     * Base64 SHA-256 of the host's certificate, set only for a pairing made over the local
+     * network. Null ⇒ a tailnet pairing, dialled in the clear inside WireGuard exactly as before.
+     */
+    val lanPin: String? = null,
 )
 
 interface PairingStore {

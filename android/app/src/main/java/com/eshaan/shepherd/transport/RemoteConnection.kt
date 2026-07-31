@@ -47,6 +47,13 @@ class RemoteConnection(
                     backoff = backoffStartMs            // a clean session resets backoff
                 } catch (_: CancellationException) {
                     throw CancellationException()
+                } catch (e: Pinning.PinMismatch) {
+                    // The host is not the one we paired with. That is a decision about identity,
+                    // not an outage, so it must not be retried into a reconnect loop that would
+                    // keep offering our secret to whoever is answering.
+                    _status.value = ConnStatus.Failed(e.message ?: "certificate refused")
+                    running = false
+                    break
                 } catch (e: Exception) {
                     _status.value = ConnStatus.Failed(e.message ?: "connection error")
                 }
