@@ -65,6 +65,11 @@ final class AgentStore: ObservableObject {
     /// workspace; ContentView presents the naming modal off this.
     @Published var promptingNewWorkspace = false
 
+    /// ⌘T (and the folder `+` / empty-workspace button) raise the new-tab composer.
+    @Published var promptingNewTab = false
+    /// Which workspace the composer opens aimed at; nil = the current one.
+    var newTabSeedWorkspaceID: String? = nil
+
     /// Toggled by ⌘/ to show the keyboard-shortcut cheatsheet overlay (transient).
     @Published var showShortcuts = false
 
@@ -397,7 +402,8 @@ final class AgentStore: ObservableObject {
     /// git runs off-main; on success the tab opens in the worktree, on failure git's
     /// stderr is surfaced. Reuses an existing branch named `name`, else creates it off origin's
     /// freshly-fetched default branch.
-    func newWorktreeTab(inWorkspace wsID: String, name: String) {
+    func newWorktreeTab(inWorkspace wsID: String, name: String,
+                        title: String? = nil, initialCommand: String? = nil) {
         if let t = remoteTarget(forWorkspace: wsID) {   // repo is on the host — it runs git
             let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !n.isEmpty else { return }
@@ -410,7 +416,9 @@ final class AgentStore: ObservableObject {
         let dest = worktreePath(base: worktreeBaseDir(), repoDir: repoDir, name: trimmed)
         // Show the tab immediately in a loading state, then run git off-main — the
         // terminal mounts once the directory exists (or the tab is removed on failure).
-        guard let provisional = addProvisioningTab(inWorkspace: wsID, name: trimmed, dest: dest) else { return }
+        guard let provisional = addProvisioningTab(inWorkspace: wsID, name: trimmed, title: title,
+                                                   dest: dest, initialCommand: initialCommand)
+        else { return }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = Git.addWorktree(dest: dest, name: trimmed, in: repoDir)
             var hookFailure: String? = nil
@@ -443,14 +451,17 @@ final class AgentStore: ObservableObject {
     }
 
     /// Append a loading placeholder tab (a single provisioning pane) and select it.
-    private func addProvisioningTab(inWorkspace wsID: String, name: String, dest: String) -> (tabID: String, paneID: String)? {
+    private func addProvisioningTab(inWorkspace wsID: String, name: String, title: String? = nil,
+                                    dest: String, initialCommand: String? = nil) -> (tabID: String, paneID: String)? {
         guard let w = workspaces.firstIndex(where: { $0.id == wsID }) else { return nil }
         selectedWorkspaceID = wsID
         var pane = Pane()
         pane.provisioning = true
         pane.userTitle = name
         pane.cwd = dest
-        let tab = Tab(pane: pane)
+        pane.initialCommand = initialCommand
+        var tab = Tab(pane: pane)
+        tab.userTitle = title   // a composed title beats the branch name the pane carries
         workspaces[w].tabs.append(tab)
         workspaces[w].selectedTabID = tab.tabID
         save()
@@ -971,13 +982,15 @@ final class AgentStore: ObservableObject {
     /// New tab into a specific folder, selecting it (the folder-header hover `+`).
     /// An explicit `cwd` (worktree flow) overrides the workspace's default directory.
     @discardableResult
-    func newTab(inWorkspace wsID: String, cwd: String? = nil, sessionID: String? = nil) -> String {
+    func newTab(inWorkspace wsID: String, cwd: String? = nil, sessionID: String? = nil,
+                initialCommand: String? = nil) -> String {
         guard let w = workspaces.firstIndex(where: { $0.id == wsID }) else { return "" }
         selectedWorkspaceID = wsID
         if let (c, wid) = remoteTarget(forWorkspace: wsID) { c.send(.cmdNewTab(workspaceID: wid)); return "" }
         var pane = Pane()
         pane.cwd = cwd ?? expandedDefaultPath(workspaces[w])
         pane.sessionID = sessionID   // set ⇒ GhosttyTerminal seeds `claude --resume` on mount
+        pane.initialCommand = initialCommand
         let tab = Tab(pane: pane)
         workspaces[w].tabs.append(tab)
         workspaces[w].selectedTabID = tab.tabID
@@ -985,6 +998,40 @@ final class AgentStore: ObservableObject {
         refocusActiveTerminal()
         broadcastWorkspaceTree(workspaceID: wsID)
         return tab.tabID
+    }
+
+    // MARK: The ⌘T composer
+
+    /// Every workspace as a composer destination. `isGitRepo` is left false for local
+    /// workspaces — the view resolves it off-main for the selected target only, since
+    /// `Git.isWorkTree` shells out.
+    func newTabTargets() -> [NewTabTarget] {
+        workspaces.enumerated().map { i, ws in
+            NewTabTarget(workspaceID: ws.id, name: ws.displayName(index: i),
+                         isRemote: ws.isRemote,
+                         isGitRepo: ws.isRemote ? (ws.defaultPath?.isEmpty == false) : false)
+        }
+    }
+
+    /// `# shepherd: new-tab-worktree = true` ⇒ the composer opens with worktree on.
+    func newTabWorktreeDefault() -> Bool {
+        let path = (NSHomeDirectory() as NSString).appendingPathComponent(".config/shepherd/config")
+        guard let contents = try? String(contentsOfFile: path, encoding: .utf8) else { return false }
+        return parseShepherdConfig(contents).newTabWorktree
+    }
+
+    /// Make the tab the composer describes.
+    func create(_ request: NewTabRequest) {
+        let cmd = AgentLaunch.launchCommand(prompt: request.effectivePrompt)
+        if request.usesWorktree {
+            newWorktreeTab(inWorkspace: request.target.workspaceID, name: request.branch,
+                           title: request.effectiveTitle, initialCommand: cmd)
+        } else {
+            let tabID = newTab(inWorkspace: request.target.workspaceID, initialCommand: cmd)
+            if let t = request.effectiveTitle, !tabID.isEmpty {
+                rename(tabID: tabID, to: t, inWorkspace: request.target.workspaceID)
+            }
+        }
     }
 
     func rename(tabID: String, to title: String, inWorkspace wsID: String) {
@@ -1316,28 +1363,37 @@ final class AgentStore: ObservableObject {
         injectText(prompt, intoPane: paneID)
     }
 
-    /// The one-shot `initial_input` to resume this pane's Claude session on restore, or nil if it
-    /// wasn't running an agent. Consumes the stored id (cleared async so we don't mutate published
-    /// state mid-view-build): resume is attempted once; a successful resume re-arms it via the
-    /// agent's own SessionStart, while a dead id simply falls back to a plain shell next launch.
-    func takeResumeInput(forPane paneID: String) -> String? {
-        let sid: String?
+    /// The one-shot `initial_input` for a pane: the command that launches a composed agent,
+    /// else the line that resumes a restored session. Consumed on read (cleared async so we
+    /// don't mutate published state mid-view-build): resume is attempted once; a successful
+    /// resume re-arms it via the agent's own SessionStart, while a dead id simply falls back
+    /// to a plain shell next launch.
+    func takeInitialInput(forPane paneID: String) -> String? {
+        let pane: Pane?
         if let (w, t) = locatePane(paneID, in: workspaces) {
-            sid = workspaces[w].tabs[t].root.pane(paneID)?.sessionID
+            pane = workspaces[w].tabs[t].root.pane(paneID)
         } else {
-            sid = ephemeralPanes.first { $0.id == paneID }?.pane.sessionID
+            pane = ephemeralPanes.first { $0.id == paneID }?.pane
         }
-        guard let sid, !sid.isEmpty else { return nil }
+        guard let pane else { return nil }
+        let composed = pane.initialCommand
+        let sid = pane.sessionID
+        guard composed != nil || (sid?.isEmpty == false) else { return nil }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             if let (w, t) = locatePane(paneID, in: self.workspaces) {
-                _ = self.workspaces[w].tabs[t].root.updatePane(paneID) { $0.sessionID = nil }
+                _ = self.workspaces[w].tabs[t].root.updatePane(paneID) {
+                    $0.sessionID = nil
+                    $0.initialCommand = nil
+                }
             } else if let i = self.ephemeralPanes.firstIndex(where: { $0.id == paneID }) {
                 self.ephemeralPanes[i].pane.sessionID = nil
+                self.ephemeralPanes[i].pane.initialCommand = nil
             }
             self.save()
         }
-        return claudeResumeInput(sessionID: sid)
+        if let composed { return composed }
+        return claudeResumeInput(sessionID: sid!)
     }
 
     // MARK: Feeds from libghostty (per-pane, ANY workspace via locatePane)

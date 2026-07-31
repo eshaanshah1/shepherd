@@ -92,6 +92,15 @@ struct ContentView: View {
             }
         }
         .animation(.easeOut(duration: 0.12), value: store.promptingNewWorkspace)
+        // The ⌘T composer (also the folder `+` and the empty-workspace button).
+        .overlay {
+            if store.promptingNewTab {
+                NewTabComposer(isPresented: $store.promptingNewTab)
+                    .environmentObject(store)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.12), value: store.promptingNewTab)
         // Tailnet device-discovery sheet (⋯ menu → "Add remote device…").
         .overlay {
             if store.showingRemoteDevices {

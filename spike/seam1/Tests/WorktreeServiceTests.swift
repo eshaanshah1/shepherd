@@ -83,4 +83,18 @@ final class WorktreeServiceTests: XCTestCase {
     func testParseConfigEditorWrapGarbageKeepsDefault() {
         XCTAssertFalse(parseShepherdConfig("# shepherd: editor-wrap-lines = maybe").editorWrapLines)
     }
+
+    func testNewTabWorktreeDefaultsOff() {
+        XCTAssertFalse(parseShepherdConfig("# shepherd: theme = dark").newTabWorktree)
+    }
+    func testNewTabWorktreeParsesTrueAndItsAliases() {
+        XCTAssertTrue(parseShepherdConfig("#   shepherd:  new-tab-worktree  =  true ").newTabWorktree)
+        XCTAssertTrue(parseShepherdConfig("# shepherd: new-tab-worktree = YES").newTabWorktree)
+        XCTAssertTrue(parseShepherdConfig("# shepherd: new-tab-worktree = on").newTabWorktree)
+        XCTAssertTrue(parseShepherdConfig("# shepherd: new-tab-worktree = 1").newTabWorktree)
+    }
+    func testNewTabWorktreeGarbageKeepsDefault() {
+        XCTAssertFalse(parseShepherdConfig("# shepherd: new-tab-worktree = maybe").newTabWorktree)
+        XCTAssertFalse(parseShepherdConfig("# shepherd: new-tab-worktree = off").newTabWorktree)
+    }
 }

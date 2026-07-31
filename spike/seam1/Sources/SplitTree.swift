@@ -27,6 +27,7 @@ struct Pane: Identifiable, Equatable {
     var reason: String? = nil
     var sessionID: String? = nil  // live Claude session id — persisted to resume the agent on relaunch
     var provisioning: Bool = false // worktree being created: show a loading view, don't mount the PTY (transient, never persisted)
+    var initialCommand: String? = nil // typed into the PTY once on mount (transient, never persisted)
     var stowing: StowKind? = nil  // worktree being archived/discarded: dim + lock the pane while git runs (transient, never persisted)
     var remote: RemoteRef? = nil  // non-nil ⇒ this pane mirrors a host pane (M2); never persisted
     var id: String { paneID }

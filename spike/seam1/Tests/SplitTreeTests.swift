@@ -206,4 +206,15 @@ final class SplitTreeTests: XCTestCase {
         XCTAssertNotEqual(restored?.paneID, "a")              // fresh id
         if case .split(_, let r, _, _) = back { XCTAssertEqual(r, 0.3) }
     }
+
+    func testInitialCommandNeverPersists() throws {
+        var pane = Pane()
+        pane.userTitle = "composed"
+        pane.initialCommand = "p=$(cat '/tmp/x'); rm -f '/tmp/x'; claude \"$p\"\n"
+        let data = try JSONEncoder().encode(SplitNode.leaf(pane))
+        let back = try JSONDecoder().decode(SplitNode.self, from: data)
+        let restored = try XCTUnwrap(back.firstLeafID.flatMap { back.pane($0) })
+        XCTAssertEqual(restored.userTitle, "composed")
+        XCTAssertNil(restored.initialCommand)
+    }
 }

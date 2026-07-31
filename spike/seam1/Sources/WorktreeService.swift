@@ -11,6 +11,8 @@ struct ShepherdConfig: Equatable {
     var theme: ThemeMode = .dark
     /// Code-editor line wrapping. Off by default → the editor scrolls horizontally.
     var editorWrapLines: Bool = false
+    /// Whether ⌘T's composer opens with the worktree toggle already on.
+    var newTabWorktree: Bool = false
 }
 
 /// Parse Shepherd directives out of the ghostty-syntax `~/.config/shepherd/config`.
@@ -41,6 +43,13 @@ func parseShepherdConfig(_ contents: String) -> ShepherdConfig {
             switch value.lowercased() {
             case "true", "yes", "on", "1":   cfg.editorWrapLines = true
             case "false", "no", "off", "0":  cfg.editorWrapLines = false
+            default: break
+            }
+        }
+        if key == "new-tab-worktree" {
+            switch value.lowercased() {
+            case "true", "yes", "on", "1":   cfg.newTabWorktree = true
+            case "false", "no", "off", "0":  cfg.newTabWorktree = false
             default: break
             }
         }
