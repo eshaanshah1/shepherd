@@ -169,6 +169,8 @@ targets:
       - path: Sources/Workspace.swift
       - path: Sources/Persistence.swift
       - path: Sources/WorktreeService.swift
+      - path: Sources/NewTabRequest.swift
+      - path: Sources/AgentLaunch.swift
       - path: Sources/ShepherdConfigWriter.swift
       - path: Sources/WorktreeHookRunner.swift
       - path: Sources/ClaudePluginInstaller.swift

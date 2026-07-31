@@ -266,11 +266,9 @@ final class GhosttySurfaceView: NSView {
             if let cwd = AgentStore.shared.cwd(forPane: paneID) {
                 cfg.working_directory = dup(cwd)
             }
-            // If this pane had a live Claude session at quit, resume it: type `claude --resume <id>`
-            // into the PTY once the shell (or the shepherdd pty wrapper) is up. Only restored panes
-            // carry a sessionID at creation; fresh panes don't, so nothing is injected for them.
-            if let resume = AgentStore.shared.takeResumeInput(forPane: paneID) {
-                cfg.initial_input = dup(resume)
+            // One-shot: a composed prompt's launch command, else a restored session's resume line.
+            if let input = AgentStore.shared.takeInitialInput(forPane: paneID) {
+                cfg.initial_input = dup(input)
             }
             if let cmd = remoteSurfaceCommand(serving: AgentStore.shared.isServing,
                                               helperPath: AgentStore.shared.helperPath) {

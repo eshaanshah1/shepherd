@@ -110,7 +110,7 @@ enum ShortcutActions {
     static func run(_ id: ShortcutID) {
         let s = AgentStore.shared
         switch id {
-        case .newTab:        s.newTab()
+        case .newTab:        s.promptingNewTab = true
         case .newEphemeral:  s.spawnEphemeral()
         case .closePane:
             if let id = s.expandedEphemeralID { s.closeEphemeral(id) }

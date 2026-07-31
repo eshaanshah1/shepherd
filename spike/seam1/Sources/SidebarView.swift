@@ -183,16 +183,9 @@ private struct WorkspaceFolderHeader: View {
     @State private var editing = false
     @State private var draft = ""
     @State private var hovering = false
-    @State private var isGitRepo = false   // local: live git check on hover; unused for mirrors
     @FocusState private var focused: Bool
 
     static let height: CGFloat = 26
-
-    /// Show "New Worktree Tab…" when the default dir is a git repo. For a mirror the repo
-    /// lives on the host (can't run git locally), so gate on the wired defaultPath instead.
-    private var worktreeEnabled: Bool {
-        ws.isRemote ? (ws.defaultPath?.isEmpty == false) : isGitRepo
-    }
 
     private var isActive: Bool { ws.id == store.selectedWorkspaceID }
 
@@ -231,19 +224,16 @@ private struct WorkspaceFolderHeader: View {
                     .lineLimit(1)
                 Spacer(minLength: 6)
                 if hovering {
-                    Menu {
-                        Button("New Tab") { store.newTab(inWorkspace: ws.id) }
-                        if worktreeEnabled {
-                            Button("New Worktree Tab…") { promptNewWorktree() }
-                        }
-                    } label: {
+                    Button(action: {
+                        store.newTabSeedWorkspaceID = ws.id
+                        store.promptingNewTab = true
+                    }) {
                         Image(systemName: "plus")
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(Theme.textDim)
+                            .contentShape(Rectangle())
                     }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .fixedSize()
+                    .buttonStyle(.plain)
                     .focusable(false)
                     .help("New tab in this workspace")
                 }
@@ -258,10 +248,7 @@ private struct WorkspaceFolderHeader: View {
             Color.clear.preference(key: FolderCentersKey.self,
                                    value: [ws.id: g.frame(in: .named("wsList")).midY])
         })
-        .onHover { h in
-            hovering = h
-            if h { refreshGitStatus() }
-        }
+        .onHover { hovering = $0 }
         .onTapGesture {
             guard !editing else { return }
             if ws.tabs.isEmpty { store.selectWorkspace(ws.id) }   // no tab to click ⇒ activate via header
@@ -319,18 +306,6 @@ private struct WorkspaceFolderHeader: View {
         editing = true
     }
 
-    /// Refresh whether the (local) default dir is a git work tree; drives the worktree menu
-    /// item. Off-main so a hover never hitches; settles before the `+` menu is opened. Skipped
-    /// for mirrors (the repo is on the host — worktreeEnabled reads the wired defaultPath there).
-    private func refreshGitStatus() {
-        guard !ws.isRemote, let p = ws.defaultPath, !p.isEmpty else { isGitRepo = false; return }
-        let dir = (p as NSString).expandingTildeInPath
-        DispatchQueue.global(qos: .userInitiated).async {
-            let ok = Git.isWorkTree(dir)
-            DispatchQueue.main.async { isGitRepo = ok }
-        }
-    }
-
     /// Set the workspace's default directory. Local: native folder chooser. Mirror: the path
     /// must exist on the HOST, so prompt for text (a local folder picker would browse the wrong machine).
     private func promptSetDirectory() {
@@ -364,22 +339,6 @@ private struct WorkspaceFolderHeader: View {
         store.setWorkspaceDirectory(ws.id, to: tf.stringValue)
     }
 
-    /// Prompt for a branch name, then create a worktree tab.
-    private func promptNewWorktree() {
-        let alert = NSAlert()
-        alert.messageText = "New worktree tab"
-        alert.informativeText = "Name a branch. An existing branch is reused; a new name is created off origin's default branch (freshly fetched)."
-        let tf = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
-        tf.placeholderString = "branch name"
-        alert.accessoryView = tf
-        alert.addButton(withTitle: "Create")
-        alert.addButton(withTitle: "Cancel")
-        alert.window.initialFirstResponder = tf
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let name = tf.stringValue.trimmingCharacters(in: .whitespaces)
-        guard !name.isEmpty else { return }
-        store.newWorktreeTab(inWorkspace: ws.id, name: name)
-    }
     private func commit() {
         store.renameWorkspace(ws.id, to: draft)
         endEditing()
