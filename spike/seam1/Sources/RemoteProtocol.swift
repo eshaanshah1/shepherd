@@ -209,7 +209,18 @@ func pairingDecision(deviceID: String, secret: String?,
                      codeAttemptsLeft: Int = 0) -> PairingDecision {
     // A known device pairs by secret over either link — no code, no comparison, ever again.
     if let dev = known.first(where: { $0.deviceID == deviceID }) {
-        return secret == dev.secret ? .accept(persistSecret: nil) : .reject(reason: "bad secret")
+        if secret == dev.secret { return .accept(persistSecret: nil) }
+        // A mismatched secret is normally the end of it. But a LAN peer presenting the host's
+        // LIVE code has proved a human is standing at the host, which is strictly stronger
+        // evidence than a stored secret — and an attacker holding the code could pair as a new
+        // device anyway, so this grants nothing extra. Without it, one stale record locks a
+        // device out permanently and only a manual Forget on the host can clear it.
+        if origin == .lan, let activeCode, codeAttemptsLeft > 0,
+           let presentedCode, presentedCode == activeCode {
+            return .needsApproval(deviceID: deviceID, name: deviceName ?? dev.name,
+                                  proposedSecret: secret ?? newSecret, confirm: .compareSAS)
+        }
+        return .reject(reason: "bad secret")
     }
     switch origin {
     case .tailnet:

@@ -38,6 +38,9 @@ final class RemoteClient {
     private let onWorkspaceRemoved: (String) -> Void
     private let onState: (String, String, String?) -> Void   // paneID, state, reason
     private let onStatus: (RemoteConnState) -> Void
+    /// The host's own words when it refuses us. Without this the reason is dropped and a refused
+    /// pairing is indistinguishable from a network that went away — nothing appears anywhere.
+    private let onRejected: (String) -> Void
 
     private let lock = NSLock()
     private var fd: Int32 = -1
@@ -54,7 +57,8 @@ final class RemoteClient {
          onWorkspaceList: @escaping ([String]) -> Void = { _ in },
          onWorkspaceRemoved: @escaping (String) -> Void = { _ in },
          onState: @escaping (String, String, String?) -> Void,
-         onStatus: @escaping (RemoteConnState) -> Void) {
+         onStatus: @escaping (RemoteConnState) -> Void,
+         onRejected: @escaping (String) -> Void = { _ in }) {
         self.host = host; self.port = port
         self.deviceID = deviceID; self.deviceName = deviceName
         self.secret = secret
@@ -66,6 +70,7 @@ final class RemoteClient {
         self.onWorkspaceRemoved = onWorkspaceRemoved
         self.onState = onState
         self.onStatus = onStatus
+        self.onRejected = onRejected
     }
 
     /// The certificate hash seen on this connection (LAN mode only), or nil.
@@ -150,7 +155,8 @@ final class RemoteClient {
         case .accepted(let n):
             lock.lock(); nonce = n; lock.unlock()
             onStatus(.live); onAccepted(n)
-        case .rejected:
+        case .rejected(let reason):
+            onRejected(reason)
             onStatus(.dead)
         case .pendingApproval:
             onStatus(.reconnecting)   // awaiting the host user's Allow tap
