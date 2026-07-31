@@ -265,6 +265,8 @@ targets:
         SWIFT_OBJC_BRIDGING_HEADER: Helper/shepherdd-Bridging.h
     sources:
       - path: Helper
+      # LANBridge: `attach` to a LAN host must dial TLS and pin the certificate.
+      - path: Sources/LANListener.swift
   ShepherdHelperTests:
     type: bundle.unit-test
     platform: macOS

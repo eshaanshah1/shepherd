@@ -2293,7 +2293,10 @@ final class AgentStore: ObservableObject {
         guard remoteClients[hostID] == nil else { return }
         let stored = UserDefaults.standard.data(forKey: lanPinKey(hostID))
         let trust: LANBridge.Trust = stored.map { .pinned($0) } ?? .learn
-        let secret = stored == nil ? nil : hostSecret(forHostID: hostID)
+        // Always propose OUR stable per-host secret, exactly as the tailnet client does. The
+        // host persists what the client proposes; minting one host-side instead would leave a
+        // record the client can never present again, so every reconnect would read "bad secret".
+        let secret = hostSecret(forHostID: hostID)
         let client = RemoteClient(
             host: host, port: port, deviceID: clientDeviceID, deviceName: clientDeviceName,
             secret: secret, trust: trust, pairingCode: stored == nil ? code : nil,
@@ -2379,11 +2382,15 @@ final class AgentStore: ObservableObject {
 
     /// Attach params for a mirror pane's `shepherdd attach` surface, or nil if it isn't a live
     /// mirror (no client / not yet accepted). Consumed by GhosttyTerminal.makeSurface (M2.5).
-    func remoteAttachInfo(forPane paneID: String) -> (host: String, port: UInt16, nonce: String, remotePaneID: String)? {
+    func remoteAttachInfo(forPane paneID: String)
+    -> (host: String, port: UInt16, nonce: String, remotePaneID: String, pin: String?)? {
         guard let (w, t) = locatePane(paneID, in: workspaces),
               let ref = workspaces[w].tabs[t].root.pane(paneID)?.remote,
               let client = remoteClients[ref.hostID], let nonce = client.sessionNonce else { return nil }
-        return (client.host, client.port, nonce, ref.remotePaneID)
+        // A LAN host's data channel is the same TLS listener as its control channel, so the
+        // helper must speak TLS and pin the certificate. Nil ⇒ tailnet, plain TCP inside WireGuard.
+        let pin = UserDefaults.standard.data(forKey: lanPinKey(ref.hostID))?.base64EncodedString()
+        return (client.host, client.port, nonce, ref.remotePaneID, pin)
     }
 
     /// Build or replace this host workspace's mirror in place (deterministic id → upsert). Panes

@@ -254,6 +254,10 @@ final class GhosttySurfaceView: NSView {
                 ghostty_env_var_s(key: dup("SHEPHERD_ATTACH_NONCE"), value: dup(info.nonce)),
                 ghostty_env_var_s(key: dup("SHEPHERD_ATTACH_PANE"),  value: dup(info.remotePaneID)),
             ]
+            // Base64 cert hash for a LAN host — the helper pins it. Absent for a tailnet host.
+            if let pin = info.pin {
+                envVars.append(ghostty_env_var_s(key: dup("SHEPHERD_ATTACH_PIN"), value: dup(pin)))
+            }
             cfg.command = dup("\(AgentStore.shared.helperPath) attach")
         } else {
             envVars = [
