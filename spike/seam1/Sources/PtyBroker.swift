@@ -143,6 +143,7 @@ final class PtyHub {
     func start() -> Bool {
         unlink(socketPath)
         let fd = socket(AF_UNIX, SOCK_STREAM, 0); guard fd >= 0 else { return false }
+        setCloseOnExec(fd)
         var addr = sockaddr_un(); addr.sun_family = sa_family_t(AF_UNIX)
         _ = socketPath.withCString { strncpy(&addr.sun_path.0, $0, MemoryLayout.size(ofValue: addr.sun_path) - 1) }
         let ok = withUnsafePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
@@ -165,6 +166,7 @@ final class PtyHub {
         while true {
             let c = accept(fd, nil, nil)
             if c < 0 { if errno == EINTR { continue }; break }
+            setCloseOnExec(c)
             // A viewer's input write() to this helper fd runs on the broker's shared serial
             // queue; bound how long it can block if the inner program stops draining (else one
             // stalled helper freezes all viewer output for that pane). Mirror RemoteServer's

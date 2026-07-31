@@ -38,6 +38,7 @@ final class SocketServer {
         unlink(path)
         fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { return }
+        setCloseOnExec(fd)
 
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
@@ -59,6 +60,7 @@ final class SocketServer {
         while true {
             let client = accept(fd, nil, nil)
             if client < 0 { if errno == EINTR { continue } else { break } }
+            setCloseOnExec(client)
             var buf = [UInt8](repeating: 0, count: 8192)
             let n = read(client, &buf, buf.count)
             close(client)

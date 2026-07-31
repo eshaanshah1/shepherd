@@ -144,6 +144,11 @@ final class AgentStore: ObservableObject {
     @Published var showingPhonePairingQR = false
     private var approvalDecider: ((Bool) -> Void)?
     private var remoteServer: RemoteServer?
+    /// The address `remoteServer` is actually bound to — compared against a freshly resolved
+    /// one to notice a renumbered tailnet (nil ⇒ not serving).
+    private var remoteServeAddress: String?
+    private var remoteServeTimer: Timer?
+    private var loggedNoServeAddress = false
     /// Client role (M2): one RemoteClient per attached host, keyed by "host:port".
     private var remoteClients: [String: RemoteClient] = [:]
 
@@ -225,6 +230,7 @@ final class AgentStore: ObservableObject {
         expireOldArchives()                // drop archives past the retention window
         startPRRefreshTimer()              // keep idle agents' PR status live-ish
         startRemoteServingIfEnabled()      // bind the control channel if serving is on
+        startRemoteServeConvergeTimer()    // …and rebind it if the tailnet address changes
         syncRepoWatches()                  // begin watching each restored pane's checkout
         startNudgeTimer()
     }
@@ -2003,12 +2009,50 @@ final class AgentStore: ObservableObject {
     func stopRemoteServing() {
         remoteServer?.stop(); remoteServer = nil
         ptyHub?.stop(); ptyHub = nil
+        remoteServeAddress = nil
     }
 
-    /// Start the control server, bound to the Tailscale interface, when serving is
-    /// on. No-op if already running, serving is off, or Tailscale is down (no 100.x).
+    /// Start the control server on the address Tailscale reports for this node, when serving
+    /// is on. No-op if already running, serving is off, or Tailscale is down. The address is
+    /// resolved off-main (it shells out to `tailscale status`) and re-checked by
+    /// `startRemoteServeConvergeTimer`, since Tailscale can come up after us or renumber.
     func startRemoteServingIfEnabled() {
-        guard isServing, remoteServer == nil, let ip = RemoteServer.currentTailscaleIPv4() else { return }
+        guard isServing, remoteServer == nil else { return }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            let ip = RemoteServer.bindIPv4(selfIPv4: self.tailnetStatus()?.selfIPv4)
+            DispatchQueue.main.async { self.startRemoteServing(on: ip) }
+        }
+    }
+
+    /// Re-resolve the bind address periodically: serving is started once at launch, but
+    /// Tailscale may not be up yet then, and its address can change under a running app —
+    /// which strands the listener on an address no peer dials (they read "not running").
+    private func startRemoteServeConvergeTimer() {
+        remoteServeTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            guard let self, self.isServing else { return }
+            DispatchQueue.global(qos: .utility).async { [weak self] in
+                guard let self else { return }
+                let ip = RemoteServer.bindIPv4(selfIPv4: self.tailnetStatus()?.selfIPv4)
+                DispatchQueue.main.async {
+                    guard self.isServing, ip != self.remoteServeAddress else { return }
+                    self.stopRemoteServing()
+                    self.startRemoteServing(on: ip)
+                }
+            }
+        }
+    }
+
+    private func startRemoteServing(on ip: String?) {
+        guard isServing, remoteServer == nil else { return }
+        guard let ip else {
+            if !loggedNoServeAddress {   // once per stretch, not once a minute
+                shepherdLog("REMOTE no tailnet address to bind — not serving")
+                loggedNoServeAddress = true
+            }
+            return
+        }
+        loggedNoServeAddress = false
         // Bring the pty-data hub up before the control server so a fast first data
         // connection finds its broker.
         let hub = PtyHub(socketPath: ptySocketPath, makeBroker: { PtyBroker(paneID: $0, cols: $1, rows: $2) })
@@ -2060,7 +2104,11 @@ final class AgentStore: ObservableObject {
             log: { [weak self] line in self?.shepherdLog(line) })
         if s.start() {
             remoteServer = s
+            remoteServeAddress = ip
             shepherdLog("REMOTE serving on \(ip):\(remotePort)")
+        } else {
+            ptyHub?.stop(); ptyHub = nil
+            shepherdLog("REMOTE bind failed on \(ip):\(remotePort)")
         }
     }
 
@@ -2108,7 +2156,9 @@ final class AgentStore: ObservableObject {
     /// The QR bootstrap payload for a phone to reach this host, or nil if Tailscale is down.
     func phonePairingPayload() -> String? {
         let status = tailnetStatus()
-        let ip = status?.selfIPv4 ?? RemoteServer.currentTailscaleIPv4()
+        // Advertise the address we are actually bound to, never a bare interface scan: another
+        // tunnel's 100.64/10 address would be a QR pointing at a port nothing listens on.
+        let ip = remoteServeAddress ?? status?.selfIPv4
         let host = status?.selfDNSName
         guard host != nil || ip != nil else { return nil }
         let name = host?.split(separator: ".").first.map(String.init) ?? (Host.current().localizedName ?? "mac")

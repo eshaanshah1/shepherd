@@ -163,4 +163,35 @@ final class RemoteProtocolTests: XCTestCase {
         XCTAssertEqual(tailscaleIPv4(from: [("en0","192.168.1.5"), ("utun3","100.101.102.103")]),
                        "100.101.102.103")
     }
+
+    /// The measured layout of a Mac on both a corporate OpenVPN and Tailscale: two 100.64/10
+    /// addresses, the VPN's enumerating first.
+    private let twoTunnels = [("en0", "192.168.0.157"),
+                              ("utun100", "100.66.14.209"),   // OpenVPN
+                              ("utun5", "100.78.141.27")]     // Tailscale
+
+    func testServeBindPrefersTheAddressTailscaleReportsForItself() {
+        XCTAssertEqual(tailscaleIPv4(from: twoTunnels), "100.66.14.209")   // the trap
+        XCTAssertEqual(serveBindIPv4(selfIPv4: "100.78.141.27", interfaces: twoTunnels),
+                       "100.78.141.27")
+    }
+
+    func testServeBindRefusesRatherThanPickAnotherTunnel() {
+        let noTailscale = [("en0", "192.168.0.157"), ("utun100", "100.66.14.209")]
+        XCTAssertNil(serveBindIPv4(selfIPv4: "100.78.141.27", interfaces: noTailscale))
+    }
+
+    func testServeBindFallsBackToTheInterfaceScanWithoutATailscaleStatus() {
+        XCTAssertEqual(serveBindIPv4(selfIPv4: nil, interfaces: twoTunnels), "100.66.14.209")
+        XCTAssertNil(serveBindIPv4(selfIPv4: nil, interfaces: [("en0", "192.168.1.5")]))
+    }
+
+    func testCloseOnExecIsOffByDefaultAndSettable() {
+        var fds: [Int32] = [-1, -1]
+        XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, &fds), 0)
+        defer { close(fds[0]); close(fds[1]) }
+        XCTAssertEqual(fcntl(fds[0], F_GETFD) & FD_CLOEXEC, 0)
+        setCloseOnExec(fds[0])
+        XCTAssertEqual(fcntl(fds[0], F_GETFD) & FD_CLOEXEC, FD_CLOEXEC)
+    }
 }

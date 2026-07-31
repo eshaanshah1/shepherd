@@ -125,10 +125,20 @@ final class RemoteServer {
     }
 
     /// Resolve this machine's Tailscale IPv4 (100.64.0.0/10), or nil if Tailscale is down.
+    /// Interface order only — see `bindIPv4(selfIPv4:)` for what a server should bind.
     static func currentTailscaleIPv4() -> String? {
+        tailscaleIPv4(from: localIPv4Addresses())
+    }
+
+    /// The address to bind, given what `tailscale status` reports for this node.
+    static func bindIPv4(selfIPv4: String?) -> String? {
+        serveBindIPv4(selfIPv4: selfIPv4, interfaces: localIPv4Addresses())
+    }
+
+    static func localIPv4Addresses() -> [(name: String, ipv4: String)] {
         var addrs: [(name: String, ipv4: String)] = []
         var ifap: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&ifap) == 0, let first = ifap else { return nil }
+        guard getifaddrs(&ifap) == 0, let first = ifap else { return [] }
         defer { freeifaddrs(ifap) }
         var ptr: UnsafeMutablePointer<ifaddrs>? = first
         while let cur = ptr {
@@ -141,13 +151,14 @@ final class RemoteServer {
             }
             ptr = cur.pointee.ifa_next
         }
-        return tailscaleIPv4(from: addrs)
+        return addrs
     }
 
     @discardableResult
     func start() -> Bool {
         let fd = socket(AF_INET, SOCK_STREAM, 0)
         guard fd >= 0 else { return false }
+        setCloseOnExec(fd)
         var yes: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
         var addr = sockaddr_in()
@@ -198,6 +209,7 @@ final class RemoteServer {
                 $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { accept(lfd, $0, &slen) }
             }
             if fd < 0 { if errno == EINTR { continue } else { break } }
+            setCloseOnExec(fd)
             // The connection's source IP — resolved host-side to a verified peer identity.
             var ipbuf = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
             let peerIP: String? = withUnsafePointer(to: &sa.sin_addr) {

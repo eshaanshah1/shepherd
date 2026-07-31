@@ -213,6 +213,23 @@ func tailscaleIPv4(from addrs: [(name: String, ipv4: String)]) -> String? {
     addrs.first { isTailscaleCGNAT($0.ipv4) }?.ipv4
 }
 
+/// Address the control server binds to. `selfIPv4` is what `tailscale status` reports for
+/// this node — the address every peer will dial, so it is the only correct answer when we
+/// have it: other tunnels (a corporate OpenVPN) also hand out 100.64/10 and can enumerate
+/// first, and binding one of those leaves peers probing a port nothing listens on. Refuses
+/// rather than fall back once Tailscale has named an address it doesn't have yet.
+func serveBindIPv4(selfIPv4: String?, interfaces: [(name: String, ipv4: String)]) -> String? {
+    guard let selfIPv4 else { return tailscaleIPv4(from: interfaces) }
+    return interfaces.contains { $0.ipv4 == selfIPv4 } ? selfIPv4 : nil
+}
+
+/// Keep a socket out of every child process we later fork/exec. Without it a PTY pane's
+/// helper, its shell and its agent all inherit the listening fd and hold the port open
+/// after serving stops — so a peer probes it and reads a dead app as ready to pair.
+func setCloseOnExec(_ fd: Int32) {
+    _ = fcntl(fd, F_SETFD, fcntl(fd, F_GETFD) | FD_CLOEXEC)
+}
+
 // MARK: - Data-channel protocol (Phase 2)
 
 /// Data-channel handshake messages. After the hello exchange the connection carries
