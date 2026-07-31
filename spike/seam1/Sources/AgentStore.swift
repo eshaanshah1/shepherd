@@ -37,6 +37,7 @@ final class AgentStore: ObservableObject {
     /// PR status per pane, shown in the sidebar when the pane is idle (transient —
     /// fetched via `gh`, refreshed while idle, never persisted).
     @Published private(set) var prStatuses: [String: PRStatus] = [:]
+    /// cwds with a `gh` fetch in flight — the checkout is the unit, not the pane.
     private var prInFlight: Set<String> = []
     private var prTimer: Timer?
 
@@ -626,7 +627,12 @@ final class AgentStore: ObservableObject {
     }
 
     /// Every pane currently idle → refresh its PR status.
+    ///
+    /// Not while the app is inactive: a PR icon nobody can see is not worth a network
+    /// round-trip per pane per minute, and being away is exactly when battery matters.
+    /// `didBecomeActive` catches up on return.
     private func refreshAllIdlePRs() {
+        guard NSApp.isActive else { return }
         for ws in workspaces where !ws.isRemote {
             for tab in ws.tabs {
                 for pane in tab.root.panes where pane.state == .idle {
@@ -638,10 +644,12 @@ final class AgentStore: ObservableObject {
 
     /// Fetch (off-main) the PR for a pane's checked-out branch and cache it; clears
     /// the entry when there's no PR. No-op without a cwd or while already fetching.
+    /// In-flight and cached by **cwd**: the PR belongs to the checkout, so ten panes in one
+    /// worktree used to make ten identical `gh` calls a minute for one answer.
     func refreshPR(forPane paneID: String) {
-        guard GH.isInstalled, !prInFlight.contains(paneID),
-              let cwd = cwd(forPane: paneID), !cwd.isEmpty else { return }
-        prInFlight.insert(paneID)
+        guard GH.isInstalled, let cwd = cwd(forPane: paneID), !cwd.isEmpty,
+              !prInFlight.contains(cwd) else { return }
+        prInFlight.insert(cwd)
         DispatchQueue.global(qos: .utility).async { [weak self] in
             // One `gh` call feeds both: the sidebar's reduced status and the workbench
             // band's detail.
@@ -649,18 +657,36 @@ final class AgentStore: ObservableObject {
             let status = detail.map(PR.reduce)
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.prInFlight.remove(paneID)
-                if let status {
-                    self.prStatuses[paneID] = status
-                    self.prDetails[paneID] = detail
-                    self.refreshReviewThreads(forPane: paneID)   // PR exists → pull its review threads
-                } else {
-                    self.prStatuses.removeValue(forKey: paneID)
-                    self.prDetails.removeValue(forKey: paneID)
-                    self.reviewThreads.removeValue(forKey: paneID)
+                self.prInFlight.remove(cwd)
+                for id in self.panes(inCwd: cwd, including: paneID) {
+                    if let status {
+                        self.prStatuses[id] = status
+                        self.prDetails[id] = detail
+                        self.refreshReviewThreads(forPane: id)   // PR exists → pull its review threads
+                    } else {
+                        self.prStatuses.removeValue(forKey: id)
+                        self.prDetails.removeValue(forKey: id)
+                        self.reviewThreads.removeValue(forKey: id)
+                    }
                 }
             }
         }
+    }
+
+    /// Every pane sitting in one checkout — the fan-out for a per-cwd fetch.
+    ///
+    /// The pane that asked is always in the result even if this misses it (a mirror
+    /// workspace's panes are keyed to a path on the *host*), so a per-cwd fetch can never
+    /// answer nobody.
+    private func panes(inCwd cwd: String, including asker: String) -> [String] {
+        var ids: Set<String> = [asker]
+        for ws in workspaces where !ws.isRemote {
+            for tab in ws.tabs {
+                for pane in tab.root.panes where pane.cwd == cwd { ids.insert(pane.paneID) }
+            }
+        }
+        for e in ephemeralPanes where e.pane.cwd == cwd { ids.insert(e.id) }
+        return Array(ids)
     }
 
     /// Submit a review, then refetch so the band reflects it. Off-main.
@@ -733,19 +759,22 @@ final class AgentStore: ObservableObject {
     /// entry when there's no PR. Reads owner/repo from the cached PRStatus url. No-op
     /// without `gh` / a PR / a cwd, or while already fetching.
     func refreshReviewThreads(forPane paneID: String) {
-        guard GH.isInstalled, !reviewThreadsInFlight.contains(paneID),
+        guard GH.isInstalled,
               let status = prStatuses[paneID],
               let cwd = cwd(forPane: paneID), !cwd.isEmpty,
+              !reviewThreadsInFlight.contains(cwd),   // keyed by cwd, like the PR fetch above
               let (owner, repo) = PRThreads.ownerRepo(fromURL: status.url) else { return }
-        reviewThreadsInFlight.insert(paneID)
+        reviewThreadsInFlight.insert(cwd)
         let number = status.number
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let threads = GH.reviewThreads(owner: owner, repo: repo, number: number, inDir: cwd)
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.reviewThreadsInFlight.remove(paneID)
-                if let threads { self.reviewThreads[paneID] = threads }
-                else { self.reviewThreads.removeValue(forKey: paneID) }
+                self.reviewThreadsInFlight.remove(cwd)
+                for id in self.panes(inCwd: cwd, including: paneID) {
+                    if let threads { self.reviewThreads[id] = threads }
+                    else { self.reviewThreads.removeValue(forKey: id) }
+                }
             }
         }
     }
@@ -1136,8 +1165,16 @@ final class AgentStore: ObservableObject {
     /// clears (`didFocus`), and the overlay teardown there is a no-op because
     /// `isFrontPane` already required no overlay.
     func didBecomeActive() {
+        // Both feeds pause while away — neither a PR icon nor a nudge can be seen from
+        // another app, and this is when the machine is meant to be idling.
+        repoWatcher.setPaused(false)
+        refreshAllIdlePRs()
         guard let pid = focusedPaneID, isFrontPane(pid) else { return }
         didFocus(paneID: pid)
+    }
+
+    func didResignActive() {
+        repoWatcher.setPaused(true)
     }
 
     /// cwd to seed a restored pane's surface (consumed once at surface creation).
@@ -1208,8 +1245,8 @@ final class AgentStore: ObservableObject {
     }
 
     func refreshRepoSignals(forPane paneID: String) {
-        repoWatcher.watch(paneID: paneID, cwd: cwd(forPane: paneID) ?? "")
-        repoWatcher.refresh(paneID: paneID)
+        repoWatcher.watch(paneID: paneID, cwd: cwd(forPane: paneID) ?? "", recheck: true)
+        repoWatcher.refresh(paneID: paneID, immediate: true)
     }
 
     private func startNudgeTimer() {

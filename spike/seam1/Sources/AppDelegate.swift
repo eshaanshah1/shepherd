@@ -22,6 +22,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         AgentStore.shared.didBecomeActive()
     }
 
+    func applicationDidResignActive(_ notification: Notification) {
+        AgentStore.shared.didResignActive()
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         OnboardingController.shared.teardownNow()   // before the store saves
         SleepGuard.shared.teardownAtQuit()

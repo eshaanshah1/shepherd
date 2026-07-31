@@ -45,9 +45,50 @@ extension RepoSignals {
             .count
     }
 
+    /// Everything `git status --porcelain=v2 --branch` carries, in one pass.
+    ///
+    /// Branch, upstream, ahead, dirty and conflict counts were five separate `git`
+    /// invocations plus a `rev-list`; one status prints all of them, and this runs on every
+    /// git write in the repo.
+    struct StatusV2: Equatable {
+        var dirty = 0
+        var conflicts = 0
+        var ahead = 0
+        var branch: String?
+        var hasUpstream = false
+    }
+
+    /// `ahead` is only filled when an upstream is set — that is the only case git prints
+    /// `branch.ab` for, and there is no honest count without a base.
+    static func parseStatusV2(_ out: String) -> StatusV2 {
+        var s = StatusV2()
+        for line in out.split(separator: "\n", omittingEmptySubsequences: true) {
+            if let name = line.dropPrefix("# branch.head ") {
+                s.branch = (name == "(detached)" || name.isEmpty) ? nil : String(name)
+            } else if line.hasPrefix("# branch.upstream ") {
+                s.hasUpstream = true
+            } else if let ab = line.dropPrefix("# branch.ab "),
+                      let plus = ab.split(separator: " ").first, plus.hasPrefix("+") {
+                s.ahead = Int(plus.dropFirst()) ?? 0
+            } else if line.hasPrefix("u ") {
+                s.conflicts += 1          // one record per unmerged path, unlike `ls-files -u`
+                s.dirty += 1
+            } else if line.hasPrefix("1 ") || line.hasPrefix("2 ") || line.hasPrefix("? ") {
+                s.dirty += 1
+            }
+        }
+        return s
+    }
+
     /// `rev-list --count` output, or 0 for anything unparseable — an empty repo makes the
     /// command fail and print nothing.
     static func revCount(_ out: String) -> Int {
         Int(out.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+    }
+}
+
+private extension Substring {
+    func dropPrefix(_ prefix: String) -> Substring? {
+        hasPrefix(prefix) ? dropFirst(prefix.count) : nil
     }
 }
