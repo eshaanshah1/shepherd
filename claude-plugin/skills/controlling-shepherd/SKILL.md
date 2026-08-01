@@ -33,6 +33,8 @@ Panes/tabs/workspaces are addressed by **handles** — `p1`/`t1`/`ws1` from
 | `shepherd whoami` | your own handles: `pane tab workspace` |
 | `shepherd state <p>` | one pane's agent state (bare word) |
 | `shepherd tab new [<ws>] [--cwd <dir>]` | new tab, opened in `--cwd`; prints the **new pane handle** |
+| `shepherd tab new [<ws>] --worktree <branch>` | new tab in a fresh `git worktree` of the workspace's dir |
+| `shepherd workspace hook get\|set\|clear <ws> [--file <path\|-> \| "<script>"]` | the bash run after `git worktree add` |
 | `shepherd pane split <p> [--down]` | split right, or down; prints the **new pane handle** |
 | `shepherd focus <p>` / `zoom <p>` / `pane close <p> [--force]` | focus / zoom / close |
 | `shepherd workspace new\|rename <ws> <name>\|switch <ws>\|rm <ws> [--force]` | workspace CRUD |
@@ -111,10 +113,29 @@ when *Serve to remote devices* is on).
 - **Destructive ops refuse.** `pane close` / `tab close` / `workspace rm` on live
   work need `--force` (or `--archive` for a worktree tab).
 
+## Worktree tabs
+
+`tab new --worktree <branch>` does what the sidebar's *New Worktree Tab…* does:
+`git worktree add` under the workspace's directory (reusing `<branch>` if it exists,
+else branching off origin's default), then a tab in it. It needs the workspace to
+*have* a directory. It prints handles as soon as the tab exists — git is still
+running, so the pane starts in a provisioning state and a git failure surfaces in the
+app rather than in the exit status. `wait "$p" --state shell` before `tell`-ing it.
+
+`workspace hook` is the bash that runs right after each `git worktree add`, cwd = the
+new worktree, with `WORKTREE_DIR` / `WORKTREE_SRC` / `WORKTREE_BRANCH` /
+`WORKTREE_NAME` / `REPO_NAME` in the environment — the place to link gitignored deps a
+fresh worktree lacks. It is per-workspace app state, so it is **not** a `config` key,
+and the workspace is always explicit. Pass a multi-line script by file:
+
+```sh
+shepherd workspace hook set ws1 --file ./worktree-hook.sh
+shepherd workspace hook get ws1 > /tmp/hook.sh    # raw, byte-identical
+```
+
 ## v1 limits
 
-- No verb to create a *worktree* tab yet — `git worktree add` yourself, then
-  `tab new --cwd <the new worktree>`.
 - `--cwd` is ignored on a **mirror** workspace; the host owns those directories.
+  `--worktree` and `workspace hook` are errors there, for the same reason.
 - No `tell --raw` keystrokes, no `view --follow`, no `view --screen`.
 - Single running Shepherd (single-window).

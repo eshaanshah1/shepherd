@@ -50,7 +50,11 @@ Reply:    { "ok": true,  "data": <any> }   |   { "ok": false, "error": "<message
 | `shepherd workspace rename <ws> <name>` | Rename. |
 | `shepherd workspace switch <ws>` | Make it active. |
 | `shepherd workspace rm <ws> [--force]` | Delete (refuses with live agents unless `--force`). |
+| `shepherd workspace hook get <ws>` | Print the workspace's worktree hook (nothing, exit 0, when unset). |
+| `shepherd workspace hook set <ws> (--file <path\|-> \| "<script>")` | Install the hook. `--file -` reads stdin. |
+| `shepherd workspace hook clear <ws>` | Remove the hook. |
 | `shepherd tab new [<ws>] [--cwd <dir>]` | New tab in `<ws>` (default: active). Prints tab + pane handles. `--cwd` opens the pane there instead of the workspace's default directory; relative paths and `~` resolve against *your* shell, and a missing directory is an error rather than a silent fallback. |
+| `shepherd tab new [<ws>] --worktree <branch>` | New tab in a fresh `git worktree` of the workspace's directory, exactly like the sidebar's *New Worktree Tab…* — reusing `<branch>` if it exists, else branching off origin's default. Runs the workspace's worktree hook. Conflicts with `--cwd`. |
 | `shepherd tab rename <t> <name>` | Rename a tab. |
 | `shepherd tab switch <t>` | Switch to a tab. |
 | `shepherd tab close <t> [--force] [--archive]` | Close; refuses on live work unless `--force`; `--archive` keeps a resumable worktree archive. |
@@ -59,6 +63,31 @@ Reply:    { "ok": true,  "data": <any> }   |   { "ok": false, "error": "<message
 | `shepherd pane close <p> [--force]` | Close a pane (refuses on a live agent unless `--force`). |
 | `shepherd focus <p>` | Focus a pane (crosses workspaces if needed). |
 | `shepherd zoom <p>` | Toggle zoom of a pane. |
+
+**The worktree hook is per-workspace app state, not a config key.** It is the bash
+Shepherd runs right after `git worktree add`, with cwd = the new worktree and
+`WORKTREE_DIR` / `WORKTREE_SRC` / `WORKTREE_BRANCH` / `WORKTREE_NAME` / `REPO_NAME` in
+the environment; a non-zero exit warns in the app but keeps the worktree. It lives in
+`shepherd.workspaces.v1`, so it is reached through `workspace hook`, not
+`config set` — `~/.config/shepherd/config` is parsed by libghostty and Shepherd's own
+keys have to ride `# shepherd:` comment lines there, which a multi-line script cannot
+survive. The workspace is always an explicit argument: `shepherd` also runs from
+terminals that are not Shepherd panes, where there is no current workspace to infer.
+
+`hook get` writes the script raw, so `shepherd workspace hook get ws1 > hook.sh`
+round-trips byte-for-byte through `hook set ws1 --file hook.sh`.
+`scripts/worktree-hook.sh` is this repo's own hook — it links the gitignored deps a
+fresh worktree lacks (`vendor/`, `android/app/google-services.json`), without which
+`xcodegen generate` and the Android build fail there:
+
+```sh
+shepherd workspace hook set <ws> --file scripts/worktree-hook.sh
+```
+
+`tab new --worktree` replies as soon as the tab exists, which is **before** git
+finishes — the pane opens in a provisioning state and the printed handles are already
+valid. A `git worktree add` or hook failure therefore surfaces in the app (the tab is
+removed / an alert is shown), not in the CLI's exit status.
 
 ### Talking to panes
 | Command | Description |
@@ -117,4 +146,7 @@ shepherd tell "$p" --file /tmp/brief.md
   (rendered viewport) are deferred.
 - `tab new --cwd` is local-workspace only: a **mirror** workspace's tabs are
   created by the host, which owns the directory, so the flag is ignored there.
+- `tab new --worktree` and `workspace hook` are local-workspace only for the same
+  reason — the host owns the repo. `--worktree` on a mirror is an error rather than a
+  tab with no handle to print.
 - Single running Shepherd instance (single-window v1).
