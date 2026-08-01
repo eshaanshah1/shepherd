@@ -74,13 +74,23 @@ struct RemoteDeviceSheet: View {
     /// about the row itself that could stand in for identity.
     @ViewBuilder private func lanRow(_ host: LANHost) -> some View {
         let entering = codeTarget == host.id
+        let live = store.attachAttempts[store.hostID(host.host, host.port)]
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 10) {
-                Image(systemName: "wifi").font(.system(size: 13))
-                    .foregroundStyle(Theme.textPrimary).frame(width: 18)
+                if case .failed = live {
+                    Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 12))
+                        .foregroundStyle(Theme.error).frame(width: 18)
+                } else if live != nil {
+                    ProgressView().controlSize(.small).frame(width: 18)
+                } else {
+                    Image(systemName: "wifi").font(.system(size: 13))
+                        .foregroundStyle(Theme.textPrimary).frame(width: 18)
+                }
                 VStack(alignment: .leading, spacing: 1) {
                     Text(host.name).font(.ui(13, .medium)).foregroundStyle(Theme.textPrimary)
-                    Text("unverified — needs the code").font(.ui(11)).foregroundStyle(Theme.textSecondary)
+                    Text(lanSubtitle(live)).font(.ui(11))
+                        .foregroundStyle({ if case .failed = live { Theme.error }
+                                           else { Theme.textSecondary } }())
                 }
                 Spacer()
             }
@@ -102,7 +112,17 @@ struct RemoteDeviceSheet: View {
         .padding(.horizontal, 10).padding(.vertical, 7)
         .background(RoundedRectangle(cornerRadius: 7).fill(Theme.raised))
         .contentShape(Rectangle())
-        .onTapGesture { codeTarget = host.id; code = "" }
+        .onTapGesture { if live == nil { codeTarget = host.id; code = "" } }
+    }
+
+    private func lanSubtitle(_ a: AgentStore.AttachAttempt?) -> String {
+        switch a {
+        case .connecting:          return "connecting…"
+        case .awaitingApproval:    return "waiting for approval on that Mac"
+        case .comparingSAS(let d): return "pick \(d) on that Mac"
+        case .failed(let why):     return why
+        case nil:                  return "unverified — needs the code"
+        }
     }
 
     /// While a pairing is in flight: the digits this Mac derived from the certificate it was
@@ -123,10 +143,7 @@ struct RemoteDeviceSheet: View {
     }
 
     private func pairLAN(_ host: LANHost) {
-        guard case let .service(_, _, _, _) = host.endpoint else { return }
-        // Resolve through Bonjour by connecting to the service endpoint's own host form: the
-        // browser gives a service name, and NWConnection resolves it, so pass the name through.
-        store.addLANHost(host: host.name + ".local", code: code)
+        store.addLANHost(host: host.host, port: host.port, code: code)
         codeTarget = nil; code = ""
     }
 
