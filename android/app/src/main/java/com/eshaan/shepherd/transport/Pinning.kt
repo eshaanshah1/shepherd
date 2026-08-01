@@ -17,6 +17,16 @@ import javax.net.ssl.X509TrustManager
  * this and the Swift side (`SecCertificateCopyData`) can produce identically — an SPKI hash would
  * drift between them and the two would show different SAS digits for the same host.
  */
+/** Did this failure come from our trust manager rejecting the certificate, or from the network? */
+private fun Throwable.hasCertificateCause(): Boolean {
+    var t: Throwable? = this
+    while (t != null) {
+        if (t is CertificateException) return true
+        t = t.cause
+    }
+    return false
+}
+
 object Pinning {
 
     /** How a connection judges the certificate it is offered. Mirrors Swift's `LANBridge.Trust`. */
@@ -35,8 +45,10 @@ object Pinning {
         data object Learn : Trust
     }
 
-    /** Thrown when the host's certificate is not the pinned one. Never retry this: it is a
-     *  statement about identity, not a transient network fault. */
+    /** Thrown ONLY when the host's certificate is not the pinned one. Never retry this: it is a
+     *  statement about identity, not a transient network fault. Everything else that can go wrong
+     *  during a handshake — a dozing radio, a Mac that just slept, a dropped AP — is transient and
+     *  must stay an ordinary IOException so the reconnect loop keeps trying. */
     class PinMismatch(message: String) : IOException(message)
 
     fun certHash(cert: X509Certificate): ByteArray =
@@ -116,7 +128,11 @@ object Pinning {
             sock.startHandshake()
         } catch (e: Exception) {
             runCatching { sock.close() }
-            throw PinMismatch(e.message ?: "TLS handshake refused")
+            // Only a CERTIFICATE rejection is terminal. Wrapping every handshake failure as a
+            // mismatch turned one dropped packet into a permanent "offline": the loop treats
+            // PinMismatch as a decision and stops retrying.
+            if (e.hasCertificateCause()) throw PinMismatch(e.message ?: "certificate refused")
+            throw if (e is IOException) e else IOException(e.message ?: "TLS handshake failed", e)
         }
         return sock
     }

@@ -61,7 +61,17 @@ class RemoteConnection(
                 _status.value = ConnStatus.Disconnected
                 delay(backoff); backoff = (backoff * 2).coerceAtMost(backoffMaxMs)
             }
+            // However this loop ended — terminal refusal, stop(), a cancelled scope — the slot
+            // must be free again, or start() returns early forever and refresh does nothing.
+            loopJob = null
         }
+    }
+
+    /// Explicitly try again after a terminal refusal, which `start()` alone will not do.
+    fun retryNow() {
+        running = false
+        loopJob?.cancel(); loopJob = null
+        start()
     }
 
     private suspend fun runSession() = coroutineScope {
