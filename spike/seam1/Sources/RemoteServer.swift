@@ -323,7 +323,6 @@ final class RemoteServer {
             // resolve the socketpair's blank address, and a hit would be meaningless anyway.
             let verified = origin == .tailnet ? ip.flatMap { verifyPeer($0) } : nil
             let code = origin == .lan ? activeLANCode() : nil
-            if origin == .lan, pairingCode != nil { noteLANCodeAttempt() }
             let decision = pairingDecision(deviceID: deviceID, secret: secret,
                                            known: knownDevices(), newSecret: makeSecret(),
                                            peer: verified, selfUserID: selfUserID(),
@@ -331,6 +330,11 @@ final class RemoteServer {
                                            presentedCode: pairingCode,
                                            activeCode: code.map(\.digits),
                                            codeAttemptsLeft: code?.attemptsLeft ?? 0)
+            // Spend an attempt only on a code that was actually WRONG: a reconnect loop resends
+            // the same hello, and counting those burned the code before the user could use it.
+            if origin == .lan, let presented = pairingCode, presented != code?.digits {
+                noteLANCodeAttempt()
+            }
             log("PAIR hello from \(ip ?? "?") origin=\(origin == .lan ? "lan" : "tailnet") "
                 + "device=\(deviceID.prefix(8)) verified=\(verified?.name ?? "nil") -> \(decision.logLabel)")
             switch decision {

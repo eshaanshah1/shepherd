@@ -2224,8 +2224,8 @@ final class AgentStore: ObservableObject {
             requestApproval: { [weak self] deviceID, name, confirm, decide in
                 DispatchQueue.main.async {
                     self?.showingPhonePairingQR = false   // the phone connected; the QR is spent
-                    self?.approvalDecider = decide
-                    self?.presentApproval(deviceID: deviceID, name: name, confirm: confirm)
+                    self?.presentApproval(deviceID: deviceID, name: name, confirm: confirm,
+                                          decide: decide)
                 }
             },
             // workspaceTrees reads @Published workspaces, so it must run on main. This is
@@ -2365,6 +2365,45 @@ final class AgentStore: ObservableObject {
     }
 
     private func lanPinKey(_ hostID: String) -> String { "shepherd.remote.lanPin.\(hostID)" }
+    private static let hostSecretPrefix = "shepherd.remote.hostSecret."
+    private static let lanPinPrefix = "shepherd.remote.lanPin."
+    private static let hostPairedPrefix = "shepherd.remote.hostPaired."
+
+    /// Hosts this Mac has paired WITH, as a client. Until now these lived only as UserDefaults
+    /// keys: invisible, and impossible to forget from the UI, so a LAN pairing could not be
+    /// undone at all. `attached` means a live client is running for it right now.
+    struct KnownHost: Identifiable, Equatable {
+        let id: String          // "host:port"
+        let isLAN: Bool
+        let attached: Bool
+        var displayHost: String { id }
+    }
+
+    var knownHostList: [KnownHost] {
+        // Keyed off the PAIRED marker, not the secret: a secret is minted on the first dial, so
+        // listing those would show every host that ever refused us as though it were paired.
+        let d = UserDefaults.standard.dictionaryRepresentation()
+        var ids = Set<String>()
+        for k in d.keys where k.hasPrefix(Self.hostPairedPrefix) {
+            ids.insert(String(k.dropFirst(Self.hostPairedPrefix.count)))
+        }
+        return ids.sorted().map {
+            KnownHost(id: $0,
+                      isLAN: UserDefaults.standard.data(forKey: lanPinKey($0)) != nil,
+                      attached: remoteClients[$0] != nil)
+        }
+    }
+
+    /// Forget a host we paired with: drop the mirror, the secret and the certificate pin, so the
+    /// next attempt is a fresh pairing. The host keeps its own record until it forgets us too.
+    func forgetKnownHost(_ hostID: String) {
+        objectWillChange.send()
+        removeRemoteHost(hostID)
+        UserDefaults.standard.removeObject(forKey: Self.hostSecretPrefix + hostID)
+        UserDefaults.standard.removeObject(forKey: Self.hostPairedPrefix + hostID)
+        UserDefaults.standard.removeObject(forKey: lanPinKey(hostID))
+        attachAttempts[hostID] = nil
+    }
 
     /// Attach to a host over the local link. The first time, `code` is the six digits showing on
     /// that host and the certificate is *learned* — safe because the user then confirms the SAS
@@ -2440,10 +2479,16 @@ final class AgentStore: ObservableObject {
     /// Pairing worked: drop the progress row and get out of the user's way, so the new
     /// workspace is what they see rather than a sheet still claiming to be pairing.
     private func finishAttach(_ hostID: String) {
+        // Acceptance is the only thing that makes a host "paired" from this side.
+        UserDefaults.standard.set(true, forKey: Self.hostPairedPrefix + hostID)
         attachAttempts[hostID] = nil
         lanPairingError = nil
         if attachAttempts.isEmpty { showingRemoteDevices = false }
     }
+
+    /// Drop a finished attempt so its row is clickable again. A failure that cannot be retried
+    /// is a dead end, and the row had no other way back.
+    func clearAttachAttempt(_ hostID: String) { attachAttempts[hostID] = nil }
 
     /// A link that dropped before it was ever accepted is a failed attempt, not a lost session.
     /// One that was already accepted has a workspace to show its state, so leave it alone.
@@ -2513,9 +2558,10 @@ final class AgentStore: ObservableObject {
               let ref = workspaces[w].tabs[t].root.pane(paneID)?.remote,
               let client = remoteClients[ref.hostID], let nonce = client.sessionNonce else { return nil }
         // A LAN host's data channel is the same TLS listener as its control channel, so the
-        // helper must speak TLS and pin the certificate. Nil ⇒ tailnet, plain TCP inside WireGuard.
-        let pin = UserDefaults.standard.data(forKey: lanPinKey(ref.hostID))?.base64EncodedString()
-        return (client.host, client.port, nonce, ref.remotePaneID, pin)
+        // helper must speak TLS and pin the certificate. Taken from the client itself — a
+        // separate lookup could disagree with the connection that is actually open, and writing
+        // plaintext into a TLS listener is precisely the "host rejected pane" failure.
+        return (client.host, client.port, nonce, ref.remotePaneID, client.lanPinB64)
     }
 
     /// Build or replace this host workspace's mirror in place (deterministic id → upsert). Panes
@@ -2591,9 +2637,29 @@ final class AgentStore: ObservableObject {
     /// Stage the approval UI for a connection, deriving the SAS trio for a LAN pairing. Decoys
     /// are random 6-digit strings that are never equal to the real one, so "none of these
     /// match" is always a truthful option when a man in the middle is present.
-    private func presentApproval(deviceID: String, name: String, confirm: ConfirmKind) {
-        guard confirm == .compareSAS, let hash = lanCertHash else {
+    /// Owns `approvalDecider` so the two can never disagree: the previous code assigned the
+    /// decider at the call site and then checked here, by which point the earlier request's
+    /// decider had already been overwritten and its connection stranded.
+    private func presentApproval(deviceID: String, name: String, confirm: ConfirmKind,
+                                 decide: @escaping (Bool) -> Void) {
+        if pendingApproval != nil {
+            // Already asking about someone else. Refuse the newcomer rather than replace the
+            // question on screen — it can try again once this one is answered.
+            shepherdLog("PAIR refused \(deviceID.prefix(8)): another approval is already open")
+            decide(false)
+            return
+        }
+        approvalDecider = decide
+        guard confirm == .compareSAS else {
             pendingApproval = (deviceID, name, .trustedOrigin, "", [])
+            return
+        }
+        guard let hash = lanCertHash else {
+            // No certificate ⇒ no SAS ⇒ no way for the user to detect a man in the middle.
+            // Falling back to a plain Allow would quietly drop the guarantee, so refuse instead.
+            shepherdLog("PAIR refused: SAS requested with no LAN certificate loaded")
+            approvalDecider = nil
+            decide(false)
             return
         }
         let real = sasDigits(certHash: hash)
@@ -2671,10 +2737,13 @@ final class AgentStore: ObservableObject {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.pairedDevicesLock.lock()
-            // Re-approval of the same device replaces its record; appending would leave the
-            // stale secret first in line for knownDevices' lookup.
+            // Re-approval of a known device ADDS its secret rather than replacing the record:
+            // the same Mac pairs once per route (tailnet address, LAN address) with a different
+            // secret each time, and replacing evicted the other route into "bad secret".
             if let i = self.pairedDevices.firstIndex(where: { $0.deviceID == dev.deviceID }) {
-                self.pairedDevices[i] = dev
+                var merged = self.pairedDevices[i].accepting(dev.secret)
+                merged.fcmToken = dev.fcmToken ?? merged.fcmToken
+                self.pairedDevices[i] = merged
             } else {
                 self.pairedDevices.append(dev)
             }

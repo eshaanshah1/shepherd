@@ -162,6 +162,26 @@ struct PairedDevice: Codable, Equatable {
     let secret: String
     let name: String
     var fcmToken: String?
+    /// Secrets this same device has been approved with over OTHER routes. A client mints its
+    /// secret per host ADDRESS, so the same Mac reaching us over the tailnet and over the LAN
+    /// presents two different secrets under one deviceID — storing only the newest made each
+    /// pairing evict the other and left the previous route permanently "bad secret".
+    /// Optional so records written before this field still decode.
+    var altSecrets: [String]?
+
+    /// Every secret this device may present.
+    var allSecrets: [String] { [secret] + (altSecrets ?? []) }
+
+    /// This record plus `newSecret` as an additional accepted route (no duplicates).
+    func accepting(_ newSecret: String) -> PairedDevice {
+        guard !allSecrets.contains(newSecret) else { return self }
+        var copy = self
+        copy.altSecrets = ((altSecrets ?? []) + [newSecret]).suffix(Self.maxAltSecrets).map { $0 }
+        return copy
+    }
+
+    /// One per transport is the realistic case; the cap stops a re-pairing loop growing the blob.
+    static let maxAltSecrets = 6
 }
 
 extension PairingDecision {
@@ -209,7 +229,8 @@ func pairingDecision(deviceID: String, secret: String?,
                      codeAttemptsLeft: Int = 0) -> PairingDecision {
     // A known device pairs by secret over either link — no code, no comparison, ever again.
     if let dev = known.first(where: { $0.deviceID == deviceID }) {
-        if secret == dev.secret { return .accept(persistSecret: nil) }
+        // Any secret this device was ever approved with — see PairedDevice.altSecrets.
+        if let secret, dev.allSecrets.contains(secret) { return .accept(persistSecret: nil) }
         // A mismatched secret is normally the end of it. But a LAN peer presenting the host's
         // LIVE code has proved a human is standing at the host, which is strictly stronger
         // evidence than a stored secret — and an attacker holding the code could pair as a new
@@ -219,6 +240,10 @@ func pairingDecision(deviceID: String, secret: String?,
            let presentedCode, presentedCode == activeCode {
             return .needsApproval(deviceID: deviceID, name: deviceName ?? dev.name,
                                   proposedSecret: secret ?? newSecret, confirm: .compareSAS)
+        }
+        if origin == .tailnet, let peer, let selfUserID, peer.userID == selfUserID {
+            return .needsApproval(deviceID: deviceID, name: peer.name,
+                                  proposedSecret: secret ?? newSecret, confirm: .trustedOrigin)
         }
         return .reject(reason: "bad secret")
     }
