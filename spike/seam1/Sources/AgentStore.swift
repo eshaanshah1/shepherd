@@ -175,6 +175,8 @@ final class AgentStore: ObservableObject {
     /// thread reads it while main mutates it.
     private var lanCode: LANCode?
     private let lanCodeLock = NSLock()
+    /// Hosts with a re-discovery in flight, so a retrying client starts at most one browse.
+    private var relocatingHosts = Set<String>()
     /// Client role (M2): one RemoteClient per attached host, keyed by "host:port".
     private var remoteClients: [String: RemoteClient] = [:]
 
@@ -2406,6 +2408,62 @@ final class AgentStore: ObservableObject {
         }
     }
 
+    /// A wifi host that stops connecting is usually a moved DHCP lease, not a gone Mac. The
+    /// certificate pin is the identity and does not move, so browse the link and keep the
+    /// candidate whose certificate matches the pin we already confirmed — the same check the
+    /// transport makes, so an impostor advertising the service fails the handshake and is skipped.
+    /// Guarded so a failing client cannot start a browse per retry.
+    private func relocateLANHost(_ hostID: String) {
+        guard !relocatingHosts.contains(hostID),
+              let pin = UserDefaults.standard.data(forKey: lanPinKey(hostID)) else { return }
+        relocatingHosts.insert(hostID)
+        let browser = LANBrowser()
+        var settled = false
+        browser.onChange = { [weak self] hosts in
+            guard let self, !settled, !hosts.isEmpty else { return }
+            DispatchQueue.global(qos: .utility).async {
+                let found = hosts.first { h in
+                    guard let b = LANBridge.dialTLS(host: h.host, port: h.port,
+                                                    trust: .pinned(pin), timeout: 3) else { return false }
+                    b.close(); return true
+                }
+                DispatchQueue.main.async {
+                    guard let found, !settled else { return }
+                    settled = true
+                    browser.stop()
+                    self.relocatingHosts.remove(hostID)
+                    let newID = self.hostID(found.host, found.port)
+                    guard newID != hostID else { return }
+                    self.shepherdLog("REMOTE \(hostID) moved to \(newID) — re-pointing")
+                    self.adoptRelocatedHost(from: hostID, to: newID, pin: pin)
+                }
+            }
+        }
+        browser.start()
+        // Give resolution a bounded window; a Mac that is simply off must not leave this pinned.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+            guard !settled else { return }
+            settled = true
+            browser.stop()
+            self?.relocatingHosts.remove(hostID)
+        }
+    }
+
+    /// Move a pairing's stored trust to the address it now answers on, and reconnect there.
+    private func adoptRelocatedHost(from oldID: String, to newID: String, pin: Data) {
+        UserDefaults.standard.set(pin, forKey: lanPinKey(newID))
+        if let secret = UserDefaults.standard.string(forKey: Self.hostSecretPrefix + oldID) {
+            // Carry the SAME secret across: the host knows us by it, and minting a fresh one
+            // would arrive as "bad secret" on a device it has already approved.
+            UserDefaults.standard.set(secret, forKey: Self.hostSecretPrefix + newID)
+        }
+        UserDefaults.standard.set(true, forKey: Self.hostPairedPrefix + newID)
+        forgetKnownHost(oldID)
+        let parts = newID.split(separator: ":")
+        guard parts.count == 2, let port = UInt16(parts[1]) else { return }
+        addLANHost(host: String(parts[0]), port: port, code: nil)
+    }
+
     /// Forget a host we paired with: drop the mirror, the secret and the certificate pin, so the
     /// next attempt is a fresh pairing. The host keeps its own record until it forgets us too.
     func forgetKnownHost(_ hostID: String) {
@@ -2465,6 +2523,7 @@ final class AgentStore: ObservableObject {
                     if conn == .dead {
                         self?.lanPairingSAS = nil
                         self?.failAttachIfPending(hostID, "could not reach \(host)")
+                        self?.relocateLANHost(hostID)
                         // A client that never got a workspace has nowhere to show a link state,
                         // so drop it rather than leave a dead entry claiming to be attached.
                         if self?.workspaces.contains(where: { $0.remoteHostID == hostID }) == false {

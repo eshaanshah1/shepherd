@@ -78,6 +78,10 @@ class MainActivity : ComponentActivity() {
                     } else {
                         val fvm = remember(hostGeneration) {
                             FleetViewModel(store, fcmToken = { fcmToken() },
+                                relocate = { pin ->
+                                    com.eshaan.shepherd.transport.LanRelocator(applicationContext)
+                                        .relocate(pin)
+                                },
                                 connectionFactory = { scope, hello ->
                                     store.load()?.let { RemoteConnection(it.host, it.port, hello, scope,
                                         connect = Pinning.connector(it.lanPin)) }
