@@ -112,7 +112,11 @@ struct RemoteDeviceSheet: View {
         .padding(.horizontal, 10).padding(.vertical, 7)
         .background(RoundedRectangle(cornerRadius: 7).fill(Theme.raised))
         .contentShape(Rectangle())
-        .onTapGesture { if live == nil { codeTarget = host.id; code = "" } }
+        .onTapGesture {
+            if case .failed = live { store.clearAttachAttempt(store.hostID(host.host, host.port)) }
+            else if live != nil { return }
+            codeTarget = host.id; code = ""
+        }
     }
 
     private func lanSubtitle(_ a: AgentStore.AttachAttempt?) -> String {
@@ -148,7 +152,9 @@ struct RemoteDeviceSheet: View {
     }
 
     @ViewBuilder private func deviceRow(_ row: RemoteDeviceRow) -> some View {
-        let enabled = row.pairability == .pairable && attempt(row) == nil
+        // A failed attempt must stay clickable — otherwise the only way to retry is to relaunch.
+        let failed: Bool = { if case .failed = attempt(row) { return true }; return false }()
+        let enabled = row.pairability == .pairable && (attempt(row) == nil || failed)
         HStack(spacing: 10) {
             if case .failed = attempt(row) {
                 Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 12))
@@ -171,7 +177,11 @@ struct RemoteDeviceSheet: View {
         .padding(.horizontal, 10).padding(.vertical, 7)
         .background(RoundedRectangle(cornerRadius: 7).fill(enabled ? Theme.raised : .clear))
         .contentShape(Rectangle())
-        .onTapGesture { if enabled { pair(row) } }
+        .onTapGesture {
+            guard enabled else { return }
+            if let ip = row.ipv4 { store.clearAttachAttempt(store.hostID(ip, AgentStore.defaultRemotePort)) }
+            pair(row)
+        }
     }
 
     /// This row's in-flight attempt, if any. Keyed by host:port the same way the store keys it,

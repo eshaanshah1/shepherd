@@ -78,6 +78,16 @@ final class RemoteClient {
         self.onAwaitingApproval = onAwaitingApproval
     }
 
+    /// Base64 pin for the helper, when this client speaks TLS. Derived from the trust this
+    /// connection actually used, so the data channel cannot disagree with the control channel.
+    var lanPinB64: String? {
+        switch trust {
+        case .pinned(let hash): return hash.base64EncodedString()
+        case .learn:            return observedCertHash?.base64EncodedString()
+        case nil:               return nil
+        }
+    }
+
     /// The certificate hash seen on this connection (LAN mode only), or nil.
     var observedCertHash: Data? { lock.lock(); defer { lock.unlock() }; return observedCert }
 

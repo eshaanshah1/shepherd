@@ -462,10 +462,37 @@ struct RemoteSettings: View {
                 }
             }
 
+            SettingsField(label: "Hosts you've paired with",
+                          footnote: store.knownHostList.isEmpty
+                            ? "This Mac hasn't paired with another Shepherd host yet."
+                            : "Macs this one connects TO. Forget one to drop its mirror, its secret and its certificate pin.") {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(store.knownHostList) { h in
+                        HStack(spacing: 10) {
+                            Image(systemName: h.isLAN ? "wifi" : "network").font(.system(size: 12))
+                                .foregroundStyle(Theme.textDim).frame(width: 16)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(h.displayHost).font(.ui(12, .medium))
+                                    .foregroundStyle(Theme.textPrimary)
+                                Text(h.attached ? (h.isLAN ? "local network · connected" : "tailnet · connected")
+                                                : (h.isLAN ? "local network" : "tailnet"))
+                                    .font(.ui(11)).foregroundStyle(Theme.textSecondary)
+                            }
+                            Spacer()
+                            Button("Forget") { store.forgetKnownHost(h.id) }
+                                .buttonStyle(.plain).focusable(false)
+                                .font(.ui(11, .medium)).foregroundStyle(Theme.error)
+                        }
+                        .padding(.vertical, 6)
+                        if h.id != store.knownHostList.last?.id { Divider().overlay(Theme.hairline) }
+                    }
+                }
+            }
+
             SettingsField(label: "Paired devices",
                           footnote: store.pairedDeviceList.isEmpty
                             ? "No devices have been approved on this Mac yet."
-                            : "Devices approved here skip the approval prompt. Forget one to require approval again.") {
+                            : "Devices approved to connect TO this Mac. Forget one to require approval again.") {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(store.pairedDeviceList, id: \.deviceID) { dev in
                         pairedRow(dev)

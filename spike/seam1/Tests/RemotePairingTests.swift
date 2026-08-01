@@ -10,9 +10,13 @@ final class RemotePairingTests: XCTestCase {
         XCTAssertEqual(d, .accept(persistSecret: nil))
     }
 
-    func testKnownDeviceBadSecretRejects() {
+    /// A wrong secret is rejected unless something else vouches for the peer. With a verified
+    /// same-user tailnet peer it now earns a re-approval instead (see
+    /// `testKnownDeviceWithBadSecretCanRepairOverTheTailnet`), because a permanent lockout that
+    /// only a manual Forget can clear is a worse failure than asking the user once.
+    func testKnownDeviceBadSecretRejectsWithoutAVerifiedPeer() {
         let d = pairingDecision(deviceID: "known", secret: "WRONG", known: known, newSecret: "NEW",
-                                peer: VerifiedPeer(userID: "u1", name: "Old Mac"), selfUserID: "u1")
+                                peer: nil, selfUserID: "u1")
         XCTAssertEqual(d, .reject(reason: "bad secret"))
     }
 
@@ -84,6 +88,66 @@ final class RemotePairingTests: XCTestCase {
                                 origin: .lan, deviceName: "Air",
                                 presentedCode: nil, activeCode: "123456", codeAttemptsLeft: 3)
         XCTAssertEqual(d, .reject(reason: "bad code"))
+    }
+
+    // MARK: one device, several routes
+
+    /// The bug that broke every other pairing: a client mints its secret per host ADDRESS, so the
+    /// same Mac presents different secrets over the tailnet and the LAN under ONE deviceID.
+    /// Storing only the newest made each pairing evict the other.
+    func testADeviceApprovedOnTwoRoutesIsAcceptedOnBoth() {
+        let lanSecret = "LAN-SECRET", netSecret = "TAILNET-SECRET"
+        var dev = PairedDevice(deviceID: "d1", secret: netSecret, name: "Air", fcmToken: nil)
+        dev = dev.accepting(lanSecret)
+        for (route, secret) in [(PeerOrigin.tailnet, netSecret), (.lan, lanSecret)] {
+            XCTAssertEqual(pairingDecision(deviceID: "d1", secret: secret, known: [dev],
+                                           newSecret: "NEW", peer: nil, selfUserID: "u1",
+                                           origin: route),
+                           .accept(persistSecret: nil), "\(route) route must still be accepted")
+        }
+    }
+
+    func testAcceptingIsIdempotentAndBounded() {
+        var dev = PairedDevice(deviceID: "d1", secret: "S0", name: "Air", fcmToken: nil)
+        dev = dev.accepting("S0")
+        XCTAssertNil(dev.altSecrets, "re-adding the primary secret must not grow the record")
+        for i in 1...20 { dev = dev.accepting("S\(i)") }
+        XCTAssertEqual(dev.altSecrets?.count, PairedDevice.maxAltSecrets)
+        XCTAssertTrue(dev.allSecrets.contains("S20"), "the newest route must survive the cap")
+        XCTAssertEqual(dev.secret, "S0", "the primary secret is never displaced")
+    }
+
+    /// A wrong secret from a verified same-user tailnet peer used to be a permanent lockout, with
+    /// no equivalent of the LAN code path's escape.
+    func testKnownDeviceWithBadSecretCanRepairOverTheTailnet() {
+        let dev = PairedDevice(deviceID: "d1", secret: "RIGHT", name: "Air", fcmToken: nil)
+        let d = pairingDecision(deviceID: "d1", secret: "WRONG", known: [dev], newSecret: "NEW",
+                                peer: VerifiedPeer(userID: "u1", name: "Air"), selfUserID: "u1")
+        XCTAssertEqual(d, .needsApproval(deviceID: "d1", name: "Air", proposedSecret: "WRONG",
+                                         confirm: .trustedOrigin))
+    }
+
+    /// …but only for a peer that verifies. An unverified one stays rejected.
+    func testUnverifiedPeerWithBadSecretIsStillRejected() {
+        let dev = PairedDevice(deviceID: "d1", secret: "RIGHT", name: "Air", fcmToken: nil)
+        XCTAssertEqual(pairingDecision(deviceID: "d1", secret: "WRONG", known: [dev],
+                                       newSecret: "NEW", peer: nil, selfUserID: "u1"),
+                       .reject(reason: "bad secret"))
+        XCTAssertEqual(pairingDecision(deviceID: "d1", secret: "WRONG", known: [dev],
+                                       newSecret: "NEW",
+                                       peer: VerifiedPeer(userID: "OTHER", name: "Nope"),
+                                       selfUserID: "u1"),
+                       .reject(reason: "bad secret"))
+    }
+
+    /// A known LAN device with a stale secret and no live code must not be admitted.
+    func testKnownLANDeviceWithBadSecretAndNoCodeIsRejected() {
+        let dev = PairedDevice(deviceID: "d1", secret: "RIGHT", name: "Air", fcmToken: nil)
+        XCTAssertEqual(pairingDecision(deviceID: "d1", secret: "WRONG", known: [dev],
+                                       newSecret: "NEW", peer: nil, selfUserID: "u1",
+                                       origin: .lan, deviceName: "Air",
+                                       presentedCode: nil, activeCode: nil, codeAttemptsLeft: 0),
+                       .reject(reason: "bad secret"))
     }
 
     func testLANFallsBackToTheDeviceIDWhenNoNameIsGiven() {
