@@ -1,17 +1,36 @@
 import Foundation
 
-/// Pure routing of an attention transition. `local` gates BOTH local surfaces together —
-/// the desktop banner AND the attention sound — so a closed/away machine fires neither and
-/// everything routes to the phone. Mirrors SleepPolicy: pure, unit-tested, no AppKit.
+/// Pure routing of an attention transition across three destinations: this Mac, any paired
+/// Mac streaming the pane, and the phone. Mirrors SleepPolicy: pure, unit-tested, no AppKit.
+///
+/// `banner` and `sound` are separate because a remote Mac wants the chime and not the banner.
+/// They still move together for the *host*, which is what the old single `local` flag encoded.
 struct Routing: Equatable {
-    let local: Bool   // desktop banner + attention sound (both, together)
-    let fcm: Bool     // data-only push to paired devices
+    let banner: Bool            // host desktop banner
+    let sound: Bool             // host attention chime
+    let chimeDevices: [String]  // deviceIDs of paired Macs streaming this pane
+    let fcm: Bool               // data-only push to paired phones
 }
 
 enum NotificationRoutingPolicy {
-    /// Present (at the machine) → local only; away (mobile) → push only. Mutually exclusive.
-    static func decide(isAway: Bool) -> Routing {
-        isAway ? Routing(local: false, fcm: true) : Routing(local: true, fcm: false)
+    /// - Parameters:
+    ///   - isAway: lid shut with no external display — nobody is at this Mac.
+    ///   - viewing: the user has eyes on this pane *here* (ADR 0020's one predicate).
+    ///   - macViewers: deviceIDs of paired Macs with a live data channel on this pane.
+    ///
+    /// A streaming Mac chimes **unconditionally** — even when `viewing` is true here, and even
+    /// when the host is also alerting. That is a deliberate departure from ADR 0020 for the
+    /// remote destination only: on a mirror the chime is the reason the pane is open, and a
+    /// missed one costs more than a redundant one. The host's own `viewing` landing is intact.
+    ///
+    /// The phone is the fallback and loses to a present Mac: push fires only when this Mac is
+    /// away *and* no paired Mac is streaming the pane.
+    static func decide(isAway: Bool, viewing: Bool, macViewers: [String]) -> Routing {
+        let present = !viewing && !isAway
+        return Routing(banner: present,
+                       sound: present,
+                       chimeDevices: macViewers,
+                       fcm: !viewing && isAway && macViewers.isEmpty)
     }
 
     /// On the away→present edge, the pane ids still needing attention (to desktop-banner —

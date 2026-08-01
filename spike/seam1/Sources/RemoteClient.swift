@@ -44,6 +44,9 @@ final class RemoteClient {
     /// The host has shown its approval prompt and is waiting on a human. Distinct from
     /// `.reconnecting`, which also means "still dialling" — the UI needs to tell those apart.
     private let onAwaitingApproval: () -> Void
+    /// The host says a pane we are streaming wants attention. Chime only — the host deliberately
+    /// sends no banner for this destination.
+    private let onChime: (String) -> Void
 
     private let lock = NSLock()
     private var fd: Int32 = -1
@@ -62,7 +65,8 @@ final class RemoteClient {
          onState: @escaping (String, String, String?) -> Void,
          onStatus: @escaping (RemoteConnState) -> Void,
          onRejected: @escaping (String) -> Void = { _ in },
-         onAwaitingApproval: @escaping () -> Void = { }) {
+         onAwaitingApproval: @escaping () -> Void = { },
+         onChime: @escaping (String) -> Void = { _ in }) {
         self.host = host; self.port = port
         self.deviceID = deviceID; self.deviceName = deviceName
         self.secret = secret
@@ -76,6 +80,7 @@ final class RemoteClient {
         self.onStatus = onStatus
         self.onRejected = onRejected
         self.onAwaitingApproval = onAwaitingApproval
+        self.onChime = onChime
     }
 
     /// Base64 pin for the helper, when this client speaks TLS. Derived from the trust this
@@ -152,6 +157,11 @@ final class RemoteClient {
         if let d = try? FrameCodec.encode(hello) {
             _ = d.withUnsafeBytes { write(f, $0.baseAddress, d.count) }
         }
+        // Identify as a Mac so the host chimes here for panes we stream. A host too old to know
+        // this case ignores it; we simply never get chimed at, which is the old behavior.
+        if let d = try? FrameCodec.encode(ControlMessage.clientKind(kind: "mac")) {
+            _ = d.withUnsafeBytes { write(f, $0.baseAddress, d.count) }
+        }
 
         let dec = FrameDecoder()
         var buf = [UInt8](repeating: 0, count: 8192)
@@ -180,6 +190,7 @@ final class RemoteClient {
         case .workspaceList(let ids): onWorkspaceList(ids)
         case .workspaceRemoved(let id): onWorkspaceRemoved(id)
         case .state(let p, let s, let r): onState(p, s, r)
+        case .chime(let p): onChime(p)
         case .pong: break
         default: break   // host-only frames (prompt/resize/etc.) not consumed in M2
         }
