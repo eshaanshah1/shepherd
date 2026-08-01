@@ -41,6 +41,9 @@ final class RemoteClient {
     /// The host's own words when it refuses us. Without this the reason is dropped and a refused
     /// pairing is indistinguishable from a network that went away — nothing appears anywhere.
     private let onRejected: (String) -> Void
+    /// The host has shown its approval prompt and is waiting on a human. Distinct from
+    /// `.reconnecting`, which also means "still dialling" — the UI needs to tell those apart.
+    private let onAwaitingApproval: () -> Void
 
     private let lock = NSLock()
     private var fd: Int32 = -1
@@ -58,7 +61,8 @@ final class RemoteClient {
          onWorkspaceRemoved: @escaping (String) -> Void = { _ in },
          onState: @escaping (String, String, String?) -> Void,
          onStatus: @escaping (RemoteConnState) -> Void,
-         onRejected: @escaping (String) -> Void = { _ in }) {
+         onRejected: @escaping (String) -> Void = { _ in },
+         onAwaitingApproval: @escaping () -> Void = { }) {
         self.host = host; self.port = port
         self.deviceID = deviceID; self.deviceName = deviceName
         self.secret = secret
@@ -71,6 +75,7 @@ final class RemoteClient {
         self.onState = onState
         self.onStatus = onStatus
         self.onRejected = onRejected
+        self.onAwaitingApproval = onAwaitingApproval
     }
 
     /// The certificate hash seen on this connection (LAN mode only), or nil.
@@ -159,6 +164,7 @@ final class RemoteClient {
             onRejected(reason)
             onStatus(.dead)
         case .pendingApproval:
+            onAwaitingApproval()
             onStatus(.reconnecting)   // awaiting the host user's Allow tap
         case .workspaceTree(let t): onWorkspaceTree(t)
         case .workspaceList(let ids): onWorkspaceList(ids)

@@ -82,7 +82,7 @@ struct SidebarView: View {
             Toggle("Serve to remote devices", isOn: Binding(
                 get: { store.isServing },
                 set: { store.setServing($0) }))
-            Button("Add remote device…") { store.showingRemoteDevices = true }
+            Button("Add remote device…") { store.presentRemoteDevices() }
             if store.isServing {
                 Button("Connect a phone…") { store.showingPhonePairingQR = true }
             }
