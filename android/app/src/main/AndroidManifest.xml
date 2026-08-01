@@ -21,6 +21,15 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- Portrait scanner: the library's CaptureActivity is sensorLandscape, and orientation
+             is an activity attribute, so it can only be overridden by declaring our own. -->
+        <activity
+            android:name=".ui.PortraitCaptureActivity"
+            android:screenOrientation="portrait"
+            android:stateNotNeeded="true"
+            android:exported="false"
+            android:theme="@android:style/Theme.Material.NoActionBar"
+            android:windowSoftInputMode="stateAlwaysHidden" />
         <service
             android:name=".fcm.ShepherdMessagingService"
             android:exported="false">

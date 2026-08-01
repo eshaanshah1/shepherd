@@ -141,6 +141,15 @@ final class RemoteServer {
         tailscaleIPv4(from: localIPv4Addresses())
     }
 
+    /// This Mac's address on the local link — the one a phone on the same wifi can reach. Skips
+    /// loopback and the CGNAT range, since a tailnet address is exactly what LAN mode is for
+    /// avoiding. Nil when there is no ordinary local network attached.
+    static func currentLANIPv4() -> String? {
+        localIPv4Addresses().first {
+            $0.ipv4 != "127.0.0.1" && !isTailscaleCGNAT($0.ipv4) && !$0.ipv4.hasPrefix("169.254.")
+        }?.ipv4
+    }
+
     /// The address to bind, given what `tailscale status` reports for this node.
     static func bindIPv4(selfIPv4: String?) -> String? {
         serveBindIPv4(selfIPv4: selfIPv4, interfaces: localIPv4Addresses())

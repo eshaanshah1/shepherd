@@ -62,11 +62,21 @@ class MainActivity : ComponentActivity() {
                 Surface {
                     val store = remember { EncryptedPairingStore(applicationContext) }
                     var paired by remember { mutableStateOf(store.load() != null) }
-                    if (!paired) {
-                        val pvm = remember { PairingViewModel(store, fcmToken = { fcmToken() }) }
-                        PairingScreen(pvm) { paired = true }
+                    // Bumped when the selected Mac changes or one is forgotten. Everything below
+                    // is keyed on it, so the view model and its connection are rebuilt against the
+                    // newly selected pairing instead of quietly serving the old one.
+                    var hostGeneration by remember { mutableStateOf(0) }
+                    // Set when the user asks to add another Mac while already paired.
+                    var addingHost by remember { mutableStateOf(false) }
+                    if (!paired || addingHost) {
+                        val pvm = remember(hostGeneration, addingHost) {
+                            PairingViewModel(store, fcmToken = { fcmToken() })
+                        }
+                        PairingScreen(pvm) {
+                            paired = true; addingHost = false; hostGeneration++
+                        }
                     } else {
-                        val fvm = remember {
+                        val fvm = remember(hostGeneration) {
                             FleetViewModel(store, fcmToken = { fcmToken() },
                                 connectionFactory = { scope, hello ->
                                     store.load()?.let { RemoteConnection(it.host, it.port, hello, scope,
@@ -125,10 +135,21 @@ class MainActivity : ComponentActivity() {
                                         AgentScreen(avm, title) { fvm.consumeNavTarget() }
                                     } else {
                                         // No live connection yet — fall back to the Fleet list.
-                                        fvm.consumeNavTarget(); FleetScreen(fvm)
+                                        fvm.consumeNavTarget()
+                                        FleetScreen(fvm, pairings = store,
+                                                    onSwitchHost = {
+                                                        paired = store.load() != null
+                                                        hostGeneration++
+                                                    },
+                                                    onPairAnother = { addingHost = true })
                                     }
                                 }
-                                null -> FleetScreen(fvm)
+                                null -> FleetScreen(fvm, pairings = store,
+                                                    onSwitchHost = {
+                                                        paired = store.load() != null
+                                                        hostGeneration++
+                                                    },
+                                                    onPairAnother = { addingHost = true })
                             }
                         }
                     }

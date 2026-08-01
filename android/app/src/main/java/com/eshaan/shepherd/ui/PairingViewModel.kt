@@ -44,13 +44,26 @@ class PairingViewModel(
     }
 
     /**
+     * Pair from a scanned QR. If it carries the Mac's LAN address, pin and code, prefer that: it
+     * needs no Tailscale and no typing, and the pin came over the camera rather than the network.
+     */
+    fun pairFromQR(p: com.eshaan.shepherd.protocol.PairingPayload.Parsed) {
+        if (p.hasLan) {
+            pairOverLan(p.lanHost!!, p.lanPort!!, p.code ?: "", knownPin = p.pin)
+        } else {
+            pair(p.host ?: "", p.ip, p.port)
+        }
+    }
+
+    /**
      * Pair over the local network. There is no pin yet, so the certificate is learned and its SAS
      * published for the user to confirm on the host; the pin is persisted only when the host
      * accepts, which happens only if that confirmation matched.
      */
-    fun pairOverLan(host: String, port: Int, code: String) {
+    fun pairOverLan(host: String, port: Int, code: String, knownPin: String? = null) {
         val deviceId = DeviceIdentity.newDeviceId()
-        val pending = Pairing(host, port, deviceId, DeviceIdentity.deviceName(), DeviceIdentity.newSecret())
+        val pending = Pairing(host, port, deviceId, DeviceIdentity.deviceName(),
+                              DeviceIdentity.newSecret(), knownPin)
         val observed = java.util.concurrent.atomic.AtomicReference<ByteArray?>(null)
         viewModelScope.launch {
             val token = fcmToken()
@@ -60,9 +73,16 @@ class PairingViewModel(
                                                  pairingCode = code)
                 },
                 scope = viewModelScope,
-                connect = Pinning.learningConnector { hash ->
-                    observed.set(hash)
-                    _sas.value = Pinning.sasDigits(hash)
+                // With a pin from the QR the certificate is already bound, so enforce it rather
+                // than learn it — a MITM is refused at the handshake instead of relying on the
+                // user comparing digits. Without one, learn and show the SAS.
+                connect = if (knownPin != null) {
+                    Pinning.connector(knownPin) { observed.set(it) }
+                } else {
+                    Pinning.learningConnector { hash ->
+                        observed.set(hash)
+                        _sas.value = Pinning.sasDigits(hash)
+                    }
                 })
             conn = c
             viewModelScope.launch {

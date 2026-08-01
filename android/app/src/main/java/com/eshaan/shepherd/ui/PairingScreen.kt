@@ -47,7 +47,7 @@ fun PairingScreen(vm: PairingViewModel, onPaired: () -> Unit) {
         val contents = result.contents ?: return@rememberLauncherForActivityResult   // cancelled
         val p = PairingPayload.parse(contents)
         if (p == null) scanError = "That QR isn't a Shepherd pairing code."
-        else { scanError = null; vm.pair(p.host ?: "", p.ip, p.port) }
+        else { scanError = null; vm.pairFromQR(p) }
     }
 
     Column(
@@ -67,7 +67,11 @@ fun PairingScreen(vm: PairingViewModel, onPaired: () -> Unit) {
         PrimaryButton("Scan QR to pair", {
             scanError = null
             scanLauncher.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-                .setBeepEnabled(false).setPrompt("Scan the Shepherd QR").setOrientationLocked(false))
+                .setBeepEnabled(false).setPrompt("Scan the Shepherd QR")
+                // Our own activity, declared portrait; the library's is sensorLandscape and no
+                // ScanOptions setting can override an activity attribute.
+                .setCaptureActivity(PortraitCaptureActivity::class.java)
+                .setOrientationLocked(true))
         }, Modifier.fillMaxWidth())
 
         scanError?.let { Spacer(Modifier.height(8.dp)); Text(it, color = Color(0xFFE5645D)) }
