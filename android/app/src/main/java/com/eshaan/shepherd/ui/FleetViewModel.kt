@@ -23,6 +23,11 @@ class FleetViewModel(
     private val store: PairingStore,
     private val fcmToken: suspend () -> String?,
     private val connectionFactory: (CoroutineScope, () -> ControlMessage.Hello) -> RemoteConnection?,
+    /**
+     * Finds a wifi-paired Mac again when DHCP moves it. Null on tailnet-only builds and in tests.
+     * Returns the address now serving the certificate behind the pin, or null.
+     */
+    private val relocate: (suspend (String) -> Pair<String, Int>?)? = null,
 ) : ViewModel() {
     private val _fleet = MutableStateFlow(Fleet(emptyList()))
     val fleet: StateFlow<Fleet> = _fleet
@@ -56,8 +61,34 @@ class FleetViewModel(
             val c = connectionFactory(viewModelScope) { controller.helloForReconnect(p, token) } ?: return@launch
             conn = c
             inboundJob = viewModelScope.launch { c.inbound.collect { applyInbound(it) } }
-            statusJob = viewModelScope.launch { c.status.collect { _connected.value = it is ConnStatus.Connected } }
+            statusJob = viewModelScope.launch {
+                c.status.collect { st ->
+                    _connected.value = st is ConnStatus.Connected
+                    if (st is ConnStatus.Failed) tryRelocate(p.lanPin)
+                }
+            }
             c.start()
+        }
+    }
+
+    /**
+     * A wifi pairing that stops connecting is usually a moved DHCP lease, not a gone Mac. The
+     * certificate pin is the identity and does not move, so re-discover the address behind it and
+     * reconnect. Guarded so a failing loop cannot spawn a browse per retry.
+     */
+    private var relocating = false
+    private fun tryRelocate(pinB64: String?) {
+        val find = relocate ?: return
+        if (pinB64 == null || relocating) return
+        relocating = true
+        viewModelScope.launch {
+            try {
+                val found = find(pinB64) ?: return@launch
+                val current = store.load() ?: return@launch
+                if (found.first == current.host && found.second == current.port) return@launch
+                store.save(current.copy(host = found.first, port = found.second))
+                refresh()
+            } finally { relocating = false }
         }
     }
 
