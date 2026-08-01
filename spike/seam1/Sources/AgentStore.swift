@@ -2515,7 +2515,17 @@ final class AgentStore: ObservableObject {
         let host = status?.selfDNSName
         guard host != nil || ip != nil else { return nil }
         let name = host?.split(separator: ".").first.map(String.init) ?? (Host.current().localizedName ?? "mac")
-        return PairingPayload.encode(host: host, ip: ip, port: AgentStore.defaultRemotePort, name: name)
+        // When the LAN listener is up, the QR also carries the local address, the certificate pin
+        // and a live code — so a phone with no Tailscale can pair by scanning alone. Minting the
+        // code here is what makes it zero-typing; it still expires and still admits one device.
+        var lan: String?, pin: String?, code: String?
+        if isServingLAN, let hash = lanCertHash, let lanIP = RemoteServer.currentLANIPv4() {
+            lan = "\(lanIP):\(AgentStore.defaultLANPort)"
+            pin = hash.base64EncodedString()
+            code = activeLANCode()?.digits ?? newLANCode()
+        }
+        return PairingPayload.encode(host: host, ip: ip, port: AgentStore.defaultRemotePort,
+                                     name: name, lan: lan, pin: pin, code: code)
     }
 
     /// Human-readable host line under the QR (MagicDNS name : port), or nil.

@@ -21,7 +21,12 @@ import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FleetScreen(vm: FleetViewModel) {
+fun FleetScreen(
+    vm: FleetViewModel,
+    pairings: com.eshaan.shepherd.data.PairingStore? = null,
+    onSwitchHost: () -> Unit = {},
+    onPairAnother: () -> Unit = {},
+) {
     val fleet by vm.fleet.collectAsState()
     val connected by vm.connected.collectAsState()
     var refreshing by remember { mutableStateOf(false) }
@@ -37,7 +42,14 @@ fun FleetScreen(vm: FleetViewModel) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val settings = remember { com.eshaan.shepherd.data.PrefsSettingsStore(ctx) }
     var showSettings by remember { mutableStateOf(false) }
-    if (showSettings) { SettingsScreen(settings) { showSettings = false }; return }
+    if (showSettings) {
+        SettingsScreen(settings, pairings = pairings,
+                       onSwitchHost = { showSettings = false; onSwitchHost() },
+                       onPairAnother = { showSettings = false; onPairAnother() }) {
+            showSettings = false
+        }
+        return
+    }
 
     Column(Modifier.fillMaxSize().background(Color(ShepherdPalette.ground))) {
         ShepherdTopBar(title = "Agents", trailing = {

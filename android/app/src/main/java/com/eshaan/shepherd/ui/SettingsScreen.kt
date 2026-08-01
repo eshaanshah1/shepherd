@@ -1,6 +1,7 @@
 package com.eshaan.shepherd.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -13,15 +14,26 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.eshaan.shepherd.data.Pairing
+import com.eshaan.shepherd.data.PairingStore
 import com.eshaan.shepherd.data.SettingsStore
+import com.eshaan.shepherd.data.hostID
 import com.eshaan.shepherd.ui.components.ShepherdTopBar
 import com.eshaan.shepherd.ui.components.Tabler
 import com.eshaan.shepherd.ui.components.TablerIcon
 import com.eshaan.shepherd.ui.theme.ShepherdPalette
 
 @Composable
-fun SettingsScreen(settings: SettingsStore, onBack: () -> Unit) {
+fun SettingsScreen(
+    settings: SettingsStore,
+    pairings: PairingStore? = null,
+    onSwitchHost: () -> Unit = {},
+    onPairAnother: () -> Unit = {},
+    onBack: () -> Unit,
+) {
     var ignoreSilent by remember { mutableStateOf(settings.ignoreSilent) }
+    var hosts by remember { mutableStateOf(pairings?.loadAll() ?: emptyList()) }
+    var selected by remember { mutableStateOf(pairings?.load()?.hostID) }
 
     Column(Modifier.fillMaxSize().background(Color(ShepherdPalette.ground))) {
         ShepherdTopBar(title = "Settings", onBack = onBack)
@@ -37,6 +49,38 @@ fun SettingsScreen(settings: SettingsStore, onBack: () -> Unit) {
                 checked = ignoreSilent,
                 onCheckedChange = { ignoreSilent = it; settings.ignoreSilent = it },
             )
+
+            if (pairings != null) {
+                Spacer(Modifier.height(6.dp))
+                SectionLabel("Macs")
+                hosts.forEach { p ->
+                    HostRow(
+                        pairing = p,
+                        isSelected = p.hostID == selected,
+                        onSelect = {
+                            pairings.select(p.hostID)
+                            selected = p.hostID
+                            onSwitchHost()
+                        },
+                        onForget = {
+                            pairings.forget(p.hostID)
+                            hosts = pairings.loadAll()
+                            selected = pairings.load()?.hostID
+                            onSwitchHost()
+                        },
+                    )
+                }
+                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                    .background(Color(ShepherdPalette.surface2)).padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Text("Pair another Mac", color = Color(ShepherdPalette.textPrimary),
+                         style = MaterialTheme.typography.bodyMedium,
+                         modifier = Modifier.weight(1f))
+                    Text("Add", color = Color(ShepherdPalette.textPrimary),
+                         style = MaterialTheme.typography.bodyMedium,
+                         modifier = Modifier.clickable { onPairAnother() })
+                }
+            }
         }
     }
 }
@@ -76,5 +120,35 @@ private fun ToggleRow(
                 uncheckedBorderColor = Color(ShepherdPalette.hairline),
             ),
         )
+    }
+}
+
+
+/** One paired Mac: tap to show it, Forget to drop it. */
+@Composable
+private fun HostRow(pairing: Pairing, isSelected: Boolean,
+                    onSelect: () -> Unit, onForget: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+            .background(Color(ShepherdPalette.surface2))
+            .clickable(enabled = !isSelected) { onSelect() }
+            .padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(pairing.host, color = Color(ShepherdPalette.textPrimary),
+                 style = MaterialTheme.typography.bodyMedium)
+            Text(
+                buildString {
+                    append(if (pairing.lanPin != null) "local network" else "tailnet")
+                    if (isSelected) append(" · showing")
+                },
+                color = Color(ShepherdPalette.textDim),
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        Text("Forget", color = Color(0xFFE5645D),
+             style = MaterialTheme.typography.bodySmall,
+             modifier = Modifier.clickable { onForget() })
     }
 }
