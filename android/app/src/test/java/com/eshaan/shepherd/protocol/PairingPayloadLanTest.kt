@@ -25,6 +25,20 @@ class PairingPayloadLanTest {
         assertEquals(8722, p.port)
     }
 
+    /** Tailscale down ⇒ a QR with no tailnet fields at all. That is a complete pairing. */
+    @Test fun `a lan-only QR parses`() {
+        val p = PairingPayload.parse(
+            "shepherd://pair?port=8722&name=work&lan=192.168.0.145:8723&pin=YWJjZA%3D%3D&code=424242")!!
+        assertTrue(p.hasLan)
+        assertNull(p.host); assertNull(p.ip)
+        assertEquals("192.168.0.145", p.lanHost)
+        assertEquals(8723, p.lanPort)
+    }
+
+    @Test fun `a QR with neither tailnet nor lan is rejected`() {
+        assertNull(PairingPayload.parse("shepherd://pair?port=8722&name=work"))
+    }
+
     /** A malformed lan= must not throw away an otherwise usable tailnet pairing. */
     @Test fun `a malformed lan is treated as absent`() {
         val p = PairingPayload.parse(
