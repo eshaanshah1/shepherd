@@ -2506,24 +2506,36 @@ final class AgentStore: ObservableObject {
         UserDefaults.standard.set(hash, forKey: lanPinKey(hostID))
     }
 
+    /// Open the phone-pairing QR. Minting the code belongs HERE, in the action — never in the
+    /// payload getter, which `PhonePairingQRView` calls from inside `body`: mutating store state
+    /// during a view update re-invalidates the view that is currently evaluating, and SwiftUI
+    /// crashes rather than loops forever.
+    func presentPhonePairing() {
+        if isServingLAN, activeLANCode() == nil { newLANCode() }
+        showingPhonePairingQR = true
+    }
+
     /// The QR bootstrap payload for a phone to reach this host, or nil if Tailscale is down.
+    /// PURE — read only. See `presentPhonePairing()`.
     func phonePairingPayload() -> String? {
         let status = tailnetStatus()
         // Advertise the address we are actually bound to, never a bare interface scan: another
         // tunnel's 100.64/10 address would be a QR pointing at a port nothing listens on.
         let ip = remoteServeAddress ?? status?.selfIPv4
         let host = status?.selfDNSName
-        guard host != nil || ip != nil else { return nil }
-        let name = host?.split(separator: ".").first.map(String.init) ?? (Host.current().localizedName ?? "mac")
-        // When the LAN listener is up, the QR also carries the local address, the certificate pin
-        // and a live code — so a phone with no Tailscale can pair by scanning alone. Minting the
-        // code here is what makes it zero-typing; it still expires and still admits one device.
+        // The LAN half: local address, certificate pin, and the live code minted by
+        // presentPhonePairing — so a phone with no Tailscale pairs by scanning alone.
         var lan: String?, pin: String?, code: String?
         if isServingLAN, let hash = lanCertHash, let lanIP = RemoteServer.currentLANIPv4() {
             lan = "\(lanIP):\(AgentStore.defaultLANPort)"
             pin = hash.base64EncodedString()
-            code = activeLANCode()?.digits ?? newLANCode()
+            code = activeLANCode()?.digits
         }
+        // A LAN-only QR is valid on its own. Requiring a tailnet identity here meant that with
+        // Tailscale down there was no QR at all — precisely the case LAN mode exists for.
+        guard host != nil || ip != nil || lan != nil else { return nil }
+        let name = host?.split(separator: ".").first.map(String.init)
+            ?? (Host.current().localizedName ?? "mac")
         return PairingPayload.encode(host: host, ip: ip, port: AgentStore.defaultRemotePort,
                                      name: name, lan: lan, pin: pin, code: code)
     }

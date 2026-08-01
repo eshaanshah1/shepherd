@@ -84,7 +84,7 @@ struct SidebarView: View {
                 set: { store.setServing($0) }))
             Button("Add remote device…") { store.presentRemoteDevices() }
             if store.isServing {
-                Button("Connect a phone…") { store.showingPhonePairingQR = true }
+                Button("Connect a phone…") { store.presentPhonePairing() }
             }
         } label: {
             Image(systemName: "ellipsis")

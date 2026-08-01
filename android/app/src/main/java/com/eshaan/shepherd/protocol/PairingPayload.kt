@@ -31,12 +31,14 @@ object PairingPayload {
         val port = map["port"]?.toIntOrNull() ?: return null
         val host = map["host"]?.ifBlank { null }
         val ip = map["ip"]?.ifBlank { null }
-        if (host == null && ip == null) return null
         // lan is "ip:port"; anything malformed is simply treated as absent rather than failing
         // the whole scan — the tailnet fields alone are still a usable pairing.
         val lan = map["lan"]?.ifBlank { null }
         val lanHost = lan?.substringBeforeLast(':', "")?.ifBlank { null }
         val lanPort = lan?.substringAfterLast(':', "")?.toIntOrNull()
+        // A Mac with Tailscale down emits a LAN-only QR, and that is a complete pairing — so
+        // requiring a tailnet address here would reject exactly the case LAN mode is for.
+        if (host == null && ip == null && lanHost == null) return null
         return Parsed(host, ip, port, map["name"]?.ifBlank { null },
                       lanHost = if (lanPort != null) lanHost else null,
                       lanPort = if (lanHost != null) lanPort else null,
