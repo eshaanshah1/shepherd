@@ -55,9 +55,10 @@ jobs:
           xcodebuild -downloadComponent MetalToolchain
           bash ./scripts/build-libghostty.sh
 
-      # CodeEditLanguages is a local path package, so the checkout must exist
-      # before xcodegen resolves it. Not cached: the blobless clone is ~64M and
-      # lands in seconds, unlike the libghostty build above.
+      # CodeEditLanguages is a local path package, so the checkout must exist before
+      # xcodegen resolves it. Not cached: the blobless clone is ~48M and lands in
+      # seconds, unlike the libghostty build above. The script also thins the grammar
+      # container to arm64 (~1 min), which matches the ARCHS=arm64 build below.
       - name: Vendor CodeEditLanguages
         run: bash ./scripts/vendor-codeedit-languages.sh
 
