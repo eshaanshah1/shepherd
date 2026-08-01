@@ -145,6 +145,16 @@ final class AgentStore: ObservableObject {
                                      sas: String, sasChoices: [String])?
     /// Drives the tailnet device-discovery sheet (⋯ menu → "Add remote device…").
     @Published var showingRemoteDevices = false
+
+    /// Show the pairing sheet AND surface the window it lives in. It is an overlay inside
+    /// ContentView, so opening it from the Settings window alone leaves it drawn behind Settings.
+    func presentRemoteDevices() {
+        showingRemoteDevices = true
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.windows.first { $0.isVisible && $0.canBecomeMain
+                              && $0.frameAutosaveName != "com_apple_SwiftUI_Settings_window" }?
+            .makeKeyAndOrderFront(nil)
+    }
     /// Drives the phone-pairing QR sheet (⋯ menu → "Connect a phone…").
     @Published var showingPhonePairingQR = false
     private var approvalDecider: ((Bool) -> Void)?
@@ -2286,16 +2296,34 @@ final class AgentStore: ObservableObject {
     func addRemoteHost(host: String, port: UInt16) {
         let hostID = "\(host):\(port)"
         guard remoteClients[hostID] == nil else { return }
+        attachAttempts[hostID] = .connecting
         let secret = hostSecret(forHostID: hostID)
         let client = RemoteClient(
             host: host, port: port, deviceID: clientDeviceID, deviceName: clientDeviceName,
             secret: secret,
-            onAccepted: { _ in },
+            onAccepted: { [weak self] _ in
+                DispatchQueue.main.async { self?.finishAttach(hostID) }
+            },
             onWorkspaceTree: { [weak self] tree in DispatchQueue.main.async { self?.upsertMirrorWorkspace(tree, hostID: hostID) } },
             onWorkspaceList: { [weak self] ids in DispatchQueue.main.async { self?.pruneMirrorWorkspaces(hostID: hostID, keep: ids) } },
             onWorkspaceRemoved: { [weak self] id in DispatchQueue.main.async { self?.removeMirrorWorkspace(hostID: hostID, remoteWorkspaceID: id) } },
             onState: { [weak self] p, s, r in DispatchQueue.main.async { self?.applyRemoteState(paneID: p, state: s, reason: r) } },
-            onStatus: { [weak self] conn in DispatchQueue.main.async { self?.applyRemoteStatus(hostID: hostID, conn: conn) } })
+            onStatus: { [weak self] conn in
+                DispatchQueue.main.async {
+                    if conn == .dead { self?.failAttachIfPending(hostID, "could not reach \(host)") }
+                    self?.applyRemoteStatus(hostID: hostID, conn: conn)
+                }
+            },
+            onRejected: { [weak self] reason in
+                DispatchQueue.main.async { self?.attachAttempts[hostID] = .failed(reason) }
+            },
+            onAwaitingApproval: { [weak self] in
+                DispatchQueue.main.async {
+                    if self?.attachAttempts[hostID] == .connecting {
+                        self?.attachAttempts[hostID] = .awaitingApproval
+                    }
+                }
+            })
         remoteClients[hostID] = client
         client.start()
     }
@@ -2310,6 +2338,20 @@ final class AgentStore: ObservableObject {
     /// Why the last LAN attempt failed, in the host's words. A refused pairing produced no
     /// workspace and no message before this, so it looked like nothing had happened at all.
     @Published var lanPairingError: String?
+
+    /// Where each in-flight pairing has got to, keyed by "host:port". The pairing sheet renders
+    /// from this rather than from its own state, because only the store learns the outcome — a
+    /// sheet-local flag had no way to clear itself and read "pairing…" forever.
+    @Published var attachAttempts: [String: AttachAttempt] = [:]
+
+    enum AttachAttempt: Equatable {
+        case connecting
+        case awaitingApproval
+        case comparingSAS(String)      // LAN: the digits to pick on the host
+        case failed(String)
+    }
+
+    func hostID(_ host: String, _ port: UInt16) -> String { "\(host):\(port)" }
     private let lanBrowser = LANBrowser()
 
     func startLANBrowsing() {
@@ -2331,6 +2373,7 @@ final class AgentStore: ObservableObject {
     func addLANHost(host: String, port: UInt16 = AgentStore.defaultLANPort, code: String?) {
         lanPairingError = nil
         let hostID = "\(host):\(port)"
+        attachAttempts[hostID] = .connecting
         guard remoteClients[hostID] == nil else { return }
         let stored = UserDefaults.standard.data(forKey: lanPinKey(hostID))
         let trust: LANBridge.Trust = stored.map { .pinned($0) } ?? .learn
@@ -2344,7 +2387,11 @@ final class AgentStore: ObservableObject {
             // host still knows us, and re-pairing is exactly how a stale record is repaired.
             secret: secret, trust: trust, pairingCode: code,
             onObservedCert: { [weak self] hash in
-                DispatchQueue.main.async { self?.lanPairingSAS = sasDigits(certHash: hash) }
+                DispatchQueue.main.async {
+                    let digits = sasDigits(certHash: hash)
+                    self?.lanPairingSAS = digits
+                    if stored == nil { self?.attachAttempts[hostID] = .comparingSAS(digits) }
+                }
             },
             // Acceptance means the host's user picked the digits this Mac showed, so the
             // certificate it presented is the right one — only now is it worth remembering.
@@ -2355,6 +2402,7 @@ final class AgentStore: ObservableObject {
                         self.rememberLANPin(hostID: hostID, matching: sas)
                     }
                     self.lanPairingSAS = nil
+                    self.finishAttach(hostID)
                 }
             },
             onWorkspaceTree: { [weak self] tree in DispatchQueue.main.async { self?.upsertMirrorWorkspace(tree, hostID: hostID) } },
@@ -2365,6 +2413,7 @@ final class AgentStore: ObservableObject {
                 DispatchQueue.main.async {
                     if conn == .dead {
                         self?.lanPairingSAS = nil
+                        self?.failAttachIfPending(hostID, "could not reach \(host)")
                         // A client that never got a workspace has nowhere to show a link state,
                         // so drop it rather than leave a dead entry claiming to be attached.
                         if self?.workspaces.contains(where: { $0.remoteHostID == hostID }) == false {
@@ -2377,6 +2426,7 @@ final class AgentStore: ObservableObject {
             },
             onRejected: { [weak self] reason in
                 DispatchQueue.main.async {
+                    self?.attachAttempts[hostID] = .failed(reason)
                     self?.lanPairingError = reason == "bad secret"
                         ? "That Mac still has an old record of this device. Forget it there "
                           + "(Settings → Remote → Paired devices), or enter a fresh code to re-pair."
@@ -2385,6 +2435,22 @@ final class AgentStore: ObservableObject {
             })
         remoteClients[hostID] = client
         client.start()
+    }
+
+    /// Pairing worked: drop the progress row and get out of the user's way, so the new
+    /// workspace is what they see rather than a sheet still claiming to be pairing.
+    private func finishAttach(_ hostID: String) {
+        attachAttempts[hostID] = nil
+        lanPairingError = nil
+        if attachAttempts.isEmpty { showingRemoteDevices = false }
+    }
+
+    /// A link that dropped before it was ever accepted is a failed attempt, not a lost session.
+    /// One that was already accepted has a workspace to show its state, so leave it alone.
+    private func failAttachIfPending(_ hostID: String, _ why: String) {
+        guard let a = attachAttempts[hostID], a != .failed(why) else { return }
+        if case .failed = a { return }
+        attachAttempts[hostID] = .failed(why)
     }
 
     /// Store the learned certificate hash for a host. Keyed off the SAS we displayed so a late

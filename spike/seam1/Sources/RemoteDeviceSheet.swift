@@ -7,7 +7,6 @@ struct RemoteDeviceSheet: View {
     @EnvironmentObject var store: AgentStore
     @State private var rows: [RemoteDeviceRow] = []
     @State private var loading = true
-    @State private var pairing: Set<String> = []   // row ids we've clicked to pair
     @State private var codeTarget: String?         // LAN host id whose code field is open
     @State private var code = ""
 
@@ -132,14 +131,23 @@ struct RemoteDeviceSheet: View {
     }
 
     @ViewBuilder private func deviceRow(_ row: RemoteDeviceRow) -> some View {
-        let enabled = row.pairability == .pairable && !pairing.contains(row.id)
+        let enabled = row.pairability == .pairable && attempt(row) == nil
         HStack(spacing: 10) {
-            Image(systemName: glyph(row.os)).font(.system(size: 13))
-                .foregroundStyle(enabled ? Theme.textPrimary : Theme.textDim).frame(width: 18)
+            if case .failed = attempt(row) {
+                Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 12))
+                    .foregroundStyle(Theme.error).frame(width: 18)
+            } else if attempt(row) != nil {
+                ProgressView().controlSize(.small).frame(width: 18)
+            } else {
+                Image(systemName: glyph(row.os)).font(.system(size: 13))
+                    .foregroundStyle(enabled ? Theme.textPrimary : Theme.textDim).frame(width: 18)
+            }
             VStack(alignment: .leading, spacing: 1) {
                 Text(row.name).font(.ui(13, .medium))
                     .foregroundStyle(enabled ? Theme.textPrimary : Theme.textDim)
-                Text(subtitle(row)).font(.ui(11)).foregroundStyle(Theme.textSecondary)
+                Text(subtitle(row)).font(.ui(11))
+                    .foregroundStyle({ if case .failed = attempt(row) { Theme.error }
+                                       else { Theme.textSecondary } }())
             }
             Spacer()
         }
@@ -149,8 +157,21 @@ struct RemoteDeviceSheet: View {
         .onTapGesture { if enabled { pair(row) } }
     }
 
+    /// This row's in-flight attempt, if any. Keyed by host:port the same way the store keys it,
+    /// so a row and its attempt cannot drift apart.
+    private func attempt(_ row: RemoteDeviceRow) -> AgentStore.AttachAttempt? {
+        guard let ip = row.ipv4 else { return nil }
+        return store.attachAttempts[store.hostID(ip, AgentStore.defaultRemotePort)]
+    }
+
     private func subtitle(_ row: RemoteDeviceRow) -> String {
-        if pairing.contains(row.id) { return "pairing… (approve on that device)" }
+        switch attempt(row) {
+        case .connecting:        return "connecting…"
+        case .awaitingApproval:  return "waiting for approval on that Mac"
+        case .comparingSAS(let d): return "pick \(d) on that Mac"
+        case .failed(let why):   return why
+        case nil: break
+        }
         switch row.pairability {
         case .pairable:   return "ready to pair"
         case .notServing: return "Shepherd not running"
@@ -173,7 +194,6 @@ struct RemoteDeviceSheet: View {
 
     private func pair(_ row: RemoteDeviceRow) {
         guard let ip = row.ipv4 else { return }
-        pairing.insert(row.id)
         store.addRemoteHost(host: ip, port: AgentStore.defaultRemotePort)
     }
 

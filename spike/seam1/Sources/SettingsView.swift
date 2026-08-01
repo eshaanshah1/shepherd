@@ -458,7 +458,7 @@ struct RemoteSettings: View {
             SettingsField(label: "Devices",
                           footnote: "Pairing codes and the device list appear in the pairing sheet.") {
                 SettingsButton(title: "Add remote device…", systemImage: "plus") {
-                    store.showingRemoteDevices = true
+                    store.presentRemoteDevices()
                 }
             }
 
