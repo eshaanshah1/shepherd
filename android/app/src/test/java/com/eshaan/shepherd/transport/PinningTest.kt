@@ -84,6 +84,25 @@ class PinningTest {
         } finally { server.close() }
     }
 
+    /**
+     * A dead address must NOT look like a certificate rejection. Conflating them made one moved
+     * DHCP lease permanent: the reconnect loop treats PinMismatch as a decision and stops, so the
+     * app read "offline" and refresh could not recover it.
+     */
+    @Test
+    fun `an unreachable host is transient, not a pin mismatch`() {
+        val e = try {
+            // Port 1 on localhost: nothing listens, so the connect fails before any handshake.
+            Pinning.connect("127.0.0.1", 1, Pinning.Trust.Pinned(ByteArray(32)))
+            null
+        } catch (t: Throwable) { t }
+        assertNotNull("expected a failure", e)
+        assertFalse("a refused connection is not a certificate rejection",
+                    e is Pinning.PinMismatch)
+        assertTrue("and it must stay an IOException the retry loop understands",
+                   e is java.io.IOException)
+    }
+
     @Test
     fun `learn accepts and reports the hash so a first pairing can show its SAS`() {
         val received = mutableListOf<String>()
