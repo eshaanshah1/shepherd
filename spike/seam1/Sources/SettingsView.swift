@@ -412,6 +412,42 @@ struct RemoteSettings: View {
     @State private var servingLAN: Bool = false
     @State private var lanCode: String?
     @State private var confirmingReset = false
+    /// The host whose workspace picker is open, if any. One at a time — the list is long enough.
+    @State private var expandedHost: String?
+
+    /// Which of a host's workspaces this Mac mirrors. The host enforces the choice, so an
+    /// unticked workspace is not merely hidden: its tabs, panes and paths never arrive.
+    @ViewBuilder
+    private func workspacePicker(hostID: String) -> some View {
+        let entries = store.hostWorkspaceCatalogues[hostID]
+        VStack(alignment: .leading, spacing: 6) {
+            if let entries {
+                if entries.isEmpty {
+                    Text("That Mac has no workspaces to mirror.")
+                        .font(.ui(11)).foregroundStyle(Theme.textDim)
+                } else {
+                    ForEach(entries, id: \.workspaceID) { e in
+                        Toggle(isOn: Binding(
+                            get: { e.synced },
+                            set: { on in
+                                let now = Set(entries.filter { $0.synced }.map { $0.workspaceID })
+                                let next = on ? now.union([e.workspaceID])
+                                              : now.subtracting([e.workspaceID])
+                                store.setSyncedWorkspaces(hostID: hostID, ids: Array(next).sorted())
+                            })) {
+                                Text(e.name).font(.ui(11)).foregroundStyle(Theme.textPrimary)
+                            }
+                            .toggleStyle(.checkbox).focusable(false)
+                    }
+                    Text("Unticked workspaces are never sent to this Mac.")
+                        .font(.ui(11)).foregroundStyle(Theme.textDim)
+                }
+            } else {
+                Text("Asking that Mac…").font(.ui(11)).foregroundStyle(Theme.textDim)
+            }
+        }
+        .padding(.leading, 26).padding(.bottom, 8)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
@@ -479,11 +515,24 @@ struct RemoteSettings: View {
                                     .font(.ui(11)).foregroundStyle(Theme.textSecondary)
                             }
                             Spacer()
+                            if h.attached {
+                                Button(expandedHost == h.id ? "Done" : "Workspaces…") {
+                                    if expandedHost == h.id {
+                                        expandedHost = nil
+                                    } else {
+                                        expandedHost = h.id
+                                        store.requestWorkspaceCatalogue(hostID: h.id)
+                                    }
+                                }
+                                .buttonStyle(.plain).focusable(false)
+                                .font(.ui(11, .medium)).foregroundStyle(Theme.accent)
+                            }
                             Button("Forget") { store.forgetKnownHost(h.id) }
                                 .buttonStyle(.plain).focusable(false)
                                 .font(.ui(11, .medium)).foregroundStyle(Theme.error)
                         }
                         .padding(.vertical, 6)
+                        if expandedHost == h.id { workspacePicker(hostID: h.id) }
                         if h.id != store.knownHostList.last?.id { Divider().overlay(Theme.hairline) }
                     }
                 }

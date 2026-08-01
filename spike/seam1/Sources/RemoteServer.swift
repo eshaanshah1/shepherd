@@ -28,6 +28,10 @@ final class RemoteServer {
     /// an attempt. Rate limiting lives with the code's owner, not in the policy.
     private let noteLANCodeAttempt: () -> Void
     private let workspaceTrees: () -> [WorkspaceTree]
+    /// Which workspace a pane belongs to. Needed because per-device workspace filtering has to
+    /// scope pane-level frames too — `paneAdded` carries a title and cwd, so forwarding it for an
+    /// unmirrored workspace would leak exactly what the filter exists to withhold.
+    private let workspaceOfPane: (String) -> String?
     // A paired client's structural command (cmd*). Forwarded verbatim to the app, which
     // applies it to the real store on main and re-broadcasts the affected workspace tree.
     private let onCommand: (ControlMessage) -> Void
@@ -128,6 +132,7 @@ final class RemoteServer {
          persist: @escaping (PairedDevice) -> Void,
          requestApproval: @escaping (String, String, ConfirmKind, @escaping (Bool) -> Void) -> Void,
          workspaceTrees: @escaping () -> [WorkspaceTree],
+         workspaceOfPane: @escaping (String) -> String? = { _ in nil },
          updateFCMToken: @escaping (String, String) -> Void,
          makeSecret: @escaping () -> String,
          makeNonce: @escaping () -> String,
@@ -144,7 +149,8 @@ final class RemoteServer {
         self.verifyPeer = verifyPeer; self.selfUserID = selfUserID
         self.knownDevices = knownDevices
         self.persist = persist; self.requestApproval = requestApproval
-        self.workspaceTrees = workspaceTrees; self.updateFCMToken = updateFCMToken
+        self.workspaceTrees = workspaceTrees; self.workspaceOfPane = workspaceOfPane
+        self.updateFCMToken = updateFCMToken
         self.makeSecret = makeSecret; self.makeNonce = makeNonce
         self.lookupBroker = lookupBroker
         self.onCommand = onCommand
@@ -407,6 +413,27 @@ final class RemoteServer {
             let n = conn.nonce
             conn.lock.unlock()
             if let n { nonceLock.lock(); liveNonces[n] = owner; nonceLock.unlock() }
+        case .cmdListWorkspaces where phase == .paired:
+            conn.lock.lock(); let devID = conn.deviceID; conn.lock.unlock()
+            let synced = syncedIDs(forDevice: devID)
+            // Names only, and never the synthetic Temp Tabs folder — it is not a workspace
+            // anyone chooses to mirror.
+            let entries = workspaceTrees()
+                .filter { $0.workspaceID != ephemeralWorkspaceID }
+                .map { t in
+                    WorkspaceCatalogueEntry(workspaceID: t.workspaceID, name: t.name,
+                                            synced: synced.map { $0.contains(t.workspaceID) } ?? true)
+                }
+            enqueueWrite(fd, encode(.workspaceCatalogue(entries: entries)), on: conn)
+        case let .cmdSetSyncedWorkspaces(ids) where phase == .paired:
+            conn.lock.lock(); let devID = conn.deviceID; conn.lock.unlock()
+            guard let devID, var dev = knownDevices().first(where: { $0.deviceID == devID })
+            else { return .keepReading }
+            dev.syncedWorkspaceIDs = ids
+            persist(dev)
+            // Re-send the snapshot under the new selection. The client's workspaceList handler
+            // prunes anything absent, so dropped workspaces need no separate removal frame.
+            resendStructure(fd, conn)
         case let .resize(paneID, cols, rows) where phase == .paired:
             applyResize(paneID: paneID, cols: cols, rows: rows)
         case .detach:
@@ -543,21 +570,82 @@ final class RemoteServer {
         state.lock.unlock()
         nonceLock.lock(); liveNonces[nonce] = owner; nonceLock.unlock()
         let accepted = encode(.accepted(sessionNonce: nonce))
-        let trees = workspaceTrees()
-        let listFrame = encode(.workspaceList(ids: trees.map { $0.workspaceID }))
-        let treeFrames = trees.map { encode(.workspaceTree($0)) }
+        let frames = structureFrames(for: state)
         clientsLock.lock()
         clients[fd] = state
         enqueueWrite(fd, accepted, on: state)
-        enqueueWrite(fd, listFrame, on: state)
-        for f in treeFrames { enqueueWrite(fd, f, on: state) }
+        for f in frames { enqueueWrite(fd, f, on: state) }
         clientsLock.unlock()
+    }
+
+    /// The structure frames for ONE connection under its device's selection: the ordered
+    /// workspace list, then a tree per workspace it mirrors. The snapshot is filtered as well as
+    /// the deltas — otherwise every unmirrored workspace still arrives in full on attach and the
+    /// selection means nothing. The synthetic "Temp Tabs" tree is never filtered out: it belongs
+    /// to no real workspace and nobody chooses to mirror it.
+    private func structureFrames(for state: ConnState) -> [Data] {
+        state.lock.lock(); let devID = state.deviceID; state.lock.unlock()
+        let synced = syncedIDs(forDevice: devID)
+        let trees = workspaceTrees().filter { t in
+            guard let synced else { return true }
+            return t.workspaceID == ephemeralWorkspaceID || synced.contains(t.workspaceID)
+        }
+        return [encode(.workspaceList(ids: trees.map { $0.workspaceID }))]
+             + trees.map { encode(.workspaceTree($0)) }
+    }
+
+    /// Push the structure again after the selection changed.
+    private func resendStructure(_ fd: Int32, _ state: ConnState) {
+        let frames = structureFrames(for: state)
+        clientsLock.lock()
+        for f in frames { enqueueWrite(fd, f, on: state) }
+        clientsLock.unlock()
+    }
+
+    /// The workspace a frame is *about*, or nil for one that belongs to no workspace (ping,
+    /// accepted, catalogue…) and therefore reaches every client. Pane-level frames resolve
+    /// through `workspaceOfPane`; if that can't place the pane the frame is treated as unscoped,
+    /// which keeps a pane the host can't locate visible rather than silently dropping it.
+    private func workspaceScope(_ m: ControlMessage) -> String? {
+        switch m {
+        case .workspaceTree(let t):          return t.workspaceID
+        case .workspaceRemoved(let id):      return id
+        case .state(let p, _, _):            return workspaceOfPane(p)
+        case .paneAdded(let info):           return workspaceOfPane(info.paneID)
+        case .paneRemoved(let p):            return workspaceOfPane(p)
+        case .paneRenamed(let p, _):         return workspaceOfPane(p)
+        case .prompt(let p, _, _, _):        return workspaceOfPane(p)
+        case .chime(let p):                  return workspaceOfPane(p)
+        default:                             return nil
+        }
+    }
+
+    /// This device's workspace selection, or nil for "all". Read per broadcast rather than
+    /// cached: `cmdSetSyncedWorkspaces` persists through the app, and a cache here would serve
+    /// the old selection until the client reconnected.
+    private func syncedIDs(forDevice deviceID: String?) -> [String]? {
+        guard let deviceID,
+              let dev = knownDevices().first(where: { $0.deviceID == deviceID })
+        else { return nil }
+        return dev.syncedWorkspaceIDs
+    }
+
+    private func deviceSyncs(_ workspaceID: String, deviceID: String?) -> Bool {
+        guard let ids = syncedIDs(forDevice: deviceID) else { return true }
+        return ids.contains(workspaceID)
     }
 
     func broadcast(_ msg: ControlMessage) {
         let data = (try? FrameCodec.encode(msg)) ?? Data()
+        let scope = workspaceScope(msg)
         clientsLock.lock()
-        for (fd, state) in clients { enqueueWrite(fd, data, on: state) }
+        for (fd, state) in clients {
+            if let scope {
+                state.lock.lock(); let id = state.deviceID; state.lock.unlock()
+                guard deviceSyncs(scope, deviceID: id) else { continue }
+            }
+            enqueueWrite(fd, data, on: state)
+        }
         clientsLock.unlock()
     }
 

@@ -13,7 +13,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterIsInstance
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /** Extra-key / hardware-key logical keys the terminal input row emits. */
@@ -63,6 +65,13 @@ class AgentViewModel(
 
     private var channel: DataChannel? = null
     private val jobs = mutableListOf<Job>()
+    /** Collectors owned by the CURRENT data channel — cancelled and rebuilt on every new nonce,
+     *  separately from [jobs] so a rebuild doesn't tear down the prompt collector. */
+    private val channelJobs = mutableListOf<Job>()
+    /** The measured grid [attach] opened at; a rebuilt channel reuses it so a reconnect doesn't
+     *  reshape the pane back to the 80×24 default. */
+    private var attachCols = initialCols
+    private var attachRows = initialRows
     @Volatile private var opened = false
 
     /** Create the terminal emulator/session eagerly — WITHOUT opening the data channel — so the
@@ -90,19 +99,37 @@ class AgentViewModel(
         prepareSession()
         if (opened) return
         opened = true
+        attachCols = cols; attachRows = rows
         val session = _terminalSession.value!!
-        viewModelScope.launch {
-            val nonce = (controlConn.status.first { it is ConnStatus.Connected } as ConnStatus.Connected).sessionNonce
-            val ch = channelFactory(nonce, cols, rows, viewModelScope)
-            channel = ch
-            jobs += launch { ch.output.collect { session.onOutput(it) } }
-            jobs += launch { ch.status.collect { _status.value = it } }
-            ch.start()
+        // FOLLOW the control connection's nonce rather than taking the first one. A nonce dies
+        // with its control session, and locking the phone kills that socket; on unlock the
+        // control channel reconnects and the host mints a new nonce while revoking the old. A
+        // DataChannel still holding the old one is answered with dataRejected, which stops its
+        // retry loop for good — the pane then stays dead until the screen is rebuilt.
+        jobs += viewModelScope.launch {
+            controlConn.status
+                .filterIsInstance<ConnStatus.Connected>()
+                .map { it.sessionNonce }
+                .distinctUntilChanged()
+                .collect { nonce -> openChannel(nonce, session) }
         }
+    }
+
+    /** Build (or rebuild) the data channel for [nonce]. Tearing the old one down first keeps a
+     *  revoked channel from double-writing into the same session. */
+    private fun openChannel(nonce: String, session: RemoteTerminalSession) {
+        channelJobs.forEach { it.cancel() }; channelJobs.clear()
+        channel?.stop()
+        val ch = channelFactory(nonce, attachCols, attachRows, viewModelScope)
+        channel = ch
+        channelJobs += viewModelScope.launch { ch.output.collect { session.onOutput(it) } }
+        channelJobs += viewModelScope.launch { ch.status.collect { _status.value = it } }
+        ch.start()
     }
 
     fun detach() {
         jobs.forEach { it.cancel() }; jobs.clear()
+        channelJobs.forEach { it.cancel() }; channelJobs.clear()
         channel?.stop(); channel = null
         _terminalSession.value = null
         _status.value = DataStatus.Disconnected
