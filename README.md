@@ -155,7 +155,7 @@ locally; the compiled xcframework isn't committed).
 
 ```sh
 ./scripts/build-libghostty.sh             # -> vendor/GhosttyKit.xcframework
-./scripts/vendor-codeedit-languages.sh    # -> vendor/CodeEditLanguages
+./scripts/vendor-codeedit-languages.sh    # -> vendor/CodeEditLanguages (arm64-thinned)
 
 cd spike/seam1
 xcodegen generate
