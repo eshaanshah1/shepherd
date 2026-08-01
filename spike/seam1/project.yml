@@ -276,6 +276,7 @@ targets:
     sources:
       - path: HelperTests
       - path: Helper/HelperFrame.swift
+      - path: Helper/ControlClient.swift
     dependencies:
       - target: shepherdd
 schemes:

@@ -40,8 +40,8 @@ func absolutePath(_ path: String) -> String {
     return (anchored as NSString).standardizingPath
 }
 
-/// `tell --file <path>`: the file's contents, or stdin for `-`.
-func readTellSource(_ path: String) -> String? {
+/// `--file <path>`: the file's contents, or stdin for `-`.
+func readTextSource(_ path: String) -> String? {
     if path == "-" {
         let data = FileHandle.standardInput.readDataToEndOfFile()
         return String(data: data, encoding: .utf8)
@@ -52,6 +52,31 @@ func readTellSource(_ path: String) -> String? {
         return nil
     }
     return contents
+}
+
+/// `workspace hook get|set|clear <ws> [--file <path|-> | <script>]`. The workspace is
+/// always explicit: `shepherd` also runs outside Shepherd, where there is no current
+/// workspace to infer, and inferring one would silently retarget the same command.
+/// The script is passed through verbatim — a hook is bash and its newlines are content.
+func buildHookRequest(_ rest: [String]) -> [String: Any]? {
+    guard rest.count >= 2 else { return nil }
+    let ws = rest[1]
+    switch rest[0] {
+    case "get":   return ["cmd": "workspace-hook-get", "workspace": ws]
+    case "clear": return ["cmd": "workspace-hook-clear", "workspace": ws]
+    case "set":
+        let args = Array(rest.dropFirst(2))
+        let script: String
+        if let i = args.firstIndex(of: "--file"), i + 1 < args.count {
+            guard let contents = readTextSource(args[i + 1]) else { return nil }
+            script = contents
+        } else {
+            guard let literal = args.first, !literal.hasPrefix("--") else { return nil }
+            script = literal
+        }
+        return ["cmd": "workspace-hook-set", "workspace": ws, "script": script]
+    default: return nil
+    }
 }
 
 /// Verb -> request dict. Extended in later tasks; ping needs no args.
@@ -69,6 +94,7 @@ func buildRequest(verb: String, rest: [String]) -> [String: Any]? {
         case "rename": guard rest.count >= 3 else { return nil }; return ["cmd": "workspace-rename", "workspace": rest[1], "name": rest[2]]
         case "switch": guard rest.count >= 2 else { return nil }; return ["cmd": "workspace-switch", "workspace": rest[1]]
         case "rm":     guard rest.count >= 2 else { return nil }; return ["cmd": "workspace-rm", "workspace": rest[1], "force": rest.contains("--force")]
+        case "hook":   return buildHookRequest(Array(rest.dropFirst()))
         default: return nil
         }
     case "tab":
@@ -79,7 +105,13 @@ func buildRequest(verb: String, rest: [String]) -> [String: Any]? {
             var positional: [String] = []
             var i = 1
             while i < rest.count {
-                if rest[i] == "--cwd", i + 1 < rest.count { req["cwd"] = absolutePath(rest[i + 1]); i += 2; continue }
+                if rest[i] == "--cwd" || rest[i] == "--worktree" {
+                    guard i + 1 < rest.count else { return nil }
+                    // A worktree branch is a git ref, not a path — don't resolve it.
+                    req[rest[i] == "--cwd" ? "cwd" : "worktree"] =
+                        rest[i] == "--cwd" ? absolutePath(rest[i + 1]) : rest[i + 1]
+                    i += 2; continue
+                }
                 positional.append(rest[i]); i += 1
             }
             if let ws = positional.first { req["workspace"] = ws }
@@ -105,7 +137,7 @@ func buildRequest(verb: String, rest: [String]) -> [String: Any]? {
         let args = Array(rest.dropFirst())
         var text: String
         if let i = args.firstIndex(of: "--file"), i + 1 < args.count {
-            guard let contents = readTellSource(args[i + 1]) else { return nil }
+            guard let contents = readTextSource(args[i + 1]) else { return nil }
             text = contents
         } else {
             guard let literal = args.first, !literal.hasPrefix("--") else { return nil }
@@ -165,7 +197,16 @@ func printData(verb: String, data: Any?) {
     if let d = data as? [String: Any] {
         switch verb {
         case "tab", "split", "pane": if let p = d["pane"] as? String { print(p); return }
-        case "workspace":            if let w = d["workspace"] as? String { print(w); return }
+        case "workspace":
+            // `hook get` writes the script raw, so redirecting it round-trips byte-for-byte;
+            // the newline is only added when the script lacks one, like `cat`.
+            if let s = d["script"] as? String {
+                FileHandle.standardOutput.write(Data(s.utf8))
+                if !s.hasSuffix("\n") { print() }
+                return
+            }
+            if d["script"] is NSNull { return }   // no hook set: print nothing, exit 0
+            if let w = d["workspace"] as? String { print(w); return }
         case "whoami":               print([d["pane"], d["tab"], d["workspace"]].compactMap { $0 as? String }.joined(separator: " ")); return
         case "state":                if let s = d["state"] as? String { print(s); return }
         default: break

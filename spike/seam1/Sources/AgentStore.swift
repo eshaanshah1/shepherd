@@ -441,23 +441,26 @@ final class AgentStore: ObservableObject {
     /// git runs off-main; on success the tab opens in the worktree, on failure git's
     /// stderr is surfaced. Reuses an existing branch named `name`, else creates it off origin's
     /// freshly-fetched default branch.
+    /// Returns the provisioning tab's ids, or nil when nothing was opened locally (bad args,
+    /// no repo dir, or a mirror workspace, where the host opens the tab).
+    @discardableResult
     func newWorktreeTab(inWorkspace wsID: String, name: String,
-                        title: String? = nil, initialCommand: String? = nil) {
+                        title: String? = nil, initialCommand: String? = nil) -> (tabID: String, paneID: String)? {
         if let t = remoteTarget(forWorkspace: wsID) {   // repo is on the host — it runs git
             let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !n.isEmpty else { return }
-            t.client.send(.cmdNewWorktreeTab(workspaceID: t.wsID, name: n)); return
+            guard !n.isEmpty else { return nil }
+            t.client.send(.cmdNewWorktreeTab(workspaceID: t.wsID, name: n)); return nil
         }
         guard let ws = workspaces.first(where: { $0.id == wsID }),
-              let repoDir = expandedDefaultPath(ws) else { return }
+              let repoDir = expandedDefaultPath(ws) else { return nil }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty else { return nil }
         let dest = worktreePath(base: worktreeBaseDir(), repoDir: repoDir, name: trimmed)
         // Show the tab immediately in a loading state, then run git off-main — the
         // terminal mounts once the directory exists (or the tab is removed on failure).
         guard let provisional = addProvisioningTab(inWorkspace: wsID, name: trimmed, title: title,
                                                    dest: dest, initialCommand: initialCommand)
-        else { return }
+        else { return nil }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = Git.addWorktree(dest: dest, name: trimmed, in: repoDir)
             var hookFailure: String? = nil
@@ -487,6 +490,7 @@ final class AgentStore: ObservableObject {
                 }
             }
         }
+        return provisional
     }
 
     /// Append a loading placeholder tab (a single provisioning pane) and select it.
@@ -2958,6 +2962,19 @@ final class AgentStore: ObservableObject {
             guard let ws = (req["workspace"] as? String).flatMap(resolveWorkspace)
             else { return ["ok": false, "error": "no such workspace"] }
             selectWorkspace(ws); return ["ok": true, "data": NSNull()]
+        case "workspace-hook-get":
+            guard let ws = (req["workspace"] as? String).flatMap(resolveWorkspace),
+                  let w = workspaces.firstIndex(where: { $0.id == ws })
+            else { return ["ok": false, "error": "no such workspace"] }
+            return ["ok": true, "data": ["script": workspaces[w].worktreeHook.map { $0 as Any } ?? NSNull()]]
+        case "workspace-hook-set":
+            guard let ws = (req["workspace"] as? String).flatMap(resolveWorkspace),
+                  let script = req["script"] as? String else { return ["ok": false, "error": "bad args"] }
+            setWorktreeHook(ws, to: script); return ["ok": true, "data": NSNull()]
+        case "workspace-hook-clear":
+            guard let ws = (req["workspace"] as? String).flatMap(resolveWorkspace)
+            else { return ["ok": false, "error": "no such workspace"] }
+            setWorktreeHook(ws, to: nil); return ["ok": true, "data": NSNull()]
 
         case "tab-new":
             guard let ws = (req["workspace"] as? String).flatMap(resolveWorkspace) ?? selectedWorkspaceID
@@ -2965,6 +2982,29 @@ final class AgentStore: ObservableObject {
             let cwd = (req["cwd"] as? String).flatMap { $0.isEmpty ? nil : $0 }
             if let cwd, !FileManager.default.fileExists(atPath: cwd) {
                 return ["ok": false, "error": "no such directory: \(cwd)"]
+            }
+            if let branch = (req["worktree"] as? String)?
+                .trimmingCharacters(in: .whitespacesAndNewlines), !branch.isEmpty {
+                if cwd != nil {
+                    return ["ok": false, "error": "--cwd and --worktree conflict: a worktree tab opens in the new worktree"]
+                }
+                if remoteTarget(forWorkspace: ws) != nil {
+                    return ["ok": false, "error": "worktree tabs on a mirror workspace are created by the host; run this there"]
+                }
+                guard let w = workspaces.firstIndex(where: { $0.id == ws }),
+                      workspaces[w].defaultPath?.isEmpty == false else {
+                    return ["ok": false, "error": "workspace has no directory; set one first (folder right-click → Set Directory…)"]
+                }
+                // git runs off-main, so this replies with the provisioning tab: the worktree
+                // may still fail afterwards, and that surfaces in the app, not here.
+                guard let made = newWorktreeTab(inWorkspace: ws, name: branch) else {
+                    return ["ok": false, "error": "couldn't open a worktree tab"]
+                }
+                _ = controlSnapshot()
+                return ["ok": true, "data": [
+                    "tab": controlHandles.handle(for: made.tabID, kind: .tab),
+                    "pane": controlHandles.handle(for: made.paneID, kind: .pane),
+                ]]
             }
             let tabID = newTab(inWorkspace: ws, cwd: cwd)
             _ = controlSnapshot()
