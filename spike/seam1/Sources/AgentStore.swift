@@ -179,6 +179,10 @@ final class AgentStore: ObservableObject {
     private var relocatingHosts = Set<String>()
     /// Client role (M2): one RemoteClient per attached host, keyed by "host:port".
     private var remoteClients: [String: RemoteClient] = [:]
+    /// Per-host workspace catalogue (every workspace that host owns + whether we mirror it),
+    /// refreshed on demand. The picker's only source: an unmirrored workspace never arrives as a
+    /// tree, so it cannot be listed from the mirror itself.
+    @Published var hostWorkspaceCatalogues: [String: [WorkspaceCatalogueEntry]] = [:]
 
     /// Dedicated unix socket for shepherdd pty data streams, kept separate from
     /// socketPath (which carries newline-delimited hook JSON). Injected as
@@ -2247,6 +2251,17 @@ final class AgentStore: ObservableObject {
                 if Thread.isMainThread { return self.workspaceTrees() }
                 return DispatchQueue.main.sync { self.workspaceTrees() }
             },
+            // Same main-thread discipline as workspaceTrees: `workspaces` is @Published, and
+            // this is called from broadcast on arbitrary queues.
+            workspaceOfPane: { [weak self] paneID in
+                guard let self else { return nil }
+                let resolve: () -> String? = {
+                    guard let hit = locatePane(paneID, in: self.workspaces) else { return nil }
+                    return self.workspaces[hit.ws].id
+                }
+                if Thread.isMainThread { return resolve() }
+                return DispatchQueue.main.sync(execute: resolve)
+            },
             updateFCMToken: { [weak self] id, token in self?.updateFCMToken(deviceID: id, token: token) },
             makeSecret: { UUID().uuidString }, makeNonce: { UUID().uuidString },
             verifyPeer: { [weak self] ip in
@@ -2333,9 +2348,26 @@ final class AgentStore: ObservableObject {
             },
             onChime: { [weak self] _ in
                 DispatchQueue.main.async { self?.playRemoteChime() }
+            },
+            onCatalogue: { [weak self] entries in
+                DispatchQueue.main.async { self?.hostWorkspaceCatalogues[hostID] = entries }
             })
         remoteClients[hostID] = client
         client.start()
+    }
+
+    /// Ask a host for its full workspace list so the picker can show unmirrored ones too.
+    func requestWorkspaceCatalogue(hostID: String) {
+        remoteClients[hostID]?.send(.cmdListWorkspaces)
+    }
+
+    /// Mirror exactly `ids` from this host; nil restores "all". The host re-sends the structure
+    /// under the new selection, so the mirror converges without a reconnect. The catalogue is
+    /// re-requested because its `synced` flags are now stale.
+    func setSyncedWorkspaces(hostID: String, ids: [String]?) {
+        guard let c = remoteClients[hostID] else { return }
+        c.send(.cmdSetSyncedWorkspaces(workspaceIDs: ids))
+        c.send(.cmdListWorkspaces)
     }
 
     /// A mirrored pane wants attention. Sound only — the host sends no banner for this
@@ -2545,6 +2577,9 @@ final class AgentStore: ObservableObject {
             },
             onChime: { [weak self] _ in
                 DispatchQueue.main.async { self?.playRemoteChime() }
+            },
+            onCatalogue: { [weak self] entries in
+                DispatchQueue.main.async { self?.hostWorkspaceCatalogues[hostID] = entries }
             })
         remoteClients[hostID] = client
         client.start()

@@ -116,6 +116,15 @@ enum ControlMessage: Codable, Equatable {
     case workspaceTree(WorkspaceTree)
     case workspaceList(ids: [String])
     case workspaceRemoved(workspaceID: String)
+    /// Host→client: every workspace the host has, including ones this device does NOT mirror,
+    /// so the picker can offer them. Names only — no tabs, no panes.
+    case workspaceCatalogue(entries: [WorkspaceCatalogueEntry])
+    /// Client→host: send me the catalogue.
+    case cmdListWorkspaces
+    /// Client→host: mirror exactly these workspaces. `nil` restores "all". The host replies with
+    /// the new structure: trees for anything newly selected, `workspaceRemoved` for anything
+    /// dropped.
+    case cmdSetSyncedWorkspaces(workspaceIDs: [String]?)
     // v2 structural commands (client→host): the host applies each to its real store.
     case cmdNewTab(workspaceID: String)
     case cmdSplit(paneID: String, axis: String)
@@ -164,6 +173,15 @@ final class FrameDecoder {
 
 enum RemoteProtocolError: Error { case frameTooLarge }
 
+/// One row of the workspace picker: a workspace the host owns, and whether this device
+/// currently mirrors it. Carries no tabs or panes — an unmirrored workspace must not leak its
+/// contents just to be listed.
+struct WorkspaceCatalogueEntry: Codable, Equatable {
+    let workspaceID: String
+    let name: String
+    let synced: Bool
+}
+
 // MARK: - Pairing (pure decision)
 
 struct PairedDevice: Codable, Equatable {
@@ -177,6 +195,17 @@ struct PairedDevice: Codable, Equatable {
     /// pairing evict the other and left the previous route permanently "bad secret".
     /// Optional so records written before this field still decode.
     var altSecrets: [String]?
+    /// Which workspaces this device mirrors. `nil` means ALL — the behaviour before per-device
+    /// selection existed, and what every record written before this field decodes to, so no
+    /// migration is needed. An empty array is a real choice: mirror nothing.
+    var syncedWorkspaceIDs: [String]?
+
+    /// Whether `workspaceID` should be projected to this device at all. The host enforces this,
+    /// so an unselected workspace never reaches the wire.
+    func syncs(_ workspaceID: String) -> Bool {
+        guard let ids = syncedWorkspaceIDs else { return true }
+        return ids.contains(workspaceID)
+    }
 
     /// Every secret this device may present.
     var allSecrets: [String] { [secret] + (altSecrets ?? []) }

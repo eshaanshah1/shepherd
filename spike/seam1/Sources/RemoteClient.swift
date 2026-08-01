@@ -47,6 +47,9 @@ final class RemoteClient {
     /// The host says a pane we are streaming wants attention. Chime only — the host deliberately
     /// sends no banner for this destination.
     private let onChime: (String) -> Void
+    /// The host's full workspace list, including ones this device does not mirror — the picker's
+    /// only source, since an unmirrored workspace deliberately never arrives as a tree.
+    private let onCatalogue: ([WorkspaceCatalogueEntry]) -> Void
 
     private let lock = NSLock()
     private var fd: Int32 = -1
@@ -66,7 +69,8 @@ final class RemoteClient {
          onStatus: @escaping (RemoteConnState) -> Void,
          onRejected: @escaping (String) -> Void = { _ in },
          onAwaitingApproval: @escaping () -> Void = { },
-         onChime: @escaping (String) -> Void = { _ in }) {
+         onChime: @escaping (String) -> Void = { _ in },
+         onCatalogue: @escaping ([WorkspaceCatalogueEntry]) -> Void = { _ in }) {
         self.host = host; self.port = port
         self.deviceID = deviceID; self.deviceName = deviceName
         self.secret = secret
@@ -81,6 +85,7 @@ final class RemoteClient {
         self.onRejected = onRejected
         self.onAwaitingApproval = onAwaitingApproval
         self.onChime = onChime
+        self.onCatalogue = onCatalogue
     }
 
     /// Base64 pin for the helper, when this client speaks TLS. Derived from the trust this
@@ -191,6 +196,7 @@ final class RemoteClient {
         case .workspaceRemoved(let id): onWorkspaceRemoved(id)
         case .state(let p, let s, let r): onState(p, s, r)
         case .chime(let p): onChime(p)
+        case .workspaceCatalogue(let entries): onCatalogue(entries)
         case .pong: break
         default: break   // host-only frames (prompt/resize/etc.) not consumed in M2
         }
