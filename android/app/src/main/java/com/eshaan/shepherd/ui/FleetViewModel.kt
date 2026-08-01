@@ -36,6 +36,8 @@ class FleetViewModel(
     val activeConnection: RemoteConnection? get() = conn
     val host: String? get() = store.load()?.host
     val port: Int? get() = store.load()?.port
+    /** Null on the tailnet; on the LAN the data channel must be pinned like the control one. */
+    val lanPin: String? get() = store.load()?.lanPin
 
     fun openAgent(paneId: String) { _navTarget.value = NavTarget.Agent(paneId) }
     fun consumeNavTarget() { _navTarget.value = null }

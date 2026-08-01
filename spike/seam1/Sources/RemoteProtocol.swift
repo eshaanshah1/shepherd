@@ -91,6 +91,15 @@ enum ControlMessage: Codable, Equatable {
     case hello(deviceID: String, deviceName: String, pairingCode: String?, secret: String?,
                fcmToken: String?, protocolVersion: Int)
     case refreshFCMToken(token: String)
+    /// Client→host, sent right after `hello`. Only a client reporting "mac" is chimed at for a
+    /// pane it streams; everything else falls through to the phone-push destination. Kept off
+    /// `hello` deliberately — adding a field there would change a frame every existing client
+    /// already sends, and this is purely additive instead.
+    case clientKind(kind: String)
+    /// Host→client: play the attention chime for this pane. Sent ONLY to a paired Mac holding a
+    /// data channel on the pane, never broadcast, so a phone never has to decode it. No banner —
+    /// the chime is the whole payload.
+    case chime(paneID: String)
     case accepted(sessionNonce: String)
     case rejected(reason: String)
     case pendingApproval

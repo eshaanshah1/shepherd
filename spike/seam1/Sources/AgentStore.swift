@@ -1544,11 +1544,16 @@ final class AgentStore: ObservableObject {
         }
         // `viewing` is the single gate for every alert channel — banner, chime and push —
         // so they can't disagree about whether the user already has eyes on the pane.
-        if res.state != cur, res.state.wantsAttention, let updated, !viewing {
-            let routing = NotificationRoutingPolicy.decide(isAway: isAway())
-            if routing.local {
-                notifyAttention(updated)
-                playAttentionSound(for: res.state)
+        // `viewing` is threaded INTO the policy rather than gating the block, because a paired Mac
+        // streaming this pane chimes even when the pane is in front of us here.
+        if res.state != cur, res.state.wantsAttention, let updated {
+            let routing = NotificationRoutingPolicy.decide(
+                isAway: isAway(), viewing: viewing,
+                macViewers: remoteServer?.macViewerDeviceIDs(paneID: paneID) ?? [])
+            if routing.banner { notifyAttention(updated) }
+            if routing.sound { playAttentionSound(for: res.state) }
+            if !routing.chimeDevices.isEmpty {
+                remoteServer?.send(.chime(paneID: paneID), toDevices: routing.chimeDevices)
             }
             if routing.fcm { pushWake(paneID: paneID, state: res.state) }
         }
@@ -2323,10 +2328,17 @@ final class AgentStore: ObservableObject {
                         self?.attachAttempts[hostID] = .awaitingApproval
                     }
                 }
+            },
+            onChime: { [weak self] _ in
+                DispatchQueue.main.async { self?.playRemoteChime() }
             })
         remoteClients[hostID] = client
         client.start()
     }
+
+    /// A mirrored pane wants attention. Sound only — the host sends no banner for this
+    /// destination, so there is nothing else to surface.
+    private func playRemoteChime() { playAttentionSound(for: .needsCheck) }
 
     // MARK: LAN client role — attach to a host over the local link
 
@@ -2471,6 +2483,9 @@ final class AgentStore: ObservableObject {
                           + "(Settings → Remote → Paired devices), or enter a fresh code to re-pair."
                         : "The host refused: \(reason)"
                 }
+            },
+            onChime: { [weak self] _ in
+                DispatchQueue.main.async { self?.playRemoteChime() }
             })
         remoteClients[hostID] = client
         client.start()

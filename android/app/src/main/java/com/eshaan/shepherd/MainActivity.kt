@@ -129,7 +129,7 @@ class MainActivity : ComponentActivity() {
                                     val host = fvm.host; val port = fvm.port
                                     if (conn != null && host != null && port != null) {
                                         val avm = remember(target.paneId) {
-                                            AgentViewModel(target.paneId, host, port, conn)
+                                            AgentViewModel(target.paneId, host, port, conn, fvm.lanPin)
                                         }
                                         val title = fleet.pane(target.paneId)?.title ?: ""
                                         AgentScreen(avm, title) { fvm.consumeNavTarget() }

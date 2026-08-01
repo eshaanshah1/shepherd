@@ -2,13 +2,49 @@ import XCTest
 
 final class NotificationRoutingPolicyTests: XCTestCase {
 
+    private func decide(away: Bool = false, viewing: Bool = false,
+                        macs: [String] = []) -> Routing {
+        NotificationRoutingPolicy.decide(isAway: away, viewing: viewing, macViewers: macs)
+    }
+
     func testPresentRoutesToLocalSurfacesOnly() {
-        XCTAssertEqual(NotificationRoutingPolicy.decide(isAway: false), Routing(local: true, fcm: false))
+        XCTAssertEqual(decide(),
+                       Routing(banner: true, sound: true, chimeDevices: [], fcm: false))
     }
 
     func testAwayRoutesToPushOnly() {
         // Away ⇒ NO local surface (no banner, no sound — a closed machine stays silent).
-        XCTAssertEqual(NotificationRoutingPolicy.decide(isAway: true), Routing(local: false, fcm: true))
+        XCTAssertEqual(decide(away: true),
+                       Routing(banner: false, sound: false, chimeDevices: [], fcm: true))
+    }
+
+    func testViewingHereSuppressesEveryLocalSurface() {
+        // ADR 0020: a turn finishing under your eyes is not an alert.
+        XCTAssertEqual(decide(viewing: true),
+                       Routing(banner: false, sound: false, chimeDevices: [], fcm: false))
+    }
+
+    func testStreamingMacChimesAlongsideThePresentHost() {
+        XCTAssertEqual(decide(macs: ["mac-1"]),
+                       Routing(banner: true, sound: true, chimeDevices: ["mac-1"], fcm: false))
+    }
+
+    func testStreamingMacChimesEvenWhileViewingHere() {
+        // The deliberate departure from ADR 0020: on a mirror the chime is the point of having
+        // the pane open, so it fires even though this Mac stays silent.
+        XCTAssertEqual(decide(viewing: true, macs: ["mac-1"]),
+                       Routing(banner: false, sound: false, chimeDevices: ["mac-1"], fcm: false))
+    }
+
+    func testStreamingMacBeatsThePhoneWhenAway() {
+        // A present Mac is a better destination than a push, so FCM stays off.
+        XCTAssertEqual(decide(away: true, macs: ["mac-1"]),
+                       Routing(banner: false, sound: false, chimeDevices: ["mac-1"], fcm: false))
+    }
+
+    func testAwayWithNoMacViewerStillPushes() {
+        XCTAssertEqual(decide(away: true, macs: []),
+                       Routing(banner: false, sound: false, chimeDevices: [], fcm: true))
     }
 
     func testCatchUpTargetsAreOnlyAttentionStates() {

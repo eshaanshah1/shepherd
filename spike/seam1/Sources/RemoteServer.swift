@@ -50,14 +50,21 @@ final class RemoteServer {
     /// ephemeral port when constructed with port 0 (loopback tests). Zero before `start()`.
     var boundPort: UInt16 { listenLock.lock(); defer { listenLock.unlock() }; return actualPort }
 
+    /// Who a live session nonce belongs to. Carried so a data channel can be attributed to a
+    /// device — attention routing chimes on a paired Mac streaming the pane, and must not
+    /// mistake a phone's data channel for one.
+    struct NonceOwner {
+        let deviceID: String?
+        let isMac: Bool
+    }
     // Nonces of live control sessions. A data channel is admitted only if its dataHello
-    // carries a nonce still in this set (i.e. an authenticated control session is open).
-    private var liveNonces = Set<String>()
+    // carries a nonce still in this map (i.e. an authenticated control session is open).
+    private var liveNonces: [String: NonceOwner] = [:]
     private let nonceLock = NSLock()
 
     /// True while some live control session was issued this sessionNonce.
     func hasLiveNonce(_ nonce: String) -> Bool {
-        nonceLock.lock(); defer { nonceLock.unlock() }; return liveNonces.contains(nonce)
+        nonceLock.lock(); defer { nonceLock.unlock() }; return liveNonces[nonce] != nil
     }
 
     // Open data-channel viewer fds keyed by the sessionNonce that admitted them. When a
@@ -73,6 +80,11 @@ final class RemoteServer {
     // a whole workspace (many panes) at once, each pane sized independently. A phone views one
     // pane at a time, so its count is 1 for that pane — same behavior as the old single-pane model.
     private var paneViewers: [String: Int] = [:]
+    // paneID → sessionNonce → how many of that session's data channels are on the pane. Same
+    // refcount as `paneViewers`, split by session so a viewer can be attributed to its device.
+    // Kept under `sizeLock` with `paneViewers`, so the two can never disagree about who is on
+    // a pane.
+    private var paneViewerNonces: [String: [String: Int]] = [:]
     private let sizeLock = NSLock()
     private let acceptQueue = DispatchQueue(label: "shepherd.remote.accept", qos: .utility)
     // Per-connection reader loops run concurrently here so one's blocking read()
@@ -102,6 +114,9 @@ final class RemoteServer {
         var deviceID: String?
         var peerIP: String?
         var nonce: String?
+        /// Self-reported by the client's `hello`. Only a device that says "mac" is chimed at;
+        /// anything else (a phone, or a client too old to report) falls through to push.
+        var isMac = false
         /// Which link this connection arrived over. Set once at accept; the pairing policy
         /// branches on it, so a LAN connection can never take the tailnet's identity path.
         var origin: PeerOrigin = .tailnet
@@ -383,6 +398,15 @@ final class RemoteServer {
         case let .refreshFCMToken(token) where phase == .paired:
             conn.lock.lock(); let id = conn.deviceID; conn.lock.unlock()
             if let id { updateFCMToken(id, token) }
+        case let .clientKind(kind):
+            // Arrives after `admit`, so the nonce owner already exists and must be corrected —
+            // otherwise this session stays classed as not-a-Mac for its whole life.
+            conn.lock.lock()
+            conn.isMac = (kind == "mac")
+            let owner = NonceOwner(deviceID: conn.deviceID, isMac: conn.isMac)
+            let n = conn.nonce
+            conn.lock.unlock()
+            if let n { nonceLock.lock(); liveNonces[n] = owner; nonceLock.unlock() }
         case let .resize(paneID, cols, rows) where phase == .paired:
             applyResize(paneID: paneID, cols: cols, rows: rows)
         case .detach:
@@ -410,7 +434,7 @@ final class RemoteServer {
         // This viewer takes the pane at its size — UNLESS the desktop is showing it right now, in
         // which case the desktop wins the tie and the pane stays desktop-sized (DataReady echoes
         // that). Refcounted per pane so other panes this device views are untouched.
-        viewerAttached(paneID, cols: cols, rows: rows)
+        viewerAttached(paneID, nonce: nonce, cols: cols, rows: rows)
         _ = rawWrite(fd, (try? DataFrameCodec.encode(.dataReady(cols: broker.cols, rows: broker.rows))) ?? Data())
         // Attach + register atomically under dataViewersLock, re-checking the nonce is STILL
         // live inside the lock. closeConn removes the nonce (under nonceLock) then sweeps
@@ -443,7 +467,7 @@ final class RemoteServer {
         broker.detachViewer(fd: fd)
         // This viewer left the pane. Drop its count; if it was the pane's LAST viewer, snap the
         // pane back to its desktop grid so the Mac's own grid is never left at a remote size.
-        viewerDetached(paneID)
+        viewerDetached(paneID, nonce: nonce)
         shutdown(fd, SHUT_RDWR); close(fd)
     }
 
@@ -460,18 +484,43 @@ final class RemoteServer {
     /// A viewer attached to `paneID` at (cols,rows): bump its viewer count and size the pane to
     /// this viewer. The remote owns the size while viewing — even if the desktop is showing the
     /// pane right now, its surface reflows to match and snaps back on the last detach.
-    private func viewerAttached(_ paneID: String, cols: Int, rows: Int) {
-        sizeLock.lock(); paneViewers[paneID, default: 0] += 1; sizeLock.unlock()
+    private func viewerAttached(_ paneID: String, nonce: String, cols: Int, rows: Int) {
+        sizeLock.lock()
+        paneViewers[paneID, default: 0] += 1
+        paneViewerNonces[paneID, default: [:]][nonce, default: 0] += 1
+        sizeLock.unlock()
         lookupBroker(paneID)?.setSize(cols: cols, rows: rows)
+    }
+
+    /// deviceIDs of paired **Macs** with a live data channel on `paneID`, deduped. Attention
+    /// routing chimes on these; a phone viewer is deliberately excluded, since the phone is the
+    /// fallback destination and gets a push instead.
+    func macViewerDeviceIDs(paneID: String) -> [String] {
+        sizeLock.lock(); let byNonce = paneViewerNonces[paneID] ?? [:]; sizeLock.unlock()
+        guard !byNonce.isEmpty else { return [] }
+        nonceLock.lock(); defer { nonceLock.unlock() }
+        var seen = Set<String>()
+        return byNonce.keys.compactMap { nonce -> String? in
+            guard let owner = liveNonces[nonce], owner.isMac,
+                  let id = owner.deviceID, seen.insert(id).inserted else { return nil }
+            return id
+        }
     }
 
     /// A viewer detached from `paneID`: drop its count and, if it was the pane's LAST viewer,
     /// release the pane back to the desktop — the helper resumes sizing from its own outer PTY.
     /// Other panes' counts are untouched.
-    private func viewerDetached(_ paneID: String) {
+    private func viewerDetached(_ paneID: String, nonce: String) {
         sizeLock.lock()
         let remaining = (paneViewers[paneID] ?? 1) - 1
         if remaining <= 0 { paneViewers[paneID] = nil } else { paneViewers[paneID] = remaining }
+        let n = (paneViewerNonces[paneID]?[nonce] ?? 1) - 1
+        if n <= 0 {
+            paneViewerNonces[paneID]?[nonce] = nil
+            if paneViewerNonces[paneID]?.isEmpty == true { paneViewerNonces[paneID] = nil }
+        } else {
+            paneViewerNonces[paneID]?[nonce] = n
+        }
         sizeLock.unlock()
         guard remaining <= 0 else { return }
         lookupBroker(paneID)?.releaseSize()
@@ -489,8 +538,10 @@ final class RemoteServer {
     /// immediately (async), so the lock is never held across the actual Darwin.write.
     private func admit(_ fd: Int32, _ state: ConnState) {
         let nonce = makeNonce()
-        state.lock.lock(); state.nonce = nonce; state.lock.unlock()
-        nonceLock.lock(); liveNonces.insert(nonce); nonceLock.unlock()
+        state.lock.lock(); state.nonce = nonce
+        let owner = NonceOwner(deviceID: state.deviceID, isMac: state.isMac)
+        state.lock.unlock()
+        nonceLock.lock(); liveNonces[nonce] = owner; nonceLock.unlock()
         let accepted = encode(.accepted(sessionNonce: nonce))
         let trees = workspaceTrees()
         let listFrame = encode(.workspaceList(ids: trees.map { $0.workspaceID }))
@@ -510,6 +561,20 @@ final class RemoteServer {
         clientsLock.unlock()
     }
 
+    /// Send to every live connection belonging to `deviceIDs`. Used for `.chime`, which must
+    /// reach one device rather than the room — same lock + per-fd write queue as `broadcast`.
+    func send(_ msg: ControlMessage, toDevices deviceIDs: [String]) {
+        guard !deviceIDs.isEmpty else { return }
+        let wanted = Set(deviceIDs)
+        let data = (try? FrameCodec.encode(msg)) ?? Data()
+        clientsLock.lock()
+        for (fd, state) in clients {
+            state.lock.lock(); let id = state.deviceID; state.lock.unlock()
+            if let id, wanted.contains(id) { enqueueWrite(fd, data, on: state) }
+        }
+        clientsLock.unlock()
+    }
+
     /// Close a connection's fd exactly once and drop its bookkeeping. Safe to call from
     /// the reader loop, an async approval callback, or teardown — the `closed` flag on
     /// the shared `ConnState` makes every call after the first a no-op.
@@ -520,7 +585,7 @@ final class RemoteServer {
         let n = state.nonce; state.nonce = nil
         state.lock.unlock()
         if let n {
-            nonceLock.lock(); liveNonces.remove(n); nonceLock.unlock()
+            nonceLock.lock(); liveNonces[n] = nil; nonceLock.unlock()
             // Tear down every data channel this session authorized: SHUT_RDWR ONLY (never
             // close — that wakes the blocked read in serveDataChannel, which is the sole
             // closer + detacher). Held under dataViewersLock so a registered fd can't be
