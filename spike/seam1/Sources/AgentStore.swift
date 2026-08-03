@@ -2151,6 +2151,10 @@ final class AgentStore: ObservableObject {
                     return
                 }
                 logInfo(.lan, "bridged a TLS client from \(ip ?? "?") into the control server")
+                if let storm = self?.noteConnection(from: ip ?? "?") {
+                    logWarn(.lan, "\(ip ?? "?") reconnected \(storm.count) times in "
+                                + "\(Int(storm.window))s — that is a client bug, not a network")
+                }
                 server.acceptBridged(fd: fd, peerIP: ip)
             },
             log: { line in logInfo(.lan, line) })
@@ -2198,6 +2202,19 @@ final class AgentStore: ObservableObject {
         lanServingError = reason
         clearLANCode()
         objectWillChange.send()
+    }
+
+    /// Connection-rate bookkeeping for bridged LAN clients. Touched from the listener's queue, so
+    /// it is guarded rather than assumed main-thread.
+    private var connectionStorms = StormDetector()
+    private let stormLock = NSLock()
+
+    /// Returns a rate worth logging, or nil. Also prunes, so a busy network cannot grow the map.
+    private func noteConnection(from peer: String) -> (count: Int, window: TimeInterval)? {
+        let now = Date()
+        stormLock.lock(); defer { stormLock.unlock() }
+        connectionStorms.prune(before: now.addingTimeInterval(-120))
+        return connectionStorms.record(peer: peer, at: now)
     }
 
     func stopLANServing() {
