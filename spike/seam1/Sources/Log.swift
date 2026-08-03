@@ -47,6 +47,7 @@ enum LogCategory: String {
     case remote     // tailnet control server
     case lan        // TLS listener, socketpair bridge
     case pairing    // approval, codes, SAS
+    case notify     // where an attention alert went: banner / chime / phone push
     case control    // the `shepherd` CLI socket
     case pty        // pty broker / data channels
     case worktree

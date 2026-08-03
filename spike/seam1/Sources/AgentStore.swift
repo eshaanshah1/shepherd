@@ -1564,9 +1564,17 @@ final class AgentStore: ObservableObject {
         // `viewing` is threaded INTO the policy rather than gating the block, because a paired Mac
         // streaming this pane chimes even when the pane is in front of us here.
         if res.state != cur, res.state.wantsAttention, let updated {
+            let away = isAway()
             let routing = NotificationRoutingPolicy.decide(
-                isAway: isAway(), viewing: viewing,
+                isAway: away, viewing: viewing,
                 macViewers: remoteServer?.macViewerDeviceIDs(paneID: paneID) ?? [])
+            // Say where it went and on what grounds. "I heard nothing on my phone" is otherwise
+            // unanswerable: push is deliberately suppressed unless this Mac is away, and nothing
+            // recorded which branch ran.
+            logInfo(.notify, "pane=\(paneID.prefix(8)) \(res.state.rawValue) -> "
+                           + "banner=\(routing.banner) sound=\(routing.sound) "
+                           + "chime=\(routing.chimeDevices.count) push=\(routing.fcm) "
+                           + "(away=\(away) viewing=\(viewing))")
             if routing.banner { notifyAttention(updated) }
             if routing.sound { playAttentionSound(for: res.state) }
             if !routing.chimeDevices.isEmpty {
@@ -2878,17 +2886,39 @@ final class AgentStore: ObservableObject {
     /// Fire a data-only FCM wake to every paired device, deduped. Reads PERSISTED tokens
     /// (push needs no live control channel). Off-main (network); prunes dead tokens.
     private func pushWake(paneID: String, state: AgentState) {
-        guard isServing, let pusher = fcmPusher else { return }
+        // Four ways this used to decline in silence. A push that never leaves is
+        // indistinguishable from a phone that ignored it, so each one now says which it was.
+        guard isServing else { logInfo(.notify, "no push: serving is off"); return }
+        guard let pusher = fcmPusher else {
+            logWarn(.notify, "no push: no FCM credentials "
+                           + "(~/.config/shepherd/fcm-service-account.json)")
+            return
+        }
         let now = Date()
         guard PushDecision.shouldPush(paneID: paneID, state: state.rawValue,
-                                      lastPushed: lastPushed, now: now, window: pushWindow) else { return }
+                                      lastPushed: lastPushed, now: now, window: pushWindow) else {
+            logDebug(.notify, "no push for \(paneID.prefix(8)): same state inside the "
+                            + "\(Int(pushWindow))s dedupe window")
+            return
+        }
         lastPushed[paneID] = (state.rawValue, now)
         pairedDevicesLock.lock(); let tokens = pairedDevices.compactMap { $0.fcmToken }; pairedDevicesLock.unlock()
-        guard !tokens.isEmpty else { return }
+        guard !tokens.isEmpty else {
+            logWarn(.notify, "no push: no paired device has an FCM token")
+            return
+        }
         let urgent = (state == .blocked || state == .error)
+        logInfo(.notify, "pushing \(state.rawValue) for \(paneID.prefix(8)) to \(tokens.count) "
+                       + "device(s)\(urgent ? " (urgent)" : "")")
         Task { [weak self] in
             let dead = await pusher.wake(tokens: tokens, paneID: paneID, state: state.rawValue, urgent: urgent)
-            if !dead.isEmpty { await MainActor.run { self?.pruneTokens(dead) } }
+            if dead.isEmpty {
+                logInfo(.notify, "push accepted by FCM for \(paneID.prefix(8))")
+            } else {
+                logWarn(.notify, "FCM rejected \(dead.count) of \(tokens.count) token(s) for "
+                               + "\(paneID.prefix(8)) — pruning them")
+                await MainActor.run { self?.pruneTokens(dead) }
+            }
         }
     }
 
