@@ -2848,7 +2848,10 @@ final class AgentStore: ObservableObject {
         }
         approvalDecider = decide
         guard confirm == .compareSAS else {
-            pendingApproval = (deviceID, name, .trustedOrigin, "", [])
+            // Carry the kind through rather than flattening it: the sheet says what was
+            // verified, and `.qrVerified` and `.trustedOrigin` were checked differently.
+            logInfo(.pairing, "approval requested for \(deviceID.prefix(8)) (\(confirm))")
+            pendingApproval = (deviceID, name, confirm, "", [])
             return
         }
         guard let hash = lanCertHash else {

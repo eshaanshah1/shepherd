@@ -359,7 +359,7 @@ final class RemoteServer {
         conn.lock.lock(); let phase = conn.phase; conn.lock.unlock()
         if phase == .closed { closeConn(fd, conn); return .stop }
         switch m {
-        case let .hello(deviceID, deviceName, pairingCode, secret, fcmToken, _) where phase == .unpaired:
+        case let .hello(deviceID, deviceName, pairingCode, secret, fcmToken, _, pinVerified) where phase == .unpaired:
             conn.lock.lock(); conn.deviceID = deviceID
             let ip = conn.peerIP; let origin = conn.origin; conn.lock.unlock()
             // A LAN connection has no resolvable identity, so don't even ask: verifyPeer would
@@ -372,7 +372,8 @@ final class RemoteServer {
                                            origin: origin, deviceName: deviceName,
                                            presentedCode: pairingCode,
                                            activeCode: code.map(\.digits),
-                                           codeAttemptsLeft: code?.attemptsLeft ?? 0)
+                                           codeAttemptsLeft: code?.attemptsLeft ?? 0,
+                                           clientPinnedCert: pinVerified ?? false)
             // Spend an attempt only on a code that was actually WRONG: a reconnect loop resends
             // the same hello, and counting those burned the code before the user could use it.
             if origin == .lan, let presented = pairingCode, presented != code?.digits {
