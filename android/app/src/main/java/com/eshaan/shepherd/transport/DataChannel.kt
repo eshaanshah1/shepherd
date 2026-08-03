@@ -7,6 +7,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
 import java.io.OutputStream
 import java.net.Socket
+import com.eshaan.shepherd.util.SLog
 
 sealed interface DataStatus {
     data object Connecting : DataStatus
@@ -68,6 +69,7 @@ class DataChannel(
                     // per second, forever, at a rate that never grew. A host that hangs up on us
                     // is exactly the case backoff exists for.
                     if (runSession()) backoff = backoffStartMs
+                    else SLog.w(SLog.DATA, "session ended without a handshake; backoff stays ${backoff}ms")
                 } catch (_: CancellationException) {
                     throw CancellationException()
                 } catch (e: Exception) {
@@ -75,6 +77,7 @@ class DataChannel(
                     // not report `Rejected`, which means "the host refused this nonce" and is the
                     // signal the view model rebuilds on — conflating the two turned every dropped
                     // socket into a rebuild, i.e. a new TLS connection to the host every ~250ms.
+                    SLog.w(SLog.DATA, "transport error for pane $paneId: ${e.message}")
                     _status.value = DataStatus.Disconnected
                 }
                 if (!running) break
@@ -83,6 +86,7 @@ class DataChannel(
                 // its way to backoffMaxMs while the screen is off, so on unlock the next attempt
                 // could be half a minute away — which read as "streaming is broken until I leave
                 // the session and come back". `retryNow()` collapses that wait to nothing.
+                SLog.d(SLog.DATA, "retrying pane $paneId in ${backoff}ms")
                 if (waitForRetry(backoff)) backoff = backoffStartMs
                 else backoff = (backoff * 2).coerceAtMost(backoffMaxMs)
             }
@@ -102,6 +106,7 @@ class DataChannel(
     private suspend fun runSession(): Boolean {
         _status.value = DataStatus.Connecting
         ready = false
+        SLog.i(SLog.DATA, "dialling $host:$port for pane $paneId nonce=${sessionNonce.take(8)}")
         val s = connect(host, port); socket = s; out = s.getOutputStream()
         try {
             sendRaw(DataWireCodec.encode(DataMessage.DataHello(sessionNonce, paneId, initialCols, initialRows)))
@@ -115,10 +120,12 @@ class DataChannel(
                 if (m == null) continue
                 when (m) {
                     is DataMessage.DataReady -> {
+                        SLog.i(SLog.DATA, "READY pane $paneId at ${m.cols}x${m.rows}")
                         _status.value = DataStatus.Ready(m.cols, m.rows); ready = true
                         if (tail.isNotEmpty()) _output.emit(tail)
                     }
                     is DataMessage.DataRejected -> {
+                        SLog.e(SLog.DATA, "host REFUSED pane $paneId: ${m.reason}")
                         _status.value = DataStatus.Rejected(m.reason); running = false; return false
                     }
                     else -> { _status.value = DataStatus.Rejected("unexpected handshake frame"); return false }

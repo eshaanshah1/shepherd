@@ -9,6 +9,7 @@ import com.eshaan.shepherd.transport.DataChannel
 import com.eshaan.shepherd.transport.Pinning
 import com.eshaan.shepherd.transport.DataStatus
 import com.eshaan.shepherd.transport.RemoteConnection
+import com.eshaan.shepherd.util.SLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -167,6 +168,7 @@ class AgentViewModel(
      * what produced a connection to the host every ~250ms.
      */
     fun resume() {
+        SLog.i(SLog.VM, "resume (foreground) pane $paneId status=${_status.value}")
         controlConn.retryNow()
         channel?.retryNow()
     }

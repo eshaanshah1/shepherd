@@ -146,6 +146,28 @@ path is reported and left alone, so it can't delete your checkout symlink. The
 run, so a link into them would dangle), which is what `PluginInstallState
 .unavailable` renders.
 
+### 3b. Testing the phone path — use the DEV app, not a release
+**`ShepherdDev` serves on its own ports (8822/8823, +100) and advertises a distinct Bonjour name**,
+so it can serve a phone *while* your daily app keeps serving on 8722/8723. The QR carries the port,
+so a phone scanning the dev build's code dials the dev ports with no client change. This exists
+because without it the only way to test anything on the phone path was cutting a real release — one
+day's debugging produced **six**. The loop is now `scripts/dev.sh` (~60s), daily app untouched.
+Enable serving once in the dev app (its UserDefaults domain is separate):
+```sh
+defaults write com.shepherd.Shepherd.dev shepherd.remote.serving -bool true
+defaults write com.shepherd.Shepherd.dev shepherd.remote.servingLAN -bool true
+```
+**`scripts/phone-smoke.sh <paneID> [--install]`** then drives the whole flow over `adb` and asserts
+it from logs rather than from a human's description: control accepted → stream `READY` → lock →
+unlock → reattach → *no reconnect storm* (a dial-count ceiling, because the storm produced perfectly
+correct states at four per second). The Android client logs through **`SLog`** (`adb logcat -s
+Shepherd:V`, categories `conn`/`data`/`pair`/`vm`) — it had **zero** logging calls before, which is
+why a day of debugging had to infer the client's behaviour from the host's socket log.
+`unitTests.isReturnDefaultValues = true` is required in `app/build.gradle.kts` for that: Android's
+`Log` is a *throwing* stub in JVM unit tests, so a log line on a covered path fails the test rather
+than the code. (Known flake, unrelated: `PinningTest.matching pin connects and carries bytes` fails
+on a loopback TLS timing race roughly one run in five.)
+
 ### 4. Shepherd Dev — throwaway dev instance (`scripts/dev.sh`)
 Iterate on the app **without killing your daily driver**. `ShepherdDev` is a second
 app target: same sources, bundle id `com.shepherd.Shepherd.dev`, product/exec

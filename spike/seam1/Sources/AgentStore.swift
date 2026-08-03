@@ -190,7 +190,11 @@ final class AgentStore: ObservableObject {
     let ptySocketPath = "/tmp/shepherd-pty-\(getpid()).sock"
     private var ptyHub: PtyHub?
     /// The control-channel port hosts bind and clients dial by default.
-    static let defaultRemotePort: UInt16 = 8722
+    /// The dev build offsets its ports (+100) so it can serve a phone WHILE the daily app runs.
+    /// Without that, testing anything on the phone path meant cutting a real release — which is
+    /// how a single day's debugging produced six of them. The QR carries the port, so a phone
+    /// scanning the dev build's code dials the dev ports with no client change.
+    nonisolated static var defaultRemotePort: UInt16 { AppMode.isDev ? 8822 : 8722 }
     private let remotePort: UInt16 = AgentStore.defaultRemotePort
     private let pairedDevicesKey = "shepherd.remote.devices"
 
@@ -2106,7 +2110,7 @@ final class AgentStore: ObservableObject {
     /// The control port for LAN clients. Deliberately not 8722: a 0.0.0.0 listener sharing a
     /// port with an address-specific one is SO_REUSEADDR behaviour whose delivery depends on
     /// bind specificity, and that ambiguity is not worth saving a port number.
-    static let defaultLANPort: UInt16 = 8723
+    nonisolated static var defaultLANPort: UInt16 { AppMode.isDev ? 8823 : 8723 }
 
     var isServingLAN: Bool { UserDefaults.standard.bool(forKey: "shepherd.remote.servingLAN") }
 
@@ -2130,7 +2134,15 @@ final class AgentStore: ObservableObject {
     static let lanBindAttempts = 4
 
     func startLANServingIfEnabled(attempt: Int = 0) {
-        guard isServingLAN, lanListener == nil else { return }
+        guard isServingLAN else {
+            logDebug(.lan, "start skipped: LAN serving is off")
+            return
+        }
+        guard lanListener == nil else {
+            logDebug(.lan, "start skipped: already listening (attempt \(attempt))")
+            return
+        }
+        logInfo(.lan, "starting LAN serving on \(AgentStore.defaultLANPort) (attempt \(attempt))")
         if remoteServer == nil {
             if !isServing { setServing(true) } else { startRemoteServingIfEnabled() }
         }
@@ -2141,6 +2153,8 @@ final class AgentStore: ObservableObject {
         lanCertHash = got.certHash
         let l = LANListener(
             port: AgentStore.defaultLANPort, identity: got.identity,
+            serviceName: AppMode.isDev
+                ? "\(Host.current().localizedName ?? "Mac") (Shepherd Dev)" : nil,
             onBridgedFD: { [weak self] fd, ip in
                 guard let server = self?.remoteServer else {
                     // Nothing to hand it to. Close it rather than leaking the socketpair end,
@@ -2198,6 +2212,13 @@ final class AgentStore: ObservableObject {
     }
 
     private func failLANServing(_ reason: String) {
+        // Never report failure over a LIVE listener. A stale attempt landing after a successful
+        // one would otherwise leave the app claiming it is not serving while it is — the same lie
+        // as a dead listener that still reads as on, just inverted.
+        guard lanListener == nil else {
+            logWarn(.lan, "ignoring a stale failure (\(reason)) — a listener is already up")
+            return
+        }
         logError(.lan, "not serving on the local network: \(reason)")
         lanServingError = reason
         clearLANCode()

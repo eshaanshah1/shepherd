@@ -7,6 +7,11 @@ plugins {
 }
 
 android {
+    // android.util.Log is a THROWING stub in plain JVM unit tests, so adding a log line to any
+    // covered code path would fail the test rather than the code. Defaults make the stubs inert —
+    // logging must never be able to change an outcome.
+    testOptions { unitTests.isReturnDefaultValues = true }
+
     namespace = "com.eshaan.shepherd"
     compileSdk = 35
     defaultConfig {
