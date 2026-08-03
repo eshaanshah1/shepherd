@@ -1185,7 +1185,14 @@ final class AgentStore: ObservableObject {
     /// `isFrontPane` plus Shepherd being frontmost — the predicate for "they saw it",
     /// shared by the state machine (`Stop` → idle, not need-to-check) and every alert
     /// channel, so a dot and a banner can't tell different stories.
-    func isViewing(_ paneID: String) -> Bool { NSApp.isActive && isFrontPane(paneID) }
+    /// `!presence.isAway` is part of the predicate, not a separate check bolted on by one
+    /// caller: with the lid shut and no external display you are not looking at anything, but
+    /// `NSApp.isActive` and `isFrontPane` both stay true, so a turn finishing in clamshell read
+    /// as "they saw it" — landing `idle` with no badge, no banner, and **no phone push**, since
+    /// `viewing` gates every channel (ADR 0020). That is the one moment the phone exists for.
+    func isViewing(_ paneID: String) -> Bool {
+        NSApp.isActive && !presence.isAway && isFrontPane(paneID)
+    }
 
     /// Coming back to Shepherd counts as looking: the pane in front of you has been
     /// seen, so its finished turn clears without demanding a click. Only need-to-check

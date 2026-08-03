@@ -45,12 +45,19 @@ func buildSigningInput(clientEmail: String, tokenURI: String, scope: String, iat
 
 /// The FCM HTTP v1 `messages:send` body — DATA-ONLY (no `notification` block, so no
 /// terminal content transits Google; the woken app raises its own local notification).
+/// Priority is **always high**, and that is not a tuning knob. This message carries no
+/// `notification` block, so Android cannot display it by itself — the app has to be woken to
+/// raise the notification locally. At `normal` priority a locked, dozing phone defers exactly
+/// that wake, so the push is silently dropped until some later maintenance window; measured as
+/// "my agent finished and my phone never made a sound". Every push this app sends exists
+/// because a human needs to be told, which is the case high priority is for. `urgent` stays in
+/// the data payload so the client can still choose its own sound/vibration treatment.
 func buildWakeMessage(token: String, paneID: String, state: String, urgent: Bool) -> [String: Any] {
     [
         "message": [
             "token": token,
             "data": ["paneID": paneID, "state": state, "urgent": urgent ? "true" : "false"],
-            "android": ["priority": urgent ? "high" : "normal"],
+            "android": ["priority": "high"],
         ] as [String: Any]
     ]
 }

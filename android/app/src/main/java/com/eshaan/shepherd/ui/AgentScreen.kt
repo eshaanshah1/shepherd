@@ -78,6 +78,18 @@ fun AgentScreen(vm: AgentViewModel, title: String, onBack: () -> Unit) {
     // opened later at that measured size (see the BoxWithConstraints below) so the host resizes the
     // PTY before it streams — no first-paint reshape.
     LaunchedEffect(Unit) { vm.prepareSession() }
+    // Unlocking the phone must resume the stream at once. Both channels' retry loops can be
+    // mid-backoff (up to 30s after a long screen-off), so waiting for them is what made the
+    // stream look broken until you left the session and came back. ON_START fires on unlock and
+    // on foregrounding, and addObserver syncs to the current state, so this covers re-entry too.
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, vm) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_START) vm.resume()
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
     // The VM is remember-scoped (not ViewModelStore-owned), so onCleared() never fires — detach
     // on leaving composition (Back-nav) to close the socket + coroutines and let the host snap back.
     // Also mark this pane as the visible one so a push for it skips the (redundant) banner.

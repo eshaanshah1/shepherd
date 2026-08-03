@@ -68,7 +68,13 @@ class RemoteConnection(
     }
 
     /// Explicitly try again after a terminal refusal, which `start()` alone will not do.
+    ///
+    /// Refuses to touch a LIVE session. This is destructive — it drops the socket, and the host
+    /// revokes that session's `sessionNonce` when it dies, which strands every data channel built
+    /// on it (they are answered `dataRejected`, and that stops their retry loop for good). Calling
+    /// it on foreground "just in case" is what made unlocking the phone break streaming.
     fun retryNow() {
+        if (_status.value is ConnStatus.Connected) return
         running = false
         loopJob?.cancel(); loopJob = null
         start()
