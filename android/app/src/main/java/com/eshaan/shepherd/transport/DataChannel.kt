@@ -62,8 +62,12 @@ class DataChannel(
             var backoff = backoffStartMs
             while (running && isActive) {
                 try {
-                    runSession()
-                    backoff = backoffStartMs
+                    // Reset the backoff only for a session that actually WORKED. runSession
+                    // returns normally when the host closes before answering the handshake, and
+                    // treating that as success reset the backoff to 1s every time — a connection
+                    // per second, forever, at a rate that never grew. A host that hangs up on us
+                    // is exactly the case backoff exists for.
+                    if (runSession()) backoff = backoffStartMs
                 } catch (_: CancellationException) {
                     throw CancellationException()
                 } catch (e: Exception) {
@@ -93,7 +97,9 @@ class DataChannel(
      *  call when already connected: a queued kick is only consumed while waiting to retry. */
     fun retryNow() { kick.trySend(Unit) }
 
-    private suspend fun runSession() {
+    /** Returns true only if the handshake completed — i.e. this attempt is evidence the host is
+     *  willing to serve us, and the backoff may reset. Every early return is a refusal. */
+    private suspend fun runSession(): Boolean {
         _status.value = DataStatus.Connecting
         ready = false
         val s = connect(host, port); socket = s; out = s.getOutputStream()
@@ -104,7 +110,7 @@ class DataChannel(
             // Handshake: decode EXACTLY one frame; its untouched tail is the first raw output (the
             // ready frame and the first PTY bytes routinely coalesce into one read).
             handshake@ while (!ready) {
-                val n = ins.read(buf); if (n <= 0) return
+                val n = ins.read(buf); if (n <= 0) return false   // hung up on before answering
                 val (m, tail) = dec.feedOne(buf.copyOf(n))
                 if (m == null) continue
                 when (m) {
@@ -112,14 +118,17 @@ class DataChannel(
                         _status.value = DataStatus.Ready(m.cols, m.rows); ready = true
                         if (tail.isNotEmpty()) _output.emit(tail)
                     }
-                    is DataMessage.DataRejected -> { _status.value = DataStatus.Rejected(m.reason); running = false; return }
-                    else -> { _status.value = DataStatus.Rejected("unexpected handshake frame"); return }
+                    is DataMessage.DataRejected -> {
+                        _status.value = DataStatus.Rejected(m.reason); running = false; return false
+                    }
+                    else -> { _status.value = DataStatus.Rejected("unexpected handshake frame"); return false }
                 }
             }
             while (true) {
                 val n = ins.read(buf); if (n <= 0) break
                 _output.emit(buf.copyOf(n))
             }
+            return true
         } finally { closeSocket() }
     }
 

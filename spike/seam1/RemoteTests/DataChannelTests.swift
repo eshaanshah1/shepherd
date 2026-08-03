@@ -124,7 +124,30 @@ final class DataChannelTests: XCTestCase {
         defer { server.stop() }
         let dataFD = try connectTCP(server.boundPort); defer { close(dataFD) }
         try writeFrame(dataFD, .dataHello(sessionNonce: "not-a-real-nonce", paneID: "paneY", cols: 80, rows: 24))
-        XCTAssertEqual(try readOneDataMessage(dataFD), .dataRejected(reason: "bad nonce"))
+        // The reason is deliberately specific. It used to be "bad nonce" for BOTH a dead session and
+        // a pane with no broker, and that one shared string is what sent a debugging session after
+        // session revocation when the pane simply was not streamable. The phone shows this text.
+        XCTAssertEqual(try readOneDataMessage(dataFD), .dataRejected(reason: "session expired"))
+    }
+
+    /// A live nonce but a pane with no broker: distinct cause, distinct message. This refusal had
+    /// no test and no log line, so in the field it was indistinguishable from session revocation —
+    /// and a phone retrying against it looks exactly like a network fault.
+    func testDataChannelRefusesAPaneWithNoBrokerDistinctly() throws {
+        let ptyPath = "/tmp/shepherd-test-pty-\(UUID().uuidString).sock"
+        let hub = PtyHub(socketPath: ptyPath, makeBroker: { PtyBroker(paneID: $0, cols: $1, rows: $2) })
+        XCTAssertTrue(hub.start()); defer { hub.stop() }
+        let server = try makePairedLoopbackServer(lookupBroker: { hub.broker(for: $0) })
+        defer { server.stop() }
+        let (controlFD, nonce) = try pairAndGetNonce(server)
+        defer { close(controlFD) }          // the nonce dies with its control session
+        let dataFD = try connectTCP(server.boundPort); defer { close(dataFD) }
+        try writeFrame(dataFD, .dataHello(sessionNonce: nonce, paneID: "no-helper-here", cols: 80, rows: 24))
+        guard case let .dataRejected(reason) = try readOneDataMessage(dataFD) else {
+            return XCTFail("expected a rejection")
+        }
+        XCTAssertNotEqual(reason, "session expired", "a missing broker is not an expired session")
+        XCTAssertTrue(reason.contains("streamable"), "got \(reason)")
     }
 
     // MARK: - H5: control-channel resize reaches the helper (only for the phone's open pane)

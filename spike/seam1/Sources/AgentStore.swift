@@ -2315,7 +2315,13 @@ final class AgentStore: ObservableObject {
         // Bring the pty-data hub up before the control server so a fast first data
         // connection finds its broker.
         let hub = PtyHub(socketPath: ptySocketPath, makeBroker: { PtyBroker(paneID: $0, cols: $1, rows: $2) })
-        _ = hub.start()
+        // Not discarded: without the hub no pane can stream, and the phone's only clue was a
+        // data channel refused as "bad nonce".
+        if hub.start() {
+            logInfo(.pty, "pty hub listening at \(ptySocketPath)")
+        } else {
+            logError(.pty, "pty hub FAILED to listen at \(ptySocketPath) — no pane will stream")
+        }
         ptyHub = hub
         let s = RemoteServer(
             bindAddress: ip, port: remotePort,
@@ -2366,6 +2372,7 @@ final class AgentStore: ObservableObject {
             // per call: that property is written on main but this closure runs on
             // RemoteServer's connQueue, so re-reading it would be an unsynchronized data race.
             lookupBroker: { [weak hub] in hub?.broker(for: $0) },
+            brokerPaneIDs: { [weak hub] in hub?.paneIDs() ?? [] },
             // A paired client's structural command arrives on RemoteServer's connQueue; apply
             // it on main since it mutates @Published state + drives libghostty focus.
             onCommand: { [weak self] msg in
