@@ -13,6 +13,10 @@ struct ShepherdConfig: Equatable {
     var editorWrapLines: Bool = false
     /// Whether ⌘T's composer opens with the worktree toggle already on.
     var newTabWorktree: Bool = false
+    /// `debug` | `info` | `warn` | `error`. Kept as the raw string so this struct stays
+    /// independent of `Log.swift`, which is compiled into test targets that have no reason
+    /// to know about config files.
+    var logLevel: String? = nil
 }
 
 /// Parse Shepherd directives out of the ghostty-syntax `~/.config/shepherd/config`.
@@ -32,6 +36,7 @@ func parseShepherdConfig(_ contents: String) -> ShepherdConfig {
         let value = body[body.index(after: eq)...].trimmingCharacters(in: .whitespaces)
         guard !value.isEmpty else { continue }
         if key == "worktree-base" { cfg.worktreeBase = value }
+        if key == "log-level" { cfg.logLevel = value }
         if key == "theme" {
             switch value.lowercased() {
             case "light": cfg.theme = .light

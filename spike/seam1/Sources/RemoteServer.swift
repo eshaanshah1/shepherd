@@ -14,7 +14,13 @@ import Darwin
 /// keeps reading but ignores frames until the approval callback admits or rejects, so
 /// the fd never gets a second concurrent reader.
 final class RemoteServer {
-    private let bindAddress: String
+    /// nil = **bridge-only**: no TCP listener of its own, serving only the fds `acceptBridged`
+    /// hands over. That is the shape LAN serving needs, because a LAN client's socket is
+    /// terminated by `LANListener` and arrives as a socketpair — the tailnet bind is
+    /// irrelevant to it. Requiring an address here meant that with Tailscale down there was
+    /// no server at all, so `acceptBridged` was called on nil and every LAN pairing attempt
+    /// completed its TLS handshake and was then answered by nobody.
+    private let bindAddress: String?
     private let port: UInt16
     private let verifyPeer: (String) -> VerifiedPeer?
     private let selfUserID: () -> String?
@@ -127,7 +133,7 @@ final class RemoteServer {
         let writeQueue = DispatchQueue(label: "shepherd.remote.write", qos: .utility)
     }
 
-    init(bindAddress: String, port: UInt16,
+    init(bindAddress: String?, port: UInt16,
          knownDevices: @escaping () -> [PairedDevice],
          persist: @escaping (PairedDevice) -> Void,
          requestApproval: @escaping (String, String, ConfirmKind, @escaping (Bool) -> Void) -> Void,
@@ -197,6 +203,13 @@ final class RemoteServer {
 
     @discardableResult
     func start() -> Bool {
+        // Bridge-only: nothing to bind, and success is the right answer — the server is
+        // ready to be handed fds. Reporting failure here would tear down the very object
+        // LAN serving needs.
+        guard let bindAddress else {
+            logInfo(.remote, "server up in bridge-only mode (no tailnet bind; LAN clients only)")
+            return true
+        }
         let fd = socket(AF_INET, SOCK_STREAM, 0)
         guard fd >= 0 else { return false }
         setCloseOnExec(fd)

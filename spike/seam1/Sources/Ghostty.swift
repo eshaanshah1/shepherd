@@ -100,6 +100,9 @@ final class GhosttyApp {
     /// Main-thread only (libghostty C API + AppKit).
     @MainActor func reloadConfig() {
         Theme.reloadMode()
+        // ⌘⇧R is how you turn `debug` on mid-session, without restarting and losing the state
+        // you are trying to explain.
+        ShepherdLog.shared.reloadLevel(raw: AgentStore.shepherdConfigFromDisk().logLevel)
         guard let app, let cfg = Self.buildConfig() else { return }
         ghostty_app_update_config(app, cfg)
         for view in surfaceViews.allObjects { view.updateConfig(cfg) }

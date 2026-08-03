@@ -6,6 +6,14 @@ import UserNotifications
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // First, so everything below is on the record.
+        ShepherdLog.shared.reloadLevel(raw: AgentStore.shepherdConfigFromDisk().logLevel)
+        logInfo(.app, "launched \(AppVersion.current) (\(AppMode.isDev ? "dev" : "release")) "
+                    + "pid \(ProcessInfo.processInfo.processIdentifier)")
+        // An in-place update moves the bundled CLI, so the shim is re-checked every launch
+        // rather than only at install time.
+        CLIShim.reconcile()
+
         let center = UNUserNotificationCenter.current()
         center.delegate = self
         center.requestAuthorization(options: [.alert, .sound]) { _, _ in }

@@ -56,10 +56,24 @@ final class SocketServer {
         queue.async { [weak self] in self?.acceptLoop() }
     }
 
+    /// Must outlive a transient `accept` failure: this is the channel every agent's state
+    /// arrives on, so abandoning it turns every pane's state to stone with nothing said.
+    /// Same reasoning as `ControlServer.acceptLoop`.
     private func acceptLoop() {
         while true {
             let client = accept(fd, nil, nil)
-            if client < 0 { if errno == EINTR { continue } else { break } }
+            if client < 0 {
+                switch errno {
+                case EINTR, ECONNABORTED: continue
+                case EMFILE, ENFILE, ENOMEM, ENOBUFS:
+                    logWarn(.agent, "hook-socket accept failed (errno \(errno)) — backing off, listener kept")
+                    usleep(100_000)
+                    continue
+                default:
+                    logInfo(.agent, "hook-socket accept loop ended (errno \(errno))")
+                    return
+                }
+            }
             setCloseOnExec(client)
             var buf = [UInt8](repeating: 0, count: 8192)
             let n = read(client, &buf, buf.count)
