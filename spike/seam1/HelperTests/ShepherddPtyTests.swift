@@ -517,4 +517,125 @@ extension ShepherddPtyTests {
         XCTAssertEqual(hello["paneID"] as? String, "paneLate",
                        "the helper must keep trying until the hub exists")
     }
+
+    /**
+     * The other half of the late-connect fix, and the half I shipped broken: a tap that connects
+     * on a RETRY must be readable, not just writable. Output goes straight to the socket, so with
+     * the poll slot never pointed at the live fd, streaming looked perfectly healthy while nothing
+     * the phone sent arrived — no keystrokes and no resize. Asserted through the read direction:
+     * an input frame down the late tap must reach the child and come back out of the PTY.
+     */
+    func testLateConnectedTapCanBeREADFrom() throws {
+        let path = "/tmp/shepherd-test-lateread-\(UUID().uuidString).sock"
+        defer { unlink(path) }
+
+        var master: Int32 = 0, slave: Int32 = 0
+        var ws = winsize(ws_row: 24, ws_col: 80, ws_xpixel: 0, ws_ypixel: 0)
+        XCTAssertEqual(openpty(&master, &slave, nil, nil, &ws), 0, "openpty")
+        let proc = Process()
+        proc.executableURL = helperURL()
+        proc.arguments = ["pty", "--", "/bin/cat"]
+        var env = ProcessInfo.processInfo.environment
+        env["SHEPHERD_PTY_SOCK"] = path          // nothing listening yet — the dial must be retried
+        env["SHEPHERD_TAB_ID"] = "paneRead"
+        proc.environment = env
+        let h = FileHandle(fileDescriptor: slave, closeOnDealloc: false)
+        proc.standardInput = h; proc.standardOutput = h; proc.standardError = h
+        do { try proc.run() } catch { XCTFail("launch: \(error)"); return }
+        close(slave)
+        defer { proc.terminate(); proc.waitUntilExit(); close(master) }
+
+        Thread.sleep(forTimeInterval: 1.0)
+        let listenFD = try startUnixListener(path)
+        defer { close(listenFD) }
+        let conn = try acceptOne(listenFD, timeout: 8)
+        defer { close(conn) }
+        _ = try readOnePtyHelloJSON(conn, timeout: 8)
+
+        // An input frame: [u32 len][0x00][bytes]. cat echoes it back through the PTY.
+        let payload: [UInt8] = [0x00, 0x68, 0x69, 0x0a]           // "hi\n"
+        var frame: [UInt8] = [0, 0, 0, UInt8(payload.count)]
+        frame.append(contentsOf: payload)
+        _ = frame.withUnsafeBytes { write(conn, $0.baseAddress, frame.count) }
+
+        // The child's echo comes back on the master we own.
+        var seen = ""
+        let deadline = Date().addingTimeInterval(8)
+        var rbuf = [UInt8](repeating: 0, count: 4096)
+        while Date() < deadline, !seen.contains("hi") {
+            var pfd = pollfd(fd: master, events: Int16(POLLIN), revents: 0)
+            guard poll(&pfd, 1, 500) > 0 else { continue }
+            let n = read(master, &rbuf, rbuf.count)
+            if n > 0 { seen += String(decoding: rbuf[0..<n], as: UTF8.self) }
+        }
+        XCTAssertTrue(seen.contains("hi"),
+                      "input sent down a retried tap never reached the shell; got \(seen.debugDescription)")
+    }
+
+    /**
+     * A dead tap must not freeze the pane's size forever.
+     *
+     * `gAppDriven` is set when a viewer resizes, so the desktop grid cannot stomp the phone's —
+     * and it used to be cleared ONLY by an explicit `.releaseSize` frame. Any other way for the tap
+     * to end (the phone drops, serving switched off, socket broken) left it stuck, and
+     * reconcileWinsize() then early-returned for the rest of the pane's life: dragging the Shepherd
+     * window no longer resized that PTY. Retrying the dial makes taps come and go, so this went
+     * from rare to routine.
+     *
+     * Sequence: viewer resizes (40x30) → tap dies → outer PTY resizes → the child must see the new
+     * size, not 40x30.
+     */
+    func testLocalResizeWorksAgainAfterTheTapDies() throws {
+        let path = "/tmp/shepherd-test-stuck-\(UUID().uuidString).sock"
+        defer { unlink(path) }
+        let listenFD = try startUnixListener(path)
+        defer { close(listenFD) }
+
+        var master: Int32 = 0, slave: Int32 = 0
+        var ws = winsize(ws_row: 24, ws_col: 80, ws_xpixel: 0, ws_ypixel: 0)
+        XCTAssertEqual(openpty(&master, &slave, nil, nil, &ws), 0, "openpty")
+        let proc = Process()
+        proc.executableURL = helperURL()
+        // Reports its tty size whenever the window changes, which is what we are measuring.
+        proc.arguments = ["pty", "--", "/bin/sh", "-c",
+                          "trap 'stty size' WINCH; while :; do sleep 0.1; done"]
+        var env = ProcessInfo.processInfo.environment
+        env["SHEPHERD_PTY_SOCK"] = path
+        env["SHEPHERD_TAB_ID"] = "paneStuck"
+        proc.environment = env
+        let h = FileHandle(fileDescriptor: slave, closeOnDealloc: false)
+        proc.standardInput = h; proc.standardOutput = h; proc.standardError = h
+        do { try proc.run() } catch { XCTFail("launch: \(error)"); return }
+        close(slave)
+        defer { proc.terminate(); proc.waitUntilExit(); close(master) }
+
+        let conn = try acceptOne(listenFD, timeout: 8)
+        _ = try readOnePtyHelloJSON(conn, timeout: 8)
+
+        // A viewer takes the size: resize frame 40x30 → the helper marks the pane app-driven.
+        let resize: [UInt8] = [0, 0, 0, 5, 0x01, 0, 40, 0, 30]
+        _ = resize.withUnsafeBytes { write(conn, $0.baseAddress, resize.count) }
+        Thread.sleep(forTimeInterval: 0.4)
+
+        // The viewer vanishes WITHOUT sending .releaseSize — a dropped phone, not a clean detach.
+        close(conn)
+        Thread.sleep(forTimeInterval: 0.6)
+
+        // Now the desktop grid changes, exactly as dragging the window does.
+        var bigger = winsize(ws_row: 50, ws_col: 120, ws_xpixel: 0, ws_ypixel: 0)
+        XCTAssertEqual(ioctl(master, TIOCSWINSZ, &bigger), 0, "outer resize")
+        kill(proc.processIdentifier, SIGWINCH)
+
+        var seen = ""
+        let deadline = Date().addingTimeInterval(8)
+        var rbuf = [UInt8](repeating: 0, count: 4096)
+        while Date() < deadline, !seen.contains("50 120") {
+            var pfd = pollfd(fd: master, events: Int16(POLLIN), revents: 0)
+            guard poll(&pfd, 1, 500) > 0 else { continue }
+            let n = read(master, &rbuf, rbuf.count)
+            if n > 0 { seen += String(decoding: rbuf[0..<n], as: UTF8.self) }
+        }
+        XCTAssertTrue(seen.contains("50 120"),
+                      "the pane stayed frozen at the dead viewer's size; child reported \(seen.debugDescription)")
+    }
 }

@@ -27,20 +27,30 @@ final class Tee {
     /// and the phone's only symptom was a refused data channel.
     private var paneID: String?
     private var lastAttempt: Date = .distantPast
-    /// Retry cadence. Cheap: while disconnected the pump polls with a timeout instead of blocking,
-    /// and once connected it goes back to blocking forever, so a working tap costs no wakeups.
-    private let retryEvery: TimeInterval = 2
+    /// Grows to `TapRetry.cap` so a pane whose app is not serving settles at one cheap check per
+    /// 30s rather than dialling into nothing forever.
+    private var retryInterval: TimeInterval = TapRetry.start
 
     /// True while a tap is wanted but not established — the pump uses this to bound its poll.
     var wantsRetry: Bool { sock < 0 && paneID != nil }
 
-    /// Re-dial at most once per [retryEvery], with the CURRENT window size (it may have changed
-    /// while we were disconnected). Best-effort throughout: a failure just leaves the tap off.
+    /// How long the pump may block: forever while the tap is healthy, otherwise paced by the
+    /// current retry interval.
+    var pollTimeoutMs: Int32 { TapRetry.pollTimeoutMs(retrying: wantsRetry, interval: retryInterval) }
+
+    /// Re-dial when it is due, with the CURRENT window size (it may have changed while we were
+    /// disconnected). Best-effort throughout: a failure just leaves the tap off and widens the gap.
     func retryIfNeeded(master: Int32, now: Date = Date()) {
-        guard wantsRetry, now.timeIntervalSince(lastAttempt) >= retryEvery, let pane = paneID else { return }
+        guard wantsRetry, let pane = paneID,
+              let path = ProcessInfo.processInfo.environment["SHEPHERD_PTY_SOCK"], !path.isEmpty
+        else { return }
+        guard TapRetry.shouldDial(now: now, lastAttempt: lastAttempt, interval: retryInterval,
+                                  socketExists: FileManager.default.fileExists(atPath: path))
+        else { return }
         var ws = winsize()
         let ok = ioctl(master, TIOCGWINSZ, &ws) == 0
         connect(paneID: pane, cols: ok ? Int(ws.ws_col) : 80, rows: ok ? Int(ws.ws_row) : 24)
+        retryInterval = sock >= 0 ? TapRetry.start : TapRetry.next(after: retryInterval)
     }
 
     func connect(paneID: String, cols: Int, rows: Int) {
@@ -217,7 +227,13 @@ func pump(master: Int32) {
     let tap = Tee.shared.fd
     var pfds = [pollfd(fd: STDIN_FILENO, events: Int16(POLLIN), revents: 0),
                 pollfd(fd: master,       events: Int16(POLLIN), revents: 0)]
-    let tapIdx = tap >= 0 ? pfds.count : -1
+    // UNCONDITIONAL, because the slot below is unconditional. Deriving this from the fd we happen
+    // to hold at startup meant that once the dial was retried — i.e. whenever the first attempt
+    // failed, which is the normal case at launch — tapIdx stayed -1, every `tapIdx >= 0` guard
+    // was skipped, and the reserved slot was never pointed at the live socket. Output still flowed
+    // (it writes to the socket directly), so streaming looked healthy while nothing the phone sent
+    // was ever read: no input, no resize.
+    let tapIdx = pfds.count
     // Reserved UNCONDITIONALLY: a tap that connects later (the dial is retried) needs a slot to
     // be polled in, and poll ignores a negative fd — so an unestablished tap costs nothing. With
     // the slot omitted, a reconnected tap could still write output but the phone's keystrokes
@@ -230,8 +246,9 @@ func pump(master: Int32) {
     while true {
         // Block forever when the tap is healthy (zero idle wakeups); poll with a timeout only
         // while a re-dial is pending, so the retry below actually gets to run.
-        let timeout: Int32 = Tee.shared.wantsRetry ? 500 : -1
-        if poll(&pfds, nfds_t(pfds.count), timeout) < 0 { if errno == EINTR { continue }; break }
+        if poll(&pfds, nfds_t(pfds.count), Tee.shared.pollTimeoutMs) < 0 {
+            if errno == EINTR { continue }; break
+        }
         Tee.shared.retryIfNeeded(master: master)
         // The captured `tap` is only the fd we started with; a retry replaces it.
         if tapIdx >= 0 { pfds[tapIdx].fd = Tee.shared.fd }
@@ -273,7 +290,17 @@ func pump(master: Int32) {
                     }
                 } else if closed(n) { dead = true }
             }
-            if dead { Tee.shared.disable(); pfds[tapIdx].fd = -1 }
+            if dead {
+                Tee.shared.disable(); pfds[tapIdx].fd = -1
+                // Resume LOCAL sizing. `gAppDriven` is set by a viewer's resize so the desktop
+                // grid can't stomp the phone's, and it was cleared only by an explicit
+                // `.releaseSize`. A tap that dies any other way — the phone drops, serving is
+                // switched off, the socket breaks — left the flag stuck true, and from then on
+                // reconcileWinsize() early-returned: dragging the Shepherd window no longer
+                // resized that pane's PTY, for the rest of the pane's life. Retrying the dial
+                // makes taps come and go, so this is now easy to hit.
+                releaseLocalSize()
+            }
         }
 
         // SIGWINCH woke us (a burst coalesces into one byte): drain the pipe and
