@@ -67,7 +67,11 @@ class DataChannel(
                 } catch (_: CancellationException) {
                     throw CancellationException()
                 } catch (e: Exception) {
-                    _status.value = DataStatus.Rejected(e.message ?: "data channel error")
+                    // A transport failure is TRANSIENT and this loop already retries it. It must
+                    // not report `Rejected`, which means "the host refused this nonce" and is the
+                    // signal the view model rebuilds on — conflating the two turned every dropped
+                    // socket into a rebuild, i.e. a new TLS connection to the host every ~250ms.
+                    _status.value = DataStatus.Disconnected
                 }
                 if (!running) break
                 _status.value = DataStatus.Disconnected

@@ -12,10 +12,12 @@ import com.eshaan.shepherd.transport.RemoteConnection
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterIsInstance
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
@@ -82,7 +84,9 @@ class AgentViewModel(
     /** How long a drop is held back before the UI shows it. Long enough to cover an unlock
      *  reattach, short enough that a real outage still reports promptly. */
     private val disconnectGraceMs = 900L
-    private val rejectionRebuildMs = 250L
+    /** How long a rejected channel waits for a DIFFERENT nonce before giving up and
+     *  leaving it to the nonce-follower. Never a retry interval — see rebuildAfterRejection. */
+    private val rebuildNonceTimeoutMs = 10_000L
 
     /** Create the terminal emulator/session eagerly — WITHOUT opening the data channel — so the
      *  view can render and measure its grid first. [attach] then opens the channel at that measured
@@ -168,14 +172,25 @@ class AgentViewModel(
         }
     }
 
-    /** A rejected channel will never retry itself, so re-dial with whatever nonce is live now. */
+    /**
+     * A rejected channel will never retry itself, so re-dial — but ONLY with a nonce we have not
+     * already tried. A rejection means the host refused *that* nonce, so re-dialing the same one
+     * just gets refused again, and rebuilding on a timer turned that into a connection attempt per
+     * 250ms against the host (visible in its log as a TLS client every second). The recovery we
+     * actually want is: wait for the control channel to produce a DIFFERENT nonce, then rebuild
+     * once.
+     */
     private fun rebuildAfterRejection(session: RemoteTerminalSession) {
         rebuildJob?.cancel()
         rebuildJob = viewModelScope.launch {
-            delay(rejectionRebuildMs)   // let a control reconnect land a fresh nonce first
-            controlConn.retryNow()
-            val nonce = (controlConn.status.value as? ConnStatus.Connected)?.sessionNonce ?: return@launch
-            openChannel(nonce, session)
+            controlConn.retryNow()   // no-op if the control session is live
+            val fresh = withTimeoutOrNull(rebuildNonceTimeoutMs) {
+                controlConn.status
+                    .filterIsInstance<ConnStatus.Connected>()
+                    .map { it.sessionNonce }
+                    .first { it != lastNonce }
+            } ?: return@launch        // nothing new to try; the nonce-follower will catch a later one
+            openChannel(fresh, session)
         }
     }
 

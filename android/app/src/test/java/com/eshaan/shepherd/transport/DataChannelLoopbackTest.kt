@@ -100,4 +100,23 @@ class DataChannelLoopbackTest {
 
         collectJob.cancel(); channel.stop(); scope.cancel(); server.close()
     }
+
+    /**
+     * A transport failure must report `Disconnected`, never `Rejected`. `Rejected` means the host
+     * refused this nonce and is the signal AgentViewModel rebuilds the channel on, so reporting it
+     * for an ordinary dropped or refused socket turned every blip into a rebuild — measured on the
+     * host as a fresh TLS client roughly every second, with the phone unable to hold a session.
+     * The retry loop here already handles transport failures; nothing above needs to know.
+     */
+    @Test fun aRefusedSocketReportsDisconnectedNotRejected() = runBlocking {
+        // Bind then close, so the port is (almost certainly) refusing rather than listening.
+        val probe = ServerSocket(0); val deadPort = probe.localPort; probe.close()
+        val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        val ch = DataChannel("127.0.0.1", deadPort, "nonce", "p1", 80, 24, scope)
+        ch.start()
+        val st = withTimeout(5000) { ch.status.first { it !is DataStatus.Connecting } }
+        assertTrue("a transport error must not read as a host rejection, got $st",
+                   st is DataStatus.Disconnected)
+        ch.stop(); scope.cancel()
+    }
 }
