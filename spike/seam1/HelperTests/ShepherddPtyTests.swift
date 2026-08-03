@@ -475,4 +475,46 @@ extension ShepherddPtyTests {
         proc.waitUntilExit()
         XCTAssertTrue(exited, "helper did not exit after its outer PTY closed — orphaned")
     }
+
+    /**
+     * THE launch race, which cost an afternoon and three wrong diagnoses. The app's pty hub comes
+     * up asynchronously after launch, so every pane restored at startup dials before it is
+     * listening. The dial was a single attempt, so those panes stayed tapless for the process's
+     * whole life — on the host that read as `no PTY broker` for EVERY pane, and the phone's only
+     * symptom was a data channel refused as "bad nonce".
+     *
+     * So: start the helper with nothing listening, bring the listener up afterwards, and require
+     * the helper to arrive anyway.
+     */
+    func testTapConnectsEvenWhenTheHubStartsLater() throws {
+        let path = "/tmp/shepherd-test-late-\(UUID().uuidString).sock"
+        defer { unlink(path) }
+
+        var master: Int32 = 0, slave: Int32 = 0
+        var ws = winsize(ws_row: 24, ws_col: 80, ws_xpixel: 0, ws_ypixel: 0)
+        XCTAssertEqual(openpty(&master, &slave, nil, nil, &ws), 0, "openpty")
+        let proc = Process()
+        proc.executableURL = helperURL()
+        proc.arguments = ["pty", "--", "/bin/cat"]
+        var env = ProcessInfo.processInfo.environment
+        env["SHEPHERD_PTY_SOCK"] = path          // nothing is listening here yet
+        env["SHEPHERD_TAB_ID"] = "paneLate"
+        proc.environment = env
+        let h = FileHandle(fileDescriptor: slave, closeOnDealloc: false)
+        proc.standardInput = h; proc.standardOutput = h; proc.standardError = h
+        do { try proc.run() } catch { XCTFail("launch: \(error)"); return }
+        close(slave)
+        defer { proc.terminate(); proc.waitUntilExit(); close(master) }
+
+        // Let the first dial fail, exactly as it does at app launch.
+        Thread.sleep(forTimeInterval: 1.0)
+        let listenFD = try startUnixListener(path)
+        defer { close(listenFD) }
+
+        let conn = try acceptOne(listenFD, timeout: 8)
+        defer { close(conn) }
+        let hello = try readOnePtyHelloJSON(conn, timeout: 8)
+        XCTAssertEqual(hello["paneID"] as? String, "paneLate",
+                       "the helper must keep trying until the hub exists")
+    }
 }

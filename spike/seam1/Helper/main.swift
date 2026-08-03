@@ -20,7 +20,32 @@ final class Tee {
     static let shared = Tee()
     private var sock: Int32 = -1
 
+    /// The pane this tap belongs to, kept so the dial can be RETRIED. A single attempt was the
+    /// bug: the app's pty hub comes up asynchronously after launch, so every pane restored at
+    /// startup dialled before it was listening, failed, and stayed tapless for the process's whole
+    /// life. On the host that appeared as `no PTY broker` for every pane — nothing could stream,
+    /// and the phone's only symptom was a refused data channel.
+    private var paneID: String?
+    private var lastAttempt: Date = .distantPast
+    /// Retry cadence. Cheap: while disconnected the pump polls with a timeout instead of blocking,
+    /// and once connected it goes back to blocking forever, so a working tap costs no wakeups.
+    private let retryEvery: TimeInterval = 2
+
+    /// True while a tap is wanted but not established — the pump uses this to bound its poll.
+    var wantsRetry: Bool { sock < 0 && paneID != nil }
+
+    /// Re-dial at most once per [retryEvery], with the CURRENT window size (it may have changed
+    /// while we were disconnected). Best-effort throughout: a failure just leaves the tap off.
+    func retryIfNeeded(master: Int32, now: Date = Date()) {
+        guard wantsRetry, now.timeIntervalSince(lastAttempt) >= retryEvery, let pane = paneID else { return }
+        var ws = winsize()
+        let ok = ioctl(master, TIOCGWINSZ, &ws) == 0
+        connect(paneID: pane, cols: ok ? Int(ws.ws_col) : 80, rows: ok ? Int(ws.ws_row) : 24)
+    }
+
     func connect(paneID: String, cols: Int, rows: Int) {
+        self.paneID = paneID
+        lastAttempt = Date()
         guard let path = ProcessInfo.processInfo.environment["SHEPHERD_PTY_SOCK"], !path.isEmpty else { return }
         let fd = socket(AF_UNIX, SOCK_STREAM, 0); guard fd >= 0 else { return }
         var addr = sockaddr_un(); addr.sun_family = sa_family_t(AF_UNIX)
@@ -193,13 +218,23 @@ func pump(master: Int32) {
     var pfds = [pollfd(fd: STDIN_FILENO, events: Int16(POLLIN), revents: 0),
                 pollfd(fd: master,       events: Int16(POLLIN), revents: 0)]
     let tapIdx = tap >= 0 ? pfds.count : -1
-    if tap >= 0 { pfds.append(pollfd(fd: tap, events: Int16(POLLIN), revents: 0)) }
+    // Reserved UNCONDITIONALLY: a tap that connects later (the dial is retried) needs a slot to
+    // be polled in, and poll ignores a negative fd — so an unestablished tap costs nothing. With
+    // the slot omitted, a reconnected tap could still write output but the phone's keystrokes
+    // would never be read.
+    pfds.append(pollfd(fd: tap, events: Int16(POLLIN), revents: 0))
     // The SIGWINCH self-pipe read end: a wake byte here means "outer resized, reconcile".
     let winch = gWinchPipe.read
     let winchIdx = pfds.count
     if winch >= 0 { pfds.append(pollfd(fd: winch, events: Int16(POLLIN), revents: 0)) }
     while true {
-        if poll(&pfds, nfds_t(pfds.count), -1) < 0 { if errno == EINTR { continue }; break }
+        // Block forever when the tap is healthy (zero idle wakeups); poll with a timeout only
+        // while a re-dial is pending, so the retry below actually gets to run.
+        let timeout: Int32 = Tee.shared.wantsRetry ? 500 : -1
+        if poll(&pfds, nfds_t(pfds.count), timeout) < 0 { if errno == EINTR { continue }; break }
+        Tee.shared.retryIfNeeded(master: master)
+        // The captured `tap` is only the fd we started with; a retry replaces it.
+        if tapIdx >= 0 { pfds[tapIdx].fd = Tee.shared.fd }
 
         // outer (libghostty) → inner shell
         if pfds[0].revents & Int16(POLLIN) != 0 {
@@ -228,7 +263,7 @@ func pump(master: Int32) {
         if tapIdx >= 0, pfds[tapIdx].fd >= 0 {
             var dead = pfds[tapIdx].revents & hup != 0
             if !dead, pfds[tapIdx].revents & Int16(POLLIN) != 0 {
-                let n = read(tap, buf, cap)
+                let n = read(pfds[tapIdx].fd, buf, cap)   // live fd, not the one we started with
                 if n > 0 {
                     appInBuf.append(contentsOf: UnsafeBufferPointer(start: buf, count: n))
                     for f in decodeHelperFrames(&appInBuf) {
