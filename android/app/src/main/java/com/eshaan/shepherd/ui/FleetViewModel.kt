@@ -92,7 +92,18 @@ class FleetViewModel(
         }
     }
 
-    fun refresh() { disconnect(); connect() }   // reconnect re-snapshots
+    /// Called on every foreground (ON_START), so it must not disturb a working connection.
+    /// `disconnect(); connect()` unconditionally is what broke streaming on unlock: the host
+    /// revokes a dead control session's `sessionNonce`, so tearing down a live one stranded the
+    /// pane's data channel and left the terminal flapping between connecting and disconnected
+    /// until the user backed out of the session and re-entered it. A live connection is already
+    /// receiving pushed state; all it needs is a re-snapshot.
+    /// A live connection needs nothing: the host pushes tree and state updates as they happen, so
+    /// the snapshot is already current. Only a connection that is actually down gets rebuilt.
+    fun refresh() {
+        if (_connected.value) return
+        disconnect(); connect()
+    }
 
     fun disconnect() {
         connectJob?.cancel(); connectJob = null

@@ -47,11 +47,18 @@ final class FCMMessageTests: XCTestCase {
         XCTAssertNil(msg["notification"])   // data-only: no notification block, ever
     }
 
-    func testWakeMessageNonUrgentIsNormalPriority() {
+    /// This test asserted `normal` and so encoded the defect: a finished turn is not "urgent",
+    /// but the message is data-only, so Android cannot display it without waking the app — and a
+    /// locked, dozing phone defers precisely that wake at normal priority. The push was dropped
+    /// in the one situation the phone exists for. Priority is high for every wake now; `urgent`
+    /// remains in the payload for the client's own sound treatment.
+    func testEveryWakeIsHighPriorityEvenWhenNotUrgent() {
         let m = buildWakeMessage(token: "TOK", paneID: "p1", state: "needsCheck", urgent: false)
         let msg = m["message"] as! [String: Any]
         XCTAssertEqual((msg["data"] as! [String: String])["urgent"], "false")
-        XCTAssertEqual((msg["android"] as! [String: String])["priority"], "normal")
+        XCTAssertEqual((msg["android"] as! [String: String])["priority"], "high",
+                       "a data-only wake at normal priority is deferred by Doze on a locked phone")
+        XCTAssertNil(msg["notification"])
     }
 
     func testDedupSuppressesSameStateWithinWindow() {

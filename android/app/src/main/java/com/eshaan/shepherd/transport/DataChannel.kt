@@ -42,6 +42,9 @@ class DataChannel(
     private var loopJob: Job? = null
     private var writerJob: Job? = null
     private val inputCh = Channel<ByteArray>(Channel.UNLIMITED)
+    /** CONFLATED: many kicks while waiting collapse to one retry, and a kick sent while connected
+     *  is simply the next wait's head start rather than a queue of reconnects. */
+    private val kick = Channel<Unit>(Channel.CONFLATED)
     @Volatile private var socket: Socket? = null
     @Volatile private var out: OutputStream? = null
     @Volatile private var ready = false
@@ -68,10 +71,23 @@ class DataChannel(
                 }
                 if (!running) break
                 _status.value = DataStatus.Disconnected
-                delay(backoff); backoff = (backoff * 2).coerceAtMost(backoffMaxMs)
+                // Interruptible: locking the phone kills the socket and the backoff then doubles
+                // its way to backoffMaxMs while the screen is off, so on unlock the next attempt
+                // could be half a minute away — which read as "streaming is broken until I leave
+                // the session and come back". `retryNow()` collapses that wait to nothing.
+                if (waitForRetry(backoff)) backoff = backoffStartMs
+                else backoff = (backoff * 2).coerceAtMost(backoffMaxMs)
             }
         }
     }
+
+    /** Suspend up to [ms], returning true if [retryNow] woke us instead of the timeout. */
+    private suspend fun waitForRetry(ms: Long): Boolean =
+        withTimeoutOrNull(ms) { kick.receive(); true } ?: false
+
+    /** Reconnect immediately and reset the backoff — call this when the phone unlocks. Safe to
+     *  call when already connected: a queued kick is only consumed while waiting to retry. */
+    fun retryNow() { kick.trySend(Unit) }
 
     private suspend fun runSession() {
         _status.value = DataStatus.Connecting

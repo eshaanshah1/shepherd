@@ -11,6 +11,7 @@ import com.eshaan.shepherd.transport.DataStatus
 import com.eshaan.shepherd.transport.RemoteConnection
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -73,6 +74,15 @@ class AgentViewModel(
     private var attachCols = initialCols
     private var attachRows = initialRows
     @Volatile private var opened = false
+    /** The nonce the current channel was built with, so a rebuild can tell a genuinely new
+     *  session from the same one coming back. */
+    private var lastNonce: String? = null
+    private var graceJob: Job? = null
+    private var rebuildJob: Job? = null
+    /** How long a drop is held back before the UI shows it. Long enough to cover an unlock
+     *  reattach, short enough that a real outage still reports promptly. */
+    private val disconnectGraceMs = 900L
+    private val rejectionRebuildMs = 250L
 
     /** Create the terminal emulator/session eagerly — WITHOUT opening the data channel — so the
      *  view can render and measure its grid first. [attach] then opens the channel at that measured
@@ -120,16 +130,76 @@ class AgentViewModel(
     private fun openChannel(nonce: String, session: RemoteTerminalSession) {
         channelJobs.forEach { it.cancel() }; channelJobs.clear()
         channel?.stop()
+        lastNonce = nonce
         val ch = channelFactory(nonce, attachCols, attachRows, viewModelScope)
         channel = ch
         channelJobs += viewModelScope.launch { ch.output.collect { session.onOutput(it) } }
-        channelJobs += viewModelScope.launch { ch.status.collect { _status.value = it } }
+        channelJobs += viewModelScope.launch { ch.status.collect { publish(it, session) } }
         ch.start()
+    }
+
+    /**
+     * Surface the channel's status, with two departures from passing it straight through.
+     *
+     * A brief drop is held back for [disconnectGraceMs] before it reaches the UI, because a
+     * reattach that completes inside that window should look continuous rather than flash
+     * "disconnected" — that flicker is the jitter, not a state worth rendering.
+     *
+     * And a channel that died terminally is rebuilt rather than left dead: `Rejected` stops
+     * DataChannel's own retry loop for good (a revoked nonce is not worth retrying), so before
+     * this the pane recovered only when the CONTROL connection produced a *different* nonce. When
+     * the control session survived the lock, the nonce never changed, nothing rebuilt the dead
+     * channel, and the only way back was leaving the session and re-entering it.
+     */
+    private fun publish(st: DataStatus, session: RemoteTerminalSession) {
+        graceJob?.cancel(); graceJob = null
+        when (st) {
+            is DataStatus.Ready -> _status.value = st
+            is DataStatus.Connecting ->
+                // Don't advertise "connecting" over a live stream mid-reattach either.
+                if (_status.value !is DataStatus.Ready) _status.value = st
+            is DataStatus.Disconnected, is DataStatus.Rejected -> {
+                graceJob = viewModelScope.launch {
+                    delay(disconnectGraceMs)
+                    _status.value = st
+                }
+                if (st is DataStatus.Rejected) rebuildAfterRejection(session)
+            }
+        }
+    }
+
+    /** A rejected channel will never retry itself, so re-dial with whatever nonce is live now. */
+    private fun rebuildAfterRejection(session: RemoteTerminalSession) {
+        rebuildJob?.cancel()
+        rebuildJob = viewModelScope.launch {
+            delay(rejectionRebuildMs)   // let a control reconnect land a fresh nonce first
+            controlConn.retryNow()
+            val nonce = (controlConn.status.value as? ConnStatus.Connected)?.sessionNonce ?: return@launch
+            openChannel(nonce, session)
+        }
+    }
+
+    /**
+     * The phone came back. Kick both channels instead of waiting out their backoff — this is what
+     * makes unlocking resume immediately rather than up to `backoffMaxMs` later.
+     */
+    fun resume() {
+        // Kick the DATA channel, which is what carries the stream, and leave the control channel
+        // alone if it is up: its nonce is still valid to the host, so re-dialing data with the
+        // same nonce restores streaming without a re-handshake. `retryNow` is a no-op on a live
+        // control session by design — dropping it would revoke the nonce we are about to use.
+        controlConn.retryNow()
+        channel?.retryNow()
+        val session = _terminalSession.value ?: return
+        // A channel that was rejected will not retry itself, so it needs an explicit rebuild.
+        if (channel == null || _status.value is DataStatus.Rejected) rebuildAfterRejection(session)
     }
 
     fun detach() {
         jobs.forEach { it.cancel() }; jobs.clear()
         channelJobs.forEach { it.cancel() }; channelJobs.clear()
+        graceJob?.cancel(); graceJob = null
+        rebuildJob?.cancel(); rebuildJob = null
         channel?.stop(); channel = null
         _terminalSession.value = null
         _status.value = DataStatus.Disconnected

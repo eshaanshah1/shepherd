@@ -103,4 +103,36 @@ class AgentViewModelTest {
 
         vm.detach(); scope.cancel()
     }
+
+    /**
+     * THE lock/unlock regression. Foregrounding the app calls FleetViewModel.refresh() and the
+     * agent screen's resume(); neither may drop a LIVE control session, because the host revokes
+     * a dead session's nonce and every data channel built on it is then answered `dataRejected`,
+     * which stops its retry loop for good. That is what left the terminal flapping between
+     * connecting and disconnected until the session was left and re-entered.
+     *
+     * Asserted at the seam that caused it: `retryNow()` on a connected socket keeps both the
+     * session and its nonce.
+     */
+    @Test fun retryNowLeavesALiveControlSessionAndItsNonceAlone() = runBlocking {
+        val controlServer = ServerSocket(0)
+        controlHost(controlServer, "nonce-keep")
+        val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        val controlConn = RemoteConnection("127.0.0.1", controlServer.localPort,
+            { ControlMessage.Hello("d", "n", null, "sec", null, 1) }, scope)
+        controlConn.start()
+        val before = withTimeout(5000) {
+            controlConn.status.first { it is ConnStatus.Connected }
+        } as ConnStatus.Connected
+
+        controlConn.retryNow()          // what unlocking used to do to a healthy connection
+        controlConn.retryNow()
+
+        val after = controlConn.status.value
+        assertTrue("a live session must stay connected, got $after", after is ConnStatus.Connected)
+        assertEquals("the nonce must survive — data channels are built on it",
+                     before.sessionNonce, (after as ConnStatus.Connected).sessionNonce)
+
+        controlConn.stop(); scope.cancel(); controlServer.close()
+    }
 }

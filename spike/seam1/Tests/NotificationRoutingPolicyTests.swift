@@ -54,4 +54,14 @@ final class NotificationRoutingPolicyTests: XCTestCase {
         ]
         XCTAssertEqual(NotificationRoutingPolicy.catchUpTargets(panes), ["a", "c", "e"])
     }
+
+    /// Belt for the clamshell defect. `isViewing` now includes `!isAway`, so this combination
+    /// should never reach the policy — but if that regresses, the phone must still ring rather
+    /// than every channel going quiet at once. A shut lid is not a pair of eyes.
+    func testAwayStillPushesEvenIfViewingIsSomehowTrue() {
+        let r = NotificationRoutingPolicy.decide(isAway: true, viewing: true, macViewers: [])
+        XCTAssertFalse(r.banner, "nobody can see a banner on a shut lid")
+        XCTAssertFalse(r.sound)
+        XCTAssertTrue(r.fcm, "the phone is the only surface left when the lid is shut")
+    }
 }
