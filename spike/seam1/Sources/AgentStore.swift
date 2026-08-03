@@ -1084,11 +1084,18 @@ final class AgentStore: ObservableObject {
         }
     }
 
+    /// `~/.config/shepherd/config`, parsed. Defaults when the file is absent or unreadable.
+    static func shepherdConfigFromDisk() -> ShepherdConfig {
+        let path = (NSHomeDirectory() as NSString).appendingPathComponent(".config/shepherd/config")
+        guard let contents = try? String(contentsOfFile: path, encoding: .utf8) else {
+            return ShepherdConfig()
+        }
+        return parseShepherdConfig(contents)
+    }
+
     /// `# shepherd: new-tab-worktree = true` ⇒ the composer opens with worktree on.
     func newTabWorktreeDefault() -> Bool {
-        let path = (NSHomeDirectory() as NSString).appendingPathComponent(".config/shepherd/config")
-        guard let contents = try? String(contentsOfFile: path, encoding: .utf8) else { return false }
-        return parseShepherdConfig(contents).newTabWorktree
+        AgentStore.shepherdConfigFromDisk().newTabWorktree
     }
 
     /// Make the tab the composer describes.
@@ -1497,7 +1504,7 @@ final class AgentStore: ObservableObject {
                 return self.ephemeralPanes[i].pane
             }
         } else {
-            shepherdLog("event=\(event) tab=\(paneID.prefix(8)) -> NO SUCH TAB")
+            logWarn(.agent, "event=\(event) tab=\(paneID.prefix(8)) -> NO SUCH TAB")
         }
     }
 
@@ -1511,7 +1518,7 @@ final class AgentStore: ObservableObject {
         // A nested `claude` (e.g. `claude -p` run via Bash) reports on the parent pane's
         // id with its own session_id; drop it so it can't drive the parent's state.
         guard sessionEventAccepted(sid: sid, owner: current.sessionID) else {
-            shepherdLog("event=\(event) tab=\(paneID.prefix(8)) (ignored: foreign session \(sid.prefix(8)))")
+            logDebug(.agent, "event=\(event) tab=\(paneID.prefix(8)) (ignored: foreign session \(sid.prefix(8)))")
             return
         }
         let cur = current.state
@@ -1526,7 +1533,7 @@ final class AgentStore: ObservableObject {
         } else {
             suffix = "\(cur.rawValue) (ignored: not mid-turn)"
         }
-        shepherdLog("event=\(event)\(detail.isEmpty ? "" : "[\(detail)]") tab=\(paneID.prefix(8)) " + suffix)
+        logInfo(.agent, "event=\(event)\(detail.isEmpty ? "" : "[\(detail)]") tab=\(paneID.prefix(8)) " + suffix)
 
         guard res.applied else { return }
         let updated = mutate {
@@ -1593,18 +1600,6 @@ final class AgentStore: ObservableObject {
             }
         }
         if wsID == nil { broadcastEphemeralTree() }   // ephemeral state changed → re-mirror
-    }
-
-    private func shepherdLog(_ msg: String) {
-        let path = AppMode.isDev ? "/tmp/shepherd-dev-events.log" : "/tmp/shepherd-events.log"
-        guard let data = (msg + "\n").data(using: .utf8) else { return }
-        if let h = FileHandle(forWritingAtPath: path) {
-            defer { try? h.close() }
-            h.seekToEndOfFile()
-            h.write(data)
-        } else {
-            FileManager.default.createFile(atPath: path, contents: data)
-        }
     }
 
     /// OSC title (SET_TITLE action). Not persisted (only userTitle is).
@@ -2109,37 +2104,92 @@ final class AgentStore: ObservableObject {
 
     /// Bring up the TLS listener. Needs `remoteServer` (it bridges into it), so enabling LAN
     /// serving turns tailnet serving on as well rather than silently doing nothing.
-    func startLANServingIfEnabled() {
+    /// Why the local network is not being served despite the toggle being on, for the UI to
+    /// show. A dead listener that still reads as "on" is what sent a phone to the tailnet
+    /// instead: the QR drops its `lan=` half when `lanCertHash` is nil, silently.
+    private(set) var lanServingError: String?
+
+    /// How many times a bind is retried before giving up. `stop()` cancels the NWListener
+    /// asynchronously, so an off→on toggle reliably hits EADDRINUSE on the first attempt —
+    /// the port is still held by the listener we just cancelled.
+    static let lanBindAttempts = 4
+
+    func startLANServingIfEnabled(attempt: Int = 0) {
         guard isServingLAN, lanListener == nil else { return }
         if remoteServer == nil {
             if !isServing { setServing(true) } else { startRemoteServingIfEnabled() }
         }
         guard let got = LANIdentity.loadOrMint(dir: AppMode.supportDir) else {
-            shepherdLog("LAN identity unavailable — not serving on the local network"); return
+            failLANServing("LAN identity unavailable (could not read or mint the certificate)")
+            return
         }
         lanCertHash = got.certHash
         let l = LANListener(
             port: AgentStore.defaultLANPort, identity: got.identity,
-            onBridgedFD: { [weak self] fd, ip in self?.remoteServer?.acceptBridged(fd: fd, peerIP: ip) },
-            log: { [weak self] line in self?.shepherdLog(line) })
-        guard l.start() else { lanCertHash = nil; return }
+            onBridgedFD: { [weak self] fd, ip in
+                guard let server = self?.remoteServer else {
+                    // Nothing to hand it to. Close it rather than leaking the socketpair end,
+                    // and say so — this was silent, and silence here looks exactly like a
+                    // network problem from the client's side.
+                    logError(.lan, "dropped a bridged connection from \(ip ?? "?"): no server to hand it to")
+                    close(fd)
+                    return
+                }
+                logInfo(.lan, "bridged a TLS client from \(ip ?? "?") into the control server")
+                server.acceptBridged(fd: fd, peerIP: ip)
+            },
+            log: { line in logInfo(.lan, line) })
+        guard l.start() else {
+            lanCertHash = nil
+            retryOrFailLANServing(attempt: attempt, reason: "could not create the listener")
+            return
+        }
         lanListener = l
+        lanServingError = nil
         objectWillChange.send()
         // The bind is asynchronous, so failure (port in use) arrives after start() said yes.
-        // Reflect it rather than leaving the UI claiming to serve.
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let ok = l.waitUntilReady()
-            guard !ok else { return }
+            guard !ok else {
+                logInfo(.lan, "listening on 0.0.0.0:\(AgentStore.defaultLANPort)")
+                return
+            }
             DispatchQueue.main.async {
                 guard let self, self.lanListener === l else { return }
-                self.stopLANServing()
+                self.lanListener?.stop(); self.lanListener = nil
+                self.lanCertHash = nil
+                self.retryOrFailLANServing(attempt: attempt, reason: "bind failed on port \(AgentStore.defaultLANPort)")
             }
         }
     }
 
+    /// Retry a failed bind, then give up loudly. Giving up must leave a reason behind: the
+    /// toggle stays on (it is the user's intent), so something has to say it is not working.
+    private func retryOrFailLANServing(attempt: Int, reason: String) {
+        guard attempt + 1 < AgentStore.lanBindAttempts else {
+            failLANServing(reason)
+            return
+        }
+        let delay = 0.4 * Double(attempt + 1)
+        logWarn(.lan, "\(reason) — retrying in \(String(format: "%.1f", delay))s "
+                    + "(attempt \(attempt + 2) of \(AgentStore.lanBindAttempts))")
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            self?.startLANServingIfEnabled(attempt: attempt + 1)
+        }
+    }
+
+    private func failLANServing(_ reason: String) {
+        logError(.lan, "not serving on the local network: \(reason)")
+        lanServingError = reason
+        clearLANCode()
+        objectWillChange.send()
+    }
+
     func stopLANServing() {
+        if lanListener != nil { logInfo(.lan, "stopped serving on the local network") }
         lanListener?.stop(); lanListener = nil
         lanCertHash = nil
+        lanServingError = nil
         clearLANCode()
         objectWillChange.send()
     }
@@ -2215,12 +2265,19 @@ final class AgentStore: ObservableObject {
 
     private func startRemoteServing(on ip: String?) {
         guard isServing, remoteServer == nil else { return }
-        guard let ip else {
-            if !loggedNoServeAddress {   // once per stretch, not once a minute
-                shepherdLog("REMOTE no tailnet address to bind — not serving")
-                loggedNoServeAddress = true
+        // No tailnet address is not a reason to have no server: a LAN client's socket is
+        // terminated by LANListener and bridged in, so it needs the protocol handler, not
+        // the tailnet bind. Build it bridge-only instead of returning — returning is what
+        // made every LAN pairing attempt hang after a successful TLS handshake.
+        if ip == nil {
+            guard isServingLAN else {
+                if !loggedNoServeAddress {   // once per stretch, not once a minute
+                    logInfo(.remote, "no tailnet address to bind and LAN serving off — not serving")
+                    loggedNoServeAddress = true
+                }
+                return
             }
-            return
+            logInfo(.remote, "no tailnet address to bind — starting bridge-only for LAN clients")
         }
         loggedNoServeAddress = false
         // Bring the pty-data hub up before the control server so a fast first data
@@ -2284,14 +2341,19 @@ final class AgentStore: ObservableObject {
             },
             activeLANCode: { [weak self] in self?.activeLANCode() },
             noteLANCodeAttempt: { [weak self] in self?.noteLANCodeAttempt() },
-            log: { [weak self] line in self?.shepherdLog(line) })
+            log: { line in logInfo(.remote, line) })
         if s.start() {
             remoteServer = s
             remoteServeAddress = ip
-            shepherdLog("REMOTE serving on \(ip):\(remotePort)")
+            logInfo(.remote, ip.map { "serving on \($0):\(remotePort)" }
+                          ?? "bridge-only server up (LAN clients only)")
+            // The LAN listener may have started first and found no server to bridge into.
+            // Now there is one, so make sure it is actually up rather than waiting for the
+            // user to toggle it.
+            startLANServingIfEnabled()
         } else {
             ptyHub?.stop(); ptyHub = nil
-            shepherdLog("REMOTE bind failed on \(ip):\(remotePort)")
+            logError(.remote, "bind failed on \(ip ?? "-"):\(remotePort) — not serving")
         }
     }
 
@@ -2470,7 +2532,7 @@ final class AgentStore: ObservableObject {
                     self.relocatingHosts.remove(hostID)
                     let newID = self.hostID(found.host, found.port)
                     guard newID != hostID else { return }
-                    self.shepherdLog("REMOTE \(hostID) moved to \(newID) — re-pointing")
+                    logInfo(.remote, "\(hostID) moved to \(newID) — re-pointing")
                     self.adoptRelocatedHost(from: hostID, to: newID, pin: pin)
                 }
             }
@@ -2745,7 +2807,7 @@ final class AgentStore: ObservableObject {
         // registered — so drop it or retrying that host silently does nothing until relaunch.
         if conn == .dead, let dead = remoteClients.removeValue(forKey: hostID) {
             dead.stop()
-            shepherdLog("REMOTE client \(hostID) dead — slot released")
+            logWarn(.remote, "client \(hostID) dead — slot released")
         }
     }
 
@@ -2780,7 +2842,7 @@ final class AgentStore: ObservableObject {
         if pendingApproval != nil {
             // Already asking about someone else. Refuse the newcomer rather than replace the
             // question on screen — it can try again once this one is answered.
-            shepherdLog("PAIR refused \(deviceID.prefix(8)): another approval is already open")
+            logWarn(.pairing, "refused \(deviceID.prefix(8)): another approval is already open")
             decide(false)
             return
         }
@@ -2792,7 +2854,7 @@ final class AgentStore: ObservableObject {
         guard let hash = lanCertHash else {
             // No certificate ⇒ no SAS ⇒ no way for the user to detect a man in the middle.
             // Falling back to a plain Allow would quietly drop the guarantee, so refuse instead.
-            shepherdLog("PAIR refused: SAS requested with no LAN certificate loaded")
+            logError(.pairing, "refused: SAS requested with no LAN certificate loaded")
             approvalDecider = nil
             decide(false)
             return
@@ -2894,7 +2956,7 @@ final class AgentStore: ObservableObject {
         pairedDevices.removeAll { $0.deviceID == deviceID }
         pairedDevicesLock.unlock()
         savePairedDevices()
-        shepherdLog("REMOTE forgot paired device \(deviceID)")
+        logInfo(.remote, "forgot paired device \(deviceID)")
     }
 
     private func loadPairedDevices() {

@@ -244,12 +244,17 @@ targets:
       - path: Sources/HandleRegistry.swift
       - path: Sources/TranscriptReader.swift
       - path: Sources/AnsiText.swift
+      - path: Sources/Log.swift
+      - path: Sources/CLIShim.swift
       - path: Tests
   ShepherdRemoteTests:
     type: bundle.unit-test
     platform: macOS
     sources:
       - path: RemoteTests
+      # RemoteServer logs through the free log functions; Log.swift is dependency-free
+      # precisely so a test target can compile it without dragging the app in.
+      - path: Sources/Log.swift
       - path: Sources/RemoteProtocol.swift
       - path: Sources/RemoteServer.swift
       - path: Sources/LANIdentity.swift

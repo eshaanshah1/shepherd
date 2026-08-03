@@ -17,14 +17,18 @@ final class LANPairingE2ETests: XCTestCase {
         func tearDown() { listener.stop(); server.stop() }
     }
 
+    /// `bindAddress: nil` is the shape production has whenever Tailscale is down — a
+    /// bridge-only server. It defaults to a real address only because most cases here do not
+    /// care; the nil case has its own test below.
     private func rig(port: UInt16, code: LANCode?, known: [PairedDevice] = [],
-                     approve: Bool = true, persisted: @escaping (PairedDevice) -> Void = { _ in })
+                     approve: Bool = true, persisted: @escaping (PairedDevice) -> Void = { _ in },
+                     bindAddress: String? = "127.0.0.1")
     throws -> Rig {
         let dir = (NSTemporaryDirectory() as NSString).appendingPathComponent("e2e-\(UUID().uuidString)")
         guard let id = LANIdentity.loadOrMint(dir: dir) else { throw XCTSkip("openssl unavailable") }
         let codeBox = CodeBox(code)
         let server = RemoteServer(
-            bindAddress: "127.0.0.1", port: 0,      // the tailnet listener is unused here
+            bindAddress: bindAddress, port: 0,      // the tailnet listener is unused here
             knownDevices: { known },
             persist: persisted,
             requestApproval: { _, _, confirm, decide in
@@ -93,6 +97,43 @@ final class LANPairingE2ETests: XCTestCase {
         wait(for: [ok, got], timeout: 12)
         lock.lock(); let s = persistedSecret; lock.unlock()
         XCTAssertEqual(s, "MINTED-SECRET", "approval must persist the device so reconnects skip the code")
+    }
+
+    /// THE regression: with Tailscale down there is no tailnet address, and the server used to
+    /// not be built at all — so `acceptBridged` was invoked on nil, and a LAN client completed
+    /// its TLS handshake, sent its hello, and was answered by nobody. No error, no popup, no
+    /// log line: from the phone it was indistinguishable from a blocked network. A bridge-only
+    /// server must serve a LAN client exactly as a tailnet-bound one does.
+    func testBridgeOnlyServerWithNoTailnetAddressStillPairsALANClient() throws {
+        var persistedSecret: String?
+        let lock = NSLock()
+        let r = try rig(port: 18739, code: LANCode.fresh(now: Date(), digits: "515151"),
+                        persisted: { dev in lock.lock(); persistedSecret = dev.secret; lock.unlock() },
+                        bindAddress: nil)
+        defer { r.tearDown() }
+
+        let ok = expectation(description: "accepted")
+        let got = expectation(description: "tree")
+        let c = client(r, code: "515151", accepted: ok,
+                       tree: { if $0.name == "SECRET-WORKSPACE-NAME" { got.fulfill() } })
+        c.start()
+        defer { c.stop() }
+        wait(for: [ok, got], timeout: 12)
+        lock.lock(); let s = persistedSecret; lock.unlock()
+        XCTAssertEqual(s, "MINTED-SECRET")
+    }
+
+    /// A bridge-only server has no listener, so `start()` reporting failure would make the
+    /// caller tear down the object LAN serving depends on.
+    func testBridgeOnlyServerStartsSuccessfully() {
+        let s = RemoteServer(
+            bindAddress: nil, port: 0,
+            knownDevices: { [] }, persist: { _ in },
+            requestApproval: { _, _, _, decide in decide(false) },
+            workspaceTrees: { [] }, updateFCMToken: { _, _ in },
+            makeSecret: { "S" }, makeNonce: { "N" })
+        XCTAssertTrue(s.start(), "bridge-only start must succeed — there is nothing to bind")
+        s.stop()
     }
 
     func testWrongCodeIsRejected() throws {

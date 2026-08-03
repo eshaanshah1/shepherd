@@ -38,10 +38,34 @@ final class ControlServer {
         queue.async { [weak self] in self?.acceptLoop(listenFD) }
     }
 
+    /// Survives a transient `accept` failure. Breaking out on the first one left the
+    /// listening fd open with nobody accepting, so the socket file looked healthy while the
+    /// 16-slot backlog filled with abandoned connects and every later client got
+    /// ECONNREFUSED — reported by the CLI as "cannot reach Shepherd (is it running?)" for
+    /// the rest of the app's life. EMFILE is the realistic trigger.
     private nonisolated func acceptLoop(_ listenFD: Int32) {
+        var transient = 0
         while true {
             let client = accept(listenFD, nil, nil)
-            if client < 0 { if errno == EINTR { continue } else { break } }
+            if client < 0 {
+                switch errno {
+                case EINTR, ECONNABORTED:
+                    continue
+                case EMFILE, ENFILE, ENOMEM, ENOBUFS:
+                    // Out of descriptors: yield instead of spinning, and keep the listener.
+                    transient += 1
+                    logWarn(.control, "accept failed (errno \(errno)) — backing off, listener kept")
+                    usleep(100_000)
+                    if transient > 600 { logError(.control, "accept failing persistently"); transient = 0 }
+                    continue
+                default:
+                    // The listening fd itself is gone (stop()/deinit closed it). Only then is
+                    // ending the loop correct.
+                    logInfo(.control, "accept loop ended (errno \(errno))")
+                    return
+                }
+            }
+            transient = 0
             setCloseOnExec(client)
             queue.async { [weak self] in self?.handle(client) }
         }
