@@ -88,8 +88,15 @@ struct WorkspaceTree: Codable, Equatable {
 /// frame. Wire shape per case, e.g. {"ping":{}} or {"state":{"paneID":"…","state":"…","reason":null}}.
 /// The Kotlin client must match this shape; keep cases additive + versioned.
 enum ControlMessage: Codable, Equatable {
+    /// `pinVerified` says the client already held this host's certificate hash (it came over
+    /// the QR, off the camera) and enforced it during the handshake, rather than learning it.
+    /// It has to ride `hello` because the pairing decision is made from that one frame; it is
+    /// **optional** so a client that never sends it decodes as nil and gets exactly the old
+    /// behaviour. Trusting a client's word here grants it nothing: the SAS comparison protects
+    /// the CLIENT from a MITM host, and the host's own gate is the 6-digit code, unchanged. A
+    /// client lying about it only weakens its own guarantee.
     case hello(deviceID: String, deviceName: String, pairingCode: String?, secret: String?,
-               fcmToken: String?, protocolVersion: Int)
+               fcmToken: String?, protocolVersion: Int, pinVerified: Bool? = nil)
     case refreshFCMToken(token: String)
     /// Client→host, sent right after `hello`. Only a client reporting "mac" is chimed at for a
     /// pane it streams; everything else falls through to the phone-push destination. Kept off
@@ -247,7 +254,11 @@ enum PeerOrigin: Equatable { case tailnet, lan }
 /// How the human must confirm an approval. `.trustedOrigin` is the tailnet's plain yes/no;
 /// `.compareSAS` is the three-way pick that makes a LAN pairing MITM-resistant. Carried by the
 /// decision so the policy — not the AppKit shell — decides which approval a peer deserves.
-enum ConfirmKind: Equatable { case trustedOrigin, compareSAS }
+/// `.qrVerified` is a LAN client that enforced a certificate pin it read off the QR, so its
+/// channel is already bound and there is nothing for the user to compare — the sheet says what
+/// was checked instead of asking for digits the phone does not display. Host-internal: this
+/// never crosses the wire, so adding a case cannot break a client.
+enum ConfirmKind: Equatable { case trustedOrigin, compareSAS, qrVerified }
 
 /// A connecting peer's Tailscale-verified identity, resolved host-side from the
 /// connection's source IP (never from the self-reported `hello` name).
@@ -264,7 +275,8 @@ func pairingDecision(deviceID: String, secret: String?,
                      peer: VerifiedPeer?, selfUserID: String?,
                      origin: PeerOrigin = .tailnet, deviceName: String? = nil,
                      presentedCode: String? = nil, activeCode: String? = nil,
-                     codeAttemptsLeft: Int = 0) -> PairingDecision {
+                     codeAttemptsLeft: Int = 0,
+                     clientPinnedCert: Bool = false) -> PairingDecision {
     // A known device pairs by secret over either link — no code, no comparison, ever again.
     if let dev = known.first(where: { $0.deviceID == deviceID }) {
         // Any secret this device was ever approved with — see PairedDevice.altSecrets.
@@ -277,7 +289,8 @@ func pairingDecision(deviceID: String, secret: String?,
         if origin == .lan, let activeCode, codeAttemptsLeft > 0,
            let presentedCode, presentedCode == activeCode {
             return .needsApproval(deviceID: deviceID, name: deviceName ?? dev.name,
-                                  proposedSecret: secret ?? newSecret, confirm: .compareSAS)
+                                  proposedSecret: secret ?? newSecret,
+                                  confirm: clientPinnedCert ? .qrVerified : .compareSAS)
         }
         if origin == .tailnet, let peer, let selfUserID, peer.userID == selfUserID {
             return .needsApproval(deviceID: deviceID, name: peer.name,
@@ -297,8 +310,16 @@ func pairingDecision(deviceID: String, secret: String?,
               let presentedCode, presentedCode == activeCode else { return .reject(reason: "bad code") }
         // The name is self-reported — a LAN peer has no verified one — so the approval sheet
         // must label it as such rather than presenting it as an identity.
+        //
+        // Ask for the digit comparison only when the digits are what binds identity, i.e. when
+        // the client LEARNED the certificate. A client that enforced a pin it read off the QR
+        // already had a MITM refused at the handshake, so the comparison cannot fail — and a
+        // ceremony that cannot fail is one people learn to guess at rather than read. (Measured:
+        // the first user asked to do it with a phone that displayed nothing picked at random and
+        // was let in.)
         return .needsApproval(deviceID: deviceID, name: deviceName ?? deviceID,
-                              proposedSecret: secret ?? newSecret, confirm: .compareSAS)
+                              proposedSecret: secret ?? newSecret,
+                              confirm: clientPinnedCert ? .qrVerified : .compareSAS)
     }
 }
 

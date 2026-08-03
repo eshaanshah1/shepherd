@@ -107,4 +107,22 @@ class WireCodecTest {
         val r2 = dec.feed(b.copyOfRange(2, b.size))
         assertEquals(1, r2.size); assertTrue(r2[0] is ControlMessage.Pong)
     }
+
+    /**
+     * The key name is byte-pinned to Swift's `pinVerified` associated value — the host reads
+     * exactly that, and a rename on either side silently reverts the QR flow to asking the user
+     * to compare digits this app does not display.
+     */
+    @Test fun helloCarriesPinVerifiedWhenTheCertWasPinned() {
+        val json = frameJson(ControlMessage.Hello("dev-123", "Pixel 8", pairingCode = "424242",
+            secret = "s", fcmToken = null, protocolVersion = 2, pinVerified = true))
+        assertTrue(json, json.contains("\"pinVerified\":true"))
+    }
+
+    /** Absent, not false: an older host must see the frame it has always seen. */
+    @Test fun helloOmitsPinVerifiedWhenUnset() {
+        val json = frameJson(ControlMessage.Hello("dev-123", "Pixel 8", pairingCode = "424242",
+            secret = "s", fcmToken = null, protocolVersion = 2))
+        assertFalse("unset pinVerified must be omitted", json.contains("pinVerified"))
+    }
 }

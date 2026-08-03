@@ -26,6 +26,16 @@ struct PairingApprovalView: View {
                         .foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
 
+                    // Say what was actually checked. Otherwise Allow is a button pressed
+                    // without looking, which is the thing the SAS flow exists to avoid.
+                    if store.pendingApproval?.confirm == .qrVerified {
+                        Text("Its connection matched the certificate in the QR code you showed it, "
+                             + "so there is nothing to compare.")
+                            .font(.ui(11))
+                            .foregroundStyle(Theme.textDim)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
                     HStack(spacing: 8) {
                         Spacer()
                         button("Deny", weight: .medium, fg: Theme.textSecondary,

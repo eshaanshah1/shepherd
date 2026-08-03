@@ -194,4 +194,31 @@ final class RemoteProtocolTests: XCTestCase {
         setCloseOnExec(fds[0])
         XCTAssertEqual(fcntl(fds[0], F_GETFD) & FD_CLOEXEC, FD_CLOEXEC)
     }
+
+    // MARK: hello gained an optional field — old clients must be unaffected
+
+    /// THE compatibility check. `pinVerified` was added to `hello`, the one frame every client
+    /// sends, and `ControlMessage` uses synthesized enum Codable. A frame from a phone that
+    /// predates the field has no such key, and it must still decode — otherwise adding a UX
+    /// nicety breaks pairing for every installed client.
+    func testHelloFromAClientWithoutPinVerifiedStillDecodes() throws {
+        let json = #"{"hello":{"deviceID":"d1","deviceName":"Pixel","pairingCode":"8421","#
+                 + #""secret":null,"fcmToken":null,"protocolVersion":2}}"#
+        let msg = try JSONDecoder().decode(ControlMessage.self, from: Data(json.utf8))
+        guard case let .hello(deviceID, _, code, _, _, version, pinVerified) = msg else {
+            return XCTFail("decoded as \(msg)")
+        }
+        XCTAssertEqual(deviceID, "d1")
+        XCTAssertEqual(code, "8421")
+        XCTAssertEqual(version, 2)
+        XCTAssertNil(pinVerified, "absent means absent — never a silent true")
+    }
+
+    /// And a client that does send it round-trips.
+    func testHelloWithPinVerifiedRoundTrips() throws {
+        let hello = ControlMessage.hello(deviceID: "d1", deviceName: "Pixel", pairingCode: "8421",
+                                         secret: nil, fcmToken: nil, protocolVersion: 2,
+                                         pinVerified: true)
+        XCTAssertEqual(try FrameDecoder().feed(try FrameCodec.encode(hello)), [hello])
+    }
 }

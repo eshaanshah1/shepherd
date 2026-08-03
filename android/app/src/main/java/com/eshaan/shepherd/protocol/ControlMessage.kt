@@ -8,6 +8,14 @@ sealed interface ControlMessage {
         val secret: String?,
         val fcmToken: String?,
         val protocolVersion: Int = 2,
+        /**
+         * True when we already held the host's certificate hash (from the QR) and enforced it
+         * during the handshake instead of learning it. The host uses this to skip asking the
+         * user to compare digits: with a pin, a MITM was refused at the handshake, so there is
+         * nothing to compare — and this app displays no digits in that path. Omitted (null)
+         * behaves exactly as before, so an older host is unaffected.
+         */
+        val pinVerified: Boolean? = null,
     ) : ControlMessage
     data class RefreshFcmToken(val token: String) : ControlMessage
     data class Accepted(val sessionNonce: String) : ControlMessage

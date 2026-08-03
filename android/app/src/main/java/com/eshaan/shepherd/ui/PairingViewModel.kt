@@ -70,14 +70,24 @@ class PairingViewModel(
             val c = RemoteConnection(host, port,
                 helloFactory = {
                     controller.helloForFirstPair(deviceId, pending.deviceName, pending.secret, token,
-                                                 pairingCode = code)
+                                                 pairingCode = code,
+                                                 // Tell the host we enforced a pin, so it does not
+                                                 // ask for a digit comparison this screen cannot
+                                                 // show. An older host ignores the field.
+                                                 pinVerified = knownPin != null)
                 },
                 scope = viewModelScope,
                 // With a pin from the QR the certificate is already bound, so enforce it rather
                 // than learn it — a MITM is refused at the handshake instead of relying on the
                 // user comparing digits. Without one, learn and show the SAS.
                 connect = if (knownPin != null) {
-                    Pinning.connector(knownPin) { observed.set(it) }
+                    // Publish the digits anyway. They can never mismatch here (the pin already
+                    // decided identity), but an older host still asks for the three-way pick, and
+                    // showing nothing is what left the user guessing.
+                    Pinning.connector(knownPin) { hash ->
+                        observed.set(hash)
+                        _sas.value = Pinning.sasDigits(hash)
+                    }
                 } else {
                     Pinning.learningConnector { hash ->
                         observed.set(hash)

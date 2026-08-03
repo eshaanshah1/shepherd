@@ -175,4 +175,48 @@ final class RemotePairingTests: XCTestCase {
                                 peer: VerifiedPeer(userID: "u1", name: "Mini"), selfUserID: nil)
         XCTAssertEqual(d, .reject(reason: "unverified peer"))
     }
+
+    // MARK: pinVerified — the QR path must not ask for digits the phone does not show
+
+    /// A LAN client that enforced a pin from the QR gets a plain approval naming what was
+    /// checked, not a three-way digit pick. Asking for a comparison that cannot fail is what
+    /// taught the first user to guess (and be let in).
+    func testLANClientThatPinnedTheCertSkipsTheSASCompare() {
+        let d = pairingDecision(deviceID: "d9", secret: nil, known: [], newSecret: "N",
+                                peer: nil, selfUserID: "u1", origin: PeerOrigin.lan, deviceName: "Pixel",
+                                presentedCode: "424242", activeCode: "424242",
+                                codeAttemptsLeft: 3, clientPinnedCert: true)
+        guard case let .needsApproval(_, _, _, confirm) = d else { return XCTFail("\(d)") }
+        XCTAssertEqual(confirm, ConfirmKind.qrVerified)
+    }
+
+    /// Without a pin the digits ARE the identity binding, so the comparison stays.
+    func testLANClientThatLearnedTheCertStillComparesSAS() {
+        let d = pairingDecision(deviceID: "d9", secret: nil, known: [], newSecret: "N",
+                                peer: nil, selfUserID: "u1", origin: PeerOrigin.lan, deviceName: "Pixel",
+                                presentedCode: "424242", activeCode: "424242",
+                                codeAttemptsLeft: 3, clientPinnedCert: false)
+        guard case let .needsApproval(_, _, _, confirm) = d else { return XCTFail("\(d)") }
+        XCTAssertEqual(confirm, ConfirmKind.compareSAS)
+    }
+
+    /// The flag must not become a way past the CODE, which is the host's own gate.
+    func testPinVerifiedDoesNotBypassThePairingCode() {
+        let d = pairingDecision(deviceID: "d9", secret: nil, known: [], newSecret: "N",
+                                peer: nil, selfUserID: "u1", origin: PeerOrigin.lan, deviceName: "Pixel",
+                                presentedCode: "000000", activeCode: "424242",
+                                codeAttemptsLeft: 3, clientPinnedCert: true)
+        XCTAssertEqual(d, PairingDecision.reject(reason: "bad code"))
+    }
+
+    /// Default false, so every existing caller and every client that never sends the field
+    /// keeps the old ceremony.
+    func testDefaultIsTheOldCompareSASBehaviour() {
+        let d = pairingDecision(deviceID: "d9", secret: nil, known: [], newSecret: "N",
+                                peer: nil, selfUserID: "u1", origin: PeerOrigin.lan, deviceName: "Pixel",
+                                presentedCode: "424242", activeCode: "424242",
+                                codeAttemptsLeft: 3)
+        guard case let .needsApproval(_, _, _, confirm) = d else { return XCTFail("\(d)") }
+        XCTAssertEqual(confirm, ConfirmKind.compareSAS)
+    }
 }

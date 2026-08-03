@@ -17,9 +17,10 @@ class PairingController(private val store: PairingStore) {
     /** `pairingCode` is the host's 6 digits — set for a LAN first pairing, null on the tailnet,
      *  where the host verifies our source IP against its peer list instead. */
     fun helloForFirstPair(deviceId: String, deviceName: String, secret: String,
-                          fcmToken: String?, pairingCode: String? = null): ControlMessage.Hello =
+                          fcmToken: String?, pairingCode: String? = null,
+                          pinVerified: Boolean? = null): ControlMessage.Hello =
         ControlMessage.Hello(deviceId, deviceName, pairingCode = pairingCode, secret = secret,
-                             fcmToken = fcmToken)
+                             fcmToken = fcmToken, pinVerified = pinVerified)
 
     fun helloForReconnect(p: Pairing, fcmToken: String?): ControlMessage.Hello =
         ControlMessage.Hello(p.deviceId, p.deviceName, pairingCode = null, secret = p.secret, fcmToken = fcmToken)

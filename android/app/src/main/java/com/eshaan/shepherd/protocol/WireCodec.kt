@@ -42,6 +42,8 @@ object WireCodec {
                 if (msg.pairingCode != null) put("pairingCode", msg.pairingCode)
                 if (msg.secret != null) put("secret", msg.secret)
                 if (msg.fcmToken != null) put("fcmToken", msg.fcmToken)
+                // Omitted when unset, so an older host sees byte-for-byte the frame it always has.
+                if (msg.pinVerified != null) put("pinVerified", msg.pinVerified)
                 put("deviceID", msg.deviceId); put("deviceName", msg.deviceName)
             }
             is ControlMessage.RefreshFcmToken -> putJsonObject("refreshFCMToken") { put("token", msg.token) }
