@@ -45,6 +45,7 @@ final class RemoteServer {
     private let makeSecret: () -> String
     private let makeNonce: () -> String
     private let lookupBroker: (String) -> PtyBroker?
+    private let brokerPaneIDs: () -> [String]
 
     /// A client that can't drain a write within this many seconds is treated as dead and
     /// dropped, so a stalled reader parks at most one worker (its own queue) for ≤ this
@@ -145,6 +146,7 @@ final class RemoteServer {
          verifyPeer: @escaping (String) -> VerifiedPeer? = { _ in nil },
          selfUserID: @escaping () -> String? = { nil },
          lookupBroker: @escaping (String) -> PtyBroker? = { _ in nil },
+         brokerPaneIDs: @escaping () -> [String] = { [] },
          onCommand: @escaping (ControlMessage) -> Void = { _ in },
          activeLANCode: @escaping () -> LANCode? = { nil },
          noteLANCodeAttempt: @escaping () -> Void = { },
@@ -159,6 +161,7 @@ final class RemoteServer {
         self.updateFCMToken = updateFCMToken
         self.makeSecret = makeSecret; self.makeNonce = makeNonce
         self.lookupBroker = lookupBroker
+        self.brokerPaneIDs = brokerPaneIDs
         self.onCommand = onCommand
     }
 
@@ -468,10 +471,26 @@ final class RemoteServer {
     /// then DataReady → attachViewer (replays the ring + live fan-out) → pump viewer input
     /// into the helper until EOF. On rejection or teardown the fd is shut down and closed.
     private func serveDataChannel(_ fd: Int32, nonce: String, paneID: String, cols: Int, rows: Int) {
-        guard hasLiveNonce(nonce), let broker = lookupBroker(paneID) else {
-            _ = rawWrite(fd, (try? DataFrameCodec.encode(.dataRejected(reason: "bad nonce"))) ?? Data())
+        // Two very different refusals used to share one message. "bad nonce" sent a debugging
+        // session after session revocation when the truth was that the pane has no PTY broker —
+        // which happens to every pane whose `shepherdd pty` helper started before the hub existed,
+        // i.e. every pane older than the moment serving was switched on. Name the actual cause, on
+        // the wire as well as in the log, because the phone shows this string to the user.
+        guard hasLiveNonce(nonce) else {
+            logWarn(.pty, "refused a data channel for pane \(paneID.prefix(8)): "
+                        + "nonce is not live (its control session is gone)")
+            _ = rawWrite(fd, (try? DataFrameCodec.encode(.dataRejected(reason: "session expired"))) ?? Data())
             shutdown(fd, SHUT_RDWR); close(fd); return
         }
+        guard let broker = lookupBroker(paneID) else {
+            logWarn(.pty, "refused a data channel for pane \(paneID.prefix(8)): no PTY broker — "
+                        + "that pane's helper never registered (opened before serving started?). "
+                        + "Brokers: \(brokerPaneIDs().map { String($0.prefix(8)) }.joined(separator: ","))")
+            _ = rawWrite(fd, (try? DataFrameCodec.encode(
+                .dataRejected(reason: "this pane isn't streamable — open a new tab"))) ?? Data())
+            shutdown(fd, SHUT_RDWR); close(fd); return
+        }
+        logInfo(.pty, "data channel attached to pane \(paneID.prefix(8)) at \(cols)x\(rows)")
         // This viewer takes the pane at its size — UNLESS the desktop is showing it right now, in
         // which case the desktop wins the tie and the pane stays desktop-sized (DataReady echoes
         // that). Refcounted per pane so other panes this device views are untouched.

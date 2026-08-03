@@ -140,6 +140,11 @@ final class PtyHub {
 
     func broker(for paneID: String) -> PtyBroker? { lock.lock(); defer { lock.unlock() }; return brokers[paneID] }
 
+    /// Pane ids that CAN stream — i.e. whose helper registered. For diagnostics: a refusal that
+    /// only says "no broker for this pane" leaves you unable to tell whether none registered or
+    /// just this one.
+    func paneIDs() -> [String] { lock.lock(); defer { lock.unlock() }; return Array(brokers.keys) }
+
     func start() -> Bool {
         unlink(socketPath)
         let fd = socket(AF_UNIX, SOCK_STREAM, 0); guard fd >= 0 else { return false }
