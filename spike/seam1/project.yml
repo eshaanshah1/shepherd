@@ -246,6 +246,7 @@ targets:
       - path: Sources/AnsiText.swift
       - path: Sources/Log.swift
       - path: Sources/CLIShim.swift
+      - path: Sources/StormDetector.swift
       - path: Tests
   ShepherdRemoteTests:
     type: bundle.unit-test

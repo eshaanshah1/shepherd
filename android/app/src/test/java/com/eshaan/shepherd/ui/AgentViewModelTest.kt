@@ -135,4 +135,38 @@ class AgentViewModelTest {
 
         controlConn.stop(); scope.cancel(); controlServer.close()
     }
+
+    /**
+     * The storm, at the level it actually happened. A host that refuses every data connection must
+     * cost a bounded number of attempts, not one every 250ms forever. This is the assertion the
+     * original fix lacked: its unit tests checked states, and the states were all correct.
+     */
+    @Test fun aRefusingHostDoesNotProduceAConnectionStorm() = runBlocking {
+        val controlServer = ServerSocket(0)
+        controlHost(controlServer, "nonce-1")
+        val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        val controlConn = RemoteConnection("127.0.0.1", controlServer.localPort,
+            { ControlMessage.Hello("d", "n", null, "sec", null, 1) }, scope)
+        controlConn.start()
+        withTimeout(5000) { controlConn.status.first { it is ConnStatus.Connected } }
+
+        // A data host that accepts and hangs up on every attempt, counting them.
+        val dataServer = ServerSocket(0)
+        val attempts = java.util.concurrent.atomic.AtomicInteger(0)
+        Thread {
+            while (!dataServer.isClosed) {
+                try { dataServer.accept().close(); attempts.incrementAndGet() } catch (_: Exception) { return@Thread }
+            }
+        }.apply { isDaemon = true; start() }
+
+        val vm = AgentViewModel(paneId = "p1", host = "127.0.0.1", port = dataServer.localPort,
+                                controlConn = controlConn, initialCols = 40, initialRows = 30)
+        vm.attach()
+        delay(3_000)
+        val n = attempts.get()
+        vm.detach(); controlConn.stop(); scope.cancel(); controlServer.close(); dataServer.close()
+
+        assertTrue("the pane dialled $n times in 3s — that is a storm, not a retry", n <= 4)
+        assertTrue("it should still be retrying, got $n", n >= 1)
+    }
 }

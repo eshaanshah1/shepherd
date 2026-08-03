@@ -84,9 +84,7 @@ fun AgentScreen(vm: AgentViewModel, title: String, onBack: () -> Unit) {
     // on foregrounding, and addObserver syncs to the current state, so this covers re-entry too.
     val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, vm) {
-        val obs = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            if (event == androidx.lifecycle.Lifecycle.Event.ON_START) vm.resume()
-        }
+        val obs = resumeOnForegroundObserver { vm.resume() }
         lifecycleOwner.lifecycle.addObserver(obs)
         onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
     }
