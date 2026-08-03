@@ -23,6 +23,9 @@ final class LANListener {
     private let port: UInt16
     private let identity: SecIdentity
     private let onBridgedFD: (Int32, String?) -> Void
+    /// Bonjour instance name. nil = let the system use the host name. The dev build passes a
+    /// distinct one so a phone browsing `_shepherd._tcp` can tell two instances apart.
+    private let serviceName: String?
     private let log: (String) -> Void
     private var listener: NWListener?
     private var bridges: [ObjectIdentifier: LANBridge] = [:]
@@ -36,10 +39,11 @@ final class LANListener {
     /// - Parameter onBridgedFD: receives the app-side fd of a socketpair carrying one client's
     ///   plaintext frames, plus the peer's IP for logging only — never for identity.
     init(port: UInt16, identity: SecIdentity,
+         serviceName: String? = nil,
          onBridgedFD: @escaping (Int32, String?) -> Void,
          log: @escaping (String) -> Void = { _ in }) {
         self.port = port; self.identity = identity
-        self.onBridgedFD = onBridgedFD; self.log = log
+        self.onBridgedFD = onBridgedFD; self.log = log; self.serviceName = serviceName
     }
 
     @discardableResult
@@ -57,7 +61,7 @@ final class LANListener {
               let l = try? NWListener(using: params, on: nwPort) else {
             log("LAN listener: could not bind \(port)"); return false
         }
-        l.service = NWListener.Service(type: "_shepherd._tcp")
+        l.service = NWListener.Service(name: serviceName, type: "_shepherd._tcp")
         l.newConnectionHandler = { [weak self] conn in self?.adopt(conn) }
         l.stateUpdateHandler = { [weak self] st in
             guard let self else { return }

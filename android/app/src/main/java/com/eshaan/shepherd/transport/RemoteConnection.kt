@@ -1,6 +1,7 @@
 package com.eshaan.shepherd.transport
 
 import com.eshaan.shepherd.protocol.ControlMessage
+import com.eshaan.shepherd.util.SLog
 import com.eshaan.shepherd.protocol.WireCodec
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
@@ -74,7 +75,11 @@ class RemoteConnection(
     /// on it (they are answered `dataRejected`, and that stops their retry loop for good). Calling
     /// it on foreground "just in case" is what made unlocking the phone break streaming.
     fun retryNow() {
-        if (_status.value is ConnStatus.Connected) return
+        if (_status.value is ConnStatus.Connected) {
+            SLog.d(SLog.CONN, "retryNow ignored — session is live (dropping it would revoke the nonce)")
+            return
+        }
+        SLog.i(SLog.CONN, "retryNow: reconnecting to $host:$port")
         running = false
         loopJob?.cancel(); loopJob = null
         start()
@@ -92,7 +97,10 @@ class RemoteConnection(
                 for (m in dec.feed(buf.copyOf(n))) {
                     when (m) {
                         is ControlMessage.PendingApproval -> _status.value = ConnStatus.Pending
-                        is ControlMessage.Accepted -> _status.value = ConnStatus.Connected(m.sessionNonce)
+                        is ControlMessage.Accepted -> {
+                            SLog.i(SLog.CONN, "accepted by $host:$port nonce=${m.sessionNonce.take(8)}")
+                            _status.value = ConnStatus.Connected(m.sessionNonce)
+                        }
                         is ControlMessage.Rejected -> { _status.value = ConnStatus.Failed(m.reason); running = false }
                         else -> {}
                     }
