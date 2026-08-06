@@ -48,4 +48,24 @@ export {
   LayoutDecodeError,
 } from './layout/index.ts';
 
-export { PtyRing, PtyFanout, type PtySink } from './session/index.ts';
+export {
+  PtyRing,
+  PtyFanout,
+  SessionHost,
+  resolveSpec,
+  DEFAULT_COLS,
+  DEFAULT_ROWS,
+  DEFAULT_RING_BYTES,
+  DEFAULT_TERM,
+  type PtySink,
+  type ResolvedSpec,
+  type SessionError,
+  type SessionErrorCode,
+  type SessionExit,
+  type SessionHostOptions,
+  type SessionInfo,
+  type SessionSpec,
+  type WillCreateEvent,
+  type WillCreateHook,
+  type WillCreatePatch,
+} from './session/index.ts';

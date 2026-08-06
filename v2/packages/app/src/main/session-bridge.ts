@@ -1,0 +1,192 @@
+import type { Clock, Disposable, Result, SessionID } from '@shepherd/sdk';
+import type { SessionError, SessionExit, SessionInfo, SessionSpec } from '@shepherd/core';
+import { OutputCoalescer } from '../shared/coalescer.ts';
+import { EMIT, type SessionDataMessage, type SessionExitMessage } from '../shared/channels.ts';
+
+/**
+ * The main-process half of the session IPC, with the electron API removed.
+ *
+ * Everything electron-shaped is behind two small interfaces — `SessionHostLike`
+ * (what this needs from the kernel) and `RendererTarget` (what it needs from a
+ * `WebContents`). `ipc.ts` is the twenty lines that supply the real ones. The
+ * split exists so the batching contract can be asserted with exact numbers on a
+ * manual clock rather than inferred from a screenshot of a running app.
+ */
+
+/** The subset of `SessionHost` this bridge uses. `SessionHost` satisfies it. */
+export interface SessionHostLike {
+  create(spec: SessionSpec): Result<SessionInfo, SessionError>;
+  get(id: SessionID): SessionInfo | undefined;
+  list(): SessionInfo[];
+  attach(id: SessionID, sink: (bytes: Uint8Array) => void): Result<Disposable, SessionError>;
+  write(id: SessionID, data: string | Uint8Array): Result<void, SessionError>;
+  paste(id: SessionID, text: string): Result<void, SessionError>;
+  resize(id: SessionID, cols: number, rows: number): Result<void, SessionError>;
+  kill(id: SessionID, signal?: string): Result<void, SessionError>;
+  onExit(listener: (exit: SessionExit) => void): Disposable;
+}
+
+/** One renderer that can be sent to. In production this wraps `WebContents`. */
+export interface RendererTarget {
+  /** Stable per window; the bridge keys its attachments by it. */
+  readonly id: number;
+  isDestroyed(): boolean;
+  send(channel: string, payload: SessionDataMessage | SessionExitMessage): void;
+}
+
+export interface SessionBridgeOptions {
+  readonly clock: Clock;
+  readonly intervalMs?: number;
+  readonly maxBytes?: number;
+}
+
+interface Attachment {
+  readonly target: RendererTarget;
+  readonly coalescer: OutputCoalescer;
+  readonly disposable: Disposable;
+}
+
+export class SessionBridge {
+  readonly #host: SessionHostLike;
+  readonly #options: SessionBridgeOptions;
+  /** targetId -> sessionId -> attachment. Two windows may watch one session. */
+  readonly #attachments = new Map<number, Map<SessionID, Attachment>>();
+  readonly #hostExit: Disposable;
+
+  constructor(host: SessionHostLike, options: SessionBridgeOptions) {
+    this.#host = host;
+    this.#options = options;
+    this.#hostExit = this.#host.onExit((exit) => this.#onSessionExit(exit));
+  }
+
+  create(spec: SessionSpec): Result<SessionInfo, SessionError> {
+    return this.#host.create(spec);
+  }
+
+  /**
+   * Streams a session to a renderer. Idempotent per (target, session): a
+   * remount that re-attaches must not end up with two coalescers doubling every
+   * byte, which is the shape the "React unmount kills the session" bug takes
+   * once sessions correctly survive unmounting.
+   */
+  attach(target: RendererTarget, id: SessionID): Result<SessionInfo, SessionError> {
+    const existing = this.#attachments.get(target.id)?.get(id);
+    if (existing) {
+      const info = this.#host.get(id);
+      return info ? okOf(info) : errOf(unknown(id));
+    }
+
+    const coalescer = new OutputCoalescer({
+      clock: this.#options.clock,
+      ...(this.#options.intervalMs === undefined ? {} : { intervalMs: this.#options.intervalMs }),
+      ...(this.#options.maxBytes === undefined ? {} : { maxBytes: this.#options.maxBytes }),
+      flush: (bytes) => {
+        if (target.isDestroyed()) return;
+        target.send(EMIT.sessionData, { sessionId: id, bytes });
+      },
+    });
+
+    const attached = this.#host.attach(id, (bytes) => coalescer.push(bytes));
+    if (!attached.ok) {
+      coalescer.dispose();
+      return attached;
+    }
+
+    const info = this.#host.get(id);
+    if (!info) {
+      // Raced its own exit between attach and get. Unwind rather than leave a
+      // subscription pointing at a session nobody can name.
+      attached.value.dispose();
+      coalescer.dispose();
+      return errOf(unknown(id));
+    }
+
+    let byTarget = this.#attachments.get(target.id);
+    if (!byTarget) {
+      byTarget = new Map();
+      this.#attachments.set(target.id, byTarget);
+    }
+    byTarget.set(id, { target, coalescer, disposable: attached.value });
+    return okOf(info);
+  }
+
+  detach(target: RendererTarget, id: SessionID): void {
+    const byTarget = this.#attachments.get(target.id);
+    const attachment = byTarget?.get(id);
+    if (!attachment || !byTarget) return;
+    attachment.disposable.dispose();
+    attachment.coalescer.dispose();
+    byTarget.delete(id);
+    if (byTarget.size === 0) this.#attachments.delete(target.id);
+  }
+
+  /** A window went away. Its sessions keep running; only its viewers go. */
+  detachAll(targetId: number): void {
+    const byTarget = this.#attachments.get(targetId);
+    if (!byTarget) return;
+    for (const attachment of byTarget.values()) {
+      attachment.disposable.dispose();
+      attachment.coalescer.dispose();
+    }
+    this.#attachments.delete(targetId);
+  }
+
+  write(id: SessionID, data: string | Uint8Array): Result<void, SessionError> {
+    return this.#host.write(id, data);
+  }
+
+  paste(id: SessionID, text: string): Result<void, SessionError> {
+    return this.#host.paste(id, text);
+  }
+
+  resize(id: SessionID, cols: number, rows: number): Result<void, SessionError> {
+    return this.#host.resize(id, cols, rows);
+  }
+
+  kill(id: SessionID): Result<void, SessionError> {
+    return this.#host.kill(id);
+  }
+
+  list(): SessionInfo[] {
+    return this.#host.list();
+  }
+
+  dispose(): void {
+    for (const targetId of [...this.#attachments.keys()]) this.detachAll(targetId);
+    this.#hostExit.dispose();
+  }
+
+  #onSessionExit(exit: SessionExit): void {
+    const message: SessionExitMessage = {
+      sessionId: exit.sessionId,
+      exitCode: exit.exitCode,
+      ...(exit.signal === undefined ? {} : { signal: exit.signal }),
+    };
+    for (const [targetId, byTarget] of [...this.#attachments]) {
+      const attachment = byTarget.get(exit.sessionId);
+      if (!attachment) continue;
+      // Flush BEFORE announcing the exit: the last thing a program prints is
+      // usually the thing you wanted to read, and an exit that overtakes it
+      // makes the pane look like it died mid-sentence.
+      attachment.coalescer.dispose();
+      attachment.disposable.dispose();
+      byTarget.delete(exit.sessionId);
+      if (byTarget.size === 0) this.#attachments.delete(targetId);
+      if (!attachment.target.isDestroyed()) {
+        attachment.target.send(EMIT.sessionExit, message);
+      }
+    }
+  }
+}
+
+// Local Result constructors: importing `ok`/`err` from the sdk here would be
+// fine, but these keep the file's only dependency on the sdk a type-only one.
+function okOf<T>(value: T): Result<T, SessionError> {
+  return { ok: true, value };
+}
+function errOf(error: SessionError): Result<never, SessionError> {
+  return { ok: false, error };
+}
+function unknown(id: SessionID): SessionError {
+  return { code: 'unknown-session', message: `no live session ${id}`, sessionId: id };
+}

@@ -1,6 +1,23 @@
-// The session half of the kernel. P1 lands the two pure pieces the host is
-// built out of — the replay ring and the record-and-fan-out seam over it.
-// `SessionHost` (node-pty, registry, env-injection hook) arrives in P2 and owns
-// one `PtyFanout` per session.
+// The session half of the kernel: the replay ring, the record-and-fan-out seam
+// over it, and `SessionHost` — the registry of live PTYs that owns one
+// `PtyFanout` each and carries the `onWillCreate` env-injection seam.
 export { PtyRing } from './ring.ts';
 export { PtyFanout, type PtySink } from './fanout.ts';
+export {
+  SessionHost,
+  resolveSpec,
+  DEFAULT_COLS,
+  DEFAULT_ROWS,
+  DEFAULT_RING_BYTES,
+  DEFAULT_TERM,
+  type ResolvedSpec,
+  type SessionError,
+  type SessionErrorCode,
+  type SessionExit,
+  type SessionHostOptions,
+  type SessionInfo,
+  type SessionSpec,
+  type WillCreateEvent,
+  type WillCreateHook,
+  type WillCreatePatch,
+} from './host.ts';

@@ -58,3 +58,42 @@ export interface SessionExitMessage {
   readonly exitCode: number;
   readonly signal?: number;
 }
+
+/**
+ * The wire DTOs.
+ *
+ * Deliberately their own types rather than re-exports of core's `SessionSpec` /
+ * `SessionError`: this file is loaded in the renderer, and a type alias is one
+ * refactor away from becoming a value import that drags node-pty across the
+ * process boundary. Same discipline as the layout's persisted DTOs — a field
+ * reaches the wire because somebody wrote it here.
+ */
+export interface SessionCreateRequest {
+  readonly cwd: string;
+  readonly command: string;
+  readonly args?: readonly string[];
+  readonly env?: Readonly<Record<string, string>>;
+  readonly cols?: number;
+  readonly rows?: number;
+  readonly term?: string;
+  readonly paneId?: string;
+}
+
+export interface SessionDescriptor {
+  readonly sessionId: string;
+  readonly pid: number;
+  readonly cols: number;
+  readonly rows: number;
+}
+
+export interface IpcError {
+  readonly code: string;
+  readonly message: string;
+}
+
+/**
+ * Every handler answers with this. A rejected `invoke` in the renderer arrives
+ * as an Error whose message has been mangled by Electron's serializer and whose
+ * `code` is gone — so failures are values here, exactly as they are in core.
+ */
+export type IpcResult<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: IpcError };

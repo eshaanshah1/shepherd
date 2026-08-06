@@ -16,7 +16,8 @@
     "test": "pnpm -r test",
     "test:count": "node tooling/scripts/test-count.mjs",
     "pty:proof": "node tooling/scripts/pty-proof.mjs",
-    "pty:proof:electron": "node tooling/scripts/pty-proof-electron.mjs"
+    "pty:proof:electron": "node tooling/scripts/pty-proof-electron.mjs",
+    "smoke:session": "node tooling/scripts/smoke-session.mjs"
   },
   "dependencies": {
     "node-pty": "catalog:"
