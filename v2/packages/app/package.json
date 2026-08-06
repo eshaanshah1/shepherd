@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "The Electron shell: main-process wiring, preload bridge, React renderer.",
-  "//main": "Electron's app loader reads `main` literally and never consults `exports`; workspace importers resolve through `exports` and never see `main`. So this field can be the built entry while the source stays the package's public face — neither has to lie.",
+  "//main": "Electron's app loader reads `main` literally and never consults `exports`; workspace importers resolve through `exports` and never see `main`. So this field can be the built entry while the source stays the package's public face \u2014 neither has to lie.",
   "main": "./out/main/index.js",
   "types": "./src/shared/index.ts",
   "exports": {
@@ -25,6 +25,8 @@
     "@shepherd/design-tokens": "workspace:*",
     "@shepherd/platform-darwin": "workspace:*",
     "@shepherd/sdk": "workspace:*",
+    "@xterm/addon-fit": "catalog:",
+    "@xterm/xterm": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:"
   },

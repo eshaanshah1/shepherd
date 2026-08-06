@@ -2,6 +2,13 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { app, BrowserWindow } from 'electron';
 import { color } from '@shepherd/design-tokens';
+import { appName, resolveAppPaths, shellDefaults } from '@shepherd/platform-darwin';
+import { SessionHost } from '@shepherd/core';
+import { systemClock } from '@shepherd/sdk';
+import { SessionBridge } from './session-bridge.ts';
+import { registerSessionIpc } from './ipc.ts';
+import { registerWindowIpc } from './window-ipc.ts';
+import { installMenu } from './menu.ts';
 
 /**
  * The Electron entry point (electron-vite builds this to `out/main`, and
@@ -9,22 +16,49 @@ import { color } from '@shepherd/design-tokens';
  * field literally and never consults `exports`, so the source stays the
  * package's public face).
  *
- * P3 opens a window and nothing else: no session host, no IPC registration, no
- * userData redirect and no single-instance lock. Those are P4's, and their
- * order matters — `app.setPath('userData', …)` must run BEFORE
- * `requestSingleInstanceLock()`, because Chromium keys the lock off the
- * user-data dir, and a lock taken first is shared by the dev build and the
- * daily one: the exact isolation the redirect exists to buy. `smoke-session.ts`
- * already pins that ordering.
+ * Startup order is the load-bearing part, and it is the reverse of the obvious
+ * one: `app.setPath('userData', …)` runs BEFORE `requestSingleInstanceLock()`,
+ * because Chromium keys the lock off the user-data directory. Locked first, a
+ * dev build and the daily one share a lock and the second refuses to launch —
+ * the exact isolation the redirect exists to buy. (Measured in the P0 probe;
+ * `paths.ts` carries the note and `smoke-session.ts` pins it.)
  *
- * What is here now is the part that would otherwise get skipped later: strict
- * renderer isolation, and a window that does not flash white before React runs.
+ * The `SessionHost` is built here, at module scope, and is deliberately NOT
+ * owned by a window: it is the registry a React unmount must not be able to
+ * reach. Windows come and go against it.
  */
 
 /** electron-vite sets this in dev; in a packaged build it is absent. */
 const RENDERER_DEV_URL = process.env['ELECTRON_RENDERER_URL'];
+const IS_DEV = !app.isPackaged;
 
-function createWindow(): BrowserWindow {
+function argValue(flag: string): string | undefined {
+  const prefix = `${flag}=`;
+  return process.argv.find((a) => a.startsWith(prefix))?.slice(prefix.length);
+}
+
+// --- 1. userData, then the lock. The order IS the isolation.
+const paths = resolveAppPaths(IS_DEV);
+app.setPath('userData', argValue('--shepherd-user-data') ?? paths.userData);
+
+if (!app.requestSingleInstanceLock()) {
+  // Another copy owns this user-data dir. Say so — a silent exit here is the
+  // "I double-clicked and nothing happened" bug.
+  process.stdout.write('[shepherd] another instance owns this userData dir; exiting\n');
+  app.quit();
+}
+
+// --- 2. the session registry, which outlives every window and every view.
+const host = new SessionHost({
+  onError: (error, context) =>
+    process.stderr.write(`[shepherd] session ${context}: ${String(error)}\n`),
+});
+const bridge = new SessionBridge(host, { clock: systemClock });
+
+/** The smoke drives the REAL app; `--shepherd-smoke=terminal` is the only trigger. */
+const SMOKE = argValue('--shepherd-smoke');
+
+export function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1180,
     height: 760,
@@ -38,24 +72,24 @@ function createWindow(): BrowserWindow {
       nodeIntegration: false,
       // An ESM preload requires an unsandboxed renderer (Electron's own
       // constraint). Context isolation is still on, so the page sees the
-      // bridge's functions and nothing else.
+      // bridge's functions and nothing else — asserted in the terminal smoke
+      // against the real `window.shepherd`, `window.require`, `window.process`.
       sandbox: false,
     },
   });
 
-  // `show: false` until `ready-to-show`: an empty window that then fills in is
-  // the thing every Electron app gets mocked for.
   win.once('ready-to-show', () => win.show());
-
-  // Self-gated: the capture hook is a no-op unless SHEPHERD_CAPTURE is set, and
-  // it must work against the built bundle too, not only the dev server.
   captureIfAsked(win);
 
   if (RENDERER_DEV_URL !== undefined) {
     forwardRendererDiagnostics(win);
-    void win.loadURL(RENDERER_DEV_URL);
+    void win.loadURL(SMOKE === undefined ? RENDERER_DEV_URL : `${RENDERER_DEV_URL}?smoke=1`);
   } else {
-    void win.loadFile(join(import.meta.dirname, '../renderer/index.html'));
+    if (SMOKE !== undefined) forwardRendererDiagnostics(win);
+    void win.loadFile(
+      join(import.meta.dirname, '../renderer/index.html'),
+      SMOKE === undefined ? {} : { query: { smoke: '1' } },
+    );
   }
 
   return win;
@@ -96,20 +130,43 @@ function forwardRendererDiagnostics(win: BrowserWindow): void {
 function captureIfAsked(win: BrowserWindow): void {
   const path = process.env['SHEPHERD_CAPTURE'];
   if (path === undefined || path === '') return;
+  // `did-finish-load` fires before React's first commit, so a capture always
+  // waits. The delay is settable because a manual run photographs the app
+  // AFTER driving it (a keystroke, a menu item), not at startup.
+  const delayMs = Number(process.env['SHEPHERD_CAPTURE_DELAY_MS'] ?? '1200');
   win.webContents.once('did-finish-load', () => {
-    // A frame after load: `did-finish-load` fires before React's first commit.
     setTimeout(() => {
       void win.webContents
         .capturePage()
         .then((image) => writeFile(path, image.toPNG()))
         .then(() => process.stdout.write(`[capture] wrote ${path}\n`))
         .catch((error: unknown) => process.stdout.write(`[capture] failed ${String(error)}\n`));
-    }, 1200);
+    }, Number.isFinite(delayMs) ? delayMs : 1200);
   });
 }
 
-void app.whenReady().then(() => {
-  createWindow();
+void app.whenReady().then(async () => {
+  registerSessionIpc(bridge, { defaults: shellDefaults() });
+  registerWindowIpc();
+  // No `dispatch` override: a command goes to the focused window's renderer,
+  // which is the only process that knows what a pane is.
+  installMenu({ appName: appName(IS_DEV), isDev: IS_DEV });
+
+  const win = createWindow();
+
+  if (SMOKE !== undefined) {
+    const { runTerminalSmoke } = await import('./smoke-terminal.ts');
+    // The catch is not decoration. Without it a throw inside the smoke becomes
+    // an unhandled rejection — a warning on stderr — and the app then exits
+    // ZERO, so a broken build reports success. Measured, while proving a
+    // negative control: the run printed a TypeError and passed.
+    await runTerminalSmoke(win, host).catch((error: unknown) => {
+      process.stdout.write(`smoke: FAIL threw ${String(error)}\n`);
+      app.exit(1);
+    });
+    return;
+  }
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -117,4 +174,9 @@ void app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
+});
+
+app.on('will-quit', () => {
+  bridge.dispose();
+  host.dispose();
 });

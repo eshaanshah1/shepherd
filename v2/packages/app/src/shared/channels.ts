@@ -10,6 +10,7 @@ export const INVOKE = {
   sessionPaste: 'session:paste',
   sessionResize: 'session:resize',
   sessionKill: 'session:kill',
+  windowClose: 'window:close',
   layoutGet: 'layout:get',
 } as const;
 
@@ -17,6 +18,7 @@ export const INVOKE = {
 export const EMIT = {
   sessionData: 'session:data',
   sessionExit: 'session:exit',
+  command: 'app:command',
   layoutChanged: 'layout:changed',
 } as const;
 
@@ -69,8 +71,13 @@ export interface SessionExitMessage {
  * reaches the wire because somebody wrote it here.
  */
 export interface SessionCreateRequest {
-  readonly cwd: string;
-  readonly command: string;
+  /**
+   * Both optional, and main fills them in — see `shellDefaults` in
+   * @shepherd/platform-darwin. The renderer has no `os.homedir()` and no
+   * `$SHELL`, so a required `cwd` here would only ever be a guess it invented.
+   */
+  readonly cwd?: string;
+  readonly command?: string;
   readonly args?: readonly string[];
   readonly env?: Readonly<Record<string, string>>;
   readonly cols?: number;

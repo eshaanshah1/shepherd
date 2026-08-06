@@ -125,7 +125,10 @@ body.sh-dragging {
   min-width: 0;
   min-height: 0;
   display: flex;
-  align-items: flex-start;
+  /* `stretch`, so a terminal fills its pane. The placeholder card sets its own
+     alignment; a terminal that only filled the space its first line needed
+     would look like a layout bug and read as a terminal bug. */
+  align-items: stretch;
   background: var(--sh-ink-term);
   border: var(--sh-hairline) solid var(--sh-ink-line);
   overflow: hidden;
@@ -140,6 +143,41 @@ body.sh-dragging {
 
 .sh-pane-body {
   padding: calc(var(--sh-line-height) / 2) var(--sh-line-height);
+  align-self: flex-start;
+}
+
+/* ------------------------------------------------------------------ terminal */
+
+/*
+ * The host xterm opens into. Half a cell of padding so the first column is not
+ * welded to the hairline; xterm sizes its own grid to what is left, and the fit
+ * addon re-measures on every ResizeObserver tick (see TerminalPane).
+ */
+.sh-term {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  padding: calc(var(--sh-line-height) / 4) calc(var(--sh-line-height) / 2);
+  overflow: hidden;
+}
+
+/*
+ * The wrapper the registry parents between hosts (see pane-sessions.ts). It has
+ * to carry the full box or the fit addon measures a zero-height element and
+ * xterm keeps its default 24 rows — which looks fine for a shell prompt and is
+ * wrong the moment anything full-screen runs, because the pty was told the
+ * window is 24 rows tall.
+ */
+.sh-term-surface,
+.sh-term .xterm {
+  width: 100%;
+  height: 100%;
+}
+
+/* xterm draws its own focus outline on the helper textarea; the pane's opacity
+   is already the focus signal, and two of them fight. */
+.sh-term .xterm-helper-textarea:focus {
+  outline: none;
 }
 
 .sh-pane-title {
