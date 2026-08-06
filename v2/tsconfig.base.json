@@ -15,6 +15,12 @@
     "isolatedModules": true,
     "skipLibCheck": true,
 
+    // Electron 43 runs our .ts main entry directly, on Node 24's built-in type
+    // stripping — no bundler between an edit and a running app. Stripping can
+    // only erase; an `enum`, a `namespace` or a constructor parameter property
+    // would fail at launch. This flag makes that a typecheck error instead.
+    "erasableSyntaxOnly": true,
+
     // Relative imports carry the real `.ts` extension: node 25 and vite both
     // resolve it, and nothing here emits JS (see emitDeclarationOnly below), so
     // the usual "write .js, mean .ts" sleight of hand buys nothing.
