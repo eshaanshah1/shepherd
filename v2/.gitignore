@@ -1,0 +1,7 @@
+node_modules/
+out/
+out-tsc/
+dist/
+*.tsbuildinfo
+.vite/
+.DS_Store

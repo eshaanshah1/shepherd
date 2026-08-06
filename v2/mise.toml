@@ -1,0 +1,5 @@
+# Pin the toolchain so a later session cannot silently drift onto another node.
+# Node 25.2.1 is what this workspace was built and measured against; pnpm is
+# pinned again in package.json's "packageManager" (corepack reads that one).
+[tools]
+node = "25.2.1"
