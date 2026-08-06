@@ -26,6 +26,7 @@ struct Pane: Identifiable, Equatable {
     var state: AgentState = .shell
     var reason: String? = nil
     var sessionID: String? = nil  // live Claude session id — persisted to resume the agent on relaunch
+    var claudeProfileID: String? = nil // per-tab Claude account override; nil = inherit the workspace's
     var provisioning: Bool = false // worktree being created: show a loading view, don't mount the PTY (transient, never persisted)
     var initialCommand: String? = nil // typed into the PTY once on mount (transient, never persisted)
     var stowing: StowKind? = nil  // worktree being archived/discarded: dim + lock the pane while git runs (transient, never persisted)
@@ -251,19 +252,21 @@ extension SplitNode {
 // (paneID, run state, OSC title) never survives a restart — a restored pane is a fresh shell,
 // or, if it had a live Claude session, one that resumes that session on first input.
 extension Pane: Codable {
-    enum CodingKeys: String, CodingKey { case userTitle, cwd, sessionID }
+    enum CodingKeys: String, CodingKey { case userTitle, cwd, sessionID, claudeProfileID }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init(paneID: UUID().uuidString)
         userTitle = try c.decodeIfPresent(String.self, forKey: .userTitle)
         cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
         sessionID = try c.decodeIfPresent(String.self, forKey: .sessionID)
+        claudeProfileID = try c.decodeIfPresent(String.self, forKey: .claudeProfileID)
     }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encodeIfPresent(userTitle, forKey: .userTitle)
         try c.encodeIfPresent(cwd, forKey: .cwd)
         try c.encodeIfPresent(sessionID, forKey: .sessionID)
+        try c.encodeIfPresent(claudeProfileID, forKey: .claudeProfileID)
     }
 }
 

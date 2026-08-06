@@ -55,6 +55,7 @@ Reply:    { "ok": true,  "data": <any> }   |   { "ok": false, "error": "<message
 | `shepherd workspace hook clear <ws>` | Remove the hook. |
 | `shepherd tab new [<ws>] [--cwd <dir>]` | New tab in `<ws>` (default: active). Prints tab + pane handles. `--cwd` opens the pane there instead of the workspace's default directory; relative paths and `~` resolve against *your* shell, and a missing directory is an error rather than a silent fallback. |
 | `shepherd tab new [<ws>] --worktree <branch>` | New tab in a fresh `git worktree` of the workspace's directory, exactly like the sidebar's *New Worktree Tab…* — reusing `<branch>` if it exists, else branching off origin's default. Runs the workspace's worktree hook. Conflicts with `--cwd`. |
+| `shepherd tab new [<ws>] --profile <name>` | Run the tab's Claude under a named profile (a separate `CLAUDE_CONFIG_DIR`, i.e. a different account) instead of the workspace's. Names resolve case-insensitively; `Default` is always valid. Composes with `--cwd`/`--worktree`. |
 | `shepherd tab rename <t> <name>` | Rename a tab. |
 | `shepherd tab switch <t>` | Switch to a tab. |
 | `shepherd tab close <t> [--force] [--archive]` | Close; refuses on live work unless `--force`; `--archive` keeps a resumable worktree archive. |
