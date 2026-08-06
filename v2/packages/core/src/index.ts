@@ -1,7 +1,51 @@
 // @shepherd/core — the kernel.
 //
-// P0 lands the package and its boundaries only. The two directories the design
-// names arrive next:
-//   src/layout/   — the SplitTree port (P1)
-//   src/session/  — SessionHost + PtyRing (P1 ring, P2 host)
-export { newSessionId, newPaneId } from './identity.ts';
+// Two directories, both of which the design names:
+//   src/layout/   — the SplitTree port. Pure, immutable, platform-free.
+//   src/session/  — PtyRing + PtyFanout now; SessionHost (node-pty) in P2.
+//
+// They are directories rather than packages on purpose: one tsconfig, one
+// vitest project, one boundary-lint rule. Splitting them into workspace
+// packages would triple the project-reference wiring and buy nothing in M0.
+export { newSessionId, newPaneId, type RandomId } from './identity.ts';
+
+export type {
+  Pane,
+  PaneInit,
+  SplitAxis,
+  FocusDirection,
+  Rect,
+  SplitNode,
+  SplitDivider,
+  TreeEdit,
+  PersistedPane,
+  PersistedNode,
+} from './layout/index.ts';
+export {
+  makePane,
+  displayTitle,
+  leaf,
+  split,
+  leafIds,
+  panes,
+  firstLeafId,
+  findPane,
+  containsPane,
+  splitPane,
+  updatePane,
+  setRatio,
+  clampRatio,
+  frames,
+  dividers,
+  neighbor,
+  siblingLeaf,
+  closing,
+  MIN_RATIO,
+  MAX_RATIO,
+  serializePane,
+  serializeNode,
+  deserializeNode,
+  LayoutDecodeError,
+} from './layout/index.ts';
+
+export { PtyRing, PtyFanout, type PtySink } from './session/index.ts';
