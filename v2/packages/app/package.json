@@ -1,0 +1,31 @@
+{
+  "name": "@shepherd/app",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The Electron shell: main-process wiring, preload bridge, React renderer.",
+  "main": "./src/shared/index.ts",
+  "types": "./src/shared/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/shared/index.ts",
+      "default": "./src/shared/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -b",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@shepherd/core": "workspace:*",
+    "@shepherd/design-tokens": "workspace:*",
+    "@shepherd/platform-darwin": "workspace:*",
+    "@shepherd/sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "electron": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

@@ -1,0 +1,27 @@
+packages:
+  - packages/*
+  - packages/platform/*
+  - extensions/*
+
+# One place for every version pin. Packages depend on "catalog:" so a bump is a
+# one-line edit and two packages can never drift onto different majors.
+catalog:
+  # toolchain
+  typescript: 6.0.3
+  vitest: 4.1.10
+  eslint: 10.8.0
+  typescript-eslint: 8.66.0
+  '@types/node': 26.1.2
+
+  # runtime
+  node-pty: 1.1.0
+  electron: 43.3.0
+  electron-vite: 5.0.0
+
+  # renderer (wired in P3; pinned here so the xterm 6 + addon majors are chosen once)
+  '@xterm/xterm': 6.0.0
+  '@xterm/addon-fit': 0.11.0
+  '@xterm/addon-webgl': 0.19.0
+  react: 19.2.8
+  react-dom: 19.2.8
+  '@types/react': 19.2.18

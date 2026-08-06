@@ -1,0 +1,27 @@
+{
+  "name": "@shepherd/platform-darwin",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The only place OS APIs appear: paths, presence, notifications, dock badge, keychain.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -b",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@shepherd/sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

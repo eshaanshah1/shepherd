@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "moduleDetection": "force",
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+
+    // Relative imports carry the real `.ts` extension: node 25 and vite both
+    // resolve it, and nothing here emits JS (see emitDeclarationOnly below), so
+    // the usual "write .js, mean .ts" sleight of hand buys nothing.
+    "allowImportingTsExtensions": true,
+
+    // Project references need composite + emit; nothing consumes the emit —
+    // every package's "exports" points at src/index.ts, so `pnpm -r test`
+    // never waits on a build. `tsc -b` is the typechecker, out-tsc is scratch.
+    "composite": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": "out-tsc",
+    "noEmitOnError": true
+  }
+}

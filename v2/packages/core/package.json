@@ -1,0 +1,28 @@
+{
+  "name": "@shepherd/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The kernel: session host, layout, commands, events. Imports stdlib + node-pty + @shepherd/sdk only.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -b",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@shepherd/sdk": "workspace:*",
+    "node-pty": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
