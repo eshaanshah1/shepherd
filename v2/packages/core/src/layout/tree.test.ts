@@ -16,6 +16,7 @@ import { describe, expect, it } from 'vitest';
 import { paneId } from '@shepherd/sdk';
 import {
   closing,
+  dividerKey,
   dividers,
   firstLeafId,
   findPane,
@@ -167,6 +168,23 @@ describe('SplitTree (ported from SplitTreeTests.swift)', () => {
     const keys = dividers(tree, r).map((d) => d.key);
     expect(new Set(keys).size).toBe(keys.length); // unique
     expect(keys).toEqual(dividers(tree, r).map((d) => d.key)); // stable across calls
+  });
+
+  it('derives every divider key from dividerKey(path), separator and all', () => {
+    // The renderer builds its own dividers while recursing and keys them with
+    // this same function. Two `path.join(…)` expressions in two packages is the
+    // hand-synced pair this repo keeps getting bitten by — so the format is
+    // asserted here, in the package that owns it, and at a depth where the
+    // separator is actually visible (at depth 1 every separator looks alike).
+    const tree = split(
+      'row',
+      0.5,
+      leaf(p('a')),
+      split('column', 0.5, leaf(p('b')), split('row', 0.5, leaf(p('c')), leaf(p('d')))),
+    );
+    const ds = dividers(tree, rect(0, 0, 100, 40));
+    expect(ds.map((d) => d.key)).toEqual(['', '1', '1.1']);
+    expect(ds.map((d) => d.key)).toEqual(ds.map((d) => dividerKey(d.path)));
   });
 
   it('testFramesColumnSplit', () => {

@@ -19,7 +19,25 @@ pnpm lint           # the import boundaries
 pnpm test:count     # the mechanical "did the test count move" number
 pnpm pty:proof      # spawns a real pty under node and asserts it echoes
 pnpm pty:proof:electron   # …and again under Electron's ABI
+pnpm dev            # electron-vite: the window, with HMR on the renderer
+pnpm build          # electron-vite build -> packages/app/out
 ```
+
+### Screenshotting the window
+
+`screencapture -l <window-id>` needs macOS **Screen Recording** permission,
+which an automated session does not have — it fails with `could not create
+image from window`, which looks exactly like the app never drew. So the app
+takes its own picture instead:
+
+```sh
+SHEPHERD_CAPTURE=/tmp/shot.png pnpm dev     # writes one PNG, then says so
+```
+
+It works against `pnpm build` + `electron-vite preview` too. In dev the
+renderer's console is forwarded to the terminal (`[renderer:error] …`), because
+otherwise the only place a React error appears is a DevTools window nobody has
+open.
 
 ## Layout
 
@@ -30,6 +48,10 @@ packages/
   design-tokens/       Flock tokens as data + CSS/xterm generators.
   platform/darwin/     @shepherd/platform-darwin — the ONLY place OS APIs appear.
   app/                 @shepherd/app — Electron main + preload + React renderer.
+                       React lives here and nowhere else. The renderer's one
+                       door into the kernel is `@shepherd/core/layout` (pure
+                       geometry); everything else goes over the preload bridge,
+                       and both halves of that are lint rules.
 extensions/            built-ins (M2/M3); sdk only.
 tooling/
   eslint/boundaries.js the import rules, which are the architecture

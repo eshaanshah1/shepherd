@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "description": "The Electron shell: main-process wiring, preload bridge, React renderer.",
-  "main": "./src/shared/index.ts",
+  "//main": "Electron's app loader reads `main` literally and never consults `exports`; workspace importers resolve through `exports` and never see `main`. So this field can be the built entry while the source stays the package's public face — neither has to lie.",
+  "main": "./out/main/index.js",
   "types": "./src/shared/index.ts",
   "exports": {
     ".": {
@@ -14,18 +15,28 @@
   },
   "scripts": {
     "typecheck": "tsc -b",
-    "test": "vitest run"
+    "test": "vitest run",
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview"
   },
   "dependencies": {
     "@shepherd/core": "workspace:*",
     "@shepherd/design-tokens": "workspace:*",
     "@shepherd/platform-darwin": "workspace:*",
-    "@shepherd/sdk": "workspace:*"
+    "@shepherd/sdk": "workspace:*",
+    "react": "catalog:",
+    "react-dom": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
     "electron": "catalog:",
+    "electron-vite": "catalog:",
+    "jsdom": "catalog:",
     "typescript": "catalog:",
+    "vite": "catalog:",
     "vitest": "catalog:"
   }
 }
