@@ -27,6 +27,7 @@ struct SettingsView: View {
             switch section {
             case .appearance:  AppearanceSettings()
             case .workspaces:  WorkspaceSettings()
+            case .claude:      ClaudeSettings()
             case .remote:      RemoteSettings()
             case .keybindings: KeybindingSettings()
             case .general:     GeneralSettings()
@@ -40,12 +41,13 @@ struct SettingsView: View {
 // MARK: - Sections
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case appearance, workspaces, remote, keybindings, general
+    case appearance, workspaces, claude, remote, keybindings, general
     var id: String { rawValue }
     var title: String {
         switch self {
         case .appearance:  return "Appearance"
         case .workspaces:  return "Workspaces"
+        case .claude:      return "Claude"
         case .remote:      return "Remote"
         case .keybindings: return "Keybindings"
         case .general:     return "General"
@@ -55,6 +57,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .appearance:  return "paintbrush"
         case .workspaces:  return "square.stack"
+        case .claude:      return "person.crop.circle"
         case .remote:      return "antenna.radiowaves.left.and.right"
         case .keybindings: return "keyboard"
         case .general:     return "gearshape"
@@ -291,9 +294,14 @@ struct WorkspaceSettings: View {
     @State private var hookTesting = false
     @State private var hookResult: WorktreeHookRunner.HookResult?
 
+    @State private var profileID: String = ClaudeProfiles.defaultID
+
     private var current: Workspace? { store.workspaces.first { $0.id == selectedID } }
     private var workspaceOptions: [(label: String, value: String)] {
         store.workspaces.enumerated().map { (label: $0.element.displayName(index: $0.offset), value: $0.element.id) }
+    }
+    private var profileOptions: [(label: String, value: String)] {
+        store.allClaudeProfiles.map { (label: $0.name, value: $0.id) }
     }
 
     var body: some View {
@@ -317,6 +325,16 @@ struct WorkspaceSettings: View {
                     }
                 }
                 PathHint(path: dirText)
+            }
+
+            if !store.claudeProfiles.isEmpty {
+                SettingsField(label: "Claude profile",
+                              footnote: "Which Claude account new tabs in this workspace run as. Manage profiles in Settings → Claude.") {
+                    SettingsDropdown(options: profileOptions, selection: $profileID)
+                        .onChange(of: profileID) { new in
+                            store.setWorkspaceClaudeProfile(selectedID, to: new)
+                        }
+                }
             }
 
             SettingsField(label: "Worktree hook",
@@ -348,6 +366,7 @@ struct WorkspaceSettings: View {
     private func loadFields() {
         dirText = current?.defaultPath ?? ""
         hookText = current?.worktreeHook ?? ""
+        profileID = current?.claudeProfileID ?? ClaudeProfiles.defaultID
         hookResult = nil
     }
 

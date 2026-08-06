@@ -17,6 +17,8 @@ struct NewTabRequest: Equatable {
     var title: String = ""
     var prompt: String = ""
     var worktree: Bool = false
+    /// Which Claude account the tab runs as. nil = whatever the workspace uses.
+    var claudeProfileID: String? = nil
 
     private(set) var branchEdited = false
     private(set) var typedBranch = ""
