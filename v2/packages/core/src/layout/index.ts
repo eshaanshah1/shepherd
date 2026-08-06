@@ -30,6 +30,7 @@ export {
   clampRatio,
   frames,
   dividers,
+  dividerKey,
   neighbor,
   siblingLeaf,
   closing,

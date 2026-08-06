@@ -1,0 +1,198 @@
+/*
+ * Every colour in this file is a `--sh-*` variable set by `theme.ts` from
+ * @shepherd/design-tokens. There are no hex literals here, and there must never
+ * be: a colour typed into a stylesheet is a colour the terminal grid does not
+ * know about, which is precisely the drift v1 had between Theme.swift and
+ * writeBaseTheme().
+ *
+ * Spacing is in cell multiples (--sh-line-height / --sh-row-height), per the
+ * design language's first rule: the character cell is the grid, not a 4px web
+ * scale.
+ */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--sh-ink-deep);
+  color: var(--sh-wool);
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size);
+  line-height: var(--sh-line-height);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+body.sh-dragging {
+  /* A drag that lets the pointer select text drags a selection instead. */
+  user-select: none;
+  cursor: grabbing;
+}
+
+.sh-app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* ------------------------------------------------------------------ top bar */
+
+.sh-bar {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--sh-line-height) / 2);
+  height: var(--sh-row-height);
+  padding: 0 calc(var(--sh-line-height) / 2);
+  background: var(--sh-ink);
+  border-bottom: var(--sh-hairline) solid var(--sh-ink-line);
+  flex: 0 0 auto;
+}
+
+.sh-brand,
+.sh-plate {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: var(--sh-wool-dim);
+}
+
+.sh-plate-dim {
+  color: var(--sh-wool-faint);
+}
+
+.sh-bar-spacer {
+  flex: 1 1 auto;
+}
+
+.sh-bar-sep {
+  width: var(--sh-hairline);
+  height: 60%;
+  background: var(--sh-ink-line);
+}
+
+/* A control looks like a key: flat, bordered, honest. No pills, no shadows. */
+.sh-key {
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--sh-wool-dim);
+  background: var(--sh-ink-raised);
+  border: var(--sh-hairline) solid var(--sh-ink-line);
+  border-radius: 2px;
+  padding: 2px 8px;
+  cursor: pointer;
+  transition: color var(--sh-motion) linear, background var(--sh-motion) linear;
+}
+
+.sh-key:hover:not(:disabled) {
+  color: var(--sh-ink);
+  background: var(--sh-wool);
+}
+
+.sh-key:disabled {
+  color: var(--sh-wool-faint);
+  cursor: default;
+}
+
+/* ------------------------------------------------------------------- panes */
+
+.sh-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  padding: var(--sh-hairline);
+}
+
+.sh-split-root,
+.sh-split,
+.sh-split-child {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+}
+
+.sh-pane {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: flex-start;
+  background: var(--sh-ink-term);
+  border: var(--sh-hairline) solid var(--sh-ink-line);
+  overflow: hidden;
+  /* Inactive panes dim by opacity, never by a border ring (carried from v1). */
+  opacity: 0.62;
+  transition: opacity var(--sh-motion) linear;
+}
+
+.sh-pane[data-focused='true'] {
+  opacity: 1;
+}
+
+.sh-pane-body {
+  padding: calc(var(--sh-line-height) / 2) var(--sh-line-height);
+}
+
+.sh-pane-title {
+  color: var(--sh-wool);
+}
+
+.sh-pane-meta {
+  color: var(--sh-wool-faint);
+}
+
+.sh-pane-hint {
+  margin-top: var(--sh-line-height);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--sh-signal);
+}
+
+/* ---------------------------------------------------------------- dividers */
+
+.sh-divider {
+  flex: 0 0 auto;
+  background: var(--sh-ink-line);
+  position: relative;
+  z-index: 1;
+}
+
+/*
+ * The hairline is 1px of ink; the grab target is 7px of nothing around it,
+ * projected with a pseudo-element. A 1px hit area is a 1px hit area.
+ */
+.sh-divider[data-axis='row'] {
+  width: var(--sh-hairline);
+  cursor: col-resize;
+}
+
+.sh-divider[data-axis='column'] {
+  height: var(--sh-hairline);
+  cursor: row-resize;
+}
+
+.sh-divider::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+}
+
+.sh-divider:hover {
+  background: var(--sh-cobalt);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
+}

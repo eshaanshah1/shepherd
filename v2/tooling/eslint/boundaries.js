@@ -6,7 +6,8 @@
 //   design-tokens   -> nothing                        (data + generators)
 //   platform/*      -> stdlib + OS APIs + electron    (the ONLY place OS APIs appear)
 //   app/main|preload-> electron + core + sdk + platform
-//   app/renderer    -> react + xterm + tokens + sdk   (the ONLY place react appears)
+//   app/renderer    -> react + xterm + tokens + sdk + @shepherd/core/layout
+//                                                     (the ONLY place react appears)
 //   extensions/*    -> sdk only
 //
 // Enforced with the core `no-restricted-imports` rule so the lint step needs no
@@ -43,11 +44,43 @@ function deny(groups, message) {
   return { group: groups, message };
 }
 
+/**
+ * An EXACT module name, not a pattern. `patterns` are gitignore-style, and
+ * gitignore treats `@shepherd/core` as a directory prefix — so it also matches
+ * `@shepherd/core/layout`, and a `!` negation does not rescue it (measured).
+ * `paths` matches the import string literally, which is what a carve-out of one
+ * subpath needs.
+ */
+function denyExact(name, message) {
+  return { name, message };
+}
+
 function restrict(...entries) {
+  const paths = entries.filter((entry) => 'name' in entry);
+  const patterns = entries.filter((entry) => 'group' in entry);
   return {
-    'no-restricted-imports': ['error', { patterns: entries }],
+    'no-restricted-imports': ['error', { paths, patterns }],
   };
 }
+
+/**
+ * The DOM half of the same boundary.
+ *
+ * `packages/app` compiles main, preload and renderer under ONE tsconfig (a
+ * package's worth of project-reference wiring is not worth three), so `lib`
+ * carries DOM and TypeScript alone would happily let a main-process file touch
+ * `document`. The type layer therefore cannot be the boundary here — this rule
+ * is, and it is the honest one anyway: the objection to `document` in main was
+ * never that it fails to typecheck.
+ */
+const noDom = {
+  'no-restricted-globals': [
+    'error',
+    { name: 'document', message: 'there is no DOM in the main process.' },
+    { name: 'window', message: 'there is no DOM in the main process (BrowserWindow is not it).' },
+    { name: 'navigator', message: 'there is no DOM in the main process.' },
+  ],
+};
 
 export const boundaries = [
   {
@@ -102,7 +135,20 @@ export const boundaries = [
   },
   {
     name: 'boundary/app-main',
-    files: ['packages/app/src/main/**/*.ts', 'packages/app/src/preload/**/*.ts'],
+    files: ['packages/app/src/main/**/*.ts'],
+    rules: {
+      ...restrict(
+        deny(REACT, 'react belongs to packages/app/src/renderer.'),
+        deny(OS_APIS, 'OS APIs live in packages/platform/darwin only.'),
+      ),
+      ...noDom,
+    },
+  },
+  {
+    // Preload is the one file that legitimately sees both sides, so it keeps
+    // the import restrictions without the DOM ban.
+    name: 'boundary/app-preload',
+    files: ['packages/app/src/preload/**/*.ts'],
     rules: restrict(
       deny(REACT, 'react belongs to packages/app/src/renderer.'),
       deny(OS_APIS, 'OS APIs live in packages/platform/darwin only.'),
@@ -115,7 +161,22 @@ export const boundaries = [
       deny(ELECTRON, 'the renderer talks to main through the preload bridge, never electron directly.'),
       deny(NODE_PTY, 'the renderer attaches to a session over IPC; it never owns a pty.'),
       deny(OS_APIS, 'OS APIs live in packages/platform/darwin only.'),
-      deny(WORKSPACE.core, 'the renderer reaches core through the preload bridge.'),
+      // The kernel entry point stays shut: a session, a command or an event
+      // reaches the renderer through the preload bridge and nowhere else —
+      // importing `@shepherd/core` here would also drag node-pty into a page.
+      // `@shepherd/core/layout` is carved out because the split tree is pure
+      // geometry with no platform in its import graph, and the renderer is the
+      // thing that draws it. The subpath IS the boundary: it is enumerable, it
+      // cannot reach `session/`, and a widening shows up as an edit to this
+      // line rather than as a quiet new import.
+      denyExact(
+        '@shepherd/core',
+        'the renderer reaches core through the preload bridge; only @shepherd/core/layout (pure geometry) is importable directly.',
+      ),
+      deny(
+        ['@shepherd/core/session*'],
+        'the session registry lives in main; the renderer attaches over IPC.',
+      ),
     ),
   },
   {

@@ -4,7 +4,17 @@
     "rootDir": "src",
     "outDir": "out-tsc",
     "tsBuildInfoFile": "out-tsc/tsconfig.tsbuildinfo",
-    "types": ["node"]
+    "types": ["node"],
+
+    // Main, preload and renderer compile as ONE project: three tsconfigs inside
+    // one package would triple the reference wiring to express a split the
+    // directory names already express. The cost is that `lib` carries DOM for
+    // main too — so "no DOM in main" is a lint rule (`noDom` in
+    // tooling/eslint/boundaries.js), which is the honest place for it: the
+    // objection to `document` in the main process was never that it fails to
+    // typecheck.
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx"
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"],
   "references": [

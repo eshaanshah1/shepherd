@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { colorTokens, palette } from './palette.ts';
+import { colorTokens, palette, type ColorToken, type ThemeMode } from './palette.ts';
 import { cssVarName, cssVariableBlock, cssVariables } from './css.ts';
-import { xtermTheme } from './xterm.ts';
+import { xtermTheme, type XtermTheme } from './xterm.ts';
 import { metrics } from './metrics.ts';
 
 const HEX = /^#[0-9A-F]{6}$/;
@@ -93,5 +93,78 @@ describe('xtermTheme', () => {
     for (const value of Object.values(xtermTheme('light'))) {
       expect(allowed.has(value), value).toBe(true);
     }
+  });
+});
+
+/**
+ * The reason this package exists.
+ *
+ * v1 had two palettes: `Theme.swift` for the chrome and `writeBaseTheme()` in
+ * `Ghostty.swift` for the terminal grid, kept in step by a comment asking the
+ * next person to remember. They drifted, because that is what hand-synced pairs
+ * do — and the tell was a terminal background a shade off the surface behind it,
+ * which nobody reports as a bug.
+ *
+ * Here both surfaces are generated, so the failure mode has to be a hex typed
+ * into a generator instead of read from `palette`. These cases exist to make
+ * exactly that fail. The last one is the structural one: it needs no table of
+ * its own, so it cannot itself drift.
+ */
+describe('one token map', () => {
+  const MODES: ThemeMode[] = ['dark', 'light'];
+
+  /** The colour jobs the chrome and the grid must agree on, by name. */
+  const SHARED: ReadonlyArray<readonly [keyof XtermTheme, ColorToken]> = [
+    ['background', 'ink-term'],
+    ['foreground', 'wool'],
+    ['selectionBackground', 'ink-line'],
+    ['cursor', 'signal'],
+    ['blue', 'cobalt'],
+    ['yellow', 'hay'],
+    ['green', 'pasture'],
+    ['red', 'ember'],
+    ['brightWhite', 'wool'],
+    ['brightBlack', 'wool-faint'],
+    ['black', 'ink-deep'],
+  ];
+
+  it.each(MODES)('gives chrome and grid the same value for every shared job (%s)', (mode) => {
+    const css = cssVariables(mode);
+    const term = xtermTheme(mode);
+    for (const [slot, token] of SHARED) {
+      expect(term[slot], `${slot} vs --sh-${token}`).toBe(css[cssVarName(token)]);
+    }
+  });
+
+  it('sets no terminal colour the chrome does not also carry', () => {
+    for (const mode of MODES) {
+      const chrome = new Set(Object.values(cssVariables(mode)));
+      for (const [slot, value] of Object.entries(xtermTheme(mode))) {
+        expect(chrome.has(value), `${mode}.${slot} = ${value} is not a --sh- variable`).toBe(true);
+      }
+    }
+  });
+
+  it('moves both generators together when the mode changes', () => {
+    // Same values in one mode and different values in the other would mean one
+    // generator is reading `palette` and the other a frozen copy of it.
+    for (const [slot, token] of SHARED) {
+      const darkPair = [xtermTheme('dark')[slot], cssVariables('dark')[cssVarName(token)]];
+      const lightPair = [xtermTheme('light')[slot], cssVariables('light')[cssVarName(token)]];
+      expect(darkPair[0]).toBe(darkPair[1]);
+      expect(lightPair[0]).toBe(lightPair[1]);
+      expect(darkPair[0], `${slot} is the same in both modes`).not.toBe(lightPair[0]);
+    }
+  });
+
+  it('leaves no colour token that only one generator knows about', () => {
+    // Every token reaches the chrome by construction; the grid uses a subset,
+    // and this pins WHICH subset — so a token that quietly stops being drawn
+    // (or a fourteenth that only the terminal knows) fails here.
+    const inTerm = new Set(Object.values(xtermTheme('dark')));
+    const drawn = colorTokens.filter((token) => inTerm.has(palette[token].dark));
+    expect([...drawn].sort()).toEqual(
+      ['ember', 'hay', 'ink-deep', 'ink-line', 'ink-term', 'pasture', 'signal', 'wool', 'wool-dim', 'wool-faint', 'cobalt'].sort(),
+    );
   });
 });

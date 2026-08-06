@@ -189,6 +189,16 @@ export interface SplitDivider {
   readonly key: string;
 }
 
+/**
+ * A divider's identity, derived from its path and nothing else.
+ *
+ * Exported because the renderer builds its dividers while recursing the tree
+ * and must produce the same key `dividers()` does. Two `path.join('.')`
+ * expressions in two packages is exactly the hand-synced pair this codebase
+ * keeps getting bitten by, so there is one function and both call it.
+ */
+export const dividerKey = (path: readonly number[]): string => path.join('.');
+
 /** Flat list of every split's divider, resolved with the same math as `frames`. A leaf has none. */
 export function dividers(node: SplitNode, rect: Rect, path: readonly number[] = []): SplitDivider[] {
   if (node.kind !== 'split') return [];
@@ -203,7 +213,7 @@ export function dividers(node: SplitNode, rect: Rect, path: readonly number[] = 
     ratio: node.ratio,
     rect: boundary,
     span: node.axis === 'row' ? rect.width : rect.height,
-    key: path.join('.'),
+    key: dividerKey(path),
   };
   return [
     here,
