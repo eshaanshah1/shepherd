@@ -19,9 +19,23 @@ pnpm lint           # the import boundaries
 pnpm test:count     # the mechanical "did the test count move" number
 pnpm pty:proof      # spawns a real pty under node and asserts it echoes
 pnpm pty:proof:electron   # …and again under Electron's ABI
+pnpm smoke:session  # main-only: node-pty under Electron's ABI, userData before the lock
+pnpm smoke:terminal # the whole chain: build, boot, xterm attached, menu keys, quit
 pnpm dev            # electron-vite: the window, with HMR on the renderer
 pnpm build          # electron-vite build -> packages/app/out
 ```
+
+`smoke:terminal` is the one that answers "does the app work". It builds, launches
+the real app under a throwaway userData dir, and asserts 27 things a headless
+vitest run cannot: that pty bytes reach xterm's *buffer*, that `window.shepherd`
+is exactly the declared bridge and `window.require` is undefined, that clicking
+the real ⌘D / ⌘⇧D / ⌘⌥← / ⌘W menu items drives the layout the way the layout
+model says, and that ⌘W closes the window only on the last pane. It passes only
+if the process exits 0 **and** prints `smoke: OK` — an Electron main process
+that dies of an unhandled rejection exits zero, which was measured, not assumed.
+
+Add `SHEPHERD_CAPTURE=/tmp/shot.png` to photograph the three-pane state it
+asserts.
 
 ### Screenshotting the window
 
@@ -55,7 +69,7 @@ packages/
 extensions/            built-ins (M2/M3); sdk only.
 tooling/
   eslint/boundaries.js the import rules, which are the architecture
-  scripts/             postinstall fixes + the pty proof
+  scripts/             postinstall fixes, the pty proofs, the two smokes
 ```
 
 ## Two traps this scaffold exists to keep closed

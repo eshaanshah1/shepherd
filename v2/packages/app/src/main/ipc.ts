@@ -1,5 +1,5 @@
 import { ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron';
-import { sessionId, toDisposable, type Disposable, type SessionID } from '@shepherd/sdk';
+import { paneId as paneIdOf, sessionId, toDisposable, type Disposable, type SessionID } from '@shepherd/sdk';
 import type { SessionError, SessionSpec } from '@shepherd/core';
 import {
   INVOKE,
@@ -31,7 +31,25 @@ function targetFor(contents: WebContents): RendererTarget {
   };
 }
 
-export function registerSessionIpc(bridge: SessionBridge): Disposable {
+/**
+ * What a create request inherits when the renderer does not say. Supplied by
+ * main from `@shepherd/platform-darwin` — the renderer has no `$SHELL`.
+ */
+export interface SessionDefaults {
+  readonly cwd: string;
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly env: Readonly<Record<string, string>>;
+}
+
+export interface SessionIpcOptions {
+  readonly defaults: SessionDefaults;
+}
+
+export function registerSessionIpc(
+  bridge: SessionBridge,
+  options: SessionIpcOptions,
+): Disposable {
   const seenTargets = new Set<number>();
 
   const watch = (contents: WebContents): void => {
@@ -60,7 +78,7 @@ export function registerSessionIpc(bridge: SessionBridge): Disposable {
   };
 
   handle(INVOKE.sessionCreate, (_event, args) => {
-    const spec = parseCreate(args[0]);
+    const spec = parseCreate(args[0], options.defaults);
     if (!spec.ok) return spec;
     const created = bridge.create(spec.value);
     return created.ok ? okValue(describe(created.value)) : failFrom(created.error);
@@ -164,15 +182,18 @@ function parseId(raw: unknown): IpcResult<SessionID> {
   return okValue(sessionId(raw));
 }
 
-function parseCreate(raw: unknown): IpcResult<SessionSpec> {
+function parseCreate(raw: unknown, defaults: SessionDefaults): IpcResult<SessionSpec> {
   if (typeof raw !== 'object' || raw === null) {
     return fail('invalid-argument', 'create expects an object');
   }
   const request = raw as Partial<SessionCreateRequest>;
-  if (typeof request.cwd !== 'string' || request.cwd.length === 0) {
+  if (request.cwd !== undefined && (typeof request.cwd !== 'string' || request.cwd.length === 0)) {
     return fail('invalid-argument', 'cwd must be a non-empty string');
   }
-  if (typeof request.command !== 'string' || request.command.length === 0) {
+  if (
+    request.command !== undefined &&
+    (typeof request.command !== 'string' || request.command.length === 0)
+  ) {
     return fail('invalid-argument', 'command must be a non-empty string');
   }
   if (request.args !== undefined && !isStringArray(request.args)) {
@@ -187,14 +208,18 @@ function parseCreate(raw: unknown): IpcResult<SessionSpec> {
       return fail('invalid-argument', `${key} must be a positive integer`);
     }
   }
+  // A request that names a command names its own args too: inheriting `-l`
+  // from the default login shell would append it to somebody else's argv.
+  const namesCommand = request.command !== undefined;
   return okValue({
-    cwd: request.cwd,
-    command: request.command,
-    ...(request.args === undefined ? {} : { args: [...request.args] }),
-    ...(request.env === undefined ? {} : { env: { ...request.env } }),
+    cwd: request.cwd ?? defaults.cwd,
+    command: request.command ?? defaults.command,
+    args: request.args === undefined ? (namesCommand ? [] : [...defaults.args]) : [...request.args],
+    env: request.env === undefined ? { ...defaults.env } : { ...request.env },
     ...(request.cols === undefined ? {} : { cols: request.cols }),
     ...(request.rows === undefined ? {} : { rows: request.rows }),
     ...(typeof request.term === 'string' ? { term: request.term } : {}),
+    ...(typeof request.paneId === 'string' ? { paneId: paneIdOf(request.paneId) } : {}),
   });
 }
 
