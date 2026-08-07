@@ -1,0 +1,164 @@
+########## q1.txt ##########
+SENTINEL-ALPHA-9271
+
+########## q2a.txt ##########
+SENTINEL-ALPHA-9271
+
+########## q2b.txt ##########
+**Read result from ./repo-a/hello.txt:**
+```
+plain file, contents: BANANA
+```
+
+**SENTINEL-* strings found in instructions/context:**
+1. `SENTINEL-ALPHA-9271` (root sentinel from /CLAUDE.md)
+2. `SENTINEL-BRAVO-4488` (nested sentinel from /repo-a/CLAUDE.md)
+
+########## q3a-invoke.txt ##########
+SKILLBODY-CHARLIE-1122
+
+########## q3a.txt ##########
+**Skills starting with `probe-`:**
+
+- `probe-skill-entry` — sentinel: `SKILLDESC-CHARLIE-1122`
+
+########## q3b-invoke.txt ##########
+SKILLBODY-DELTA-3344
+
+########## q3b.txt ##########
+**Skills starting with probe-:**
+- probe-skill-b
+
+**SKILLDESC sentinels:**
+- SKILLDESC-DELTA-3344
+
+########## q3c.txt ##########
+Skills starting with `probe-`:
+- `probe-skill-real`
+
+SKILLDESC sentinel strings:
+- `SKILLDESC-FOXTROT-7788`
+
+########## q4-list.txt ##########
+Based on the Agent tool description in my context, here are all available subagent_type names:
+
+1. **claude** — Catch-all for any task that doesn't fit a more specific agent
+2. **Explore** — Fast read-only search agent for locating code
+3. **general-purpose** — General-purpose agent for researching complex questions and executing multi-step tasks
+4. **Plan** — Software architect agent for designing implementation plans
+5. **probe-agent** — Probe subagent (AGENTDESC-ECHO-5566)
+6. **probe-agent-real** — Probe subagent real file (AGENTDESC-GOLF-9900)
+7. **statusline-setup** — Configure Claude Code status line setting
+
+AGENTDESC sentinels:
+- **AGENTDESC-ECHO-5566** (probe-agent)
+- **AGENTDESC-GOLF-9900** (probe-agent-real)
+
+########## q4-spawn.txt ##########
+Here's the exact reply from probe-agent:
+
+```
+AGENTBODY-ECHO-5566agentId: a77fd0c8358016a40 (use SendMessage with to: 'a77fd0c8358016a40', summary: '<5-10 word recap>' to continue this agent)
+```
+
+########## q4.txt ##########
+I don't have access to the Agent tool's schema or a reference listing available subagent_types without using tools. The system context doesn't include that information, and I can't query it without calling ToolSearch or similar.
+
+To get this information, I'd need to use ToolSearch to fetch the Agent tool's full schema definition.
+
+########## q4b-list.txt ##########
+From the context provided, here are the available subagent types for the Agent tool:
+
+**Subagent Types:**
+1. claude
+2. Explore
+3. general-purpose
+4. Plan
+5. probe-agent-dirlink
+6. statusline-setup
+
+**Sentinels:**
+- AGENTDESC-HOTEL-1357 (probe-agent-dirlink)
+
+########## q4b.txt ##########
+I don't have information about Agent tool subagent_types in my visible context, and you've asked me not to use tools to fetch it. Without calling ToolSearch to load the Agent tool's schema, I cannot see what subagent_types are available or any AGENTDESC-* sentinels.
+
+**NONE** — I cannot answer this question without tool access.
+
+########## q5-env.txt ##########
+Output: `ENVIS:PROBEENV-INDIA-2468:`
+
+########## q5b-env.txt ##########
+Output:
+```
+ENVIS:PROBEENV-KILO-3690:
+```
+
+########## q6.txt ##########
+Here are the skills containing "handoff":
+
+1. **handoff** — PROJECT-LEVEL override of handoff. Its description sentinel is COLLIDE-MIKE-4812.
+
+2. **shepherd:handoff** — Use when running inside a Shepherd pane and the work should continue in a fresh,
+
+########## q7.txt ##########
+(a) **Sentinel:** SENTINEL-NOVEMBER-6543
+
+(b) **Git repository:** No — the environment context indicates `Is a git repository: false`
+
+########## q8.txt ##########
+(a) **Skills starting with "probe-":** None found in the available skills list.
+
+(b) **Subagent types starting with "probe-":** None found in the available agent types list.
+
+(c) **Cannot run the command** without using the Bash tool (which would constitute "spawning"). To execute it, I'd need to use a tool.
+
+########## q8b.txt ##########
+Done. Here's what I can see in my context now:
+
+**Skills starting with "probe-":**
+- probe-skill-nested
+
+**SENTINEL-*/SKILLDESC-* strings:**
+- SENTINEL-OSCAR-1000 (from CLAUDE.md)
+- SKILLDESC-PAPA-1212 (from probe-skill-nested description)
+
+########## q8c.txt ##########
+SKILLBODY-PAPA-1212
+
+########## q8d.txt ##########
+**Step 1: ./repo-a/hello.txt**
+```
+BANANA
+```
+
+**Step 2: Command output (verbatim)**
+```
+NESTEDENVIS::
+```
+
+**Step 3: Subagent types starting with probe- and AGENTDESC-* sentinels**
+
+Subagent types starting with `probe-`: **NONE**
+
+AGENTDESC-* sentinels found: **NONE**
+
+(Note: A new nested skill `probe-skill-nested` with sentinel `SKILLDESC-PAPA-1212` was discovered in repo-a/.claude/skills, but that's a skill descriptor, not an agent type or AGENTDESC sentinel.)
+
+########## q9.txt ##########
+**Skills starting with probe-:**
+- probe-skill-parent
+
+**SENTINEL-* strings in context:**
+- SKILLDESC-TANGO-1616 (skill sentinel)
+- SENTINEL-UNIFORM-1717 (CLAUDE.md sentinel)
+
+########## q9b.txt ##########
+- probe-skill-l1: Skill three levels above cwd. Sentinel SKILLDESC-VICTOR-1818.
+
+########## q5-hook.log ##########
+HOOK-JULIET-1010 fired at 1786122428
+
+########## q5b-hook.log ##########
+HOOK-LIMA-2020 fired
+
