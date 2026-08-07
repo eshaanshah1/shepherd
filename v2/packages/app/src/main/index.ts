@@ -2,7 +2,7 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { app, BrowserWindow } from 'electron';
 import { color } from '@shepherd/design-tokens';
-import { appName, resolveAppPaths, shellDefaults } from '@shepherd/platform-darwin';
+import { appName, resolveAppPaths, runExec, runGit, shellDefaults } from '@shepherd/platform-darwin';
 import {
   CommandRegistry,
   EventBus,
@@ -288,6 +288,10 @@ const extensionHost = new ExtensionHost({
   permissions,
   bus,
   kv: (namespace) => store.namespace(namespace),
+  // The one runner, from the one directory allowed to spawn (Rebuild checklist
+  // item 4). Injected rather than imported by the host so a test can prove a
+  // denial denies without a real subprocess.
+  run: { exec: runExec, git: runGit },
   logger,
   clock: systemClock,
   isDev: IS_DEV,

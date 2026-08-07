@@ -24,6 +24,9 @@ import {
   type LogLevel,
   type Permission,
   type PointsAPI,
+  type ExecErr,
+  type ExecOk,
+  type ExecOptions,
   type ProcessAPI,
   type ProposedAPI,
   type Result,
@@ -632,10 +635,53 @@ function createExtensions(options: CallerOptions): ExtensionsAPI {
   };
 }
 
-function createProcess(): ProcessAPI {
-  const refuse = (member: string): Promise<never> =>
-    Promise.reject(new NotImplementedError(`process.${member}`, LANDS_IN('M3, when tasks needs git')));
-  return { exec: () => refuse('exec'), gitRead: () => refuse('gitRead'), gitWrite: () => refuse('gitWrite') };
+/**
+ * Running a program, from a process that is forbidden to spawn one.
+ *
+ * `boundaries.js` denies `child_process` here and in `extensions/**`, and points
+ * OS APIs at `packages/platform/darwin` — so this is a proxy, and the runner is
+ * over the port in main. That is the boundary working: an extension asking the
+ * host to run something is reviewable, gated and testable; an extension calling
+ * `spawn` is none of those.
+ *
+ * Three things are decided on this side rather than the host's:
+ *
+ *   - **`signal`** never crosses. An `AbortSignal` is not clonable, so it is
+ *     honoured here: an already-aborted call fails without sending anything.
+ *     (Aborting a call already in flight is not yet expressible — there is no
+ *     cancel frame — and failing fast on the common case is better than pretending.)
+ *   - **`gitRead`/`gitWrite` collapse into one frame with a `mode`**, so the
+ *     read/write distinction survives the crossing as data. The host applies
+ *     `GIT_OPTIONAL_LOCKS=0` to a read and merges the environment for a write;
+ *     a child that had to remember to ask for those would eventually not.
+ *   - **A transport failure is an `ExecErr`, not a throw.** The declared API
+ *     returns `ExecOk | ExecErr` and a caller that has to catch as well as branch
+ *     will do one of the two badly. `code: -1` marks "never ran".
+ */
+function createProcess(services: ExtHostServices): ProcessAPI {
+  const answer = async (call: ApiCall, opts: ExecOptions, what: string): Promise<ExecOk | ExecErr> => {
+    if (opts.signal?.aborted === true) {
+      return { ok: false, code: -1, stdout: '', stderr: `${what} was aborted before it started` };
+    }
+    const result = await services.call(call);
+    if (result.ok) return result.value as ExecOk | ExecErr;
+    return { ok: false, code: -1, stdout: '', stderr: `${what}: ${result.error.message}` };
+  };
+
+  const wire = (opts: ExecOptions) => ({
+    cwd: opts.cwd,
+    ...(opts.env === undefined ? {} : { env: opts.env }),
+    ...(opts.stdin === undefined ? {} : { stdin: opts.stdin }),
+    timeoutMs: opts.timeoutMs,
+  });
+
+  return {
+    exec: (cmd, opts) => answer({ kind: 'process.exec', cmd: [...cmd], opts: wire(opts) }, opts, cmd[0] ?? 'exec'),
+    gitRead: (args, opts) =>
+      answer({ kind: 'process.git', mode: 'read', args: [...args], opts: wire(opts) }, opts, 'git'),
+    gitWrite: (args, opts) =>
+      answer({ kind: 'process.git', mode: 'write', args: [...args], opts: wire(opts) }, opts, 'git'),
+  };
 }
 
 export interface ShepherdOptions {
@@ -670,7 +716,11 @@ export function createShepherd(options: ShepherdOptions): Shepherd {
     attention: gated('attention', () => createAttention(services)),
     points: gated('points', () => createPoints(caller)),
     extensions: gated('extensions', () => createExtensions(caller)),
-    process: createProcess(),
+    // Gated like every other group on whether `proposed` is assembled at all;
+    // the `process.exec` PERMISSION is enforced host-side by the one authorizer,
+    // not re-checked here (a judgement made in two places is one two places can
+    // disagree about).
+    process: gated('process', () => createProcess(services)),
   };
   return { version: options.apiVersion, proposed };
 }

@@ -823,5 +823,89 @@ describe('the extension host runtime', () => {
       expect(result).toMatchObject({ ok: false, error: { code: 'unavailable' } });
       expect(JSON.stringify(result)).toContain(`no answer in ${CHILD_CALL_TIMEOUT_MS}ms`);
     });
+
+    /**
+     * D1. The flat 15s deadline is shorter than things M3 legitimately runs — a
+     * cold `git fetch` above all — so a call may name its own. Two properties,
+     * and the second is why the first is safe.
+     */
+    it('honours a longer deadline a call asks for, instead of failing work that is fine', async () => {
+      let pending: Promise<unknown> | undefined;
+      const waiting = harness((_ctx, api) => {
+        pending = api.proposed.process.exec(['git', 'fetch'], { cwd: '/r', timeoutMs: 600_000 });
+      });
+      waiting.runtime.start();
+      await waiting.receive(helloOk);
+      await waiting.receive(activateAsk());
+
+      // A settled FLAG, not `Promise.race` against a resolved sentinel: the
+      // sentinel wins that race by one microtask whether or not the call timed
+      // out, so the test passed with the deadline change reverted. Caught by
+      // mutation-testing it, which is what mutation-testing is for.
+      let settled = false;
+      void pending?.then(() => {
+        settled = true;
+      });
+
+      // Well past the flat default, and this call is still legitimately running.
+      waiting.clock.advance(CHILD_CALL_TIMEOUT_MS * 4);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(settled).toBe(false);
+
+      // And it does still time out — at its OWN deadline, not the flat one.
+      waiting.clock.advance(600_000);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(settled).toBe(true);
+    });
+
+    it('still times out a call that names NO deadline at the flat default', async () => {
+      // The property the constant protects, kept: a wedged host produces a
+      // timeout rather than a promise nobody settles.
+      let pending: Promise<unknown> | undefined;
+      const waiting = harness((_ctx, api) => {
+        pending = api.proposed.commands.invoke('never.answered');
+      });
+      waiting.runtime.start();
+      await waiting.receive(helloOk);
+      await waiting.receive(activateAsk());
+
+      waiting.clock.advance(CHILD_CALL_TIMEOUT_MS + 1);
+      expect(await pending).toMatchObject({ ok: false, error: { code: 'unavailable' } });
+    });
+
+    /**
+     * The half that makes the above safe. Main settles its outstanding calls on
+     * disconnect (`ext-host.ts`'s `#failPending`); the child had no equivalent,
+     * so its only escape was that timer — and with a ten-minute deadline in play
+     * a dead main process would mean a ten-minute hang.
+     */
+    it('settles every pending call when the channel closes, without waiting for a deadline', async () => {
+      let pending: Promise<unknown> | undefined;
+      const waiting = harness((_ctx, api) => {
+        pending = api.proposed.process.exec(['git', 'fetch'], { cwd: '/r', timeoutMs: 600_000 });
+      });
+      waiting.runtime.start();
+      await waiting.receive(helloOk);
+      await waiting.receive(activateAsk());
+
+      waiting.runtime.channelClosed('the host closed the frame channel');
+
+      // No clock advance at all — the answer comes from the disconnect.
+      // It lands as an `ExecErr`, not a wire error: `ProcessAPI` returns
+      // `ExecOk | ExecErr`, so a transport failure is a VALUE here. A caller
+      // that had to catch as well as branch would do one of the two badly.
+      // `code: -1` is the marker for "never ran".
+      const result = await pending;
+      expect(result).toMatchObject({ ok: false, code: -1, stdout: '' });
+      expect(JSON.stringify(result)).toContain('closed');
+    });
+
+    it('is safe to report a closed channel twice', async () => {
+      const waiting = harness(() => {});
+      waiting.runtime.start();
+      await waiting.receive(helloOk);
+      waiting.runtime.channelClosed('once');
+      expect(() => waiting.runtime.channelClosed('twice')).not.toThrow();
+    });
   });
 });

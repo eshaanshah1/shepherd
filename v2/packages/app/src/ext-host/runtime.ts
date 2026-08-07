@@ -62,6 +62,32 @@ import {
  */
 export const CHILD_CALL_TIMEOUT_MS = 15_000;
 
+/**
+ * Slack added to a call's declared timeout before the transport gives up.
+ *
+ * The transport must outlive the work, not race it: if the two deadlines were
+ * equal, the transport would time out at the same instant the host is killing
+ * the process, and the caller would get a transport failure for work that
+ * completed — reproducing D1's "false failure with a real side effect" one layer
+ * along.
+ */
+const DEADLINE_SLACK_MS = 5_000;
+
+/**
+ * How long this particular call may take.
+ *
+ * Only `process.*` declares one, because only it runs a program whose duration
+ * is the caller's business rather than the transport's. Everything else keeps
+ * the flat default — which is the property the constant exists for, and which a
+ * test pins.
+ */
+function deadlineFor(call: ApiCall): number {
+  if (call.kind === 'process.exec' || call.kind === 'process.git') {
+    return call.opts.timeoutMs + DEADLINE_SLACK_MS;
+  }
+  return CHILD_CALL_TIMEOUT_MS;
+}
+
 export interface ExtHostRuntimeOptions {
   readonly send: (frame: ChildFrame) => void;
   readonly clock: Clock;
@@ -110,7 +136,7 @@ export class ExtHostRuntime {
    * registry and one table of exported APIs, shared by everything activated here.
    */
   readonly #world;
-  #state: 'starting' | 'accepted' | 'refused' = 'starting';
+  #state: 'starting' | 'accepted' | 'refused' | 'closed' = 'starting';
   #apiVersion = '0.0.0';
   #subscriptionSeq = 0;
 
@@ -135,7 +161,7 @@ export class ExtHostRuntime {
     this.#send({ kind: 'hello', id: this.#nextId(), protocol: this.#protocol, childPid: this.#childPid });
   }
 
-  get state(): 'starting' | 'accepted' | 'refused' {
+  get state(): 'starting' | 'accepted' | 'refused' | 'closed' {
     return this.#state;
   }
 
@@ -382,6 +408,26 @@ export class ExtHostRuntime {
     return services;
   }
 
+  /**
+   * Tell the runtime the channel is gone.
+   *
+   * Main has done this since M1 (`ext-host.ts`'s `#failPending`); the child had
+   * no equivalent, and its only escape from a dead host was the flat deadline.
+   * That was survivable while every call shared a 15s ceiling. It stopped being
+   * survivable when a call could name ten minutes (D1) — a dead main process
+   * would have meant a ten-minute hang — so the two halves land together.
+   *
+   * Idempotent: a port can report `close` alongside an error, and settling twice
+   * must not throw.
+   */
+  channelClosed(reason: string): void {
+    this.#state = 'closed';
+    for (const [id, settle] of [...this.#pending]) {
+      this.#pending.delete(id);
+      settle(wireErr('unavailable', `the frame channel closed before an answer arrived: ${reason}`));
+    }
+  }
+
   #call(handle: string, call: ApiCall): Promise<WireResult> {
     if (this.#state !== 'accepted') {
       return Promise.resolve(
@@ -390,18 +436,23 @@ export class ExtHostRuntime {
     }
     return new Promise<WireResult>((resolve) => {
       const id = this.#nextId();
+      // A call may declare how long its work legitimately takes; the flat
+      // constant is the default for everything that does not. Without this, a
+      // cold `git fetch` reports failure while git is still working — and then
+      // succeeds anyway, which is a false failure with a real side effect.
+      const deadline = deadlineFor(call);
       // One settle, whichever comes first. Without the delete-before-resolve the
       // late answer path below would settle a promise that already has a value —
       // harmless for a Promise, but it would also hide the timeout in the log.
       const timer = this.#clock.setTimeout(() => {
         if (!this.#pending.delete(id)) return;
-        resolve(wireErr('timeout', `${call.kind} got no answer in ${CHILD_CALL_TIMEOUT_MS}ms`));
-      }, CHILD_CALL_TIMEOUT_MS);
+        resolve(wireErr('timeout', `${call.kind} got no answer in ${deadline}ms`));
+      }, deadline);
       this.#pending.set(id, (result) => {
         timer.dispose();
         resolve(result);
       });
-      this.#send({ kind: 'call', id, handle, call });
+      this.#send({ kind: 'call', id, handle, call, deadlineMs: deadline });
     });
   }
 

@@ -132,6 +132,19 @@ const wireResultSchema: Schema<WireResult> = s.union(
  *     invocation would be a second authorization path, which is exactly what the
  *     one verb table exists to prevent.
  */
+/**
+ * `ExecOptions` minus the parts that cannot cross a structured clone.
+ *
+ * `signal` is an `AbortSignal` — not clonable, and meaningless in another
+ * process — so it is honoured on the child's side of the API and never sent.
+ */
+const execOptionsSchema = s.object({
+  cwd: s.string(),
+  env: s.optional(s.record(s.string())),
+  stdin: s.optional(s.string()),
+  timeoutMs: s.int(),
+});
+
 const apiCallSchema = s.union(
   /**
    * The host registers a **proxy** in the real `CommandRegistry` that forwards
@@ -169,6 +182,34 @@ const apiCallSchema = s.union(
    */
   s.object({ kind: s.literal('storage.set'), key: s.string(), value: s.optional(s.unknown()) }),
   s.object({ kind: s.literal('storage.delete'), key: s.string() }),
+
+  /**
+   * Running a program — the one call whose duration is the CALLER's business.
+   *
+   * `opts.timeoutMs` is required by `ExecOptions` and is what the transport
+   * derives this call's deadline from (`deadlineFor`), because a cold `git
+   * fetch` outlives the flat 15s and a `git worktree add` on a large repo can.
+   * `signal` and the promise-shaped result stay on the API's side of the port —
+   * an `AbortSignal` is not clonable, so cancellation is the caller's own
+   * timeout here.
+   *
+   * `git` is its own kind rather than an `exec` of `['git', …]` so the
+   * read/write distinction survives the crossing: the host applies
+   * `GIT_OPTIONAL_LOCKS=0` to a read and merges (never replaces) the environment
+   * for a write. Structural, per the Rebuild checklist — a child that had to
+   * remember to ask for those would eventually not.
+   */
+  s.object({
+    kind: s.literal('process.exec'),
+    cmd: s.array(s.string()),
+    opts: execOptionsSchema,
+  }),
+  s.object({
+    kind: s.literal('process.git'),
+    mode: s.enumOf(['read', 'write'] as const),
+    args: s.array(s.string()),
+    opts: execOptionsSchema,
+  }),
 
   s.object({
     kind: s.literal('log'),
@@ -248,7 +289,19 @@ export const childFrameSchema = s.union(
     /** So the host can log which OS process answered — and a smoke can prove it. */
     childPid: s.int(),
   }),
-  s.object({ kind: s.literal('call'), id: s.string(), handle: s.string(), call: apiCallSchema }),
+  s.object({
+    kind: s.literal('call'),
+    id: s.string(),
+    handle: s.string(),
+    call: apiCallSchema,
+    /**
+     * How long the CHILD will wait for this call's answer. A transport property,
+     * so it rides the frame rather than every `ApiCall` variant — and it is here
+     * rather than inferred by the host so a log line on either side can say the
+     * same number.
+     */
+    deadlineMs: s.optional(s.int()),
+  }),
   /** The child's answer to a host `ask`, correlated by the ask's own id. */
   s.object({ kind: s.literal('answer'), id: s.string(), result: wireResultSchema }),
 );

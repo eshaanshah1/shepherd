@@ -63,7 +63,13 @@ if (parent === undefined || parent === null) {
     });
 
     port.on('message', (message) => runtime.receive(message.data));
-    port.on('close', () => stderr('the host closed the frame channel'));
+    // Both halves: say it, and settle every call waiting on a channel that is
+    // now gone. Without the second, a dead main process would hang a long call
+    // for its whole declared timeout.
+    port.on('close', () => {
+      stderr('the host closed the frame channel');
+      runtime.channelClosed('the host closed the frame channel');
+    });
     // Before `start()` nothing is delivered; before `hello` the host has nothing
     // to judge. In that order, so a `hello-ok` racing our own send still lands.
     port.start();
