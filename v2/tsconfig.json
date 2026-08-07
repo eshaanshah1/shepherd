@@ -5,6 +5,7 @@
     { "path": "packages/core" },
     { "path": "packages/design-tokens" },
     { "path": "packages/platform/darwin" },
-    { "path": "packages/app" }
+    { "path": "packages/app" },
+    { "path": "extensions/diagnostics" }
   ]
 }

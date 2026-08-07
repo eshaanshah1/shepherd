@@ -16,12 +16,14 @@
   "scripts": {
     "typecheck": "tsc -b",
     "test": "vitest run",
-    "dev": "electron-vite dev",
+    "dev": "env -u NODE_OPTIONS electron-vite dev",
     "build": "electron-vite build",
-    "preview": "electron-vite preview"
+    "preview": "electron-vite preview",
+    "start": "env -u NODE_OPTIONS electron-vite preview"
   },
   "dependencies": {
     "@shepherd/core": "workspace:*",
+    "@shepherd/ext-diagnostics": "workspace:*",
     "@shepherd/design-tokens": "workspace:*",
     "@shepherd/platform-darwin": "workspace:*",
     "@shepherd/sdk": "workspace:*",
