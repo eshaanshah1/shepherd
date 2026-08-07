@@ -140,3 +140,27 @@ export {
   registerAttentionCommands,
   type AttentionCommandsOptions,
 } from './attention/index.ts';
+
+export {
+  parseManifest,
+  isExtensionIdShape,
+  isVersion,
+  isVersionRange,
+  type ManifestError,
+} from './extensions/index.ts';
+export {
+  permissionDiff,
+  PermissionStore,
+  type PermissionDiff,
+  type ReviewOutcome,
+} from './extensions/index.ts';
+export { PointRegistry, DuplicatePointError, type PointRegistryOptions } from './extensions/index.ts';
+export {
+  ExtensionRegistry,
+  shouldActivate,
+  type ActivationTrigger,
+  type Activator,
+  type ExtensionRecord,
+  type ExtensionRegistryOptions,
+  type ExtensionState,
+} from './extensions/index.ts';
