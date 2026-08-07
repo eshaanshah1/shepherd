@@ -15,7 +15,8 @@ import {
 import { LayoutStore, registerLayoutCommands } from '@shepherd/core/layout';
 import { AttentionStore, ViewingResolver, registerAttentionCommands } from '@shepherd/core';
 import { diagnosticsManifest } from '@shepherd/ext-diagnostics/manifest';
-import { createLogger, extensionId, rootId, systemClock } from '@shepherd/sdk';
+import { agentsCoreManifest } from '@shepherd/ext-agents-core/manifest';
+import { KERNEL, createLogger, extensionId, rootId, systemClock } from '@shepherd/sdk';
 import { ExtensionHost } from './ext-host.ts';
 import { forkExtensionHost } from './ext-host-process.ts';
 import { IS_DEV } from './build-flags.ts';
@@ -223,6 +224,23 @@ const attention = new AttentionStore({ layout, viewing, bus, logger });
 const viewingTopic = publishViewingEdges({ viewing, layout, bus, logger });
 
 /**
+ * `session.exit` — a session ended, on the bus.
+ *
+ * An agent extension holds per-session state a process away: a vendor's
+ * ownership lock, its resume id, and whether the user is looking at it. Without
+ * this it learns of a death only from the reconciliation sweep, which is a
+ * *heuristic over a pty* — so the exact signal would go unused and every dead
+ * session would leak an entry until something inferred it.
+ */
+host.onExit((exit) => {
+  bus.emit(
+    'session.exit',
+    { sessionId: exit.sessionId, exitCode: exit.exitCode, ...(exit.paneId === undefined ? {} : { paneId: exit.paneId }) },
+    KERNEL,
+  );
+});
+
+/**
  * The extension host, and the registry that drives it.
  *
  * The two are mutually dependent by construction — the registry is built *with*
@@ -402,19 +420,24 @@ void app.whenReady().then(async () => {
   // a CLI client cannot arrive before `diagnostics.ping` is registered, and so a
   // built-in's own `commands.register` cannot race the kernel's.
   extensionHost.registerCommands();
-  const installed = extensions.add(diagnosticsManifest, 'builtin');
-  if (!installed.ok) {
-    // Not fatal, and not silent. A built-in whose own manifest does not validate
-    // is our defect, and the app still has to open — but the reason has to be on
-    // the record or the extension is just missing.
-    for (const problem of installed.error) {
-      logger.error('extension', `built-in diagnostics is unloadable: ${problem.field}: ${problem.message}`);
+  for (const manifest of [diagnosticsManifest, agentsCoreManifest]) {
+    const added = extensions.add(manifest, 'builtin');
+    if (added.ok) continue;
+    for (const problem of added.error) {
+      logger.error('extension', `built-in ${manifest.id} is unloadable: ${problem.field}: ${problem.message}`);
     }
-  } else {
-    // Awaited, so the child is up and its commands are registered before anything
-    // can invoke them. A failure is already logged by the registry, with the
-    // reason kept on its record — `extensions.list` is where you read it back.
-    await extensions.activate(extensionId(diagnosticsManifest.id));
+  }
+  // Awaited, and in order, so each child is up and its commands registered
+  // before anything can invoke them. A failure is already logged by the registry
+  // with the reason kept on its record — `extensions.list` reads it back.
+  //
+  // `agents-core` is activated explicitly rather than left to its `onStartup`
+  // trigger, because `claude-code` will declare it as a dependency and the
+  // registry activates dependencies first: doing it here keeps one ordering
+  // rather than two that must agree.
+  for (const manifest of [diagnosticsManifest, agentsCoreManifest]) {
+    if (extensions.state(extensionId(manifest.id)) === undefined) continue;
+    await extensions.activate(extensionId(manifest.id));
   }
 
   // The tree exists before the page can ask for it: `layout:get` is the first
