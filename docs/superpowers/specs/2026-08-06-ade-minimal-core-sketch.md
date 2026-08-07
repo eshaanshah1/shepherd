@@ -430,8 +430,59 @@ too thin, that is the moment to widen it, with a real consumer to shape it.
    consistent scrollback, thin clients, and "read the screen" as an extension
    API). Lean: bytes now, protocol shaped so screen-state can slot in behind
    it; daemon decided by whether headless tasks are v2.0 or v2.1.
-8. **Presence sensing** (review §Ugly-5): `isAway` gates the phone-push
+8. **Presence sensing** (review §Ugly-5) — **ANSWERED 2026-08-07; see §7d
+   below.** `isAway` gates the phone-push
    channel and Electron has no clamshell API. Budget native-module work; make
    presence an explicit multi-signal input (idle time, lock/unlock, display
    state) behind the existing `decide()` seam, `viewing` stays a reducer
    parameter.
+
+## 7d. Decided (2026-08-07) — presence is multi-signal, lazily sampled, and needs no native module
+
+Answers §8.8. Asked during M1, because `route()` takes `away` as a parameter and
+M1 always passes `false`. There are two halves to the answer and the second is
+the one that matters.
+
+**The predicate was the bug, not the missing sensor.** v1's `isAway = lid closed
+&& no external display` is exactly what review §Ugly-5 called a heuristic wearing
+a predicate's clothes: an iMac is never away, a laptop in another room is never
+away, a locked screen is not away. Finding a clamshell API for Electron would
+have reproduced a wrong answer more reliably. So presence is a **combination**,
+and Electron already delivers most of it:
+
+- `powerMonitor.getSystemIdleTime()` — real idle seconds. The strongest single
+  signal, and v1 never used it.
+- `powerMonitor` `lock-screen` / `unlock-screen` / `suspend` / `resume`.
+- `screen.getAllDisplays()` for the docked case.
+- Clamshell, at most, as a **one-shot confirmatory read** (`ioreg -r -k
+  AppleClamshellState`) for the one case the others miss: lid shut with an
+  external display attached.
+
+**So: no third-party native module, and probably no native code at all.** The
+review budgeted native work on the assumption the sensor needed it. Every
+presence *transition* is already an Electron event, and a lid-close while docked
+should surface as a display-count change — *verify that with a probe when the
+time comes rather than trusting this paragraph*, which is the ADR 0021 habit that
+already deleted one assumed dependency. A tiny bundled Swift **one-shot** helper
+is the fallback if `ioreg` output proves flaky. Never an in-process N-API addon:
+that buys an ABI rebuild on every Electron bump — precisely the cost ADR 0021
+removed — to serve a reading taken once per decision.
+
+Three constraints on whoever builds it:
+
+- **It lives in `packages/platform/darwin`.** §7's platform-skeleton decision
+  names presence explicitly, and `boundaries.js` permits electron imports there,
+  so it is the only legal home for `powerMonitor`/`screen` outside `app/main`.
+  Don't invent a location.
+- **No polling monitor.** `getSystemIdleTime()` has no event, so a stateful
+  watcher means a timer machine — review §Bad-9's class, which v2 has kept out so
+  far. Sample idle **lazily, at `decide()` time**; subscribe only to the
+  transition events, and only for the away→present edge the catch-up replay
+  needs.
+- **Present when uncertain.** No signal ⇒ `away = false`, failing toward local
+  surfaces plus catch-up rather than toward a push. A missed banner you find on
+  return is recoverable; a push fired at someone sitting in front of the machine
+  teaches them to ignore pushes.
+
+**When:** with remote/phone, post-M4. `away` stays a `decide()` parameter until
+then, which is the shape that lets this land as one file instead of a refactor.
