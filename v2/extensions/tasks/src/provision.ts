@@ -1,0 +1,154 @@
+import { existsSync, lstatSync, mkdirSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import type { ProcessAPI } from '@shepherd/sdk';
+import { resolveBranch, type RepoRefs } from './model/branch.ts';
+import type { TaskRoot } from './model/root-synth.ts';
+
+/**
+ * Making a task real — the half that touches disk and git.
+ *
+ * The decisions are all in `model/`: `TaskRootSynth` says what the root should
+ * contain and `resolveBranch` says which git invocation to run. This file only
+ * performs them, which is why the interesting cases are table-tested without a
+ * filesystem and the ones here are about what a filesystem does to you.
+ *
+ * `fs` is deliberately available to an extension (`boundaries.js` keeps
+ * `fs`/`path`/`url` out of its OS-API deny-list). Spawning is not, which is why
+ * git goes through `ProcessAPI`.
+ */
+
+export interface MaterializeResult {
+  readonly linked: number;
+  /** Links that could not be made, each with a reason. Degraded, not fatal. */
+  readonly failed: readonly string[];
+}
+
+/**
+ * Write the generated `CLAUDE.md` and the per-entry symlinks.
+ *
+ * **Idempotent, and a link is replaced rather than kept.** A repo can move, and
+ * a stale symlink pointing at where it used to be is worse than no link at all —
+ * it resolves to nothing and reports no error, so a skill silently stops
+ * existing. Re-materializing is also the repair path.
+ *
+ * **A failed link degrades the task rather than failing it.** One missing skill
+ * is not a reason to refuse to create work; the count and the reasons come back
+ * so a caller can say so.
+ */
+export function materializeTaskRoot(root: string, plan: TaskRoot): MaterializeResult {
+  mkdirSync(root, { recursive: true });
+  writeFileSync(join(root, 'CLAUDE.md'), plan.claudeMd, 'utf8');
+
+  let linked = 0;
+  const failed: string[] = [];
+  for (const link of plan.links) {
+    const at = join(root, link.linkPath);
+    try {
+      mkdirSync(dirname(at), { recursive: true });
+      // `lstat`, never `existsSync`: a symlink pointing at a deleted target does
+      // not "exist" by the second test, so the stale link would survive forever.
+      if (lstatSync(at, { throwIfNoEntry: false }) !== undefined) rmSync(at, { recursive: true, force: true });
+      if (!existsSync(link.target)) {
+        failed.push(`${link.linkPath}: ${link.target} does not exist`);
+        continue;
+      }
+      symlinkSync(link.target, at);
+      linked += 1;
+    } catch (error) {
+      failed.push(`${link.linkPath}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return { linked, failed };
+}
+
+export interface ProvisionRepo {
+  readonly name: string;
+  /** The source repo, as the user picked it. */
+  readonly path: string;
+}
+
+export type RepoOutcome =
+  | { readonly ok: true; readonly name: string; readonly worktree: string }
+  | { readonly ok: false; readonly name: string; readonly reason: string };
+
+/**
+ * One repo's worktree, on the task's branch.
+ *
+ * Everything probe 2 measured is honoured by going through `resolveBranch`:
+ * three-way resolution (v1's two-way silently forked an origin-only branch off
+ * the default with a wrong upstream), no fetch precondition (v1's made a
+ * remoteless or offline repo unusable), no DWIM naming (the path basename here is
+ * the REPO name, so git would name the branch after it), and a refusal rather
+ * than `--force` when a branch is checked out elsewhere.
+ *
+ * The fetch is **opportunistic**: it improves the base ref when it works and is
+ * ignored when it does not.
+ */
+export async function provisionRepo(
+  process_: ProcessAPI,
+  repo: ProvisionRepo,
+  branch: string,
+  dest: string,
+  timeoutMs = 120_000,
+): Promise<RepoOutcome> {
+  const opts = { cwd: repo.path, timeoutMs };
+  const lines = async (args: string[]): Promise<string[]> => {
+    const out = await process_.gitRead(args, opts);
+    return out.ok ? out.stdout.split('\n').map((l) => l.trim()).filter((l) => l !== '') : [];
+  };
+
+  // Opportunistic, and its failure is not the task's failure.
+  await process_.gitRead(['fetch', '--quiet', 'origin'], opts).catch(() => undefined);
+
+  const refs: RepoRefs = {
+    localBranches: await lines(['for-each-ref', '--format=%(refname:short)', 'refs/heads']),
+    remoteBranches: await lines(['for-each-ref', '--format=%(refname:short)', 'refs/remotes']),
+    // Every branch some worktree of this repo already holds. A branch belongs to
+    // one worktree, so this is what makes the refusal possible instead of a
+    // `--force` that would give two worktrees one branch.
+    checkedOutBranches: await lines([
+      'worktree',
+      'list',
+      '--porcelain',
+    ]).then((rows) =>
+      rows.filter((row) => row.startsWith('branch ')).map((row) => row.slice('branch refs/heads/'.length)),
+    ),
+    defaultBase: (await lines(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']))[0],
+  };
+
+  const plan = resolveBranch(branch, dest, refs);
+  if (!plan.ok) return { ok: false, name: repo.name, reason: plan.reason };
+
+  const added = await process_.gitWrite([...plan.args], opts);
+  if (!added.ok) return { ok: false, name: repo.name, reason: added.stderr.trim() || `git exited ${added.code}` };
+  return { ok: true, name: repo.name, worktree: dest };
+}
+
+/**
+ * What a repo's worktree contributes to the task root.
+ *
+ * Read from the WORKTREE, not the source repo: the branch may add or remove
+ * skills, and the agent will be working in the worktree.
+ */
+export function readContribution(worktree: string): {
+  skills: string[];
+  agents: string[];
+  hasSettings: boolean;
+} {
+  return {
+    skills: entriesOf(join(worktree, '.claude', 'skills')),
+    agents: entriesOf(join(worktree, '.claude', 'agents')),
+    hasSettings: existsSync(join(worktree, '.claude', 'settings.json')),
+  };
+}
+
+function entriesOf(dir: string): string[] {
+  // A repo with no `.claude/` is the common case, not an error — the throw is
+  // the answer "there are none", and swallowing it here is what keeps every
+  // caller from having to know that.
+  try {
+    return readdirSync(dir).sort();
+  } catch {
+    return [];
+  }
+}
