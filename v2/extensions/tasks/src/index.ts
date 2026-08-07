@@ -1,10 +1,10 @@
 import { s, type ExtensionContext, type Shepherd } from '@shepherd/sdk';
 import { REPO_SUGGESTIONS_POINT, TASK_COMMANDS } from './manifest.ts';
-import { TaskStore, type RepoRef, type TaskRecord, type TaskSession } from './store.ts';
+import { TaskStore, type RepoArchive, type RepoRef, type TaskRecord, type TaskSession } from './store.ts';
 import { slugify, uniqueSlug } from './model/slug.ts';
 import { displayState } from './model/lifecycle.ts';
 import { synthTaskRoot } from './model/root-synth.ts';
-import { archiveWorktree, materializeTaskRoot, provisionRepo, readContribution } from './provision.ts';
+import { archiveWorktree, materializeTaskRoot, provisionRepo, readContribution, restoreWorktree } from './provision.ts';
 
 /**
  * `tasks` — the extension M3 exists for, and the one that has to prove the ADE
@@ -242,6 +242,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         if (task === undefined) throw new Error(`no task ${args.task}`);
         const root = rootOf(task);
         const warnings: string[] = [];
+        const archives: RepoArchive[] = [];
         for (const repo of task.repos) {
           const out = await archiveWorktree(api.proposed.process, repo.path, `${root}/${repo.name}`);
           if (!out.ok) {
@@ -249,10 +250,14 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
             // snapshotted, and failing inside git is how v1 found that out.
             throw new Error(`${repo.name}: ${out.reason}`);
           }
+          // Recorded, because a snapshot nothing points at is one restore cannot
+          // find — and an unreferenced pinned commit is worse than no archive:
+          // it looks like the work is safe.
+          archives.push({ repo: repo.name, ...out.record });
           // Gitignored files go either way; the user hears about it first.
           for (const warning of out.warnings) warnings.push(`${repo.name}: ${warning}`);
         }
-        store.put({ ...task, lifecycle: 'archived' });
+        store.put({ ...task, lifecycle: 'archived', archives });
         for (const warning of warnings) ctx.log.warn(`task ${task.id}: ${warning}`);
         return { id: task.id, lifecycle: 'archived', warnings };
       },
@@ -269,7 +274,22 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         // Re-provisioning is the restore: `worktree add` recreates each repo at
         // the same path on the same branch, and the root is re-materialized from
         // what lands. Optimistic, for the same reason creating one is.
-        void provision(store.get(task.id) as TaskRecord).catch((error: unknown) => {
+        void (async () => {
+          await provision(store.get(task.id) as TaskRecord);
+          // Re-provisioning gives back the branch and a CLEAN tree, which is not
+          // what was archived. Replaying the snapshot is a separate step, and
+          // omitting it is what made an earlier build "restore" a task to an
+          // empty working tree while reporting success.
+          for (const archive of task.archives ?? []) {
+            const out = await restoreWorktree(api.proposed.process, `${rootOf(task)}/${archive.repo}`, archive);
+            if (!out.ok) ctx.log.warn(`task ${task.id}: ${archive.repo} work not replayed — ${out.reason}`);
+          }
+          // The archives are consumed: they describe a snapshot that has now been
+          // put back, and keeping them would let a second restore overwrite newer
+          // work with the old snapshot.
+          const now = store.get(task.id);
+          if (now !== undefined) store.put({ ...now, archives: [] });
+        })().catch((error: unknown) => {
           ctx.log.error(`task ${task.id}: restore threw — ${String(error)}`);
         });
         return { id: task.id, lifecycle: 'running' };

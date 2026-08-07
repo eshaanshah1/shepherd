@@ -60,6 +60,17 @@ export interface TaskSession {
   readonly resumeTarget?: string;
 }
 
+/** Where a repo's uncommitted work went when the task was archived. */
+export interface RepoArchive {
+  readonly repo: string;
+  readonly branch: string;
+  readonly headSha: string;
+  /** The pinned snapshot commit. Restore reads its tree. */
+  readonly commit: string;
+  /** The staged tree, so restore can re-split staged from unstaged. */
+  readonly stagedTree: string;
+}
+
 export interface TaskRecord {
   readonly schemaVersion: typeof TASK_SCHEMA_VERSION;
   readonly id: string;
@@ -71,6 +82,8 @@ export interface TaskRecord {
   readonly repos: readonly RepoRef[];
   readonly sessions: readonly TaskSession[];
   readonly createdAt: number;
+  /** Present only while archived. Added later; `s.stored` reads old records fine. */
+  readonly archives?: readonly RepoArchive[];
 }
 
 const repoSchema = s.stored({ path: s.string(), name: s.string() });
@@ -92,6 +105,17 @@ const taskSchema = s.stored({
   repos: s.array(repoSchema),
   sessions: s.array(sessionSchema),
   createdAt: s.int(),
+  archives: s.optional(
+    s.array(
+      s.stored({
+        repo: s.string(),
+        branch: s.string(),
+        headSha: s.string(),
+        commit: s.string(),
+        stagedTree: s.string(),
+      }),
+    ),
+  ),
 });
 
 export class TaskStore {

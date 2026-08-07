@@ -141,3 +141,4 @@ TypeScript is pinned to the 6.0 line rather than 7.0: `typescript@7` is the
 native (Go) compiler and ships no JS compiler API, which `typescript-eslint`
 (peer `typescript <6.1.0`) parses with — so 7.0 would cost the boundary lint,
 the thing this phase exists to install. Revisit when typescript-eslint supports it.
+staged-change
