@@ -31,21 +31,32 @@ export function registerSessionCommands(options: SessionCommandsOptions): Dispos
       schema: s.nothing(),
       handler: () =>
         host.list().map((info) => {
-          // Both fields come from the host, including the derived one: the
-          // predicate is a judgement about what a session's command means, and
-          // re-deriving it here from `foregroundProcess` would be a second copy
-          // of it that drifts the first time either side is corrected.
-          const foregroundProcess = host.foregroundProcess(info.id);
+          // ONE read for both fields. Asking the host twice samples the pty
+          // twice, so a child exiting between the two calls yields a
+          // self-contradictory answer — `{foregroundProcess: 'sleep',
+          // hasForegroundProcess: false}` — which is worse than either field
+          // alone for the sweep that cross-checks them. The derived boolean
+          // still comes from the host rather than being recomputed here: the
+          // predicate is a judgement about what a session's command means, and a
+          // second copy would drift the first time either side is corrected.
+          const foreground = host.foreground(info.id);
           return {
             id: info.id,
+            // The child-side `Session` declares `pid`, and this command is its
+            // only transport — omitting it would make that member unfulfillable.
+            pid: info.pid,
             cwd: info.cwd,
             command: info.command,
             args: info.args,
             cols: info.cols,
             rows: info.rows,
             ...(info.paneId === undefined ? {} : { paneId: info.paneId }),
-            ...(foregroundProcess === undefined ? {} : { foregroundProcess }),
-            hasForegroundProcess: host.hasForegroundProcess(info.id),
+            ...(foreground.name === undefined ? {} : { foregroundProcess: foreground.name }),
+            // Tri-state, and it crosses the wire as one: `null` is "the tty
+            // could not be read", which a reconciler must not read as "nothing
+            // is running". JSON has no `undefined`, so the absent case would be
+            // indistinguishable from a field this build does not send.
+            hasForegroundProcess: foreground.hasForegroundProcess ?? null,
           };
         }),
     }),

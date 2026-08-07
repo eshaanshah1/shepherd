@@ -178,7 +178,16 @@ export interface ExtensionPoint<T> extends Disposable {
 
 export interface PointsAPI {
   define<T>(id: string, opts?: { readonly order?: 'priority' | 'registration' }): ExtensionPoint<T>;
-  /** Another extension's point, by id. Undefined if its owner is not active. */
+  /**
+   * Another extension's point, by id.
+   *
+   * `undefined` when nothing defines that id, or when its owner is not active —
+   * the registry frees an id on dispose, so those collapse into one honest
+   * answer. **Reaching a point whose owner the caller never declared in its
+   * manifest `dependencies` throws instead**, because that is a manifest bug and
+   * an author who got `undefined` for it would debug the seam rather than the one
+   * line that is wrong.
+   */
   get<T>(id: string): ExtensionPoint<T> | undefined;
 }
 
@@ -196,7 +205,20 @@ export interface PointsAPI {
  * kernel while still making "ask Claude" one line for an extension author.
  */
 export interface ExtensionsAPI {
-  /** Typed and semver-checked against the exporting extension's declared range. */
+  /**
+   * The API the named extension returned from its `activate`.
+   *
+   * Resolves **only ids the caller declared** in its manifest's `dependencies`;
+   * an undeclared id is a typed refusal, not `undefined`. `undefined` means one
+   * thing and one thing only — the extension is hosted here and is not active —
+   * so an extension in another process and one that exported nothing are their
+   * own errors rather than three facts wearing one answer.
+   *
+   * Not semver-checked: `Manifest.dependencies` carries bare ids with no ranges,
+   * so there is nothing to check against. (An earlier version of this comment
+   * promised a check that never existed, which was harmless only while `get`
+   * refused everything.) If ranges are ever wanted they go in the manifest first.
+   */
   get<T>(id: string): T | undefined;
   isActive(id: string): boolean;
 }

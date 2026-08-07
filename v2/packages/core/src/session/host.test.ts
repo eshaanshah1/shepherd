@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { isErr, isOk, sessionId, type SessionID } from '@shepherd/sdk';
-import { SessionHost, type SessionExit } from './host.ts';
+import { SessionHost, foregroundReading, type SessionExit } from './host.ts';
 
 // These run against a REAL /bin/sh pty. A faked spawn would prove the registry
 // and nothing about the thing that actually breaks — node-pty's prebuild, its
@@ -527,5 +527,55 @@ describe('SessionHost input and geometry', () => {
     expect(host.list()).toHaveLength(0);
     // Listeners are dropped by dispose(), so the count is the point, not the events.
     await new Promise((resolve) => setTimeout(resolve, 50));
+  });
+});
+
+describe('foregroundReading — the pure decision', () => {
+  it('reports an unreadable tty as "cannot tell", never as idle', () => {
+    // THE case this shape exists for. `false` here is the reconciliation
+    // sweep's demote signal, so answering it for a session whose tty merely
+    // could not be read would mark a live, working agent as idle. node-pty
+    // returns undefined rather than throwing on every darwin failure path, so
+    // this is the real failure mode and not a defensive hypothetical.
+    for (const raw of [undefined, '']) {
+      expect(foregroundReading(raw, '/bin/zsh').hasForegroundProcess).toBeUndefined();
+      expect(foregroundReading(raw, '/bin/zsh').name).toBeUndefined();
+    }
+  });
+
+  it('is false when the session\'s own command is back in front', () => {
+    expect(foregroundReading('zsh', '/bin/zsh')).toEqual({ name: 'zsh', hasForegroundProcess: false });
+  });
+
+  it('is true for anything else, whatever it is called', () => {
+    // Name-blind on purpose: a real claude install resolves to a binary named
+    // after its version, so a predicate that matched the vendor's name would
+    // match nothing at all.
+    for (const raw of ['sleep', '2.1.224', 'node', 'some-wrapper']) {
+      expect(foregroundReading(raw, '/bin/zsh').hasForegroundProcess).toBe(true);
+    }
+  });
+
+  it('compares basenames, because the two sides are a path and a bare name', () => {
+    expect(foregroundReading('bash', '/bin/bash').hasForegroundProcess).toBe(false);
+  });
+
+  it('inverts when the shell execs under another name — the /bin/sh hazard', () => {
+    // macOS derives the process name from the RESOLVED executable, so a session
+    // spawned as `/bin/sh` reports `bash` and reads busy forever, and the sweep
+    // would never demote a pane. A negative control on the constraint that a
+    // pane must be spawned as the shell's own path.
+    expect(foregroundReading('bash', '/bin/sh').hasForegroundProcess).toBe(true);
+  });
+});
+
+describe('foreground — the IO shell over it', () => {
+  it('reports a dead or unknown id as a real false, not as unknown', () => {
+    // Distinct from an unreadable tty on purpose: there is nothing to reconcile
+    // for a session that does not exist, so this is knowledge the sweep may act
+    // on rather than an absence of it.
+    const host = makeHost();
+    expect(host.foreground(sessionId('nope')).hasForegroundProcess).toBe(false);
+    expect(host.foreground(sessionId('nope')).name).toBeUndefined();
   });
 });

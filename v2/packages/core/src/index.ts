@@ -122,6 +122,8 @@ export {
   type WillCreateEvent,
   type WillCreateHook,
   type WillCreatePatch,
+  foregroundReading,
+  type ForegroundReading,
   registerSessionCommands,
   SESSION_COMMANDS,
   type SessionCommandsOptions,

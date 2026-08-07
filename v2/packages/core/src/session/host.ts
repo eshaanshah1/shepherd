@@ -69,6 +69,51 @@ export interface ResolvedSpec {
   readonly paneId?: PaneID;
 }
 
+/**
+ * What one read of the pty's foreground process says.
+ *
+ * `hasForegroundProcess` is tri-state on purpose — see `SessionHost.foreground`.
+ * `undefined` means the tty could not be read, which a reconciler must not treat
+ * as "nothing is running".
+ */
+export interface ForegroundReading {
+  readonly name?: string;
+  readonly hasForegroundProcess: boolean | undefined;
+}
+
+/**
+ * What a raw `pty.process` reading means for a session that ran `command` — the
+ * whole decision, as a pure function, so the case that matters is testable
+ * without racing a dying pty.
+ *
+ * `raw` is what node-pty answered: a name, or `undefined` when the tty could not
+ * be read. On darwin every failure path returns the latter rather than throwing
+ * (bad fd, `tcgetpgrp` -1, `sysctl` -1, empty `p_comm`) — measured against a pty
+ * killed mid-read — which is exactly why the unreadable case needs a value of
+ * its own and cannot be left to a `catch`.
+ *
+ * The predicate is deliberately **name-blind**. The obvious alternative is to
+ * match the foreground against the agent's own binary name, and it matches
+ * nothing: a real `claude` install resolves to a binary named after its version
+ * (`2.1.224`), and macOS derives the process name from the resolved executable.
+ * A pane's command is the login shell, so while anything at all runs the
+ * foreground is *something else*, and when it dies by any means the shell comes
+ * back — which is the session's own command, whatever either is called.
+ *
+ * That same resolution bites the command side: a session spawned as `/bin/sh`
+ * reports `bash` on macOS and would read busy forever. A pane must be spawned as
+ * the shell's own resolved path, never through a wrapper or a name that execs
+ * into a differently-named binary.
+ */
+export function foregroundReading(raw: string | undefined, command: string): ForegroundReading {
+  // Not `false`: "I could not look" is not "nothing is there", and a reconciler
+  // that conflated them would demote a live agent over one unreadable tick.
+  if (raw === undefined || raw === '') return { hasForegroundProcess: undefined };
+  // Basenames, because the spec carries a path (`/bin/zsh`) and the pty reports
+  // a bare name (`zsh`).
+  return { name: raw, hasForegroundProcess: basename(raw) !== basename(command) };
+}
+
 /** The public view of a live session. A dead one is not in the registry at all. */
 export interface SessionInfo {
   readonly id: SessionID;
@@ -278,15 +323,56 @@ export class SessionHost {
    * here (the predicate below reads that as "the session's own command"), but it
    * is why a test must wait on the settled NAME and not on the predicate.
    */
-  foregroundProcess(id: SessionID): string | undefined {
+  /**
+   * The pty's foreground process name, and what that implies — **from one read**.
+   *
+   * Both answers come from a single `pty.process` access on purpose: sampling
+   * twice can report `{name: 'sleep', hasForegroundProcess: false}` if a child
+   * exits between them, and a self-contradictory pair is worse than either
+   * answer alone for a caller trying to cross-check.
+   *
+   * `hasForegroundProcess` is `undefined` — **never `false`** — when the tty
+   * could not be read, and that distinction is the whole point. node-pty does
+   * not throw here: on darwin every failure path (bad fd, `tcgetpgrp` -1,
+   * `sysctl` -1, empty `p_comm`) returns NULL and surfaces as `undefined`,
+   * measured over a pty killed mid-read. Collapsing that into `false` would hand
+   * the reconciliation sweep its demote signal for a live, working agent whose
+   * tty was merely unreadable for a tick, with nothing anywhere saying why. So
+   * an unreadable tty is reported through `onError` and answered as "cannot
+   * tell", and the sweep is expected to fail toward NOT demoting.
+   */
+  foreground(id: SessionID): ForegroundReading {
     const record = this.#sessions.get(id);
-    if (!record) return undefined;
+    // A session that is gone is running nothing, and its exit is the exact
+    // signal for that case — so this is knowledge, not an absence of it.
+    if (!record) return { hasForegroundProcess: false };
+
+    let raw: string | undefined;
     try {
-      return record.pty.process;
+      // node-pty types this `string`; on darwin it is genuinely `string |
+      // undefined`, and the cast is what makes that lie visible.
+      raw = record.pty.process as string | undefined;
     } catch (error) {
-      this.#onError?.(error, `foregroundProcess(${id})`);
-      return undefined;
+      // Kept for platforms where this IS a throw. On darwin it is not, which is
+      // why `foregroundReading` carries the unreadable case rather than this.
+      this.#onError?.(error, `foreground(${id})`);
+      return { hasForegroundProcess: undefined };
     }
+
+    const reading = foregroundReading(raw, record.info.command);
+    if (reading.name === undefined) {
+      // The branch that must never be silent: the sweep is about to be told
+      // "cannot tell", and without this nothing anywhere says why.
+      this.#onError?.(
+        new Error(`node-pty could not read the foreground process of ${id}`),
+        `foreground(${id})`,
+      );
+    }
+    return reading;
+  }
+
+  foregroundProcess(id: SessionID): string | undefined {
+    return this.foreground(id).name;
   }
 
   /**
@@ -315,12 +401,8 @@ export class SessionHost {
    * headless agent spawned directly, which would read idle while alive). Such a
    * session's liveness is its exit; don't reconcile it from here.
    */
-  hasForegroundProcess(id: SessionID): boolean {
-    const record = this.#sessions.get(id);
-    if (!record) return false;
-    const foreground = this.foregroundProcess(id);
-    if (foreground === undefined) return false;
-    return basename(foreground) !== basename(record.info.command);
+  hasForegroundProcess(id: SessionID): boolean | undefined {
+    return this.foreground(id).hasForegroundProcess;
   }
 
   // ------------------------------------------------------------------- streams

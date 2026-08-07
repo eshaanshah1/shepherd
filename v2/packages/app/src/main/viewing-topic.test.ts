@@ -167,3 +167,53 @@ describe('publishViewingEdges', () => {
     running.dispose();
   });
 });
+
+
+describe('the closing edge', () => {
+  it('publishes viewing=false for a pane whose binding the close already removed', () => {
+    // `LayoutStore.close` unbinds SYNCHRONOUSLY and announces afterwards, so the
+    // resolver's `(pane, false)` — the edge it fires precisely so subscribers
+    // stop suppressing alerts for a pane that is gone — arrives when
+    // `sessionFor` is already empty. Dropped, a subscriber holds "they are
+    // looking at it" forever for a session that no longer exists.
+    const h = harness();
+    const live = publisher(h);
+
+    // Split first, so closing is not "the root ran out of panes" — and take the
+    // NEW pane, which the split focuses. Closing the focused, bound pane is the
+    // case that matters, because it is the one being viewed.
+    const split = h.layout.split(ROOT, 'row');
+    if (!split.ok) throw new Error('split failed');
+    const pane = split.value;
+
+    const session = sessionId('session-1');
+    h.layout.bindSession(pane, session);
+    live.announce(pane);
+    expect(h.seen).toContainEqual({ sessionId: session, paneId: pane, viewing: true });
+    h.seen.length = 0;
+
+    h.layout.close(pane);
+
+    const closing = h.seen.filter((event) => event.sessionId === session);
+    expect(closing, 'the closing edge was dropped').toHaveLength(1);
+    expect(closing[0]?.viewing).toBe(false);
+    live.dispose();
+  });
+
+  it('says nothing twice for the same closed pane', () => {
+    // The last-known entry is consumed when it is used, so a later edge for the
+    // same pane cannot resurrect a session id that is already gone.
+    const h = harness();
+    const live = publisher(h);
+    h.layout.bindSession(h.pane, sessionId('session-1'));
+    live.announce(h.pane);
+    h.layout.unbindSession(sessionId('session-1'));
+    h.seen.length = 0;
+
+    live.announce(h.pane);
+    live.announce(h.pane);
+    expect(h.seen).toHaveLength(1);
+    expect(h.seen[0]?.viewing).toBe(false);
+    live.dispose();
+  });
+});
