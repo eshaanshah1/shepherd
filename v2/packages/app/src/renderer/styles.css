@@ -234,3 +234,65 @@ body.sh-dragging {
     transition: none !important;
   }
 }
+
+/*
+ * The pane, as a column: an agent badge slot over the terminal.
+ *
+ * The slot is ALWAYS in the tree — see AgentBadge for why (a conditional
+ * sibling shifts the terminal's reconciliation index and remounts xterm). Empty
+ * it collapses to nothing visible, so a plain shell looks exactly as it did.
+ */
+.sh-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+}
+
+/*
+ * Fixed height whenever it carries anything, per rule 9: attention changes what
+ * a row says, never how big it is. v1 grew alerted rows into two-line cards and
+ * reverted it for being noisy — the lesson survives the rewrite.
+ */
+.sh-agent-badge {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--sh-line-height) / 3);
+  padding: 0 calc(var(--sh-line-height) / 2);
+  height: 0;
+  overflow: hidden;
+  border-bottom: 1px solid transparent;
+  font-size: var(--sh-micro-size, 10px);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--sh-wool-dim);
+  transition: none; /* rule 7: no easing on a state indicator. */
+}
+
+/* Only an actual agent opens the slot. `''` is a plain shell. */
+.sh-agent-badge[data-agent-state]:not([data-agent-state='']) {
+  height: var(--sh-row-height, 28px);
+  border-bottom-color: var(--sh-ink-line);
+}
+
+.sh-agent-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.sh-agent-label {
+  color: var(--sh-wool);
+}
+
+/* The reason is prose, not a label — it keeps its case and dims. */
+.sh-agent-reason {
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--sh-wool-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

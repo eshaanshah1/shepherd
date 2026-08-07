@@ -1,6 +1,6 @@
 import type { SplitNode } from '@shepherd/core/layout';
 import { leafIds } from '@shepherd/core/layout';
-import type { LayoutState } from './commands.ts';
+import type { LayoutSnapshot } from '../shared/index.ts';
 import type { PaneDiagnostics, PaneTerminals } from './pane-sessions.ts';
 
 /**
@@ -32,6 +32,8 @@ export interface SmokeSnapshot {
   readonly focusedPaneId: string | null;
   readonly outline: PaneOutline | null;
   readonly panes: PaneDiagnostics[];
+  /** paneId → sessionId as MAIN sees it. The renderer's view is in `panes`. */
+  readonly sessions: Readonly<Record<string, string>>;
 }
 
 export interface SmokeHook {
@@ -39,17 +41,24 @@ export interface SmokeHook {
 }
 
 export interface SmokeHandle {
-  readonly onState: (state: LayoutState) => void;
+  readonly onSnapshot: (snapshot: LayoutSnapshot) => void;
 }
 
+const EMPTY: SmokeSnapshot = {
+  ready: false,
+  paneIds: [],
+  focusedPaneId: null,
+  outline: null,
+  panes: [],
+  sessions: {},
+};
+
 export function installSmokeHook(terminals: PaneTerminals | null): SmokeHandle {
-  let latest: LayoutState | null = null;
+  let latest: LayoutSnapshot | null = null;
 
   const hook: SmokeHook = {
     snapshot: () => {
-      if (latest === null) {
-        return { ready: false, paneIds: [], focusedPaneId: null, outline: null, panes: [] };
-      }
+      if (latest === null) return EMPTY;
       const ids = leafIds(latest.tree);
       return {
         ready: true,
@@ -59,6 +68,7 @@ export function installSmokeHook(terminals: PaneTerminals | null): SmokeHandle {
         panes: ids
           .map((id) => terminals?.inspect(id))
           .filter((info): info is PaneDiagnostics => info !== undefined),
+        sessions: latest.sessions,
       };
     },
   };
@@ -66,8 +76,8 @@ export function installSmokeHook(terminals: PaneTerminals | null): SmokeHandle {
   (globalThis as { __shepherdTest?: SmokeHook }).__shepherdTest = hook;
 
   return {
-    onState: (state) => {
-      latest = state;
+    onSnapshot: (snapshot) => {
+      latest = snapshot;
     },
   };
 }

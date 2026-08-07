@@ -20,4 +20,12 @@ export {
   type WillCreateEvent,
   type WillCreateHook,
   type WillCreatePatch,
+  foregroundReading,
+  type ForegroundReading,
 } from './host.ts';
+export {
+  registerSessionCommands,
+  SESSION_COMMANDS,
+  type SessionCommandsOptions,
+  type ViewingLookup,
+} from './commands.ts';

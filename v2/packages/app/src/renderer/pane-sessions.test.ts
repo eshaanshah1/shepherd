@@ -2,184 +2,28 @@
 import { describe, expect, it } from 'vitest';
 import { paneId as makePaneId } from '@shepherd/sdk';
 import { makePane, type Pane } from '@shepherd/core/layout';
-import type {
-  IpcResult,
-  SessionApi,
-  SessionCreateRequest,
-  SessionDataMessage,
-  SessionDescriptor,
-  SessionExitMessage,
-} from '../shared/index.ts';
-import {
-  PaneSessionRegistry,
-  type TerminalDisposable,
-  type TerminalLike,
-} from './pane-sessions.ts';
+import { PaneSessionRegistry } from './pane-sessions.ts';
+import { SpySession, decode, fakeTerminal, type FakeTerminal } from './test-terminals.ts';
 
 /**
  * The v1 root finding, as a test: **a view going away must not end a session.**
  *
  * The registry is exercised against a spy bridge, so every claim is about the
  * exact IPC calls it makes — `kill` is a string in a list, and its absence is
- * checkable. The negative control (`close` DOES kill) is in the same describe
- * block on purpose: a guard with no negative control guards nothing, and the
- * failure mode it protects against is a registry that simply never kills.
+ * checkable.
+ *
+ * P4a moved the kill itself one process over: the kernel owns the layout, so
+ * `layout.close` ends a session through the `SessionSink` a `LayoutStore` cannot
+ * be constructed without, and by the time the pane's disappearance reaches this
+ * renderer the pty is already gone. So the assertion here is now that **nothing
+ * in this file kills anything, on any path** — `release` included.
+ *
+ * A guard with no negative control guards nothing, and "never kills" is a claim
+ * that a registry which does nothing at all would also satisfy. Two controls keep
+ * it honest: `create`/`attach`/`detach` are asserted positively throughout (so the
+ * registry demonstrably still talks to the bridge), and `menu-dispatch.test.ts`
+ * asserts the kill really does happen, against a real `LayoutStore` in main.
  */
-
-// ------------------------------------------------------------------- spies
-
-interface Call {
-  readonly name: string;
-  readonly args: readonly unknown[];
-}
-
-class SpySession implements SessionApi {
-  readonly calls: Call[] = [];
-  #nextId = 0;
-  dataListeners: Array<(m: SessionDataMessage) => void> = [];
-  exitListeners: Array<(m: SessionExitMessage) => void> = [];
-  /** Set to make the next create fail. */
-  failCreate = false;
-  /** Set to hold every create open until `releaseCreates()`. */
-  deferCreate = false;
-  #deferred: Array<() => void> = [];
-
-  releaseCreates(): void {
-    for (const release of this.#deferred.splice(0)) release();
-  }
-
-  get names(): string[] {
-    return this.calls.map((call) => call.name);
-  }
-
-  #record(name: string, ...args: unknown[]): void {
-    this.calls.push({ name, args });
-  }
-
-  create(request: SessionCreateRequest): Promise<IpcResult<SessionDescriptor>> {
-    this.#record('create', request);
-    if (this.failCreate) {
-      return Promise.resolve({ ok: false, error: { code: 'spawn-failed', message: 'nope' } });
-    }
-    this.#nextId += 1;
-    const value: SessionDescriptor = {
-      sessionId: `s${this.#nextId}`,
-      pid: 100 + this.#nextId,
-      cols: 80,
-      rows: 24,
-    };
-    if (!this.deferCreate) return Promise.resolve({ ok: true, value });
-    return new Promise((resolve) => {
-      this.#deferred.push(() => resolve({ ok: true, value }));
-    });
-  }
-
-  attach(sessionId: string): Promise<IpcResult<SessionDescriptor>> {
-    this.#record('attach', sessionId);
-    return Promise.resolve({ ok: true, value: { sessionId, pid: 1, cols: 80, rows: 24 } });
-  }
-
-  detach(sessionId: string): Promise<IpcResult<void>> {
-    this.#record('detach', sessionId);
-    return Promise.resolve({ ok: true, value: undefined });
-  }
-
-  write(sessionId: string, data: string | Uint8Array): Promise<IpcResult<void>> {
-    this.#record('write', sessionId, data);
-    return Promise.resolve({ ok: true, value: undefined });
-  }
-
-  paste(sessionId: string, text: string): Promise<IpcResult<void>> {
-    this.#record('paste', sessionId, text);
-    return Promise.resolve({ ok: true, value: undefined });
-  }
-
-  resize(sessionId: string, cols: number, rows: number): Promise<IpcResult<void>> {
-    this.#record('resize', sessionId, cols, rows);
-    return Promise.resolve({ ok: true, value: undefined });
-  }
-
-  kill(sessionId: string): Promise<IpcResult<void>> {
-    this.#record('kill', sessionId);
-    return Promise.resolve({ ok: true, value: undefined });
-  }
-
-  onData(listener: (message: SessionDataMessage) => void): () => void {
-    this.dataListeners.push(listener);
-    return () => {
-      this.dataListeners = this.dataListeners.filter((l) => l !== listener);
-    };
-  }
-
-  onExit(listener: (message: SessionExitMessage) => void): () => void {
-    this.exitListeners.push(listener);
-    return () => {
-      this.exitListeners = this.exitListeners.filter((l) => l !== listener);
-    };
-  }
-
-  emitData(sessionId: string, bytes: Uint8Array): void {
-    for (const listener of [...this.dataListeners]) listener({ sessionId, bytes });
-  }
-
-  emitExit(sessionId: string, exitCode: number): void {
-    for (const listener of [...this.exitListeners]) listener({ sessionId, exitCode });
-  }
-}
-
-interface FakeTerminal extends TerminalLike {
-  readonly written: Array<Uint8Array | string>;
-  disposed: boolean;
-  opened: HTMLElement | null;
-  typed(text: string): void;
-  resizedTo(cols: number, rows: number): void;
-}
-
-function fakeTerminal(): FakeTerminal {
-  const written: Array<Uint8Array | string> = [];
-  let dataListener: ((data: string) => void) | null = null;
-  let resizeListener: ((size: { cols: number; rows: number }) => void) | null = null;
-  const disposable = (clear: () => void): TerminalDisposable => ({ dispose: clear });
-
-  const terminal: FakeTerminal = {
-    cols: 80,
-    rows: 24,
-    written,
-    disposed: false,
-    opened: null,
-    open: (host) => {
-      terminal.opened = host;
-    },
-    write: (data) => {
-      written.push(data);
-    },
-    onData: (listener) => {
-      dataListener = listener;
-      return disposable(() => {
-        dataListener = null;
-      });
-    },
-    onResize: (listener) => {
-      resizeListener = listener;
-      return disposable(() => {
-        resizeListener = null;
-      });
-    },
-    focus: () => undefined,
-    fit: () => ({ cols: 80, rows: 24 }),
-    text: () => written.map((chunk) => decode(chunk)).join(''),
-    dispose: () => {
-      terminal.disposed = true;
-    },
-    typed: (text) => dataListener?.(text),
-    resizedTo: (cols, rows) => resizeListener?.({ cols, rows }),
-  };
-  return terminal;
-}
-
-function decode(chunk: Uint8Array | string): string {
-  return typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk);
-}
 
 interface Harness {
   readonly session: SpySession;
@@ -289,24 +133,27 @@ describe('PaneSessionRegistry lifetime', () => {
     expect(h.registry.inspect(h.pane.id)?.sessionId).toBe('s1');
   });
 
-  // ------------------------------------------------- the negative control
-  it('kills on an explicit close — otherwise the guard above guards nothing', async () => {
+  // ------------------------------------------- release: drop the view, kill nothing
+  it('release drops the terminal and stops the stream — and does NOT kill', async () => {
     const h = harness();
     h.registry.attach(h.pane, h.host());
     await h.registry.settled();
     h.session.calls.length = 0;
 
-    h.registry.close(h.pane.id);
+    h.registry.release(h.pane.id);
     await h.registry.settled();
 
-    expect(h.session.names).toEqual(['detach', 'kill']);
-    expect(h.session.calls.at(-1)?.args[0]).toBe('s1');
+    // `detach` so main stops coalescing bytes into a view that is gone; no
+    // `kill`, because core already killed it and a second one would be an
+    // `unknown-session` error on a perfectly correct close.
+    expect(h.session.names).toEqual(['detach']);
+    expect(h.session.names).not.toContain('kill');
     expect(h.terminals[0]?.disposed).toBe(true);
     expect(h.registry.inspect(h.pane.id)).toBeUndefined();
     expect(h.registry.paneIds()).toEqual([]);
   });
 
-  it('kills a pane closed while unmounted — the session was still running', async () => {
+  it('release of an UNPARENTED pane still stops its stream', async () => {
     const h = harness();
     h.registry.attach(h.pane, h.host());
     await h.registry.settled();
@@ -314,48 +161,55 @@ describe('PaneSessionRegistry lifetime', () => {
     await h.registry.settled();
     h.session.calls.length = 0;
 
-    h.registry.close(h.pane.id);
+    h.registry.release(h.pane.id);
     await h.registry.settled();
 
-    expect(h.session.names).toEqual(['detach', 'kill']);
+    // `detach` the VIEW leaves the stream running on purpose (that is what makes
+    // a remount cost an `appendChild` instead of a replay), so the stream is still
+    // live here and release is the thing that ends it.
+    expect(h.session.names).toEqual(['detach']);
+    expect(h.session.names).not.toContain('kill');
   });
 
-  it('does not kill a session that already exited', async () => {
+  it('says nothing to a session that already exited', async () => {
     const h = harness();
     h.registry.attach(h.pane, h.host());
     await h.registry.settled();
     h.session.emitExit('s1', 0);
     h.session.calls.length = 0;
 
-    h.registry.close(h.pane.id);
+    h.registry.release(h.pane.id);
     await h.registry.settled();
 
     expect(h.session.names).toEqual([]);
   });
 
-  it('a pane closed before its create runs never spawns a shell at all', async () => {
+  it('a pane released before its create runs never spawns a shell at all', async () => {
     const h = harness();
     h.registry.attach(h.pane, h.host());
-    // Same tick: `close` marks the entry before the queued work reaches `create`.
-    h.registry.close(h.pane.id);
+    // Same tick: `release` marks the entry before the queued work reaches
+    // `create`, which is why that flag is set synchronously.
+    h.registry.release(h.pane.id);
     await h.registry.settled();
 
     expect(h.session.names).toEqual([]);
   });
 
-  it('a close that lands MID-create still kills the session that create returns', async () => {
+  it('a release that lands MID-create leaves the pty to core, not to itself', async () => {
     const h = harness();
     h.session.deferCreate = true;
     h.registry.attach(h.pane, h.host());
     await Promise.resolve(); // let the queue reach the `await create(...)`
-    h.registry.close(h.pane.id);
+    h.registry.release(h.pane.id);
     h.session.releaseCreates();
     await h.registry.settled();
 
-    // The dangerous ordering: the pane is gone, and a pty exists that nothing
-    // in the renderer names any more. It must not be left running.
-    expect(h.session.names).toEqual(['create', 'kill']);
-    expect(h.session.calls.at(-1)?.args[0]).toBe('s1');
+    // The ordering worth naming: a pty now exists that this renderer no longer
+    // names. It is main's — the pane's session was bound in `SessionBridge.create`
+    // the moment the pty was spawned, so `layout.close` can still reach it. A
+    // kill from here would race that binding and report a failure either way.
+    expect(h.session.names).toEqual(['create']);
+    expect(h.session.names).not.toContain('kill');
   });
 
   it('disposing the registry drops every view and stream but kills nothing', async () => {
@@ -457,7 +311,7 @@ describe('PaneSessionRegistry streaming', () => {
   it('ignores a detach for a pane it has never seen', async () => {
     const h = harness();
     h.registry.detach(makePaneId('ghost'));
-    h.registry.close(makePaneId('ghost'));
+    h.registry.release(makePaneId('ghost'));
     await h.registry.settled();
     expect(h.session.calls).toEqual([]);
   });

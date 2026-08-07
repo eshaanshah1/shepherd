@@ -15,10 +15,16 @@ import type {
  * v1 lost a running `claude` every time a `_ConditionalContent` re-created a
  * surface, because the view owned the PTY. Here a view owns nothing. The
  * registry holds the pane→session mapping; mounting a leaf calls `attach`,
- * unmounting calls `detach`, and the ONLY thing that ends a session is an
- * explicit `close(paneId)` — one method, one caller (the close-pane command).
- * `pane-sessions.test.ts` asserts both halves, because a guard with no negative
- * control guards nothing.
+ * unmounting calls `detach`, and **nothing in this file ever kills a session.**
+ *
+ * That last clause is P4a's change, and it is the same rule one process over.
+ * The kernel owns the layout, so `layout.close` — reached by ⌘W, by
+ * `shepherd pane close`, by an extension — is what ends a session, through the
+ * `SessionSink` a `LayoutStore` cannot be built without. By the time the pane's
+ * disappearance reaches this renderer as a snapshot, main has already killed the
+ * pty; a kill here would be a guaranteed second one. `release(paneId)` therefore
+ * drops the view and nothing else, and `pane-sessions.test.ts` asserts that with
+ * its negative controls kept pointing the other way round.
  *
  * **`detach` unparents; it does not tear down.** Each pane's terminal lives in
  * a wrapper element the registry owns, and `detach` merely removes that wrapper
@@ -68,8 +74,11 @@ export interface PaneTerminals {
   attach(pane: Pane, host: HTMLElement): void;
   /** The view went away. The session does not. */
   detach(paneId: PaneID): void;
-  /** The pane is gone for good. This — and only this — kills the session. */
-  close(paneId: PaneID): void;
+  /**
+   * The pane is gone from the layout. Drops the terminal and stops streaming —
+   * and kills nothing, because core already did. See the class comment.
+   */
+  release(paneId: PaneID): void;
   focus(paneId: PaneID): void;
   fit(paneId: PaneID): void;
   /** Every branch that ends in "and then nothing happens" must be readable. */
@@ -162,22 +171,26 @@ export class PaneSessionRegistry implements PaneTerminals {
     entry.host = null;
   }
 
-  close(paneId: PaneID): void {
+  release(paneId: PaneID): void {
     const entry = this.#entries.get(paneId);
     if (entry === undefined) return;
     this.#teardownView(entry);
+    // `closed` is set SYNCHRONOUSLY, before anything is awaited: a pane released
+    // while its very first `create` is still queued must not go on to spawn a
+    // shell for a pane that no longer exists — `#sync` reads this flag first.
     entry.closed = true;
     entry.wantStream = false;
     this.#entries.delete(paneId);
-    this.#enqueue(entry, 'close', async () => {
+    this.#enqueue(entry, 'release', async () => {
       const id = entry.sessionId;
       if (id === null) return;
       this.#bySession.delete(id);
       if (entry.streaming) {
+        // Stop the fan-out, so main is not coalescing bytes into a dead view. NOT
+        // a kill: the pty is core's, and it is already gone or on its way.
         await this.#session.detach(id);
         entry.streaming = false;
       }
-      if (!entry.exited) await this.#session.kill(id);
     });
   }
 

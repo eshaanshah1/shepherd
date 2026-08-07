@@ -22,6 +22,7 @@ import {
   electronBinary,
   entry,
   finish,
+  electronEnv,
   killStrays,
   strayCount,
 } from './smoke-lib.mjs';
@@ -38,7 +39,7 @@ const args = [entry, FLAG, `--shepherd-user-data=${userData}`];
 let a;
 try {
   // --- A: take the lock and hold it.
-  a = spawn(electronBinary, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  a = spawn(electronBinary, args, { stdio: ['ignore', 'pipe', 'pipe'], env: electronEnv() });
   const gotLock = await waitForLine(a, /lock=true/, 30_000);
   check(gotLock !== null, `instance A took the lock (${gotLock ?? 'never said so'})`);
 
@@ -47,6 +48,7 @@ try {
   const b = spawnSync(electronBinary, args, {
     encoding: 'utf8',
     timeout: B_DEADLINE_MS,
+    env: electronEnv(),
     // See `smoke-m0.mjs`: a hung Electron declines SIGTERM.
     killSignal: 'SIGKILL',
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -83,6 +85,7 @@ try {
   const c = spawnSync(electronBinary, [...args, '--shepherd-print-paths'], {
     encoding: 'utf8',
     timeout: 30_000,
+    env: electronEnv(),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   check(c.status === 0, `a later launch into the freed directory starts fine (got ${c.status})`);

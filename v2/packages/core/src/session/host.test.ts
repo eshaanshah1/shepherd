@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { isErr, isOk, sessionId, type SessionID } from '@shepherd/sdk';
-import { SessionHost, type SessionExit } from './host.ts';
+import { SessionHost, foregroundReading, type SessionExit } from './host.ts';
 
 // These run against a REAL /bin/sh pty. A faked spawn would prove the registry
 // and nothing about the thing that actually breaks — node-pty's prebuild, its
@@ -404,6 +404,80 @@ describe('SessionHost onWillCreate', () => {
   });
 });
 
+describe('SessionHost foreground process', () => {
+  it('tracks the pty foreground across running a command and back', async () => {
+    const host = makeHost();
+    const created = host.create({ cwd: '/tmp', command: '/bin/bash', args: [] });
+    if (!isOk(created)) throw new Error('create failed');
+    const id = created.value.id;
+
+    // Waiting on the NAME, not on the predicate: for the first tick or two after
+    // spawn the pty answers with the file we handed it, which already satisfies
+    // "not busy" and would let this test pass before anything had settled.
+    await waitFor(() => host.foregroundProcess(id) === 'bash', 'the shell to settle as the foreground');
+    expect(host.hasForegroundProcess(id)).toBe(false);
+
+    host.write(id, 'sleep 30\n');
+    await waitFor(() => host.foregroundProcess(id) === 'sleep', 'sleep to take the foreground');
+    expect(host.hasForegroundProcess(id)).toBe(true);
+
+    // ^C, not waiting the sleep out: the pty's line discipline signals the
+    // foreground group, so the transition back is the kernel's, not a timer's.
+    host.write(id, '\x03');
+    await waitFor(() => host.foregroundProcess(id) === 'bash', 'the shell to return to the foreground');
+    expect(host.hasForegroundProcess(id)).toBe(false);
+  });
+
+  it('answers undefined / false for an id that is dead or never existed', async () => {
+    const host = makeHost();
+    const exits: SessionExit[] = [];
+    host.onExit((e) => exits.push(e));
+
+    const created = host.create({ cwd: '/tmp', command: '/bin/sh', args: ['-c', 'exit 0'] });
+    if (!isOk(created)) throw new Error('create failed');
+    await waitFor(() => exits.length > 0, 'exit');
+
+    // A dead pty runs nothing, so `false` is the truthful answer rather than a
+    // hedge — and it must be an answer, not an exception, because the sweep
+    // that asks this races every session's exit by construction.
+    for (const id of [created.value.id, sessionId('never-minted') as SessionID]) {
+      expect(host.foregroundProcess(id)).toBeUndefined();
+      expect(host.hasForegroundProcess(id)).toBe(false);
+    }
+  });
+
+  it('compares basenames, not paths', async () => {
+    // The negative control for the predicate. The pty reports a bare name
+    // (`bash`) and the spec carries a path (`/bin/bash`); an implementation
+    // comparing those two verbatim calls every idle shell busy, and every other
+    // assertion in this file still passes. Pinning both sides is what exposes it.
+    const host = makeHost();
+    const created = host.create({ cwd: '/tmp', command: '/bin/bash', args: [] });
+    if (!isOk(created)) throw new Error('create failed');
+    const id = created.value.id;
+
+    await waitFor(() => host.foregroundProcess(id) === 'bash', 'the shell to settle');
+    expect(host.get(id)?.command).toBe('/bin/bash');
+    expect(host.hasForegroundProcess(id)).toBe(false);
+  });
+
+  it('inverts when the shell execs under another name (measured: /bin/sh is bash)', async () => {
+    // Measured on macOS 26, and the one case where this predicate lies. `p_comm`
+    // comes from the RESOLVED executable, and /bin/sh resolves to bash — so an
+    // idle `/bin/sh` session reports `bash`, which is not `sh`, and reads busy
+    // forever. Same root cause as a real `claude` reporting its version-named
+    // binary; the answer is that a pane's session command must be the shell's
+    // own path, and anything spawned through a wrapper is outside this predicate.
+    const host = makeHost();
+    const created = host.create({ cwd: '/tmp', command: '/bin/sh', args: [] });
+    if (!isOk(created)) throw new Error('create failed');
+    const id = created.value.id;
+
+    await waitFor(() => host.foregroundProcess(id) === 'bash', 'the sh session to report bash');
+    expect(host.hasForegroundProcess(id)).toBe(true);
+  });
+});
+
 describe('SessionHost input and geometry', () => {
   it('resize records the new grid and refuses nonsense', async () => {
     const host = makeHost();
@@ -453,5 +527,55 @@ describe('SessionHost input and geometry', () => {
     expect(host.list()).toHaveLength(0);
     // Listeners are dropped by dispose(), so the count is the point, not the events.
     await new Promise((resolve) => setTimeout(resolve, 50));
+  });
+});
+
+describe('foregroundReading — the pure decision', () => {
+  it('reports an unreadable tty as "cannot tell", never as idle', () => {
+    // THE case this shape exists for. `false` here is the reconciliation
+    // sweep's demote signal, so answering it for a session whose tty merely
+    // could not be read would mark a live, working agent as idle. node-pty
+    // returns undefined rather than throwing on every darwin failure path, so
+    // this is the real failure mode and not a defensive hypothetical.
+    for (const raw of [undefined, '']) {
+      expect(foregroundReading(raw, '/bin/zsh').hasForegroundProcess).toBeUndefined();
+      expect(foregroundReading(raw, '/bin/zsh').name).toBeUndefined();
+    }
+  });
+
+  it('is false when the session\'s own command is back in front', () => {
+    expect(foregroundReading('zsh', '/bin/zsh')).toEqual({ name: 'zsh', hasForegroundProcess: false });
+  });
+
+  it('is true for anything else, whatever it is called', () => {
+    // Name-blind on purpose: a real claude install resolves to a binary named
+    // after its version, so a predicate that matched the vendor's name would
+    // match nothing at all.
+    for (const raw of ['sleep', '2.1.224', 'node', 'some-wrapper']) {
+      expect(foregroundReading(raw, '/bin/zsh').hasForegroundProcess).toBe(true);
+    }
+  });
+
+  it('compares basenames, because the two sides are a path and a bare name', () => {
+    expect(foregroundReading('bash', '/bin/bash').hasForegroundProcess).toBe(false);
+  });
+
+  it('inverts when the shell execs under another name — the /bin/sh hazard', () => {
+    // macOS derives the process name from the RESOLVED executable, so a session
+    // spawned as `/bin/sh` reports `bash` and reads busy forever, and the sweep
+    // would never demote a pane. A negative control on the constraint that a
+    // pane must be spawned as the shell's own path.
+    expect(foregroundReading('bash', '/bin/sh').hasForegroundProcess).toBe(true);
+  });
+});
+
+describe('foreground — the IO shell over it', () => {
+  it('reports a dead or unknown id as a real false, not as unknown', () => {
+    // Distinct from an unreadable tty on purpose: there is nothing to reconcile
+    // for a session that does not exist, so this is knowledge the sweep may act
+    // on rather than an absence of it.
+    const host = makeHost();
+    expect(host.foreground(sessionId('nope')).hasForegroundProcess).toBe(false);
+    expect(host.foreground(sessionId('nope')).name).toBeUndefined();
   });
 });

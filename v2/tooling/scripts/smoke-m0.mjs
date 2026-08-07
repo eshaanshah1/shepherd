@@ -23,6 +23,7 @@ import {
   build,
   check,
   electronBinary,
+  electronEnv,
   entry,
   finish,
   killStrays,
@@ -52,6 +53,7 @@ try {
         // timeout that the thing it is bounding can decline is not a timeout.
         killSignal: 'SIGKILL',
         stdio: ['ignore', 'pipe', 'pipe'],
+        env: electronEnv(),
       },
     );
     const output = `${result.stdout ?? ''}${result.stderr ?? ''}`;

@@ -1,7 +1,8 @@
 import {
   EMIT,
   INVOKE,
-  type CommandMessage,
+  type AgentIndicatorDTO,
+  type LayoutSnapshot,
   type SessionDataMessage,
   type SessionExitMessage,
   type ShepherdBridge,
@@ -50,7 +51,20 @@ export function createBridge(ipc: IpcLike): ShepherdBridge {
       onExit: (listener) => subscribe<SessionExitMessage>(EMIT.sessionExit, listener),
     },
     commands: {
-      onCommand: (listener) => subscribe<CommandMessage>(EMIT.command, listener),
+      // `args` defaults to `{}` rather than travelling as `undefined`: every
+      // layout command's schema is an object, and `s.object` on `undefined` is
+      // an `invalid-args` failure for a gesture that simply took no arguments.
+      invoke: (command, args) => invoke(INVOKE.commandInvoke, command, args ?? {}),
+    },
+    layout: {
+      get: () => invoke(INVOKE.layoutGet),
+      onChanged: (listener) => subscribe<LayoutSnapshot>(EMIT.layoutChanged, listener),
+      setViewport: (rect) => invoke(INVOKE.layoutViewport, rect),
+    },
+    agents: {
+      get: () => invoke(INVOKE.agentsGet),
+      onChanged: (listener) =>
+        subscribe<readonly AgentIndicatorDTO[]>(EMIT.agentsChanged, listener),
     },
     window: {
       close: () => invoke(INVOKE.windowClose),

@@ -13,6 +13,50 @@ badge pull you back.
 
 ---
 
+## ⚠️ There are two apps in this repo. Read this before anything else.
+
+Everything below this section describes **v1**: the Swift/libghostty app under
+`spike/seam1/`. It is the daily driver and it is **maintenance-only** — feature
+energy goes to v2 (decided, sketch §7b).
+
+**`v2/` is a separate, in-progress rewrite** — an **ADE** (Agentic Development
+Environment): a deliberately small TypeScript/Electron kernel plus an extension
+runtime, where everything that makes it agentic (the Claude integration, the task
+model, git, worktrees, remote) is an extension consuming the same public API a
+third party gets. The moat is being a hackable substrate, not the terminal grid.
+It is not a port of v1; it is the same thesis rebuilt on a runtime that does not
+fight it.
+
+**If you are working in `v2/`, start here — not with this file:**
+1. [`docs/superpowers/plans/2026-08-07-v2-handoff.md`](docs/superpowers/plans/2026-08-07-v2-handoff.md)
+   — **always current**: what is built, what is next, and the traps of the moment.
+   M0–M2 are done (kernel + agents; a hook drives a real state indicator);
+   **M3 (tasks) is next, and dogfooding begins there**.
+2. [`docs/superpowers/specs/2026-08-06-ade-minimal-core-sketch.md`](docs/superpowers/specs/2026-08-06-ade-minimal-core-sketch.md)
+   — thesis and **every decision** (§7, §7b, §7c the headless-agent seam, §7d presence).
+3. [`docs/superpowers/specs/2026-08-06-ade-v2-core-design.md`](docs/superpowers/specs/2026-08-06-ade-v2-core-design.md)
+   — the API and the M0–M4 milestones.
+4. [`docs/superpowers/specs/2026-08-06-architecture-review.md`](docs/superpowers/specs/2026-08-06-architecture-review.md)
+   — what v1 got wrong; **its Rebuild checklist is normative for v2**.
+5. ADRs [0021](.claude/adr/0021-v2-store-is-node-sqlite.md) /
+   [0022](.claude/adr/0022-v2-layout-owns-the-session-binding.md) /
+   [0023](.claude/adr/0023-v2-permissions-granted-once-checked-always.md).
+
+**Two rules that will bite you immediately in `v2/`:**
+- **`env -u NODE_OPTIONS` every command.** An ambient `NODE_OPTIONS` makes
+  Electron exit **9** before running a line of our code, and the symptom is every
+  check failing at once with no app output to explain why.
+- **`v2/tooling/eslint/boundaries.js` IS the architecture diagram.** A package can
+  import something because a line there says so. Widening it deliberately, with
+  the reason in the rule's own comment, is fine; widening it quietly is the drift
+  the file exists to prevent.
+
+The rest of this file is v1. The two share a repo, a decision log and two months
+of recorded gotchas (which are v2's test plan) — and nothing else. `v2/` touches
+no file under `spike/`.
+
+---
+
 ## Repo layout
 
 ```

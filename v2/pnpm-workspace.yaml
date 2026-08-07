@@ -3,6 +3,20 @@ packages:
   - packages/platform/*
   - extensions/*
 
+# Which dependencies may run install scripts. pnpm blocks them by default, and
+# node-pty's is what makes `spawn-helper` executable.
+#
+# This list lived in package.json's "pnpm" key until pnpm 10.28 stopped reading
+# it — `[WARN] The "pnpm" field in package.json is no longer read by pnpm ...
+# keys were ignored: "pnpm.onlyBuiltDependencies"`. The allowlist had become a
+# no-op, and it was invisible because node-pty ships prebuilds and the
+# `fix-node-pty-perms` postinstall was repairing the permission bit anyway. A
+# guard that has silently stopped guarding is worse than no guard.
+onlyBuiltDependencies:
+  - node-pty
+  - electron
+  - esbuild
+
 # One place for every version pin. Packages depend on "catalog:" so a bump is a
 # one-line edit and two packages can never drift onto different majors.
 catalog:

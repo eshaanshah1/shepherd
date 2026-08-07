@@ -1,5 +1,6 @@
-import { BrowserWindow, Menu, type MenuItemConstructorOptions } from 'electron';
-import { EMIT, type CommandID, type CommandMessage } from '../shared/index.ts';
+import { Menu, type MenuItemConstructorOptions } from 'electron';
+import type { CommandID } from '../shared/index.ts';
+import { unmappedCommands } from '../shared/menu-commands.ts';
 import {
   hasModifier,
   declaredAccelerators,
@@ -12,13 +13,17 @@ import {
 /**
  * Turn the template into the real application menu.
  *
- * The only judgement here is the two guards below, and they run at startup on
+ * The only judgement here is the three guards below, and they run at startup on
  * purpose: a bare-letter accelerator makes that letter untypeable in every
  * terminal, and there is no way to notice that from a screenshot.
  */
 export interface InstallMenuOptions extends MenuOptions {
-  /** Where a chosen command goes. Defaults to the focused window's renderer. */
-  readonly dispatch?: (command: CommandID) => void;
+  /**
+   * What a chosen menu item does. `index.ts` supplies the one that invokes the
+   * kernel; the terminal smoke drives these same items, so there is no second
+   * path to test against.
+   */
+  readonly dispatch: (command: CommandID) => void;
 }
 
 export function installMenu(options: InstallMenuOptions): Menu {
@@ -34,9 +39,17 @@ export function installMenu(options: InstallMenuOptions): Menu {
   if (missing.length > 0) {
     throw new Error(`commands with no menu item (so no key can reach them): ${missing.join(', ')}`);
   }
+  // The third guard, new with P4a: an item can now also be wired to nothing.
+  // Before this, "the menu covers the vocabulary" was the whole claim because the
+  // renderer's `runCommand` had an exhaustive switch and the compiler checked it.
+  // The vocabulary now maps to the kernel's verbs through a table, and a hole in a
+  // table is a key that does nothing and says nothing.
+  const unmapped = unmappedCommands();
+  if (unmapped.length > 0) {
+    throw new Error(`menu commands that map to no kernel command: ${unmapped.join(', ')}`);
+  }
 
-  const dispatch = options.dispatch ?? sendToFocusedWindow;
-  const menu = Menu.buildFromTemplate(template.map((item) => toElectron(item, dispatch)));
+  const menu = Menu.buildFromTemplate(template.map((item) => toElectron(item, options.dispatch)));
   Menu.setApplicationMenu(menu);
   return menu;
 }
@@ -57,19 +70,4 @@ function toElectron(
       : { submenu: spec.submenu.map((child) => toElectron(child, dispatch)) }),
     ...(command === undefined ? {} : { click: () => dispatch(command) }),
   };
-}
-
-/**
- * A command means nothing in main — the layout lives in the renderer. So the
- * menu says what was chosen and the renderer decides what it means.
- *
- * `getFocusedWindow()` can be null when the menu is driven programmatically
- * (the terminal smoke does exactly that), so it falls back to the only window
- * there is rather than dropping the command in silence.
- */
-function sendToFocusedWindow(command: CommandID): void {
-  const target = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
-  if (target === undefined || target.isDestroyed()) return;
-  const message: CommandMessage = { command };
-  target.webContents.send(EMIT.command, message);
 }
