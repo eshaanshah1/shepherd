@@ -1,11 +1,29 @@
 {
   "files": [],
   "references": [
-    { "path": "packages/sdk" },
-    { "path": "packages/core" },
-    { "path": "packages/design-tokens" },
-    { "path": "packages/platform/darwin" },
-    { "path": "packages/app" },
-    { "path": "extensions/diagnostics" }
+    {
+      "path": "packages/sdk"
+    },
+    {
+      "path": "packages/core"
+    },
+    {
+      "path": "packages/design-tokens"
+    },
+    {
+      "path": "packages/platform/darwin"
+    },
+    {
+      "path": "packages/app"
+    },
+    {
+      "path": "extensions/diagnostics"
+    },
+    {
+      "path": "extensions/agents-core"
+    },
+    {
+      "path": "extensions/claude-code"
+    }
   ]
 }
