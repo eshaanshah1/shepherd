@@ -2,6 +2,17 @@ import type { BrowserWindow } from 'electron';
 import type { SessionHost } from '@shepherd/core';
 import { die, say } from './smoke-support.ts';
 import type { M1SmokeOptions } from './smoke-m1.ts';
+import type { M2SmokeOptions } from './smoke-m2.ts';
+
+/**
+ * Every handle any smoke may want.
+ *
+ * One bag rather than a union, because `index.ts` builds it once and this table
+ * is the only thing that knows which smoke needs what — a smoke that reached for
+ * something absent would otherwise fail as a `TypeError` three frames deep
+ * instead of as a named refusal here.
+ */
+export type SmokeKernel = M1SmokeOptions & Partial<Omit<M2SmokeOptions, keyof M1SmokeOptions>>;
 
 /**
  * `--shepherd-smoke=<name>` → the smoke to run.
@@ -19,7 +30,7 @@ export async function runSmoke(
    * table stays the only thing that knows which smoke wants what — and so a
    * smoke cannot reach a second copy of anything.
    */
-  kernel: M1SmokeOptions,
+  kernel: SmokeKernel,
 ): Promise<void> {
   say(`running '${name}'`);
   switch (name) {
@@ -34,6 +45,12 @@ export async function runSmoke(
     case 'm1': {
       const { runM1Smoke } = await import('./smoke-m1.ts');
       return runM1Smoke(win, host, kernel);
+    }
+    case 'm2': {
+      const { runM2Smoke } = await import('./smoke-m2.ts');
+      const { isM2Options } = await import('./smoke-m2.ts');
+      if (!isM2Options(kernel)) return die('the m2 smoke needs the layout and agent handles');
+      return runM2Smoke(win, host, kernel);
     }
     default:
       return die(`unknown smoke '${name}'`);

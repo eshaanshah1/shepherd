@@ -79,6 +79,15 @@ export function startAgentRelay(options: AgentRelayOptions): AgentRelay {
 
   const push = (): void => options.publish([...latest.values()]);
 
+  /**
+   * The badge, driven by the thing it counts.
+   *
+   * Anything else is a race: the agent event and the attention write are two
+   * ordered crossings of one port, so a badge computed on the first reads the
+   * state from before the second.
+   */
+  const badgeSubscription = options.attention.onDidChange(() => options.badge(options.attention.count()));
+
   const subscription = options.bus.on(AGENT_STATE_TOPIC, (payload) => {
     const change = payload as IncomingChange;
     if (typeof change.sessionId !== 'string' || typeof change.to !== 'string') {
@@ -97,10 +106,13 @@ export function startAgentRelay(options: AgentRelayOptions): AgentRelay {
     }
     push();
 
-    // The badge counts what attention holds, not what this map holds: attention
-    // is the channel that decides what "needs you" means, and reading it keeps
-    // one answer rather than two that can disagree.
-    options.badge(options.attention.count());
+    // NOTE the badge is deliberately NOT set here. It counts what attention
+    // holds, and attention has not been told yet: `agents-core` emits this event
+    // and then calls `attention.set`, two ordered crossings of one port, so at
+    // this instant the store still describes the world before this change.
+    // Measured — the badge read 0 for a turn that had just finished. The badge
+    // follows `attention.onDidChange` instead, below, which is the only moment
+    // the count is true.
 
     const pane = options.layout.paneForSession(sessionId as unknown as SessionID);
     if (pane === undefined) {
@@ -138,6 +150,7 @@ export function startAgentRelay(options: AgentRelayOptions): AgentRelay {
     clear: () => latest.clear(),
     dispose: () => {
       subscription.dispose();
+      badgeSubscription.dispose();
       latest.clear();
     },
   };
