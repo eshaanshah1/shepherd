@@ -51,3 +51,4 @@ Same log, same numbering — one chronological record for the repo. These apply 
 `v2/` only; v1 is maintenance-only for the duration.
 - [0021](0021-v2-store-is-node-sqlite.md) — The store is `node:sqlite` (not better-sqlite3: stdlib, no ABI rebuild, no new boundary exception), versioned in `PRAGMA user_version` so no data operation can erase the marker
 - [0022](0022-v2-layout-owns-the-session-binding.md) — The layout lives in the kernel, and `layout.close` is what ends a session — enforced by a constructor that cannot omit the `SessionSink`
+- [0023](0023-v2-permissions-granted-once-checked-always.md) — Permissions: review-at-install, grant once, checked always in the one dispatcher; a built-in is pre-granted by a WRITE, not by an exemption, so `revoke` bites it
