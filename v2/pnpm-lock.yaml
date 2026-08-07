@@ -141,6 +141,9 @@ importers:
       '@shepherd/ext-agents-core':
         specifier: workspace:*
         version: link:../../extensions/agents-core
+      '@shepherd/ext-claude-code':
+        specifier: workspace:*
+        version: link:../../extensions/claude-code
       '@shepherd/ext-diagnostics':
         specifier: workspace:*
         version: link:../../extensions/diagnostics

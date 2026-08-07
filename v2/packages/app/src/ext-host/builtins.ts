@@ -3,6 +3,8 @@ import { activate as diagnostics } from '@shepherd/ext-diagnostics';
 import { DIAGNOSTICS_ID } from '@shepherd/ext-diagnostics/manifest';
 import { activate as agentsCore } from '@shepherd/ext-agents-core';
 import { AGENTS_CORE_ID } from '@shepherd/ext-agents-core/manifest';
+import { activate as claudeCode } from '@shepherd/ext-claude-code';
+import { CLAUDE_CODE_ID } from '@shepherd/ext-claude-code/manifest';
 
 /**
  * Which built-ins this build contains, by id.
@@ -22,4 +24,8 @@ import { AGENTS_CORE_ID } from '@shepherd/ext-agents-core/manifest';
 export const BUILTIN_MODULES: ReadonlyMap<string, ActivateFn> = new Map<string, ActivateFn>([
   [DIAGNOSTICS_ID, diagnostics],
   [AGENTS_CORE_ID, agentsCore],
+  // Order here is cosmetic — `ExtensionRegistry` activates a manifest's declared
+  // `dependencies` first, so claude-code cannot run before agents-core whatever
+  // this map says.
+  [CLAUDE_CODE_ID, claudeCode],
 ]);

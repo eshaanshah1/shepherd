@@ -1,0 +1,6 @@
+{
+  "name": "shepherd-v2",
+  "version": "0.1.0",
+  "description": "Reports Claude Code session lifecycle to the Shepherd v2 terminal over its event ingress, so each session's state indicator reflects the agent live. Silent no-op outside Shepherd v2.",
+  "author": { "name": "Shepherd" }
+}
