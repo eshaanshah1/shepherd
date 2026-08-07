@@ -19,6 +19,7 @@ import { dirname, join } from 'node:path';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
+import { electronEnv } from './smoke-lib.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const appDir = join(here, '..', '..', 'packages', 'app');
@@ -36,7 +37,7 @@ try {
   const result = spawnSync(
     electronBinary,
     [entry, `--shepherd-user-data=${userData}`],
-    { stdio: 'inherit', timeout: 60_000 },
+    { stdio: 'inherit', timeout: 60_000, env: electronEnv() },
   );
   status = result.status ?? 1;
 } finally {
