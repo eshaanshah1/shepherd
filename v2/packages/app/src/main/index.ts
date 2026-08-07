@@ -2,9 +2,17 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { app, BrowserWindow } from 'electron';
 import { color } from '@shepherd/design-tokens';
-import { appName, resolveAppPaths, shellDefaults } from '@shepherd/platform-darwin';
+import { appName, shellDefaults } from '@shepherd/platform-darwin';
 import { SessionHost } from '@shepherd/core';
 import { systemClock } from '@shepherd/sdk';
+import { IS_DEV } from './build-flags.ts';
+import {
+  bootstrap,
+  flagValue,
+  resolveUserData,
+  EXIT_SECOND_INSTANCE,
+} from './bootstrap.ts';
+import { windowOptions } from './window-options.ts';
 import { SessionBridge } from './session-bridge.ts';
 import { registerSessionIpc } from './ipc.ts';
 import { registerWindowIpc } from './window-ipc.ts';
@@ -16,67 +24,69 @@ import { installMenu } from './menu.ts';
  * field literally and never consults `exports`, so the source stays the
  * package's public face).
  *
- * Startup order is the load-bearing part, and it is the reverse of the obvious
- * one: `app.setPath('userData', …)` runs BEFORE `requestSingleInstanceLock()`,
- * because Chromium keys the lock off the user-data directory. Locked first, a
- * dev build and the daily one share a lock and the second refuses to launch —
- * the exact isolation the redirect exists to buy. (Measured in the P0 probe;
- * `paths.ts` carries the note and `smoke-session.ts` pins it.)
+ * Three things are decided here and nowhere else:
  *
- * The `SessionHost` is built here, at module scope, and is deliberately NOT
- * owned by a window: it is the registry a React unmount must not be able to
- * reach. Windows come and go against it.
+ *   - **Which build this is.** `IS_DEV` is substituted into the bundle at build
+ *     time (`build-flags.ts`), never read from the environment.
+ *   - **Which directory it owns, and only then the lock.** See `bootstrap.ts`;
+ *     the order is the isolation, and it is asserted by a test.
+ *   - **What the window may do.** `window-options.ts`, likewise asserted.
+ *
+ * The `SessionHost` is built here and is deliberately NOT owned by a window: it
+ * is the registry a React unmount must not be able to reach. Windows come and
+ * go against it.
  */
 
 /** electron-vite sets this in dev; in a packaged build it is absent. */
 const RENDERER_DEV_URL = process.env['ELECTRON_RENDERER_URL'];
-const IS_DEV = !app.isPackaged;
 
-function argValue(flag: string): string | undefined {
-  const prefix = `${flag}=`;
-  return process.argv.find((a) => a.startsWith(prefix))?.slice(prefix.length);
+/** The smoke entries drive the REAL app; these flags are the only triggers. */
+const SMOKE = flagValue(process.argv, '--shepherd-smoke');
+const PRINT_PATHS = process.argv.includes('--shepherd-print-paths');
+
+function say(line: string): void {
+  process.stdout.write(`[shepherd] ${line}\n`);
 }
 
-// --- 1. userData, then the lock. The order IS the isolation.
-const paths = resolveAppPaths(IS_DEV);
-app.setPath('userData', argValue('--shepherd-user-data') ?? paths.userData);
-
-if (!app.requestSingleInstanceLock()) {
-  // Another copy owns this user-data dir. Say so — a silent exit here is the
-  // "I double-clicked and nothing happened" bug.
-  process.stdout.write('[shepherd] another instance owns this userData dir; exiting\n');
-  app.quit();
+// --- Answer-and-leave mode: which directory would this build own?
+//
+// It runs BEFORE any lock is requested, so `pnpm smoke:isolation` can ask both
+// builds the question without either of them taking a lock or creating a
+// directory. `setPath` then `getPath` rather than printing the input, so the
+// answer comes out of Electron's own path store.
+if (PRINT_PATHS) {
+  app.setPath('userData', resolveUserData({ isDev: IS_DEV, argv: process.argv }));
+  say(`isDev=${IS_DEV} userData=${app.getPath('userData')}`);
+  app.exit(0);
 }
 
-// --- 2. the session registry, which outlives every window and every view.
+// --- userData, then the lock. The order IS the isolation (bootstrap.ts).
+const boot = bootstrap({ isDev: IS_DEV, argv: process.argv });
+say(`isDev=${boot.isDev} userData=${boot.userData} lock=${boot.hasLock}`);
+
+if (!boot.hasLock) {
+  // Another copy owns this user-data dir. Say so and exit NON-ZERO: a silent
+  // zero here is the "I double-clicked and nothing happened" bug, and a
+  // launcher cannot tell "already running" from "started fine".
+  say(`another instance owns ${boot.userData}; exiting`);
+  app.exit(EXIT_SECOND_INSTANCE);
+}
+
+// --- the session registry, which outlives every window and every view.
 const host = new SessionHost({
   onError: (error, context) =>
     process.stderr.write(`[shepherd] session ${context}: ${String(error)}\n`),
 });
 const bridge = new SessionBridge(host, { clock: systemClock });
 
-/** The smoke drives the REAL app; `--shepherd-smoke=terminal` is the only trigger. */
-const SMOKE = argValue('--shepherd-smoke');
-
 export function createWindow(): BrowserWindow {
-  const win = new BrowserWindow({
-    width: 1180,
-    height: 760,
-    show: false,
-    // The backdrop token, painted before any HTML exists. Without it the first
-    // frame is Chromium's white, which on a dark app reads as a flash.
-    backgroundColor: color('ink-deep', 'dark'),
-    webPreferences: {
-      preload: join(import.meta.dirname, '../preload/index.mjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      // An ESM preload requires an unsandboxed renderer (Electron's own
-      // constraint). Context isolation is still on, so the page sees the
-      // bridge's functions and nothing else — asserted in the terminal smoke
-      // against the real `window.shepherd`, `window.require`, `window.process`.
-      sandbox: false,
-    },
-  });
+  const win = new BrowserWindow(
+    windowOptions({
+      // `.cjs`, because a sandboxed renderer's preload is not an ES module.
+      preloadPath: join(import.meta.dirname, '../preload/index.cjs'),
+      backgroundColor: color('ink-deep', 'dark'),
+    }),
+  );
 
   win.once('ready-to-show', () => win.show());
   captureIfAsked(win);
@@ -152,15 +162,22 @@ void app.whenReady().then(async () => {
   // which is the only process that knows what a pane is.
   installMenu({ appName: appName(IS_DEV), isDev: IS_DEV });
 
+  // `hold` opens no window: it exists so `pnpm smoke:single-instance` can have
+  // a live process owning the lock while a second one tries for it.
+  if (SMOKE === 'hold') {
+    say('holding the lock; waiting to be killed');
+    return;
+  }
+
   const win = createWindow();
 
   if (SMOKE !== undefined) {
-    const { runTerminalSmoke } = await import('./smoke-terminal.ts');
+    const { runSmoke } = await import('./smoke-registry.ts');
     // The catch is not decoration. Without it a throw inside the smoke becomes
     // an unhandled rejection — a warning on stderr — and the app then exits
     // ZERO, so a broken build reports success. Measured, while proving a
     // negative control: the run printed a TypeError and passed.
-    await runTerminalSmoke(win, host).catch((error: unknown) => {
+    await runSmoke(SMOKE, win, host).catch((error: unknown) => {
       process.stdout.write(`smoke: FAIL threw ${String(error)}\n`);
       app.exit(1);
     });

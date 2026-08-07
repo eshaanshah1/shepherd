@@ -19,11 +19,22 @@ pnpm lint           # the import boundaries
 pnpm test:count     # the mechanical "did the test count move" number
 pnpm pty:proof      # spawns a real pty under node and asserts it echoes
 pnpm pty:proof:electron   # …and again under Electron's ABI
+pnpm smoke          # THE M0 GATE — see below. Run this to answer "is M0 done?"
 pnpm smoke:session  # main-only: node-pty under Electron's ABI, userData before the lock
 pnpm smoke:terminal # the whole chain: build, boot, xterm attached, menu keys, quit
+pnpm smoke:isolation       # builds twice; each build must own its own userData dir
+pnpm smoke:single-instance # two copies, one dir: the second must exit 2, promptly
 pnpm dev            # electron-vite: the window, with HMR on the renderer
 pnpm build          # electron-vite build -> packages/app/out
 ```
+
+`pnpm smoke` is the milestone gate. One run of the real built app: boot → a
+session exists → write `echo …` **through the page's own bridge** → assert those
+bytes are in the session's replay ring → split with the ⌘D menu item → assert two
+leaves and two live sessions → quit. It runs **twice back to back into the same
+userData directory**, which is the only way to catch a leaked single-instance
+lock (a fresh dir per run hides exactly that), and it checks the pty pids the app
+reported are really gone afterwards.
 
 `smoke:terminal` is the one that answers "does the app work". It builds, launches
 the real app under a throwaway userData dir, and asserts 27 things a headless
@@ -99,8 +110,26 @@ build script again.
 **Dev/prod isolation is an ordering rule.** Chromium keys the single-instance
 lock off the user-data directory, so `app.setPath('userData', …)` must run
 *before* `app.requestSingleInstanceLock()`. Locked first, the dev build shares
-the daily app's lock and refuses to launch beside it. The paths themselves are
-`packages/platform/darwin/src/paths.ts`.
+the daily app's lock and refuses to launch beside it. The order lives in
+`packages/app/src/main/bootstrap.ts` and is asserted by a test that swaps the
+electron module for a recorder and reads the call sequence back — the property
+is invisible in the result, so a comment could not have carried it. The paths
+themselves are `packages/platform/darwin/src/paths.ts`, and which build this is
+comes from `build-flags.ts`, substituted into the bundle by electron-vite's
+`define` rather than read at runtime: an env var or an argv flag is a switch
+anybody can flip to point a dev build at the production directory.
+`pnpm smoke:isolation` asserts both halves — the path each build prints, and
+that the identifier is gone from the bundle.
+
+**The renderer is sandboxed, and that is why the preload is `.cjs`.**
+`window-options.ts` sets `contextIsolation: true`, `nodeIntegration: false`,
+`sandbox: true` and mentions `enableRemoteModule` nowhere (a key that is present
+is a key somebody flips during a debugging session). A sandboxed preload is not
+an ES module, so electron-vite emits `out/preload/index.cjs` while the package
+stays `"type": "module"`. Getting that wrong does not produce an error you can
+read: measured, an `.mjs` preload under `sandbox: true` left the app **hung** —
+no window, no log line — and it then declined the SIGTERM the smoke runner's
+timeout sends, which is why those runners now kill with SIGKILL.
 
 ## Toolchain pins
 
