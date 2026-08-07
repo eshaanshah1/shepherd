@@ -31,6 +31,26 @@ export {
 
 export { debounce, type Debounced } from './util/index.ts';
 
+export {
+  ControlIngress,
+  EventsIngress,
+  UnixHttpServer,
+  reclaimSocketPath,
+  COMMANDS_ROUTE,
+  DEFAULT_MAX_BODY_BYTES,
+  DEFAULT_REQUEST_TIMEOUT_MS,
+  EVENTS_ROUTE,
+  INVOKE_ROUTE,
+  SUBSCRIBE_ROUTE,
+  type ControlIngressOptions,
+  type EventsIngressOptions,
+  type ReclaimOutcome,
+  type Route,
+  type RouteRequest,
+  type RouteResponse,
+  type UnixHttpServerOptions,
+} from './ingress/index.ts';
+
 export type {
   Pane,
   PaneInit,

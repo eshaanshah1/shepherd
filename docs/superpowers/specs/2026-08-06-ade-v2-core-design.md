@@ -265,8 +265,14 @@ Generic agent session tracking; knows no vendor.
 
 ### 5.2 `claude-code`
 
-- `sessions.onWillCreate` → inject `SHEPHERD_PANE_ID` (= session id) +
+- `sessions.onWillCreate` → inject **`SHEPHERD_SESSION_ID`** +
   `SHEPHERD_SOCK` (event ingress path). Correlation preserved exactly.
+  *(Corrected 2026-08-07 while building P3, which fixes the wire format: this
+  said `SHEPHERD_PANE_ID` (= session id), which is v1's `tab_id`-holding-a-pane-id
+  lie in new clothes — the exact thing §4.4's "`pane_id` named honestly" is
+  about. A hook correlates to the session, and `SessionID` is declared to be
+  "THE correlation key, everywhere", so both the env var and the ingress field
+  say session.)*
 - Subscribes to ingress topic `claude.hook`; reduces via the **ported
   `StopPolicy.applyEvent`** (first artifact ported, tests first) with
   `viewing: layout.isViewing(...)` threaded as a parameter, unchanged.
