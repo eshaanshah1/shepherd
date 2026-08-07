@@ -12,12 +12,14 @@ import {
   COMMANDS,
   type AgentIndicatorDTO,
   type AgentsApi,
+  type ViewsApi,
   type CommandID,
   type CommandsApi,
   type LayoutApi,
   type LayoutSnapshot,
 } from '../shared/index.ts';
 import { MENU_INVOCATIONS } from '../shared/menu-commands.ts';
+import { ViewDock } from './view-dock.tsx';
 import { SplitView } from './split-view.tsx';
 import { TerminalPane } from './terminal-pane.tsx';
 import type { PaneTerminals } from './pane-sessions.ts';
@@ -49,6 +51,8 @@ export interface AppProps {
   readonly commands: CommandsApi | null;
   /** Agent state per session. Null with no bridge — panes then show no badge. */
   readonly agents?: AgentsApi | null;
+  /** Contributed views (M3). Absent = no dock, not a crash. */
+  readonly views?: ViewsApi | null;
   /** Rendered until (or instead of) main's first push. The no-bridge and test seam. */
   readonly initialSnapshot?: LayoutSnapshot;
   /** Diagnostics seam: the smoke reads the live projection through this. */
@@ -71,6 +75,7 @@ export function App({
   layout,
   commands,
   agents: agentsApi = null,
+  views: viewsApi = null,
   initialSnapshot,
   onSnapshot,
 }: AppProps): ReactNode {
@@ -226,7 +231,9 @@ export function App({
           <span className="sh-plate-dim">{terminals === null ? ' / NO BRIDGE' : ''}</span>
         </span>
       </header>
-      <main className="sh-stage" ref={stageRef}>
+      <div className="sh-body">
+        <ViewDock views={viewsApi} />
+        <main className="sh-stage" ref={stageRef}>
         {snapshot === null ? null : (
           <SplitView
             tree={snapshot.tree}
@@ -242,7 +249,8 @@ export function App({
             home=""
           />
         )}
-      </main>
+        </main>
+      </div>
     </div>
   );
 }

@@ -28,7 +28,7 @@ export function isM3Options(options: Partial<M3SmokeOptions>): options is M3Smok
   return typeof options.controlSocket === 'string' && typeof options.alerts === 'function';
 }
 
-export async function runM3Smoke(_win: BrowserWindow, options: M3SmokeOptions): Promise<void> {
+export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): Promise<void> {
   const repo = flagValue(process.argv, '--shepherd-m3-repo');
   if (repo === undefined) die('no --shepherd-m3-repo');
 
@@ -88,6 +88,23 @@ export async function runM3Smoke(_win: BrowserWindow, options: M3SmokeOptions): 
   );
   check(after === before, `round trip: ${JSON.stringify(before)} vs ${JSON.stringify(after)}`);
   say('ok — the round trip is byte-identical');
+
+  // --- 5. a contributed view is ON SCREEN, read from the real DOM.
+  //
+  // Asserting main's registry would pass even if the renderer never drew a
+  // thing — the same reason m2 reads the badge's DOM rather than main's state.
+  // Diagnostics contributes this tree; nothing about the dock knows that, which
+  // is the property being tested.
+  const rows = await until(
+    'the contributed tree to render',
+    () =>
+      win.webContents.executeJavaScript(
+        `Array.from(document.querySelectorAll('[data-view-type="diagnostics.tree"] [data-testid="view-row"]')).map((el) => el.textContent)`,
+      ) as Promise<string[]>,
+    (found) => found.length > 0,
+  );
+  check(rows.some((row) => row.includes('ticks')), `the tree's rows reached the DOM: ${JSON.stringify(rows)}`);
+  say('ok — an extension put a view on screen');
 
   say('smoke: OK m3');
   app.exit(0);

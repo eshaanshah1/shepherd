@@ -35,4 +35,4 @@ export { COMMANDS, commandIds, type CommandID } from './commands.ts';
 export { OutputCoalescer, type CoalescerOptions } from './coalescer.ts';
 
 export type { AgentIndicatorDTO } from './channels.ts';
-export type { AgentsApi } from './bridge.ts';
+export type { AgentsApi, ViewsApi } from './bridge.ts';

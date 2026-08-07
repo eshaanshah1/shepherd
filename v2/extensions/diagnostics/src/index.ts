@@ -1,4 +1,4 @@
-import { s, type ActivateFn } from '@shepherd/sdk';
+import { s, toDisposable, type ActivateFn } from '@shepherd/sdk';
 import { DIAGNOSTICS_COMMANDS, EXTENSIONS_LIST_COMMAND } from './manifest.ts';
 
 /**
@@ -30,7 +30,7 @@ interface HostFacts {
 }
 
 export const activate: ActivateFn = (ctx, api) => {
-  const { commands, events } = api.proposed;
+  const { commands, events, views } = api.proposed;
   const startedAt = ctx.clock.now();
 
   ctx.subscriptions.push(
@@ -98,6 +98,65 @@ export const activate: ActivateFn = (ctx, api) => {
           message: attempt.error.message,
           declared: [...ctx.permissions],
         };
+      },
+    }),
+  );
+
+  /**
+   * A contributed tree — the trivial consumer P6's view mechanism is built
+   * against, deliberately NOT the task tree.
+   *
+   * Building the mechanism against its real consumer would shape it around one
+   * caller. Building it against a static two-item list would prove registration
+   * and nothing else, so this exercises the three axes a real tree needs and a
+   * static one does not: a row whose label CHANGES (via `onDidChange`), a row
+   * carrying a `command` (which is where D14's attribution is enforced), and a
+   * `tint` (a token name, resolved by the renderer — never a raw colour).
+   */
+  let ticks = 0;
+  const listeners = new Set<() => void>();
+  ctx.subscriptions.push(
+    views.registerViewType('diagnostics.tree', {
+      kind: 'tree',
+      data: {
+        children: (parent) =>
+          Promise.resolve(
+            parent === undefined
+              ? [
+                  { id: 'ticks', label: `ticks: ${ticks}`, tint: 'accent' },
+                  {
+                    id: 'ping',
+                    label: 'click me — the count above goes up',
+                    description: 'runs a command',
+                    command: { id: 'diagnostics.bump' },
+                  },
+                ]
+              : [],
+          ),
+        onDidChange: (fn) => {
+          listeners.add(fn);
+          return toDisposable(() => listeners.delete(fn));
+        },
+      },
+    }),
+  );
+
+  /**
+   * What the row's command does: change the tree.
+   *
+   * A timer was the first version and was wrong twice over — `Clock` has no
+   * `setInterval` (it threw, and one bad extension being one bad extension took
+   * the whole contribution with it), and a tree that changes on a schedule tests
+   * change-propagation without testing the thing that usually causes it. A click
+   * exercises the command path AND `onDidChange` together, deterministically.
+   */
+  ctx.subscriptions.push(
+    commands.register('diagnostics.bump', {
+      schema: s.nothing(),
+      handler: () => {
+        ticks += 1;
+        for (const fn of listeners) fn();
+        return { ticks };
       },
     }),
   );

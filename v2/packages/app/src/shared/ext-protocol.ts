@@ -211,6 +211,22 @@ const apiCallSchema = s.union(
     opts: execOptionsSchema,
   }),
 
+  /**
+   * A contributed view — M3's first, and what retires main's one-topic relay
+   * allow-list.
+   *
+   * Only the DECLARATION crosses here. A `TreeDataProvider` is functions, which
+   * a port cannot carry, so the host asks for children by `view.children` and
+   * the child answers from the provider it kept. `view.changed` is the child
+   * saying the provider fired — the host then re-asks. Push the DATA and the
+   * host would have to trust a snapshot it did not request; this way the host
+   * decides when to read, which is also what keeps a chatty extension from
+   * flooding the renderer.
+   */
+  s.object({ kind: s.literal('view.register'), type: s.string(), viewKind: s.enumOf(['tree'] as const) }),
+  s.object({ kind: s.literal('view.unregister'), type: s.string() }),
+  s.object({ kind: s.literal('view.changed'), type: s.string() }),
+
   s.object({
     kind: s.literal('log'),
     level: s.enumOf(['debug', 'info', 'warn', 'error'] as const),
@@ -276,6 +292,13 @@ const hostAskSchema = s.union(
     dataDir: s.string(),
   }),
   s.object({ kind: s.literal('deactivate'), extension: s.string() }),
+  /** Read a contributed tree. The provider lives in the child; this is the read. */
+  s.object({
+    kind: s.literal('view.children'),
+    extension: s.string(),
+    type: s.string(),
+    parent: s.optional(s.string()),
+  }),
   /** Run the handler this extension registered for `commandId`. */
   s.object({
     kind: s.literal('command'),

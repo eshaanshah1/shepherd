@@ -147,6 +147,13 @@ export interface ExtensionHostOptions {
    * should not re-derive one.
    */
   readonly support: string;
+  /** Where contributed views are recorded. Optional so a test can omit it. */
+  readonly views?: {
+    register(extension: string, type: string): void;
+    unregister(type: string): void;
+    changed(type: string): void;
+    forget(extension: string): void;
+  };
   /**
    * How a program gets run, injected from `packages/platform/darwin`.
    *
@@ -547,6 +554,7 @@ export class ExtensionHost {
 
   /** Drops every trace of an extension from this host. Idempotent. */
   #forget(record: HostedExtension): void {
+    this.#options.views?.forget(record.id);
     for (const registration of record.commands.values()) registration.dispose();
     record.commands.clear();
     for (const subscription of record.subscriptions.values()) subscription.dispose();
@@ -623,6 +631,22 @@ export class ExtensionHost {
         return;
       }
     }
+  }
+
+  /**
+   * Read a contributed tree from the extension that owns it.
+   *
+   * Public because `ViewRegistry` holds ownership and this holds the port; the
+   * two halves meet at `main/index.ts` rather than either importing the other.
+   */
+  async readTree(extension: string, type: string, parent: string | undefined): Promise<unknown> {
+    const answer = await this.#ask({
+      kind: 'view.children',
+      extension,
+      type,
+      ...(parent === undefined ? {} : { parent }),
+    });
+    return answer.ok ? answer.value : [];
   }
 
   #ask(ask: HostAsk): Promise<WireResult> {
@@ -736,6 +760,38 @@ export class ExtensionHost {
         const verdict = this.#permitted(caller, 'storage');
         if (verdict !== undefined) return verdict;
         this.#options.kv(storageNamespace(record.id)).set(call.key, call.value);
+        return wireOk();
+      }
+
+      /**
+       * Contributed views, gated on `views`.
+       *
+       * Only the DECLARATION crosses; the provider stays in the child. So this
+       * records ownership and nothing else — which is exactly what D14 needs, and
+       * why a row click can be attributed at all.
+       */
+      case 'view.register': {
+        const verdict = this.#permitted(caller, 'views');
+        if (verdict !== undefined) return verdict;
+        this.#options.views?.register(record.id, call.type);
+        this.#log.info(`${record.id} contributed the ${call.viewKind} view "${call.type}"`);
+        return wireOk();
+      }
+
+      case 'view.unregister': {
+        const verdict = this.#permitted(caller, 'views');
+        if (verdict !== undefined) return verdict;
+        this.#options.views?.unregister(call.type);
+        return wireOk();
+      }
+
+      case 'view.changed': {
+        const verdict = this.#permitted(caller, 'views');
+        if (verdict !== undefined) return verdict;
+        // A NUDGE, not the data: the host re-reads when it is ready, so a chatty
+        // extension cannot flood the renderer and the host never draws a
+        // snapshot it did not ask for.
+        this.#options.views?.changed(call.type);
         return wireOk();
       }
 

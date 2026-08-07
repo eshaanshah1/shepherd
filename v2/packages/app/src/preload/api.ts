@@ -66,6 +66,20 @@ export function createBridge(ipc: IpcLike): ShepherdBridge {
       onChanged: (listener) =>
         subscribe<readonly AgentIndicatorDTO[]>(EMIT.agentsChanged, listener),
     },
+    /**
+     * Contributed views. Note what the page can ask for: WHICH views exist, a
+     * named view's rows, and "the user clicked this row". It cannot name a bus
+     * topic or a caller — the same refusal `bridge.ts` makes for `invoke`, and
+     * the reason a compromised page cannot promote itself here either. Who a
+     * click is attributed to is decided in main (D14).
+     */
+    views: {
+      list: () => invoke(INVOKE.viewsList),
+      children: (type: string, parent?: string) => invoke(INVOKE.viewsChildren, type, parent),
+      activate: (type: string, command: { id: string; args?: unknown }) =>
+        invoke(INVOKE.viewsActivate, type, command),
+      onChanged: (listener: (type: string) => void) => subscribe<string>(EMIT.viewsChanged, listener),
+    },
     window: {
       close: () => invoke(INVOKE.windowClose),
     },

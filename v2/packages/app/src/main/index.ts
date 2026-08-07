@@ -1,6 +1,6 @@
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, ipcMain, webContents } from 'electron';
 import { color } from '@shepherd/design-tokens';
 import { appName, resolveAppPaths, runExec, runGit, shellDefaults } from '@shepherd/platform-darwin';
 import {
@@ -43,7 +43,9 @@ import {
 } from './ingress.ts';
 import { menuDispatcher } from './menu-dispatch.ts';
 import { registerAgentIpc, type AgentIpc } from './agent-ipc.ts';
+import { EMIT, INVOKE } from '../shared/index.ts';
 import { agentPrincipals } from './agent-principals.ts';
+import { ViewRegistry } from './view-registry.ts';
 import { createSystemAlerts } from './system-alerts.ts';
 import { clearAgentState } from './agent-relay.ts';
 import { correlationEnv } from './correlation-env.ts';
@@ -292,6 +294,27 @@ host.onExit((exit) => {
  */
 let agentIpc: AgentIpc | undefined;
 
+/**
+ * Contributed views (M3 P6). Constructed before the host because the host
+ * records contributions into it; the two halves meet here rather than importing
+ * each other. `read` goes back through the host, because the provider lives in
+ * the child and cannot cross the port.
+ */
+const views: ViewRegistry = new ViewRegistry({
+  read: async (extension, type, parent) =>
+    (await extensionHost.readTree(extension, type, parent)) as never,
+  invoke: async (command, args, caller) => {
+    const result = await registry.invoke(command, args, caller);
+    if (!result.ok) logger.warn('app', `a view row's command ${command} failed: ${result.error.message}`);
+    return result;
+  },
+  publish: (type) => {
+    for (const contents of webContents.getAllWebContents()) {
+      if (!contents.isDestroyed()) contents.send(EMIT.viewsChanged, type);
+    }
+  },
+});
+
 const extensionHost = new ExtensionHost({
   registry,
   // The return type is written out because the two constructions below are
@@ -301,6 +324,7 @@ const extensionHost = new ExtensionHost({
   bus,
   kv: (namespace) => store.namespace(namespace),
   support,
+  views,
   // The one runner, from the one directory allowed to spawn (Rebuild checklist
   // item 4). Injected rather than imported by the host so a test can prove a
   // denial denies without a real subprocess.
@@ -456,6 +480,18 @@ void app.whenReady().then(async () => {
 
   // Before the extensions activate, so the first transition an agent publishes
   // has somewhere to land rather than being emitted at nobody.
+  // Contributed views: three reads and one gesture. The page names a view type
+  // — which main told it about — never a topic and never a caller.
+  ipcMain.handle(INVOKE.viewsList, () => ({ ok: true, value: views.list() }));
+  ipcMain.handle(INVOKE.viewsChildren, async (_event, type: string, parent?: string) => ({
+    ok: true,
+    value: await views.children(type, parent),
+  }));
+  ipcMain.handle(INVOKE.viewsActivate, async (_event, type: string, command: { id: string; args?: unknown }) => {
+    await views.activate(type, command);
+    return { ok: true, value: undefined };
+  });
+
   agentIpc = registerAgentIpc({
     bus,
     layout,
