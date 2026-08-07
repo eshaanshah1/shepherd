@@ -24,6 +24,9 @@
     },
     {
       "path": "extensions/claude-code"
+    },
+    {
+      "path": "extensions/tasks"
     }
   ]
 }

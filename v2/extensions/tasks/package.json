@@ -1,0 +1,25 @@
+{
+  "name": "@shepherd/ext-tasks",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "shepherd.tasks — a task is intent plus 1..n repos plus the sessions working them; worktrees, never copies.",
+  "//exports": "The agents-core split: main imports ./manifest to register, the utility process imports the root. ./model is a THIRD subpath for the pure layer — the task vocabulary, the root synthesis and the git decisions — so a consumer reaching it does not pull in `activate`.",
+  "exports": {
+    ".": { "types": "./src/index.ts", "default": "./src/index.ts" },
+    "./manifest": { "types": "./src/manifest.ts", "default": "./src/manifest.ts" },
+    "./model": { "types": "./src/model/index.ts", "default": "./src/model/index.ts" }
+  },
+  "scripts": {
+    "typecheck": "tsc -b",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@shepherd/sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
