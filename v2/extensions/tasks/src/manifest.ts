@@ -47,7 +47,7 @@ export const tasksManifest: Manifest = {
    * of agent attention (ADR 0026) — enforced by being the only extension in the
    * repo that declares it. `tasks` asking for it would break that by manifest.
    */
-  permissions: ['storage', 'process.exec', 'sessions'],
+  permissions: ['storage', 'process.exec', 'sessions', 'views'],
   contributes: {
     commands: [
       { id: TASK_COMMANDS.create, title: 'Tasks: New Task' },

@@ -1,4 +1,4 @@
-import { s, type ExtensionContext, type Shepherd } from '@shepherd/sdk';
+import { s, toDisposable, type ExtensionContext, type Shepherd } from '@shepherd/sdk';
 import { REPO_SUGGESTIONS_POINT, TASK_COMMANDS } from './manifest.ts';
 import { TaskStore, type RepoArchive, type RepoRef, type TaskRecord, type TaskSession } from './store.ts';
 import { slugify, uniqueSlug } from './model/slug.ts';
@@ -36,7 +36,7 @@ export interface TasksAPI {
 const repoArg = s.object({ path: s.string(), name: s.string() });
 
 export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
-  const { commands, points } = api.proposed;
+  const { commands, points, views } = api.proposed;
   const store = new TaskStore(ctx.storage);
   /** Per-repo provisioning state. In memory, deliberately — see `provision`. */
   const provisioning = new Map<string, 'working' | 'ready' | 'failed'>();
@@ -96,9 +96,11 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       const outcome = await provisionRepo(api.proposed.process, repo, task.slug, `${root}/${repo.name}`);
       if (outcome.ok) {
         provisioning.set(`${task.id}:${repo.name}`, 'ready');
+        changed();
         landed.push({ name: repo.name, path: repo.path, worktree: outcome.worktree });
       } else {
         provisioning.set(`${task.id}:${repo.name}`, 'failed');
+        changed();
         ctx.log.warn(`task ${task.id}: ${repo.name} did not provision — ${outcome.reason}`);
       }
     }
@@ -149,6 +151,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           createdAt: ctx.clock.now(),
         };
         store.put(task);
+        changed();
         ctx.log.info(`created task ${task.id} (${slug}) with ${task.repos.length} repo(s)`);
 
         // OPTIMISTIC (D12): the record exists and is answerable NOW, and the
@@ -228,6 +231,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           role: 'workstream',
         };
         store.put({ ...task, sessions: [...task.sessions, session], lifecycle: 'running' });
+        changed();
         ctx.log.info(`task ${id}: spawned ${session.id}${args.repo === undefined ? '' : ` in ${args.repo}`}`);
         return session;
       },
@@ -258,6 +262,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           for (const warning of out.warnings) warnings.push(`${repo.name}: ${warning}`);
         }
         store.put({ ...task, lifecycle: 'archived', archives });
+        changed();
         for (const warning of warnings) ctx.log.warn(`task ${task.id}: ${warning}`);
         return { id: task.id, lifecycle: 'archived', warnings };
       },
@@ -271,6 +276,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         const task = store.get(args.task);
         if (task === undefined) throw new Error(`no task ${args.task}`);
         store.put({ ...task, lifecycle: 'running' });
+        changed();
         // Re-provisioning is the restore: `worktree add` recreates each repo at
         // the same path on the same branch, and the root is re-materialized from
         // what lands. Optimistic, for the same reason creating one is.
@@ -293,6 +299,63 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           ctx.log.error(`task ${task.id}: restore threw — ${String(error)}`);
         });
         return { id: task.id, lifecycle: 'running' };
+      },
+    }),
+  );
+
+  /**
+   * The task tree — P6b, and the test of P6's mechanism.
+   *
+   * It is a CONSUMER, not machinery: everything below is `TreeItem`s and one
+   * `onDidChange`, the same surface the diagnostics demo used, and nothing in
+   * the core knows what a task is. If this had needed a special case there, the
+   * view model would have been wrong (sketch §2b).
+   *
+   * Rows are grouped by state because that is how the sidebar is specified (§4)
+   * and because the grouping is a READ — `displayState` derives `needs-you` from
+   * the sessions' attention (D4), and nothing writes it.
+   */
+  const treeListeners = new Set<() => void>();
+  const changed = (): void => {
+    for (const fn of treeListeners) fn();
+  };
+  ctx.subscriptions.push(
+    views.registerViewType('tasks.tree', {
+      kind: 'tree',
+      data: {
+        children: (parent) => {
+          if (parent === undefined) {
+            const tasks = [...store.list()].sort((a, b) => b.createdAt - a.createdAt);
+            if (tasks.length === 0) {
+              return Promise.resolve([{ id: 'empty', label: 'no tasks yet', description: 'shepherd task new' }]);
+            }
+            return Promise.resolve(
+              tasks.map((task) => ({
+                id: task.id,
+                label: task.title,
+                description: displayState(task.lifecycle, []),
+                tint: displayState(task.lifecycle, []),
+                collapsed: true,
+                // Clicking a task logs where it is. Attributed to THIS extension
+                // (D14), which is also why it may only name a command it is
+                // itself allowed to invoke.
+                command: { id: TASK_COMMANDS.list },
+              })),
+            );
+          }
+          const task = store.get(parent);
+          return Promise.resolve(
+            (task?.repos ?? []).map((repo) => ({
+              id: `${parent}:${repo.name}`,
+              label: repo.name,
+              description: provisioning.get(`${parent}:${repo.name}`) ?? 'ready',
+            })),
+          );
+        },
+        onDidChange: (fn) => {
+          treeListeners.add(fn);
+          return toDisposable(() => treeListeners.delete(fn));
+        },
       },
     }),
   );
