@@ -41,7 +41,8 @@ import {
   type RunningIngress,
 } from './ingress.ts';
 import { menuDispatcher } from './menu-dispatch.ts';
-import { registerAgentIpc, systemAlerts, type AgentIpc } from './agent-ipc.ts';
+import { registerAgentIpc, type AgentIpc } from './agent-ipc.ts';
+import { createSystemAlerts } from './system-alerts.ts';
 import { clearAgentState } from './agent-relay.ts';
 import { correlationEnv } from './correlation-env.ts';
 import { publishViewingEdges } from './viewing-topic.ts';
@@ -436,7 +437,7 @@ void app.whenReady().then(async () => {
     // The smoke records alerts instead of raising them: a run that stacked real
     // banners in the user's Notification Center could not assert the one thing
     // ADR 0020 is about — that a turn finishing under your eyes raises nothing.
-    alerts: SMOKE === undefined ? systemAlerts : smokeAlerts,
+    alerts: SMOKE === undefined ? createSystemAlerts({ logger }) : smokeAlerts,
   });
 
   // `sessions.list`, which carries each session's foreground process — the

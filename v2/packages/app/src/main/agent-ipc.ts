@@ -1,9 +1,10 @@
-import { app, ipcMain, Notification, webContents } from 'electron';
+import { app, ipcMain, webContents } from 'electron';
 import type { Disposable, Logger } from '@shepherd/sdk';
 import type { AttentionStore, EventBus } from '@shepherd/core';
 import type { LayoutStore } from '@shepherd/core/layout';
 import { EMIT, INVOKE, type AgentIndicatorDTO, type IpcResult } from '../shared/index.ts';
 import { startAgentRelay, type AgentRelay, type AlertSink } from './agent-relay.ts';
+import { createSystemAlerts } from './system-alerts.ts';
 
 /**
  * The electron-shaped twenty lines around `agent-relay.ts`: push to every live
@@ -29,20 +30,6 @@ export interface AgentIpcOptions {
   readonly alerts?: AlertSink;
 }
 
-/**
- * The production sink.
- *
- * Separate from the relay so `smoke:m2` can assert that a turn finishing under
- * the user's eyes raises NOTHING — which is ADR 0020's whole point and cannot be
- * asserted against a real Notification Center.
- */
-export const systemAlerts: AlertSink = {
-  notify: ({ title, body }) => {
-    if (!Notification.isSupported()) return;
-    new Notification({ title, body }).show();
-  },
-};
-
 export function registerAgentIpc(options: AgentIpcOptions): AgentIpc {
   const publish = (indicators: readonly AgentIndicatorDTO[]): void => {
     for (const contents of webContents.getAllWebContents()) {
@@ -63,7 +50,11 @@ export function registerAgentIpc(options: AgentIpcOptions): AgentIpc {
     attention: options.attention,
     logger: options.logger,
     publish,
-    alerts: options.alerts ?? systemAlerts,
+    // The production sink lives in its own file so a test can reach both of its
+    // failure paths; `alerts` stays injected so `smoke:m2` can assert that a turn
+    // finishing under the user's eyes raises NOTHING (ADR 0020), which cannot be
+    // asserted against a real Notification Center.
+    alerts: options.alerts ?? createSystemAlerts({ logger: options.logger }),
     badge,
   });
 
