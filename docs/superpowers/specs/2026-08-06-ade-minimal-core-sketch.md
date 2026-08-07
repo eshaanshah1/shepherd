@@ -447,16 +447,37 @@ the one that matters.
 && no external display` is exactly what review §Ugly-5 called a heuristic wearing
 a predicate's clothes: an iMac is never away, a laptop in another room is never
 away, a locked screen is not away. Finding a clamshell API for Electron would
-have reproduced a wrong answer more reliably. So presence is a **combination**,
-and Electron already delivers most of it:
+have reproduced a wrong answer more reliably.
 
-- `powerMonitor.getSystemIdleTime()` — real idle seconds. The strongest single
-  signal, and v1 never used it.
-- `powerMonitor` `lock-screen` / `unlock-screen` / `suspend` / `resume`.
-- `screen.getAllDisplays()` for the docked case.
-- Clamshell, at most, as a **one-shot confirmatory read** (`ioreg -r -k
-  AppleClamshellState`) for the one case the others miss: lid shut with an
-  external display attached.
+**And the signals are asymmetric — that is the load-bearing part.** The first
+draft of this section listed `lock-screen` as an away signal and that was the
+same mistake one layer along: the lock screen is a *display* state, not a presence
+state. It appears while the Mac is awake and working, it appears because a
+screensaver timeout fired while you sat there reading, and somebody can be equally
+absent with the screen never locking at all. So:
+
+- **`powerMonitor.getSystemIdleTime()` is the only honest measure of absence**,
+  and it is the one signal v1 never used. Being HID-based, it already resolves the
+  cases lock state confuses: locked with 30 minutes idle is away; locked with five
+  seconds idle is somebody standing right there who just hit the shortcut.
+  (Probe that it keeps counting while the screen is locked before relying on it.)
+- **Some events confirm PRESENCE and nothing else**: `unlock-screen` (a human
+  typed a password), `resume`, window focus, and any command arriving with
+  `caller.kind === 'user'` — a keystroke reaching the app *is* presence, and the
+  command envelope already attributes it. Use these for the away→present edge the
+  catch-up replay needs.
+- **Nothing is treated as evidence of absence except idle time.** In particular
+  `lock-screen` is not, and neither is `suspend`: a suspended Mac is not running
+  agents, and one kept awake by the sleep guard with the lid shut is answered by
+  idle time anyway.
+- `screen.getAllDisplays()` for the docked case, if it turns out to be needed.
+
+**Clamshell may therefore be droppable entirely**, which would delete the last
+reason to shell out at all. v1 needed lid state *because* it had no idle signal;
+with idle as the primary measure, "lid shut + long idle" is already away and "lid
+shut + fresh input" is already docked-and-working, and the lid adds nothing. Reach
+for `ioreg -r -k AppleClamshellState` only if a real case survives that argument —
+and if one does, it is a **one-shot confirmatory read**, never a watcher.
 
 **So: no third-party native module, and probably no native code at all.** The
 review budgeted native work on the assumption the sensor needed it. Every
