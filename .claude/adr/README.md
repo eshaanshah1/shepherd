@@ -45,3 +45,9 @@ Date: YYYY-MM-DD
 - [0018](0018-worktree-archive-and-provisioning.md) — Worktree archive/restore + optimistic provisioning feedback
 - [0019](0019-markdown-rendered-diff.md) — Rendered markdown diff in the review panel (block-level, per-file Rendered⇄Raw toggle)
 - [0020](0020-viewing-a-pane-is-one-predicate.md) — "The user is viewing this pane" is one predicate, and the state machine consults it (a turn that finishes under your eyes reads idle, not done)
+
+### v2 (`v2/`, the ADE rewrite)
+Same log, same numbering — one chronological record for the repo. These apply to
+`v2/` only; v1 is maintenance-only for the duration.
+- [0021](0021-v2-store-is-node-sqlite.md) — The store is `node:sqlite` (not better-sqlite3: stdlib, no ABI rebuild, no new boundary exception), versioned in `PRAGMA user_version` so no data operation can erase the marker
+- [0022](0022-v2-layout-owns-the-session-binding.md) — The layout lives in the kernel, and `layout.close` is what ends a session — enforced by a constructor that cannot omit the `SessionSink`
