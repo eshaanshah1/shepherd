@@ -120,6 +120,12 @@ interface RootState {
 
 export class LayoutStore {
   readonly #roots = new Map<RootID, RootState>();
+  /**
+   * Pending initial input, per pane. **In memory only** — `serialize.ts`
+   * excludes `initialCommand` from the persisted shape precisely so a relaunch
+   * does not re-run a command, and a map that reached disk would undo that.
+   */
+  readonly #initialInput = new Map<PaneID, string>();
   readonly #sessionByPane = new Map<PaneID, SessionID>();
   readonly #paneBySession = new Map<SessionID, PaneID>();
   readonly #listeners = new Set<(root: RootID) => void>();
@@ -224,6 +230,44 @@ export class LayoutStore {
   }
 
   // ------------------------------------------------------------------- sessions
+
+  /**
+   * Give a pane the one thing that will be typed into its session — M3 D10.
+   *
+   * **There is exactly one of these, and it is consumed once.** v1 learned this
+   * the expensive way: a composed prompt and a `--resume` line were two producers
+   * of "the first thing typed", and two producers race. Here a pane carries at
+   * most one initial input, whoever created the pane decided which it is (the
+   * composer's launch command, or a task's resume line), and the precedence
+   * question is settled before a pane exists rather than adjudicated here.
+   *
+   * A newline in this string is an **Enter press**, because it is typed into a
+   * pty. Multi-line text must therefore be delivered some other way — v1 wrote
+   * it to a temp file and typed a one-line command that read it back. This seam
+   * carries the command, never the prose.
+   */
+  setInitialInput(pane: PaneID, input: string): void {
+    const found = this.pane(pane);
+    if (found === undefined) {
+      this.#log.warn(`initial input for ${pane} was dropped: no such pane`);
+      return;
+    }
+    this.#initialInput.set(pane, input);
+  }
+
+  /**
+   * Take it, once.
+   *
+   * One-shot by construction rather than by discipline: the second caller gets
+   * `undefined` because the first deleted it. A seam that could answer twice is
+   * how a prompt gets submitted twice, and it would do so only under a race
+   * nobody reproduces on purpose.
+   */
+  takeInitialInput(pane: PaneID): string | undefined {
+    const input = this.#initialInput.get(pane);
+    this.#initialInput.delete(pane);
+    return input;
+  }
 
   bindSession(pane: PaneID, session: SessionID): void {
     const previous = this.#sessionByPane.get(pane);

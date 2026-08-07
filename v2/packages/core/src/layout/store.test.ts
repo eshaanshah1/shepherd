@@ -3,6 +3,7 @@ import {
   createLogger,
   manualClock,
   paneId,
+  type PaneID,
   s,
   sessionId,
   type Caller,
@@ -477,5 +478,44 @@ describe('leafIds still describes the tree the store holds', () => {
     store.split(root, 'row');
     store.split(root, 'column');
     expect(leafIds(store.tree(root)!)).toEqual(store.panes(root));
+  });
+});
+
+describe('the initial-input seam (M3 D10)', () => {
+  it('hands a pane’s initial command over exactly once', () => {
+    // v1's hardest rule here: `takeInitialInput` is THE seam, and it is one-shot.
+    // Two ways to type the first thing into a session is how a resume races a
+    // prompt; a seam that can fire twice is how a prompt is submitted twice.
+    const store = build();
+    const root = store.open();
+    const pane = store.focused(root) as PaneID;
+    store.setInitialInput(pane, 'claude --resume abc\n');
+
+    expect(store.takeInitialInput(pane)).toBe('claude --resume abc\n');
+    expect(store.takeInitialInput(pane)).toBeUndefined();
+  });
+
+  it('is absent for a pane that was never given one', () => {
+    const store = build();
+    const root = store.open();
+    expect(store.takeInitialInput(store.focused(root) as PaneID)).toBeUndefined();
+  });
+
+  it('is absent for a pane that does not exist', () => {
+    expect(build().takeInitialInput(paneId('nope'))).toBeUndefined();
+  });
+
+  it('never reaches disk — a relaunch must not re-run a command', () => {
+    // `serialize.ts` excludes `initialCommand` on purpose. Setting one and
+    // restoring must not resurrect it, or every relaunch replays the prompt.
+    const storage = fakeKV();
+    const first = build(storage);
+    const root = first.open();
+    first.setInitialInput(first.focused(root) as PaneID, 'claude "do the thing"\n');
+    first.flush();
+
+    const second = build(storage);
+    const restored = second.open();
+    expect(second.takeInitialInput(second.focused(restored) as PaneID)).toBeUndefined();
   });
 });

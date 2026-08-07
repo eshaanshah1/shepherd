@@ -190,14 +190,19 @@ const bus = new EventBus({ clock: systemClock, logger });
  * the sink is a required constructor argument in core: there is no way to build a
  * store that closes a pane and forgets the pty behind it.
  *
- * No `storage`, even though main now owns a `SqliteStore` (the extension host
- * needed one): layout persistence stays unwired deliberately, because a restored
- * tree would make both smokes non-deterministic — they assert "the app opens with
- * one pane", and a previous run's three-pane layout would restore into it.
+ * Persistence is ON (M3 D3). It was built in M0 and left unwired with the note
+ * that a restored tree would make the smokes non-deterministic — which is true of
+ * exactly one smoke, and not for the reason the note gave. `smoke:m1` and
+ * `smoke:m2` mkdtemp a throwaway userData per run, so they open an empty database
+ * and have nothing to restore. `smoke-m0` deliberately reuses ONE directory
+ * across two passes, to catch a leaked single-instance lock — and that lock is
+ * keyed on the DIRECTORY, not on `store.db`, so its runner drops the database
+ * between passes and keeps the property it exists for.
  */
 const layout = new LayoutStore({
   logger,
   clock: systemClock,
+  storage: store.namespace('layout'),
   sessions: { kill: (id) => void host.kill(id) },
 });
 
@@ -345,6 +350,16 @@ const bridge = new SessionBridge(host, {
       // already been and gone. Replay the current value or this session's mirror
       // starts empty and a turn finishing in front of you reads as unseen.
       viewingTopic.announce(pane);
+      // D10's one seam, consumed here because this is the first moment there is
+      // something to type into. `take` empties it, so a rebind — a pane whose
+      // session died and was replaced — does NOT replay the command.
+      const initial = layout.takeInitialInput(pane);
+      if (initial !== undefined) {
+        const written = host.write(session, initial);
+        if (!written.ok) {
+          logger.warn('layout', `initial input for ${pane} was not delivered: ${written.error.message}`);
+        }
+      }
     },
     unbind: (session) => {
       layout.unbindSession(session);

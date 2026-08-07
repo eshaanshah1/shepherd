@@ -40,6 +40,12 @@ const userData = mkdtempSync(join(tmpdir(), 'shepherd-v2-m0-'));
 
 try {
   for (const pass of [1, 2]) {
+    // The layout persists (M3 D3), and this smoke asserts "the app opens with
+    // ONE pane" — but pass 1 splits and quits via `app.quit()`, so `will-quit`
+    // flushes a two-pane tree. Drop the database, keep the DIRECTORY: the leaked
+    // single-instance lock this reuse exists to catch is keyed on the directory,
+    // so the property survives and the assertion stops being a lie.
+    rmSync(join(userData, 'store.db'), { force: true });
     const result = spawnSync(
       electronBinary,
       [entry, FLAG, `--shepherd-user-data=${userData}`],
