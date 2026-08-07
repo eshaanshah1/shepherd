@@ -2,7 +2,7 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, rmSync, symlinkSync, wri
 import { dirname, join } from 'node:path';
 import type { ProcessAPI } from '@shepherd/sdk';
 import { resolveBranch, type RepoRefs } from './model/branch.ts';
-import { planArchive, type ArchiveRecord, type WorktreeState } from './model/archive.ts';
+import { planArchive, planRestore, type ArchiveRecord, type WorktreeState } from './model/archive.ts';
 import type { TaskRoot } from './model/root-synth.ts';
 
 /**
@@ -174,7 +174,10 @@ export async function archiveWorktree(
   repoPath: string,
   worktree: string,
   timeoutMs = 120_000,
-): Promise<{ ok: true; record: ArchiveRecord; warnings: readonly string[] } | { ok: false; reason: string }> {
+): Promise<
+  | { ok: true; record: ArchiveRecord & { commit: string; stagedTree: string }; warnings: readonly string[] }
+  | { ok: false; reason: string }
+> {
   const at = { cwd: worktree, timeoutMs };
   const read = async (args: string[]): Promise<string> => {
     const out = await process_.gitRead(args, at);
@@ -204,5 +207,43 @@ export async function archiveWorktree(
 
   const removed = await process_.gitWrite(['worktree', 'remove', '--force', worktree], { cwd: repoPath, timeoutMs });
   if (!removed.ok) return { ok: false, reason: removed.stderr.trim() || `git exited ${removed.code}` };
-  return { ok: true, record: plan.record, warnings: plan.warnings };
+  return { ok: true, record: { ...plan.record, commit, stagedTree: staged }, warnings: plan.warnings };
+}
+
+/**
+ * Put the uncommitted work back — the half `worktree add` cannot do.
+ *
+ * Re-provisioning gives you the branch; it gives you a CLEAN tree, which is not
+ * what was archived. This replays the snapshot, and the order is the whole
+ * algorithm:
+ *
+ *   1. `read-tree --reset -u <archive tree>` makes the index AND the working
+ *      tree exactly what was captured. `-u` is what updates files on disk and
+ *      what removes the ones that were deleted — a plain `checkout -- .` writes
+ *      what is in the tree and leaves a deleted file sitting there, restored.
+ *   2. `read-tree <staged tree>` then sets the index back to the staged
+ *      snapshot WITHOUT touching the working tree. That is what re-splits
+ *      staged from unstaged, and it is also why untracked files come back as
+ *      untracked: `add -A` captured them into the archive tree, and this step
+ *      takes them back out of the index.
+ *   3. HEAD goes where `planRestore` says — reattached to the branch, or
+ *      detached onto the recorded sha. Skipping step 3 for a detached worktree
+ *      is exactly how v1 left HEAD on the archive commit.
+ */
+export async function restoreWorktree(
+  process_: ProcessAPI,
+  worktree: string,
+  record: ArchiveRecord & { commit: string; stagedTree: string },
+  timeoutMs = 120_000,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const at = { cwd: worktree, timeoutMs };
+  const head = await process_.gitWrite([...planRestore(record).args], at);
+  if (!head.ok) return { ok: false, reason: head.stderr.trim() || `git exited ${head.code}` };
+
+  const full = await process_.gitWrite(['read-tree', '--reset', '-u', `${record.commit}^{tree}`], at);
+  if (!full.ok) return { ok: false, reason: full.stderr.trim() || `git exited ${full.code}` };
+
+  const staged = await process_.gitWrite(['read-tree', record.stagedTree], at);
+  if (!staged.ok) return { ok: false, reason: staged.stderr.trim() || `git exited ${staged.code}` };
+  return { ok: true };
 }
