@@ -10,10 +10,15 @@
 //                                                     (the ONLY place react appears)
 //   app/ext-host    -> sdk + app/shared + built-in extensions
 //                                                     (a utility process: no electron, no core)
-//   extensions/*    -> sdk only
+//   extensions/*    -> sdk only, + TYPE-only imports of another extension
+//                                                     (values go through extensions.get)
 //
 // Enforced with the core `no-restricted-imports` rule so the lint step needs no
-// type information and stays fast enough to run on every save.
+// type information and stays fast enough to run on every save. One rule — the
+// extension-to-extension one — uses the typescript-eslint variant of that same
+// rule, for `allowTypeImports`; it needs no type information either.
+
+import tseslint from 'typescript-eslint';
 
 const ELECTRON = ['electron', 'electron/*', '@electron/*'];
 const REACT = ['react', 'react-dom', 'react/*', 'react-dom/*'];
@@ -269,15 +274,49 @@ export const boundaries = [
   {
     name: 'boundary/extensions',
     files: ['extensions/**/*.ts', 'extensions/**/*.tsx'],
-    rules: restrict(
-      deny(ELECTRON, 'an extension sees the host only through @shepherd/sdk.'),
-      deny(NODE_PTY, 'an extension asks the session API; it never spawns a pty.'),
-      deny(OS_APIS, 'an extension asks the platform through @shepherd/sdk.'),
-      deny(
-        [...WORKSPACE.core, ...WORKSPACE.app, ...WORKSPACE.platform],
-        'an extension may only import @shepherd/sdk.',
+    // The TS variant of the same rule, for `allowTypeImports` below. It needs no
+    // type information either, so the "fast enough to run on every save" property
+    // this file is built on is intact.
+    plugins: { '@typescript-eslint': tseslint.plugin },
+    rules: {
+      ...restrict(
+        deny(ELECTRON, 'an extension sees the host only through @shepherd/sdk.'),
+        deny(NODE_PTY, 'an extension asks the session API; it never spawns a pty.'),
+        deny(OS_APIS, 'an extension asks the platform through @shepherd/sdk.'),
+        deny(
+          [...WORKSPACE.core, ...WORKSPACE.app, ...WORKSPACE.platform],
+          'an extension may only import @shepherd/sdk.',
+        ),
       ),
-    ),
+      // One extension may TYPE-import another and may not VALUE-import it.
+      //
+      // Added deliberately in M2, when `claude-code` became the first extension
+      // to depend on another (`agents-core`'s state vocabulary). Sharing types is
+      // how a vendor extension speaks the noun it plugs into — the alternative is
+      // duplicating the union, which drifts. Sharing *values* is different: §7c
+      // decided cross-extension calls are **declared, not discovered**, so the
+      // runtime path is `manifest.dependencies` + `extensions.get`, which the host
+      // can review and gate. A direct value import reaches the same code with no
+      // manifest entry and no gate, which is the whole mechanism routed around.
+      //
+      // `allowTypeImports` is exactly this distinction, and it is why this one
+      // rule uses the typescript-eslint variant: a type import is erased, so it
+      // cannot be a runtime edge at all.
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['@shepherd/ext-*'],
+              allowTypeImports: true,
+              message:
+                'one extension may only TYPE-import another (`import type`). The runtime path is ' +
+                'manifest `dependencies` + `extensions.get`, which the host gates; a value import routes around it.',
+            },
+          ],
+        },
+      ],
+    },
   },
 ];
 

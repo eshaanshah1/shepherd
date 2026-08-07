@@ -1,0 +1,34 @@
+{
+  "name": "@shepherd/ext-agents-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "shepherd.agents-core — the vendor-blind agent noun: state, attention, and the kind registry other extensions plug into.",
+  "//exports": "Same split as diagnostics: main imports ./manifest to register the extension, the utility process imports the root. ./state is a THIRD subpath because it is the vocabulary a vendor extension type-imports (see claude-code) — reaching it must not pull in `activate`.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./manifest": {
+      "types": "./src/manifest.ts",
+      "default": "./src/manifest.ts"
+    },
+    "./state": {
+      "types": "./src/state.ts",
+      "default": "./src/state.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -b",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@shepherd/sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

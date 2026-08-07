@@ -1,0 +1,32 @@
+{
+  "name": "@shepherd/ext-claude-code",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "shepherd.claude-code — the Claude Code adapter: the hook protocol, the lifecycle map v1 carried in StopPolicy, and session resume.",
+  "//exports": "Same split as diagnostics: main imports ./manifest, the utility process imports the root.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./manifest": {
+      "types": "./src/manifest.ts",
+      "default": "./src/manifest.ts"
+    }
+  },
+  "//dependencies": "@shepherd/ext-agents-core is a TYPE-ONLY dependency — `import type` and nothing else. The runtime relationship is declared in the manifest's `dependencies` and resolved through `extensions.get`, which is the gate the host can review; a value import would route around it. See extensions/README.md.",
+  "dependencies": {
+    "@shepherd/ext-agents-core": "workspace:*",
+    "@shepherd/sdk": "workspace:*"
+  },
+  "scripts": {
+    "typecheck": "tsc -b",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
