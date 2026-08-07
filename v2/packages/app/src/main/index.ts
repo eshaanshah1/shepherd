@@ -17,6 +17,7 @@ import { AttentionStore, ViewingResolver, registerAttentionCommands } from '@she
 import { diagnosticsManifest } from '@shepherd/ext-diagnostics/manifest';
 import { agentsCoreManifest } from '@shepherd/ext-agents-core/manifest';
 import { claudeCodeManifest } from '@shepherd/ext-claude-code/manifest';
+import { tasksManifest } from '@shepherd/ext-tasks/manifest';
 import { KERNEL, createLogger, extensionId, rootId, systemClock } from '@shepherd/sdk';
 import { ExtensionHost } from './ext-host.ts';
 import { forkExtensionHost } from './ext-host-process.ts';
@@ -499,7 +500,7 @@ void app.whenReady().then(async () => {
   // a CLI client cannot arrive before `diagnostics.ping` is registered, and so a
   // built-in's own `commands.register` cannot race the kernel's.
   extensionHost.registerCommands();
-  for (const manifest of [diagnosticsManifest, agentsCoreManifest, claudeCodeManifest]) {
+  for (const manifest of [diagnosticsManifest, agentsCoreManifest, claudeCodeManifest, tasksManifest]) {
     const added = extensions.add(manifest, 'builtin');
     if (added.ok) continue;
     for (const problem of added.error) {
@@ -514,7 +515,7 @@ void app.whenReady().then(async () => {
   // trigger, because `claude-code` will declare it as a dependency and the
   // registry activates dependencies first: doing it here keeps one ordering
   // rather than two that must agree.
-  for (const manifest of [diagnosticsManifest, agentsCoreManifest, claudeCodeManifest]) {
+  for (const manifest of [diagnosticsManifest, agentsCoreManifest, claudeCodeManifest, tasksManifest]) {
     if (extensions.state(extensionId(manifest.id)) === undefined) continue;
     await extensions.activate(extensionId(manifest.id));
   }

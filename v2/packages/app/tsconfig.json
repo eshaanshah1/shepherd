@@ -24,6 +24,7 @@
     { "path": "../platform/darwin" },
     { "path": "../../extensions/diagnostics" },
     { "path": "../../extensions/agents-core" },
-    { "path": "../../extensions/claude-code" }
+    { "path": "../../extensions/claude-code" },
+    { "path": "../../extensions/tasks" }
   ]
 }

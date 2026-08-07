@@ -157,3 +157,36 @@ describe('s.nullValue', () => {
     expect(tri.parse(undefined).ok).toBe(false);
   });
 });
+
+describe('s.stored — the lenient reader', () => {
+  const record = s.stored({ id: s.string(), title: s.string() });
+
+  it('reads a record it fully understands', () => {
+    expect(record.parse({ id: 'a', title: 't' })).toEqual({ ok: true, value: { id: 'a', title: 't' } });
+  });
+
+  it('KEEPS a record carrying a key it does not know', () => {
+    // The whole point. `s.object` rejects unknown keys, which is right for a
+    // command's ARGUMENTS — a mistyped flag must fail — and wrong for something
+    // read back from disk, where an unknown key means "written by a newer build".
+    // Rejecting there makes `KV.get` return undefined, which reads as "no such
+    // task" while its worktrees sit on disk with nothing referencing them.
+    const out = record.parse({ id: 'a', title: 't', addedLater: 42 });
+    expect(out).toEqual({ ok: true, value: { id: 'a', title: 't' } });
+  });
+
+  it('still fails a record missing something it needs', () => {
+    // Lenient about additions, never about absences: a task with no id is not a
+    // task from the future, it is corrupt.
+    expect(record.parse({ title: 't' }).ok).toBe(false);
+  });
+
+  it('still fails a field of the wrong type', () => {
+    expect(record.parse({ id: 7, title: 't' }).ok).toBe(false);
+  });
+
+  it('still rejects a non-object', () => {
+    expect(record.parse('nope').ok).toBe(false);
+    expect(record.parse(null).ok).toBe(false);
+  });
+});

@@ -32,7 +32,8 @@
     "@xterm/addon-fit": "catalog:",
     "@xterm/xterm": "catalog:",
     "react": "catalog:",
-    "react-dom": "catalog:"
+    "react-dom": "catalog:",
+    "@shepherd/ext-tasks": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "catalog:",
