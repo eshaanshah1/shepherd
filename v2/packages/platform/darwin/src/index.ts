@@ -8,3 +8,5 @@ export {
   type ShellDefaults,
   type ShellInputs,
 } from './shell.ts';
+export { runExec, runGit, gitEnv, truncate, MAX_OUTPUT_BYTES } from './exec.ts';
+export type { RunOptions, RunResult } from './exec.ts';

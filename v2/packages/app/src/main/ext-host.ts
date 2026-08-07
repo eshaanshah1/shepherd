@@ -11,6 +11,7 @@ import {
 import {
   extensionId,
   isPermission,
+  type Permission,
   s,
   err,
   ok,
@@ -117,6 +118,14 @@ export interface ExtChildProcess {
   kill(): void;
 }
 
+/** What `process.*` carries across the port — `ExecOptions` minus its `AbortSignal`. */
+export interface ExecRunOptions {
+  readonly cwd: string;
+  readonly env?: Readonly<Record<string, string>>;
+  readonly stdin?: string;
+  readonly timeoutMs: number;
+}
+
 export interface ExtensionHostOptions {
   readonly registry: CommandRegistry;
   /**
@@ -129,6 +138,18 @@ export interface ExtensionHostOptions {
   readonly bus: EventBus;
   /** `SqliteStore.namespace`. One namespace per extension, never re-derived. */
   readonly kv: (namespace: string) => KV;
+  /**
+   * How a program gets run, injected from `packages/platform/darwin`.
+   *
+   * Injected for the same reason the pty spawn is: `child_process` lives behind
+   * the platform boundary, and a test that a denial denies must not need a real
+   * subprocess. Optional so a test can omit it — and its absence is a refusal
+   * with a reason, not a quiet success.
+   */
+  readonly run?: {
+    exec(cmd: readonly string[], opts: ExecRunOptions): Promise<unknown>;
+    git(mode: 'read' | 'write', args: readonly string[], opts: ExecRunOptions): Promise<unknown>;
+  };
   readonly logger: Logger;
   readonly clock: Clock;
   /**
@@ -711,6 +732,34 @@ export class ExtensionHost {
         this.#options.kv(storageNamespace(record.id)).delete(call.key);
         return wireOk();
       }
+
+      /**
+       * Running a program, gated on `process.exec` — the heaviest grant there is.
+       *
+       * The runner is injected rather than imported, for the same reason the pty
+       * spawn is: `child_process` lives behind the platform boundary, and a test
+       * for this dispatch must not need a subprocess to prove that a denial
+       * denies. An absent runner is a **refusal with a reason**, never a silent
+       * success — this build simply has no way to run anything.
+       */
+      case 'process.exec':
+      case 'process.git': {
+        const verdict = this.#permitted(caller, 'process.exec');
+        if (verdict !== undefined) return verdict;
+        const run = this.#options.run;
+        if (run === undefined) {
+          return wireErr('host-failed', `${call.kind}: this build has no process runner wired`);
+        }
+        const result =
+          call.kind === 'process.exec'
+            ? await run.exec(call.cmd, call.opts)
+            : await run.git(call.mode, call.args, call.opts);
+        // The API's own shape: a non-zero exit is a VALUE, not a wire failure.
+        // `git` exiting 1 for "no differences" is not an error in the transport,
+        // and collapsing the two would make every caller unable to tell a repo
+        // state from a broken host.
+        return wireOk(result);
+      }
     }
   }
 
@@ -790,7 +839,7 @@ export class ExtensionHost {
    * judgement. That distinction is the whole reason `authorize` is pure and takes
    * its grants as a value.
    */
-  #permitted(caller: Caller, permission: 'storage'): WireResult | undefined {
+  #permitted(caller: Caller, permission: Permission): WireResult | undefined {
     const verdict = authorize(caller, permission, this.#grants());
     return verdict.allowed ? undefined : wireErr('denied', verdict.reason);
   }
