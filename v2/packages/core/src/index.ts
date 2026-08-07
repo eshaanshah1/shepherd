@@ -21,6 +21,16 @@ export {
 
 export { EventBus, type EventBusOptions } from './events/index.ts';
 
+export {
+  SqliteStore,
+  MIGRATIONS,
+  LATEST_VERSION,
+  type Migration,
+  type SqliteStoreOptions,
+} from './storage/index.ts';
+
+export { debounce, type Debounced } from './util/index.ts';
+
 export type {
   Pane,
   PaneInit,

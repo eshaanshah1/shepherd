@@ -20,6 +20,16 @@ const NODE_PTY = ['node-pty', 'node-pty/*'];
 
 // "OS API" = the node builtins through which a process reaches the machine
 // itself. fs/path/url are stdlib and stay allowed everywhere; these are not.
+//
+// Three builtins core DOES use, deliberately, and which this list therefore
+// does not name — recorded because a deny-list is silent about what it permits,
+// and this file is supposed to be readable as the architecture:
+//   node:sqlite  the one store (stdlib, so no native build against Electron's ABI)
+//   node:http    the two ingress sockets — HTTP over a unix path buys framing,
+//                acks, request timeouts and body caps for free
+//   node:net     the unix paths those listen on
+// They are the kernel's own persistence and its external front door, not a
+// reach into the machine, which is what the entries below are about.
 const OS_APIS = [
   'os',
   'node:os',
@@ -91,6 +101,30 @@ export const boundaries = [
       deny(REACT, 'core is headless: no react. Views live in packages/app/src/renderer.'),
       deny(XTERM, 'xterm is a renderer concern; core owns bytes, not views.'),
       deny(OS_APIS, 'OS APIs live in packages/platform/darwin only (node-pty is the one exception).'),
+      deny(
+        [...WORKSPACE.app, ...WORKSPACE.platform, ...WORKSPACE.tokens],
+        'core may only import @shepherd/sdk.',
+      ),
+    ),
+  },
+  {
+    // Core's TESTS may reach the machine; core itself may not.
+    //
+    // The rule above exists so the shipped kernel stays process-agnostic. A test
+    // is not shipped, and the on-disk half of the store — migrations only happen
+    // on a real file — needs a temp directory. Without this carve-out the test
+    // author's options are to read `process.env.TMPDIR` off the global (lint
+    // cannot see it, which makes the rule theatre) or to write fixtures into the
+    // repo. Everything else still applies: no electron, no react, no other
+    // workspace package.
+    //
+    // Ordered AFTER boundary/core so it wins for the files it names.
+    name: 'boundary/core-tests',
+    files: ['packages/core/**/*.test.ts'],
+    rules: restrict(
+      deny(ELECTRON, 'core is process-agnostic: no electron, not even in a test.'),
+      deny(REACT, 'core is headless: no react, not even in a test.'),
+      deny(XTERM, 'xterm is a renderer concern.'),
       deny(
         [...WORKSPACE.app, ...WORKSPACE.platform, ...WORKSPACE.tokens],
         'core may only import @shepherd/sdk.',
