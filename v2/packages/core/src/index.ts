@@ -127,6 +127,7 @@ export {
   registerSessionCommands,
   SESSION_COMMANDS,
   type SessionCommandsOptions,
+  type ViewingLookup,
 } from './session/index.ts';
 
 export { ViewingResolver, type Presence } from './attention/index.ts';

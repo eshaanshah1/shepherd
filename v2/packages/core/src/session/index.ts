@@ -27,4 +27,5 @@ export {
   registerSessionCommands,
   SESSION_COMMANDS,
   type SessionCommandsOptions,
+  type ViewingLookup,
 } from './commands.ts';

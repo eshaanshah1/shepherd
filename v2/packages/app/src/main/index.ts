@@ -373,7 +373,14 @@ void app.whenReady().then(async () => {
   // reconciliation sweep's only input, and the reason it needs no subprocess.
   // Registered beside the other kernel verbs and before the sockets open, so a
   // client cannot arrive ahead of the command it wants to invoke.
-  registerSessionCommands({ host, registry });
+  registerSessionCommands({
+    host,
+    registry,
+    // The one predicate, answering for each row — so an agent extension's pushed
+    // mirror is seeded by the read it already makes rather than by a re-announce
+    // mechanism nobody can trigger.
+    viewing: (pane) => viewing.isViewing(pane),
+  });
 
   registerLayoutCommands({
     store: layout,
