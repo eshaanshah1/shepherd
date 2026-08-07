@@ -40,12 +40,16 @@ enum LANIdentity {
         return Data(SHA256.hash(data: SecCertificateCopyData(cert) as Data))
     }
 
+    /// `kSecImportToMemoryOnly` is load-bearing: without it every call deposits another copy of
+    /// the identity in the login keychain, and enumerating that keychain gets slow machine-wide.
     private static func load(_ path: String) -> SecIdentity? {
         guard let data = FileManager.default.contents(atPath: path) else { return nil }
+        var options: [String: Any] = [kSecImportExportPassphrase as String: passphrase]
+        if #available(macOS 15.0, *) {
+            options[kSecImportToMemoryOnly as String] = kCFBooleanTrue
+        }
         var items: CFArray?
-        guard SecPKCS12Import(data as CFData,
-                              [kSecImportExportPassphrase as String: passphrase] as CFDictionary,
-                              &items) == errSecSuccess,
+        guard SecPKCS12Import(data as CFData, options as CFDictionary, &items) == errSecSuccess,
               let arr = items as? [[String: Any]],
               let ident = arr.first?[kSecImportItemIdentity as String] else { return nil }
         return (ident as! SecIdentity)
