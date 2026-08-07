@@ -29,7 +29,7 @@ export { createLogger, formatLine, passes, parseLogLevel, nullLogger, LOG_LEVELS
 
 // ------------------------------------------------------------------ contract
 export type { Caller, CallerKind } from './caller.ts';
-export { USER, callerLabel, externalCallerSchema } from './caller.ts';
+export { USER, KERNEL, callerLabel, externalCallerSchema } from './caller.ts';
 export type { Envelope, SeqVerdict } from './envelope.ts';
 export { seqVerdict } from './envelope.ts';
 export type { Permission, ExtensionSource } from './permission.ts';

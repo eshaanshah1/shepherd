@@ -123,3 +123,20 @@ export {
   type WillCreateHook,
   type WillCreatePatch,
 } from './session/index.ts';
+
+export { ViewingResolver, type Presence } from './attention/index.ts';
+export { route, wantsAttention, type RoutingDecision, type RoutingInput } from './attention/index.ts';
+export {
+  AttentionStore,
+  ATTENTION_TOPIC,
+  attentionTarget,
+  type AttentionChanged,
+  type AttentionStoreOptions,
+  type AttentionTarget,
+  type DecideOptions,
+} from './attention/index.ts';
+export {
+  ATTENTION_COMMANDS,
+  registerAttentionCommands,
+  type AttentionCommandsOptions,
+} from './attention/index.ts';

@@ -22,6 +22,16 @@ describe('the user', () => {
   });
 });
 
+describe('the kernel', () => {
+  it('is allowed, because there is no principal to check against', () => {
+    // Not a privilege level: core IS the thing doing the checking. What makes this
+    // safe is that no transport can mint a `kernel` caller — `externalCallerSchema`
+    // has no such variant — which its own test pins.
+    expect(authorize({ kind: 'kernel' }, undefined, emptyGrants()).allowed).toBe(true);
+    expect(authorize({ kind: 'kernel' }, 'process.exec', emptyGrants()).allowed).toBe(true);
+  });
+});
+
 describe('an unknown principal', () => {
   it('is denied even for a command that needs no permission', () => {
     // Reaching the socket is not identity. An extension that is not loaded, a
