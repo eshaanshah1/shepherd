@@ -42,7 +42,8 @@
     "permissions": [
       "storage",
       "process.exec",
-      "sessions"
+      "sessions",
+      "views"
     ],
     "contributes": {
       "commands": [

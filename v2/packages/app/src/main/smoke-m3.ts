@@ -106,6 +106,22 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
   check(rows.some((row) => row.includes('ticks')), `the tree's rows reached the DOM: ${JSON.stringify(rows)}`);
   say('ok — an extension put a view on screen');
 
+  // --- 6. and the TASK tree specifically, carrying the task this smoke made.
+  //
+  // The point of asserting both: the dock draws a diagnostics tree and a task
+  // tree through the same code path, and neither is special-cased in the core.
+  // If `tasks` had needed one, the view model would be wrong (sketch §2b).
+  const taskRows = await until(
+    'the task tree to show this task',
+    () =>
+      win.webContents.executeJavaScript(
+        `Array.from(document.querySelectorAll('[data-view-type="tasks.tree"] [data-testid="view-row"]')).map((el) => el.textContent)`,
+      ) as Promise<string[]>,
+    (found) => found.some((row) => row.includes('Smoke task')),
+  );
+  check(taskRows.length > 0, `the task tree rendered: ${JSON.stringify(taskRows)}`);
+  say('ok — the task tree drew the task, through the same mechanism');
+
   say('smoke: OK m3');
   app.exit(0);
 }
