@@ -30,6 +30,8 @@ fight it.
 **If you are working in `v2/`, start here — not with this file:**
 1. [`docs/superpowers/plans/2026-08-07-v2-handoff.md`](docs/superpowers/plans/2026-08-07-v2-handoff.md)
    — **always current**: what is built, what is next, and the traps of the moment.
+   M0–M2 are done (kernel + agents; a hook drives a real state indicator);
+   **M3 (tasks) is next, and dogfooding begins there**.
 2. [`docs/superpowers/specs/2026-08-06-ade-minimal-core-sketch.md`](docs/superpowers/specs/2026-08-06-ade-minimal-core-sketch.md)
    — thesis and **every decision** (§7, §7b, §7c the headless-agent seam, §7d presence).
 3. [`docs/superpowers/specs/2026-08-06-ade-v2-core-design.md`](docs/superpowers/specs/2026-08-06-ade-v2-core-design.md)
