@@ -3,6 +3,7 @@ import type { SessionHost } from '@shepherd/core';
 import { die, say } from './smoke-support.ts';
 import type { M1SmokeOptions } from './smoke-m1.ts';
 import type { M2SmokeOptions } from './smoke-m2.ts';
+import type { M3SmokeOptions } from './smoke-m3.ts';
 
 /**
  * Every handle any smoke may want.
@@ -12,7 +13,9 @@ import type { M2SmokeOptions } from './smoke-m2.ts';
  * something absent would otherwise fail as a `TypeError` three frames deep
  * instead of as a named refusal here.
  */
-export type SmokeKernel = M1SmokeOptions & Partial<Omit<M2SmokeOptions, keyof M1SmokeOptions>>;
+export type SmokeKernel = M1SmokeOptions &
+  Partial<Omit<M2SmokeOptions, keyof M1SmokeOptions>> &
+  Partial<Omit<M3SmokeOptions, keyof M1SmokeOptions>>;
 
 /**
  * `--shepherd-smoke=<name>` → the smoke to run.
@@ -52,6 +55,12 @@ export async function runSmoke(
       if (!isM2Options(kernel)) return die('the m2 smoke needs the layout and agent handles');
       return runM2Smoke(win, host, kernel);
     }
+    case 'm3': {
+      const { isM3Options, runM3Smoke } = await import('./smoke-m3.ts');
+      if (!isM3Options(kernel)) return die('the m3 smoke needs the alerts handle');
+      return runM3Smoke(win, kernel);
+    }
+
     default:
       return die(`unknown smoke '${name}'`);
   }
