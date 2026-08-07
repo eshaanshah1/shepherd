@@ -16,6 +16,7 @@ struct PersistedWorkspace: Codable {
     var collapsed: Bool?           // optional so pre-accordion blobs still decode (nil = expanded)
     var defaultPath: String?       // optional so pre-feature blobs still decode (nil = none)
     var worktreeHook: String?      // optional so pre-feature blobs still decode (nil = none)
+    var claudeProfileID: String?   // optional so pre-feature blobs still decode (nil = default profile)
 }
 
 /// On-disk ephemeral pane: cwd + sessionID + userTitle only (like a tab, live
@@ -66,7 +67,8 @@ func snapshotState(_ workspaces: [Workspace], selectedWorkspaceID: String?,
             tabs: ws.tabs.map { PersistedTab(userTitle: $0.userTitle, root: $0.root) },
             collapsed: ws.collapsed,
             defaultPath: ws.defaultPath,
-            worktreeHook: ws.worktreeHook)
+            worktreeHook: ws.worktreeHook,
+            claudeProfileID: ws.claudeProfileID)
     }
     return PersistedState(workspaces: pws, selectedWorkspaceIndex: selWs,
                           ephemeral: snapshotEphemerals(ephemeral))
@@ -108,7 +110,7 @@ func buildWorkspaces(from state: PersistedState) -> [Workspace] {
         return Workspace(id: pw.id ?? UUID().uuidString, userTitle: pw.userTitle,
                          tabs: tabs, selectedTabID: selID,
                          collapsed: pw.collapsed ?? false, defaultPath: pw.defaultPath,
-                         worktreeHook: pw.worktreeHook)
+                         worktreeHook: pw.worktreeHook, claudeProfileID: pw.claudeProfileID)
     }
 }
 

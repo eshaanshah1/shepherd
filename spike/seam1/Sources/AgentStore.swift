@@ -34,6 +34,12 @@ final class AgentStore: ObservableObject {
     /// dim, non-interactive "deleting" state until it clears. Transient.
     @Published private(set) var deletingArchiveIDs: Set<String> = []
 
+    /// Extra Claude accounts, each a named `CLAUDE_CONFIG_DIR`. The default profile is
+    /// implicit and never in this list (it is "export nothing" — see `ClaudeProfiles`).
+    @Published private(set) var claudeProfiles: [ClaudeProfile] =
+        (UserDefaults.standard.data(forKey: "shepherd.claudeProfiles.v1")
+            .flatMap { try? JSONDecoder().decode([ClaudeProfile].self, from: $0) }) ?? []
+
     /// PR status per pane, shown in the sidebar when the pane is idle (transient —
     /// fetched via `gh`, refreshed while idle, never persisted).
     @Published private(set) var prStatuses: [String: PRStatus] = [:]
@@ -430,6 +436,99 @@ final class AgentStore: ObservableObject {
         save()
     }
 
+    // MARK: Claude profiles (multiple accounts)
+
+    /// The default profile first, then the configured ones — the order every picker shows.
+    var allClaudeProfiles: [ClaudeProfile] { [ClaudeProfiles.defaultProfile] + claudeProfiles }
+
+    func claudeProfile(id: String?) -> ClaudeProfile {
+        ClaudeProfiles.resolve(paneOverride: id, workspace: nil, profiles: claudeProfiles)
+    }
+
+    /// Which account this pane's PTY runs under. Resolved from the pane's own override,
+    /// else its workspace's; an ephemeral pane has no workspace, so it takes the default.
+    func claudeProfile(forPane paneID: String) -> ClaudeProfile {
+        if let (w, t) = locatePane(paneID, in: workspaces) {
+            return ClaudeProfiles.resolve(
+                paneOverride: workspaces[w].tabs[t].root.pane(paneID)?.claudeProfileID,
+                workspace: workspaces[w].claudeProfileID,
+                profiles: claudeProfiles)
+        }
+        let ep = ephemeralPanes.first { $0.id == paneID }?.pane.claudeProfileID
+        return ClaudeProfiles.resolve(paneOverride: ep, workspace: nil, profiles: claudeProfiles)
+    }
+
+    /// The env `GhosttyTerminal` injects into this pane's PTY. Empty for the default
+    /// profile — deliberately, see `ClaudeProfiles.environment(for:)`.
+    func claudeEnvironment(forPane paneID: String) -> [String: String] {
+        ClaudeProfiles.environment(for: claudeProfile(forPane: paneID))
+    }
+
+    private func saveClaudeProfiles() {
+        if let data = try? JSONEncoder().encode(claudeProfiles) {
+            UserDefaults.standard.set(data, forKey: "shepherd.claudeProfiles.v1")
+        }
+    }
+
+    @discardableResult
+    func addClaudeProfile(name: String, configDir: String) -> ClaudeProfile {
+        let p = ClaudeProfile(name: name.trimmed.isEmpty ? "Profile" : name.trimmed,
+                              configDir: configDir.trimmed)
+        claudeProfiles.append(p)
+        saveClaudeProfiles()
+        return p
+    }
+
+    func updateClaudeProfile(_ id: String, name: String? = nil, configDir: String? = nil) {
+        guard let i = claudeProfiles.firstIndex(where: { $0.id == id }) else { return }
+        if let name { claudeProfiles[i].name = name.trimmed.isEmpty ? claudeProfiles[i].name : name.trimmed }
+        if let configDir, !configDir.trimmed.isEmpty { claudeProfiles[i].configDir = configDir.trimmed }
+        saveClaudeProfiles()
+    }
+
+    /// Removing a profile never touches its config dir — the account outlives us. Panes
+    /// and workspaces pointing at it fall back to the default, and those panes drop their
+    /// `sessionID`: a session id only resolves inside the config dir that recorded it.
+    func removeClaudeProfile(_ id: String) {
+        claudeProfiles.removeAll { $0.id == id }
+        saveClaudeProfiles()
+        for w in workspaces.indices where workspaces[w].claudeProfileID == id {
+            workspaces[w].claudeProfileID = nil
+        }
+        for w in workspaces.indices {
+            for t in workspaces[w].tabs.indices {
+                for pid in workspaces[w].tabs[t].root.leafIDs {
+                    guard workspaces[w].tabs[t].root.pane(pid)?.claudeProfileID == id else { continue }
+                    _ = workspaces[w].tabs[t].root.updatePane(pid) {
+                        $0.claudeProfileID = nil
+                        $0.sessionID = nil
+                    }
+                }
+            }
+        }
+        save()
+    }
+
+    /// The account new panes in this workspace use. Local workspaces only: a mirror's
+    /// panes are the host's PTYs, so the host's profile is what runs.
+    func setWorkspaceClaudeProfile(_ id: String, to profileID: String?) {
+        guard let i = workspaces.firstIndex(where: { $0.id == id }), !workspaces[i].isRemote else { return }
+        workspaces[i].claudeProfileID = (profileID == ClaudeProfiles.defaultID) ? nil : profileID
+        save()
+    }
+
+    /// Re-point one pane at another account. Clears `sessionID` for the reason above —
+    /// left set, the restored `claude --resume <id>` would name a session the new config
+    /// dir has never heard of and the pane would quietly come up as a plain shell.
+    func setPaneClaudeProfile(_ paneID: String, to profileID: String?) {
+        guard let (w, t) = locatePane(paneID, in: workspaces) else { return }
+        _ = workspaces[w].tabs[t].root.updatePane(paneID) {
+            $0.claudeProfileID = (profileID == ClaudeProfiles.defaultID) ? nil : profileID
+            $0.sessionID = nil
+        }
+        save()
+    }
+
     /// The base dir worktrees are created under: `# shepherd: worktree-base` from the config,
     /// else `~/.shepherd/worktrees`.
     func worktreeBaseDir() -> String {
@@ -449,7 +548,8 @@ final class AgentStore: ObservableObject {
     /// no repo dir, or a mirror workspace, where the host opens the tab).
     @discardableResult
     func newWorktreeTab(inWorkspace wsID: String, name: String,
-                        title: String? = nil, initialCommand: String? = nil) -> (tabID: String, paneID: String)? {
+                        title: String? = nil, initialCommand: String? = nil,
+                        claudeProfileID: String? = nil) -> (tabID: String, paneID: String)? {
         if let t = remoteTarget(forWorkspace: wsID) {   // repo is on the host — it runs git
             let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !n.isEmpty else { return nil }
@@ -463,7 +563,8 @@ final class AgentStore: ObservableObject {
         // Show the tab immediately in a loading state, then run git off-main — the
         // terminal mounts once the directory exists (or the tab is removed on failure).
         guard let provisional = addProvisioningTab(inWorkspace: wsID, name: trimmed, title: title,
-                                                   dest: dest, initialCommand: initialCommand)
+                                                   dest: dest, initialCommand: initialCommand,
+                                                   claudeProfileID: claudeProfileID)
         else { return nil }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = Git.addWorktree(dest: dest, name: trimmed, in: repoDir)
@@ -499,7 +600,8 @@ final class AgentStore: ObservableObject {
 
     /// Append a loading placeholder tab (a single provisioning pane) and select it.
     private func addProvisioningTab(inWorkspace wsID: String, name: String, title: String? = nil,
-                                    dest: String, initialCommand: String? = nil) -> (tabID: String, paneID: String)? {
+                                    dest: String, initialCommand: String? = nil,
+                                    claudeProfileID: String? = nil) -> (tabID: String, paneID: String)? {
         guard let w = workspaces.firstIndex(where: { $0.id == wsID }) else { return nil }
         selectedWorkspaceID = wsID
         var pane = Pane()
@@ -507,6 +609,7 @@ final class AgentStore: ObservableObject {
         pane.userTitle = name
         pane.cwd = dest
         pane.initialCommand = initialCommand
+        pane.claudeProfileID = claudeProfileID
         var tab = Tab(pane: pane)
         tab.userTitle = title   // a composed title beats the branch name the pane carries
         workspaces[w].tabs.append(tab)
@@ -1058,7 +1161,7 @@ final class AgentStore: ObservableObject {
     /// An explicit `cwd` (worktree flow) overrides the workspace's default directory.
     @discardableResult
     func newTab(inWorkspace wsID: String, cwd: String? = nil, sessionID: String? = nil,
-                initialCommand: String? = nil) -> String {
+                initialCommand: String? = nil, claudeProfileID: String? = nil) -> String {
         guard let w = workspaces.firstIndex(where: { $0.id == wsID }) else { return "" }
         selectedWorkspaceID = wsID
         if let (c, wid) = remoteTarget(forWorkspace: wsID) { c.send(.cmdNewTab(workspaceID: wid)); return "" }
@@ -1066,6 +1169,7 @@ final class AgentStore: ObservableObject {
         pane.cwd = cwd ?? expandedDefaultPath(workspaces[w])
         pane.sessionID = sessionID   // set ⇒ GhosttyTerminal seeds `claude --resume` on mount
         pane.initialCommand = initialCommand
+        pane.claudeProfileID = claudeProfileID   // nil ⇒ inherit the workspace's account
         let tab = Tab(pane: pane)
         workspaces[w].tabs.append(tab)
         workspaces[w].selectedTabID = tab.tabID
@@ -1107,9 +1211,11 @@ final class AgentStore: ObservableObject {
         let cmd = AgentLaunch.launchCommand(prompt: request.effectivePrompt)
         if request.usesWorktree {
             newWorktreeTab(inWorkspace: request.target.workspaceID, name: request.branch,
-                           title: request.effectiveTitle, initialCommand: cmd)
+                           title: request.effectiveTitle, initialCommand: cmd,
+                           claudeProfileID: request.claudeProfileID)
         } else {
-            let tabID = newTab(inWorkspace: request.target.workspaceID, initialCommand: cmd)
+            let tabID = newTab(inWorkspace: request.target.workspaceID, initialCommand: cmd,
+                               claudeProfileID: request.claudeProfileID)
             if let t = request.effectiveTitle, !tabID.isEmpty {
                 rename(tabID: tabID, to: t, inWorkspace: request.target.workspaceID)
             }
@@ -3130,6 +3236,14 @@ final class AgentStore: ObservableObject {
             if let cwd, !FileManager.default.fileExists(atPath: cwd) {
                 return ["ok": false, "error": "no such directory: \(cwd)"]
             }
+            var profileID: String? = nil
+            if let asked = (req["profile"] as? String)?.trimmed, !asked.isEmpty {
+                guard let id = resolveClaudeProfile(asked) else {
+                    let known = allClaudeProfiles.map(\.name).joined(separator: ", ")
+                    return ["ok": false, "error": "no such Claude profile: \(asked) (have: \(known))"]
+                }
+                profileID = id
+            }
             if let branch = (req["worktree"] as? String)?
                 .trimmingCharacters(in: .whitespacesAndNewlines), !branch.isEmpty {
                 if cwd != nil {
@@ -3144,7 +3258,8 @@ final class AgentStore: ObservableObject {
                 }
                 // git runs off-main, so this replies with the provisioning tab: the worktree
                 // may still fail afterwards, and that surfaces in the app, not here.
-                guard let made = newWorktreeTab(inWorkspace: ws, name: branch) else {
+                guard let made = newWorktreeTab(inWorkspace: ws, name: branch,
+                                                claudeProfileID: profileID) else {
                     return ["ok": false, "error": "couldn't open a worktree tab"]
                 }
                 _ = controlSnapshot()
@@ -3153,7 +3268,7 @@ final class AgentStore: ObservableObject {
                     "pane": controlHandles.handle(for: made.paneID, kind: .pane),
                 ]]
             }
-            let tabID = newTab(inWorkspace: ws, cwd: cwd)
+            let tabID = newTab(inWorkspace: ws, cwd: cwd, claudeProfileID: profileID)
             _ = controlSnapshot()
             let paneID = workspaces.first { $0.id == ws }?.tabs.first { $0.tabID == tabID }?.root.firstLeafID
             return ["ok": true, "data": [
@@ -3232,7 +3347,9 @@ final class AgentStore: ObservableObject {
             let lines = (req["lines"] as? Int) ?? 40
             let forceRaw = (req["raw"] as? Bool) == true
             if !forceRaw, let sid = pn.sessionID, !sid.isEmpty {
-                let projects = (NSHomeDirectory() as NSString).appendingPathComponent(".claude/projects")
+                // Transcripts live under the pane's own config dir — reading the default
+                // one for a profiled pane finds another account's sessions, or nothing.
+                let projects = ClaudeProfiles.projectsDir(for: claudeProfile(forPane: p))
                 guard let file = TranscriptReader.sessionFile(sessionID: sid, projectsDir: projects),
                       let text = try? String(contentsOfFile: file, encoding: .utf8)
                 else { return ["ok": true, "data": ["kind": "transcript", "text": "(no transcript yet)"]] }
@@ -3263,6 +3380,13 @@ final class AgentStore: ObservableObject {
         }
     }
 
+    /// A profile named by id or (case-insensitively) by name; nil if there is no such one.
+    private func resolveClaudeProfile(_ s: String) -> String? {
+        if s.caseInsensitiveCompare(ClaudeProfiles.defaultProfile.name) == .orderedSame
+            || s == ClaudeProfiles.defaultID { return ClaudeProfiles.defaultID }
+        return claudeProfiles.first { $0.id == s || $0.name.caseInsensitiveCompare(s) == .orderedSame }?.id
+    }
+
     /// Full workspace→tab→pane tree as plain dicts, assigning/refreshing handles.
     private func controlSnapshot() -> [[String: Any]] {
         var live = Set<String>()
@@ -3279,6 +3403,7 @@ final class AgentStore: ObservableObject {
                         "title": p.displayTitle,
                         "cwd": p.cwd ?? "",
                         "sessionID": p.sessionID ?? "",
+                        "profile": claudeProfile(forPane: p.paneID).name,
                     ]
                 }
                 return [
