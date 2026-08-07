@@ -267,6 +267,16 @@ private struct WorkspaceFolderHeader: View {
             if ws.defaultPath?.isEmpty == false {
                 Button("Clear Directory") { store.setWorkspaceDirectory(ws.id, to: nil) }
             }
+            // Only once a second Claude account exists — with one, there is nothing to pick.
+            if !store.claudeProfiles.isEmpty, !ws.isRemote {
+                Menu("Claude Profile") {
+                    ForEach(store.allClaudeProfiles) { p in
+                        Button(p.name + ((ws.claudeProfileID ?? ClaudeProfiles.defaultID) == p.id ? " ✓" : "")) {
+                            store.setWorkspaceClaudeProfile(ws.id, to: p.id)
+                        }
+                    }
+                }
+            }
             Button(ws.collapsed ? "Expand" : "Collapse") { store.toggleWorkspaceCollapsed(ws.id) }
             if store.workspaces.count > 1 {
                 Button("Delete", role: .destructive) { confirmDelete() }

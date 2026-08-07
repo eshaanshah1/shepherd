@@ -266,6 +266,12 @@ final class GhosttySurfaceView: NSView {
                 ghostty_env_var_s(key: dup("SHEPHERD_PTY_SOCK"), value: dup(AgentStore.shared.ptySocketPath)),
                 ghostty_env_var_s(key: dup("SHEPHERD_CTL_SOCK"), value: dup(AgentStore.shared.ctlSocketPath)),
             ]
+            // Which Claude account this pane runs as. Empty for the default profile —
+            // exporting CLAUDE_CONFIG_DIR at all changes the Keychain item Claude Code
+            // reads, so the default must inject nothing (see ClaudeProfiles).
+            for (k, v) in AgentStore.shared.claudeEnvironment(forPane: paneID) {
+                envVars.append(ghostty_env_var_s(key: dup(k), value: dup(v)))
+            }
             // Restore-on-relaunch: open in the pane's last-known cwd if we have one.
             if let cwd = AgentStore.shared.cwd(forPane: paneID) {
                 cfg.working_directory = dup(cwd)
