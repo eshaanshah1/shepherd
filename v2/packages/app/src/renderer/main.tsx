@@ -26,6 +26,42 @@ const isSmoke = params.get('smoke') === '1';
 
 const bridge = (globalThis as { shepherd?: ShepherdBridge }).shepherd ?? null;
 
+/**
+ * `react-grab` — dev-only, and named in the sketch (§6) as one of the two
+ * reasons the renderer is React at all.
+ *
+ * It turns an element on screen into its component source, which is exactly the
+ * loop v1 lived without: P6's empty dock cost a screenshot, a log line and a
+ * guess before the log said `ctx.clock.setInterval is not a function`. An agent
+ * that can ask "what component is this" answers that in one step.
+ *
+ * **Excluded from production**, and by a build-time constant rather than a
+ * runtime check: `import.meta.env.DEV` is statically false in the production
+ * bundle, so the dynamic import below is dropped entirely rather than shipped
+ * and skipped. Dev/prod isolation applies to tooling too (§6).
+ *
+ * Failure to load is a LOG, never a throw. A missing devtool must not be able to
+ * stop the app from starting — that would make the tooling load-bearing, which
+ * is precisely what it is not.
+ */
+declare global {
+  /**
+   * Vite's build-time flag, declared here rather than by adding `vite/client` to
+   * the package's `types`. Main, preload and renderer compile as ONE project
+   * (see the tsconfig's own note), so that would put Vite's globals in the main
+   * process — which does not have them — to type one line in the renderer.
+   */
+  interface ImportMeta {
+    readonly env?: { readonly DEV?: boolean };
+  }
+}
+
+if (import.meta.env?.DEV === true) {
+  void import('react-grab').catch((error: unknown) => {
+    console.warn('[shepherd] react-grab did not load; continuing without it:', error);
+  });
+}
+
 const terminals =
   bridge === null
     ? null
