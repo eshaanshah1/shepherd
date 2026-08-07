@@ -3,12 +3,21 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "shepherd.tasks — a task is intent plus 1..n repos plus the sessions working them; worktrees, never copies.",
-  "//exports": "The agents-core split: main imports ./manifest to register, the utility process imports the root. ./model is a THIRD subpath for the pure layer — the task vocabulary, the root synthesis and the git decisions — so a consumer reaching it does not pull in `activate`.",
+  "description": "shepherd.tasks \u2014 a task is intent plus 1..n repos plus the sessions working them; worktrees, never copies.",
+  "//exports": "The agents-core split: main imports ./manifest to register, the utility process imports the root. ./model is a THIRD subpath for the pure layer \u2014 the task vocabulary, the root synthesis and the git decisions \u2014 so a consumer reaching it does not pull in `activate`.",
   "exports": {
-    ".": { "types": "./src/index.ts", "default": "./src/index.ts" },
-    "./manifest": { "types": "./src/manifest.ts", "default": "./src/manifest.ts" },
-    "./model": { "types": "./src/model/index.ts", "default": "./src/model/index.ts" }
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./manifest": {
+      "types": "./src/manifest.ts",
+      "default": "./src/manifest.ts"
+    },
+    "./model": {
+      "types": "./src/model/index.ts",
+      "default": "./src/model/index.ts"
+    }
   },
   "scripts": {
     "typecheck": "tsc -b",
@@ -21,5 +30,44 @@
     "@types/node": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
-  }
+  },
+  "shepherd": {
+    "id": "shepherd.tasks",
+    "name": "Tasks",
+    "version": "0.1.0",
+    "api": "^1.0.0",
+    "activation": [
+      "onStartup"
+    ],
+    "permissions": [
+      "storage",
+      "process.exec",
+      "sessions"
+    ],
+    "contributes": {
+      "commands": [
+        {
+          "id": "tasks.create",
+          "title": "Tasks: New Task"
+        },
+        {
+          "id": "tasks.list",
+          "title": "Tasks: List"
+        },
+        {
+          "id": "tasks.spawn",
+          "title": "Tasks: Spawn a Session"
+        },
+        {
+          "id": "tasks.archive",
+          "title": "Tasks: Archive"
+        },
+        {
+          "id": "tasks.restore",
+          "title": "Tasks: Restore"
+        }
+      ]
+    }
+  },
+  "//shepherd": "The manifest, as an extension declares it. `src/manifest.ts` is the typed copy the host loads, and `manifest.test.ts` asserts the two are identical."
 }

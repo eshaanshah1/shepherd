@@ -141,6 +141,31 @@ function enumOf<const T extends readonly (string | number)[]>(values: T): Schema
 }
 
 function object<S extends Shape>(shape: S): Schema<InferShape<S>> {
+  return objectWith(shape, 'strict');
+}
+
+/**
+ * The same thing, lenient about keys it does not recognise.
+ *
+ * `s.object` treating an unknown key as an error is correct for a command's
+ * ARGUMENTS — a mistyped flag must fail rather than go missing — and wrong for a
+ * record read back from storage, where an unknown key means "written by a build
+ * newer than this one". There, rejecting it makes `KV.get` answer `undefined`,
+ * which reads as "there is no such task" while its worktrees, branches and
+ * archive refs sit on disk with nothing referencing them.
+ *
+ * Lenient about ADDITIONS only. A missing required field or a field of the wrong
+ * type still fails: a record with no id is not from the future, it is corrupt,
+ * and the two must not become one answer.
+ *
+ * The handoff predicted this: `agents-core` hand-rolls `readSessionRows` for the
+ * same reason, and named the second consumer as the moment to build it once.
+ */
+function stored<S extends Shape>(shape: S): Schema<InferShape<S>> {
+  return objectWith(shape, 'lenient');
+}
+
+function objectWith<S extends Shape>(shape: S, keys_: 'strict' | 'lenient'): Schema<InferShape<S>> {
   const keys = Object.keys(shape);
   return {
     describe: `{ ${keys.join(', ')} }`,
@@ -169,7 +194,7 @@ function object<S extends Shape>(shape: S): Schema<InferShape<S>> {
       // a field from a client we no longer speak to must reach the caller as a
       // failure; silently ignoring it is how an argument goes missing and the
       // command appears to work.
-      for (const key of Object.keys(input)) {
+      for (const key of keys_ === 'lenient' ? [] : Object.keys(input)) {
         if (!Object.hasOwn(shape, key)) issues.push({ path: '', message: `unexpected key ${JSON.stringify(key)}` });
       }
 
@@ -270,6 +295,7 @@ export const s = {
   nullValue,
   enumOf,
   object,
+  stored,
   array,
   record,
   optional,

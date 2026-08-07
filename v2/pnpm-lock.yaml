@@ -163,6 +163,9 @@ importers:
       '@shepherd/ext-diagnostics':
         specifier: workspace:*
         version: link:../../extensions/diagnostics
+      '@shepherd/ext-tasks':
+        specifier: workspace:*
+        version: link:../../extensions/tasks
       '@shepherd/platform-darwin':
         specifier: workspace:*
         version: link:../platform/darwin

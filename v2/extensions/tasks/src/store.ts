@@ -1,0 +1,156 @@
+import { s, type KV } from '@shepherd/sdk';
+import { LIFECYCLE_STATES, type TaskLifecycle } from './model/lifecycle.ts';
+
+/**
+ * The task store — D2 and D15.
+ *
+ * **KV, not SQL.** Three settled statements disagreed about this (§7b said
+ * better-sqlite3, ADR 0021 said `node:sqlite`, §7c said KV stays until a real
+ * consumer proves it thin), and the live question was only ever the API surface
+ * `tasks` is handed. It is KV: the query a task list needs is "all of them,
+ * ordered", and `keys()` plus a filter *is* that query at the scale a person's
+ * task list reaches — with no index for this extension to keep consistent.
+ *
+ * `SqliteStore.db` exists and is commented "escape hatch for core's own tables
+ * (tasks, layout)". It stays shut. Taking it would make `tasks` a core table
+ * reached through commands, which is the privileged path the whole ADE bet
+ * forbids: `tasks` must consume the same public API a third party gets, or the
+ * substrate claim is hollow.
+ *
+ * **Two constraints on the shape, and the first is not obvious.** `ctx.storage`
+ * is a write-through mirror: the host ships the extension's whole namespace
+ * across the message port at activation and it stays resident in the child. So a
+ * task record must stay small — no transcripts, no diffs, no file contents, ever;
+ * those are files or they are nothing. And the mirror is sound only because a
+ * namespace has exactly one writer, which this is and must remain.
+ *
+ * **D15: an unreadable record must not orphan a worktree.** `KV.get` treats a
+ * schema mismatch as *absent* and `s.object` rejects unknown keys, so a record
+ * written by a newer build would read as "there is no such task" while its
+ * worktrees, branches and archive refs sat on disk with nothing referencing them.
+ * Hence `s.stored` (lenient about additions, strict about absences) plus a
+ * version stamped INSIDE the value, since KV versions nothing itself. What
+ * cannot be read is **quarantined and reportable**, never silently gone.
+ */
+
+export const TASK_SCHEMA_VERSION = 1;
+
+/** Prefix, so a stray key in this namespace is not read as a task. */
+const KEY_PREFIX = 'task:';
+
+export interface RepoRef {
+  /** The repo's own directory, as the user picked it. */
+  readonly path: string;
+  /** Its basename — the namespace for skill collisions, and the worktree's name. */
+  readonly name: string;
+}
+
+/**
+ * One tracked session of a task.
+ *
+ * `resumeTarget` is **opaque here** (D11). It comes from the agent kind that
+ * captured it and goes back through the same seam; `tasks` never interprets it.
+ * The moment this extension reads it, it has learned about a vendor.
+ */
+export interface TaskSession {
+  readonly id: string;
+  /** Which repo it works in, or absent for one that runs at the task root. */
+  readonly repo?: string;
+  readonly role: 'orchestrator' | 'workstream';
+  readonly resumeTarget?: string;
+}
+
+export interface TaskRecord {
+  readonly schemaVersion: typeof TASK_SCHEMA_VERSION;
+  readonly id: string;
+  /** Derived once and STORED — never re-derived from the title (D8). */
+  readonly slug: string;
+  readonly title: string;
+  readonly brief: string;
+  readonly lifecycle: TaskLifecycle;
+  readonly repos: readonly RepoRef[];
+  readonly sessions: readonly TaskSession[];
+  readonly createdAt: number;
+}
+
+const repoSchema = s.stored({ path: s.string(), name: s.string() });
+
+const sessionSchema = s.stored({
+  id: s.string(),
+  repo: s.optional(s.string()),
+  role: s.enumOf(['orchestrator', 'workstream'] as const),
+  resumeTarget: s.optional(s.string()),
+});
+
+const taskSchema = s.stored({
+  schemaVersion: s.int(),
+  id: s.string(),
+  slug: s.string(),
+  title: s.string(),
+  brief: s.string(),
+  lifecycle: s.enumOf(LIFECYCLE_STATES),
+  repos: s.array(repoSchema),
+  sessions: s.array(sessionSchema),
+  createdAt: s.int(),
+});
+
+export class TaskStore {
+  readonly #kv: KV;
+  /** Ids present in storage that could not be read. Reportable, not silent. */
+  readonly #unreadable = new Set<string>();
+
+  constructor(kv: KV) {
+    this.#kv = kv;
+  }
+
+  get(id: string): TaskRecord | undefined {
+    const raw = this.#kv.get(`${KEY_PREFIX}${id}`, taskSchema);
+    if (raw === undefined) {
+      // Absent and unreadable are different facts, and only storage knows which:
+      // `KV.get` collapses them, so the key list is what tells them apart.
+      if (this.#kv.keys().includes(`${KEY_PREFIX}${id}`)) this.#unreadable.add(id);
+      return undefined;
+    }
+    // A record from a FUTURE version is not read leniently — leniency covers
+    // added keys, not changed meanings, and guessing at the latter is how a
+    // downgrade corrupts data it could have left alone.
+    if (raw.schemaVersion > TASK_SCHEMA_VERSION) {
+      this.#unreadable.add(id);
+      return undefined;
+    }
+    this.#unreadable.delete(id);
+    return raw as TaskRecord;
+  }
+
+  list(): readonly TaskRecord[] {
+    const out: TaskRecord[] = [];
+    for (const key of this.#kv.keys()) {
+      if (!key.startsWith(KEY_PREFIX)) continue;
+      const task = this.get(key.slice(KEY_PREFIX.length));
+      if (task !== undefined) out.push(task);
+    }
+    return out;
+  }
+
+  put(task: TaskRecord): void {
+    // Stamped on write, never trusted from the caller: the version describes the
+    // shape this build writes, and a caller that could set it could lie about it.
+    this.#kv.set(`${KEY_PREFIX}${task.id}`, { ...task, schemaVersion: TASK_SCHEMA_VERSION });
+    this.#unreadable.delete(task.id);
+  }
+
+  remove(id: string): void {
+    this.#kv.delete(`${KEY_PREFIX}${id}`);
+    this.#unreadable.delete(id);
+  }
+
+  /** Every slug in use, for `uniqueSlug` (D8). Includes nothing unreadable. */
+  takenSlugs(): ReadonlySet<string> {
+    return new Set(this.list().map((task) => task.slug));
+  }
+
+  /** Ids whose stored record could not be read. For a warning the user can act on. */
+  unreadable(): readonly string[] {
+    return [...this.#unreadable];
+  }
+}
