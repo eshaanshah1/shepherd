@@ -2,9 +2,10 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { app, BrowserWindow } from 'electron';
 import { color } from '@shepherd/design-tokens';
-import { appName, shellDefaults } from '@shepherd/platform-darwin';
-import { CommandRegistry, SessionHost, emptyGrants } from '@shepherd/core';
+import { appName, resolveAppPaths, shellDefaults } from '@shepherd/platform-darwin';
+import { CommandRegistry, EventBus, SessionHost, emptyGrants } from '@shepherd/core';
 import { LayoutStore, registerLayoutCommands } from '@shepherd/core/layout';
+import { AttentionStore, ViewingResolver, registerAttentionCommands } from '@shepherd/core';
 import { createLogger, rootId, systemClock } from '@shepherd/sdk';
 import { IS_DEV } from './build-flags.ts';
 import {
@@ -19,6 +20,13 @@ import { registerSessionIpc } from './ipc.ts';
 import { registerWindowIpc } from './window-ipc.ts';
 import { registerLayoutIpc } from './layout-ipc.ts';
 import { installMenu } from './menu.ts';
+import {
+  LOCAL_DEVICE_ID,
+  LOCAL_DEVICE_PERMISSIONS,
+  resolveSupport,
+  startIngress,
+  type RunningIngress,
+} from './ingress.ts';
 import { menuDispatcher } from './menu-dispatch.ts';
 
 /**
@@ -101,8 +109,22 @@ const registry = new CommandRegistry({
   // Nothing is granted yet — `PermissionStore` is P5. A `user` caller is always
   // allowed (`authorize`), which is every caller M1's chrome has, so an empty
   // grant set is the honest value rather than a placeholder.
-  grants: () => emptyGrants(),
+  grants: () => ({
+    ...emptyGrants(),
+    // The one grant M1 has. Everything else — extensions, paired devices, live
+    // agent sessions — arrives with `PermissionStore` (P5) and the remote layer.
+    // See `ingress.ts` for why reaching the local socket is itself the
+    // authorization, and for what this deliberately does not extend to.
+    devices: new Map([[LOCAL_DEVICE_ID, LOCAL_DEVICE_PERMISSIONS]]),
+  }),
 });
+
+/**
+ * The bus. Both ingresses publish onto it and `shepherd wait` subscribes through
+ * it, so it is built at this level for the same reason the `SessionHost` is:
+ * nothing that comes and goes with a window may own it.
+ */
+const bus = new EventBus({ clock: systemClock, logger });
 
 /**
  * The layout. Its `SessionSink` is the `SessionHost`, which is the entire reason
@@ -121,6 +143,30 @@ const layout = new LayoutStore({
 });
 
 const ROOT = rootId('window-1');
+
+/**
+ * Where the sockets live. Overridable per run — see `SUPPORT_FLAG`; a throwaway
+ * userData directory does not isolate a socket derived from `$HOME`.
+ */
+const support = resolveSupport(process.argv, resolveAppPaths(IS_DEV).support);
+
+let ingress: RunningIngress | undefined;
+
+/**
+ * Attention, and the one predicate under it (ADR 0020).
+ *
+ * `Presence` is set from Electron's own signals below. It carries no `away`:
+ * v1's `isAway` (lid shut, no external display) needs a sensor Electron does not
+ * expose, so `route()` takes it as a parameter and M1 always passes false. That
+ * is the honest shape — a heuristic wearing a predicate's clothes is what the
+ * architecture review objected to.
+ */
+const viewing = new ViewingResolver(
+  layout,
+  { appActive: true, focusedRoot: ROOT, overlay: false },
+  logger,
+);
+const attention = new AttentionStore({ layout, viewing, bus, logger });
 
 /**
  * Assigned once `registerLayoutIpc` exists, which is inside `whenReady` because
@@ -229,6 +275,8 @@ void app.whenReady().then(async () => {
   const layoutIpc = registerLayoutIpc({ store: layout, registry, root: ROOT });
   publishLayout = layoutIpc.publish;
 
+  registerAttentionCommands({ store: attention, registry });
+
   registerLayoutCommands({
     store: layout,
     registry,
@@ -249,6 +297,18 @@ void app.whenReady().then(async () => {
   // thing the renderer does, and a root that is not open yet would answer
   // `no-root` and leave a blank window with nothing anywhere saying why.
   layout.open(ROOT);
+
+  // After the lock (held in `bootstrap`) and after the command table is
+  // registered, so the first CLI client cannot arrive before there is anything
+  // for it to invoke.
+  ingress = await startIngress({
+    registry,
+    bus,
+    logger,
+    support,
+    controlSocket: `${support}/control.sock`,
+    hookSocket: `${support}/hooks.sock`,
+  });
 
   installMenu({
     appName: appName(IS_DEV),
@@ -273,12 +333,23 @@ void app.whenReady().then(async () => {
     // an unhandled rejection — a warning on stderr — and the app then exits
     // ZERO, so a broken build reports success. Measured, while proving a
     // negative control: the run printed a TypeError and passed.
-    await runSmoke(SMOKE, win, host).catch((error: unknown) => {
+    await runSmoke(SMOKE, win, host, {
+      bus,
+      controlSocket: `${support}/control.sock`,
+      hookSocket: `${support}/hooks.sock`,
+      attentionCount: () => attention.count(),
+    }).catch((error: unknown) => {
       process.stdout.write(`smoke: FAIL threw ${String(error)}\n`);
       app.exit(1);
     });
     return;
   }
+
+  // The two signals Electron does give us. Without these, `isViewing` is frozen
+  // at "yes" and a turn that finished while you were in another app would read
+  // as one you had already seen — v1's bug, in reverse.
+  app.on('browser-window-focus', () => viewing.setPresence({ appActive: true, focusedRoot: ROOT, overlay: false }));
+  app.on('browser-window-blur', () => viewing.setPresence({ appActive: false, focusedRoot: null, overlay: false }));
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -290,6 +361,11 @@ app.on('window-all-closed', () => {
 });
 
 app.on('will-quit', () => {
+  // Unbind the sockets before the process goes: a listener that outlives its app
+  // is the corpse `reclaimSocketPath` then has to reason about on the next launch.
+  void ingress?.stop();
+  attention.dispose();
+  viewing.dispose();
   // The layout write is debounced (a drag would otherwise write per mousemove),
   // so the pending one has to be forced out here or the last change made before
   // quitting is the one that never lands.
