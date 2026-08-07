@@ -39,8 +39,9 @@ from the terminal and the instrument panel, not the web.
    in corners (version, branch, counts), box-drawing dividers where they
    earn their place. Controls are flat, bordered, honest — a button looks
    like a key, not a pill.
-6. **Mono is the voice, serif is the prose.** A characterful mono (Berkeley
-   Mono class, licensed and bundled) for everything structural; a warm serif
+6. **Mono is the voice, serif is the prose.** A characterful bundled mono
+   (**JetBrains Mono**, OFL — decided 2026-08-07; Berkeley-class character
+   without a licence to reason about) for everything structural; a warm serif
    only where the app speaks in sentences — onboarding, markdown, empty
    states. Sans appears nowhere.
 7. **Motion is textual.** ScrambleText, typewriter reveals, braille-spinner
@@ -104,14 +105,18 @@ Live reference: [`2026-08-06-flock-mock.html`](2026-08-06-flock-mock.html)
 | `ember` | `#E85D43` | `#C23A22` | error / urgent / dev build |
 | `signal` | `#F2762E` | `#C85312` | prompts / live affordances |
 
-Cell metrics (mock-approved): mono 13px / line-height 20px; row height 28px
-(2 cells); micro-labels 10px with `.1em`–`.16em` tracking. Motion: sheep
-cycle ~500ms; cursor blink 1.1s steps; scramble tick 70ms.
+Cell metrics (mock-approved), all **integer px, frozen** — see the rule-1
+amendment: mono 13px / line-height 20px (one terminal row); chrome row height
+28px — **not** a cell multiple, which would be 40 and is an enormous list row;
+micro-labels 10px with `.1em`–`.16em` tracking. Motion: sheep cycle ~500ms;
+cursor blink 1.1s steps; scramble tick 70ms.
 
-Font: **JetBrains Mono is the bundled placeholder** (already in v1's
-resources) with a recorded TODO to license Berkeley Mono (or equivalent
-characterful mono) before 1.0. Serif: system stack (Iowan Old Style /
-Palatino / Georgia) until a bundled face is chosen.
+Font: **JetBrains Mono, decided 2026-08-07** — OFL, so it redistributes inside
+an app bundle with no licence tier to reason about, and it has the character rule
+6 asks for. Not a placeholder pending a purchase; Berkeley Mono stays a possible
+later swap, which under the frozen-token mechanism is one token edit plus a
+regeneration. Serif: system stack (Iowan Old Style / Palatino / Georgia) until a
+bundled face is chosen.
 
 ## Carried v1 assets
 
