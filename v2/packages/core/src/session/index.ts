@@ -21,3 +21,8 @@ export {
   type WillCreateHook,
   type WillCreatePatch,
 } from './host.ts';
+export {
+  registerSessionCommands,
+  SESSION_COMMANDS,
+  type SessionCommandsOptions,
+} from './commands.ts';

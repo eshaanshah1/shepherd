@@ -1,12 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import {
-  createLogger,
-  manualClock,
-  type ExtensionPoint,
-  type LogRecord,
-  type Logger,
-  type PointsAPI,
-} from '@shepherd/sdk';
+import { createLogger, type LogRecord, type Logger } from './log.ts';
+import { manualClock } from './clock.ts';
+import type { ExtensionPoint, PointsAPI } from './api-kernel.ts';
 import { DuplicatePointError, PointRegistry } from './points.ts';
 
 /** What M2's first real consumer looks like: a vendor agent kind (spec §7c). */
@@ -77,6 +72,74 @@ describe('define and get', () => {
     const api: PointsAPI = points;
     api.define<AgentKind>(POINT);
     expect(api.get<AgentKind>(POINT)?.id).toBe(POINT);
+  });
+});
+
+describe('owners', () => {
+  it('records who defined a point, and answers for nobody otherwise', () => {
+    points.define(POINT, { owner: 'shepherd.agents-core' });
+    expect(points.ownerOf(POINT)).toBe('shepherd.agents-core');
+    expect(points.ownerOf('nobody.defines.this')).toBeUndefined();
+  });
+
+  it('names the first owner when a second extension defines over it', () => {
+    // The refusal has to say who already holds the id, or the author of the
+    // second extension has a collision with no way to find the first.
+    points.define(POINT, { owner: 'shepherd.agents-core' });
+    let caught: unknown;
+    try {
+      points.define(POINT, { owner: 'acme.impostor' });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(DuplicatePointError);
+    expect((caught as DuplicatePointError).owner).toBe('shepherd.agents-core');
+    expect((caught as Error).message).toContain('shepherd.agents-core');
+  });
+
+  it('forgets the owner once the point is disposed', () => {
+    // `ownerOf` is what the host's dependency gate reads, so a stale owner would
+    // gate access to a seam that no longer exists.
+    points.define(POINT, { owner: 'shepherd.agents-core' }).dispose();
+    expect(points.ownerOf(POINT)).toBeUndefined();
+  });
+
+  it('an owner-less point is defined and reachable, just unattributed', () => {
+    // The kernel and a test define points without being an extension; ownership is
+    // for the host's gate, not a precondition of the primitive.
+    points.define(POINT);
+    expect(points.get(POINT)?.id).toBe(POINT);
+    expect(points.ownerOf(POINT)).toBeUndefined();
+  });
+});
+
+describe('disposeOwnedBy', () => {
+  it('drops every point an extension defined, and nothing else', () => {
+    points.define('agents-core.kinds', { owner: 'shepherd.agents-core' });
+    points.define('agents-core.transports', { owner: 'shepherd.agents-core' });
+    points.define('tasks.repoSuggestions', { owner: 'shepherd.tasks' });
+
+    points.disposeOwnedBy('shepherd.agents-core');
+
+    expect(points.get('agents-core.kinds')).toBeUndefined();
+    expect(points.get('agents-core.transports')).toBeUndefined();
+    // The negative control: a sweep that took everything would pass every
+    // assertion above and be wrong.
+    expect(points.get('tasks.repoSuggestions')?.id).toBe('tasks.repoSuggestions');
+  });
+
+  it('frees the ids, so the same extension can activate again', () => {
+    // An `activate` that defines a point and then throws is rolled back by the
+    // host; without this the retry dies on DuplicatePointError instead.
+    points.define(POINT, { owner: 'shepherd.agents-core' });
+    points.disposeOwnedBy('shepherd.agents-core');
+    expect(() => points.define(POINT, { owner: 'shepherd.agents-core' })).not.toThrow();
+  });
+
+  it('is a no-op for an extension that defined none', () => {
+    points.define(POINT, { owner: 'shepherd.agents-core' });
+    expect(() => points.disposeOwnedBy('acme.nothing')).not.toThrow();
+    expect(points.get(POINT)?.id).toBe(POINT);
   });
 });
 
@@ -180,7 +243,8 @@ describe('disposal', () => {
   it('disposing the point makes get return undefined', () => {
     // The host disposes an extension's points on deactivate (they go in
     // `ctx.subscriptions`), which is how the SDK's "undefined if its owner is not
-    // active" holds without this registry tracking owners.
+    // active" holds: the point and its owner entry go together, so there is still
+    // one answer to whether the seam is live.
     const point = points.define<AgentKind>(POINT);
     point.register(claude);
     point.dispose();

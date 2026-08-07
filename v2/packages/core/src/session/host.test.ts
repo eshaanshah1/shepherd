@@ -404,6 +404,80 @@ describe('SessionHost onWillCreate', () => {
   });
 });
 
+describe('SessionHost foreground process', () => {
+  it('tracks the pty foreground across running a command and back', async () => {
+    const host = makeHost();
+    const created = host.create({ cwd: '/tmp', command: '/bin/bash', args: [] });
+    if (!isOk(created)) throw new Error('create failed');
+    const id = created.value.id;
+
+    // Waiting on the NAME, not on the predicate: for the first tick or two after
+    // spawn the pty answers with the file we handed it, which already satisfies
+    // "not busy" and would let this test pass before anything had settled.
+    await waitFor(() => host.foregroundProcess(id) === 'bash', 'the shell to settle as the foreground');
+    expect(host.hasForegroundProcess(id)).toBe(false);
+
+    host.write(id, 'sleep 30\n');
+    await waitFor(() => host.foregroundProcess(id) === 'sleep', 'sleep to take the foreground');
+    expect(host.hasForegroundProcess(id)).toBe(true);
+
+    // ^C, not waiting the sleep out: the pty's line discipline signals the
+    // foreground group, so the transition back is the kernel's, not a timer's.
+    host.write(id, '\x03');
+    await waitFor(() => host.foregroundProcess(id) === 'bash', 'the shell to return to the foreground');
+    expect(host.hasForegroundProcess(id)).toBe(false);
+  });
+
+  it('answers undefined / false for an id that is dead or never existed', async () => {
+    const host = makeHost();
+    const exits: SessionExit[] = [];
+    host.onExit((e) => exits.push(e));
+
+    const created = host.create({ cwd: '/tmp', command: '/bin/sh', args: ['-c', 'exit 0'] });
+    if (!isOk(created)) throw new Error('create failed');
+    await waitFor(() => exits.length > 0, 'exit');
+
+    // A dead pty runs nothing, so `false` is the truthful answer rather than a
+    // hedge — and it must be an answer, not an exception, because the sweep
+    // that asks this races every session's exit by construction.
+    for (const id of [created.value.id, sessionId('never-minted') as SessionID]) {
+      expect(host.foregroundProcess(id)).toBeUndefined();
+      expect(host.hasForegroundProcess(id)).toBe(false);
+    }
+  });
+
+  it('compares basenames, not paths', async () => {
+    // The negative control for the predicate. The pty reports a bare name
+    // (`bash`) and the spec carries a path (`/bin/bash`); an implementation
+    // comparing those two verbatim calls every idle shell busy, and every other
+    // assertion in this file still passes. Pinning both sides is what exposes it.
+    const host = makeHost();
+    const created = host.create({ cwd: '/tmp', command: '/bin/bash', args: [] });
+    if (!isOk(created)) throw new Error('create failed');
+    const id = created.value.id;
+
+    await waitFor(() => host.foregroundProcess(id) === 'bash', 'the shell to settle');
+    expect(host.get(id)?.command).toBe('/bin/bash');
+    expect(host.hasForegroundProcess(id)).toBe(false);
+  });
+
+  it('inverts when the shell execs under another name (measured: /bin/sh is bash)', async () => {
+    // Measured on macOS 26, and the one case where this predicate lies. `p_comm`
+    // comes from the RESOLVED executable, and /bin/sh resolves to bash — so an
+    // idle `/bin/sh` session reports `bash`, which is not `sh`, and reads busy
+    // forever. Same root cause as a real `claude` reporting its version-named
+    // binary; the answer is that a pane's session command must be the shell's
+    // own path, and anything spawned through a wrapper is outside this predicate.
+    const host = makeHost();
+    const created = host.create({ cwd: '/tmp', command: '/bin/sh', args: [] });
+    if (!isOk(created)) throw new Error('create failed');
+    const id = created.value.id;
+
+    await waitFor(() => host.foregroundProcess(id) === 'bash', 'the sh session to report bash');
+    expect(host.hasForegroundProcess(id)).toBe(true);
+  });
+});
+
 describe('SessionHost input and geometry', () => {
   it('resize records the new grid and refuses nonsense', async () => {
     const host = makeHost();

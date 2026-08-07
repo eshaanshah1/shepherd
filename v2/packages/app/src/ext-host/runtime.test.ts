@@ -1,5 +1,15 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { manualClock, nodeId, s, toDisposable, type ActivateFn, type ExtensionContext, type ManualClock, type Shepherd } from '@shepherd/sdk';
+import {
+  manualClock,
+  nodeId,
+  s,
+  toDisposable,
+  type ActivateFn,
+  type ExtensionContext,
+  type ExtensionPoint,
+  type ManualClock,
+  type Shepherd,
+} from '@shepherd/sdk';
 import {
   EXT_PROTOCOL_VERSION,
   wireErr,
@@ -7,15 +17,17 @@ import {
   type ChildFrame,
   type HostFrame,
 } from '../shared/ext-protocol.ts';
-import { NotImplementedError } from './api.ts';
+import { ExtensionUnreachableError, NotImplementedError, UndeclaredDependencyError } from './api.ts';
 import { CHILD_CALL_TIMEOUT_MS, ExtHostRuntime } from './runtime.ts';
 
 /**
  * The child's decisions, with the port replaced by two arrays.
  *
  * What it proves: nothing crosses before the handshake, one bad extension is one
- * bad extension, an extension's own schema still runs before its handler, and
- * every M1 refusal is a *named* refusal rather than a silent nothing.
+ * bad extension, an extension's own schema still runs before its handler, every
+ * refusal is a *named* refusal rather than a silent nothing, and — the M2 half —
+ * that two extensions in this process share one point registry and reach each
+ * other's APIs only through what their manifests declare.
  */
 
 const HANDLE = 'handle-for-one';
@@ -34,7 +46,12 @@ interface Harness {
   answers(): Extract<ChildFrame, { kind: 'answer' }>[];
 }
 
-function harness(activate?: ActivateFn): Harness {
+/**
+ * @param more further modules this process hosts, by id — what the
+ * cross-extension tests need, and also what makes `not-hosted` testable: an id
+ * absent from this map is one no module here can serve.
+ */
+function harness(activate?: ActivateFn, more?: Readonly<Record<string, ActivateFn>>): Harness {
   const sent: ChildFrame[] = [];
   const lines: string[] = [];
   const clock = manualClock(1_000);
@@ -46,11 +63,14 @@ function harness(activate?: ActivateFn): Harness {
       seen.api = api;
     });
 
+  const modules = new Map<string, ActivateFn>([[ID, module]]);
+  for (const [id, fn] of Object.entries(more ?? {})) modules.set(id, fn);
+
   const runtime = new ExtHostRuntime({
     send: (frame) => void sent.push(frame),
     clock,
     childPid: 9191,
-    modules: new Map([[ID, module]]),
+    modules,
     log: (line) => void lines.push(line),
   });
 
@@ -107,7 +127,37 @@ const activateAsk = (overrides: Record<string, unknown> = {}): HostFrame => ({
   } as never,
 });
 
+/** An activate ask for some other extension, with the dependencies it declared. */
+const askFor = (extension: string, dependencies: readonly string[] = []): HostFrame =>
+  activateAsk({
+    extension,
+    handle: `handle-${extension}`,
+    manifest: {
+      id: extension,
+      name: extension,
+      version: '1.0.0',
+      api: '^1.0.0',
+      activation: ['onStartup'],
+      permissions: [],
+      dependencies: [...dependencies],
+    },
+  });
+
 const helloOk: HostFrame = { kind: 'hello-ok', id: 'c-1', protocol: EXT_PROTOCOL_VERSION, apiVersion: '1.0.0' };
+
+const AGENTS = 'shepherd.agents-core';
+const CLAUDE = 'shepherd.claude-code';
+const KINDS = 'agents-core.kinds';
+
+interface AgentKind {
+  readonly id: string;
+}
+
+/** The failure message of the last answer, or '' — every cross-extension refusal lands here. */
+const lastFailure = (h: Harness): string => {
+  const result = h.answers().at(-1)?.result;
+  return result?.ok === false ? result.error.message : '';
+};
 
 let h: Harness;
 
@@ -352,8 +402,6 @@ describe('the extension host runtime', () => {
         () => proposed?.attention.get(nodeId('pane-1')),
         () => proposed?.layout.roots(),
         () => proposed?.layout.isViewing(nodeId('node-1')),
-        () => proposed?.extensions.isActive('shepherd.two'),
-        () => proposed?.points.define('some.point'),
         () => proposed?.views.registerStatusItem({ id: 'a', text: 'b' }),
         () => proposed?.sessions.list(),
       ]) {
@@ -376,6 +424,325 @@ describe('the extension host runtime', () => {
       // is the second line of defence, and it must not be a silent one.
       expect(() => withheld.seen.api?.proposed.commands.invoke('anything')).toThrow(NotImplementedError);
       expect(() => withheld.seen.api?.proposed.events.emit('t', 1)).toThrow(/dev build/);
+    });
+  });
+
+  /**
+   * D4: the point registry runs HERE, shared, because a provider is a function
+   * and a function cannot cross a port. These tests are the proof that the two
+   * extensions reach the same object rather than one each.
+   */
+  describe('points — one registry for the whole process', () => {
+    it('one extension defines a seam and another registers into it', async () => {
+      let point: ExtensionPoint<AgentKind> | undefined;
+      const two = harness(undefined, {
+        [AGENTS]: (_ctx, api) => void (point = api.proposed.points.define<AgentKind>(KINDS)),
+        [CLAUDE]: (_ctx, api) => void api.proposed.points.get<AgentKind>(KINDS)?.register({ id: 'claude-code' }),
+      });
+      two.runtime.start();
+      await two.receive(helloOk);
+      await two.receive(askFor(AGENTS));
+
+      // The control: the seam is real and empty until the second extension runs,
+      // so the assertion below cannot pass with the provider already there.
+      expect(point?.all()).toEqual([]);
+
+      await two.receive(askFor(CLAUDE, [AGENTS]));
+      expect(two.answers().at(-1)?.result).toEqual({ ok: true });
+      expect(point?.all()).toEqual([{ id: 'claude-code' }]);
+    });
+
+    it('refuses a second define of the same id and leaves the first owner intact', async () => {
+      let point: ExtensionPoint<AgentKind> | undefined;
+      const two = harness(undefined, {
+        [AGENTS]: (_ctx, api) => {
+          point = api.proposed.points.define<AgentKind>(KINDS);
+          point.register({ id: 'built-in' });
+        },
+        [CLAUDE]: (_ctx, api) => void api.proposed.points.define<AgentKind>(KINDS),
+      });
+      two.runtime.start();
+      await two.receive(helloOk);
+      await two.receive(askFor(AGENTS));
+      await two.receive(askFor(CLAUDE, [AGENTS]));
+
+      expect(two.answers().at(-1)?.result).toMatchObject({ ok: false, error: { code: 'handler-failed' } });
+      expect(lastFailure(two)).toContain(KINDS);
+      // Naming the first owner is the whole value of the refusal: without it the
+      // author of the second extension has a collision and no way to find the first.
+      expect(lastFailure(two)).toContain(AGENTS);
+      // The control: a silent second registry would satisfy every assertion above
+      // and quietly orphan the providers already on the first point.
+      expect(point?.all()).toEqual([{ id: 'built-in' }]);
+    });
+
+    it('refuses points.get for an owner the caller never declared', async () => {
+      let thrown: unknown;
+      const two = harness(undefined, {
+        [AGENTS]: (_ctx, api) => void api.proposed.points.define<AgentKind>(KINDS),
+        [CLAUDE]: (_ctx, api) => {
+          try {
+            api.proposed.points.get<AgentKind>(KINDS);
+          } catch (error) {
+            thrown = error;
+          }
+        },
+      });
+      two.runtime.start();
+      await two.receive(helloOk);
+      await two.receive(askFor(AGENTS));
+      // Declared is the only key. The point exists, its owner is active, and it is
+      // still unreachable — §7c: declared, not discovered.
+      await two.receive(askFor(CLAUDE));
+
+      expect(thrown).toBeInstanceOf(UndeclaredDependencyError);
+      expect((thrown as UndeclaredDependencyError).requested).toBe(AGENTS);
+      expect((thrown as Error).message).toContain('dependencies');
+    });
+
+    it('resolves its own point without declaring itself a dependency', async () => {
+      let resolved: string | undefined;
+      const two = harness(undefined, {
+        [AGENTS]: (_ctx, api) => {
+          api.proposed.points.define<AgentKind>(KINDS);
+          resolved = api.proposed.points.get<AgentKind>(KINDS)?.id;
+        },
+      });
+      two.runtime.start();
+      await two.receive(helloOk);
+      await two.receive(askFor(AGENTS));
+      expect(resolved).toBe(KINDS);
+    });
+
+    it('answers undefined for a seam nobody defines, rather than refusing', async () => {
+      // The one place `undefined` is the honest answer here: "no such seam" and
+      // "its owner is gone" are the same fact, because disposing a point frees
+      // its id and its owner together.
+      let answer: unknown = 'untouched';
+      const two = harness(undefined, {
+        [CLAUDE]: (_ctx, api) => void (answer = api.proposed.points.get('nobody.defines.this')),
+      });
+      two.runtime.start();
+      await two.receive(helloOk);
+      await two.receive(askFor(CLAUDE));
+      expect(two.answers().at(-1)?.result).toEqual({ ok: true });
+      expect(answer).toBeUndefined();
+    });
+
+    it('frees an extension’s point ids when it is torn down', async () => {
+      let runs = 0;
+      const two = harness(undefined, {
+        [AGENTS]: (_ctx, api) => {
+          runs += 1;
+          api.proposed.points.define<AgentKind>(KINDS);
+        },
+      });
+      two.runtime.start();
+      await two.receive(helloOk);
+      await two.receive(askFor(AGENTS));
+      await two.receive({ kind: 'ask', id: 'h-off', ask: { kind: 'deactivate', extension: AGENTS } });
+      await two.receive(askFor(AGENTS));
+
+      expect(runs).toBe(2);
+      expect(two.answers().at(-1)?.result).toEqual({ ok: true });
+    });
+
+    it('frees the point id of an activate that defined one and then threw', async () => {
+      // The rollback is only clean if the points go too: `activate` never reached
+      // the line that would have put this in `ctx.subscriptions`, so the retry
+      // would otherwise die on a duplicate-point error that blames the wrong thing.
+      let attempt = 0;
+      const two = harness(undefined, {
+        [AGENTS]: (_ctx, api) => {
+          attempt += 1;
+          api.proposed.points.define<AgentKind>(KINDS);
+          if (attempt === 1) throw new Error('half-built');
+        },
+      });
+      two.runtime.start();
+      await two.receive(helloOk);
+      await two.receive(askFor(AGENTS));
+      expect(two.answers().at(-1)?.result).toMatchObject({ ok: false, error: { code: 'handler-failed' } });
+
+      await two.receive(askFor(AGENTS));
+      expect(two.answers().at(-1)?.result).toEqual({ ok: true });
+      expect(two.runtime.active).toEqual([AGENTS]);
+    });
+  });
+
+  /**
+   * D5: an extension may export an API, and the gate on reaching it is the
+   * caller's declared `dependencies` — the judgement that used to have a second,
+   * unused implementation in core's `ExtensionRegistry.apiFor`.
+   */
+  describe('extensions — the declared-dependency gate', () => {
+    interface AgentsApi {
+      readonly greet: () => string;
+    }
+
+    const exporting: ActivateFn = () => ({ greet: () => 'hello from agents-core' }) satisfies AgentsApi;
+
+    it('resolves the API a declared dependency returned from activate', async () => {
+      let reached: AgentsApi | undefined;
+      const two = harness(undefined, {
+        [AGENTS]: exporting,
+        [CLAUDE]: (_ctx, api) => void (reached = api.proposed.extensions.get<AgentsApi>(AGENTS)),
+      });
+      two.runtime.start();
+      await two.receive(helloOk);
+      await two.receive(askFor(AGENTS));
+      await two.receive(askFor(CLAUDE, [AGENTS]));
+
+      expect(reached?.greet()).toBe('hello from agents-core');
+    });
+
+    it('refuses an id the caller did not declare, even when it is active', async () => {
+      let thrown: unknown;
+      const two = harness(undefined, {
+        [AGENTS]: exporting,
+        [CLAUDE]: (_ctx, api) => {
+          try {
+            api.proposed.extensions.get<AgentsApi>(AGENTS);
+          } catch (error) {
+            thrown = error;
+          }
+        },
+      });
+      two.runtime.start();
+      await two.receive(helloOk);
+      await two.receive(askFor(AGENTS));
+      // Active, installed, exporting — and still unreachable, because reaching it
+      // is a reviewable fact in the manifest rather than a string invented here.
+      await two.receive(askFor(CLAUDE, ['shepherd.worktrees']));
+
+      expect(thrown).toBeInstanceOf(UndeclaredDependencyError);
+      expect((thrown as UndeclaredDependencyError).caller).toBe(CLAUDE);
+    });
+
+    it('answers undefined for a declared dependency hosted here and not active', async () => {
+      // The single meaning `undefined` keeps. Every other miss below is a refusal
+      // precisely so it cannot be confused with this one.
+      let answer: unknown = 'untouched';
+      const two = harness(undefined, {
+        [AGENTS]: exporting,
+        [CLAUDE]: (_ctx, api) => void (answer = api.proposed.extensions.get<AgentsApi>(AGENTS)),
+      });
+      two.runtime.start();
+      await two.receive(helloOk);
+      await two.receive(askFor(CLAUDE, [AGENTS]));
+
+      expect(two.answers().at(-1)?.result).toEqual({ ok: true });
+      expect(answer).toBeUndefined();
+    });
+
+    it('refuses an id no module here hosts, naming both ways that happens', async () => {
+      let thrown: unknown;
+      const two = harness(undefined, {
+        [CLAUDE]: (_ctx, api) => {
+          try {
+            api.proposed.extensions.get('shepherd.remote-core');
+          } catch (error) {
+            thrown = error;
+          }
+        },
+      });
+      two.runtime.start();
+      await two.receive(helloOk);
+      await two.receive(askFor(CLAUDE, ['shepherd.remote-core']));
+
+      expect(thrown).toBeInstanceOf(ExtensionUnreachableError);
+      expect((thrown as ExtensionUnreachableError).reason).toBe('not-hosted');
+      // Nothing runs in a second process today; the day it does, this must be a
+      // message and not a mystery. The child cannot tell "absent" from "elsewhere",
+      // so it says both rather than picking one confidently.
+      expect((thrown as Error).message).toContain('another process');
+      expect((thrown as Error).message).toContain('absent from this build');
+    });
+
+    it('refuses when a declared dependency activated and exported nothing', async () => {
+      let thrown: unknown;
+      const two = harness(undefined, {
+        [AGENTS]: () => {},
+        [CLAUDE]: (_ctx, api) => {
+          try {
+            api.proposed.extensions.get<AgentsApi>(AGENTS);
+          } catch (error) {
+            thrown = error;
+          }
+        },
+      });
+      two.runtime.start();
+      await two.receive(helloOk);
+      await two.receive(askFor(AGENTS));
+      await two.receive(askFor(CLAUDE, [AGENTS]));
+
+      // `undefined` here would read as "not active", and the caller's
+      // `if (!api) return` would be a silent no-op with a live dependency.
+      expect(thrown).toBeInstanceOf(ExtensionUnreachableError);
+      expect((thrown as ExtensionUnreachableError).reason).toBe('no-export');
+    });
+
+    it('isActive answers from the same table', async () => {
+      const seen: boolean[] = [];
+      const build = (): Readonly<Record<string, ActivateFn>> => ({
+        [AGENTS]: exporting,
+        [CLAUDE]: (_ctx, api) => void seen.push(api.proposed.extensions.isActive(AGENTS)),
+      });
+
+      const cold = harness(undefined, build());
+      cold.runtime.start();
+      await cold.receive(helloOk);
+      await cold.receive(askFor(CLAUDE, [AGENTS]));
+
+      const warm = harness(undefined, build());
+      warm.runtime.start();
+      await warm.receive(helloOk);
+      await warm.receive(askFor(AGENTS));
+      await warm.receive(askFor(CLAUDE, [AGENTS]));
+
+      expect(seen).toEqual([false, true]);
+    });
+
+    it('refuses isActive for an id the caller did not declare', async () => {
+      // Otherwise `false` is the answer to two different questions, and the one it
+      // is not the answer to is a manifest bug.
+      let thrown: unknown;
+      const two = harness(undefined, {
+        [AGENTS]: exporting,
+        [CLAUDE]: (_ctx, api) => {
+          try {
+            api.proposed.extensions.isActive(AGENTS);
+          } catch (error) {
+            thrown = error;
+          }
+        },
+      });
+      two.runtime.start();
+      await two.receive(helloOk);
+      await two.receive(askFor(AGENTS));
+      await two.receive(askFor(CLAUDE));
+
+      expect(thrown).toBeInstanceOf(UndeclaredDependencyError);
+    });
+
+    it('forgets an extension’s export when it is torn down', async () => {
+      const seen: unknown[] = [];
+      const two = harness(undefined, {
+        [AGENTS]: exporting,
+        [CLAUDE]: (_ctx, api) => void seen.push(api.proposed.extensions.get<AgentsApi>(AGENTS)),
+      });
+      two.runtime.start();
+      await two.receive(helloOk);
+      await two.receive(askFor(AGENTS));
+      await two.receive(askFor(CLAUDE, [AGENTS]));
+      expect(seen).toHaveLength(1);
+
+      await two.receive({ kind: 'ask', id: 'h-off', ask: { kind: 'deactivate', extension: AGENTS } });
+      await two.receive({ kind: 'ask', id: 'h-off2', ask: { kind: 'deactivate', extension: CLAUDE } });
+      await two.receive(askFor(CLAUDE, [AGENTS]));
+
+      // Back to the one honest `undefined`: hosted here, not active.
+      expect(seen).toEqual([{ greet: expect.any(Function) }, undefined]);
     });
   });
 

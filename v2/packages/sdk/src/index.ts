@@ -86,3 +86,18 @@ export type {
   SecretStore,
 } from './api-kernel.ts';
 export type { ActivateFn, ExtensionContext, ProposedAPI, Shepherd } from './api.ts';
+
+/**
+ * The extension-point primitive, which core-design §4.7 puts here: "the SDK
+ * ships a standard extension-point primitive", so *any* extension can be a
+ * platform rather than only the core.
+ *
+ * It lived in `@shepherd/core` until M2, when its first real consumer turned out
+ * to be an extension rather than the kernel: a point hands back live objects
+ * holding provider **functions**, which cannot cross a message port — so the
+ * registry has to run in the utility process beside the extensions using it, and
+ * `boundaries.js` (rightly) denies `@shepherd/core` there. Core re-exports it, so
+ * nothing outside core moved.
+ */
+export { DuplicatePointError, PointRegistry } from './points.ts';
+export type { DefinePointOptions, PointRegistryOptions } from './points.ts';
