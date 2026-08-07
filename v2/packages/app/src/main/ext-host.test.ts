@@ -563,6 +563,25 @@ describe('the extension host', () => {
       expect(MAX_HOST_RESTARTS).toBe(1);
     });
 
+    it('does not fork a replacement when the child exits 0 unasked', async () => {
+      h.extensions.add(manifestFor('shepherd.one'), 'builtin');
+      await activate(h, manifestFor('shepherd.one'));
+      await call_register(h);
+
+      // `app.exit()` emits neither `before-quit` nor `will-quit`, so no teardown
+      // hook can run before the child's exit arrives. Without this branch the app
+      // forks a replacement extension host on its way out the door.
+      h.child().die(0);
+      await settle();
+
+      expect(h.children).toHaveLength(1);
+      expect(h.registry.has('one.hello')).toBe(false);
+      // Not silent, and not a lie: `installed` is exactly what it is now.
+      expect(h.extensions.state(extensionId('shepherd.one'))).toBe('installed');
+      expect(h.lines.some((line) => line.includes('exited cleanly (code 0) without being asked'))).toBe(true);
+      expect(h.lines.some((line) => line.includes('restarting the extension host'))).toBe(false);
+    });
+
     it('treats a deliberate shutdown as a shutdown, not a crash', async () => {
       h.extensions.add(manifestFor('shepherd.one'), 'builtin');
       await activate(h, manifestFor('shepherd.one'));
