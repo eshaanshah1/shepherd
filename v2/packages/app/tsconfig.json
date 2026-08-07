@@ -22,6 +22,7 @@
     { "path": "../core" },
     { "path": "../design-tokens" },
     { "path": "../platform/darwin" },
-    { "path": "../../extensions/diagnostics" }
+    { "path": "../../extensions/diagnostics" },
+    { "path": "../../extensions/agents-core" }
   ]
 }

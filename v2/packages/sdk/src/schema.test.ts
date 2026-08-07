@@ -137,3 +137,23 @@ describe('types', () => {
     }>();
   });
 });
+
+describe('s.nullValue', () => {
+  it('accepts null and nothing else', () => {
+    expect(s.nullValue().parse(null)).toEqual({ ok: true, value: null });
+    for (const other of [undefined, 0, '', false, {}, []]) {
+      expect(s.nullValue().parse(other).ok, JSON.stringify(other) ?? 'undefined').toBe(false);
+    }
+  });
+
+  it('is how a tri-state field crosses the wire', () => {
+    // JSON has no `undefined`, so "could not tell" has to be spelled `null` —
+    // an absent key would be indistinguishable from a field the sender's build
+    // does not know about. `s.optional` answers a different question.
+    const tri = s.union(s.boolean(), s.nullValue());
+    expect(tri.parse(true)).toEqual({ ok: true, value: true });
+    expect(tri.parse(false)).toEqual({ ok: true, value: false });
+    expect(tri.parse(null)).toEqual({ ok: true, value: null });
+    expect(tri.parse(undefined).ok).toBe(false);
+  });
+});

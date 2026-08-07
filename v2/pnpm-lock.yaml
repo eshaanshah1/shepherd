@@ -138,6 +138,9 @@ importers:
       '@shepherd/design-tokens':
         specifier: workspace:*
         version: link:../design-tokens
+      '@shepherd/ext-agents-core':
+        specifier: workspace:*
+        version: link:../../extensions/agents-core
       '@shepherd/ext-diagnostics':
         specifier: workspace:*
         version: link:../../extensions/diagnostics

@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "shepherd.agents-core — the vendor-blind agent noun: state, attention, and the kind registry other extensions plug into.",
-  "//exports": "Same split as diagnostics: main imports ./manifest to register the extension, the utility process imports the root. ./state is a THIRD subpath because it is the vocabulary a vendor extension type-imports (see claude-code) — reaching it must not pull in `activate`.",
+  "description": "shepherd.agents-core \u2014 the vendor-blind agent noun: state, attention, and the kind registry other extensions plug into.",
+  "//exports": "Same split as diagnostics: main imports ./manifest to register the extension, the utility process imports the root. ./state is a THIRD subpath because it is the vocabulary a vendor extension type-imports (see claude-code) \u2014 reaching it must not pull in `activate`.",
   "exports": {
     ".": {
       "types": "./src/index.ts",
@@ -30,5 +30,28 @@
     "@types/node": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
-  }
+  },
+  "shepherd": {
+    "id": "shepherd.agents-core",
+    "name": "Agents",
+    "version": "0.1.0",
+    "api": "^1.0.0",
+    "activation": [
+      "onStartup"
+    ],
+    "permissions": [
+      "sessions",
+      "storage",
+      "attention"
+    ],
+    "contributes": {
+      "commands": [
+        {
+          "id": "agents.list",
+          "title": "Agents: List Tracked Sessions"
+        }
+      ]
+    }
+  },
+  "//shepherd": "The manifest, as an extension declares it. `src/manifest.ts` is the typed copy the host loads, and `manifest.test.ts` asserts the two are identical \u2014 a built-in is held to the same validation as anybody else."
 }

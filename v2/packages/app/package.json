@@ -23,8 +23,9 @@
   },
   "dependencies": {
     "@shepherd/core": "workspace:*",
-    "@shepherd/ext-diagnostics": "workspace:*",
     "@shepherd/design-tokens": "workspace:*",
+    "@shepherd/ext-agents-core": "workspace:*",
+    "@shepherd/ext-diagnostics": "workspace:*",
     "@shepherd/platform-darwin": "workspace:*",
     "@shepherd/sdk": "workspace:*",
     "@xterm/addon-fit": "catalog:",

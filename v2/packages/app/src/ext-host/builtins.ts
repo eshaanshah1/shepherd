@@ -1,6 +1,8 @@
 import type { ActivateFn } from '@shepherd/sdk';
 import { activate as diagnostics } from '@shepherd/ext-diagnostics';
 import { DIAGNOSTICS_ID } from '@shepherd/ext-diagnostics/manifest';
+import { activate as agentsCore } from '@shepherd/ext-agents-core';
+import { AGENTS_CORE_ID } from '@shepherd/ext-agents-core/manifest';
 
 /**
  * Which built-ins this build contains, by id.
@@ -17,4 +19,7 @@ import { DIAGNOSTICS_ID } from '@shepherd/ext-diagnostics/manifest';
  * answers `unavailable` naming both facts, which is the one shape of that bug a
  * reader can act on.
  */
-export const BUILTIN_MODULES: ReadonlyMap<string, ActivateFn> = new Map([[DIAGNOSTICS_ID, diagnostics]]);
+export const BUILTIN_MODULES: ReadonlyMap<string, ActivateFn> = new Map<string, ActivateFn>([
+  [DIAGNOSTICS_ID, diagnostics],
+  [AGENTS_CORE_ID, agentsCore],
+]);

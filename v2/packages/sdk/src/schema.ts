@@ -106,6 +106,20 @@ const number = (): Schema<number> =>
 
 const int = (): Schema<number> => scalar('integer', (v): v is number => Number.isInteger(v));
 
+/**
+ * `null`, as a value in its own right.
+ *
+ * Needed because JSON has no `undefined`: a tri-state field crossing the wire —
+ * "yes" / "no" / "could not tell" — has to spell the third state `null`, and an
+ * absent key would be indistinguishable from a field the sending build does not
+ * know about. `s.optional` is a different question (may the key be missing) and
+ * cannot express this one.
+ */
+const nullValue = (): Schema<null> => ({
+  describe: 'null',
+  parse: (value) => (value === null ? ok(null) : err(issue('', `expected null, got ${show(value)}`))),
+});
+
 function literal<const T extends string | number | boolean>(expected: T): Schema<T> {
   const describe = JSON.stringify(expected);
   return {
@@ -253,6 +267,7 @@ export const s = {
   int,
   boolean,
   literal,
+  nullValue,
   enumOf,
   object,
   array,
