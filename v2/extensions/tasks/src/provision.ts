@@ -2,6 +2,7 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, rmSync, symlinkSync, wri
 import { dirname, join } from 'node:path';
 import type { ProcessAPI } from '@shepherd/sdk';
 import { resolveBranch, type RepoRefs } from './model/branch.ts';
+import { planArchive, type ArchiveRecord, type WorktreeState } from './model/archive.ts';
 import type { TaskRoot } from './model/root-synth.ts';
 
 /**
@@ -151,4 +152,57 @@ function entriesOf(dir: string): string[] {
   } catch {
     return [];
   }
+}
+
+/**
+ * Remove a task's worktrees, after snapshotting what is uncommitted.
+ *
+ * The SHAPE is v1's and ports unchanged, because probe 2 measured it
+ * round-tripping `git status --porcelain` byte-identically — untracked files
+ * included, which is the gap everyone assumes is there and is not. What is added
+ * is the three things it gets wrong, each measured:
+ *
+ *   - a **conflicted** worktree is refused up front, because `write-tree` fails
+ *     with exit 128 and v1 discovers that by failing inside git
+ *   - **gitignored** files are warned about before they are destroyed (`add -A`
+ *     skips them, `worktree remove --force` deletes them)
+ *   - HEAD's **sha** is recorded beside the branch, so a detached worktree stops
+ *     restoring onto the archive commit
+ */
+export async function archiveWorktree(
+  process_: ProcessAPI,
+  repoPath: string,
+  worktree: string,
+  timeoutMs = 120_000,
+): Promise<{ ok: true; record: ArchiveRecord; warnings: readonly string[] } | { ok: false; reason: string }> {
+  const at = { cwd: worktree, timeoutMs };
+  const read = async (args: string[]): Promise<string> => {
+    const out = await process_.gitRead(args, at);
+    return out.ok ? out.stdout.trim() : '';
+  };
+
+  const state: WorktreeState = {
+    branch: await read(['symbolic-ref', '--quiet', '--short', 'HEAD']),
+    headSha: await read(['rev-parse', 'HEAD']),
+    hasConflicts: (await read(['ls-files', '-u'])) !== '',
+    ignoredPaths: (await read(['ls-files', '--others', '--ignored', '--exclude-standard']))
+      .split('\n')
+      .filter((line) => line !== ''),
+  };
+
+  const plan = planArchive(state);
+  if (!plan.ok) return plan;
+
+  // v1's two commits, pinned under a ref so `gc` cannot reclaim them. Local
+  // only: `refs/shepherd/*` is outside the default push refspec.
+  const staged = await read(['write-tree']);
+  await process_.gitWrite(['add', '-A'], at);
+  const everything = await read(['write-tree']);
+  const commit = await read(['commit-tree', everything, '-p', state.headSha, '-m', `shepherd archive ${staged}`]);
+  if (commit === '') return { ok: false, reason: 'could not write the archive commit' };
+  await process_.gitWrite(['update-ref', `refs/shepherd/archived/${commit}`, commit], { cwd: repoPath, timeoutMs });
+
+  const removed = await process_.gitWrite(['worktree', 'remove', '--force', worktree], { cwd: repoPath, timeoutMs });
+  if (!removed.ok) return { ok: false, reason: removed.stderr.trim() || `git exited ${removed.code}` };
+  return { ok: true, record: plan.record, warnings: plan.warnings };
 }
