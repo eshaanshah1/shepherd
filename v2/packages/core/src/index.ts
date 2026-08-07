@@ -32,6 +32,17 @@ export {
 export { debounce, type Debounced } from './util/index.ts';
 
 export {
+  LayoutStore,
+  registerLayoutCommands,
+  LAYOUT_COMMANDS,
+  type CloseOutcome,
+  type LayoutCommandsOptions,
+  type LayoutStoreOptions,
+  type PersistedLayout,
+  type SessionSink,
+} from './layout/index.ts';
+
+export {
   ControlIngress,
   EventsIngress,
   UnixHttpServer,
