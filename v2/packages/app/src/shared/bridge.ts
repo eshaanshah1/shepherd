@@ -11,6 +11,7 @@ import type {
   SessionDescriptor,
   SessionExitMessage,
   ViewportRect,
+  AgentIndicatorDTO,
 } from './channels.ts';
 
 /**
@@ -83,10 +84,27 @@ export interface WindowApi {
   close(): Promise<IpcResult<void>>;
 }
 
+/**
+ * Agent state, read-only from the page — the same pull-then-follow shape as the
+ * layout, and for the same reason: a push-only channel leaves a renderer that
+ * mounted late (every HMR reload) blank until the next transition.
+ *
+ * Note what is NOT here: any way to name a bus topic. Main relays exactly one,
+ * by an allow-list it owns. `claude.hook` carries whole hook payloads — tool
+ * inputs, prompts, file contents — on the same bus, and a page that could
+ * subscribe by name could ask for it.
+ */
+export interface AgentsApi {
+  get(): Promise<IpcResult<readonly AgentIndicatorDTO[]>>;
+  /** Returns an unsubscribe function. */
+  onChanged(listener: (indicators: readonly AgentIndicatorDTO[]) => void): () => void;
+}
+
 export interface ShepherdBridge {
   readonly session: SessionApi;
   readonly commands: CommandsApi;
   readonly layout: LayoutApi;
+  readonly agents: AgentsApi;
   readonly window: WindowApi;
 }
 
@@ -112,6 +130,7 @@ export const BRIDGE_SURFACE = {
   ],
   commands: ['invoke'],
   layout: ['get', 'onChanged', 'setViewport'],
+  agents: ['get', 'onChanged'],
   window: ['close'],
 } as const satisfies Record<keyof ShepherdBridge, readonly string[]>;
 

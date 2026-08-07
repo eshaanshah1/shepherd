@@ -139,6 +139,16 @@ export interface ExtensionHostOptions {
   readonly isDev: boolean;
   readonly spawn: () => ExtChildProcess;
   /** Injectable so a test's handles are readable; production uses a UUID. */
+  /**
+   * The child is gone and is not coming back in this state.
+   *
+   * There is deliberately no general state-change event: the only transition
+   * anything outside needs to act on is "stop believing what the extensions told
+   * you", and a callback for exactly that cannot be subscribed to for the wrong
+   * reason. Fires for a clean shutdown and for an exhausted restart budget — in
+   * both cases every fact an extension published is now unowned.
+   */
+  readonly onHostGone?: (reason: string) => void;
   readonly mintHandle?: () => string;
   readonly apiVersion?: string;
 }
@@ -446,6 +456,7 @@ export class ExtensionHost {
       );
       const registry = this.#options.extensions();
       for (const id of wasActive) if (registry.state(id) === 'active') registry.deactivate(id);
+      this.#options.onHostGone?.(`the extension host exited cleanly (code ${code})`);
       return;
     }
 
@@ -457,6 +468,7 @@ export class ExtensionHost {
         `not forking another extension host (${this.#restarts} restart already spent) — ` +
           `${wasActive.length === 0 ? 'nothing was active' : `marking ${wasActive.join(', ')} failed`}`,
       );
+      this.#options.onHostGone?.(`the extension host crashed and its restart budget is spent`);
     } else {
       this.#restarts += 1;
       this.#state = 'stopped';

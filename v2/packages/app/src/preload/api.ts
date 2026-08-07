@@ -1,6 +1,7 @@
 import {
   EMIT,
   INVOKE,
+  type AgentIndicatorDTO,
   type LayoutSnapshot,
   type SessionDataMessage,
   type SessionExitMessage,
@@ -59,6 +60,11 @@ export function createBridge(ipc: IpcLike): ShepherdBridge {
       get: () => invoke(INVOKE.layoutGet),
       onChanged: (listener) => subscribe<LayoutSnapshot>(EMIT.layoutChanged, listener),
       setViewport: (rect) => invoke(INVOKE.layoutViewport, rect),
+    },
+    agents: {
+      get: () => invoke(INVOKE.agentsGet),
+      onChanged: (listener) =>
+        subscribe<readonly AgentIndicatorDTO[]>(EMIT.agentsChanged, listener),
     },
     window: {
       close: () => invoke(INVOKE.windowClose),

@@ -36,6 +36,8 @@ export const LOG_CATEGORIES = [
   'layout',
   'attention',
   'extension',
+  /** Agent lifecycle: the state relay, its alerts, and the badge. */
+  'agent',
 ] as const;
 export type LogCategory = (typeof LOG_CATEGORIES)[number];
 
