@@ -270,10 +270,27 @@ function union<const S extends readonly Schema<unknown>[]>(...variants: S): Sche
   };
 }
 
-/** The schema for a command that takes no arguments. */
+/**
+ * The schema for a command that takes no arguments.
+ *
+ * Accepts an **empty object** as well as an absent value, and that is not
+ * laxness — it is the fix for two incompatible ways of saying the same thing.
+ * A command declaring `s.nothing()` used to reject `{}`, while a command
+ * declaring `s.object` with every field optional rejects an ABSENT value. So a
+ * generic client — the CLI, a device, an agent — had no single way to say "no
+ * arguments" that both would accept, and would have had to know each command's
+ * schema to talk to it. Measured by driving the real CLI: `tasks.list` failed
+ * one way and `tasks.spawn` failed the other, on consecutive commands.
+ *
+ * A NON-empty object is still refused. "I sent you nothing" and "I sent you
+ * something you do not take" stay different answers.
+ */
 const nothing = (): Schema<undefined> => ({
   describe: 'nothing',
-  parse: (value) => (value === undefined ? ok(undefined) : err(issue('', `expected no argument, got ${typeName(value)}`))),
+  parse: (value) =>
+    value === undefined || (isPlainObject(value) && Object.keys(value).length === 0)
+      ? ok(undefined)
+      : err(issue('', `expected no argument, got ${typeName(value)}`)),
 });
 
 /** An escape hatch, deliberately ugly to type so it stays rare. */
@@ -286,6 +303,10 @@ function show(value: unknown): string {
 }
 
 /** One namespace so a schema reads as `s.object({ … })` at every call site. */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 export const s = {
   string,
   number,
