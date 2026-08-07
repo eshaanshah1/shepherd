@@ -30,8 +30,9 @@ describe('seqVerdict', () => {
 });
 
 describe('callerLabel', () => {
-  it('is greppable and carries the identity, for all four kinds', () => {
+  it('is greppable and carries the identity, for every kind', () => {
     expect(callerLabel({ kind: 'user' })).toBe('user');
+    expect(callerLabel({ kind: 'kernel' })).toBe('kernel');
     expect(callerLabel({ kind: 'extension', id: extensionId('shepherd.tasks') })).toBe('extension:shepherd.tasks');
     expect(callerLabel({ kind: 'device', deviceId: 'pixel-9' })).toBe('device:pixel-9');
     expect(callerLabel({ kind: 'agent', sessionId: sessionId('s-1') })).toBe('agent:s-1');
@@ -45,10 +46,13 @@ describe('externalCallerSchema', () => {
     expect(isOk(externalCallerSchema.parse({ kind: 'extension', id: 'shepherd.tasks' }))).toBe(true);
   });
 
-  it('REFUSES a socket client claiming to be the user', () => {
+  it('REFUSES a socket client claiming to be the user or the kernel', () => {
     // The difference between an attributed caller and a self-declared one. A
-    // `user` caller is minted in-process, by the thing that saw the keystroke.
+    // `user` caller is minted in-process, by the thing that saw the keystroke;
+    // `kernel` is core acting on its own behalf and is authorized unconditionally,
+    // so a transport being able to claim it would be a straight bypass.
     expect(isErr(externalCallerSchema.parse({ kind: 'user' }))).toBe(true);
+    expect(isErr(externalCallerSchema.parse({ kind: 'kernel' }))).toBe(true);
   });
 
   it('refuses a kind it does not know, and a missing identity', () => {

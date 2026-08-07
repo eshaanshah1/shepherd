@@ -41,6 +41,10 @@ const deny = (reason: string): Verdict => ({ allowed: false, reason });
  */
 export function authorize(caller: Caller, required: Permission | undefined, grants: GrantSet): Verdict {
   if (caller.kind === 'user') return ALLOW;
+  // The kernel has no principal to check against — it IS the thing checking, and a
+  // `kernel` caller cannot arrive over a transport (`externalCallerSchema` has no
+  // such variant). This is an absence of a subject, not a privilege level.
+  if (caller.kind === 'kernel') return ALLOW;
 
   const held = lookup(caller, grants);
   if (held === undefined) {
@@ -54,7 +58,8 @@ export function authorize(caller: Caller, required: Permission | undefined, gran
 function lookup(caller: Caller, grants: GrantSet): readonly Permission[] | undefined {
   switch (caller.kind) {
     case 'user':
-      return undefined; // handled above; a user has no permission list to consult
+    case 'kernel':
+      return undefined; // both handled above; neither has a permission list
     case 'extension':
       return grants.extensions.get(caller.id);
     case 'device':

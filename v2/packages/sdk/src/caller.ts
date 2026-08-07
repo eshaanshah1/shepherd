@@ -9,8 +9,14 @@ import type { ExtensionID, SessionID } from './ids.ts';
  * could also mutate it; and it had three separate routing implementations, none
  * of which agreed on what a caller was. One union, checked once, is the fix.
  *
- * The four kinds are not decoration:
+ * The five kinds are not decoration:
  *   - `user`      — a keystroke, a menu item, a palette entry. Fully trusted.
+ *   - `kernel`    — core acting on its own behalf, with no principal behind it:
+ *                   an entry purged because its pane went away, a session
+ *                   reaped. It exists so those events are not attributed to
+ *                   `user`, which would be the `tab_id`-holding-a-pane-id lie
+ *                   again — an event log that says the human did something the
+ *                   kernel did. It is NOT a privilege level; see `authorize`.
  *   - `extension` — checked against that extension's granted permissions.
  *   - `device`    — a paired phone or Mac; checked against its entitlements.
  *   - `agent`     — a Claude session invoking commands about its OWN work.
@@ -19,6 +25,7 @@ import type { ExtensionID, SessionID } from './ids.ts';
  */
 export type Caller =
   | { readonly kind: 'user' }
+  | { readonly kind: 'kernel' }
   | { readonly kind: 'extension'; readonly id: ExtensionID }
   | { readonly kind: 'device'; readonly deviceId: string }
   | { readonly kind: 'agent'; readonly sessionId: SessionID };
@@ -28,11 +35,22 @@ export type CallerKind = Caller['kind'];
 /** The caller for anything the human did directly. */
 export const USER: Caller = { kind: 'user' };
 
+/**
+ * Core acting on its own behalf. Note what this is not: a way to bypass a check.
+ * `authorize` allows it because there is no principal to check against — the
+ * kernel is the thing doing the checking — so it must never be reachable from a
+ * transport. `externalCallerSchema` below has no `kernel` variant, for the same
+ * reason it has no `user` one.
+ */
+export const KERNEL: Caller = { kind: 'kernel' };
+
 /** For a log line or an error message: short, stable, and greppable. */
 export function callerLabel(caller: Caller): string {
   switch (caller.kind) {
     case 'user':
       return 'user';
+    case 'kernel':
+      return 'kernel';
     case 'extension':
       return `extension:${caller.id}`;
     case 'device':
