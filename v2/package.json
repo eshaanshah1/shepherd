@@ -34,12 +34,5 @@
     "typescript": "catalog:",
     "typescript-eslint": "catalog:",
     "vitest": "catalog:"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "node-pty",
-      "electron",
-      "esbuild"
-    ]
   }
 }

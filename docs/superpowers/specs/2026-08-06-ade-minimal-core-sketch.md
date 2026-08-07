@@ -331,6 +331,42 @@ this sketch, plus the deltas the extension architecture adds:
 - **v2 lands on master early and often** — this branch merges once M0 is
   green; `v2/` evolves in small PRs (it touches nothing in `spike/`).
 
+## 7c. Decided (2026-08-07, during M1) — the SDK ships batteries for agents
+
+The question that prompted it: does an extension author who wants one smart
+feature (`claude -p` behind a button) write their own spawn plumbing and
+NDJSON parser, or does the SDK make it a line?
+
+**It is a line, and the primitive is ours.** §4.1's third tier already said an
+extension *could* run `claude -p --output-format stream-json` and render its own
+view; that is a note about what is possible, not a primitive anybody gets. If
+every extension hand-rolls it, they each do it badly and differently, and the
+"hackable substrate for agentic development" claim is hollow — the same argument
+that made one `ProcessAPI` with `gitRead`/`gitWrite` correct rather than letting
+each extension write git runner #4.
+
+Where it lives is the part that needs discipline: **the kernel stays
+vendor-blind** (§2 — core knows nothing about tasks, agents, git, or Claude). So
+
+- **`agents-core` exports the seam** (M2): `complete({prompt, cwd})` for a
+  one-shot structured answer, `stream(…)` for `stream-json` events. Typed,
+  vendor-agnostic, reached through `extensions.get<AgentsAPI>`.
+- **`claude-code` implements the Claude kind behind it** (M2). A second vendor
+  is a third extension and touches neither the kernel nor a consumer.
+- **It is its own permission, `agents`** — not a corollary of `process.exec`.
+  It spends the user's model budget, which is not a consequence "can run
+  programs" prepares anyone for. Added to the manifest vocabulary in M1, ahead
+  of the M2 implementation, so extensions declare against a stable set.
+- **Cross-extension calls are declared, not discovered**: a manifest lists
+  `dependencies`, and `extensions.get(id)` resolves only those ids. This is the
+  §3 dependency table becoming enforceable, and it gives the host a place to
+  check a dependency is active *before* activating the dependent.
+
+Storage stays as it is: `KV`, namespaced and schema-validated, is the right size
+for now. Raw SQL to extensions is a bigger grant than it looks (migrations,
+corruption blast radius) and nothing needs it before `tasks` — if M3 proves KV
+too thin, that is the moment to widen it, with a real consumer to shape it.
+
 ## 8. Open questions (each needs a decision before code)
 
 1. In-proc TS vs out-of-proc RPC as the *primary* extension form (VS Code runs
