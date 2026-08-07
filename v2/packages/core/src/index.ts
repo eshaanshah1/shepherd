@@ -9,6 +9,18 @@
 // packages would triple the project-reference wiring and buy nothing in M0.
 export { newSessionId, newPaneId, type RandomId } from './identity.ts';
 
+export {
+  authorize,
+  emptyGrants,
+  CommandRegistry,
+  DuplicateCommandError,
+  type CommandRegistryOptions,
+  type GrantSet,
+  type Verdict,
+} from './commands/index.ts';
+
+export { EventBus, type EventBusOptions } from './events/index.ts';
+
 export type {
   Pane,
   PaneInit,
