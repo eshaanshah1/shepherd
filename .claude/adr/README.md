@@ -57,3 +57,7 @@ Same log, same numbering — one chronological record for the repo. These apply 
 - [0026](0026-v2-agent-state-and-attention-are-two-channels.md) — Agent state and attention are two channels with one mapping between them; `AttentionLevel` has no `working`, and only `agents-core` declares the `attention` permission so the single-writer rule is enforced rather than remembered
 - [0027](0027-v2-the-hook-envelope-has-no-client-sequence.md) — The hook envelope carries no client `seq` (a raced counter yields a duplicate, and a duplicate is DROPPED before delivery) and no `jq` (nothing is extracted, so nothing needs escaping)
 - [0028](0028-v2-liveness-is-the-shell-coming-back.md) — Liveness is the session's own shell returning to the foreground, never a vendor's name: `claude`'s binary is named after its version, so name-matching matches nothing; the reading is tri-state and the sweep fails toward NOT demoting
+- [0029](0029-v2-a-tasks-context-is-synthesized-because-claude-does-not-inherit-it.md) — (v2) A task's context is synthesized, because Claude Code does not inherit it
+- [0030](0030-v2-the-transport-deadline-is-the-callers-not-a-constant.md) — (v2) The transport deadline is the caller's, not a constant
+- [0031](0031-v2-a-contributed-view-declares-itself-and-a-row-click-is-the-extensions.md) — (v2) A contributed view declares itself, and a row click is the extension's
+- [0032](0032-v2-tasks-uses-the-same-kv-a-third-party-gets.md) — (v2) `tasks` uses the same KV a third party gets
