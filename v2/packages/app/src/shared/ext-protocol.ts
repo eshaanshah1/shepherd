@@ -265,6 +265,15 @@ const hostAskSchema = s.union(
     permissions: s.array(s.string()),
     /** This extension's whole `KV` namespace — see the `storage.set` comment. */
     storage: s.record(s.unknown()),
+    /**
+     * A directory of its own, under the app's support dir (D1b).
+     *
+     * The host resolves it because the child cannot: `boundaries.js` denies
+     * `node:os` here, so `homedir()` is unreachable and a path is not something
+     * an extension can compute. It arrives with `activate` rather than through a
+     * call because it is a fact about this extension, fixed for its lifetime.
+     */
+    dataDir: s.string(),
   }),
   s.object({ kind: s.literal('deactivate'), extension: s.string() }),
   /** Run the handler this extension registered for `commandId`. */

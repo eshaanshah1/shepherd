@@ -149,6 +149,7 @@ function harness(options: { isDev?: boolean; spawnThrows?: boolean } = {}): Harn
     extensions: () => extensions,
     permissions,
     bus,
+    support: '/tmp/shepherd-test-support',
     kv: (namespace) => store.namespace(namespace),
     logger,
     clock,

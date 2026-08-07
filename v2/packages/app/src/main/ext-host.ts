@@ -39,6 +39,8 @@ import {
   type HostFrame,
   type WireResult,
 } from '../shared/ext-protocol.ts';
+import { extensionDataDir } from './ext-data-dir.ts';
+
 
 /**
  * The main-process half of the extension host.
@@ -138,6 +140,13 @@ export interface ExtensionHostOptions {
   readonly bus: EventBus;
   /** `SqliteStore.namespace`. One namespace per extension, never re-derived. */
   readonly kv: (namespace: string) => KV;
+  /**
+   * The app's support directory — where each extension's own data dir hangs off
+   * (D1b). Passed in rather than resolved here: `packages/app/src/main` may
+   * import the platform package, but the path is a boot-time fact and this class
+   * should not re-derive one.
+   */
+  readonly support: string;
   /**
    * How a program gets run, injected from `packages/platform/darwin`.
    *
@@ -336,6 +345,10 @@ export class ExtensionHost {
       // extension's own `ctx.permissions` must describe the former.
       permissions: [...this.#options.permissions.granted(id)],
       storage: this.#snapshotStorage(id),
+      // Resolved here because the child cannot: it may not reach `node:os`
+      // (D1b). Every hosted id is passed so the name can fall back to the full
+      // id when two extensions want the same last segment.
+      dataDir: extensionDataDir(id, this.#options.extensions().list().map((record) => record.manifest.id), this.#options.support),
     });
 
     if (!answer.ok) {

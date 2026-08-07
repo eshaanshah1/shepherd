@@ -123,6 +123,7 @@ const activateAsk = (overrides: Record<string, unknown> = {}): HostFrame => ({
     apiVersion: '1.0.0',
     permissions: ['storage'],
     storage: {},
+    dataDir: '/tmp/shepherd-test/ext',
     ...overrides,
   } as never,
 });
