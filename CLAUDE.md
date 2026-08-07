@@ -28,19 +28,24 @@ It is not a port of v1; it is the same thesis rebuilt on a runtime that does not
 fight it.
 
 **If you are working in `v2/`, start here — not with this file:**
-1. [`docs/superpowers/plans/2026-08-07-v2-handoff.md`](docs/superpowers/plans/2026-08-07-v2-handoff.md)
+1. [`docs/superpowers/plans/2026-08-08-v2-handoff.md`](docs/superpowers/plans/2026-08-08-v2-handoff.md)
    — **always current**: what is built, what is next, and the traps of the moment.
-   M0–M2 are done (kernel + agents; a hook drives a real state indicator);
-   **M3 (tasks) is next, and dogfooding begins there**.
+   M0–M3 are done (kernel, agents, tasks: real worktrees, a synthesized task
+   root, archive/restore, the `shepherd` CLI, and a sidebar an extension draws
+   into). **M3b's composer is next, and it is blocked on a contribution kind that
+   does not exist yet — read ADR 0031 before starting it.**
 2. [`docs/superpowers/specs/2026-08-06-ade-minimal-core-sketch.md`](docs/superpowers/specs/2026-08-06-ade-minimal-core-sketch.md)
    — thesis and **every decision** (§7, §7b, §7c the headless-agent seam, §7d presence).
 3. [`docs/superpowers/specs/2026-08-06-ade-v2-core-design.md`](docs/superpowers/specs/2026-08-06-ade-v2-core-design.md)
    — the API and the M0–M4 milestones.
 4. [`docs/superpowers/specs/2026-08-06-architecture-review.md`](docs/superpowers/specs/2026-08-06-architecture-review.md)
    — what v1 got wrong; **its Rebuild checklist is normative for v2**.
-5. ADRs [0021](.claude/adr/0021-v2-store-is-node-sqlite.md) /
-   [0022](.claude/adr/0022-v2-layout-owns-the-session-binding.md) /
-   [0023](.claude/adr/0023-v2-permissions-granted-once-checked-always.md).
+5. ADRs [0021](.claude/adr/0021-v2-store-is-node-sqlite.md)–[0032](.claude/adr/0032-v2-tasks-uses-the-same-kv-a-third-party-gets.md).
+   **0029–0032 are M3's**, and each records something measured rather than
+   reasoned: what Claude Code actually reads at a generated task root, why the
+   transport deadline is the caller's, how a contributed view declares itself
+   (and why a row click is the extension's, not the user's), and why `tasks`
+   uses the same KV a third party gets.
 
 **Two rules that will bite you immediately in `v2/`:**
 - **`env -u NODE_OPTIONS` every command.** An ambient `NODE_OPTIONS` makes
