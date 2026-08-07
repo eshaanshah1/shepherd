@@ -115,9 +115,15 @@ describe('collections and unions', () => {
     expect(issues(target.parse('c'))).toEqual([': no variant matched (expected "a", or "b")']);
   });
 
-  it('nothing() accepts only undefined — the schema for an argument-less command', () => {
+  it('nothing() accepts an absent value or an empty object — see the block below', () => {
+    // This test used to assert `{}` was REFUSED. Changed deliberately, not
+    // relaxed: a generic client (the CLI, a device, an agent) needs one way to
+    // say "no arguments" that every command accepts, and `s.object` with all
+    // fields optional refuses an absent value. The two rules made that
+    // impossible. Non-empty arguments are still refused.
     expect(s.nothing().parse(undefined)).toEqual({ ok: true, value: undefined });
-    expect(isErr(s.nothing().parse({}))).toBe(true);
+    expect(s.nothing().parse({})).toEqual({ ok: true, value: undefined });
+    expect(isErr(s.nothing().parse({ a: 1 }))).toBe(true);
   });
 });
 
@@ -188,5 +194,24 @@ describe('s.stored — the lenient reader', () => {
   it('still rejects a non-object', () => {
     expect(record.parse('nope').ok).toBe(false);
     expect(record.parse(null).ok).toBe(false);
+  });
+});
+
+describe('s.nothing accepts both ways of saying "no arguments"', () => {
+  it('accepts an absent value', () => {
+    expect(s.nothing().parse(undefined).ok).toBe(true);
+  });
+
+  it('accepts an EMPTY OBJECT, which is how a generic client says it', () => {
+    // Without this, `s.nothing()` and `s.object({...all optional})` disagree
+    // about the same statement: one rejects `{}` and the other rejects absent.
+    // A CLI would have to know each command's schema to call it.
+    expect(s.nothing().parse({}).ok).toBe(true);
+  });
+
+  it('still refuses arguments it does not take', () => {
+    expect(s.nothing().parse({ title: 'x' }).ok).toBe(false);
+    expect(s.nothing().parse('x').ok).toBe(false);
+    expect(s.nothing().parse([]).ok).toBe(false);
   });
 });

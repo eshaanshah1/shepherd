@@ -1,0 +1,15 @@
+{
+  "name": "@shepherd/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "shepherd — the control CLI, and (§7b) the agent API.",
+  "bin": { "shepherd": "./src/main.ts" },
+  "exports": { ".": { "types": "./src/argv.ts", "default": "./src/argv.ts" } },
+  "scripts": { "typecheck": "tsc -b", "test": "vitest run" },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
