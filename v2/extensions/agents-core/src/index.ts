@@ -118,8 +118,18 @@ export const activate: ActivateFn<AgentsAPI> = async (ctx: ExtensionContext, api
   // ------------------------------------------------------------------ outputs
 
   const publish = (change: AgentChange): void => {
-    events.emit(AGENT_STATE_TOPIC, change);
     const { level, reason } = attentionFor(change.to, change.reason);
+    /**
+     * The alert level rides the event, computed HERE and once.
+     *
+     * Both this emit and the `attention.set` below cross the port, in order — so
+     * a consumer in main receives this event *before* the attention store has
+     * taken the new level. A router that then asked the store "how urgent is
+     * this pane" would read the PREVIOUS answer and route a finished turn as
+     * whatever the last one was. Threading it is the same discipline `viewing`
+     * follows: one computation, carried, never re-derived downstream.
+     */
+    events.emit(AGENT_STATE_TOPIC, { ...change, level, alertReason: reason });
     // `none` is a clear, and `attention.set` treats it as one — so there is no
     // branch here, which is the point: one mapping, one call, no second opinion
     // about when an agent stops needing you.
@@ -268,3 +278,17 @@ export const activate: ActivateFn<AgentsAPI> = async (ctx: ExtensionContext, api
     },
   };
 };
+
+/**
+ * What `agents.stateChanged` carries.
+ *
+ * `level`/`alertReason` are `attentionFor(to, reason)` computed at the moment of
+ * the transition. They are on the wire rather than looked up because the emit
+ * and the `attention.set` that follows it are two ordered crossings of one port:
+ * a consumer reading the store on receipt sees the state from *before* this
+ * change.
+ */
+export interface AgentStateChanged extends AgentChange {
+  readonly level: 'none' | 'info' | 'attention' | 'urgent';
+  readonly alertReason: string;
+}

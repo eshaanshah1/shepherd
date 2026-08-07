@@ -3,6 +3,13 @@
 
 import type { Rect, SplitNode } from '@shepherd/core/layout';
 
+/** One session's agent state, as the chrome needs it. */
+export interface AgentIndicatorDTO {
+  readonly sessionId: string;
+  readonly state: string;
+  readonly reason?: string;
+}
+
 /** Renderer → main, request/response (`ipcRenderer.invoke`). */
 export const INVOKE = {
   sessionCreate: 'session:create',
@@ -16,6 +23,12 @@ export const INVOKE = {
   layoutGet: 'layout:get',
   layoutViewport: 'layout:viewport',
   commandInvoke: 'command:invoke',
+  /**
+   * Pull-shaped, mirroring `layoutGet`: the renderer asks on mount rather than
+   * main pushing on `did-finish-load`, which races React's first commit. It also
+   * makes an HMR remount re-pull for free.
+   */
+  agentsGet: 'agents:get',
 } as const;
 
 /** Main → renderer, fire-and-forget (`webContents.send`). */
@@ -23,6 +36,8 @@ export const EMIT = {
   sessionData: 'session:data',
   sessionExit: 'session:exit',
   layoutChanged: 'layout:changed',
+  /** Agent state per session — the indicator's only source. */
+  agentsChanged: 'agents:changed',
 } as const;
 
 export type InvokeChannel = (typeof INVOKE)[keyof typeof INVOKE];

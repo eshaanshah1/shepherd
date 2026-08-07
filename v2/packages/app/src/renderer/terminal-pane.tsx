@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import type { Pane } from '@shepherd/core/layout';
 import type { PaneTerminals } from './pane-sessions.ts';
+import { AgentBadge } from './agent-badge.tsx';
 
 /**
  * One leaf's view. It owns a `<div>` and nothing else.
@@ -20,9 +21,18 @@ export interface TerminalPaneProps {
   readonly pane: Pane;
   readonly terminals: PaneTerminals;
   readonly focused: boolean;
+  /** This pane's agent state, if it has one. Absent = a plain shell. */
+  readonly agentState?: string;
+  readonly agentReason?: string;
 }
 
-export function TerminalPane({ pane, terminals, focused }: TerminalPaneProps): ReactNode {
+export function TerminalPane({
+  pane,
+  terminals,
+  focused,
+  agentState,
+  agentReason,
+}: TerminalPaneProps): ReactNode {
   const hostRef = useRef<HTMLDivElement>(null);
   const paneRef = useRef(pane);
   paneRef.current = pane;
@@ -54,6 +64,16 @@ export function TerminalPane({ pane, terminals, focused }: TerminalPaneProps): R
   }, [pane.id, terminals]);
 
   return (
-    <div className="sh-term" data-testid="terminal-host" data-pane-id={pane.id} ref={hostRef} />
+    // The host must never be wrapped conditionally, and this element must never
+    // become a positionally-keyed list — those are the two shapes that remount a
+    // sibling (measured; a conditional sibling does not). A remounted host is a
+    // fresh xterm and lost scrollback. See `agent-badge.tsx`.
+    <div className="sh-pane" data-pane-id={pane.id}>
+      <AgentBadge
+        {...(agentState === undefined ? {} : { state: agentState })}
+        {...(agentReason === undefined ? {} : { reason: agentReason })}
+      />
+      <div className="sh-term" data-testid="terminal-host" data-pane-id={pane.id} ref={hostRef} />
+    </div>
   );
 }

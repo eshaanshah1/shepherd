@@ -41,6 +41,8 @@ import {
   type RunningIngress,
 } from './ingress.ts';
 import { menuDispatcher } from './menu-dispatch.ts';
+import { registerAgentIpc, systemAlerts, type AgentIpc } from './agent-ipc.ts';
+import { clearAgentState } from './agent-relay.ts';
 import { correlationEnv } from './correlation-env.ts';
 import { publishViewingEdges } from './viewing-topic.ts';
 
@@ -75,6 +77,21 @@ const RENDERER_DEV_URL = process.env['ELECTRON_RENDERER_URL'];
 /** The smoke entries drive the REAL app; these flags are the only triggers. */
 const SMOKE = flagValue(process.argv, '--shepherd-smoke');
 const PRINT_PATHS = process.argv.includes('--shepherd-print-paths');
+
+/**
+ * Alerts a smoke can read back.
+ *
+ * Exported through `globalThis` rather than a module export because the smoke
+ * entry is imported dynamically, long after this runs, and a module-level array
+ * would be a second instance by then.
+ */
+const smokeAlerts = {
+  notify: (alert: { title: string; body: string; sessionId: string }) => {
+    const seen = ((globalThis as { __shepherdAlerts?: unknown[] }).__shepherdAlerts ??= []);
+    seen.push(alert);
+    say(`alert ${alert.sessionId}: ${alert.title} — ${alert.body}`);
+  },
+};
 
 function say(line: string): void {
   process.stdout.write(`[shepherd] ${line}\n`);
@@ -255,6 +272,13 @@ host.onExit((exit) => {
  * decision surface in `ext-host.ts` — caller derivation, the proposed gate, one
  * bounded restart — is then testable without forking a process.
  */
+/**
+ * Assigned inside `whenReady`, where every other IPC handler is registered. The
+ * extension host is built before it and needs to reach it when the child dies,
+ * so the indirection is the seam rather than a second ordering rule.
+ */
+let agentIpc: AgentIpc | undefined;
+
 const extensionHost = new ExtensionHost({
   registry,
   // The return type is written out because the two constructions below are
@@ -267,6 +291,20 @@ const extensionHost = new ExtensionHost({
   clock: systemClock,
   isDev: IS_DEV,
   spawn: () => forkExtensionHost({ logger }),
+  // Every indicator on screen came from that process. Leaving them is a
+  // confident lie — a pane frozen at WORKING after the only thing that could
+  // say otherwise is gone.
+  onHostGone: (reason) => {
+    if (agentIpc === undefined) return;
+    clearAgentState({
+      relay: agentIpc.relay,
+      attention,
+      logger,
+      reason,
+      publish: agentIpc.publish,
+      badge: agentIpc.badge,
+    });
+  },
 });
 
 const extensions: ExtensionRegistry = new ExtensionRegistry({
@@ -387,6 +425,19 @@ void app.whenReady().then(async () => {
   publishLayout = layoutIpc.publish;
 
   registerAttentionCommands({ store: attention, registry });
+
+  // Before the extensions activate, so the first transition an agent publishes
+  // has somewhere to land rather than being emitted at nobody.
+  agentIpc = registerAgentIpc({
+    bus,
+    layout,
+    attention,
+    logger,
+    // The smoke records alerts instead of raising them: a run that stacked real
+    // banners in the user's Notification Center could not assert the one thing
+    // ADR 0020 is about — that a turn finishing under your eyes raises nothing.
+    alerts: SMOKE === undefined ? systemAlerts : smokeAlerts,
+  });
 
   // `sessions.list`, which carries each session's foreground process — the
   // reconciliation sweep's only input, and the reason it needs no subprocess.

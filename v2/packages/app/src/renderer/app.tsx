@@ -10,6 +10,8 @@ import {
 } from '@shepherd/core/layout';
 import {
   COMMANDS,
+  type AgentIndicatorDTO,
+  type AgentsApi,
   type CommandID,
   type CommandsApi,
   type LayoutApi,
@@ -45,6 +47,8 @@ export interface AppProps {
   readonly terminals: PaneTerminals | null;
   readonly layout: LayoutApi | null;
   readonly commands: CommandsApi | null;
+  /** Agent state per session. Null with no bridge — panes then show no badge. */
+  readonly agents?: AgentsApi | null;
   /** Rendered until (or instead of) main's first push. The no-bridge and test seam. */
   readonly initialSnapshot?: LayoutSnapshot;
   /** Diagnostics seam: the smoke reads the live projection through this. */
@@ -66,6 +70,7 @@ export function App({
   terminals,
   layout,
   commands,
+  agents: agentsApi = null,
   initialSnapshot,
   onSnapshot,
 }: AppProps): ReactNode {
@@ -147,12 +152,52 @@ export function App({
     knownPanes.current = present;
   }, [snapshot, terminals]);
 
+  /**
+   * Agent state per session, pulled once and then followed.
+   *
+   * The same shape as the layout, for the same reason: a push-only channel
+   * leaves a renderer that mounted after the last transition showing nothing —
+   * and with HMR that is every reload, not an edge case.
+   */
+  const [agents, setAgents] = useState<Readonly<Record<string, AgentIndicatorDTO>>>({});
+  useEffect(() => {
+    if (agentsApi === null) return;
+    const index = (list: readonly AgentIndicatorDTO[]): Readonly<Record<string, AgentIndicatorDTO>> =>
+      Object.fromEntries(list.map((indicator) => [indicator.sessionId, indicator]));
+    // Follow first, then pull — so a transition landing between the two is not
+    // overwritten by a snapshot taken before it.
+    const off = agentsApi.onChanged((list) => setAgents(index(list)));
+    let live = true;
+    void agentsApi.get().then((result) => {
+      if (!live || !result.ok) return;
+      // Merge under, never over: anything the subscription already delivered is
+      // newer than this snapshot by construction.
+      setAgents((current) => ({ ...index(result.value), ...current }));
+    });
+    return () => {
+      live = false;
+      off();
+    };
+  }, [agentsApi]);
+
   const renderPane = useCallback(
-    (pane: Pane, focused: boolean): ReactNode =>
-      terminals === null ? null : (
-        <TerminalPane pane={pane} terminals={terminals} focused={focused} />
-      ),
-    [terminals],
+    (pane: Pane, focused: boolean): ReactNode => {
+      if (terminals === null) return null;
+      // A pane shows a session; a session may have an agent. Both hops can be
+      // absent, and an absent one renders the empty slot rather than no slot.
+      const sessionId = snapshot?.sessions[pane.id];
+      const agent = sessionId === undefined ? undefined : agents[sessionId];
+      return (
+        <TerminalPane
+          pane={pane}
+          terminals={terminals}
+          focused={focused}
+          {...(agent === undefined ? {} : { agentState: agent.state })}
+          {...(agent?.reason === undefined ? {} : { agentReason: agent.reason })}
+        />
+      );
+    },
+    [terminals, snapshot, agents],
   );
 
   const paneCount = snapshot === null ? 0 : leafIds(snapshot.tree).length;

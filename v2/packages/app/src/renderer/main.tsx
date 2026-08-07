@@ -53,6 +53,7 @@ createRoot(host).render(
       terminals={terminals}
       layout={bridge?.layout ?? null}
       commands={bridge?.commands ?? null}
+      agents={bridge?.agents ?? null}
       // With no bridge there is no main process to project a tree, so the page
       // draws one placeholder pane rather than nothing at all — which is what
       // `pnpm --filter @shepherd/app dev`-without-electron shows you.
