@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   dividers,
   frames,
@@ -30,7 +30,7 @@ afterEach(() => {
 });
 
 function render(tree: SplitNode): HTMLElement {
-  mounted = mount(<SplitView tree={tree} onTreeChange={vi.fn()} />);
+  mounted = mount(<SplitView tree={tree} />);
   return mounted.container;
 }
 
@@ -126,7 +126,7 @@ describe('SplitView', () => {
     const container = render(split('row', 0.5, leaf(a), leaf(b)));
     expect(all(container, 'pane').map((el) => el.dataset['focused'])).toEqual(['false', 'false']);
 
-    mounted?.rerender(<SplitView tree={split('row', 0.5, leaf(a), leaf(b))} onTreeChange={vi.fn()} focusedPaneId={b.id} />);
+    mounted?.rerender(<SplitView tree={split('row', 0.5, leaf(a), leaf(b))} focusedPaneId={b.id} />);
     expect(all(container, 'pane').map((el) => el.dataset['focused'])).toEqual(['false', 'true']);
   });
 
@@ -138,8 +138,39 @@ describe('SplitView', () => {
     const container = render(leaf(a));
     expect(all(container, 'pane')).toHaveLength(1);
 
-    mounted?.rerender(<SplitView tree={split('row', 0.5, leaf(a), leaf(b))} onTreeChange={vi.fn()} />);
+    mounted?.rerender(<SplitView tree={split('row', 0.5, leaf(a), leaf(b))} />);
     expect(all(container, 'pane')).toHaveLength(2);
     expect(all(container, 'divider')).toHaveLength(1);
+  });
+
+  it('keeps a pane element across a snapshot that is a fresh clone of the same tree', () => {
+    // Every `layout:changed` push arrives structure-cloned, so nothing in a new
+    // snapshot is object-identical to the last one. Finding G: identity has to
+    // come from the PANE ID, not from the object — otherwise a push that changed
+    // one pane's title rebuilds every pane's DOM under it.
+    const a = makePane({ userTitle: 'a' });
+    const b = makePane({ userTitle: 'b' });
+    const container = render(split('row', 0.5, leaf(a), leaf(b)));
+    const before = all(container, 'pane');
+
+    mounted?.rerender(<SplitView tree={structuredClone(split('row', 0.5, leaf(a), leaf(b)))} />);
+
+    const after = all(container, 'pane');
+    expect(after[0]).toBe(before[0]);
+    expect(after[1]).toBe(before[1]);
+  });
+
+  it('takes the focused pane id as a plain string, the way it comes off the wire', () => {
+    // `LayoutSnapshot.focusedPaneId` is `string | null`, not the branded `PaneID`:
+    // a structured clone carries no brand, and a view that demanded one would
+    // have to launder it on the way in.
+    const a = makePane({});
+    const b = makePane({});
+    const container = render(split('row', 0.5, leaf(a), leaf(b)));
+
+    mounted?.rerender(
+      <SplitView tree={split('row', 0.5, leaf(a), leaf(b))} focusedPaneId={String(b.id)} />,
+    );
+    expect(all(container, 'pane').map((el) => el.dataset['focused'])).toEqual(['false', 'true']);
   });
 });

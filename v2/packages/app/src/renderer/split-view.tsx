@@ -1,6 +1,8 @@
 import {
   useCallback,
+  useEffect,
   useRef,
+  useState,
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
@@ -8,9 +10,9 @@ import {
 } from 'react';
 import type { PaneID } from '@shepherd/sdk';
 import {
+  clampRatio,
   dividerKey,
   displayTitle,
-  setRatio,
   type Pane,
   type SplitAxis,
   type SplitNode,
@@ -25,57 +27,84 @@ import {
  *     flex does the arithmetic, so the browser's layout and `frames()` are the
  *     same function of the same numbers. Positioning panes absolutely from
  *     `frames()` would be a second layout engine racing the first.
- *   - **The tree.** Every mutation goes out through `onTreeChange` as a NEW
- *     tree from a core op; nothing here writes to `props.tree`. That is the
- *     "read-only tree, mutations through one normalizing funnel" rule, and it
- *     is why a drag can be replayed in a test by calling the same op.
- *   - **Sessions.** A leaf renders whatever `renderPane` returns. In P3 that is
- *     a placeholder; when xterm arrives it becomes a terminal view, and the
- *     view's mount/unmount still must not create or kill anything — the session
- *     registry is keyed by pane id in the main process.
+ *   - **The tree.** `tree` is main's, and this view never produces a new one. A
+ *     gesture is a *command* (`onFocusPane`, `onSetRatio`) that the kernel
+ *     applies; the changed tree comes back as the next snapshot. That is the
+ *     "mutations through one normalizing funnel" rule with the funnel now a
+ *     process away — and it is why ⌘D, this view, and `shepherd pane split`
+ *     cannot come to mean different things.
+ *   - **Sessions.** A leaf renders whatever `renderPane` returns, and the view's
+ *     mount/unmount neither creates nor kills anything — the session registry is
+ *     keyed by pane id and the pty lives in main.
+ *
+ * The one piece of state it does own is the **drag preview**, and that is
+ * finding F: a `layout.setRatio` per mousemove would be a 60Hz IPC storm into the
+ * one funnel with a debounced sqlite write behind it. So a drag paints locally and
+ * commits exactly once, on mouse-up.
  */
 
 export interface SplitViewProps {
   readonly tree: SplitNode;
-  /** Called with the new tree after any layout gesture. Never mutates `tree`. */
-  readonly onTreeChange: (next: SplitNode) => void;
-  readonly focusedPaneId?: PaneID | null;
+  /** One command per completed drag. Never called per mousemove — see `Preview`. */
+  readonly onSetRatio?: (path: readonly number[], ratio: number) => void;
+  readonly focusedPaneId?: string | null;
   readonly onFocusPane?: (id: PaneID) => void;
   readonly renderPane?: (pane: Pane, focused: boolean) => ReactNode;
   /** For `displayTitle`'s `~` shortening; the renderer has no `os.homedir()`. */
   readonly home?: string;
 }
 
+/** Which divider is mid-drag, and where the user has dragged it to. */
+interface Preview {
+  readonly key: string;
+  readonly ratio: number;
+}
+
 interface Ctx {
-  readonly focusedPaneId: PaneID | null;
+  readonly focusedPaneId: string | null;
   readonly onFocusPane: ((id: PaneID) => void) | undefined;
   readonly renderPane: ((pane: Pane, focused: boolean) => ReactNode) | undefined;
-  readonly onRatio: (path: readonly number[], ratio: number) => void;
+  readonly preview: Preview | null;
+  readonly onPreview: (path: readonly number[], ratio: number) => void;
+  readonly onCommit: (path: readonly number[], ratio: number) => void;
   readonly home: string;
 }
 
 const ROOT_PATH: readonly number[] = [];
 
 export function SplitView(props: SplitViewProps): ReactNode {
-  const { tree, onTreeChange } = props;
+  const { tree, onSetRatio } = props;
+  const [preview, setPreview] = useState<Preview | null>(null);
 
-  const onRatio = useCallback(
+  // The preview is dropped when a NEW TREE arrives, not on mouse-up. Between
+  // releasing the mouse and the snapshot coming back there is a round trip
+  // through main, and clearing early makes the divider snap to its old position
+  // for a frame or two — which reads as the drag having been rejected.
+  useEffect(() => setPreview(null), [tree]);
+
+  const onPreview = useCallback((path: readonly number[], ratio: number) => {
+    // Clamped with core's own `clampRatio`, which is the function `setRatio`
+    // applies. Not a second opinion about what is legal — the same one, so what
+    // you drag is what you get and the preview cannot show a pane of no width.
+    setPreview({ key: dividerKey(path), ratio: clampRatio(ratio) });
+  }, []);
+
+  const onCommit = useCallback(
     (path: readonly number[], ratio: number) => {
-      // The one place a drag becomes a tree — and the ONLY clamp. The divider
-      // hands over a raw fraction; `setRatio` decides what is legal, exactly as
-      // it does for a scripted layout change. A second clamp in the view would
-      // read as belt-and-braces and act as a second opinion about the model's
-      // invariants, which is how the two drift.
-      onTreeChange(setRatio(tree, path, ratio));
+      // Already clamped, for the same reason: the committed value is the value
+      // the user was looking at when they let go.
+      onSetRatio?.(path, clampRatio(ratio));
     },
-    [tree, onTreeChange],
+    [onSetRatio],
   );
 
   const ctx: Ctx = {
     focusedPaneId: props.focusedPaneId ?? null,
     onFocusPane: props.onFocusPane,
     renderPane: props.renderPane,
-    onRatio,
+    preview,
+    onPreview,
+    onCommit,
     home: props.home ?? '',
   };
 
@@ -90,6 +119,16 @@ export function SplitView(props: SplitViewProps): ReactNode {
  * Dispatch only — no hooks. A node can change from leaf to split in place when
  * a pane is split, and a component that called `useRef` after an early return
  * would change its hook count under React at exactly that moment.
+ *
+ * The `key`s are finding G: a leaf is keyed by its **pane id**, a split by its
+ * path, so React's identity for a node is structural rather than positional.
+ * Every snapshot arrives as a freshly structure-cloned tree, so positional
+ * identity is the only thing standing between a reshape and a churn of everything
+ * below it. What it cannot do is keep a component mounted across a change of
+ * DEPTH — splitting a leaf makes it a grandchild, and React must remount it.
+ * That is why the terminal is owned by `PaneSessionRegistry` and not by the view:
+ * a remount costs one `appendChild` and no xterm, which `app.test.tsx` asserts by
+ * counting terminals built.
  */
 function NodeView({
   node,
@@ -101,9 +140,9 @@ function NodeView({
   ctx: Ctx;
 }): ReactNode {
   return node.kind === 'leaf' ? (
-    <PaneLeaf pane={node.pane} ctx={ctx} />
+    <PaneLeaf key={`pane:${node.pane.id}`} pane={node.pane} ctx={ctx} />
   ) : (
-    <SplitBranch node={node} path={path} ctx={ctx} />
+    <SplitBranch key={`split:${dividerKey(path)}`} node={node} path={path} ctx={ctx} />
   );
 }
 
@@ -117,6 +156,8 @@ function SplitBranch({
   ctx: Ctx;
 }): ReactNode {
   const container = useRef<HTMLDivElement>(null);
+  // The dragged ratio if this is the divider being dragged, else the tree's.
+  const ratio = ctx.preview?.key === dividerKey(path) ? ctx.preview.ratio : node.ratio;
 
   return (
     <div
@@ -129,11 +170,17 @@ function SplitBranch({
       // vertical hairline between them. Read it off the tree module, not the word.
       style={{ flexDirection: node.axis === 'row' ? 'row' : 'column' }}
     >
-      <div className="sh-split-child" data-testid="split-child" data-slot="first" style={share(node.ratio)}>
+      <div className="sh-split-child" data-testid="split-child" data-slot="first" style={share(ratio)}>
         <NodeView node={node.first} path={[...path, 0]} ctx={ctx} />
       </div>
-      <PaneDivider path={path} axis={node.axis} containerRef={container} onRatio={ctx.onRatio} />
-      <div className="sh-split-child" data-testid="split-child" data-slot="second" style={share(1 - node.ratio)}>
+      <PaneDivider
+        path={path}
+        axis={node.axis}
+        containerRef={container}
+        onPreview={ctx.onPreview}
+        onCommit={ctx.onCommit}
+      />
+      <div className="sh-split-child" data-testid="split-child" data-slot="second" style={share(1 - ratio)}>
         <NodeView node={node.second} path={[...path, 1]} ctx={ctx} />
       </div>
     </div>
@@ -155,7 +202,10 @@ export interface PaneDividerProps {
   readonly path: readonly number[];
   readonly axis: SplitAxis;
   readonly containerRef: RefObject<HTMLDivElement | null>;
-  readonly onRatio: (path: readonly number[], ratio: number) => void;
+  /** Per mousemove. Local paint only — never a command. */
+  readonly onPreview: (path: readonly number[], ratio: number) => void;
+  /** Once, on mouse-up, and only if the drag actually moved. */
+  readonly onCommit: (path: readonly number[], ratio: number) => void;
 }
 
 /**
@@ -163,8 +213,16 @@ export interface PaneDividerProps {
  * a pointer capture on the divider would keep working, but plain mouse events
  * are what jsdom implements, and a drag nobody can test is a drag that breaks.
  */
-export function PaneDivider({ path, axis, containerRef, onRatio }: PaneDividerProps): ReactNode {
+export function PaneDivider({
+  path,
+  axis,
+  containerRef,
+  onPreview,
+  onCommit,
+}: PaneDividerProps): ReactNode {
   const dragging = useRef(false);
+  /** The last ratio the mouse produced. What mouse-up commits. */
+  const pending = useRef<number | null>(null);
 
   const ratioAt = useCallback(
     (clientX: number, clientY: number): number | null => {
@@ -173,11 +231,10 @@ export function PaneDivider({ path, axis, containerRef, onRatio }: PaneDividerPr
       const rect = el.getBoundingClientRect();
       const span = axis === 'row' ? rect.width : rect.height;
       // An unmeasured container (display:none, or a test that forgot to give
-      // the element a size) would divide by zero and hand `setRatio` a NaN,
-      // which clamps to NaN and renders a pane of no width. Refuse instead.
+      // the element a size) would divide by zero and hand `clampRatio` a NaN,
+      // which stays NaN and renders a pane of no width. Refuse instead.
       if (!(span > 0)) return null;
       const offset = axis === 'row' ? clientX - rect.left : clientY - rect.top;
-      // Raw, deliberately: `setRatio` owns the clamp (see `onRatio`).
       return offset / span;
     },
     [axis, containerRef],
@@ -188,17 +245,26 @@ export function PaneDivider({ path, axis, containerRef, onRatio }: PaneDividerPr
       event.preventDefault();
       if (dragging.current) return;
       dragging.current = true;
+      pending.current = null;
 
       const move = (e: MouseEvent): void => {
         if (!dragging.current) return;
         const ratio = ratioAt(e.clientX, e.clientY);
-        if (ratio !== null) onRatio(path, ratio);
+        if (ratio === null) return;
+        pending.current = ratio;
+        onPreview(path, ratio);
       };
       const up = (): void => {
         dragging.current = false;
         globalThis.removeEventListener('mousemove', move);
         globalThis.removeEventListener('mouseup', up);
         globalThis.document.body.classList.remove('sh-dragging');
+        // ONE command per drag. A press with no movement commits nothing: it is
+        // a click on a hairline, and turning it into a `setRatio` would put a
+        // no-op through the funnel and a write behind it.
+        const ratio = pending.current;
+        pending.current = null;
+        if (ratio !== null) onCommit(path, ratio);
       };
 
       // Listeners on the window, not the divider: the cursor outruns a 1px
@@ -207,7 +273,7 @@ export function PaneDivider({ path, axis, containerRef, onRatio }: PaneDividerPr
       globalThis.addEventListener('mouseup', up);
       globalThis.document.body.classList.add('sh-dragging');
     },
-    [path, ratioAt, onRatio],
+    [path, ratioAt, onPreview, onCommit],
   );
 
   return (
@@ -243,10 +309,9 @@ function PaneLeaf({ pane, ctx }: { pane: Pane; ctx: Ctx }): ReactNode {
 }
 
 /**
- * What sits where the terminal will. P3 proves the layout before a PTY is
- * attached to it, so this is deliberately a card and not an empty box: an empty
- * box cannot show you that the pane it is in has the right size or the right
- * identity.
+ * What sits where the terminal will. This is deliberately a card and not an empty
+ * box: an empty box cannot show you that the pane it is in has the right size or
+ * the right identity, which is exactly what a layout test needs to see.
  */
 function PanePlaceholder({ pane, home }: { pane: Pane; home: string }): ReactNode {
   return (
