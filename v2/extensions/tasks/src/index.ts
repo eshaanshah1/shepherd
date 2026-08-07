@@ -4,7 +4,7 @@ import { TaskStore, type RepoRef, type TaskRecord, type TaskSession } from './st
 import { slugify, uniqueSlug } from './model/slug.ts';
 import { displayState } from './model/lifecycle.ts';
 import { synthTaskRoot } from './model/root-synth.ts';
-import { materializeTaskRoot, provisionRepo, readContribution } from './provision.ts';
+import { archiveWorktree, materializeTaskRoot, provisionRepo, readContribution } from './provision.ts';
 
 /**
  * `tasks` — the extension M3 exists for, and the one that has to prove the ADE
@@ -234,24 +234,48 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     }),
   );
 
-  for (const [verb, lifecycle] of [
-    [TASK_COMMANDS.archive, 'archived'],
-    [TASK_COMMANDS.restore, 'running'],
-  ] as const) {
-    ctx.subscriptions.push(
-      commands.register(verb, {
-        schema: s.object({ task: s.string() }),
-        handler: (args) => {
-          const task = store.get(args.task);
-          if (task === undefined) throw new Error(`no task ${args.task}`);
-          // The worktree half — the two-commit snapshot, the gitignored-file
-          // warning, the conflicted refusal — is P4. This is the record.
-          store.put({ ...task, lifecycle });
-          return { id: task.id, lifecycle };
-        },
-      }),
-    );
-  }
+  ctx.subscriptions.push(
+    commands.register(TASK_COMMANDS.archive, {
+      schema: s.object({ task: s.string() }),
+      handler: async (args) => {
+        const task = store.get(args.task);
+        if (task === undefined) throw new Error(`no task ${args.task}`);
+        const root = rootOf(task);
+        const warnings: string[] = [];
+        for (const repo of task.repos) {
+          const out = await archiveWorktree(api.proposed.process, repo.path, `${root}/${repo.name}`);
+          if (!out.ok) {
+            // A refusal is the whole point — a conflicted worktree cannot be
+            // snapshotted, and failing inside git is how v1 found that out.
+            throw new Error(`${repo.name}: ${out.reason}`);
+          }
+          // Gitignored files go either way; the user hears about it first.
+          for (const warning of out.warnings) warnings.push(`${repo.name}: ${warning}`);
+        }
+        store.put({ ...task, lifecycle: 'archived' });
+        for (const warning of warnings) ctx.log.warn(`task ${task.id}: ${warning}`);
+        return { id: task.id, lifecycle: 'archived', warnings };
+      },
+    }),
+  );
+
+  ctx.subscriptions.push(
+    commands.register(TASK_COMMANDS.restore, {
+      schema: s.object({ task: s.string() }),
+      handler: (args) => {
+        const task = store.get(args.task);
+        if (task === undefined) throw new Error(`no task ${args.task}`);
+        store.put({ ...task, lifecycle: 'running' });
+        // Re-provisioning is the restore: `worktree add` recreates each repo at
+        // the same path on the same branch, and the root is re-materialized from
+        // what lands. Optimistic, for the same reason creating one is.
+        void provision(store.get(task.id) as TaskRecord).catch((error: unknown) => {
+          ctx.log.error(`task ${task.id}: restore threw — ${String(error)}`);
+        });
+        return { id: task.id, lifecycle: 'running' };
+      },
+    }),
+  );
 
   ctx.log.info(`ready — ${store.list().length} task(s), data in ${ctx.dataDir}`);
   return { list: () => store.list(), get: (id) => store.get(id) };
