@@ -537,6 +537,10 @@ void app.whenReady().then(async () => {
       controlSocket: CONTROL_SOCKET,
       hookSocket: HOOK_SOCKET,
       attentionCount: () => attention.count(),
+      layout,
+      root: ROOT,
+      alerts: () => ((globalThis as { __shepherdAlerts?: { sessionId: string }[] }).__shepherdAlerts ?? []),
+      agentStates: () => agentIpc?.relay.snapshot() ?? [],
     }).catch((error: unknown) => {
       process.stdout.write(`smoke: FAIL threw ${String(error)}\n`);
       app.exit(1);
