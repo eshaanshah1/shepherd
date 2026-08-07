@@ -318,6 +318,36 @@ export const boundaries = [
       ],
     },
   },
+  {
+    // An extension's TESTS may reach the machine; the extension may not.
+    //
+    // Exactly the `boundary/core-tests` carve-out, for the same reason and with
+    // the same limits. `tasks` provisions worktrees and materializes a task root,
+    // and testing that against a real filesystem needs a temp directory —
+    // `node:os` is how you name one. The alternatives are reading
+    // `process.env.TMPDIR` off the global, which lint cannot see and which makes
+    // the rule theatre, or writing fixtures into the repo.
+    //
+    // Everything else still applies, and the two that matter most are untouched:
+    // no `child_process` (an extension asks `ProcessAPI`, in a test too — that is
+    // what makes the runner injectable and the boundary real) and no node-pty.
+    //
+    // Ordered AFTER boundary/extensions so it wins for the files it names.
+    name: 'boundary/extension-tests',
+    files: ['extensions/**/*.test.ts'],
+    rules: restrict(
+      deny(ELECTRON, 'an extension sees the host only through @shepherd/sdk, in a test too.'),
+      deny(NODE_PTY, 'an extension asks the session API; it never spawns a pty.'),
+      deny(
+        ['child_process', 'node:child_process'],
+        'an extension asks ProcessAPI; a test that spawned directly would prove nothing about the seam.',
+      ),
+      deny(
+        [...WORKSPACE.core, ...WORKSPACE.app, ...WORKSPACE.platform],
+        'an extension may only import @shepherd/sdk.',
+      ),
+    ),
+  },
 ];
 
 export default boundaries;

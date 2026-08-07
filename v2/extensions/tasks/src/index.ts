@@ -3,6 +3,8 @@ import { REPO_SUGGESTIONS_POINT, TASK_COMMANDS } from './manifest.ts';
 import { TaskStore, type RepoRef, type TaskRecord, type TaskSession } from './store.ts';
 import { slugify, uniqueSlug } from './model/slug.ts';
 import { displayState } from './model/lifecycle.ts';
+import { synthTaskRoot } from './model/root-synth.ts';
+import { materializeTaskRoot, provisionRepo, readContribution } from './provision.ts';
 
 /**
  * `tasks` — the extension M3 exists for, and the one that has to prove the ADE
@@ -36,6 +38,8 @@ const repoArg = s.object({ path: s.string(), name: s.string() });
 export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
   const { commands, points } = api.proposed;
   const store = new TaskStore(ctx.storage);
+  /** Per-repo provisioning state. In memory, deliberately — see `provision`. */
+  const provisioning = new Map<string, 'working' | 'ready' | 'failed'>();
 
   const suggestions = points.define<RepoSuggestionProvider>(REPO_SUGGESTIONS_POINT, {
     order: 'priority',
@@ -66,6 +70,61 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
 
   const nextId = (): string => `task-${ctx.clock.now()}-${store.list().length}`;
 
+  /** Where a task's worktrees live. `ctx.dataDir` is the host's answer to D1b. */
+  const rootOf = (task: TaskRecord): string => `${ctx.dataDir}/${task.slug}`;
+
+  /**
+   * Provision a task's repos, then synthesize its root.
+   *
+   * **Per repo, and in order of landing** — the provisioning state is per repo
+   * because the cost is per repo, and a repo that fails does not take the others
+   * with it. The task root is synthesized from what actually landed, so a
+   * degraded task describes itself honestly rather than advertising a repo that
+   * is not there.
+   *
+   * State lives in memory and is never written to KV: it changes on a second
+   * timescale, and routing it through storage would make each transition a
+   * `storage.set` across the port and a write to SQLite — v1's save()-on-every-cd
+   * reborn. It is also meaningless after a restart, since nothing is mid-provision
+   * when the app is not running.
+   */
+  async function provision(task: TaskRecord): Promise<void> {
+    const root = rootOf(task);
+    const landed: { name: string; path: string; worktree: string }[] = [];
+    for (const repo of task.repos) {
+      provisioning.set(`${task.id}:${repo.name}`, 'working');
+      const outcome = await provisionRepo(api.proposed.process, repo, task.slug, `${root}/${repo.name}`);
+      if (outcome.ok) {
+        provisioning.set(`${task.id}:${repo.name}`, 'ready');
+        landed.push({ name: repo.name, path: repo.path, worktree: outcome.worktree });
+      } else {
+        provisioning.set(`${task.id}:${repo.name}`, 'failed');
+        ctx.log.warn(`task ${task.id}: ${repo.name} did not provision — ${outcome.reason}`);
+      }
+    }
+
+    const plan = synthTaskRoot({
+      title: task.title,
+      brief: task.brief,
+      repos: landed.map((repo) => ({
+        name: repo.name,
+        path: repo.worktree,
+        ...readContribution(repo.worktree),
+      })),
+    });
+    const out = materializeTaskRoot(root, plan);
+    for (const conflict of plan.conflicts) {
+      // Measured to resolve in the filesystem otherwise, last-link-wins and
+      // silent, so an agent runs the wrong repo's skill.
+      ctx.log.warn(
+        `task ${task.id}: ${conflict.kind} "${conflict.name}" is in ${conflict.repos.join(' and ')} — namespaced by repo`,
+      );
+    }
+    for (const notice of plan.notices) ctx.log.warn(`task ${task.id}: ${notice}`);
+    for (const failure of out.failed) ctx.log.warn(`task ${task.id}: ${failure}`);
+    ctx.log.info(`task ${task.id}: ${landed.length}/${task.repos.length} repo(s), ${out.linked} link(s) at ${root}`);
+  }
+
   ctx.subscriptions.push(
     commands.register(TASK_COMMANDS.create, {
       schema: s.object({
@@ -91,6 +150,15 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         };
         store.put(task);
         ctx.log.info(`created task ${task.id} (${slug}) with ${task.repos.length} repo(s)`);
+
+        // OPTIMISTIC (D12): the record exists and is answerable NOW, and the
+        // worktrees fill in behind it. Probe 2 sized why — a `worktree add` is
+        // 0.16s but one network round-trip is 2.51s, paid ONCE PER REPO, so a
+        // three-repo task is ~7.5s of nothing before a file is written. The
+        // caller gets the task; provisioning reports itself through the record.
+        void provision(task).catch((error: unknown) => {
+          ctx.log.error(`task ${task.id}: provisioning threw — ${String(error)}`);
+        });
         return task;
       },
     }),
@@ -112,6 +180,11 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           // to read yet — until the tree consumes it (M3b) every task reports its
           // lifecycle, which is honest rather than a guess.
           displayState: displayState(task.lifecycle, []),
+          root: rootOf(task),
+          repos: task.repos.map((repo) => ({
+            ...repo,
+            provisioning: provisioning.get(`${task.id}:${repo.name}`) ?? 'ready',
+          })),
         }));
       },
     }),
