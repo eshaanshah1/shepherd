@@ -1,0 +1,283 @@
+<title>Flock — Shepherd v2 design language</title>
+<style>
+  :root {
+    --ink-deep: #14120e; --ink: #1b1915; --ink-raised: #24211b;
+    --ink-line: #343027; --ink-term: #161410;
+    --wool: #e9e2d2; --wool-dim: #a49b89; --wool-faint: #6e6759;
+    --cobalt: #62a3ff; --hay: #e0a33e; --pasture: #85bb64;
+    --ember: #e85d43; --signal: #f2762e;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Charter, Georgia, serif;
+    --mono: ui-monospace, "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace;
+    --rh: 28px;
+  }
+  :root[data-theme="light"] {
+    --ink-deep: #e6dfd0; --ink: #f3eee1; --ink-raised: #faf6ea;
+    --ink-line: #d3cab6; --ink-term: #faf6ea;
+    --wool: #2b2620; --wool-dim: #6e6759; --wool-faint: #a49b89;
+    --cobalt: #1f62d0; --hay: #96690e; --pasture: #47772c;
+    --ember: #c23a22; --signal: #c85312;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --ink-deep: #e6dfd0; --ink: #f3eee1; --ink-raised: #faf6ea;
+      --ink-line: #d3cab6; --ink-term: #faf6ea;
+      --wool: #2b2620; --wool-dim: #6e6759; --wool-faint: #a49b89;
+      --cobalt: #1f62d0; --hay: #96690e; --pasture: #47772c;
+      --ember: #c23a22; --signal: #c85312;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--ink-deep); color: var(--wool);
+    font-family: var(--mono); font-size: 13px; line-height: 20px;
+    min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    padding: 32px 20px;
+  }
+
+  .window {
+    width: 100%; max-width: 1060px;
+    background: var(--ink); border: 1px solid var(--ink-line); border-radius: 8px;
+    overflow: hidden;
+  }
+  .titlebar {
+    height: 38px; display: flex; align-items: center; gap: 10px; padding: 0 14px;
+    border-bottom: 1px solid var(--ink-line); color: var(--wool-faint);
+    font-size: 11px; letter-spacing: .1em;
+  }
+  .traffic { display: flex; gap: 7px; margin-right: 8px; }
+  .traffic i { width: 10px; height: 10px; border-radius: 50%; background: var(--ink-line); }
+  .titlebar .spec { margin-left: auto; display: flex; gap: 14px; }
+  .titlebar .spec span b { color: var(--wool-dim); font-weight: 400; }
+
+  .frame { display: flex; min-height: 440px; }
+
+  /* ---------- sidebar ---------- */
+  .sidebar { width: 268px; flex: none; border-right: 1px solid var(--ink-line); padding: 8px 0 10px; display: flex; flex-direction: column; }
+  .group {
+    height: var(--rh); display: flex; align-items: center; gap: 8px; padding: 0 14px;
+    color: var(--wool-faint); font-size: 10px; letter-spacing: .16em;
+  }
+  .group::after { content: ""; flex: 1; border-top: 1px solid var(--ink-line); }
+  .task {
+    height: var(--rh); display: flex; align-items: center; gap: 8px; padding: 0 12px 0 14px;
+    cursor: default; white-space: nowrap;
+  }
+  .task:hover { background: var(--ink-raised); }
+  .task.sel { background: var(--wool); color: var(--ink); }
+  .task.sel .word { color: var(--ink); opacity: .55; border-color: transparent; }
+  .task .name { overflow: hidden; text-overflow: ellipsis; }
+  .task .word {
+    margin-left: auto; font-size: 9px; letter-spacing: .08em; color: var(--wool-dim);
+    border: 1px solid var(--ink-line); border-radius: 3px; padding: 0 5px; line-height: 15px;
+  }
+  .task .word.w-hay { color: var(--hay); border-color: color-mix(in srgb, var(--hay) 45%, transparent); }
+  .task .word.w-past { color: var(--pasture); border-color: color-mix(in srgb, var(--pasture) 45%, transparent); }
+  .task .word.w-ember { color: var(--ember); border-color: color-mix(in srgb, var(--ember) 45%, transparent); }
+  .task.dim .name { color: var(--wool-dim); }
+
+  /* the flock — pixel sheep state indicators */
+  .sheep { width: 22px; height: 16px; flex: none; }
+  .sheep svg { display: block; width: 22px; height: 16px; shape-rendering: crispEdges; }
+
+  .side-foot { margin-top: auto; padding: 10px 14px 2px; display: flex; gap: 8px; }
+  .key {
+    font-size: 10px; letter-spacing: .06em; color: var(--wool-dim);
+    border: 1px solid var(--ink-line); border-radius: 3px; padding: 1px 6px;
+  }
+
+  /* ---------- main ---------- */
+  .main { flex: 1; display: flex; min-width: 0; }
+  .pane { flex: 1.35; display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--ink-line); }
+  .pane-title {
+    height: var(--rh); display: flex; align-items: center; gap: 8px; padding: 0 14px;
+    border-bottom: 1px solid var(--ink-line); color: var(--wool-dim); font-size: 11px;
+  }
+  .pane-title .branch { color: var(--wool-faint); }
+  .pane-title .live {
+    margin-left: auto; font-size: 9px; letter-spacing: .12em; color: var(--cobalt);
+    border: 1px solid color-mix(in srgb, var(--cobalt) 45%, transparent); border-radius: 3px;
+    padding: 0 5px; line-height: 15px;
+  }
+  .term { flex: 1; background: var(--ink-term); padding: 14px 16px; overflow: hidden; }
+  .term pre { margin: 0; font-family: var(--mono); font-size: 12.5px; line-height: 20px; color: var(--wool); }
+  .t-cob { color: var(--cobalt); } .t-past { color: var(--pasture); }
+  .t-sig { color: var(--signal); }
+  .t-dim { color: var(--wool-dim); } .t-faint { color: var(--wool-faint); }
+  .t-mark { background: var(--hay); color: var(--ink); padding: 0 4px; }
+  .cursor { display: inline-block; width: 8px; height: 16px; vertical-align: -3px; background: var(--wool); animation: blink 1.1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  .nudge {
+    height: 28px; display: flex; align-items: center; gap: 12px; padding: 0 14px;
+    border-top: 1px solid var(--ink-line); font-size: 10px; letter-spacing: .08em; color: var(--wool-dim);
+  }
+  .btn {
+    color: var(--cobalt); border: 1px solid color-mix(in srgb, var(--cobalt) 50%, transparent);
+    border-radius: 3px; padding: 1px 8px; cursor: default; letter-spacing: .1em;
+  }
+  .btn:hover { background: var(--cobalt); color: var(--ink); }
+
+  .empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 24px; }
+  .ewe { stroke: var(--wool-dim); fill: none; stroke-width: 1.6; stroke-linecap: round; opacity: .85; }
+  .empty .say { font-family: var(--serif); font-style: italic; font-size: 16px; color: var(--wool-dim); }
+  .empty .hint { display: flex; align-items: center; gap: 8px; font-size: 10px; letter-spacing: .1em; color: var(--wool-faint); }
+
+  .statusbar {
+    height: 26px; display: flex; align-items: center; gap: 16px; padding: 0 14px;
+    border-top: 1px solid var(--ink-line); font-size: 10px; letter-spacing: .1em; color: var(--wool-faint);
+  }
+  .statusbar .cell { display: flex; align-items: center; gap: 6px; }
+  .statusbar .cell i { width: 6px; height: 6px; border-radius: 50%; }
+  .statusbar .right { margin-left: auto; display: flex; gap: 16px; }
+
+  @media (prefers-reduced-motion: reduce) { .cursor { animation: none; } }
+  @media (max-width: 760px) { .sidebar { display: none; } .main { flex-direction: column; } .pane { border-right: none; border-bottom: 1px solid var(--ink-line); } }
+</style>
+
+<div class="window">
+  <div class="titlebar">
+    <span class="traffic"><i></i><i></i><i></i></span>
+    SHEPHERD
+    <span class="spec"><span>TASKS <b>07</b></span><span>V2.0.0-DEV</span></span>
+  </div>
+
+  <div class="frame">
+    <nav class="sidebar">
+      <div class="group">NEEDS YOU · 2</div>
+      <div class="task"><span class="sheep" data-sheep="blocked"></span><span class="name">android reconnect ceilings</span><span class="word w-hay">BASH?</span></div>
+      <div class="task"><span class="sheep" data-sheep="grazing"></span><span class="name">flock token package</span><span class="word w-past">REVIEW</span></div>
+      <div class="group">WORKING · 3</div>
+      <div class="task sel"><span class="sheep" data-sheep="walking"></span><span class="name">port StopPolicy to TS</span><span class="word">34M</span></div>
+      <div class="task"><span class="sheep" data-sheep="walking"></span><span class="name" id="scramble">provisioning worktree…</span></div>
+      <div class="task"><span class="sheep" data-sheep="error"></span><span class="name">fix flaky pinning test</span><span class="word w-ember">ERROR</span></div>
+      <div class="group">IDLE · 2</div>
+      <div class="task dim"><span class="sheep" data-sheep="standing"></span><span class="name">spec: task model</span></div>
+      <div class="task dim"><span class="sheep" data-sheep="standing"></span><span class="name">workbench view zones</span></div>
+      <div class="side-foot"><span class="key">⌘T NEW</span><span class="key">⌘/ KEYS</span></div>
+    </nav>
+
+    <div class="main">
+      <section class="pane">
+        <div class="pane-title">port StopPolicy to TS <span class="branch">· task/stop-policy-port · 2 repos</span><span class="live">CLAUDE</span></div>
+        <div class="term"><pre>
+<span class="t-cob">●</span> Porting applyEvent — 38 of 41 cases green.
+
+  <span class="t-dim">Running vitest…</span>
+  <span class="t-past">✓</span> stop-policy.test.ts <span class="t-faint">(41 tests, 12ms)</span>
+
+<span class="t-cob">●</span> Background-Stop suppression matches ADR 0015:
+  held at <span class="t-mark">working</span> while background_tasks &gt; 0.
+
+<span class="t-sig">❯</span> <span class="cursor"></span></pre></div>
+        <div class="nudge">↑ 3 AHEAD OF ORIGIN <span class="btn">CREATE PR</span></div>
+      </section>
+
+      <section class="empty">
+        <svg class="ewe" width="58" height="52" viewBox="0 0 58 52" aria-hidden="true">
+          <circle cx="29" cy="30" r="13" />
+          <circle cx="20" cy="15" r="5" />
+          <circle cx="29" cy="12" r="5.5" />
+          <circle cx="38" cy="15" r="5" />
+          <ellipse cx="11" cy="28" rx="5.5" ry="3" />
+          <ellipse cx="47" cy="28" rx="5.5" ry="3" />
+          <circle cx="24.5" cy="29" r="1.4" stroke="none" style="fill: var(--wool-dim)" />
+          <circle cx="33.5" cy="29" r="1.4" stroke="none" style="fill: var(--wool-dim)" />
+          <path d="M26.5 36 C27.5 37.2, 30.5 37.2, 31.5 36" />
+        </svg>
+        <div class="say">Nothing grazing here yet.</div>
+        <div class="hint"><span class="key">⌘T</span> COMPOSE A TASK</div>
+      </section>
+    </div>
+  </div>
+
+  <div class="statusbar">
+    <span class="cell"><i style="background: var(--cobalt)"></i> 2 WORKING</span>
+    <span class="cell"><i style="background: var(--hay)"></i> 1 BLOCKED</span>
+    <span class="cell"><i style="background: var(--ember)"></i> 1 ERROR</span>
+    <span class="right"><span>PHONE LINKED</span><span>THEME: WOOL-DARK</span></span>
+  </div>
+</div>
+
+<script>
+  (function () {
+    // ---- the flock: pixel sheep sprites, 11×8 grid, 2 frames, ~500ms ----
+    var BODY = [[2,2],[3,2],[4,2],[5,2],[1,3],[2,3],[3,3],[4,3],[5,3],[6,3],[2,4],[3,4],[4,4],[5,4],[6,4]];
+    var HEAD = [[7,2],[8,2],[7,3]];
+    var LEGS_A = [[2,5],[2,6],[5,5],[5,6]];
+    var LEGS_B = [[3,5],[3,6],[6,5],[6,6]];
+    function shift(px, dx, dy) { return px.map(function (p) { return [p[0]+dx, p[1]+dy]; }); }
+    var SHEEP = {
+      standing: { color: 'var(--wool-faint)',
+        frames: [BODY.concat(HEAD, LEGS_A)] },
+      walking: { color: 'var(--cobalt)',
+        frames: [BODY.concat(HEAD, LEGS_A), BODY.concat(HEAD, LEGS_B)] },
+      grazing: { color: 'var(--pasture)',
+        frames: [BODY.concat([[7,3],[8,4]], LEGS_A), BODY.concat([[7,4],[8,5]], LEGS_A)],
+        extra: { px: [[8,6],[10,6]], color: 'var(--pasture)', opacity: .5 } },
+      blocked: { color: 'var(--hay)',
+        frames: [BODY.concat(HEAD, LEGS_A), shift(BODY.concat(HEAD), 1, 0).concat(shift(LEGS_A, 1, 0))],
+        extra: { px: [[10,1],[10,2],[10,3],[10,4],[10,5],[10,6]], color: 'var(--wool-faint)', opacity: .9 } },
+      error: { color: 'var(--ember)',
+        frames: [
+          shift(BODY, 0, 1).concat([[7,5],[8,5]], [[2,1],[2,2],[5,1],[5,2]]),
+          shift(BODY, 0, 1).concat([[7,5],[8,5]], [[3,1],[3,2],[6,1],[6,2]])
+        ] }
+    };
+    var NS = 'http://www.w3.org/2000/svg';
+    function rects(px, color, opacity) {
+      var g = document.createElementNS(NS, 'g');
+      if (opacity) g.setAttribute('opacity', opacity);
+      px.forEach(function (p) {
+        var r = document.createElementNS(NS, 'rect');
+        r.setAttribute('x', p[0]); r.setAttribute('y', p[1]);
+        r.setAttribute('width', 1); r.setAttribute('height', 1);
+        r.setAttribute('fill', color);
+        g.appendChild(r);
+      });
+      return g;
+    }
+    var reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var animated = [];
+    document.querySelectorAll('[data-sheep]').forEach(function (host) {
+      var spec = SHEEP[host.getAttribute('data-sheep')];
+      if (!spec) return;
+      var svg = document.createElementNS(NS, 'svg');
+      svg.setAttribute('viewBox', '0 0 12 8');
+      if (spec.extra) svg.appendChild(rects(spec.extra.px, spec.extra.color, spec.extra.opacity));
+      var groups = spec.frames.map(function (f, i) {
+        var g = rects(f, spec.color);
+        if (i > 0) g.setAttribute('visibility', 'hidden');
+        svg.appendChild(g);
+        return g;
+      });
+      host.appendChild(svg);
+      if (groups.length > 1 && !reduced) animated.push(groups);
+    });
+    if (animated.length) {
+      var tick = 0;
+      setInterval(function () {
+        tick++;
+        animated.forEach(function (groups, k) {
+          var on = (tick + k) % groups.length;
+          groups.forEach(function (g, i) { g.setAttribute('visibility', i === on ? 'visible' : 'hidden'); });
+        });
+      }, 500);
+    }
+
+    // ---- scramble (provisioning) ----
+    if (reduced) return;
+    var el = document.getElementById('scramble');
+    var final_ = 'provisioning worktree…';
+    var glyphs = '!<>-_\\/[]{}—=+*^?#';
+    var f = 0;
+    setInterval(function () {
+      f++;
+      var reveal = Math.floor((f % 90) / 3);
+      var out = '';
+      for (var j = 0; j < final_.length; j++) {
+        out += (j < reveal || final_[j] === ' ') ? final_[j] : glyphs[(Math.random() * glyphs.length) | 0];
+      }
+      el.textContent = out;
+    }, 70);
+  })();
+</script>
