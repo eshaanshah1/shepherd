@@ -1,4 +1,4 @@
-import type { Clock, Disposable, Result, SessionID } from '@shepherd/sdk';
+import type { Clock, Disposable, PaneID, Result, SessionID } from '@shepherd/sdk';
 import type { SessionError, SessionExit, SessionInfo, SessionSpec } from '@shepherd/core';
 import { OutputCoalescer } from '../shared/coalescer.ts';
 import { EMIT, type SessionDataMessage, type SessionExitMessage } from '../shared/channels.ts';
@@ -34,10 +34,31 @@ export interface RendererTarget {
   send(channel: string, payload: SessionDataMessage | SessionExitMessage): void;
 }
 
+/**
+ * The layout's half of "a leaf carries its session".
+ *
+ * The binding is made HERE, where a session is created, and not in the renderer
+ * that asked for one. That is what makes core's `layout.close` able to end a
+ * session at all: ⌘W, `shepherd pane close` and an extension all reach
+ * `LayoutStore.close`, which kills through its `SessionSink` — and a store that
+ * was never told which session a pane shows would close the pane and leak the
+ * pty, while the renderer's own close path double-killed it.
+ *
+ * A create with no `paneId` binds nothing: a session that no pane shows is a
+ * legitimate thing (an extension's, later), and inventing a pane for it would put
+ * a lie in the tree.
+ */
+export interface LayoutBinding {
+  bind(pane: PaneID, session: SessionID): void;
+  unbind(session: SessionID): void;
+}
+
 export interface SessionBridgeOptions {
   readonly clock: Clock;
   readonly intervalMs?: number;
   readonly maxBytes?: number;
+  /** Absent = nothing owns a layout yet (a test, or the session smoke). */
+  readonly layout?: LayoutBinding;
 }
 
 interface Attachment {
@@ -60,7 +81,11 @@ export class SessionBridge {
   }
 
   create(spec: SessionSpec): Result<SessionInfo, SessionError> {
-    return this.#host.create(spec);
+    const created = this.#host.create(spec);
+    if (created.ok && spec.paneId !== undefined) {
+      this.#options.layout?.bind(spec.paneId, created.value.id);
+    }
+    return created;
   }
 
   /**
@@ -157,6 +182,11 @@ export class SessionBridge {
   }
 
   #onSessionExit(exit: SessionExit): void {
+    // Before the fan-out: a pane whose program has ended is still a pane, and a
+    // snapshot that keeps advertising a dead session id would have the next
+    // `layout.close` kill something that no longer exists.
+    this.#options.layout?.unbind(exit.sessionId);
+
     const message: SessionExitMessage = {
       sessionId: exit.sessionId,
       exitCode: exit.exitCode,

@@ -3,8 +3,9 @@ import { join } from 'node:path';
 import { app, BrowserWindow } from 'electron';
 import { color } from '@shepherd/design-tokens';
 import { appName, shellDefaults } from '@shepherd/platform-darwin';
-import { SessionHost } from '@shepherd/core';
-import { systemClock } from '@shepherd/sdk';
+import { CommandRegistry, SessionHost, emptyGrants } from '@shepherd/core';
+import { LayoutStore, registerLayoutCommands } from '@shepherd/core/layout';
+import { createLogger, rootId, systemClock } from '@shepherd/sdk';
 import { IS_DEV } from './build-flags.ts';
 import {
   bootstrap,
@@ -16,7 +17,9 @@ import { windowOptions } from './window-options.ts';
 import { SessionBridge } from './session-bridge.ts';
 import { registerSessionIpc } from './ipc.ts';
 import { registerWindowIpc } from './window-ipc.ts';
+import { registerLayoutIpc } from './layout-ipc.ts';
 import { installMenu } from './menu.ts';
+import { menuDispatcher } from './menu-dispatch.ts';
 
 /**
  * The Electron entry point (electron-vite builds this to `out/main`, and
@@ -35,6 +38,12 @@ import { installMenu } from './menu.ts';
  * The `SessionHost` is built here and is deliberately NOT owned by a window: it
  * is the registry a React unmount must not be able to reach. Windows come and
  * go against it.
+ *
+ * P4a adds the other three kernel pieces at the same level, and for the same
+ * reason: the `CommandRegistry` (the one verb table every transport dispatches
+ * into), the `LayoutStore` (which now owns the pane tree — the renderer projects
+ * it), and the `LayoutStore`'s `SessionSink`, which is what makes `layout.close`
+ * the thing that ends a session rather than a view's unmount.
  */
 
 /** electron-vite sets this in dev; in a packaged build it is absent. */
@@ -72,12 +81,70 @@ if (!boot.hasLock) {
   app.exit(EXIT_SECOND_INSTANCE);
 }
 
-// --- the session registry, which outlives every window and every view.
+// --- the kernel. All of it outlives every window and every view.
+const logger = createLogger({
+  clock: systemClock,
+  level: IS_DEV ? 'debug' : 'info',
+  // stdout for now, prefixed like everything else this process says. The rotating
+  // file v1 had is a later, deliberate addition; what matters today is that a
+  // branch ending in "and then nothing happens" has somewhere to say so.
+  sink: (line) => process.stdout.write(`[shepherd] ${line}\n`),
+});
+
 const host = new SessionHost({
   onError: (error, context) =>
     process.stderr.write(`[shepherd] session ${context}: ${String(error)}\n`),
 });
-const bridge = new SessionBridge(host, { clock: systemClock });
+
+const registry = new CommandRegistry({
+  logger,
+  // Nothing is granted yet — `PermissionStore` is P5. A `user` caller is always
+  // allowed (`authorize`), which is every caller M1's chrome has, so an empty
+  // grant set is the honest value rather than a placeholder.
+  grants: () => emptyGrants(),
+});
+
+/**
+ * The layout. Its `SessionSink` is the `SessionHost`, which is the entire reason
+ * the sink is a required constructor argument in core: there is no way to build a
+ * store that closes a pane and forgets the pty behind it.
+ *
+ * No `storage`: layout persistence stays unwired until something in main owns a
+ * `SqliteStore`. A persisted tree would also make both smokes non-deterministic —
+ * they assert "the app opens with one pane", and a previous run's three-pane
+ * layout would restore into it.
+ */
+const layout = new LayoutStore({
+  logger,
+  clock: systemClock,
+  sessions: { kill: (id) => void host.kill(id) },
+});
+
+const ROOT = rootId('window-1');
+
+/**
+ * Assigned once `registerLayoutIpc` exists, which is inside `whenReady` because
+ * that is where every other IPC handler is registered. The bridge is built before
+ * it and needs to publish, so the indirection is the seam rather than a second
+ * ordering rule to remember. Before assignment there is no renderer to tell.
+ */
+let publishLayout: () => void = () => undefined;
+
+const bridge = new SessionBridge(host, {
+  clock: systemClock,
+  // A pane's session is bound where it is created (see `LayoutBinding`), so
+  // `layout.close` — from ⌘W, from the CLI, from an extension — is what ends it.
+  layout: {
+    bind: (pane, session) => {
+      layout.bindSession(pane, session);
+      publishLayout();
+    },
+    unbind: (session) => {
+      layout.unbindSession(session);
+      publishLayout();
+    },
+  },
+});
 
 export function createWindow(): BrowserWindow {
   const win = new BrowserWindow(
@@ -158,9 +225,38 @@ function captureIfAsked(win: BrowserWindow): void {
 void app.whenReady().then(async () => {
   registerSessionIpc(bridge, { defaults: shellDefaults() });
   registerWindowIpc();
-  // No `dispatch` override: a command goes to the focused window's renderer,
-  // which is the only process that knows what a pane is.
-  installMenu({ appName: appName(IS_DEV), isDev: IS_DEV });
+
+  const layoutIpc = registerLayoutIpc({ store: layout, registry, root: ROOT });
+  publishLayout = layoutIpc.publish;
+
+  registerLayoutCommands({
+    store: layout,
+    registry,
+    // ⌘W's fall-through, decided in exactly one place. Core does not know what a
+    // window is; it knows that a root has run out of panes, which is the only
+    // case in which closing one may close a window.
+    onLastPaneClosed: () => {
+      const target = BrowserWindow.getAllWindows().find((win) => !win.isDestroyed());
+      if (target === undefined) {
+        logger.warn('app', 'last pane closed but there is no window to close');
+        return;
+      }
+      target.close();
+    },
+  });
+
+  // The tree exists before the page can ask for it: `layout:get` is the first
+  // thing the renderer does, and a root that is not open yet would answer
+  // `no-root` and leave a blank window with nothing anywhere saying why.
+  layout.open(ROOT);
+
+  installMenu({
+    appName: appName(IS_DEV),
+    isDev: IS_DEV,
+    dispatch: menuDispatcher(registry, (command, message) =>
+      logger.warn('command', `menu ${command}: ${message}`),
+    ),
+  });
 
   // `hold` opens no window: it exists so `pnpm smoke:single-instance` can have
   // a live process owning the lock while a second one tries for it.
@@ -194,6 +290,11 @@ app.on('window-all-closed', () => {
 });
 
 app.on('will-quit', () => {
+  // The layout write is debounced (a drag would otherwise write per mousemove),
+  // so the pending one has to be forced out here or the last change made before
+  // quitting is the one that never lands.
+  layout.flush();
+  layout.dispose();
   bridge.dispose();
   host.dispose();
 });

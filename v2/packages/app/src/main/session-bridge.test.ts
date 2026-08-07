@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { manualClock, sessionId, toDisposable, type Disposable, type SessionID } from '@shepherd/sdk';
+import {
+  manualClock,
+  nullLogger,
+  rootId,
+  sessionId,
+  systemClock,
+  toDisposable,
+  type Disposable,
+  type PaneID,
+  type RootID,
+  type SessionID,
+} from '@shepherd/sdk';
+import { LayoutStore } from '@shepherd/core/layout';
 import type { SessionError, SessionExit, SessionInfo, SessionSpec } from '@shepherd/core';
 import { COALESCE, EMIT, type SessionDataMessage, type SessionExitMessage } from '../shared/index.ts';
 import { SessionBridge, type RendererTarget, type SessionHostLike } from './session-bridge.ts';
@@ -251,5 +263,111 @@ describe('SessionBridge exit', () => {
     host.exit(created.value.id, 0);
     expect(a.sent.filter((s) => s.channel === EMIT.sessionExit)).toHaveLength(1);
     expect(b.sent.filter((s) => s.channel === EMIT.sessionExit)).toHaveLength(1);
+  });
+});
+
+/**
+ * The pane→session binding, which is what makes core's `layout.close` able to end
+ * a session at all.
+ *
+ * It lives here rather than in `ipc.ts` for one reason: `ipc.ts` imports electron
+ * and this does not, so the claim can be asserted against a REAL `LayoutStore`
+ * with exact values instead of by closing a pane in a running app and looking at
+ * `ps`. The store is the real one on purpose — the thing being tested is that
+ * `store.close` reaches the pty, and a fake store would only prove that a method
+ * was called.
+ */
+describe('SessionBridge → layout binding', () => {
+  function withLayout(): {
+    host: FakeHost;
+    bridge: SessionBridge;
+    store: LayoutStore;
+    killed: SessionID[];
+    root: RootID;
+  } {
+    const host = new FakeHost();
+    const killed: SessionID[] = [];
+    const store = new LayoutStore({
+      logger: nullLogger,
+      clock: systemClock,
+      sessions: { kill: (id) => void killed.push(id) },
+    });
+    const root = rootId('window-1');
+    store.open(root);
+    const bridge = new SessionBridge(host, {
+      clock: manualClock(),
+      layout: {
+        bind: (pane, session) => store.bindSession(pane, session),
+        unbind: (session) => store.unbindSession(session),
+      },
+    });
+    return { host, bridge, store, killed, root };
+  }
+
+  it('binds a created session to the pane that asked for it', () => {
+    const h = withLayout();
+    const pane = h.store.focused(h.root);
+    expect(pane).not.toBeNull();
+
+    const created = h.bridge.create({ cwd: '/tmp', command: '/bin/sh', paneId: pane as PaneID });
+
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    expect(h.store.sessionFor(pane as PaneID)).toBe(created.value.id);
+  });
+
+  it('so closing that pane ends the pty — the whole point of the binding', () => {
+    const h = withLayout();
+    const pane = h.store.focused(h.root) as PaneID;
+    // Two panes, so the close is an ordinary one rather than the last-pane case.
+    const second = h.store.split(h.root, 'row');
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+
+    const a = h.bridge.create({ cwd: '/tmp', command: '/bin/sh', paneId: pane });
+    const b = h.bridge.create({ cwd: '/tmp', command: '/bin/sh', paneId: second.value });
+    expect(a.ok && b.ok).toBe(true);
+    if (!a.ok || !b.ok) return;
+
+    h.store.close(second.value);
+
+    // Exactly the closed pane's session, and nothing else's. Killing the wrong
+    // one is the failure that looks like "closing a pane killed my agent".
+    expect(h.killed).toEqual([b.value.id]);
+    expect(h.store.sessionFor(pane)).toBe(a.value.id);
+  });
+
+  it('binds nothing for a session no pane asked for', () => {
+    // A session with no `paneId` is legitimate (an extension's, later). Inventing
+    // a pane for it would put a lie in the tree.
+    const h = withLayout();
+    const pane = h.store.focused(h.root) as PaneID;
+
+    const created = h.bridge.create({ cwd: '/tmp', command: '/bin/sh' });
+
+    expect(created.ok).toBe(true);
+    expect(h.store.sessionFor(pane)).toBeUndefined();
+  });
+
+  it('unbinds a session that exited on its own, so the pane is not holding a corpse', () => {
+    const h = withLayout();
+    const pane = h.store.focused(h.root) as PaneID;
+    const created = h.bridge.create({ cwd: '/tmp', command: '/bin/sh', paneId: pane });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    h.host.exit(created.value.id, 0);
+
+    expect(h.store.sessionFor(pane)).toBeUndefined();
+    // …and closing the pane now kills nothing, rather than a stale id.
+    h.store.close(pane);
+    expect(h.killed).toEqual([]);
+  });
+
+  it('works with no layout at all — the session smoke has none', () => {
+    const { host, bridge } = setup();
+    expect(() => bridge.create({ cwd: '/tmp', command: '/bin/sh' })).not.toThrow();
+    const created = host.create({ cwd: '/tmp', command: '/bin/sh' });
+    expect(() => host.exit(created.value.id, 0)).not.toThrow();
   });
 });

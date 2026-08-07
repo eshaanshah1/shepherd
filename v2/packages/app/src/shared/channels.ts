@@ -1,6 +1,8 @@
 // The IPC vocabulary, in one file both processes import. Shared code is loaded
 // in main AND renderer, so it may import neither electron nor react (lint).
 
+import type { Rect, SplitNode } from '@shepherd/core/layout';
+
 /** Renderer → main, request/response (`ipcRenderer.invoke`). */
 export const INVOKE = {
   sessionCreate: 'session:create',
@@ -12,13 +14,14 @@ export const INVOKE = {
   sessionKill: 'session:kill',
   windowClose: 'window:close',
   layoutGet: 'layout:get',
+  layoutViewport: 'layout:viewport',
+  commandInvoke: 'command:invoke',
 } as const;
 
 /** Main → renderer, fire-and-forget (`webContents.send`). */
 export const EMIT = {
   sessionData: 'session:data',
   sessionExit: 'session:exit',
-  command: 'app:command',
   layoutChanged: 'layout:changed',
 } as const;
 
@@ -92,6 +95,37 @@ export interface SessionDescriptor {
   readonly cols: number;
   readonly rows: number;
 }
+
+/**
+ * The layout, as the renderer receives it. Main owns the tree; this is the
+ * projection it pushes on `layout:changed` and answers `layout:get` with.
+ *
+ * **The tree crosses as plain `SplitNode` data.** That is why the type above
+ * refuses to alias core's session DTOs but this one aliases core's tree: the
+ * objection there is that a type alias is one refactor away from a *value*
+ * import dragging node-pty into a page, and `@shepherd/core/layout` has no
+ * node-pty, no electron and no OS API anywhere in its import graph — it is the
+ * one core subpath the renderer may import outright (`tooling/eslint/boundaries.js`).
+ * `SplitNode` is readonly interfaces of strings and numbers, so Electron's
+ * structured clone carries it as-is.
+ *
+ * It is emphatically NOT run through `serializeNode`/`deserializeNode` on the
+ * way: `deserializeNode` mints FRESH pane ids by design (a restored pane is a
+ * new pane), which on a per-update wire would rename every pane on every push
+ * and destroy the identity the terminal registry is keyed by.
+ */
+export interface LayoutSnapshot {
+  readonly root: string;
+  readonly tree: SplitNode;
+  /** Already resolved: never a stale id, and never null while a pane exists. */
+  readonly focusedPaneId: string | null;
+  readonly zoomedPaneId: string | null;
+  /** paneId -> sessionId, for panes showing a live session. */
+  readonly sessions: Readonly<Record<string, string>>;
+}
+
+/** The pane area, in its own coordinates. Pushed by the renderer on resize. */
+export type ViewportRect = Rect;
 
 export interface IpcError {
   readonly code: string;
