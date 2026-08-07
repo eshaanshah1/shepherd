@@ -151,19 +151,12 @@ export class ExtensionRegistry {
     }));
   }
 
-  /**
-   * The ids this extension may reach through `extensions.get` — its **declared**
-   * dependencies, and nothing else (§7c: cross-extension calls are declared, not
-   * discovered, so reaching another extension's API is a reviewable fact in the
-   * manifest rather than a string a caller invents at runtime).
-   *
-   * Liveness is not folded in. Whether a declared id resolves to a live API is
-   * `extensions.get`'s answer at the moment of the call; deciding it twice, in two
-   * places, is how the two disagree.
-   */
-  apiFor(id: ExtensionID): readonly string[] {
-    return this.#entries.get(id)?.manifest.dependencies ?? [];
-  }
+  // The declared-dependency gate that `extensions.get` and `points.get` enforce
+  // used to have a second implementation here (`apiFor`), with tests and no
+  // production callers. It is gone: resolution happens in the extension host's
+  // utility process, which cannot import core, so the judgement lives beside the
+  // resolution in `app/src/ext-host/api.ts` and nowhere else. Two implementations
+  // of one judgement is the drift `boundaries.js` exists to prevent.
 
   activate(id: ExtensionID): Promise<Result<void, string>> {
     return this.#activate(id, []);

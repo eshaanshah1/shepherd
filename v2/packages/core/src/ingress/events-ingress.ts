@@ -3,22 +3,29 @@ import type { EventBus } from '../events/bus.ts';
 import { UnixHttpServer, type Route } from './unix-http.ts';
 
 /**
- * `events.sock` — the external ingress. Hooks are its first client, not a
- * special case: anything that can POST JSON can publish an event.
+ * The external event ingress — `hooks.sock`, wherever main opens it. Hooks are
+ * its first client, not a special case: anything that can POST JSON can publish
+ * an event.
  *
- * The wire shape, one `jq -cn` away in bash:
+ * The wire shape, from bash:
  *
  * ```sh
- * jq -cn --arg s "$SHEPHERD_SESSION_ID" --argjson p "$payload" \
- *   '{topic:"claude.hook", session_id:$s, seq:'"$seq"', payload:$p}' \
- *   | curl -sS --unix-socket "$SHEPHERD_SOCK" -H 'content-type: application/json' \
- *          --data-binary @- http://unix/events
+ * { printf '{"topic":"claude.hook","session_id":"%s","payload":' "$SHEPHERD_SESSION_ID"
+ *   printf '%s' "$payload"
+ *   printf '}'
+ * } | curl -sS --max-time 2 --unix-socket "$SHEPHERD_EVENTS_SOCK" \
+ *       -H 'content-type: application/json' --data-binary @- http://unix/events
  * ```
  *
- * One `jq` builds the whole envelope, which fixes three v1 problems at once: a
- * hand-rolled JSON escaper that missed newlines (invalid JSON = silent drop), a
- * `payload` double-encoded into a JSON *string* because bash cannot compose
- * JSON, and one process per field.
+ * Note what is not there. **No JSON tool**: field extraction happens in
+ * TypeScript on this side, so the hook's own stdin is spliced in verbatim and
+ * there is nothing left for bash to escape — which is what v1's hand-rolled
+ * escaper got wrong (a payload with a newline became invalid JSON and was
+ * dropped in silence), and `jq` is not on a stock macOS anyway. **And no
+ * `seq`**: the bus numbers per source, and a client-side counter is
+ * read-increment-write with no lock, so two concurrent hooks both post the same
+ * number and the second is judged a duplicate and dropped before delivery — a
+ * lost `Stop` strands a pane at `working` for good.
  *
  * **The field is `session_id`, not `pane_id`.** v1's `tab_id` held a pane id —
  * a load-bearing lie across ~10 files — and core-design §5.2 proposed

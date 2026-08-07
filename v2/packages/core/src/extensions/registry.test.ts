@@ -495,41 +495,6 @@ describe('deactivate', () => {
   });
 });
 
-describe('apiFor — what `extensions.get` may resolve', () => {
-  it('is exactly the declared dependencies', async () => {
-    const { registry } = harness();
-    registry.add(raw('shepherd.agents-core'), 'builtin');
-    registry.add(raw('shepherd.worktrees'), 'builtin');
-    registry.add(raw('shepherd.claude-code', { dependencies: ['shepherd.agents-core'] }), 'builtin');
-    await registry.activate(extensionId('shepherd.worktrees'));
-    // `worktrees` is active and installed and STILL unreachable: reaching another
-    // extension's API is a reviewable fact in the manifest, not a string a caller
-    // invents at runtime (§7c).
-    expect(registry.apiFor(extensionId('shepherd.claude-code'))).toEqual(['shepherd.agents-core']);
-  });
-
-  it('is empty for an extension that declared none', () => {
-    const { registry } = harness();
-    registry.add(raw('shepherd.tasks'), 'builtin');
-    registry.add(raw('acme.thing'), 'user');
-    expect(registry.apiFor(extensionId('acme.thing'))).toEqual([]);
-  });
-
-  it('is empty for an unknown extension', () => {
-    expect(harness().registry.apiFor(extensionId('acme.ghost'))).toEqual([]);
-  });
-
-  it('lists a declared dependency even before it is active', () => {
-    // Declared is declared. Whether the id RESOLVES to a live API is
-    // `extensions.get`'s call at the moment of the call, and folding liveness in
-    // here would give two places an answer to the same question.
-    const { registry } = harness();
-    registry.add(raw('shepherd.agents-core'), 'builtin');
-    registry.add(raw('shepherd.claude-code', { dependencies: ['shepherd.agents-core'] }), 'builtin');
-    expect(registry.apiFor(extensionId('shepherd.claude-code'))).toEqual(['shepherd.agents-core']);
-  });
-});
-
 describe('activateFor — a trigger fanned out', () => {
   it('activates every extension that declared onStartup, and nothing else', async () => {
     const { registry, activated } = harness();

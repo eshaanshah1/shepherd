@@ -3,6 +3,7 @@ import {
   ok,
   err,
   toDisposable,
+  PointRegistry,
   type AttentionAPI,
   type Caller,
   type CategoryLogger,
@@ -15,9 +16,11 @@ import {
   type EventAPI,
   type ExtensionContext,
   type ExtensionID,
+  type ExtensionPoint,
   type ExtensionsAPI,
   type KV,
   type LayoutAPI,
+  type Logger,
   type LogLevel,
   type Permission,
   type PointsAPI,
@@ -37,22 +40,35 @@ import type { ApiCall, WireError, WireResult } from '../shared/ext-protocol.ts';
  * process out of nothing but a message port.
  *
  * **Every member is either a real dispatch to the host or a typed refusal**, and
- * a refusal is always one of exactly two kinds, each named at its call site:
+ * a refusal is always one of exactly four kinds, each named at its call site:
  *
  *   - `LANDS_IN(milestone)` — typed in the SDK, not built yet. `ProcessAPI` and
  *     `SecretStore` were declared unimplemented in M1 by the plan itself;
- *     `sessions` and `points` arrive with M2's agents, `views` with M3's first
- *     real view contribution.
+ *     `sessions` arrives with M2's agents, `views` with M3's first real view
+ *     contribution.
  *   - `ACROSS_A_PORT` — the signature is **synchronous** and the answer lives in
  *     another process. `KV.get`, `commands.list`, `attention.count` and every
  *     `LayoutAPI` read are in this class. The fix is a pushed mirror, which the
  *     first view contribution needs anyway; inventing one now would be building
  *     for a later milestone.
+ *   - `UndeclaredDependencyError` — the caller asked for another extension's API
+ *     or point without naming its owner in the manifest's `dependencies`.
+ *     Cross-extension access is **declared, not discovered** (sketch §7c), which
+ *     is the whole reason it is reviewable; a caller that routed around the
+ *     manifest has a manifest bug and must be told so at the call.
+ *   - `ExtensionUnreachableError` — the dependency is declared and its API still
+ *     cannot be handed over: nothing here hosts it, or it activated and exported
+ *     nothing.
  *
- * The third option — return `undefined`, or an empty array, or silently do
- * nothing — is the one thing this file will not do. That is the `acceptBridged`
- * failure: an extension that believes it contributed, a host that never saw it,
- * and no line anywhere saying so.
+ * The last two exist because **`undefined` is already spoken for**. `ExtensionsAPI
+ * .get` types it as "not active", so returning it for "lives in another process"
+ * or "exported nothing" would make three different facts one answer — the exact
+ * ambiguity the rest of this file is built to remove.
+ *
+ * The other option — return `undefined` where it means nothing, or an empty
+ * array, or silently do nothing — is the one thing this file will not do. That is
+ * the `acceptBridged` failure: an extension that believes it contributed, a host
+ * that never saw it, and no line anywhere saying so.
  */
 
 export class NotImplementedError extends Error {
@@ -68,6 +84,55 @@ export class NotImplementedError extends Error {
     super(`${capability} is not available in this build — ${reason}`);
     this.name = 'NotImplementedError';
     this.capability = capability;
+    this.reason = reason;
+  }
+}
+
+/**
+ * A caller reaching for something it never declared.
+ *
+ * Not a `denied` from the host's authorizer: that one is about *permissions*,
+ * decided in main. This is decided here, in the child, because here is where the
+ * resolution happens and a judgement made in two places is a judgement two places
+ * can disagree about — which is why core's unused `ExtensionRegistry.apiFor` was
+ * deleted rather than joined.
+ */
+export class UndeclaredDependencyError extends Error {
+  /** Declared and assigned: parameter properties are not erasable syntax. */
+  readonly capability: string;
+  readonly caller: string;
+  readonly requested: string;
+
+  constructor(capability: string, caller: string, requested: string) {
+    super(
+      `${capability}: ${caller} did not declare "${requested}" in its manifest \`dependencies\`, so nothing was resolved. ` +
+        'Reaching another extension is declared, not discovered (sketch §7c) — that is what makes it a reviewable fact ' +
+        'rather than a string a caller invents at runtime. Add it to the manifest.',
+    );
+    this.name = 'UndeclaredDependencyError';
+    this.capability = capability;
+    this.caller = caller;
+    this.requested = requested;
+  }
+}
+
+/** Declared, and its API still cannot be handed over. */
+export class ExtensionUnreachableError extends Error {
+  readonly requested: string;
+  readonly reason: 'not-hosted' | 'no-export';
+
+  constructor(capability: string, requested: string, reason: 'not-hosted' | 'no-export') {
+    super(
+      `${capability}: ${
+        reason === 'not-hosted'
+          ? `no module for "${requested}" runs in this extension host. It is either absent from this build or ` +
+            'running in another process — the child cannot tell those two apart, and either way its API is not ' +
+            'reachable from here'
+          : `"${requested}" is active but its activate() returned no API, so there is nothing to hand over`
+      }. Deliberately not \`undefined\`, which already means "hosted here and not active".`,
+    );
+    this.name = 'ExtensionUnreachableError';
+    this.requested = requested;
     this.reason = reason;
   }
 }
@@ -372,23 +437,160 @@ function createViews(): ViewAPI {
   };
 }
 
-function createPoints(): PointsAPI {
-  const refuse = (member: string): never => {
-    throw new NotImplementedError(
-      `points.${member}`,
-      'a point hands back a live object holding provider functions, which cannot cross a port. ' +
-        "Core's PointRegistry is built and tested; wiring it to a utility-process extension lands with M2, " +
-        'its first real consumer.',
-    );
-  };
-  return { define: () => refuse('define'), get: () => refuse('get') };
+// ------------------------------------------------------ what the process shares
+
+export interface ExtensionWorldOptions {
+  /**
+   * Every extension id this process has a module for. It is the discriminator
+   * behind `not-hosted`: an id outside this set cannot be resolved here whatever
+   * its state elsewhere, and saying so beats a `false` that reads like knowledge.
+   */
+  readonly hosted: ReadonlySet<string>;
+  /**
+   * For the point registry. `info`, not `debug`: the line that must never be lost
+   * is its warning about a provider registered into a disposed seam, and a define
+   * or a register per activation is not worth the stderr.
+   */
+  readonly logger: Logger;
 }
 
-function createExtensions(): ExtensionsAPI {
-  const refuse = (member: string): never => {
-    throw new NotImplementedError(`extensions.${member}`, ACROSS_A_PORT);
+/**
+ * The one address space every extension in this utility process shares — the
+ * point registry and the table of exported APIs.
+ *
+ * Held by the runtime and handed to each extension's API object, so `agents-core`
+ * defining a point and `claude-code` registering into it are two calls into the
+ * same `PointRegistry` rather than two registries agreeing about nothing.
+ */
+export class ExtensionWorld {
+  readonly #hosted: ReadonlySet<string>;
+  readonly #logger: Logger;
+  readonly #exports = new Map<string, { readonly api: unknown }>();
+  #points: PointRegistry | undefined;
+
+  constructor(options: ExtensionWorldOptions) {
+    this.#hosted = options.hosted;
+    this.#logger = options.logger;
+  }
+
+  /** Built on first use, so a process whose extensions define no point pays nothing. */
+  points(): PointRegistry {
+    this.#points ??= new PointRegistry({ logger: this.#logger });
+    return this.#points;
+  }
+
+  hosts(id: string): boolean {
+    return this.#hosted.has(id);
+  }
+
+  /**
+   * What `id` returned from `activate`, wrapped — because the wrapper is present
+   * for an extension that is active and exported nothing, and absent for one that
+   * is not active, and those are different answers.
+   */
+  exportOf(id: string): { readonly api: unknown } | undefined {
+    return this.#exports.get(id);
+  }
+
+  recordExport(id: string, api: unknown): void {
+    this.#exports.set(id, { api });
+  }
+
+  /** Teardown: the extension is gone, so its export and its seams go with it. */
+  forget(id: string): void {
+    this.#exports.delete(id);
+    this.#points?.disposeOwnedBy(id);
+  }
+}
+
+/**
+ * `points` and `extensions`, per calling extension.
+ *
+ * `id` is the host's word for who is asking (it comes off the `activate` ask, not
+ * off anything the extension says), and `dependencies` is that extension's
+ * declared manifest list. Both gates below read exactly those two.
+ */
+interface CallerOptions {
+  readonly id: string;
+  readonly dependencies: readonly string[];
+  readonly world: ExtensionWorld;
+}
+
+/**
+ * Points, for real — one registry shared by every extension in this process.
+ *
+ * That sharing is the substance of §7b rather than a shortcut: `registerAgentKind`
+ * carries `detect` and a state machine, which are **functions**, and a function
+ * cannot cross a message port. Putting every extension service in one utility
+ * process is what makes an in-process registry the correct implementation instead
+ * of a compromise.
+ */
+function createPoints(options: CallerOptions): PointsAPI {
+  const { id, dependencies, world } = options;
+  return {
+    define<T>(pointId: string, opts?: { readonly order?: 'priority' | 'registration' }): ExtensionPoint<T> {
+      // The owner is supplied here, never by the caller: an extension that could
+      // name itself could name somebody else, and the gate below would be a claim
+      // rather than a fact. A collision throws `DuplicatePointError` naming the
+      // first owner — a second registry under one id would silently orphan every
+      // provider the first owner's dependents registered.
+      return world.points().define<T>(pointId, { ...opts, owner: id });
+    },
+
+    get<T>(pointId: string): ExtensionPoint<T> | undefined {
+      const registry = world.points();
+      const point = registry.get<T>(pointId);
+      // Undefined covers "nobody defines this seam" AND "its owner is gone" — the
+      // registry frees the id on dispose, so those two collapse into one honest
+      // answer rather than needing a liveness table of their own.
+      if (point === undefined) return undefined;
+      const owner = registry.ownerOf(pointId);
+      if (owner === id) return point;
+      if (owner === undefined || !dependencies.includes(owner)) {
+        throw new UndeclaredDependencyError(`points.get("${pointId}")`, id, owner ?? '<unowned>');
+      }
+      return point;
+    },
   };
-  return { get: () => refuse('get'), isActive: () => refuse('isActive') };
+}
+
+/**
+ * Cross-extension APIs, for real — the sketch's §3 dependency arrows, made
+ * callable.
+ *
+ * An extension's `activate` may return an object; the runtime records it, and
+ * this resolves it for callers that declared the exporter. Three outcomes, kept
+ * distinguishable on purpose (see the header): a typed refusal for undeclared, a
+ * typed refusal for unreachable, and `undefined` for the one thing `undefined`
+ * means — hosted here, not active.
+ */
+function createExtensions(options: CallerOptions): ExtensionsAPI {
+  const { id, dependencies, world } = options;
+  const declared = (capability: string, requested: string): void => {
+    if (!dependencies.includes(requested)) throw new UndeclaredDependencyError(capability, id, requested);
+  };
+  return {
+    get<T>(requested: string): T | undefined {
+      const capability = `extensions.get("${requested}")`;
+      declared(capability, requested);
+      const record = world.exportOf(requested);
+      if (record === undefined) {
+        if (!world.hosts(requested)) throw new ExtensionUnreachableError(capability, requested, 'not-hosted');
+        return undefined;
+      }
+      if (record.api === undefined) throw new ExtensionUnreachableError(capability, requested, 'no-export');
+      return record.api as T;
+    },
+
+    isActive(requested: string): boolean {
+      const capability = `extensions.isActive("${requested}")`;
+      declared(capability, requested);
+      // `false` would be a guess about a process we cannot see, and a guess that
+      // reads exactly like a fact is worse than a refusal.
+      if (!world.hosts(requested)) throw new ExtensionUnreachableError(capability, requested, 'not-hosted');
+      return world.exportOf(requested) !== undefined;
+    },
+  };
 }
 
 function createProcess(): ProcessAPI {
@@ -407,12 +609,18 @@ export interface ShepherdOptions {
    */
   readonly proposed: boolean;
   readonly services: ExtHostServices;
+  /** Whose API object this is — the host's word, from the `activate` ask. */
+  readonly id: string;
+  /** That extension's declared `dependencies`, the only ids it may reach. */
+  readonly dependencies: readonly string[];
+  readonly world: ExtensionWorld;
 }
 
 export function createShepherd(options: ShepherdOptions): Shepherd {
-  const { services } = options;
+  const { services, id, dependencies, world } = options;
   const gated = <T extends object>(group: string, build: () => T): T =>
     options.proposed ? build() : (refuseGroup(group) as T);
+  const caller: CallerOptions = { id, dependencies, world };
 
   const proposed: ProposedAPI = {
     commands: gated('commands', () => createCommands(services)),
@@ -421,8 +629,8 @@ export function createShepherd(options: ShepherdOptions): Shepherd {
     layout: createLayout(),
     views: createViews(),
     attention: gated('attention', () => createAttention(services)),
-    points: createPoints(),
-    extensions: createExtensions(),
+    points: gated('points', () => createPoints(caller)),
+    extensions: gated('extensions', () => createExtensions(caller)),
     process: createProcess(),
   };
   return { version: options.apiVersion, proposed };

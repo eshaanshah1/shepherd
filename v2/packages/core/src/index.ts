@@ -122,6 +122,9 @@ export {
   type WillCreateEvent,
   type WillCreateHook,
   type WillCreatePatch,
+  registerSessionCommands,
+  SESSION_COMMANDS,
+  type SessionCommandsOptions,
 } from './session/index.ts';
 
 export { ViewingResolver, type Presence } from './attention/index.ts';

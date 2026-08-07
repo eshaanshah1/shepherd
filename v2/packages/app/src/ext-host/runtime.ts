@@ -1,4 +1,5 @@
 import {
+  createLogger,
   disposeAll,
   extensionId,
   isPermission,
@@ -23,7 +24,13 @@ import {
   type HostFrame,
   type WireResult,
 } from '../shared/ext-protocol.ts';
-import { createContext, createShepherd, type ExtHostServices, type ExtensionCommand } from './api.ts';
+import {
+  createContext,
+  createShepherd,
+  ExtensionWorld,
+  type ExtHostServices,
+  type ExtensionCommand,
+} from './api.ts';
 
 /**
  * The extension host, as a state machine over frames — everything the utility
@@ -77,6 +84,8 @@ interface Loaded {
   readonly handle: string;
   readonly commands: Map<string, ExtensionCommand>;
   context?: ExtensionContext;
+  /** Its manifest's `dependencies` — the only ids its API object will resolve. */
+  readonly dependencies: readonly string[];
 }
 
 interface Subscription {
@@ -95,6 +104,12 @@ export class ExtHostRuntime {
   readonly #pending = new Map<string, (result: WireResult) => void>();
   readonly #loaded = new Map<string, Loaded>();
   readonly #subscriptions = new Map<string, Subscription>();
+  /**
+   * Extension code runs in one address space, so the seams *between* extensions
+   * are ordinary objects rather than a protocol (sketch §7b/§7c) — one point
+   * registry and one table of exported APIs, shared by everything activated here.
+   */
+  readonly #world;
   #state: 'starting' | 'accepted' | 'refused' = 'starting';
   #apiVersion = '0.0.0';
   #subscriptionSeq = 0;
@@ -106,6 +121,13 @@ export class ExtHostRuntime {
     this.#modules = options.modules;
     this.#line = options.log;
     this.#protocol = options.protocol ?? EXT_PROTOCOL_VERSION;
+    this.#world = new ExtensionWorld({
+      hosted: new Set(options.modules.keys()),
+      // Our own stderr, not `#log`: a point registry is shared by every extension
+      // here, so there is no handle to attribute its lines to and inventing one
+      // would put a warning under the wrong extension's name.
+      logger: createLogger({ clock: options.clock, level: 'info', sink: (line) => options.log(line) }),
+    });
   }
 
   /** Announce ourselves. The host judges the version and answers. */
@@ -217,7 +239,13 @@ export class ExtHostRuntime {
     // re-asks, and re-running `activate` would register everything twice.
     if (this.#loaded.has(ask.extension)) return wireOk();
 
-    const record: Loaded = { id: ask.extension, handle: ask.handle, commands: new Map() };
+    // The `activate` ask has always carried the manifest and nothing read it. This
+    // is its first reader: `dependencies` is what `extensions.get` and
+    // `points.get` gate on, and it must come from the HOST's copy of the manifest
+    // — an extension that could name its own dependencies would be authorizing
+    // itself.
+    const dependencies = ask.manifest.dependencies ?? [];
+    const record: Loaded = { id: ask.extension, handle: ask.handle, commands: new Map(), dependencies };
     const services = this.#servicesFor(record);
     const context = createContext({
       id: extensionId(ask.extension),
@@ -236,7 +264,21 @@ export class ExtHostRuntime {
     this.#loaded.set(ask.extension, record);
 
     try {
-      await module(context, createShepherd({ apiVersion: this.#apiVersion, proposed: ask.proposed, services }));
+      const exported = await module(
+        context,
+        createShepherd({
+          apiVersion: this.#apiVersion,
+          proposed: ask.proposed,
+          services,
+          id: ask.extension,
+          dependencies,
+          world: this.#world,
+        }),
+      );
+      // Recorded only on success, and after the await: an extension whose
+      // `activate` rejected has no API, and handing a half-built one to a
+      // dependent is worse than telling it nothing is there.
+      this.#world.recordExport(ask.extension, exported);
     } catch (error) {
       // One bad extension is one bad extension. Roll back what it managed to
       // register so a later retry starts clean, and hand the message back intact.
@@ -292,6 +334,12 @@ export class ExtHostRuntime {
       if (subscription.owner === record.id) this.#subscriptions.delete(key);
     }
     record.commands.clear();
+    // Its exported API and any point it defined go with it. The points matter
+    // even though a well-behaved extension puts them in `ctx.subscriptions`: an
+    // `activate` that defines a point and *then* throws never reached that line,
+    // so without this the rolled-back extension leaves its point id taken and the
+    // retry fails with a duplicate-point error that blames the wrong thing.
+    this.#world.forget(record.id);
     this.#loaded.delete(record.id);
   }
 

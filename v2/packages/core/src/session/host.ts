@@ -1,3 +1,4 @@
+import { basename } from 'node:path';
 import { spawn as spawnPty, type IPty } from 'node-pty';
 import {
   err,
@@ -260,6 +261,66 @@ export class SessionHost {
   /** The replay ring's contents, for a caller that wants them without attaching. */
   snapshot(id: SessionID): Uint8Array | undefined {
     return this.#sessions.get(id)?.fanout.snapshot();
+  }
+
+  /**
+   * The name of the process currently in the pty's **foreground** — `sh` for an
+   * idle shell, `sleep` while a `sleep` runs in it. Measured on macOS; it is
+   * node-pty's `IPty.process`, not the pid we spawned.
+   *
+   * Undefined for an unknown or dead session. node-pty reads this through the
+   * tty on every access and a pty whose child is mid-exit can throw, so the
+   * throw is reported and answered as "nothing" rather than escaping into a
+   * sweep that runs on a timer.
+   *
+   * For the first tick or so after spawn it answers with the command *path* we
+   * handed it — node-pty's own fallback for a tty it cannot read yet. Harmless
+   * here (the predicate below reads that as "the session's own command"), but it
+   * is why a test must wait on the settled NAME and not on the predicate.
+   */
+  foregroundProcess(id: SessionID): string | undefined {
+    const record = this.#sessions.get(id);
+    if (!record) return undefined;
+    try {
+      return record.pty.process;
+    } catch (error) {
+      this.#onError?.(error, `foregroundProcess(${id})`);
+      return undefined;
+    }
+  }
+
+  /**
+   * Whether anything is running in front of the session's own command — the
+   * input to the liveness reconciler, which asks "state says working; is it?".
+   *
+   * The predicate is deliberately **name-blind**. The obvious alternative is to
+   * match the foreground against the agent's own binary name, and it matches
+   * nothing: a real `claude` install resolves to a binary named after its
+   * version (`2.1.224`), and macOS derives the process name from the resolved
+   * executable. A pane's session command is the login shell, so while anything
+   * at all runs the foreground is *something else*, and when it dies by any
+   * means the shell comes back — which is the session's own command, whatever
+   * either of them happens to be called.
+   *
+   * Basenames, because the spec carries a path (`/bin/bash`) and the pty reports
+   * a bare name (`bash`). False for a dead or unknown id: a session that is gone
+   * is running nothing, and its exit is the exact signal for that case anyway.
+   *
+   * The same resolution that defeats name matching bites the command side too:
+   * `p_comm` is the RESOLVED executable, so a session spawned as `/bin/sh` on
+   * macOS reports `bash` and reads busy forever. A pane must therefore be
+   * spawned as the shell's own path, not through a wrapper or an alias.
+   *
+   * Inverts for a session whose command *is* the long-running program (a
+   * headless agent spawned directly, which would read idle while alive). Such a
+   * session's liveness is its exit; don't reconcile it from here.
+   */
+  hasForegroundProcess(id: SessionID): boolean {
+    const record = this.#sessions.get(id);
+    if (!record) return false;
+    const foreground = this.foregroundProcess(id);
+    if (foreground === undefined) return false;
+    return basename(foreground) !== basename(record.info.command);
   }
 
   // ------------------------------------------------------------------- streams

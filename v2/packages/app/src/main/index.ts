@@ -10,6 +10,7 @@ import {
   PermissionStore,
   SessionHost,
   SqliteStore,
+  registerSessionCommands,
 } from '@shepherd/core';
 import { LayoutStore, registerLayoutCommands } from '@shepherd/core/layout';
 import { AttentionStore, ViewingResolver, registerAttentionCommands } from '@shepherd/core';
@@ -38,6 +39,8 @@ import {
   type RunningIngress,
 } from './ingress.ts';
 import { menuDispatcher } from './menu-dispatch.ts';
+import { correlationEnv } from './correlation-env.ts';
+import { publishViewingEdges } from './viewing-topic.ts';
 
 /**
  * The Electron entry point (electron-vite builds this to `out/main`, and
@@ -179,6 +182,21 @@ const ROOT = rootId('window-1');
  * userData directory does not isolate a socket derived from `$HOME`.
  */
 const support = resolveSupport(process.argv, resolveAppPaths(IS_DEV).support);
+const CONTROL_SOCKET = `${support}/control.sock`;
+const HOOK_SOCKET = `${support}/hooks.sock`;
+
+/**
+ * Every session is created knowing its own id and where to post back — see
+ * `correlation-env.ts` for why the kernel is what injects it, and why the
+ * variable names are not v1's.
+ *
+ * Registered here rather than inside `whenReady`, because a session can be
+ * created by anything holding the host and this hook has to be in place before
+ * the first one is: a pty that started without the env cannot be told later.
+ */
+host.onWillCreate(({ sessionId }) => ({
+  env: correlationEnv({ sessionId, eventsSocket: HOOK_SOCKET, controlSocket: CONTROL_SOCKET }),
+}));
 
 let ingress: RunningIngress | undefined;
 
@@ -197,6 +215,12 @@ const viewing = new ViewingResolver(
   logger,
 );
 const attention = new AttentionStore({ layout, viewing, bus, logger });
+
+/**
+ * The same predicate, on the bus as `session.viewing`, for the agent extension a
+ * process away — a cache of the one answer, never a second check.
+ */
+const viewingTopic = publishViewingEdges({ viewing, layout, bus, logger });
 
 /**
  * The extension host, and the registry that drives it.
@@ -248,6 +272,10 @@ const bridge = new SessionBridge(host, {
     bind: (pane, session) => {
       layout.bindSession(pane, session);
       publishLayout();
+      // The pane was focused before it had a session, so its viewing edge has
+      // already been and gone. Replay the current value or this session's mirror
+      // starts empty and a turn finishing in front of you reads as unseen.
+      viewingTopic.announce(pane);
     },
     unbind: (session) => {
       layout.unbindSession(session);
@@ -341,6 +369,12 @@ void app.whenReady().then(async () => {
 
   registerAttentionCommands({ store: attention, registry });
 
+  // `sessions.list`, which carries each session's foreground process — the
+  // reconciliation sweep's only input, and the reason it needs no subprocess.
+  // Registered beside the other kernel verbs and before the sockets open, so a
+  // client cannot arrive ahead of the command it wants to invoke.
+  registerSessionCommands({ host, registry });
+
   registerLayoutCommands({
     store: layout,
     registry,
@@ -389,8 +423,8 @@ void app.whenReady().then(async () => {
     bus,
     logger,
     support,
-    controlSocket: `${support}/control.sock`,
-    hookSocket: `${support}/hooks.sock`,
+    controlSocket: CONTROL_SOCKET,
+    hookSocket: HOOK_SOCKET,
   });
 
   installMenu({
@@ -418,8 +452,8 @@ void app.whenReady().then(async () => {
     // negative control: the run printed a TypeError and passed.
     await runSmoke(SMOKE, win, host, {
       bus,
-      controlSocket: `${support}/control.sock`,
-      hookSocket: `${support}/hooks.sock`,
+      controlSocket: CONTROL_SOCKET,
+      hookSocket: HOOK_SOCKET,
       attentionCount: () => attention.count(),
     }).catch((error: unknown) => {
       process.stdout.write(`smoke: FAIL threw ${String(error)}\n`);
@@ -453,6 +487,9 @@ app.on('will-quit', () => {
   // mark every extension failed on the way out.
   extensionHost.dispose();
   attention.dispose();
+  // Before the resolver it subscribes to, so the last edges of a shutdown are
+  // not published onto a bus nobody is left to read.
+  viewingTopic.dispose();
   viewing.dispose();
   // The layout write is debounced (a drag would otherwise write per mousemove),
   // so the pending one has to be forced out here or the last change made before

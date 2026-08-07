@@ -74,4 +74,26 @@ export interface Shepherd {
   readonly proposed: ProposedAPI;
 }
 
-export type ActivateFn = (ctx: ExtensionContext, api: Shepherd) => void | Promise<void>;
+/**
+ * An extension's entry point. It may **return an API**, which is how one
+ * extension offers something to another.
+ *
+ * The returned value is what `extensions.get<T>(id)` resolves for a dependent
+ * that declared this extension in its manifest's `dependencies` — declared, not
+ * discovered (sketch §7c), so reaching another extension's API is a reviewable
+ * fact in a manifest rather than a string somebody invents at runtime.
+ *
+ * Returning nothing is the common case and stays legal: an extension that only
+ * registers commands and views exports no API at all.
+ *
+ * `T` defaults to `unknown` rather than `void`, and that is load-bearing rather
+ * than lax: the host holds every built-in in one `ReadonlyMap<string,
+ * ActivateFn>`, and a `void` default would make that map reject exactly the
+ * extensions this type was widened for. An author who exports an API writes
+ * `ActivateFn<MyApi>` and gets the checking; the host, which cannot know any
+ * extension's API type, holds them all.
+ */
+export type ActivateFn<T = unknown> = (
+  ctx: ExtensionContext,
+  api: Shepherd,
+) => T | void | Promise<T | void>;
