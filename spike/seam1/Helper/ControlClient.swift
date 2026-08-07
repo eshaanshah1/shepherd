@@ -112,6 +112,11 @@ func buildRequest(verb: String, rest: [String]) -> [String: Any]? {
                         rest[i] == "--cwd" ? absolutePath(rest[i + 1]) : rest[i + 1]
                     i += 2; continue
                 }
+                if rest[i] == "--profile" {
+                    guard i + 1 < rest.count else { return nil }
+                    req["profile"] = rest[i + 1]   // a Claude profile name or id; resolved app-side
+                    i += 2; continue
+                }
                 positional.append(rest[i]); i += 1
             }
             if let ws = positional.first { req["workspace"] = ws }
@@ -176,8 +181,12 @@ func printData(verb: String, data: Any?) {
             let star = (ws["active"] as? Bool == true) ? "  (active)" : ""
             print("\(ws["workspace"] as? String ?? "?") \(ws["name"] as? String ?? "")\(star)")
             for tab in ws["tabs"] as? [[String: Any]] ?? [] {
-                let panes = (tab["panes"] as? [[String: Any]] ?? []).map {
-                    "\($0["pane"] as? String ?? "?") \($0["state"] as? String ?? "")"
+                let panes = (tab["panes"] as? [[String: Any]] ?? []).map { p -> String in
+                    // Only non-default Claude profiles are worth a column — with one
+                    // account (the common case) the line stays exactly as it was.
+                    let profile = p["profile"] as? String ?? ""
+                    let tag = (profile.isEmpty || profile == "Default") ? "" : " [\(profile)]"
+                    return "\(p["pane"] as? String ?? "?") \(p["state"] as? String ?? "")\(tag)"
                 }.joined(separator: "  ")
                 print("  \(tab["tab"] as? String ?? "?")  \(tab["title"] as? String ?? "")  \(panes)")
             }
