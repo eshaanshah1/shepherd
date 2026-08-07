@@ -413,15 +413,37 @@ function createLayout(): LayoutAPI {
   };
 }
 
+/**
+ * The env-injection seam an extension does NOT get, and why.
+ *
+ * `SessionHost.onWillCreate` is **synchronous**: `create` returns a `SessionID`
+ * the layout needs in the same tick, so an async hook would make session creation
+ * a promise and every caller a state machine. A port is asynchronous by
+ * construction, so this callback cannot cross one — not "not yet", but not ever
+ * in this shape.
+ *
+ * The correlation env it existed to inject (`SHEPHERD_SESSION_ID` and the socket
+ * paths) is a kernel fact rather than a vendor one, so the kernel injects it into
+ * every session and no extension has to ask.
+ */
+const SYNCHRONOUS_HOOK =
+  'its callback is synchronous and the pty is spawned in the same tick, so it cannot cross a port. ' +
+  'The correlation env it would inject (SHEPHERD_SESSION_ID, SHEPHERD_EVENTS_SOCK) is a kernel fact ' +
+  'and the kernel injects it into every session already — there is nothing here for an extension to do.';
+
 function createSessions(): SessionAPI {
   const refuse = (member: string): never => {
-    throw new NotImplementedError(`sessions.${member}`, LANDS_IN('M2 (agents-core)'));
+    throw new NotImplementedError(`sessions.${member}`, LANDS_IN('a later milestone'));
   };
   return {
-    create: () => Promise.reject(new NotImplementedError('sessions.create', LANDS_IN('M2 (agents-core)'))),
+    create: () => Promise.reject(new NotImplementedError('sessions.create', LANDS_IN('a later milestone'))),
     get: () => refuse('get'),
+    // Reachable today through `commands.invoke('sessions.list')`, which is where
+    // the child-side subset is served from; these object-returning shapes are not.
     list: () => refuse('list'),
-    onWillCreate: () => refuse('onWillCreate'),
+    onWillCreate: () => {
+      throw new NotImplementedError('sessions.onWillCreate', SYNCHRONOUS_HOOK);
+    },
     onDidCreate: () => refuse('onDidCreate'),
     onDidExit: () => refuse('onDidExit'),
   };
@@ -514,6 +536,8 @@ interface CallerOptions {
   readonly id: string;
   readonly dependencies: readonly string[];
   readonly world: ExtensionWorld;
+  /** So a legitimate `undefined` can still say why — see `createPoints.get`. */
+  readonly services: ExtHostServices;
 }
 
 /**
@@ -526,7 +550,7 @@ interface CallerOptions {
  * of a compromise.
  */
 function createPoints(options: CallerOptions): PointsAPI {
-  const { id, dependencies, world } = options;
+  const { id, dependencies, world, services } = options;
   return {
     define<T>(pointId: string, opts?: { readonly order?: 'priority' | 'registration' }): ExtensionPoint<T> {
       // The owner is supplied here, never by the caller: an extension that could
@@ -539,15 +563,30 @@ function createPoints(options: CallerOptions): PointsAPI {
 
     get<T>(pointId: string): ExtensionPoint<T> | undefined {
       const registry = world.points();
-      const point = registry.get<T>(pointId);
-      // Undefined covers "nobody defines this seam" AND "its owner is gone" — the
-      // registry frees the id on dispose, so those two collapse into one honest
-      // answer rather than needing a liveness table of their own.
-      if (point === undefined) return undefined;
       const owner = registry.ownerOf(pointId);
-      if (owner === id) return point;
-      if (owner === undefined || !dependencies.includes(owner)) {
-        throw new UndeclaredDependencyError(`points.get("${pointId}")`, id, owner ?? '<unowned>');
+
+      // The gate runs FIRST, matching `extensions.get` — and the order is the
+      // point, not tidiness. Looking up before gating means the commonest real
+      // mistake (forgetting the manifest `dependencies` entry, so the owner has
+      // not been activated and the point does not exist yet) returns `undefined`
+      // and reads as "nobody offers this seam". The author then debugs the seam
+      // instead of the one line that is actually wrong.
+      if (owner !== undefined && owner !== id && !dependencies.includes(owner)) {
+        throw new UndeclaredDependencyError(`points.get("${pointId}")`, id, owner);
+      }
+
+      const point = registry.get<T>(pointId);
+      if (point === undefined) {
+        // `undefined` is the documented answer for "nobody defines this seam" and
+        // for "its owner is not active", which the registry collapses by freeing
+        // the id on dispose. It is legitimate — and it is still logged, because a
+        // consumer silently taking its fallback path forever is indistinguishable
+        // from one whose dependency failed to activate.
+        services.log(
+          'debug',
+          `points.get("${pointId}") found no such point — either nothing defines it or its owner is not active`,
+        );
+        return undefined;
       }
       return point;
     },
@@ -620,7 +659,7 @@ export function createShepherd(options: ShepherdOptions): Shepherd {
   const { services, id, dependencies, world } = options;
   const gated = <T extends object>(group: string, build: () => T): T =>
     options.proposed ? build() : (refuseGroup(group) as T);
-  const caller: CallerOptions = { id, dependencies, world };
+  const caller: CallerOptions = { id, dependencies, world, services };
 
   const proposed: ProposedAPI = {
     commands: gated('commands', () => createCommands(services)),

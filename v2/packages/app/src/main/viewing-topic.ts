@@ -70,12 +70,38 @@ export interface ViewingPublisher extends Disposable {
 export function publishViewingEdges(options: ViewingPublisherOptions): ViewingPublisher {
   const log = options.logger.child('attention');
 
+  /**
+   * The session each pane was last published as showing.
+   *
+   * It exists for one edge, and it is the edge that matters most: `LayoutStore
+   * .close` deletes the pane→session binding **synchronously** and only then
+   * announces the change, so by the time the resolver fires `(closedPane, false)`
+   * — the edge it fires precisely so a subscriber stops suppressing alerts for a
+   * pane that no longer exists — `sessionFor` is already empty and the event
+   * would be dropped. A subscriber would then hold "they are looking at it"
+   * forever for a session that is gone.
+   *
+   * So the drop path consults what we last said, rather than what the layout can
+   * still answer.
+   */
+  const lastPublished = new Map<PaneID, SessionID>();
+
   const publish = (pane: PaneID, viewing: boolean): void => {
     const event = viewingEvent(pane, viewing, (id) => options.layout.sessionFor(id));
     if (event === null) {
+      const previous = lastPublished.get(pane);
+      if (previous !== undefined) {
+        lastPublished.delete(pane);
+        // Always `false`: the pane is no longer showing this session, so it is
+        // no longer being looked at, whatever the resolver said about the pane.
+        options.bus.emit(VIEWING_TOPIC, { sessionId: previous, paneId: pane, viewing: false }, KERNEL);
+        log.debug(`pane ${pane} no longer shows ${previous} — published viewing=false for it`);
+        return;
+      }
       log.debug(`pane ${pane} viewing=${viewing} shows no session — nothing published`);
       return;
     }
+    lastPublished.set(pane, event.sessionId);
     // `KERNEL`: main derived this from state it holds, and no verb was invoked.
     // The user's gaze is the cause of some edges and a pane closing is the cause
     // of others, and the publisher cannot tell which — so one honest constant
@@ -87,6 +113,9 @@ export function publishViewingEdges(options: ViewingPublisherOptions): ViewingPu
 
   return {
     announce: (pane) => publish(pane, options.viewing.isViewing(pane)),
-    dispose: () => subscription.dispose(),
+    dispose: () => {
+      subscription.dispose();
+      lastPublished.clear();
+    },
   };
 }

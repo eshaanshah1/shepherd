@@ -20,6 +20,8 @@ export {
   type WillCreateEvent,
   type WillCreateHook,
   type WillCreatePatch,
+  foregroundReading,
+  type ForegroundReading,
 } from './host.ts';
 export {
   registerSessionCommands,
