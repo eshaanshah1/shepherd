@@ -19,6 +19,8 @@ export const EXTENSIONS_LIST_COMMAND = 'extensions.list';
 export const DIAGNOSTICS_COMMANDS = {
   ping: 'diagnostics.ping',
   probeDenied: 'diagnostics.probeDenied',
+  /** Changes the contributed tree, so a row's click has something to prove. */
+  bump: 'diagnostics.bump',
 } as const;
 
 export const diagnosticsManifest: Manifest = {
@@ -34,16 +36,20 @@ export const diagnosticsManifest: Manifest = {
    */
   activation: ['onStartup'],
   /**
-   * `storage` and nothing else, on purpose. `diagnostics.probeDenied` then
+   * `storage` plus `views` — the second added in M3, because this extension is
+   * the trivial consumer P6's view mechanism was built against rather than the
+   * task tree (building it against its real consumer would have shaped it around
+   * one caller). `diagnostics.probeDenied` then
    * attempts a capability this list does not contain and reports the typed
    * refusal it gets — the permission model, proven by a built-in rather than
    * asserted in a comment.
    */
-  permissions: ['storage'],
+  permissions: ['storage', 'views'],
   contributes: {
     commands: [
       { id: DIAGNOSTICS_COMMANDS.ping, title: 'Diagnostics: Ping the Extension Host' },
       { id: DIAGNOSTICS_COMMANDS.probeDenied, title: 'Diagnostics: Probe an Undeclared Capability' },
+      { id: DIAGNOSTICS_COMMANDS.bump, title: 'Diagnostics: Bump the Tree' },
     ],
   },
 };

@@ -46,6 +46,11 @@ describe('the diagnostics manifest', () => {
     expect(diagnosticsManifest.contributes?.commands?.map((command) => command.id)).toEqual([
       DIAGNOSTICS_COMMANDS.ping,
       DIAGNOSTICS_COMMANDS.probeDenied,
+      // M3: the command a contributed tree row invokes. It is here rather than
+      // being a private helper because a row's command goes through the same
+      // registry and the same authorizer as any other caller's — which is what
+      // makes D14's attribution meaningful.
+      DIAGNOSTICS_COMMANDS.bump,
     ]);
   });
 });

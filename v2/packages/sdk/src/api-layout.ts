@@ -115,7 +115,17 @@ export interface TreeItem {
   readonly tint?: string;
   readonly icon?: string;
   readonly collapsed?: boolean;
-  /** Invoked with `caller: {kind:'user'}` when the row is clicked. */
+  /**
+   * Invoked when the row is clicked, attributed to the **contributing
+   * extension** — not to the user (M3 D14).
+   *
+   * The click is genuinely the user's; the command id behind it is not, and they
+   * cannot see it. `authorize` returns an unconditional ALLOW for
+   * `{kind:'user'}`, so attributing it that way would let any extension that can
+   * contribute a tree run any command with full trust — including ones its own
+   * grant denies. An extension that wants a privileged verb on a row declares
+   * the permission for it, like everywhere else.
+   */
   readonly command?: { readonly id: string; readonly args?: unknown };
 }
 

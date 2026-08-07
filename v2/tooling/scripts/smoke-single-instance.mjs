@@ -79,7 +79,13 @@ try {
 
   // --- and the lock is released when A goes: a third try must succeed.
   a.kill('SIGTERM');
-  await waitForExit(a, 10_000);
+  // 20s, not 10s. Measured after M3: instance A spends ~7s starting — four
+  // built-ins now activate, and the last of them forks the extension host —
+  // before it can even process the quit, so a 10s budget was being eaten by
+  // startup and failed roughly one run in four. The budget is for SHUTDOWN and
+  // has to outlive the startup it queues behind; it scales with the number of
+  // extensions, which is why it is a generous constant rather than a tight one.
+  await waitForExit(a, 20_000);
   check(!alive(a.pid), 'instance A is gone');
 
   const c = spawnSync(electronBinary, [...args, '--shepherd-print-paths'], {

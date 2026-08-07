@@ -35,6 +35,7 @@ import {
   type SessionAPI,
   type Shepherd,
   type ViewAPI,
+  type ViewProvider,
 } from '@shepherd/sdk';
 import type { ApiCall, WireError, WireResult } from '../shared/ext-protocol.ts';
 
@@ -455,13 +456,39 @@ function createSessions(): SessionAPI {
   };
 }
 
-function createViews(): ViewAPI {
-  const refuse = (member: string): never => {
-    throw new NotImplementedError(`views.${member}`, LANDS_IN('M3 (the first real view contribution)'));
-  };
+/**
+ * Contributed views — M3's first, and what retires main's relay allow-list.
+ *
+ * The provider stays HERE. A `TreeDataProvider` is functions, which a message
+ * port cannot carry, so what crosses is a declaration; the host then asks for
+ * children by `view.children` and this answers from the provider it kept. That
+ * direction is deliberate: the host decides when to read, so a chatty extension
+ * cannot flood the renderer, and the host never renders a snapshot it did not
+ * request.
+ *
+ * `onDidChange` becomes a `view.changed` nudge — "there is something new to
+ * ask for" — rather than a push of the data itself.
+ */
+function createViews(services: ExtHostServices, providers: Map<string, ViewProvider>): ViewAPI {
   return {
-    registerViewType: () => refuse('registerViewType'),
-    registerStatusItem: () => refuse('registerStatusItem'),
+    registerViewType: (type, provider) => {
+      if (provider.kind !== 'tree') {
+        throw new NotImplementedError(`views.registerViewType("${type}")`, LANDS_IN('a later milestone (panel views)'));
+      }
+      providers.set(type, provider);
+      services.tell({ kind: 'view.register', type, viewKind: 'tree' }, `view.register ${type}`);
+      const changed = provider.data.onDidChange?.(() => {
+        services.tell({ kind: 'view.changed', type }, `view.changed ${type}`);
+      });
+      return toDisposable(() => {
+        changed?.dispose();
+        providers.delete(type);
+        services.tell({ kind: 'view.unregister', type }, `view.unregister ${type}`);
+      });
+    },
+    registerStatusItem: () => {
+      throw new NotImplementedError('views.registerStatusItem', LANDS_IN('a later milestone'));
+    },
   };
 }
 
@@ -688,6 +715,12 @@ function createProcess(services: ExtHostServices): ProcessAPI {
 }
 
 export interface ShepherdOptions {
+  /**
+   * Where this extension's tree providers live, so the runtime can answer a
+   * `view.children` ask. Owned by the runtime rather than this factory: the ask
+   * arrives on a frame, not through the API object.
+   */
+  readonly viewProviders: Map<string, ViewProvider>;
   readonly apiVersion: string;
   /**
    * Whether `api.proposed` is assembled at all — the host's decision, per §7:
@@ -715,7 +748,7 @@ export function createShepherd(options: ShepherdOptions): Shepherd {
     events: gated('events', () => createEvents(services)),
     sessions: createSessions(),
     layout: createLayout(),
-    views: createViews(),
+    views: gated('views', () => createViews(services, options.viewProviders)),
     attention: gated('attention', () => createAttention(services)),
     points: gated('points', () => createPoints(caller)),
     extensions: gated('extensions', () => createExtensions(caller)),

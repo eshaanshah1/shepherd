@@ -3,6 +3,7 @@
 // know about, and the renderer cannot reach for something the preload does not
 // offer. Shared code imports neither electron nor react (lint).
 
+import type { TreeItem } from '@shepherd/sdk';
 import type {
   IpcResult,
   LayoutSnapshot,
@@ -100,11 +101,24 @@ export interface AgentsApi {
   onChanged(listener: (indicators: readonly AgentIndicatorDTO[]) => void): () => void;
 }
 
+/**
+ * Contributed views (M3). The page asks WHICH views exist, for a named view's
+ * rows, and reports a click — and can name neither a bus topic nor a caller.
+ * Who a click runs as is main's decision (D14).
+ */
+export interface ViewsApi {
+  list(): Promise<IpcResult<readonly { readonly extension: string; readonly type: string }[]>>;
+  children(type: string, parent?: string): Promise<IpcResult<readonly TreeItem[]>>;
+  activate(type: string, command: { readonly id: string; readonly args?: unknown }): Promise<IpcResult<void>>;
+  onChanged(listener: (type: string) => void): () => void;
+}
+
 export interface ShepherdBridge {
   readonly session: SessionApi;
   readonly commands: CommandsApi;
   readonly layout: LayoutApi;
   readonly agents: AgentsApi;
+  readonly views: ViewsApi;
   readonly window: WindowApi;
 }
 
@@ -131,6 +145,13 @@ export const BRIDGE_SURFACE = {
   commands: ['invoke'],
   layout: ['get', 'onChanged', 'setViewport'],
   agents: ['get', 'onChanged'],
+  /**
+   * Contributed views (M3). The page may ask which views exist, for a named
+   * view's rows, and report a click — and nothing else. It cannot name a bus
+   * topic or a caller, which is what the agent relay's allow-list was
+   * protecting and what this generalizes without widening.
+   */
+  views: ['list', 'children', 'activate', 'onChanged'],
   window: ['close'],
 } as const satisfies Record<keyof ShepherdBridge, readonly string[]>;
 

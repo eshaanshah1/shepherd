@@ -29,6 +29,14 @@ export const INVOKE = {
    * makes an HMR remount re-pull for free.
    */
   agentsGet: 'agents:get',
+  /**
+   * Contributed views — M3. The renderer asks WHICH views exist and for a
+   * tree's rows; it never names a bus topic, which is what the agent relay's
+   * allow-list was protecting and what this generalizes.
+   */
+  viewsList: 'views:list',
+  viewsChildren: 'views:children',
+  viewsActivate: 'views:activate',
 } as const;
 
 /** Main → renderer, fire-and-forget (`webContents.send`). */
@@ -38,6 +46,8 @@ export const EMIT = {
   layoutChanged: 'layout:changed',
   /** Agent state per session — the indicator's only source. */
   agentsChanged: 'agents:changed',
+  /** A contributed view's data changed; re-ask for its rows. */
+  viewsChanged: 'views:changed',
 } as const;
 
 export type InvokeChannel = (typeof INVOKE)[keyof typeof INVOKE];

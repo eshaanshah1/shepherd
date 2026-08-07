@@ -10,6 +10,7 @@ import {
   type ExtensionContext,
   type LogLevel,
   type Permission,
+  type ViewProvider,
 } from '@shepherd/sdk';
 import {
   EXT_PROTOCOL_VERSION,
@@ -109,6 +110,8 @@ interface Loaded {
   readonly id: string;
   readonly handle: string;
   readonly commands: Map<string, ExtensionCommand>;
+  /** Its tree providers, by view type. They cannot cross the port, so they stay. */
+  readonly views: Map<string, ViewProvider>;
   context?: ExtensionContext;
   /** Its manifest's `dependencies` — the only ids its API object will resolve. */
   readonly dependencies: readonly string[];
@@ -246,6 +249,24 @@ export class ExtHostRuntime {
     switch (ask.kind) {
       case 'activate':
         return this.#activate(ask);
+      case 'view.children': {
+        // The provider lives here because functions cannot cross a port. The
+        // host asks; this answers. An unknown type is a NAMED failure, never an
+        // empty list — "there are no rows" and "nobody registered that" are
+        // different facts and a renderer drawing the first for the second is how
+        // a contribution silently does not exist.
+        const owner = this.#loaded.get(ask.extension);
+        const provider = owner?.views.get(ask.type);
+        if (provider === undefined || provider.kind !== 'tree') {
+          return wireErr('unknown-command', `no tree view "${ask.type}" is registered by ${ask.extension}`);
+        }
+        try {
+          return wireOk(await provider.data.children(ask.parent));
+        } catch (error) {
+          return wireErr('handler-failed', error instanceof Error ? error.message : String(error));
+        }
+      }
+
       case 'deactivate':
         return this.#deactivate(ask.extension);
       case 'command':
@@ -271,7 +292,13 @@ export class ExtHostRuntime {
     // — an extension that could name its own dependencies would be authorizing
     // itself.
     const dependencies = ask.manifest.dependencies ?? [];
-    const record: Loaded = { id: ask.extension, handle: ask.handle, commands: new Map(), dependencies };
+    const record: Loaded = {
+      id: ask.extension,
+      handle: ask.handle,
+      commands: new Map(),
+      views: new Map(),
+      dependencies,
+    };
     const services = this.#servicesFor(record);
     const context = createContext({
       id: extensionId(ask.extension),
@@ -300,6 +327,7 @@ export class ExtHostRuntime {
           id: ask.extension,
           dependencies,
           world: this.#world,
+          viewProviders: record.views,
         }),
       );
       // Recorded only on success, and after the await: an extension whose
