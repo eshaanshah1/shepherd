@@ -46,6 +46,8 @@ export interface AgentsAPI {
    */
   registerKind(kind: AgentKind): Disposable;
   stateOf(sessionId: string): AgentRecord | undefined;
+  /** The calling kind's own per-session state — see `AgentSlot`. */
+  slotOf(sessionId: string): Record<string, unknown> | undefined;
   /** Fires when a turn ends — including the landing that reads `idle` (ADR 0020). */
   onTurnFinished(fn: (change: AgentChange) => void): Disposable;
 }
@@ -134,6 +136,7 @@ export const activate: ActivateFn<AgentsAPI> = async (ctx: ExtensionContext, api
   const subscribeTo = (topic: string): void => {
     if (subscribedTopics.has(topic)) return;
     subscribedTopics.add(topic);
+    ctx.log.info(`subscribed to ${topic}`);
     ctx.subscriptions.push(
       events.on(topic, (payload, envelope) => {
         // The session is the envelope's source, never a field in the payload: a
@@ -243,7 +246,11 @@ export const activate: ActivateFn<AgentsAPI> = async (ctx: ExtensionContext, api
     }),
   );
 
-  ctx.log.info(`ready — ${subscribedTopics.size} agent topics, sweep every ${SWEEP_INTERVAL_MS}ms`);
+  // Deliberately does not count topics: a kind subscribes them when it registers,
+  // which happens after this line, so any number here would read as a fault
+  // ("0 agent topics") while being momentarily true. A count that is only ever
+  // right for an instant is worse than no count.
+  ctx.log.info(`ready — sweep every ${SWEEP_INTERVAL_MS}ms; agent topics arrive as kinds register`);
 
   return {
     registerKind(kind) {
@@ -251,6 +258,7 @@ export const activate: ActivateFn<AgentsAPI> = async (ctx: ExtensionContext, api
       return kinds.register(kind);
     },
     stateOf: (sessionId) => registry.get(sessionId),
+    slotOf: (sessionId) => registry.slotOf(sessionId),
     onTurnFinished(fn) {
       return toDisposable(
         registry.onDidChange((change) => {

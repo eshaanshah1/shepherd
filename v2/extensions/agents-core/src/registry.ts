@@ -232,6 +232,18 @@ export class AgentRegistry {
     return change;
   }
 
+  /**
+   * A session's slot, for the kind that owns it.
+   *
+   * Exposed so a vendor can read back what it recorded (its resume target, say)
+   * without keeping a second map of its own — which is the leak the slot exists
+   * to prevent, since a module-level map has no lifecycle and grows an entry per
+   * session that ever ran.
+   */
+  slotOf(sessionId: string): AgentSlot | undefined {
+    return this.#entries.get(sessionId)?.slot;
+  }
+
   get(sessionId: string): AgentRecord | undefined {
     const entry = this.#entries.get(sessionId);
     if (entry === undefined) return undefined;
