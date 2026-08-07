@@ -87,13 +87,32 @@ describe('the preload bridge surface', () => {
     void bridge.session.paste('s1', 'x');
     void bridge.session.resize('s1', 80, 24);
     void bridge.session.kill('s1');
+    void bridge.commands.invoke('layout.split', { axis: 'row' });
+    void bridge.layout.get();
+    void bridge.layout.setViewport({ x: 0, y: 0, width: 10, height: 10 });
     void bridge.window.close();
     bridge.session.onData(() => undefined);
     bridge.session.onExit(() => undefined);
-    bridge.commands.onCommand(() => undefined);
+    bridge.layout.onChanged(() => undefined);
 
-    expect(ipc.log).toHaveLength(11);
+    expect(ipc.log).toHaveLength(14);
     for (const entry of ipc.log) expect(known, entry.channel).toContain(entry.channel);
+  });
+
+  it('defaults a command with no arguments to `{}`, not `undefined`', () => {
+    // Every layout command's schema is an `s.object`, and `s.object` on
+    // `undefined` is an `invalid-args` failure — so ⌘W, which genuinely takes no
+    // arguments, would be rejected for sending none.
+    const ipc = fakeIpc();
+    const bridge = createBridge(ipc);
+
+    void bridge.commands.invoke('layout.close');
+
+    expect(ipc.log[0]).toEqual({
+      kind: 'invoke',
+      channel: INVOKE.commandInvoke,
+      args: ['layout.close', {}],
+    });
   });
 
   it('passes arguments through unchanged, in order', () => {
@@ -127,14 +146,14 @@ describe('the preload bridge surface', () => {
     expect(ipc.listenerCount).toBe(0);
   });
 
-  it('a pane that unmounts really does stop listening', () => {
+  it('a view that unmounts really does stop listening', () => {
     const ipc = fakeIpc();
     const bridge = createBridge(ipc);
     const seen: unknown[] = [];
-    const off = bridge.commands.onCommand((message) => seen.push(message));
+    const off = bridge.layout.onChanged((snapshot) => seen.push(snapshot));
 
     off();
-    ipc.emit(EMIT.command, { command: 'pane.splitRight' });
+    ipc.emit(EMIT.layoutChanged, { root: 'window-1' });
 
     expect(seen).toEqual([]);
   });

@@ -28,7 +28,7 @@ function spyTerminals(): SpyTerminals {
       hosts.push(host);
     },
     detach: (paneId) => calls.push({ name: 'detach', paneId }),
-    close: (paneId) => calls.push({ name: 'close', paneId }),
+    release: (paneId) => calls.push({ name: 'release', paneId }),
     focus: (paneId) => calls.push({ name: 'focus', paneId }),
     fit: (paneId) => calls.push({ name: 'fit', paneId }),
     inspect: (): PaneDiagnostics | undefined => undefined,
@@ -53,13 +53,13 @@ describe('TerminalPane lifecycle', () => {
     view.unmount();
   });
 
-  it('detaches on unmount and NEVER closes', () => {
+  it('detaches on unmount and NEVER releases the pane', () => {
     const spy = spyTerminals();
     const pane = makePane({});
     render(spy, pane).unmount();
 
     expect(names(spy)).toEqual(['attach', 'detach']);
-    expect(names(spy)).not.toContain('close');
+    expect(names(spy)).not.toContain('release');
   });
 
   it('survives five mount/unmount cycles without ever closing', () => {
@@ -69,7 +69,7 @@ describe('TerminalPane lifecycle', () => {
 
     expect(names(spy).filter((n) => n === 'attach')).toHaveLength(5);
     expect(names(spy).filter((n) => n === 'detach')).toHaveLength(5);
-    expect(names(spy)).not.toContain('close');
+    expect(names(spy)).not.toContain('release');
     // Every call named the same pane, so a remount is the same session.
     expect(new Set(spy.calls.map((call) => call.paneId))).toEqual(new Set([pane.id]));
   });

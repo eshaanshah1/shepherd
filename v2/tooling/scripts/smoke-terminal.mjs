@@ -17,6 +17,7 @@ import { dirname, join } from 'node:path';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
+import { electronEnv } from './smoke-lib.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..', '..');
@@ -48,7 +49,7 @@ try {
   const result = spawnSync(
     electronBinary,
     [entry, '--shepherd-smoke=terminal', `--shepherd-user-data=${userData}`],
-    { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120_000, encoding: 'utf8' },
+    { stdio: ['ignore', 'pipe', 'pipe'], timeout: 120_000, encoding: 'utf8', env: electronEnv() },
   );
   output = `${result.stdout ?? ''}${result.stderr ?? ''}`;
   process.stdout.write(result.stdout ?? '');

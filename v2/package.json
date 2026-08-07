@@ -23,7 +23,9 @@
     "smoke:isolation": "node tooling/scripts/smoke-isolation.mjs",
     "smoke:single-instance": "node tooling/scripts/smoke-single-instance.mjs",
     "dev": "pnpm --filter @shepherd/app dev",
-    "build": "pnpm --filter @shepherd/app build"
+    "build": "pnpm --filter @shepherd/app build",
+    "smoke:m1": "node tooling/scripts/smoke-m1.mjs",
+    "smoke:m2": "node tooling/scripts/smoke-m2.mjs"
   },
   "dependencies": {
     "node-pty": "catalog:"
@@ -34,12 +36,5 @@
     "typescript": "catalog:",
     "typescript-eslint": "catalog:",
     "vitest": "catalog:"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "node-pty",
-      "electron",
-      "esbuild"
-    ]
   }
 }

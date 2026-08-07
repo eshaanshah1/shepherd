@@ -331,6 +331,83 @@ this sketch, plus the deltas the extension architecture adds:
 - **v2 lands on master early and often** — this branch merges once M0 is
   green; `v2/` evolves in small PRs (it touches nothing in `spike/`).
 
+## 7c. Decided (2026-08-07, during M1) — the SDK ships batteries for agents
+
+The question that prompted it: does an extension author who wants one smart
+feature (`claude -p` behind a button) write their own spawn plumbing and
+NDJSON parser, or does the SDK make it a line?
+
+**It is a line, and the primitive is ours.** §4.1's third tier already said an
+extension *could* run `claude -p --output-format stream-json` and render its own
+view; that is a note about what is possible, not a primitive anybody gets. If
+every extension hand-rolls it, they each do it badly and differently, and the
+"hackable substrate for agentic development" claim is hollow — the same argument
+that made one `ProcessAPI` with `gitRead`/`gitWrite` correct rather than letting
+each extension write git runner #4.
+
+Where it lives is the part that needs discipline: **the kernel stays
+vendor-blind** (§2 — core knows nothing about tasks, agents, git, or Claude), and
+so does `agents-core`. `claude-code` is one *kind*, not the shape of the API.
+
+**The seam is `agents-core`'s own extension point.** §5.1 already has it export
+`registerAgentKind({ id, detect, stateMachine })`; it grows a `headless` half, and
+registration runs through a point `agents-core` defines rather than a switch it
+owns. So `codex`, `opencode`, `gemini-cli` are each a third-party extension
+registering a kind — no fork, no kernel change. This is the dogfood rule one
+level deeper (a built-in routes its own pluggable decisions through its own
+points), and it makes **M2 the first real consumer of `points.define`**, which
+was otherwise waiting for `tasks` in M3.
+
+```ts
+agents.registerKind({
+  id: 'codex',
+  capabilities: { streaming: true, tools: true, resume: false, structuredOutput: true },
+  headless: {
+    argv: ({ prompt, cwd }) => ['codex', 'exec', '--json', prompt],
+    // The adapter is the only place that knows this vendor's output format.
+    parse: (line) => AgentEvent | undefined,
+  },
+  detect, stateMachine,          // the interactive half, unchanged from §5.1
+})
+```
+
+Three properties that keep it honest:
+
+- **A normalized event union for the 90%.** `text`, `tool-call`, `tool-result`,
+  `turn-start`/`turn-end`, `error`, `usage`. Someone adding one smart button does
+  not want to learn a vendor's JSON, and every coding-agent CLI has these in some
+  form. A kind's `parse` maps its own output onto them.
+- **A `raw` passthrough beside every normalized event**, because normalization is
+  a lossy claim and pretending otherwise blocks the actual driver: §4.1's third
+  tier is "my own Claude Code UI over the CLI", and that consumer deliberately
+  targets one vendor and needs full fidelity. Normalizing is for portable
+  consumers; `raw` is for deliberate ones. **Claude's `stream-json` is therefore
+  never the API's event type** — it is what `claude-code`'s adapter reads and what
+  its `raw` carries.
+- **Capabilities are declared per kind**, and asking for one a kind lacks is a
+  typed error rather than a hang. A vendor that cannot stream, cannot resume, or
+  has no structured output must fail loudly at the call, not by blocking on a
+  pipe that will never produce the format the caller is parsing for.
+
+Which kind runs is the consumer's choice or, omitted, the user's configured
+default — so "my default agent is Codex" is a preference rather than a rewrite.
+
+Two things that hold regardless of kind:
+
+- **It is its own permission, `agents`** — not a corollary of `process.exec`.
+  It spends the user's model budget, which is not a consequence "can run
+  programs" prepares anyone for. Added to the manifest vocabulary in M1, ahead
+  of the M2 implementation, so extensions declare against a stable set.
+- **Cross-extension calls are declared, not discovered**: a manifest lists
+  `dependencies`, and `extensions.get(id)` resolves only those ids. This is the
+  §3 dependency table becoming enforceable, and it gives the host a place to
+  check a dependency is active *before* activating the dependent.
+
+Storage stays as it is: `KV`, namespaced and schema-validated, is the right size
+for now. Raw SQL to extensions is a bigger grant than it looks (migrations,
+corruption blast radius) and nothing needs it before `tasks` — if M3 proves KV
+too thin, that is the moment to widen it, with a real consumer to shape it.
+
 ## 8. Open questions (each needs a decision before code)
 
 1. In-proc TS vs out-of-proc RPC as the *primary* extension form (VS Code runs
@@ -353,8 +430,80 @@ this sketch, plus the deltas the extension architecture adds:
    consistent scrollback, thin clients, and "read the screen" as an extension
    API). Lean: bytes now, protocol shaped so screen-state can slot in behind
    it; daemon decided by whether headless tasks are v2.0 or v2.1.
-8. **Presence sensing** (review §Ugly-5): `isAway` gates the phone-push
+8. **Presence sensing** (review §Ugly-5) — **ANSWERED 2026-08-07; see §7d
+   below.** `isAway` gates the phone-push
    channel and Electron has no clamshell API. Budget native-module work; make
    presence an explicit multi-signal input (idle time, lock/unlock, display
    state) behind the existing `decide()` seam, `viewing` stays a reducer
    parameter.
+
+## 7d. Decided (2026-08-07) — presence is multi-signal, lazily sampled, and needs no native module
+
+Answers §8.8. Asked during M1, because `route()` takes `away` as a parameter and
+M1 always passes `false`. There are two halves to the answer and the second is
+the one that matters.
+
+**The predicate was the bug, not the missing sensor.** v1's `isAway = lid closed
+&& no external display` is exactly what review §Ugly-5 called a heuristic wearing
+a predicate's clothes: an iMac is never away, a laptop in another room is never
+away, a locked screen is not away. Finding a clamshell API for Electron would
+have reproduced a wrong answer more reliably.
+
+**And the signals are asymmetric — that is the load-bearing part.** The first
+draft of this section listed `lock-screen` as an away signal and that was the
+same mistake one layer along: the lock screen is a *display* state, not a presence
+state. It appears while the Mac is awake and working, it appears because a
+screensaver timeout fired while you sat there reading, and somebody can be equally
+absent with the screen never locking at all. So:
+
+- **`powerMonitor.getSystemIdleTime()` is the only honest measure of absence**,
+  and it is the one signal v1 never used. Being HID-based, it already resolves the
+  cases lock state confuses: locked with 30 minutes idle is away; locked with five
+  seconds idle is somebody standing right there who just hit the shortcut.
+  (Probe that it keeps counting while the screen is locked before relying on it.)
+- **Some events confirm PRESENCE and nothing else**: `unlock-screen` (a human
+  typed a password), `resume`, window focus, and any command arriving with
+  `caller.kind === 'user'` — a keystroke reaching the app *is* presence, and the
+  command envelope already attributes it. Use these for the away→present edge the
+  catch-up replay needs.
+- **Nothing is treated as evidence of absence except idle time.** In particular
+  `lock-screen` is not, and neither is `suspend`: a suspended Mac is not running
+  agents, and one kept awake by the sleep guard with the lid shut is answered by
+  idle time anyway.
+- `screen.getAllDisplays()` for the docked case, if it turns out to be needed.
+
+**Clamshell may therefore be droppable entirely**, which would delete the last
+reason to shell out at all. v1 needed lid state *because* it had no idle signal;
+with idle as the primary measure, "lid shut + long idle" is already away and "lid
+shut + fresh input" is already docked-and-working, and the lid adds nothing. Reach
+for `ioreg -r -k AppleClamshellState` only if a real case survives that argument —
+and if one does, it is a **one-shot confirmatory read**, never a watcher.
+
+**So: no third-party native module, and probably no native code at all.** The
+review budgeted native work on the assumption the sensor needed it. Every
+presence *transition* is already an Electron event, and a lid-close while docked
+should surface as a display-count change — *verify that with a probe when the
+time comes rather than trusting this paragraph*, which is the ADR 0021 habit that
+already deleted one assumed dependency. A tiny bundled Swift **one-shot** helper
+is the fallback if `ioreg` output proves flaky. Never an in-process N-API addon:
+that buys an ABI rebuild on every Electron bump — precisely the cost ADR 0021
+removed — to serve a reading taken once per decision.
+
+Three constraints on whoever builds it:
+
+- **It lives in `packages/platform/darwin`.** §7's platform-skeleton decision
+  names presence explicitly, and `boundaries.js` permits electron imports there,
+  so it is the only legal home for `powerMonitor`/`screen` outside `app/main`.
+  Don't invent a location.
+- **No polling monitor.** `getSystemIdleTime()` has no event, so a stateful
+  watcher means a timer machine — review §Bad-9's class, which v2 has kept out so
+  far. Sample idle **lazily, at `decide()` time**; subscribe only to the
+  transition events, and only for the away→present edge the catch-up replay
+  needs.
+- **Present when uncertain.** No signal ⇒ `away = false`, failing toward local
+  surfaces plus catch-up rather than toward a push. A missed banner you find on
+  return is recoverable; a push fired at someone sitting in front of the machine
+  teaches them to ignore pushes.
+
+**When:** with remote/phone, post-M4. `away` stays a `decide()` parameter until
+then, which is the shape that lets this land as one file instead of a refactor.

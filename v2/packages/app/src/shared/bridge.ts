@@ -5,12 +5,14 @@
 
 import type {
   IpcResult,
+  LayoutSnapshot,
   SessionCreateRequest,
   SessionDataMessage,
   SessionDescriptor,
   SessionExitMessage,
+  ViewportRect,
+  AgentIndicatorDTO,
 } from './channels.ts';
-import type { CommandMessage } from './commands.ts';
 
 /**
  * Sessions. `bytes` crosses as a `Uint8Array` in both directions, never a
@@ -35,32 +37,74 @@ export interface SessionApi {
 }
 
 /**
- * Menu commands, main → renderer, one way.
+ * The one funnel, from the page's side.
  *
- * The keys live on real menu items with real accelerators (that is what makes
- * ⌘D work at all on macOS), so the *decision* has to travel from main to the
- * renderer, which is the only process that knows the layout. Hence a
- * subscription rather than a request: main says what was chosen, the renderer
- * decides what it means.
+ * This replaces the M0 `onCommand` subscription, and the direction is the whole
+ * point: main used to *tell* the renderer what a menu key meant because the
+ * renderer owned the layout. It doesn't any more — the kernel does — so a
+ * gesture in the page is a *transport* into the same `CommandRegistry` that ⌘D
+ * and `shepherd pane split` reach.
+ *
+ * `invoke(command, args)` is not the generic `invoke(channel, …)` escape hatch
+ * the note above refuses. A channel is a private door into main; a command id is
+ * a public verb that is authorized in the dispatcher against an attributed
+ * caller before any handler runs. The page can only say the things the registry
+ * already offers, and main decides — the page never asserts — that this caller
+ * is `{kind:'user'}`.
  */
 export interface CommandsApi {
-  onCommand(listener: (message: CommandMessage) => void): () => void;
+  invoke(command: string, args?: unknown): Promise<IpcResult<unknown>>;
 }
 
 /**
- * The window itself. Exactly one verb, and it exists for one case: ⌘W closes
- * the focused pane, and on the LAST pane it falls through to closing the
- * window. Only the renderer knows which of those it is, so only the renderer
- * can ask. (`window.close()` from page script is a Chromium-policy coin flip
- * for a window the page did not open; a named channel is not.)
+ * The layout, read-only from the page: fetch the projection once, then follow it.
+ *
+ * `setViewport` is the exception, and it is not a mutation of the tree — core
+ * has no DOM and `neighbor` needs a rect, so the renderer measures its pane area
+ * and publishes it. That is what lets `layout.focusDirection` take no rect
+ * argument and stay invokable from a CLI or an extension.
+ */
+export interface LayoutApi {
+  get(): Promise<IpcResult<LayoutSnapshot>>;
+  /** Returns an unsubscribe function. */
+  onChanged(listener: (snapshot: LayoutSnapshot) => void): () => void;
+  setViewport(rect: ViewportRect): Promise<IpcResult<void>>;
+}
+
+/**
+ * The window itself. One verb, and after P4a it has no caller: ⌘W's
+ * fall-through to the window is decided in core (`onLastPaneClosed`), so main
+ * closes its own window and the renderer no longer has to work out which case
+ * it is in. Kept because it is the only sanctioned way for a page to ask —
+ * `window.close()` from page script is a Chromium-policy coin flip for a window
+ * the page did not open — and the next thing that needs it should not have to
+ * re-derive that.
  */
 export interface WindowApi {
   close(): Promise<IpcResult<void>>;
 }
 
+/**
+ * Agent state, read-only from the page — the same pull-then-follow shape as the
+ * layout, and for the same reason: a push-only channel leaves a renderer that
+ * mounted late (every HMR reload) blank until the next transition.
+ *
+ * Note what is NOT here: any way to name a bus topic. Main relays exactly one,
+ * by an allow-list it owns. `claude.hook` carries whole hook payloads — tool
+ * inputs, prompts, file contents — on the same bus, and a page that could
+ * subscribe by name could ask for it.
+ */
+export interface AgentsApi {
+  get(): Promise<IpcResult<readonly AgentIndicatorDTO[]>>;
+  /** Returns an unsubscribe function. */
+  onChanged(listener: (indicators: readonly AgentIndicatorDTO[]) => void): () => void;
+}
+
 export interface ShepherdBridge {
   readonly session: SessionApi;
   readonly commands: CommandsApi;
+  readonly layout: LayoutApi;
+  readonly agents: AgentsApi;
   readonly window: WindowApi;
 }
 
@@ -84,7 +128,9 @@ export const BRIDGE_SURFACE = {
     'onData',
     'onExit',
   ],
-  commands: ['onCommand'],
+  commands: ['invoke'],
+  layout: ['get', 'onChanged', 'setViewport'],
+  agents: ['get', 'onChanged'],
   window: ['close'],
 } as const satisfies Record<keyof ShepherdBridge, readonly string[]>;
 
