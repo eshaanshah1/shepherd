@@ -52,6 +52,12 @@ export const HOST_API_VERSION = '1.0.0';
  * Why a call failed. A closed set because the child branches on it — a message
  * string is for a human, a code is for a program, and an extension deciding
  * "was I denied or is the host gone?" needs the second.
+ *
+ * Every member is produced somewhere; a code nothing emits is a branch nothing
+ * takes. In particular there is no `not-implemented` here — an M1 refusal is
+ * decided *in* the child, in process, and never travels — and no
+ * `protocol-refused`, because a refused handshake is its own frame
+ * (`hello-refused`) carrying a sentence rather than a code.
  */
 export const WIRE_ERROR_CODES = [
   /** The handle on the frame names no live extension. Nothing was dispatched. */
@@ -60,17 +66,13 @@ export const WIRE_ERROR_CODES = [
   'denied',
   /** The other end is gone or not accepting yet. */
   'unavailable',
-  /** Typed in the SDK, not built in M1. The message names the milestone. */
-  'not-implemented',
   'timeout',
-  'invalid-frame',
   /** The host tried and something threw. Distinct from `denied` on purpose. */
   'host-failed',
   'duplicate-command',
   'unknown-command',
   'invalid-args',
   'handler-failed',
-  'protocol-refused',
 ] as const;
 
 export type WireErrorCode = (typeof WIRE_ERROR_CODES)[number];

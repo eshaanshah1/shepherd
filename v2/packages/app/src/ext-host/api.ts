@@ -3,7 +3,6 @@ import {
   ok,
   err,
   toDisposable,
-  type ActivateFn,
   type AttentionAPI,
   type Caller,
   type CategoryLogger,
@@ -108,13 +107,6 @@ export interface ExtHostServices {
 
 /** An extension's command handler, with its own schema already applied. */
 export type ExtensionCommand = (args: unknown, caller: Caller) => Promise<WireResult>;
-
-export interface ExtensionRuntimeRecord {
-  readonly id: ExtensionID;
-  readonly context: ExtensionContext;
-  readonly api: Shepherd;
-  readonly activate: ActivateFn;
-}
 
 // ------------------------------------------------------------------------ storage
 

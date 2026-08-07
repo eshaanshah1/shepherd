@@ -442,7 +442,7 @@ export class ExtensionHost {
       this.#state = 'stopped';
       this.#log.warn(
         `extension host exited cleanly (code 0) without being asked to — treating it as a shutdown, not a crash` +
-          `${wasActive.length === 0 ? '' : `; ${wasActive.join(', ')} are no longer running`}`,
+          `${wasActive.length === 0 ? '' : `; no longer running: ${wasActive.join(', ')}`}`,
       );
       const registry = this.#options.extensions();
       for (const id of wasActive) if (registry.state(id) === 'active') registry.deactivate(id);
