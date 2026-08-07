@@ -1,12 +1,34 @@
-// Cell metrics and motion, mock-approved. Rule 1: the character cell is the
-// grid — chrome spacing derives from these, never from a 4px web scale.
+// Cell metrics and motion, mock-approved.
+//
+// Rule 1 as amended 2026-08-07 (see the design-language spec): these are
+// **integer px, derived once from the default cell and frozen** — cell-
+// *harmonious*, not cell-*coupled*. Three consequences worth knowing before you
+// change a number here:
+//
+//   - **Never `ch` in CSS.** It is the advance width of "0" in the *live* font,
+//     so it is (a) a width unit that says nothing about row height and (b)
+//     fractional — 8.4px puts every hairline on a subpixel boundary and the 1px
+//     rules this language is built from go blurry.
+//   - **A terminal font-size change rescales the terminal, not the chrome.** The
+//     font size is a user preference; a sidebar that got 40% wider because
+//     somebody likes 16pt text is not a feature.
+//   - **Live cell metrics belong only at the seam** — chrome that visually abuts
+//     the grid — and the terminal *publishes* its measured cell rather than each
+//     component measuring xterm for itself. One opinion about where a row sits;
+//     v1 paid for the alternative in a gutter that drifted against its text.
 
 export const metrics = {
   /** Terminal + chrome mono size, px. */
   fontSize: 13,
-  /** One cell, px. Row height is a multiple of this and nothing else. */
+  /** One terminal row, px. The grid's own rhythm — heights, never widths. */
   lineHeight: 20,
-  /** A sidebar/list row: exactly 2 cells. */
+  /**
+   * A sidebar/list row. Deliberately NOT a cell multiple (that would be 40, which
+   * is a huge list row): chrome away from the grid has its own scale, and this
+   * comment used to claim "exactly 2 cells" while reading 28 — the drift the
+   * amended rule exists to stop. Rows that must line up with terminal rows use
+   * the published cell height instead.
+   */
   rowHeight: 28,
   microLabel: {
     fontSize: 10,
@@ -29,10 +51,14 @@ export const motion = {
 } as const;
 
 /**
- * The bundled placeholder face.
- * TODO(pre-1.0): license Berkeley Mono (or an equivalent characterful mono)
- * and replace this — design language rule 6. JetBrains Mono is carried over
- * from v1's resources so nothing blocks on the licence.
+ * The bundled face. **JetBrains Mono is the choice, not a placeholder** (decided
+ * 2026-08-07): it is OFL, so it redistributes in an app bundle with no licence
+ * tier to reason about, and it has the character rule 6 asks for. Carried over
+ * from v1's resources.
+ *
+ * Swapping it later is one edit here plus regenerating the metrics above — the
+ * frozen-token mechanism is precisely what keeps a font change from becoming a
+ * hand-retune of the whole chrome.
  */
 export const fonts = {
   mono: "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace",
