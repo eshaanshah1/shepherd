@@ -1,7 +1,22 @@
-import { writeFile } from 'node:fs/promises';
-import { app, Menu, type BrowserWindow } from 'electron';
+import { app } from 'electron';
+import type { BrowserWindow } from 'electron';
 import type { SessionHost } from '@shepherd/core';
-import { BRIDGE_SURFACE, COMMANDS, FORBIDDEN_GLOBALS, type CommandID } from '../shared/index.ts';
+import { BRIDGE_SURFACE, COMMANDS, FORBIDDEN_GLOBALS } from '../shared/index.ts';
+import {
+  captureIfAsked,
+  check,
+  clickMenu,
+  die,
+  paneById,
+  same,
+  say,
+  short,
+  snapshotOf,
+  waiter,
+  waitForLoad,
+  type PaneDiagnostics,
+  type Snapshot,
+} from './smoke-support.ts';
 
 /**
  * `pnpm smoke:terminal` — the whole chain, once, in a real Electron.
@@ -29,75 +44,13 @@ const TIMEOUT_MS = 30_000;
 const NEEDLE = 'hello-from-pty';
 const TYPED = 'a';
 
-interface PaneDiagnostics {
-  readonly paneId: string;
-  readonly sessionId: string | null;
-  readonly streaming: boolean;
-  readonly mounted: boolean;
-  readonly exited: boolean;
-  readonly cols: number;
-  readonly rows: number;
-  readonly text: string;
-}
-
-interface Outline {
-  readonly kind: 'leaf' | 'split';
-  readonly paneId?: string;
-  readonly axis?: string;
-  readonly first?: Outline;
-  readonly second?: Outline;
-}
-
-interface Snapshot {
-  readonly ready: boolean;
-  readonly paneIds: string[];
-  readonly focusedPaneId: string | null;
-  readonly outline: Outline | null;
-  readonly panes: PaneDiagnostics[];
-}
-
-function say(line: string): void {
-  process.stdout.write(`smoke: ${line}\n`);
-}
-
-function die(line: string): never {
-  process.stdout.write(`smoke: FAIL ${line}\n`);
-  app.exit(1);
-  throw new Error(line); // unreachable; keeps the type `never`
-}
-
-function check(condition: boolean, description: string): void {
-  if (!condition) die(description);
-  say(`ok — ${description}`);
-}
-
 export async function runTerminalSmoke(win: BrowserWindow, host: SessionHost): Promise<void> {
   const deadline = setTimeout(() => die(`did not finish within ${TIMEOUT_MS}ms`), TIMEOUT_MS);
 
-  const snapshot = async (): Promise<Snapshot> =>
-    (await win.webContents.executeJavaScript(
-      'window.__shepherdTest ? window.__shepherdTest.snapshot() : { ready: false, paneIds: [], focusedPaneId: null, outline: null, panes: [] }',
-    )) as Snapshot;
+  const until = waiter(TIMEOUT_MS);
+  const snapshot = (): Promise<Snapshot> => snapshotOf(win);
 
-  const until = async <T>(
-    describe: string,
-    read: () => Promise<T>,
-    ok: (value: T) => boolean,
-  ): Promise<T> => {
-    const stop = Date.now() + TIMEOUT_MS;
-    let last: T | undefined;
-    while (Date.now() < stop) {
-      last = await read();
-      if (ok(last)) return last;
-      await sleep(60);
-    }
-    return die(`timed out waiting for ${describe}; last = ${JSON.stringify(last)}`);
-  };
-
-  await new Promise<void>((resolve) => {
-    if (!win.webContents.isLoading()) resolve();
-    else win.webContents.once('did-finish-load', () => resolve());
-  });
+  await waitForLoad(win);
   win.show();
   win.focus();
 
@@ -227,36 +180,4 @@ export async function runTerminalSmoke(win: BrowserWindow, host: SessionHost): P
   clearTimeout(deadline);
   say('OK');
   app.exit(0);
-}
-
-async function captureIfAsked(win: BrowserWindow): Promise<void> {
-  const path = process.env['SHEPHERD_CAPTURE'];
-  if (path === undefined || path === '') return;
-  const image = await win.webContents.capturePage();
-  await writeFile(path, image.toPNG());
-  say(`wrote ${path}`);
-}
-
-function clickMenu(id: CommandID): void {
-  const item = Menu.getApplicationMenu()?.getMenuItemById(id);
-  if (item === null || item === undefined) die(`no menu item with id ${id}`);
-  say(`click ${id} (${item.accelerator ?? 'no accelerator'})`);
-  item.click();
-}
-
-function paneById(snapshot: Snapshot, paneId: string): PaneDiagnostics {
-  const found = snapshot.panes.find((pane) => pane.paneId === paneId);
-  return found ?? die(`no diagnostics for pane ${short(paneId)}`);
-}
-
-function same(a: readonly string[], b: readonly string[]): boolean {
-  return a.length === b.length && a.every((value, index) => value === b[index]);
-}
-
-function short(id: string): string {
-  return id.slice(0, 8);
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

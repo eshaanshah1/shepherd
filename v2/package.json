@@ -17,8 +17,11 @@
     "test:count": "node tooling/scripts/test-count.mjs",
     "pty:proof": "node tooling/scripts/pty-proof.mjs",
     "pty:proof:electron": "node tooling/scripts/pty-proof-electron.mjs",
+    "smoke": "node tooling/scripts/smoke-m0.mjs",
     "smoke:session": "node tooling/scripts/smoke-session.mjs",
     "smoke:terminal": "node tooling/scripts/smoke-terminal.mjs",
+    "smoke:isolation": "node tooling/scripts/smoke-isolation.mjs",
+    "smoke:single-instance": "node tooling/scripts/smoke-single-instance.mjs",
     "dev": "pnpm --filter @shepherd/app dev",
     "build": "pnpm --filter @shepherd/app build"
   },
