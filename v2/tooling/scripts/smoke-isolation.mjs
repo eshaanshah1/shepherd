@@ -19,7 +19,7 @@
 
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { build, check, electronBinary, entry, finish, killStrays } from './smoke-lib.mjs';
+import { build, check, electronBinary, electronEnv, entry, finish, killStrays } from './smoke-lib.mjs';
 
 const FLAG = '--shepherd-print-paths';
 
@@ -30,6 +30,7 @@ function ask(mode) {
     encoding: 'utf8',
     timeout: 60_000,
     stdio: ['ignore', 'pipe', 'pipe'],
+    env: electronEnv(),
   });
   const output = `${result.stdout ?? ''}${result.stderr ?? ''}`;
   process.stdout.write(output.replace(/^/gm, `  [${mode}] `));
