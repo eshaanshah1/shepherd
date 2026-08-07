@@ -276,6 +276,7 @@ export class ExtHostRuntime {
     const context = createContext({
       id: extensionId(ask.extension),
       source: ask.source,
+      dataDir: ask.dataDir,
       // The wire carries strings (mirroring `manifestSchema`'s looseness); this is
       // where they become the closed union, and an unknown one is dropped rather
       // than handed on as a `Permission` it is not.

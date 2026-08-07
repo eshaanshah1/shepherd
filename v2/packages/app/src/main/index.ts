@@ -42,6 +42,7 @@ import {
 } from './ingress.ts';
 import { menuDispatcher } from './menu-dispatch.ts';
 import { registerAgentIpc, type AgentIpc } from './agent-ipc.ts';
+import { agentPrincipals } from './agent-principals.ts';
 import { createSystemAlerts } from './system-alerts.ts';
 import { clearAgentState } from './agent-relay.ts';
 import { correlationEnv } from './correlation-env.ts';
@@ -169,6 +170,11 @@ const registry = new CommandRegistry({
     // See `ingress.ts` for why reaching the local socket is itself the
     // authorization, and for what this deliberately does not extend to.
     devices: new Map([[LOCAL_DEVICE_ID, LOCAL_DEVICE_PERMISSIONS]]),
+    // Every live session is a principal (D9b). Derived from the pty host's own
+    // inventory rather than a second registry, so there is no revoke path to
+    // forget and nothing that can drift; `grants` is read per invocation, which
+    // is what makes deriving it here correct rather than stale.
+    agents: agentPrincipals(host.list().map((info) => info.id)),
   }),
 });
 
@@ -288,6 +294,7 @@ const extensionHost = new ExtensionHost({
   permissions,
   bus,
   kv: (namespace) => store.namespace(namespace),
+  support,
   // The one runner, from the one directory allowed to spawn (Rebuild checklist
   // item 4). Injected rather than imported by the host so a test can prove a
   // denial denies without a real subprocess.

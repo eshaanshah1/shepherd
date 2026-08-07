@@ -241,6 +241,8 @@ export interface ContextOptions {
   readonly source: 'builtin' | 'user';
   readonly permissions: readonly Permission[];
   readonly storage: Readonly<Record<string, unknown>>;
+  /** Resolved by the host: the child cannot reach `node:os` (D1b). */
+  readonly dataDir: string;
   readonly clock: Clock;
   readonly services: ExtHostServices;
 }
@@ -258,6 +260,7 @@ export function createContext(options: ContextOptions): ExtensionContext {
     source: options.source,
     subscriptions: [],
     storage: createStorage(options.storage, services),
+    dataDir: options.dataDir,
     secrets: createSecrets(),
     log,
     clock: options.clock,

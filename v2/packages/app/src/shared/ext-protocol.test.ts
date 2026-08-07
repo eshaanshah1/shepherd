@@ -123,6 +123,7 @@ describe('readFrames', () => {
         apiVersion: '1.0.0',
         permissions: ['storage'],
         storage: { pings: 4 },
+        dataDir: '/tmp/shepherd-test/ext',
       },
     };
     expect(readFrames(ask, hostFrameSchema).frames).toEqual([ask]);

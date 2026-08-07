@@ -32,6 +32,15 @@ export interface ExtensionContext {
   /** Disposed for you on deactivate, in reverse order. Put everything here. */
   readonly subscriptions: Disposable[];
   readonly storage: KV;
+  /**
+   * A directory this extension owns, already namespaced to it.
+   *
+   * The host resolves it — an extension may not reach `node:os` and so cannot
+   * compute a path (nor should it: a path the host owns varies correctly between
+   * the dev and production builds). It is NOT created for you; create it when
+   * you first need it.
+   */
+  readonly dataDir: string;
   readonly secrets: SecretStore;
   /** Category already bound to `extension`; the id rides the message. */
   readonly log: CategoryLogger;
