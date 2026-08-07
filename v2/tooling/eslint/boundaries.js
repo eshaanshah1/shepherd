@@ -8,6 +8,8 @@
 //   app/main|preload-> electron + core + sdk + platform
 //   app/renderer    -> react + xterm + tokens + sdk + @shepherd/core/layout
 //                                                     (the ONLY place react appears)
+//   app/ext-host    -> sdk + app/shared + built-in extensions
+//                                                     (a utility process: no electron, no core)
 //   extensions/*    -> sdk only
 //
 // Enforced with the core `no-restricted-imports` rule so the lint step needs no
@@ -212,6 +214,47 @@ export const boundaries = [
         'the session registry lives in main; the renderer attaches over IPC.',
       ),
     ),
+  },
+  {
+    // The extension host's utility process — a fourth process kind, and the
+    // narrowest of the four.
+    //
+    // It runs extension code, so what it can reach is what an extension can
+    // reach through it. Each denial below is therefore load-bearing rather than
+    // tidy:
+    //
+    //   - **electron**: a utility process has no `electron` module at all. The
+    //     port arrives as the `process.parentPort` GLOBAL, which lint cannot see —
+    //     so an `import` here would typecheck against electron's .d.ts and then
+    //     fail at runtime, in a child process, with the symptom "the extension
+    //     host never said hello".
+    //   - **@shepherd/core**: the kernel lives in main and is reached over the
+    //     port. A `CommandRegistry` imported here would be a SECOND, empty one —
+    //     every register succeeding, every invoke finding nothing, and no line
+    //     anywhere saying why. Denied as a `group` so the subpaths
+    //     (`@shepherd/core/layout`) go with it: unlike the renderer, this process
+    //     has no reason to draw a tree.
+    //   - **OS APIs / node-pty**: an extension asks for a session through the
+    //     API; it does not get to spawn one. Same rule as `extensions/**`, applied
+    //     to the process that hosts them.
+    //   - **react / the DOM**: there is no document here, and §7b puts extension
+    //     *UI* in-proc in the renderer — not in the services process.
+    name: 'boundary/app-ext-host',
+    files: ['packages/app/src/ext-host/**/*.ts'],
+    rules: {
+      ...restrict(
+        deny(ELECTRON, 'a utility process has no electron module; its port is the process.parentPort global.'),
+        deny(REACT, 'extension UI is in-proc in the renderer (§7b); extension services are here.'),
+        deny(XTERM, 'xterm is a renderer concern.'),
+        deny(NODE_PTY, 'an extension asks the session API; it never spawns a pty.'),
+        deny(OS_APIS, 'OS APIs live in packages/platform/darwin only.'),
+        deny(
+          [...WORKSPACE.core, ...WORKSPACE.platform, ...WORKSPACE.tokens],
+          'the kernel lives in main and is reached over the message port; a core import here would be a second, empty kernel.',
+        ),
+      ),
+      ...noDom,
+    },
   },
   {
     name: 'boundary/app-shared',

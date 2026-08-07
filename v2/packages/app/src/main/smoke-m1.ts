@@ -15,7 +15,7 @@ import { check, die, say, snapshotOf, waiter, waitForLoad } from './smoke-suppor
  * no-op on an optional chain, so a phone completed its handshake and was answered
  * by nobody. Nothing but an end-to-end run finds that.
  *
- * Three legs, and note what the first one deliberately does NOT assert:
+ * Four legs, and note what the first one deliberately does NOT assert:
  *
  *   1. `hooks.sock` accepts an envelope and it reaches the bus **with its own
  *      sequence number**. It does NOT assert a badge — nothing maps ingress
@@ -23,6 +23,8 @@ import { check, die, say, snapshotOf, waiter, waitForLoad } from './smoke-suppor
  *      would be a test of a wire that has not been run yet.
  *   2. `control.sock` invokes a real layout command and the WINDOW changes.
  *   3. attention aggregates to a count, through the same registry.
+ *   4. a built-in extension answers over the socket **from another OS process**,
+ *      and is refused a capability it never declared.
  */
 
 export interface M1SmokeOptions {
@@ -145,13 +147,96 @@ export async function runM1Smoke(
   check(cleared.status === 200, `attention.clear over the socket (got ${cleared.status})`);
   check(attentionCount() === 0, `and the count went back down (${attentionCount()})`);
 
+  // --------------------------------------------------- leg 4: the extension host
+  //
+  // Everything about this leg is unit-tested against a fake child, and none of
+  // that can tell you a utility process exists. `childPid` is the assertion that
+  // can: it is filled in by the host from the child's own `hello`, wrapped by the
+  // extension's handler running INSIDE that child, and returned over the control
+  // socket. A main process pretending to be healthy cannot produce it.
+  const ping = await post(controlSocket, '/invoke', {
+    command: 'diagnostics.ping',
+    caller: { kind: 'device', deviceId: 'local-cli' },
+  });
+  check(ping.status === 200, `diagnostics.ping answered over control.sock (got ${ping.status})`);
+
+  const facts = bodyOf<{ api: string; extensions: number; commands: number; childPid: number; pings: number }>(ping);
+  check(facts !== undefined, `the ping carried a body (${ping.text.slice(0, 120)})`);
+  if (facts === undefined) return die('no ping body');
+
+  check(
+    facts.childPid > 0 && facts.childPid !== process.pid,
+    `the answer came from ANOTHER process (child ${facts.childPid}, main ${process.pid})`,
+  );
+  check(facts.api === '1.0.0', `the extension was handed the host api version (got ${facts.api})`);
+  check(facts.extensions >= 1, `it read the real registry (${facts.extensions} extension(s))`);
+  check(facts.commands > 0, `…and the real command table (${facts.commands} command(s))`);
+  check(facts.pings === 1, `ctx.storage round-tripped through the host (pings=${facts.pings})`);
+
+  // Storage is a write-through mirror in the child and a real row in main's store,
+  // so a second ping must count 2 rather than starting over.
+  const again = bodyOf<{ pings: number }>(
+    await post(controlSocket, '/invoke', {
+      command: 'diagnostics.ping',
+      caller: { kind: 'device', deviceId: 'local-cli' },
+    }),
+  );
+  check(again?.pings === 2, `and it persisted between calls (pings=${String(again?.pings)})`);
+
+  // The permission model, from the inside. `diagnostics` declares `storage` and
+  // nothing else, so its attempt at `attention.set` must come back as a typed
+  // `denied` from the one authorizer in the dispatcher — not a crash, and not a
+  // success.
+  const probe = await post(controlSocket, '/invoke', {
+    command: 'diagnostics.probeDenied',
+    caller: { kind: 'device', deviceId: 'local-cli' },
+  });
+  check(probe.status === 200, `diagnostics.probeDenied answered (got ${probe.status})`);
+  const denial = bodyOf<{ denied: boolean; code: string; declared: string[] }>(probe);
+  check(denial?.denied === true, `an undeclared capability was refused (${JSON.stringify(denial)})`);
+  check(denial?.code === 'denied', `…and refused for the right reason (got ${String(denial?.code)})`);
+  check(
+    denial?.declared.includes('attention') === false,
+    `…while declaring only ${JSON.stringify(denial?.declared)}`,
+  );
+
+  // The registry's own account of it, over the same socket.
+  const listed = bodyOf<{ records: { id: string; state: string; source: string }[] }>(
+    await post(controlSocket, '/invoke', {
+      command: 'extensions.list',
+      caller: { kind: 'device', deviceId: 'local-cli' },
+    }),
+  );
+  const record = listed?.records.find((entry) => entry.id === 'shepherd.diagnostics');
+  check(
+    record?.state === 'active' && record.source === 'builtin',
+    `the registry reports it active as a builtin (${JSON.stringify(record)})`,
+  );
+
   say('the kernel answered on both sockets');
+  say('the extension host answered from its own process');
   // `say('OK')` and an explicit exit, as the other smokes do: the runner treats a
   // process that merely ends as a failure, because an Electron main can exit ZERO
   // for reasons nobody wrote down and a run that never reached the assertions
   // would otherwise report success.
   say('OK');
   app.exit(0);
+}
+
+/**
+ * The `value` out of the ingress's `{ok, value}` envelope.
+ *
+ * Undefined rather than a throw for a body that is not what we expect: the
+ * assertion above it then prints the body, which is the difference between "the
+ * extension host answered something odd" and a stack trace in the runner.
+ */
+function bodyOf<T>(response: { text: string }): T | undefined {
+  try {
+    const parsed = JSON.parse(response.text) as { ok?: boolean; value?: T };
+    return parsed.ok === true ? parsed.value : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** One POST over a unix socket. `curl`'s job, without depending on `curl`. */

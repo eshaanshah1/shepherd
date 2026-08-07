@@ -3,10 +3,20 @@ import { join } from 'node:path';
 import { app, BrowserWindow } from 'electron';
 import { color } from '@shepherd/design-tokens';
 import { appName, resolveAppPaths, shellDefaults } from '@shepherd/platform-darwin';
-import { CommandRegistry, EventBus, SessionHost, emptyGrants } from '@shepherd/core';
+import {
+  CommandRegistry,
+  EventBus,
+  ExtensionRegistry,
+  PermissionStore,
+  SessionHost,
+  SqliteStore,
+} from '@shepherd/core';
 import { LayoutStore, registerLayoutCommands } from '@shepherd/core/layout';
 import { AttentionStore, ViewingResolver, registerAttentionCommands } from '@shepherd/core';
-import { createLogger, rootId, systemClock } from '@shepherd/sdk';
+import { diagnosticsManifest } from '@shepherd/ext-diagnostics/manifest';
+import { createLogger, extensionId, rootId, systemClock } from '@shepherd/sdk';
+import { ExtensionHost } from './ext-host.ts';
+import { forkExtensionHost } from './ext-host-process.ts';
 import { IS_DEV } from './build-flags.ts';
 import {
   bootstrap,
@@ -104,15 +114,35 @@ const host = new SessionHost({
     process.stderr.write(`[shepherd] session ${context}: ${String(error)}\n`),
 });
 
+/**
+ * The one store. On disk under this build's own userData, so an extension's
+ * `ctx.storage` survives a relaunch — a KV that forgets is a lie, and the smokes
+ * already run against a throwaway userData directory so determinism is intact.
+ *
+ * Deliberately NOT handed to the `LayoutStore` below: a persisted pane tree would
+ * restore a previous run's three panes into a smoke that asserts the app opens
+ * with one.
+ */
+const store = new SqliteStore({ location: join(boot.userData, 'store.db'), logger });
+
+/**
+ * Who was granted what — review at install, grant once. Built-ins are pre-granted
+ * what they declare; the policy lives in `PermissionStore.review`, and
+ * `ExtensionRegistry.add` is the moment it runs.
+ */
+const permissions = new PermissionStore(store.namespace('permissions'), logger);
+
 const registry = new CommandRegistry({
   logger,
-  // Nothing is granted yet — `PermissionStore` is P5. A `user` caller is always
-  // allowed (`authorize`), which is every caller M1's chrome has, so an empty
-  // grant set is the honest value rather than a placeholder.
   grants: () => ({
-    ...emptyGrants(),
-    // The one grant M1 has. Everything else — extensions, paired devices, live
-    // agent sessions — arrives with `PermissionStore` (P5) and the remote layer.
+    // Extensions and their granted permissions, read per invocation so an install
+    // takes effect without anything re-registering.
+    ...permissions.grantSet(),
+    // MERGED onto the extension grants, not substituted for them: `grantSet()`
+    // returns empty `devices`/`agents` maps (it knows only about extensions), so
+    // replacing this key would silently deny the local CLI — and every existing
+    // leg of `smoke:m1` would start answering 403.
+    //
     // See `ingress.ts` for why reaching the local socket is itself the
     // authorization, and for what this deliberately does not extend to.
     devices: new Map([[LOCAL_DEVICE_ID, LOCAL_DEVICE_PERMISSIONS]]),
@@ -131,10 +161,10 @@ const bus = new EventBus({ clock: systemClock, logger });
  * the sink is a required constructor argument in core: there is no way to build a
  * store that closes a pane and forgets the pty behind it.
  *
- * No `storage`: layout persistence stays unwired until something in main owns a
- * `SqliteStore`. A persisted tree would also make both smokes non-deterministic —
- * they assert "the app opens with one pane", and a previous run's three-pane
- * layout would restore into it.
+ * No `storage`, even though main now owns a `SqliteStore` (the extension host
+ * needed one): layout persistence stays unwired deliberately, because a restored
+ * tree would make both smokes non-deterministic — they assert "the app opens with
+ * one pane", and a previous run's three-pane layout would restore into it.
  */
 const layout = new LayoutStore({
   logger,
@@ -167,6 +197,40 @@ const viewing = new ViewingResolver(
   logger,
 );
 const attention = new AttentionStore({ layout, viewing, bus, logger });
+
+/**
+ * The extension host, and the registry that drives it.
+ *
+ * The two are mutually dependent by construction — the registry is built *with*
+ * the host's `Activator`, and the host reads the registry to answer
+ * `extensions.list` and to put extensions back after a crash. The host therefore
+ * takes the registry as a getter: it is only ever called from inside an
+ * activation, which is long after both exist, and a getter says that out loud
+ * where a mutable field somebody has to remember to set would not.
+ *
+ * `spawn` is injected for the same reason `SessionBridge`'s clock is: the whole
+ * decision surface in `ext-host.ts` — caller derivation, the proposed gate, one
+ * bounded restart — is then testable without forking a process.
+ */
+const extensionHost = new ExtensionHost({
+  registry,
+  // The return type is written out because the two constructions below are
+  // mutually recursive, and without it TypeScript has no fixed point to infer.
+  extensions: (): ExtensionRegistry => extensions,
+  permissions,
+  bus,
+  kv: (namespace) => store.namespace(namespace),
+  logger,
+  clock: systemClock,
+  isDev: IS_DEV,
+  spawn: () => forkExtensionHost({ logger }),
+});
+
+const extensions: ExtensionRegistry = new ExtensionRegistry({
+  permissions,
+  activator: extensionHost.activator,
+  logger,
+});
 
 /**
  * Assigned once `registerLayoutIpc` exists, which is inside `whenReady` because
@@ -293,6 +357,25 @@ void app.whenReady().then(async () => {
     },
   });
 
+  // Extensions, after the command table exists and before the sockets open — so
+  // a CLI client cannot arrive before `diagnostics.ping` is registered, and so a
+  // built-in's own `commands.register` cannot race the kernel's.
+  extensionHost.registerCommands();
+  const installed = extensions.add(diagnosticsManifest, 'builtin');
+  if (!installed.ok) {
+    // Not fatal, and not silent. A built-in whose own manifest does not validate
+    // is our defect, and the app still has to open — but the reason has to be on
+    // the record or the extension is just missing.
+    for (const problem of installed.error) {
+      logger.error('extension', `built-in diagnostics is unloadable: ${problem.field}: ${problem.message}`);
+    }
+  } else {
+    // Awaited, so the child is up and its commands are registered before anything
+    // can invoke them. A failure is already logged by the registry, with the
+    // reason kept on its record — `extensions.list` is where you read it back.
+    await extensions.activate(extensionId(diagnosticsManifest.id));
+  }
+
   // The tree exists before the page can ask for it: `layout:get` is the first
   // thing the renderer does, and a root that is not open yet would answer
   // `no-root` and leave a blank window with nothing anywhere saying why.
@@ -364,6 +447,11 @@ app.on('will-quit', () => {
   // Unbind the sockets before the process goes: a listener that outlives its app
   // is the corpse `reclaimSocketPath` then has to reason about on the next launch.
   void ingress?.stop();
+  // Before anything else that could still be asked of it. `dispose` sets its own
+  // shut-down flag FIRST, which is what stops the child's exit from being read as
+  // a crash — otherwise quitting would log an error, spend the one restart, and
+  // mark every extension failed on the way out.
+  extensionHost.dispose();
   attention.dispose();
   viewing.dispose();
   // The layout write is debounced (a drag would otherwise write per mousemove),
@@ -373,4 +461,5 @@ app.on('will-quit', () => {
   layout.dispose();
   bridge.dispose();
   host.dispose();
+  store.close();
 });

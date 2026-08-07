@@ -3,7 +3,18 @@ import { defineConfig } from 'electron-vite';
 /**
  * electron-vite's defaults already name every path this app uses
  * (`src/main/index.ts`, `src/preload/index.ts`, `src/renderer/index.html`), so
- * the config is the four things that are NOT default:
+ * the config is the five things that are NOT default:
+ *
+ *   - **The extension host is a fourth build target.**
+ *     `utilityProcess.fork` needs built JS and electron-vite's config accepts
+ *     exactly three keys — `main`, `preload`, `renderer` — so the fourth target
+ *     is expressed as a second `rollupOptions.input` on the main build. Naming
+ *     `input` at all takes this build out of electron-vite's lib mode, which is
+ *     why the entry keys are spelled out: `index` must keep landing at
+ *     `out/main/index.js`, because `package.json`'s `main` field names that path
+ *     literally and Electron's app loader reads it as written. The child lands
+ *     beside it at `out/main/ext-host.js`, which is what
+ *     `ext-host-process.ts`'s `EXT_HOST_ENTRY` resolves against.
  *
  *   - **No `externalizeDepsPlugin`.** The templates ship it, and here it would
  *     be wrong: it externalizes everything in `dependencies`, which includes
@@ -43,6 +54,10 @@ export default defineConfig(({ mode }) => {
       build: {
         rollupOptions: {
           external: ['node-pty'],
+          input: {
+            index: 'src/main/index.ts',
+            'ext-host': 'src/ext-host/index.ts',
+          },
         },
       },
     },

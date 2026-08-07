@@ -21,6 +21,7 @@
     { "path": "../sdk" },
     { "path": "../core" },
     { "path": "../design-tokens" },
-    { "path": "../platform/darwin" }
+    { "path": "../platform/darwin" },
+    { "path": "../../extensions/diagnostics" }
   ]
 }
