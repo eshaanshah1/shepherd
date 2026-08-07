@@ -346,13 +346,54 @@ that made one `ProcessAPI` with `gitRead`/`gitWrite` correct rather than letting
 each extension write git runner #4.
 
 Where it lives is the part that needs discipline: **the kernel stays
-vendor-blind** (§2 — core knows nothing about tasks, agents, git, or Claude). So
+vendor-blind** (§2 — core knows nothing about tasks, agents, git, or Claude), and
+so does `agents-core`. `claude-code` is one *kind*, not the shape of the API.
 
-- **`agents-core` exports the seam** (M2): `complete({prompt, cwd})` for a
-  one-shot structured answer, `stream(…)` for `stream-json` events. Typed,
-  vendor-agnostic, reached through `extensions.get<AgentsAPI>`.
-- **`claude-code` implements the Claude kind behind it** (M2). A second vendor
-  is a third extension and touches neither the kernel nor a consumer.
+**The seam is `agents-core`'s own extension point.** §5.1 already has it export
+`registerAgentKind({ id, detect, stateMachine })`; it grows a `headless` half, and
+registration runs through a point `agents-core` defines rather than a switch it
+owns. So `codex`, `opencode`, `gemini-cli` are each a third-party extension
+registering a kind — no fork, no kernel change. This is the dogfood rule one
+level deeper (a built-in routes its own pluggable decisions through its own
+points), and it makes **M2 the first real consumer of `points.define`**, which
+was otherwise waiting for `tasks` in M3.
+
+```ts
+agents.registerKind({
+  id: 'codex',
+  capabilities: { streaming: true, tools: true, resume: false, structuredOutput: true },
+  headless: {
+    argv: ({ prompt, cwd }) => ['codex', 'exec', '--json', prompt],
+    // The adapter is the only place that knows this vendor's output format.
+    parse: (line) => AgentEvent | undefined,
+  },
+  detect, stateMachine,          // the interactive half, unchanged from §5.1
+})
+```
+
+Three properties that keep it honest:
+
+- **A normalized event union for the 90%.** `text`, `tool-call`, `tool-result`,
+  `turn-start`/`turn-end`, `error`, `usage`. Someone adding one smart button does
+  not want to learn a vendor's JSON, and every coding-agent CLI has these in some
+  form. A kind's `parse` maps its own output onto them.
+- **A `raw` passthrough beside every normalized event**, because normalization is
+  a lossy claim and pretending otherwise blocks the actual driver: §4.1's third
+  tier is "my own Claude Code UI over the CLI", and that consumer deliberately
+  targets one vendor and needs full fidelity. Normalizing is for portable
+  consumers; `raw` is for deliberate ones. **Claude's `stream-json` is therefore
+  never the API's event type** — it is what `claude-code`'s adapter reads and what
+  its `raw` carries.
+- **Capabilities are declared per kind**, and asking for one a kind lacks is a
+  typed error rather than a hang. A vendor that cannot stream, cannot resume, or
+  has no structured output must fail loudly at the call, not by blocking on a
+  pipe that will never produce the format the caller is parsing for.
+
+Which kind runs is the consumer's choice or, omitted, the user's configured
+default — so "my default agent is Codex" is a preference rather than a rewrite.
+
+Two things that hold regardless of kind:
+
 - **It is its own permission, `agents`** — not a corollary of `process.exec`.
   It spends the user's model budget, which is not a consequence "can run
   programs" prepares anyone for. Added to the manifest vocabulary in M1, ahead
