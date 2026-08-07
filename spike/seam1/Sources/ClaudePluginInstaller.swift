@@ -53,12 +53,16 @@ struct ClaudePluginInstaller {
 // MARK: - Filesystem
 
 extension ClaudePluginInstaller {
-    static var skillsDir: String {
-        (NSHomeDirectory() as NSString).appendingPathComponent(".claude/skills")
+    /// Claude Code resolves skills under its *config dir*, so a pane running on a second
+    /// account looks for the plugin somewhere else entirely. Without an install there its
+    /// hooks never fire and the pane stays `.shell` forever — which reads as Shepherd
+    /// being broken, not as a missing install. Hence: every path takes the profile.
+    static func skillsDir(for profile: ClaudeProfile = ClaudeProfiles.defaultProfile) -> String {
+        ClaudeProfiles.skillsDir(for: profile)
     }
 
-    static var linkPath: String {
-        (skillsDir as NSString).appendingPathComponent("shepherd")
+    static func linkPath(for profile: ClaudeProfile = ClaudeProfiles.defaultProfile) -> String {
+        (skillsDir(for: profile) as NSString).appendingPathComponent("shepherd")
     }
 
     static var bundledPlugin: String? {
@@ -67,8 +71,9 @@ extension ClaudePluginInstaller {
         return res
     }
 
-    static func currentEntry(fm: FileManager = .default) -> SkillsEntry {
-        let path = linkPath
+    static func currentEntry(for profile: ClaudeProfile = ClaudeProfiles.defaultProfile,
+                             fm: FileManager = .default) -> SkillsEntry {
+        let path = linkPath(for: profile)
         // destinationOfSymbolicLink first: fileExists follows links, so a dangling
         // link would otherwise read as absent and we'd try to create it over itself.
         if let dest = try? fm.destinationOfSymbolicLink(atPath: path) {
@@ -82,8 +87,8 @@ extension ClaudePluginInstaller {
         return isDir.boolValue ? .directory : .file
     }
 
-    static func currentState() -> PluginInstallState {
-        state(entry: currentEntry(), bundled: bundledPlugin)
+    static func currentState(for profile: ClaudeProfile = ClaudeProfiles.defaultProfile) -> PluginInstallState {
+        state(entry: currentEntry(for: profile), bundled: bundledPlugin)
     }
 
     enum InstallError: LocalizedError {
@@ -95,22 +100,24 @@ extension ClaudePluginInstaller {
             case .unavailable:
                 return "This build of Shepherd doesn't ship the Claude Code plugin."
             case .blocked:
-                return "Something already exists at ~/.claude/skills/shepherd. Remove it first."
+                return "Something already exists at this profile's skills/shepherd path. Remove it first."
             }
         }
     }
 
-    static func install(fm: FileManager = .default) throws {
+    static func install(for profile: ClaudeProfile = ClaudeProfiles.defaultProfile,
+                        fm: FileManager = .default) throws {
         guard let bundled = bundledPlugin else { throw InstallError.unavailable }
-        let s = currentState()
+        let s = currentState(for: profile)
         guard s.canInstall else { throw InstallError.blocked(s) }
-        try fm.createDirectory(atPath: skillsDir, withIntermediateDirectories: true)
-        try fm.createSymbolicLink(atPath: linkPath, withDestinationPath: bundled)
+        try fm.createDirectory(atPath: skillsDir(for: profile), withIntermediateDirectories: true)
+        try fm.createSymbolicLink(atPath: linkPath(for: profile), withDestinationPath: bundled)
     }
 
     /// Only ever removes a link we own — `currentState()` gates the caller.
-    static func remove(fm: FileManager = .default) throws {
-        guard currentState() == .installed else { return }
-        try fm.removeItem(atPath: linkPath)
+    static func remove(for profile: ClaudeProfile = ClaudeProfiles.defaultProfile,
+                       fm: FileManager = .default) throws {
+        guard currentState(for: profile) == .installed else { return }
+        try fm.removeItem(atPath: linkPath(for: profile))
     }
 }

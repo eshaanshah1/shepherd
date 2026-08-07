@@ -63,6 +63,21 @@ struct NewTabComposer: View {
 
             Spacer(minLength: 8)
 
+            // Only worth the pixels once a second account exists.
+            if !store.claudeProfiles.isEmpty, r.promptAvailable {
+                Menu {
+                    ForEach(store.allClaudeProfiles) { p in
+                        Button(p.name) { request?.claudeProfileID = p.id }
+                    }
+                } label: {
+                    Text(store.claudeProfile(id: r.claudeProfileID ?? workspaceProfileID).name)
+                        .font(.ui(12, .medium))
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .foregroundStyle(Theme.textSecondary)
+            }
+
             Menu {
                 ForEach(targets, id: \.workspaceID) { t in
                     Button(t.name) { retarget(t) }
@@ -174,6 +189,12 @@ struct NewTabComposer: View {
     private func binding<V>(_ key: WritableKeyPath<NewTabRequest, V>) -> Binding<V> {
         Binding(get: { (request ?? NewTabRequest(target: fallbackTarget))[keyPath: key] },
                 set: { request?[keyPath: key] = $0 })
+    }
+
+    /// The account the destination workspace would use, so the picker shows what you'd
+    /// get rather than "Default" for an inherited non-default profile.
+    private var workspaceProfileID: String? {
+        store.workspaces.first { $0.id == request?.target.workspaceID }?.claudeProfileID
     }
 
     private var fallbackTarget: NewTabTarget {
