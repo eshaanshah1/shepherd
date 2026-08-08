@@ -19,17 +19,17 @@ import '@xterm/xterm/css/xterm.css';
  * against `TerminalLike`, so xterm's DOM measurement (which jsdom cannot do)
  * never sits between a lifecycle claim and the test that proves it.
  *
- * The grid is drawn from the SAME tokens as the chrome, and the cell metrics
- * are the design language's first rule made literal: xterm's `lineHeight` is a
- * multiplier, so it is derived from the two token values rather than typed as
- * a third number that can drift from them.
+ * The grid is drawn from the SAME tokens as the chrome, but its row height is
+ * the font's own line box: xterm's DOM renderer sizes `█ ▀ ▄` to `fontSize`, so
+ * a multiplier above 1 pads the cell without growing the glyph and every block
+ * row gets a seam.
  */
 export function createXtermTerminal(mode: ThemeMode = DEFAULT_THEME_MODE): TerminalLike {
   const theme = xtermTheme(mode);
   const terminal = new Terminal({
     fontFamily: fonts.mono,
     fontSize: metrics.fontSize,
-    lineHeight: metrics.lineHeight / metrics.fontSize,
+    lineHeight: 1,
     theme,
     /*
      * The contrast floor, gated by the SAME reading the pane chrome uses — and
