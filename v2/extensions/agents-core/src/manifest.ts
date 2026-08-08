@@ -10,6 +10,13 @@ export const AGENTS_CORE_ID = 'shepherd.agents-core';
 
 export const AGENTS_COMMANDS = {
   list: 'agents.list',
+  /**
+   * What `--resume` would reattach to for a session, asked of whichever kind
+   * adopted it. The one verb a consumer needs in order to put an agent back,
+   * and the reason it is here rather than on `claudeCode.*`: a task that asked a
+   * vendor by name would be a task that knows which vendor it hired.
+   */
+  resumeTarget: 'agents.resumeTarget',
 } as const;
 
 /** Kernel commands this extension invokes. Public vocabulary, like a CLI verb. */
@@ -47,6 +54,9 @@ export const agentsCoreManifest: Manifest = {
    */
   permissions: ['sessions', 'storage', 'attention'],
   contributes: {
-    commands: [{ id: AGENTS_COMMANDS.list, title: 'Agents: List Tracked Sessions' }],
+    commands: [
+      { id: AGENTS_COMMANDS.list, title: 'Agents: List Tracked Sessions' },
+      { id: AGENTS_COMMANDS.resumeTarget, title: 'Agents: Resume Target' },
+    ],
   },
 };

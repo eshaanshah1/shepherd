@@ -38,7 +38,7 @@ import {
   type ViewProvider,
 } from '@shepherd/sdk';
 import { activate } from './index.ts';
-import { TASK_SCHEMA_VERSION, type TaskRecord } from './store.ts';
+import { TASK_SCHEMA_VERSION, type TaskRecord, type TaskSession } from './store.ts';
 
 /**
  * `tasks.delete`, through `activate` — the handler, not the pieces under it.
@@ -402,9 +402,9 @@ const rowOf = async (h: Harness, id: string): Promise<TreeItem | undefined> =>
  * timers, deliberately: the clock is manual so `correlate`'s poll never fires,
  * and this must not wait on it.
  */
-async function until(holds: () => boolean, ticks = 50): Promise<void> {
+async function until(holds: () => boolean | Promise<boolean>, ticks = 50): Promise<void> {
   for (let attempt = 0; attempt < ticks; attempt += 1) {
-    if (holds()) return;
+    if (await holds()) return;
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
   throw new Error(`the condition never held after ${ticks} ticks`);
@@ -970,6 +970,61 @@ describe('a pane that closes', () => {
   });
 });
 
+describe('restoring a task', () => {
+  const withAgent = task({
+    lifecycle: 'archived',
+    sessions: [{ id: 's1', role: 'orchestrator', resumeTarget: 'claude-abc' }],
+  });
+
+  it('REATTACHES the agent instead of starting a new one on the brief', async () => {
+    /*
+     * The bug: a restored task opened a fresh agent typed with the original
+     * brief — the same words with none of the transcript, which reads as the
+     * agent having forgotten everything it did. The target was captured when
+     * the task was archived and goes back unread (D11).
+     */
+    const h = (live = harness({ tasks: [withAgent] }));
+
+    await h.run('tasks.restore', { task: 't1' });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    const opened = h.invoked.find((call) => call.id === 'layout.openRoot');
+    expect((opened?.args as { initialCommand?: string }).initialCommand).toBe(
+      "claude --resume 'claude-abc'",
+    );
+  });
+
+  it('asks the AGENT extension for the target, never a vendor by name', async () => {
+    // A task that invoked `claudeCode.*` would be a task that knows which agent
+    // it hired. The verb is `agents.resumeTarget` and the value is opaque here.
+    const h = (live = harness({
+      tasks: [task({ sessions: [{ id: 's1', role: 'orchestrator', pane: 'p1' }] })],
+      git: archivable,
+    }));
+
+    await h.run('tasks.archive', { task: 't1' });
+
+    expect(h.invoked.some((call) => call.id === 'agents.resumeTarget')).toBe(true);
+    expect(h.invoked.some((call) => call.id.startsWith('claudeCode.'))).toBe(false);
+  });
+
+  it('leaves a session with nothing to resume alone rather than re-prompting it', async () => {
+    // An agent that cannot be reattached to is one there is nothing to restore.
+    // Starting it fresh is the behaviour being fixed; `tasks.spawn` is right
+    // there when a new agent is what you want.
+    const h = (live = harness({
+      tasks: [task({ lifecycle: 'archived', sessions: [{ id: 's1', role: 'orchestrator' }] })],
+    }));
+
+    await h.run('tasks.restore', { task: 't1' });
+    // The re-provision is deliberately not awaited by the verb (D12), so give
+    // it the ticks it needs to have opened a pane if it were going to.
+    for (let tick = 0; tick < 20; tick += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(h.invoked.some((call) => call.id === 'layout.openRoot')).toBe(false);
+  });
+});
+
 describe('a long operation', () => {
   it('says so on the row, with the app’s working indicator, and stops when it ends', async () => {
     // The seconds git takes are seconds a row that says nothing is a row you
@@ -1011,7 +1066,33 @@ describe('a task whose pane group empties', () => {
     // Archive, not delete: the worktrees are snapshotted first, so every
     // uncommitted line survives a gesture that looks like throwing work away.
     expect(h.invoked.find((call) => call.id === 'tasks.archive')?.args).toEqual({ task: 't1' });
-    expect((await h.run<{ sessions: unknown[] }[]>('tasks.list'))[0]?.sessions).toEqual([]);
+  });
+
+  it('KEEPS the sessions in the record, minus their dead panes', async () => {
+    /*
+     * They are what restore reattaches to. An empty list would also make
+     * `provision` treat the restored task as one that has never run and start a
+     * fresh agent on the original brief — the same words with none of the
+     * transcript, which is the bug this pairs with.
+     *
+     * The pane goes, because it closed with the root: a record naming a pane
+     * that does not exist is what made the archive trigger unreliable to begin
+     * with.
+     */
+    const h = (live = harness({
+      tasks: [task({ sessions: [{ id: 's1', role: 'orchestrator', pane: 'p1' }] })],
+      git: archivable,
+    }));
+
+    h.emit('layout.rootClosed', { root: 'task:t1' });
+    await until(async () => {
+      const [listed] = await h.run<{ lifecycle: string }[]>('tasks.list');
+      return listed?.lifecycle === 'archived';
+    });
+
+    expect((await h.run<{ sessions: TaskSession[] }[]>('tasks.list'))[0]?.sessions).toEqual([
+      { id: 's1', role: 'orchestrator' },
+    ]);
   });
 
   it('archives it whatever the record says its panes were', async () => {

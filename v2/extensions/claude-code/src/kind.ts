@@ -71,6 +71,16 @@ export function claudeKind(): AgentKind {
      */
     capabilities: { streaming: true, tools: true, resume: true, structuredOutput: true },
     reduce,
+    /**
+     * `claude --resume <this>`. Read out of the slot rather than a map of this
+     * extension's own, for the reason the slot exists: it dies with the session,
+     * and a map would go on answering for a pane that closed.
+     *
+     * The consumer this was waiting for landed with `tasks`: archiving a task
+     * captures one per session so that restoring it reattaches to the same
+     * transcript instead of starting a fresh agent on the brief.
+     */
+    resumeTargetOf: (slot) => (slot as ClaudeSlot | undefined)?.resumeSessionID ?? null,
   };
 }
 

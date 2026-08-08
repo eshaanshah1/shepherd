@@ -40,6 +40,22 @@ export function shellQuote(value: string): string {
  */
 export const AGENT_BINARY = 'claude';
 
+/**
+ * Reattach to an agent that already exists, by the token its kind gave us.
+ *
+ * No prompt and no prompt file: the transcript IS the context, and typing the
+ * original brief at a resumed session would restate what it already knows and
+ * read as a second instruction.
+ *
+ * `--resume` is spelled here for the same reason `AGENT_BINARY` is: one kind
+ * exists, and inventing a launch-command registry with one consumer would shape
+ * it around this caller. The TARGET is opaque and travels from the kind that
+ * captured it (D11); only the flag around it is assumed.
+ */
+export function planResume(target: string): string {
+  return `${AGENT_BINARY} --resume ${shellQuote(target)}`;
+}
+
 export function planLaunch(input: { readonly promptFile: string; readonly prompt: string }): LaunchPlan {
   const file = shellQuote(input.promptFile);
   // An empty prompt starts the agent with no argument, which is the right
