@@ -13,6 +13,7 @@ import { taskRootId } from './model/root-id.ts';
 import { displayState } from './model/lifecycle.ts';
 import { synthTaskRoot } from './model/root-synth.ts';
 import { planLaunch } from './model/launch.ts';
+import { ARCHIVE_TTL_MS, expired } from './model/expiry.ts';
 import {
   archiveWorktree,
   materializeTaskRoot,
@@ -300,6 +301,37 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       }
     }),
   );
+
+  /**
+   * Archives die after thirty days.
+   *
+   * On startup only, which is the whole cadence it needs: an archive's age
+   * changes by the day, and a timer checking a day-scale condition every few
+   * minutes is a timer running for the life of the app to answer a question
+   * that will still be true tomorrow. An app left open for a month sweeps on
+   * its next launch, and nothing is lost by the delay — the snapshot is still
+   * there, which is the failure mode you want from a garbage collector.
+   *
+   * `tasks.delete` does the work, so expiry has no second removal path: the
+   * worktrees, the root and the record go the same way they go by hand, and a
+   * bug fixed in one is fixed in both.
+   */
+  const sweep = (): void => {
+    const stale = expired(store.list(), ctx.clock.now());
+    for (const id of stale) {
+      void commands.invoke(TASK_COMMANDS.delete, { task: id }).then((result) => {
+        if (result.ok) {
+          ctx.log.info(`expired task ${id} — archived more than ${ARCHIVE_TTL_MS / 86_400_000} days ago`);
+        } else {
+          // Reported, and the record stays: a task that fails to expire is one
+          // whose worktrees somebody may still need, and a silent failure here
+          // is disk that never gets freed and nobody ever hears about.
+          ctx.log.warn(`task ${id} was due to expire and did not — ${result.error.message}`);
+        }
+      });
+    }
+    if (stale.length > 0) changed();
+  };
 
   const nextId = (): string => `task-${ctx.clock.now()}-${store.list().length}`;
 
@@ -788,7 +820,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         // the screen once what is on disk is safe.
         await closeTaskRoot(task);
 
-        store.put({ ...task, lifecycle: 'archived', archives });
+        store.put({ ...task, lifecycle: 'archived', archives, archivedAt: ctx.clock.now() });
         changed();
         for (const warning of warnings) ctx.log.warn(`task ${task.id}: ${warning}`);
         return { id: task.id, lifecycle: 'archived', warnings };
@@ -1024,6 +1056,14 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       },
     }),
   );
+
+  /**
+   * Last, not first: the sweep nudges the tree, and `changed` is defined with
+   * the view it notifies. Calling it up where the function is declared threw
+   * `Cannot access 'changed' before initialization` — caught by its own test,
+   * which is the argument for having written the test.
+   */
+  sweep();
 
   ctx.log.info(`ready — ${store.list().length} task(s), data in ${ctx.dataDir}`);
   return { list: () => store.list(), get: (id) => store.get(id) };

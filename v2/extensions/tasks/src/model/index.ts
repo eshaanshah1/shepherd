@@ -9,6 +9,7 @@
 
 export { slugify, uniqueSlug } from './slug.ts';
 export { taskRootId } from './root-id.ts';
+export { ARCHIVE_TTL_MS, expired } from './expiry.ts';
 export { repoName } from './repo-name.ts';
 export { LIFECYCLE_STATES, displayState, isLifecycle } from './lifecycle.ts';
 export type { TaskLifecycle, TaskDisplayState } from './lifecycle.ts';
