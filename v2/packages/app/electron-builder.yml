@@ -1,0 +1,43 @@
+# How Shep becomes an app you can launch from Spotlight.
+#
+# Two identities from one config, chosen by `--config.extraMetadata` at build
+# time: **Shep** (day) and **Shep Night** (dev). They are two apps on purpose —
+# `appName()` in packages/platform/darwin derives the userData directory, the
+# control socket and the Dock name from the same split, so a testing session in
+# Night can create and delete tasks without touching the real one's state. v1
+# learned that as Shepherd/ShepherdDev; the icons differ (day/night) so a glance
+# tells you which one is asking.
+appId: com.shepherd.shep
+productName: Shep
+copyright: MIT
+
+directories:
+  output: release
+  buildResources: build
+
+# `out/` is what electron-vite produced; package.json's `main` names
+# `out/main/index.js` literally, so both must ship. node_modules is filtered by
+# electron-builder itself from the production dependency graph.
+files:
+  - out/**/*
+  - package.json
+
+# node-pty is a native module: it cannot be bundled, so it is unpacked from the
+# asar and loaded from disk. Without this the app launches and every session
+# fails with a module it cannot find.
+asarUnpack:
+  - '**/node_modules/node-pty/**'
+
+mac:
+  category: public.app-category.developer-tools
+  icon: build/icon.icns
+  target:
+    - target: dir
+      arch: [arm64]
+  # Ad-hoc signing: enough for the app to run locally, and honest about what it
+  # is — a signed-for-distribution build needs a Developer ID and notarisation,
+  # which is a release concern rather than an install-it-here one.
+  identity: null
+  # The app spawns ptys and reads the user's projects; hardened runtime without
+  # the matching entitlements would break both, and it buys nothing unsigned.
+  hardenedRuntime: false
