@@ -131,6 +131,23 @@ interface AttentionChanged {
  */
 const SESSION_EXIT_TOPIC = 'session.exit';
 
+/**
+ * The layout saying a pane group ran out of panes.
+ *
+ * This is what "the task is finished with" is read from, and the reason it is
+ * not read from `session.exit` is worth stating: pane ids are regenerated when
+ * a layout is restored, so after a relaunch a task's recorded panes name panes
+ * that do not exist. Counting them down to zero therefore never gets there, and
+ * closing the last pane of a task created before the last restart archived
+ * nothing at all. The layout knows a root emptied whoever opened its panes and
+ * however many times the app has restarted since.
+ */
+const ROOT_CLOSED_TOPIC = 'layout.rootClosed';
+
+interface RootClosed {
+  readonly root?: string;
+}
+
 interface SessionExited {
   readonly sessionId: string;
   readonly paneId?: string;
@@ -326,13 +343,11 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
   );
 
   /**
-   * A pane closed, so the session that ran in it is gone.
+   * A pane closed, so the session that ran in it is gone: drop it.
    *
-   * Dropped from the record, and if it was the LAST one the task stops being
-   * `running` — it goes back to `draft`, which is what a task with no agent
-   * working it is. Its worktrees and its root are untouched: closing a pane is
-   * not deleting work, and `tasks.spawn` (or a click, which opens a root) picks
-   * it up again exactly where it was.
+   * Bookkeeping only. Whether the TASK is finished with is the next
+   * subscription's question, and it asks the layout rather than counting these
+   * down to zero — see `ROOT_CLOSED_TOPIC` for why the count is unreliable.
    *
    * Matched on the PANE, not the session id, for the reason the attention
    * mirror is pane-keyed: a session may still be carrying its `pending-*`
@@ -348,42 +363,61 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         store.put({ ...task, sessions });
         changed();
         ctx.log.info(`task ${task.id}: pane ${pane} closed, ${sessions.length} session(s) left`);
-
-        /**
-         * The LAST pane closing means the task is done.
-         *
-         * That is the user's own reading of the gesture, and it is the right
-         * one: you do not close every window on a piece of work you intend to
-         * come back to this minute. So it archives — the worktrees are
-         * snapshotted and removed, and the row sinks to the bottom of the list
-         * rather than sitting among live work as a draft nobody will read.
-         *
-         * Archiving rather than deleting is what makes the gesture safe: every
-         * uncommitted line is in the snapshot, and `tasks.restore` puts it back
-         * exactly. A task with nothing in it archives to nothing, which is the
-         * "closing a scratch task disappears it" case with no special path.
-         *
-         * Only a RUNNING task — an already archived one has no worktrees to
-         * snapshot, and a draft never had a pane to close.
-         */
-        if (sessions.length === 0 && task.lifecycle === 'running') {
-          void commands
-            .invoke(TASK_COMMANDS.archive, { task: task.id })
-            .then((result) => {
-              // A refusal is the point of the verb: a conflicted worktree
-              // cannot be snapshotted, so the task stays exactly as it is and
-              // says why. Silence here would be work quietly not saved.
-              if (!result.ok) {
-                ctx.log.warn(
-                  `task ${task.id}: last pane closed but it could not be archived — ${result.error.message}`,
-                );
-              }
-            })
-            .catch((error: unknown) => {
-              ctx.log.error(`task ${task.id}: archiving on close threw — ${String(error)}`);
-            });
-        }
       }
+    }),
+  );
+
+  /**
+   * A task's pane group emptying means the task is done.
+   *
+   * That is the user's own reading of the gesture, and it is the right one: you
+   * do not close every window on a piece of work you intend to come back to
+   * this minute. So it archives — the worktrees are snapshotted and removed,
+   * and the row sinks to the bottom of the list rather than sitting among live
+   * work as a draft nobody will read.
+   *
+   * Archiving rather than deleting is what makes the gesture safe: every
+   * uncommitted line is in the snapshot, and `tasks.restore` puts it back
+   * exactly. A task with nothing in it archives to nothing, which is the
+   * "closing a scratch task disappears it" case with no special path.
+   *
+   * Only a RUNNING task — an already archived one has no worktrees to snapshot,
+   * and a draft never had a pane to close.
+   */
+  ctx.subscriptions.push(
+    events.on<RootClosed>(ROOT_CLOSED_TOPIC, (payload) => {
+      const root = payload?.root;
+      if (typeof root !== 'string') return;
+      const task = store.list().find((candidate) => taskRootId(candidate.id) === root);
+      if (task === undefined || task.lifecycle !== 'running') return;
+
+      // Its panes are gone with the root, so the record saying otherwise is
+      // already stale — and leaving it would make the NEXT close of this task
+      // read as "one session left".
+      store.put({ ...task, sessions: [] });
+      changed();
+      ctx.log.info(`task ${task.id}: its pane group closed`);
+
+      void commands
+        .invoke(TASK_COMMANDS.archive, { task: task.id })
+        .then((result) => {
+          // A refusal is the point of the verb: a conflicted worktree cannot be
+          // snapshotted, so the task stays exactly as it is and says why.
+          // Silence here would be work quietly not saved.
+          if (!result.ok) {
+            ctx.log.warn(
+              `task ${task.id}: its panes closed but it could not be archived — ${result.error.message}`,
+            );
+          }
+        })
+        .catch((error: unknown) => {
+          ctx.log.error(`task ${task.id}: archiving on close threw — ${String(error)}`);
+        });
+    }),
+  );
+
+  /**
+   * Archives die after thirty days.      }
     }),
   );
 
