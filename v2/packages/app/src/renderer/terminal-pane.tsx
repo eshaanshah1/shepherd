@@ -1,5 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react';
-import type { Pane } from '@shepherd/core/layout';
+import { displayTitle, type Pane } from '@shepherd/core/layout';
 import type { PaneTerminals } from './pane-sessions.ts';
 import { AgentBadge } from './agent-badge.tsx';
 
@@ -63,17 +63,42 @@ export function TerminalPane({
     return () => observer.disconnect();
   }, [pane.id, terminals]);
 
+  const name = displayTitle(pane, '');
+  // The dim tail, only when it would say something the name does not. A pane
+  // with no title of its own already *is* its cwd (see `displayTitle`), and
+  // printing the path twice is noise dressed as detail.
+  const named = (pane.userTitle ?? '') !== '' || pane.title !== '';
+  const where = named ? pathTail(pane.cwd) : null;
+
   return (
     // The host must never be wrapped conditionally, and this element must never
     // become a positionally-keyed list — those are the two shapes that remount a
     // sibling (measured; a conditional sibling does not). A remounted host is a
     // fresh xterm and lost scrollback. See `agent-badge.tsx`.
+    //
+    // The head is a STATIC element in the same slot the badge used to occupy, so
+    // the terminal host keeps index 1 and its own identity for the life of the
+    // pane. Nothing here may become `{cond && <div/>}` around the host.
     <div className="sh-pane" data-pane-id={pane.id}>
-      <AgentBadge
-        {...(agentState === undefined ? {} : { state: agentState })}
-        {...(agentReason === undefined ? {} : { reason: agentReason })}
-      />
+      <div className="sh-pane-head">
+        <span className="sh-pane-name">{name}</span>
+        {where === null ? null : <span className="sh-pane-branch">· {where}</span>}
+        <AgentBadge
+          {...(agentState === undefined ? {} : { state: agentState })}
+          {...(agentReason === undefined ? {} : { reason: agentReason })}
+        />
+      </div>
       <div className="sh-term" data-testid="terminal-host" data-pane-id={pane.id} ref={hostRef} />
     </div>
   );
+}
+
+/**
+ * The last two components of a path. Presentation only — a full absolute path in
+ * a 28px strip is a line of ellipsis, and the pane's identity is the leaf.
+ */
+function pathTail(cwd: string | null): string | null {
+  if (cwd === null || cwd === '') return null;
+  const parts = cwd.split('/').filter((part) => part !== '');
+  return parts.length === 0 ? '/' : parts.slice(-2).join('/');
 }

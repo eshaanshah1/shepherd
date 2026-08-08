@@ -20,6 +20,7 @@ import {
   type LayoutSnapshots,
 } from '../shared/index.ts';
 import { MENU_INVOCATIONS } from '../shared/menu-commands.ts';
+import { EmptyState } from './empty-state.tsx';
 import { ViewDock } from './view-dock.tsx';
 import { ViewOverlay } from './view-overlay.tsx';
 import { useContributions } from './contributions.ts';
@@ -300,6 +301,14 @@ export function App({
           roots are hidden with `display: none` rather than not rendered.
         */}
         <main className="sh-stage" ref={stageRef}>
+          {/*
+            The one empty state there is: the window before main's first push.
+            Core keeps the tree intact when the last pane closes and closes the
+            window instead, so a zero-pane projection never arrives — see
+            `empty-state.tsx`. It renders no pane, which is what the null-snapshot
+            test asserts.
+          */}
+          {snapshots === null && <EmptyState />}
           {(snapshots?.roots ?? []).map((root) => (
             <div
               className="sh-root"
