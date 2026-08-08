@@ -1,0 +1,183 @@
+/*
+ * Menu — the right-click list of verbs.
+ *
+ * One luminance step (`surfaceRaised`) plus a hairline, the same separation
+ * Modal and Tooltip use, and for the same reason: rule 2 bans elevation theater,
+ * so there is no shadow to make a floating surface float. The menu is small and
+ * always over something, which is what makes one step enough.
+ */
+
+.sh-ui-menu {
+  min-width: calc(10 * var(--sh-space-xl));
+
+  background: var(--sh-surface-raised);
+  color: var(--sh-text);
+  border: var(--sh-hairline) solid var(--sh-line);
+  /* The machined corner. A menu is chrome, not a writing surface — `radius-soft`
+     is reserved for the composer and the palette, which is written on the token. */
+  border-radius: var(--sh-radius-md);
+  /* The inset is one gap all round, so the first and last items are not welded to
+     the border. Padding here rather than a margin on the items: a margin would
+     collapse the separator's own spacing into it. */
+  padding: var(--sh-space-xs);
+
+  /* Placed by Radix's positioning engine. Nothing here may set a position or a
+     transform, or the collision handling silently stops working — the same note
+     Tooltip carries, and the same failure. */
+  z-index: 30;
+}
+
+/*
+ * FINDING, reported with this wave: `min-width` has no metric behind it. A menu
+ * that is exactly as wide as the word `Reveal` reads as a fragment, and there is
+ * no "minimum affordance width" in the derived scale. Composed from the space
+ * scale (10 × xl = 140px at the defaults) rather than typed, so it moves with the
+ * base size and with density — which is the same trade `composer.css` records for
+ * its 26px inset, arrived at from the other side.
+ */
+
+/* ------------------------------------------------------------------- item */
+
+.sh-ui-menu__item {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-md);
+
+  /*
+   * The row rhythm, from the CONTROL scale.
+   *
+   * `control.md` and `row` are the same ratio on purpose — metrics.ts records
+   * Orca's rule that a control matches the row height around it, and expressing
+   * it as one shared number is how the two cannot drift. A menu opens over the
+   * sidebar, so its items land on the rhythm of the rows underneath it; naming
+   * `--sh-row-height` here would have said "this is a list", and it is not — it
+   * is a stack of controls.
+   */
+  height: var(--sh-control-md);
+  padding: 0 var(--sh-space-md);
+  border-radius: var(--sh-radius-sm);
+
+  font-family: var(--sh-font-sans);
+  font-size: var(--sh-font-size-body);
+  line-height: 1;
+  color: var(--sh-text);
+  white-space: nowrap;
+
+  /* A menu item is a verb you are pointing at, not a text you are reading. */
+  cursor: default;
+  user-select: none;
+  /* Radix draws no focus ring on a menu item — the highlight below IS the focus
+     indicator, and a ring plus a fill would be two ways of saying one thing. */
+  outline: 0;
+}
+
+/*
+ * ONE highlight, whether the pointer or the keyboard put it there.
+ *
+ * `[data-highlighted]` is the whole reason the Radix dependency is here rather
+ * than a `:hover` rule and an `activeIndex` in React state: those two are
+ * separate facts and they disagree the moment you arrow down a menu with the
+ * pointer still resting on item three. Inverse video, per rule 4 — the same
+ * treatment a selected `Row` gets, because it means the same thing.
+ */
+.sh-ui-menu__item[data-highlighted] {
+  background: var(--sh-fill-selected);
+  color: var(--sh-text-selected);
+}
+
+/*
+ * Disabled: 40% opacity on the live colour, per spec §3, and never a dimmer
+ * colour — `textDim`'s own `notFor` names this exact case. Radix stops it being
+ * highlightable and stops `onSelect` firing; this only has to say so.
+ */
+.sh-ui-menu__item[data-disabled] {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+/* ----------------------------------------------------------------- danger */
+
+/*
+ * Destructive. Ember text at rest and an ember FILL when highlighted — the
+ * treatment `Button`'s `danger` variant already uses, which is what keeps
+ * "destructive" one look in the app rather than one per surface.
+ *
+ * FINDING, reported with this wave: there is no role for INK ON A SOLID FILL by
+ * that name. `accentText` is it — an alias of `surface`, whose job is "the ink
+ * that reads ON a solid accent fill" — and its VALUE is right on any solid fill,
+ * ember included, because what makes it readable is that it is the surface
+ * colour. Only its name says accent. The alternative was typing `--sh-surface`
+ * here, which is the same value under a name that says nothing about being ink,
+ * and it would go wrong the day a fill needs an ink that is not the surface.
+ */
+.sh-ui-menu__item--danger {
+  color: var(--sh-danger);
+}
+
+.sh-ui-menu__item--danger[data-highlighted] {
+  background: var(--sh-danger);
+  color: var(--sh-accent-text);
+}
+
+/* ------------------------------------------------------------- icon + text */
+
+/*
+ * A fixed box whose CONTENTS vary, exactly as `Row`'s leading slot is — and it is
+ * rendered even when empty for the same reason. A menu where two of five verbs
+ * carry a glyph must not start three of its labels at a different x.
+ *
+ * Sized from `--sh-font-size-medium`, which is the value `iconSizes.sm` is
+ * derived from (`evenUp(metrics.type.medium)`), so the slot and the glyph move
+ * together when the base size moves. Same finding as `row.css` records: it is the
+ * closest thing to a right answer available, not the right answer.
+ */
+.sh-ui-menu__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: var(--sh-font-size-medium);
+  height: var(--sh-font-size-medium);
+}
+
+.sh-ui-menu__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/*
+ * The shortcut sits at the trailing edge with real space before it, never in a
+ * second column: a menu of four verbs does not need a grid, and a grid would
+ * align a keycap under nothing on every item that has none.
+ */
+.sh-ui-menu__shortcut {
+  flex: 0 0 auto;
+  margin-left: var(--sh-space-lg);
+}
+
+/*
+ * On a highlighted item the keycap is ink on a solid block, so it cannot keep its
+ * own dim colour or its own hairline — both are one value against the opposite
+ * surface. `currentColor` is what makes this correct in the danger case too,
+ * with no second rule.
+ */
+.sh-ui-menu__item[data-highlighted] .sh-ui-menu__shortcut {
+  color: inherit;
+  border-color: currentColor;
+  opacity: 0.72;
+}
+
+/* -------------------------------------------------------------- separator */
+
+/*
+ * A hairline and nothing else. The margin is what separates the groups; the rule
+ * is what names the separation. Both, because a gap alone in a list of 28px items
+ * reads as a rendering glitch.
+ */
+.sh-ui-menu__separator {
+  height: var(--sh-hairline);
+  margin: var(--sh-space-xs) var(--sh-space-sm);
+  background: var(--sh-line);
+}

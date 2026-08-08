@@ -218,7 +218,12 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
         // Named explicitly rather than left to the shell: switching to a root
         // that does not exist would leave the window drawing nothing, with the
         // failure visible only as a blank stage.
-        if (store.tree(root) === undefined) return unwrap(errNoRoot(args.root));
+        //
+        // `hasRoot`, not `tree(root) === undefined`, since a root may hold no
+        // panes: the old spelling answered both questions with one value and now
+        // refuses to switch to an EMPTY root, reporting "no root" about one that
+        // is open and on which the window draws the empty state.
+        if (!store.hasRoot(root)) return unwrap(errNoRoot(args.root));
         onSwitchRoot(root);
         return { root: args.root };
       },
@@ -242,20 +247,40 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
          * `store.open` restores a persisted root, which would report `created`
          * here for something the user had before — but the shell opens every
          * persisted root at launch, so by the time anything invokes this, a root
-         * on disk is a root in the map. Naming the check `store.tree` keeps it
-         * the same question the store answers everywhere else.
+         * on disk is a root in the map.
+         *
+         * The check is **"has a pane"**, not "is in the map", and the difference
+         * arrived with paneless roots. `openRoot` means "there is a root here
+         * with something in it" — that is what every caller does with the answer
+         * — so a root that exists and is EMPTY is one this verb still has work
+         * to do on. Left as an existence check, the home root could be emptied
+         * and never filled again: `openRoot` would report `created: false` with
+         * `pane: null` forever, and the empty state would be a dead end for
+         * every caller that is not the ⌘T composer.
+         *
+         * Filling one goes through `store.split`, which mints the first pane of
+         * an empty root (see its own note) — so there is one mint path and not a
+         * second one here that could shape a pane differently.
          */
-        const existing = store.tree(root) !== undefined;
-        if (existing) return { root: args.root, pane: store.focused(root), created: false };
+        if (store.panes(root).length > 0) {
+          return { root: args.root, pane: store.focused(root), created: false };
+        }
 
-        store.open(args.root, {
+        const init = {
           ...(args.cwd === undefined ? {} : { cwd: args.cwd }),
           ...(args.initialCommand === undefined ? {} : { initialCommand: args.initialCommand }),
           // A title given here is the USER's name for the pane, not an OSC one:
           // the caller is naming the thing it just made, and a program's own
           // title must still be able to lose to it.
           ...(args.title === undefined ? {} : { userTitle: args.title }),
-        });
+        };
+
+        if (store.hasRoot(root)) {
+          unwrap(store.split(root, 'row', init));
+          return { root: args.root, pane: store.focused(root), created: true };
+        }
+
+        store.open(args.root, init);
         return { root: args.root, pane: store.focused(root), created: true };
       },
     }),
@@ -266,7 +291,8 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
       schema: s.object({ root: s.string() }),
       handler: (args) => {
         const root = toRootId(args.root);
-        if (store.tree(root) === undefined) return unwrap(errNoRoot(args.root));
+        // `hasRoot`: an emptied root is still a root, and still closable.
+        if (!store.hasRoot(root)) return unwrap(errNoRoot(args.root));
         // The home root is what everything falls back to. Closing it would
         // leave the window with no root to draw and no root to switch to.
         if (root === homeRoot) return unwrap(fail(`${args.root} is the home root and cannot be closed`));

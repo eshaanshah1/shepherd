@@ -114,6 +114,49 @@ export function clickMenu(id: CommandID): void {
   item.click();
 }
 
+/**
+ * Give the home root its first pane, and prove the empty state was real.
+ *
+ * **The app now boots with NO panes.** The home root is minted `{ empty: true }`
+ * (see `index.ts`), because minting a shell nobody asked for is how "you have no
+ * tasks" came to be drawn as a terminal sitting in a directory that had usually
+ * just been deleted. The empty state is the resting state; a task, or this, is
+ * what puts a pane on the stage.
+ *
+ * So every smoke that is ABOUT a pane — the session, the ring, the terminal, the
+ * split — now says so: it asserts the window opened empty, asks for a pane, and
+ * gets on with what it was testing. That is one extra assertion and one extra
+ * line each, and it is strictly more than they proved before, because "the app
+ * opens with one pane" was never the claim any of them existed to make.
+ *
+ * It goes through **the page's own bridge**, not `layout.open` in main, for the
+ * same reason `smoke:m0` writes its bytes that way: the whole boundary —
+ * sandboxed renderer, preload, IPC, the registry, the authorization — is the
+ * half a unit test cannot reach, and a helper that skipped it would be testing
+ * a store this process could have called directly.
+ */
+export async function seedHomePane(win: BrowserWindow, timeoutMs: number): Promise<Snapshot> {
+  const until = waiter(timeoutMs);
+
+  const empty = await until(
+    'the window to render, with no panes',
+    () => snapshotOf(win),
+    (snapshot) => snapshot.ready,
+  );
+  check(empty.paneIds.length === 0, `the app opens with no panes (${empty.paneIds.length})`);
+
+  const opened = (await win.webContents.executeJavaScript(
+    `window.shepherd.commands.invoke('layout.openRoot', { root: 'window-1' })`,
+  )) as { ok: boolean; error?: { code: string; message: string } };
+  check(opened.ok, `layout.openRoot filled the empty home root${opened.ok ? '' : `: ${opened.error?.message ?? ''}`}`);
+
+  return until(
+    'the renderer to report a pane bound to a session',
+    () => snapshotOf(win),
+    (snapshot) => snapshot.paneIds.length === 1 && (snapshot.panes[0]?.sessionId ?? null) !== null,
+  );
+}
+
 export async function captureIfAsked(win: BrowserWindow): Promise<void> {
   const path = process.env['SHEPHERD_CAPTURE'];
   if (path === undefined || path === '') return;

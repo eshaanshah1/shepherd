@@ -1,0 +1,121 @@
+/*
+ * CommandPalette.
+ *
+ * Nearly empty, and that is the result rather than an omission: the surface is a
+ * `Composer` (which owns the radius, the padding and the scoped role
+ * re-declaration), the dialog is a `Modal` (which owns the scrim and the width),
+ * and a result is a `Row` (which owns the height, the hover wash and the inverse
+ * -video selection). What is left is the gap between the input and the list, the
+ * list's own scroll, and the two places a palette row differs from a sidebar row.
+ *
+ * `modal.css` already resets a nested Composer's own card, so the palette needs
+ * no rule for that either.
+ *
+ * EVERY rule below that overrides a primitive's own is written at HIGHER
+ * SPECIFICITY rather than relying on this file's position in the `@import`
+ * chain. `styles.css` states the rule and states why: the chain is alphabetical
+ * and nothing in it may depend on coming after anything else. Ordered by
+ * filename, `command-palette` lands before `composer`, `field` and `row` — all
+ * three of which this component sits inside — so a single-class override here
+ * would silently lose. Measured, not assumed: `.sh-ui-palette { gap }` against
+ * `.sh-ui-composer { gap }` is a tie at (0,1,0), and a tie goes to the later
+ * sheet.
+ */
+
+.sh-ui-composer.sh-ui-palette {
+  /*
+   * The gap `Composer` gives its children is the space between two FIELDS. Here
+   * the second child is a list whose first row must read as attached to the
+   * query above it, so the gap is one step down. Re-declared on the instance
+   * rather than added as a Composer variant: one caller is not a variant.
+   */
+  gap: var(--sh-space-sm);
+  min-height: 0;
+}
+
+/*
+ * The query.
+ *
+ * `large`, which is the composer's brief size — a palette input is the one thing
+ * on this surface you are looking at, and at body size it reads as a filter box
+ * on a list rather than as the thing you came here to type in.
+ */
+.sh-ui-palette .sh-ui-palette__input {
+  font-size: var(--sh-font-size-large);
+}
+
+/*
+ * The results.
+ *
+ * A ceiling of ten rows plus the padding, so a two-hundred-command registry does
+ * not grow the card past the bottom of the window — `Modal` caps at 76vh, and a
+ * palette that hits that cap has already stopped being usable. Ten because it is
+ * the count at which you stop reading and start typing instead.
+ *
+ * `--sh-row-height` is the right variable here and not the control scale, because
+ * these ARE list rows: they are `Row`, and the number has to be the same one or
+ * the ceiling is nine and a half of them.
+ */
+.sh-ui-palette .sh-ui-palette__list {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: calc(10 * var(--sh-row-height));
+  overflow-y: auto;
+
+  /* The rows are full-bleed inside the card's inset, which is what makes a
+     selected row read as a block rather than as a pill. */
+  margin: 0 calc(-1 * var(--sh-space-md));
+
+  scrollbar-width: thin;
+  scrollbar-color: var(--sh-line) transparent;
+}
+
+.sh-ui-palette .sh-ui-palette__list::-webkit-scrollbar {
+  width: var(--sh-space-md);
+}
+
+.sh-ui-palette .sh-ui-palette__list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sh-ui-palette .sh-ui-palette__list::-webkit-scrollbar-thumb {
+  background: var(--sh-line);
+  border-radius: 0;
+}
+
+/*
+ * A palette row is a `Row` with two differences, and no others.
+ *
+ *  - It is CLICKABLE, so it says so with the pointer. A sidebar row is a
+ *    selection; this one is an action that closes the surface it is on.
+ *  - Its horizontal inset matches the card's rather than the sidebar's, so the
+ *    labels line up with the query above them. `Row`'s own asymmetric padding is
+ *    for a list with a status column on its left, which this is not.
+ */
+.sh-ui-palette__list .sh-ui-palette__item {
+  cursor: pointer;
+  padding: 0 var(--sh-space-md);
+  border-radius: var(--sh-radius-sm);
+}
+
+/*
+ * The leading slot has no occupant here and is collapsed to nothing.
+ *
+ * `Row` renders it unconditionally so that a LIST of rows starts every label at
+ * the same x — the argument is on the component. In a palette no row will ever
+ * have a status, so the invariant is preserved by removing the slot from all of
+ * them rather than by leaving 12px of nothing in front of every command name.
+ */
+.sh-ui-palette__list .sh-ui-row__leading {
+  display: none;
+}
+
+.sh-ui-palette .sh-ui-palette__empty {
+  margin: 0;
+  padding: var(--sh-space-md);
+  font-family: var(--sh-font-sans);
+  font-size: var(--sh-font-size-body);
+  line-height: var(--sh-line-height);
+  color: var(--sh-text-faint);
+}

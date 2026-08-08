@@ -55,6 +55,7 @@ export function createBridge(ipc: IpcLike): ShepherdBridge {
       // layout command's schema is an object, and `s.object` on `undefined` is
       // an `invalid-args` failure for a gesture that simply took no arguments.
       invoke: (command, args) => invoke(INVOKE.commandInvoke, command, args ?? {}),
+      list: () => invoke(INVOKE.commandList),
     },
     layout: {
       get: () => invoke(INVOKE.layoutGet),

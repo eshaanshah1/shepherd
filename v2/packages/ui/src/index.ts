@@ -7,11 +7,27 @@
  * extension reaching for `var(--sh-ink-raised)`, a private palette name that was
  * already a public API by accident.
  *
- * **The twelve, and no thirteenth without a consumer.** Spec §6 names the risk a
+ * **Fifteen now, and none of the three arrived alone.** Spec §6 names the risk a
  * primitive set built ahead of its call sites runs — it grows members nobody
- * needs — and the mitigation is the "deliberately not in v1" list: no Select, no
- * Menu, no Tabs, no Toast, no Popover, no Table. Each arrives with its first real
- * consumer, because a primitive with no caller is a design nobody has tested.
+ * needs — and the mitigation is the rule that each new one lands with its first
+ * real consumer in the same change, because a primitive with no caller is a
+ * design nobody has tested. The three that joined the twelve, each with the
+ * caller that bought it:
+ *
+ *   `Menu`            a right-click on a sidebar task row (Reveal / Archive /
+ *                     Delete, the last two destructive). `Menu` was on the
+ *                     "deliberately not in v1" list until that consumer existed.
+ *   `Empty`           the shell's own empty state, which is now reachable: a
+ *                     root can hold no panes, so "nothing here" is a real
+ *                     projection rather than only the instant before main's
+ *                     first push.
+ *   `CommandPalette`  the kernel's command registry. Every command carries a
+ *                     `title` documented as "shown in the palette", and there
+ *                     was no palette — so `layout.zoom`, `layout.rename` and
+ *                     every `tasks.*` verb had no way to be run from the UI.
+ *
+ * Still deliberately absent, and still for the same reason: Select, Tabs, Toast,
+ * Popover, Table.
  *
  * `cva` is a dependency and is deliberately NOT re-exported: a primitive uses it
  * to build its own variants, and an extension building variants of its own means
@@ -35,8 +51,31 @@ export { Field, fieldControlVariants, type FieldProps, type FieldSize, type Fiel
 export { TextArea, type TextAreaProps } from './textarea.tsx';
 export { Composer, type ComposerProps } from './composer.tsx';
 
+export {
+  CommandPalette,
+  type CommandPaletteProps,
+  type PaletteCommand,
+} from './command-palette.tsx';
+/**
+ * The palette's ranking, exported as the pure function it is.
+ *
+ * A contributed view with its own list to filter should rank it the way the
+ * palette does, or the app has two ideas about what a better match is. The
+ * component is the one that owns a dialog; the scoring is just a comparison.
+ */
+export { fuzzyFilter, fuzzyScore, type FuzzyMatch } from './fuzzy.ts';
+
 // Structure
 export { Row, rowClasses, type RowProps } from './row.tsx';
+export { Empty, type EmptyProps } from './empty.tsx';
+export {
+  Menu,
+  isMenuSeparator,
+  type MenuEntry,
+  type MenuItemSpec,
+  type MenuProps,
+  type MenuSeparatorSpec,
+} from './menu.tsx';
 export { SectionLabel, type SectionLabelProps } from './section-label.tsx';
 export { Card, type CardProps } from './card.tsx';
 export { Modal, type ModalProps, type ModalSize } from './modal.tsx';

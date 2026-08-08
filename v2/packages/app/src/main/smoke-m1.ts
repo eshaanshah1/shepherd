@@ -3,7 +3,7 @@ import { app, type BrowserWindow } from 'electron';
 import type { EventBus, SessionHost } from '@shepherd/core';
 import { LAYOUT_COMMANDS } from '@shepherd/core/layout';
 import type { Envelope } from '@shepherd/sdk';
-import { check, die, say, snapshotOf, waiter, waitForLoad } from './smoke-support.ts';
+import { check, die, say, seedHomePane, snapshotOf, waiter, waitForLoad } from './smoke-support.ts';
 
 /**
  * The M1 smoke: the kernel, driven from OUTSIDE the process.
@@ -78,16 +78,13 @@ export async function runM1Smoke(
   check(bad.status === 400, `a session-less envelope is refused (got ${bad.status})`);
 
   // -------------------------------------------------------------- leg 2: control
-  // Leg 1 needed no window; this one does. Reading the layout before the page has
-  // rendered answers zero panes, which reads as "the app opened empty" — a
-  // misleading failure that says nothing about the socket under test.
+  // Leg 1 needed no window; this one does. The app now opens EMPTY on purpose
+  // (`seedHomePane` asserts that and says why), and what this leg is about is
+  // whether the control socket can move the layout — so it needs a pane to move,
+  // and it gets one the same way a user would.
   await waitForLoad(win);
   const until = waiter(5_000);
-  const before = await until(
-    'the window to render its first pane',
-    () => snapshotOf(win),
-    (snapshot) => snapshot.ready && snapshot.paneIds.length === 1,
-  );
+  const before = await seedHomePane(win, 5_000);
   check(before.paneIds.length === 1, `one pane to start (${before.paneIds.length})`);
 
   const split = await post(controlSocket, '/invoke', {

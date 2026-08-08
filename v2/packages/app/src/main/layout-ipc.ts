@@ -119,6 +119,33 @@ export function registerLayoutIpc(options: LayoutIpcOptions): LayoutIpc {
     },
   );
 
+  /**
+   * What the palette lists.
+   *
+   * The FILTER IS HERE, not in the page, and it is not this handler's policy: the
+   * SDK documents `title` as "shown in the palette … Absent = not user-facing",
+   * so an untitled command is one whose author said it is plumbing. Doing it in
+   * main means the page is never handed a list it has to remember not to draw,
+   * and the narrowed type (`title: string`) carries the guarantee across the
+   * port instead of a comment asking for it.
+   *
+   * Deliberately NOT filtered by permission. Every command here is invoked as
+   * `{kind:'user'}`, which `authorize` allows unconditionally — so "can this
+   * caller run it" has one answer for all of them, and pre-filtering would be a
+   * second authorization model that could disagree with the real one.
+   */
+  ipcMain.handle(
+    INVOKE.commandList,
+    (): IpcResult<readonly { id: string; title: string }[]> => ({
+      ok: true,
+      value: registry
+        .list()
+        .flatMap((command) =>
+          command.title === undefined ? [] : [{ id: command.id, title: command.title }],
+        ),
+    }),
+  );
+
   // ANY root's change republishes the whole envelope. The page holds all of them
   // mounted, so a change in a hidden root is one it still has to draw — its
   // panes keep running, and a snapshot that stopped at the active root would
@@ -131,7 +158,12 @@ export function registerLayoutIpc(options: LayoutIpcOptions): LayoutIpc {
     getActive: () => active,
     dispose: () => {
       subscription.dispose();
-      for (const channel of [INVOKE.layoutGet, INVOKE.layoutViewport, INVOKE.commandInvoke]) {
+      for (const channel of [
+        INVOKE.layoutGet,
+        INVOKE.layoutViewport,
+        INVOKE.commandInvoke,
+        INVOKE.commandList,
+      ]) {
         ipcMain.removeHandler(channel);
       }
     },

@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { TreeItem } from '@shepherd/sdk';
-import { Row, SectionLabel, StatusDot, type StatusRole } from '@shepherd/ui';
+import type { ComponentType } from 'react';
+import { IconArchive, IconEye, IconTrash } from '@tabler/icons-react';
+import type { IconProps as TablerIconProps } from '@tabler/icons-react';
+import type { TreeItem, TreeItemAction, TreeItemSeparator } from '@shepherd/sdk';
+import { Menu, Row, SectionLabel, StatusDot, type MenuEntry, type StatusRole } from '@shepherd/ui';
 import type { ViewContributionDTO, ViewsApi } from '../shared/index.ts';
 import { resolveExtensionUi } from './extension-ui.ts';
 
@@ -148,19 +151,34 @@ function TreeView({
             if (row.command !== undefined) void bridge?.activate(view.type, row.command);
           };
 
-          return (
-            <li key={row.id}>
-              {/*
-                `Row`'s root is a `<div>`, not the `<button>` this used to be, and
-                the keyboard semantics come back here rather than from the
-                element. That is the primitive's own trade (row.tsx states it): a
-                row's trailing area holds hover ACTIONS, and a control inside a
-                button is invalid HTML and unreachable by keyboard. So the row
-                announces itself as a button and activates like one, and a
-                contributed row can grow an action without the shell having to
-                change what it is.
-              */}
-              <Row
+          /*
+           * The row's context menu, and the ONE place its entries turn into a
+           * command. `activate` above and `runAction` here go through the same
+           * `bridge.activate`, so a menu entry is attributed exactly as a click
+           * is — to the contributing extension, never to the user (D14). The
+           * shell still names no caller.
+           */
+          const declared = row.actions ?? [];
+          const runAction = (id: string): void => {
+            const chosen = declared.find((entry) => !isSeparator(entry) && entry.id === id);
+            if (chosen === undefined || isSeparator(chosen)) return;
+            void bridge?.activate(view.type, {
+              id: chosen.id,
+              ...(chosen.args === undefined ? {} : { args: chosen.args }),
+            });
+          };
+
+          /*
+           * `Row`'s root is a `<div>`, not the `<button>` this used to be, and
+           * the keyboard semantics come back here rather than from the element.
+           * That is the primitive's own trade (row.tsx states it): a row's
+           * trailing area holds hover ACTIONS, and a control inside a button is
+           * invalid HTML and unreachable by keyboard. So the row announces itself
+           * as a button and activates like one, and a contributed row can grow an
+           * action without the shell having to change what it is.
+           */
+          const rowElement = (
+            <Row
                 role="button"
                 tabIndex={0}
                 selected={selected === row.id}
@@ -195,6 +213,29 @@ function TreeView({
               >
                 {row.label}
               </Row>
+          );
+
+          /*
+           * Wrapped only when there is something to show. A `Menu` with an empty
+           * item list still opens on right-click, and an empty box appearing over
+           * the sidebar is worse than nothing happening.
+           *
+           * The conditional wrap remounts the row when a contribution's actions
+           * appear or disappear, and that is deliberately acceptable HERE and
+           * would not be one layer down: a row is a div with a label, whereas the
+           * same shape around a pane is v1's recorded defect — a `_ConditionalContent`
+           * tears down its subtree, and for a pane that means a new surface and a
+           * dead shell.
+           */
+          return (
+            <li key={row.id}>
+              {declared.length === 0 ? (
+                rowElement
+              ) : (
+                <Menu items={declared.map(toMenuEntry)} onSelect={runAction}>
+                  {rowElement}
+                </Menu>
+              )}
             </li>
           );
         })}
@@ -202,6 +243,55 @@ function TreeView({
     </section>
   );
 }
+
+/** A wire entry that is a rule rather than a verb. */
+const isSeparator = (
+  entry: TreeItemAction | TreeItemSeparator,
+): entry is TreeItemSeparator => (entry as TreeItemSeparator).separator === true;
+
+/**
+ * A contributed action → a `Menu` entry.
+ *
+ * The one translation this file performs, and it is the same shape as
+ * `statusRole` below: an extension writes a NAME and the shell resolves it
+ * against its own set. An unknown glyph name renders no glyph rather than a
+ * placeholder — the label is the thing to read, and a "missing icon" box would
+ * make an extension's typo louder than its verb.
+ */
+function toMenuEntry(entry: TreeItemAction | TreeItemSeparator): MenuEntry {
+  if (isSeparator(entry)) return { separator: true };
+  const glyph = entry.icon === undefined ? undefined : ACTION_ICONS[entry.icon];
+  return {
+    id: entry.id,
+    label: entry.label,
+    ...(glyph === undefined ? {} : { icon: glyph }),
+    ...(entry.danger === undefined ? {} : { danger: entry.danger }),
+    ...(entry.shortcut === undefined ? {} : { shortcut: entry.shortcut }),
+    ...(entry.disabled === undefined ? {} : { disabled: entry.disabled }),
+  };
+}
+
+/**
+ * The glyph names a contribution may ask for.
+ *
+ * An ALLOW-LIST, and small on purpose. Tabler ships ~5,700 icons; letting a
+ * contribution name any of them would mean bundling the set, which is exactly
+ * what `Icon`'s "take a component, never a name" rule exists to prevent — and
+ * the tree-shaken subset is what keeps the renderer's bundle honest. It grows one
+ * line at a time, with the contribution that needs the glyph, which is the same
+ * rule a thirteenth primitive follows.
+ *
+ * FINDING, reported with this wave: `TreeItem.icon` — the ROW's glyph, declared
+ * in the SDK since M3 — is still consumed by nothing. It would resolve through
+ * this same table; it is left alone because the row's leading slot is occupied by
+ * its `StatusDot` and swapping one for the other is a design decision, not a
+ * wiring one.
+ */
+const ACTION_ICONS: Readonly<Record<string, ComponentType<TablerIconProps>>> = {
+  eye: IconEye,
+  archive: IconArchive,
+  trash: IconTrash,
+};
 
 /**
  * A contribution's tint word → one of `StatusDot`'s five roles.

@@ -90,7 +90,13 @@ describe('Row', () => {
   it('the leading slot is a fixed box, whatever is in it', () => {
     // Rule 2 of the four: the CONTENTS vary — dot, spinner, glyph, eventually
     // the sheep — and the box never does, including when it is empty.
-    const slot = rulesMentioning('sh-ui-row__leading')[0];
+    // The rule whose selector IS the slot, not merely the first rule mentioning
+    // it: another primitive may legitimately re-style the slot inside itself
+    // (the palette hides it), and `[0]` picks whichever sheet the alphabetical
+    // `@import` order happens to put first.
+    const slot = rulesMentioning('sh-ui-row__leading').find(
+      (rule) => rule.selectorText === '.sh-ui-row__leading',
+    );
     expect(slot?.style.width).toBe('var(--sh-font-size-medium)');
     expect(slot?.style.height).toBe('var(--sh-font-size-medium)');
     expect(slot?.style.flex).toBe('0 0 auto');

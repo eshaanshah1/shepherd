@@ -59,12 +59,19 @@ export function installSmokeHook(terminals: PaneTerminals | null): SmokeHandle {
   const hook: SmokeHook = {
     snapshot: () => {
       if (latest === null) return EMPTY;
-      const ids = leafIds(latest.tree);
+      /*
+       * A root with NO PANES is `ready` with an empty list — not `EMPTY`, which
+       * means "main has not answered yet". They are different facts and a smoke
+       * that could not tell them apart would wait out its timeout on a window
+       * that is working exactly as intended.
+       */
+      const tree = latest.tree;
+      const ids = tree === null ? [] : leafIds(tree);
       return {
         ready: true,
         paneIds: [...ids],
         focusedPaneId: latest.focusedPaneId,
-        outline: outline(latest.tree),
+        outline: tree === null ? null : outline(tree),
         panes: ids
           .map((id) => terminals?.inspect(id))
           .filter((info): info is PaneDiagnostics => info !== undefined),

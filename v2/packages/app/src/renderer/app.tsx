@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { IconPlus } from '@tabler/icons-react';
 import { paneId, type PaneID } from '@shepherd/sdk';
-import { IconButton } from '@shepherd/ui';
+import { CommandPalette, IconButton, type PaletteCommand } from '@shepherd/ui';
 import {
   LAYOUT_COMMANDS,
   findPane,
@@ -141,6 +141,60 @@ export function App({
     [commands],
   );
 
+  /**
+   * ⌘K — the command palette.
+   *
+   * The consumer that bought the primitive, and it closes a gap M1 opened: every
+   * command carries a `title` the SDK documents as "shown in the palette", and
+   * there was no palette. `layout.zoom`, `layout.rename` and every `tasks.*` verb
+   * had a user-facing name and no way for a user to say it.
+   *
+   * The list is fetched **when it opens**, not on mount: an extension activating
+   * later registers more commands, and a list taken at first paint would be short
+   * by exactly the ones a user is most likely looking for.
+   *
+   * Attribution: this goes through `commands.invoke`, which main attributes to
+   * `{kind:'user'}` — and that is CORRECT here, unlike a tree row's command
+   * (D14). The difference is not who clicked; it is that the user typed the
+   * command's own name and can see what they are running.
+   */
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteCommands, setPaletteCommands] = useState<readonly PaletteCommand[]>([]);
+
+  useEffect(() => {
+    if (!paletteOpen || commands === null) return;
+    let live = true;
+    void commands.list().then((result) => {
+      if (!live) return;
+      // A failure leaves the list empty and the palette says "no matching
+      // command" — which is honest. Silently rendering the previous list would
+      // offer verbs that may no longer be registered.
+      setPaletteCommands(result.ok ? result.value : []);
+    });
+    return () => {
+      live = false;
+    };
+  }, [paletteOpen, commands]);
+
+  useEffect(() => {
+    /*
+     * The CAPTURE phase, on the window, for the same reason `ViewOverlay` uses
+     * it: the focused element is usually an xterm, which claims the keyboard and
+     * would eat this before it bubbled anywhere.
+     *
+     * Not a menu accelerator, deliberately. A menu key equivalent fires whatever
+     * has focus — including while a modal is open — and this key has to be able
+     * to mean "close" while the palette itself is the thing on screen.
+     */
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'k' || !(event.metaKey || event.ctrlKey) || event.altKey) return;
+      event.preventDefault();
+      setPaletteOpen((open) => !open);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, []);
+
   /** A chrome gesture named the way the menu names it. One table, `menu-commands.ts`. */
   const runMenuCommand = useCallback(
     (id: CommandID) => {
@@ -190,7 +244,7 @@ export function App({
   const knownPanes = useRef<readonly PaneID[]>([]);
   useEffect(() => {
     if (snapshots === null) return;
-    const present = snapshots.roots.flatMap((root) => leafIds(root.tree));
+    const present = snapshots.roots.flatMap((root) => (root.tree === null ? [] : leafIds(root.tree)));
     for (const paneId of knownPanes.current) {
       if (!present.includes(paneId)) terminals?.release(paneId);
     }
@@ -266,9 +320,10 @@ export function App({
    * with no coupling in this file. A window with no snapshot yet says the app's
    * name, which is the one moment that is honest.
    */
-  const focused = active === null || active.focusedPaneId === null
-    ? null
-    : findPane(active.tree, paneId(active.focusedPaneId));
+  const focused =
+    active === null || active.tree === null || active.focusedPaneId === null
+      ? null
+      : findPane(active.tree, paneId(active.focusedPaneId));
   // A pane nobody named shows its path where the name would be, rather than a
   // placeholder: "Untitled" tells you nothing, and a plain shell in ~/dev is a
   // thing you can recognise.
@@ -353,13 +408,22 @@ export function App({
         */}
         <main className="sh-stage" ref={stageRef}>
           {/*
-            The one empty state there is: the window before main's first push.
-            Core keeps the tree intact when the last pane closes and closes the
-            window instead, so a zero-pane projection never arrives — see
-            `empty-state.tsx`. It renders no pane, which is what the null-snapshot
-            test asserts.
+            TWO ways to have nothing on the stage, and they draw the same thing.
+
+              - `snapshots === null` — the window before main's first push.
+              - the active root has NO PANES — a real projection now (`tree:
+                null`). Closing the last pane of the home root empties it rather
+                than closing the window, so this is where you land after
+                finishing your last task, and it is where a fresh profile starts.
+
+            The second one is why this component was unreachable for its whole
+            life, and the first is why nobody noticed: a snapshot arrives within
+            milliseconds, so the only empty state that existed was one you could
+            not see. Drawn INSIDE the stage and beside the roots rather than
+            instead of them, because the hidden roots must stay mounted — a torn
+            -down pane comes back as a second pty.
           */}
-          {snapshots === null && <EmptyState />}
+          {(snapshots === null || active?.tree == null) && <EmptyState />}
           {(snapshots?.roots ?? []).map((root) => (
             <div
               className="sh-root"
@@ -368,6 +432,7 @@ export function App({
               data-active={root.root === snapshots?.active}
               style={{ display: root.root === snapshots?.active ? 'flex' : 'none' }}
             >
+              {root.tree === null ? null : (
               <SplitView
                 tree={root.tree}
                 // Only the visible root has a focused pane. `TerminalPane` calls
@@ -384,12 +449,26 @@ export function App({
                 {...(terminals === null ? {} : { renderPane })}
                 home=""
               />
+              )}
             </div>
           ))}
         </main>
       </div>
 
       <ViewOverlay views={contributions} bridge={viewsApi} />
+
+      {/*
+        ⌘K. Mounted always and open only when asked — `Modal` renders nothing at
+        all while closed, so this costs one element in the tree and keeps the
+        palette's own state (its query, its active row) from being a remount
+        away from whatever else is on screen.
+      */}
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        commands={paletteCommands}
+        onRun={(id) => invoke(id, {})}
+      />
     </div>
   );
 }

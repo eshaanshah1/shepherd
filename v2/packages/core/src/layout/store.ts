@@ -75,15 +75,30 @@ export interface LayoutStoreOptions {
   readonly persistDebounceMs?: number;
 }
 
+/** How a root is minted. Nothing here applies to a root restored from storage. */
+export interface OpenOptions {
+  /**
+   * Mint it with NO pane.
+   *
+   * The home root asks for this at launch. A shell minted for a window nobody
+   * asked to put anything in is how "you have no tasks" came to be drawn as a
+   * terminal sitting in a directory that had usually just been deleted.
+   */
+  readonly empty?: boolean;
+}
+
 export interface CloseOutcome {
   /** The pane that went away. */
   readonly closed: PaneID;
   /** The session it was showing, if any — already killed by the time you see this. */
   readonly endedSession?: SessionID;
   /**
-   * True when that was the last pane of the root. ⌘W then falls through to the
-   * window, and **only** here: closing the window on any other pane is the
-   * classic Electron bug where a split vanishes because one pane was closed.
+   * True when that was the last pane of the root, which is now a fact about the
+   * ROOT rather than an instruction about the window: the root is left open and
+   * empty, and the shell decides what that means for each one (a task's root is
+   * finished with; the home root becomes the empty state). Never a signal to
+   * close the window on any OTHER pane — that is the classic Electron bug where
+   * a split vanishes because one of its panes was closed.
    */
   readonly wasLastPane: boolean;
 }
@@ -93,7 +108,19 @@ export interface PersistedLayout {
   readonly schemaVersion: 1;
   readonly roots: readonly {
     readonly id: string;
-    readonly tree: PersistedNode;
+    /**
+     * `null` for a root the user left with no panes in it — which is a thing
+     * they can now do, and which has to survive a relaunch or the empty state
+     * would silently refill itself with a shell on the next launch.
+     *
+     * **Still `schemaVersion: 1`,** and that is a decision rather than an
+     * oversight. An older build reading a null tree throws `LayoutDecodeError`
+     * inside `#restore`, which already catches it and starts that root fresh —
+     * so a downgrade loses an empty root and gains a pane, which is exactly what
+     * the old build would have done anyway. Bumping the version would instead
+     * discard the WHOLE payload, including every root that decodes perfectly.
+     */
+    readonly tree: PersistedNode | null;
     readonly focusedPaneId: string | null;
   }[];
 }
@@ -103,7 +130,25 @@ const DEFAULT_PERSIST_DEBOUNCE_MS = 400;
 
 interface RootState {
   readonly id: RootID;
-  tree: SplitNode;
+  /**
+   * The pane tree, or **null for a root that holds no panes**.
+   *
+   * Nullable since the empty-state fix, and it is a real state rather than a
+   * transient: closing the last pane of the home root leaves the root open and
+   * empty rather than closing the window (v1 landed on exactly this — a
+   * workspace may hold zero tabs, and `WorkspaceEmptyView` is what it draws).
+   * Before, `close` left the last pane's tree INTACT and the shell closed the
+   * window, so a zero-pane projection could not exist — and the app's empty
+   * state was therefore unreachable, drawing only in the instant before main's
+   * first push.
+   *
+   * `SplitNode` has no empty variant and must not grow one: an empty tree would
+   * be a case every walk (`leafIds`, `frames`, `neighbor`, `closing`) has to
+   * carry, to express something that is a property of the ROOT. Null here is one
+   * check at the root, in the places that already ask whether there is anything
+   * to draw.
+   */
+  tree: SplitNode | null;
   focusedPaneId: PaneID | null;
   /** Transient, never persisted — v1's rule for zoom, kept. */
   zoomedPaneId: PaneID | null;
@@ -167,13 +212,38 @@ export class LayoutStore {
    * an initial command to one of them would re-run a command that the persisted
    * shape deliberately drops (see `serialize.ts`) and re-point a pane the user
    * had moved elsewhere.
+   *
+   * **`{ empty: true }` mints it with NO pane.** That is what the home root asks
+   * for at launch: the shell's unit of work is a task, and minting a shell in
+   * whatever directory happens to be current is how "you have no tasks" came to
+   * be drawn as a terminal — usually sitting in a worktree that had just been
+   * deleted. It applies only to the MINT: a restore still brings back whatever
+   * the user left, empty or not, because that is what they left.
+   *
+   * `init` with `empty` is a contradiction and the pane wins nothing: there is
+   * no pane to shape. Passing both is legal and `init` is ignored, rather than a
+   * failure, because the caller that does it is a caller that stopped needing a
+   * first pane and left an argument behind.
    */
-  open(id: string = 'window-1', init?: PaneInit): RootID {
+  open(id: string = 'window-1', init?: PaneInit, options: OpenOptions = {}): RootID {
     const live = this.#roots.get(rootId(id));
     if (live) return live.id;
 
     const restored = this.#restore(rootId(id));
     if (restored) return restored.id;
+
+    if (options.empty === true) {
+      const state: RootState = {
+        id: rootId(id),
+        tree: null,
+        focusedPaneId: null,
+        zoomedPaneId: null,
+        viewport: { x: 0, y: 0, width: 0, height: 0 },
+      };
+      this.#roots.set(state.id, state);
+      this.#changed(state.id);
+      return state.id;
+    }
 
     const pane = makePane(init ?? {}, this.#newPane);
     const state: RootState = {
@@ -205,7 +275,7 @@ export class LayoutStore {
     // Pending initial input for panes that never got a session would otherwise
     // outlive the panes it names, and every entry here is keyed by a pane id
     // that can never be minted again.
-    for (const pane of leafIds(state.tree)) this.#initialInput.delete(pane);
+    for (const pane of state.tree === null ? [] : leafIds(state.tree)) this.#initialInput.delete(pane);
     this.#roots.delete(id);
     this.#changed(id);
     this.#log.info(`removed root ${id}`);
@@ -249,8 +319,30 @@ export class LayoutStore {
       .map((saved) => rootId(saved.id));
   }
 
+  /**
+   * The tree to draw, if there is one.
+   *
+   * `undefined` now means "no root **or** no panes", which is deliberately the
+   * same answer: every caller of this asks it in order to walk a tree, and both
+   * cases mean there is nothing to walk. What it is NOT any more is an existence
+   * check — that is `hasRoot`, and the two questions parted company the moment a
+   * root could be empty. Every `store.tree(root) === undefined` that meant "does
+   * this root exist" was converted with this change.
+   */
   tree(root: RootID): SplitNode | undefined {
-    return this.#roots.get(root)?.tree;
+    return this.#roots.get(root)?.tree ?? undefined;
+  }
+
+  /**
+   * Does this root exist — whether or not it holds anything.
+   *
+   * Split out of `tree() === undefined`, which answered both questions with one
+   * value while a root could not be empty. Left as it was, `layout.switchRoot`
+   * would refuse to switch to an empty root and `layout.closeRoot` would refuse
+   * to close one, both reporting "no root" about a root that is open.
+   */
+  hasRoot(root: RootID): boolean {
+    return this.#roots.has(root);
   }
 
   /**
@@ -261,6 +353,7 @@ export class LayoutStore {
   focused(root: RootID): PaneID | null {
     const state = this.#roots.get(root);
     if (!state) return null;
+    if (state.tree === null) return null;
     const id = state.focusedPaneId;
     if (id !== null && containsPane(state.tree, id)) return id;
     return firstLeafId(state.tree);
@@ -281,13 +374,15 @@ export class LayoutStore {
 
   /** Which root holds a pane. Needed because a command names a pane, not a root. */
   rootOf(pane: PaneID): RootID | undefined {
-    for (const [id, state] of this.#roots) if (containsPane(state.tree, pane)) return id;
+    for (const [id, state] of this.#roots) {
+      if (state.tree !== null && containsPane(state.tree, pane)) return id;
+    }
     return undefined;
   }
 
   pane(id: PaneID): Pane | null {
     for (const state of this.#roots.values()) {
-      const found = findPane(state.tree, id);
+      const found = state.tree === null ? null : findPane(state.tree, id);
       if (found) return found;
     }
     return null;
@@ -369,6 +464,18 @@ export class LayoutStore {
   split(root: RootID, axis: SplitAxis, init: PaneInit = {}): Result<PaneID, string> {
     const state = this.#roots.get(root);
     if (!state) return err(`no root ${root}`);
+
+    /*
+     * Splitting an EMPTY root gives it its first pane.
+     *
+     * Not a special case bolted on: with a root able to hold none, "make me a
+     * pane here" and "make me another pane here" are the same gesture, and ⌘D on
+     * the empty state has to do something other than log `nothing to split`. It
+     * is the only way back into an empty home root from the keyboard, so the
+     * alternative is an empty state you can only leave by composing a task.
+     */
+    if (state.tree === null) return ok(this.#seed(state, init));
+
     const target = this.focused(root);
     if (target === null) return err('nothing to split');
 
@@ -391,7 +498,7 @@ export class LayoutStore {
     const state = this.#roots.get(root);
     if (!state) return err(`no root ${root}`);
     const target = this.focused(root);
-    if (target === null) return ok(null);
+    if (target === null || state.tree === null) return ok(null);
 
     const next = neighbor(state.tree, target, direction, state.viewport);
     if (next === null) {
@@ -426,13 +533,33 @@ export class LayoutStore {
     const state = this.#roots.get(root)!;
 
     const session = this.#sessionByPane.get(pane);
-    const next = closing(state.tree, pane);
+    // Non-null: `rootOf` found the pane in this root's tree, so there is one.
+    const tree = state.tree as SplitNode;
+    const next = closing(tree, pane);
 
     if (next === null) {
-      // The last pane. The tree is left alone — the app decides what closing the
-      // window means, and a root with no leaves is not a state anything can draw.
+      /*
+       * The last pane. The root is now EMPTY — the tree really goes to null, and
+       * that is the change the empty state needed.
+       *
+       * It used to be left intact, with the shell closing the window instead. So
+       * a zero-pane projection could not exist, the app's empty state was
+       * unreachable, and "you have no tasks" was drawn as a live shell sitting in
+       * whatever directory was current — usually a worktree that had just been
+       * deleted. `wasLastPane` still reports the fact; what the shell does with
+       * it is the shell's, and for the home root it is now "draw the empty state"
+       * rather than "quit".
+       *
+       * `#changed`, not silence: this is a structural change that has to reach
+       * the renderer AND the persisted payload, or the next launch mints a pane
+       * into a root the user emptied on purpose.
+       */
+      state.tree = null;
+      state.focusedPaneId = null;
+      state.zoomedPaneId = null;
       if (session !== undefined) this.#endSession(pane, session);
-      this.#log.info(`closed the last pane of ${root}`);
+      this.#log.info(`closed the last pane of ${root}; it is now empty`);
+      this.#changed(root);
       return ok({
         closed: pane,
         ...(session === undefined ? {} : { endedSession: session }),
@@ -440,7 +567,7 @@ export class LayoutStore {
       });
     }
 
-    const heir = siblingLeaf(state.tree, pane) ?? firstLeafId(next);
+    const heir = siblingLeaf(tree, pane) ?? firstLeafId(next);
     state.tree = next;
     state.focusedPaneId = heir;
     if (state.zoomedPaneId === pane) state.zoomedPaneId = null;
@@ -458,6 +585,7 @@ export class LayoutStore {
     const state = this.#roots.get(root);
     if (!state) return err(`no root ${root}`);
     if (!Number.isFinite(ratio)) return err(`ratio must be finite, got ${ratio}`);
+    if (state.tree === null) return err(`${root} has no panes`);
     state.tree = setRatio(state.tree, path, clampRatio(ratio));
     this.#changed(root);
     return ok(undefined);
@@ -502,7 +630,10 @@ export class LayoutStore {
     if (!state) return undefined;
     return {
       id: state.id,
-      regions: { main: this.#projectNode(state.tree) },
+      // A paneless root contributes NO region rather than an empty one: `regions`
+      // is `Partial<Record<RegionName, LayoutNode>>` and an absent key already
+      // means "nothing here", so an extension reading it needs no new case.
+      regions: state.tree === null ? {} : { main: this.#projectNode(state.tree) },
       focused: state.focusedPaneId === null ? null : nodeId(state.focusedPaneId),
       zoomed: state.zoomedPaneId === null ? null : nodeId(state.zoomedPaneId),
     };
@@ -542,11 +673,27 @@ export class LayoutStore {
     // `updatePane` answers with a `TreeEdit`, not a tree: its `ok` distinguishes
     // "rewritten" from "that pane is not in here", and dropping the distinction
     // is what makes a miss look like a successful no-op.
-    const result = updatePane(state.tree, pane, edit);
+    // Non-null: `rootOf` found the pane in this root's tree.
+    const result = updatePane(state.tree as SplitNode, pane, edit);
     if (!result.ok) return err(`no pane ${pane}`);
     state.tree = result.tree;
     this.#changed(root);
     return ok(undefined);
+  }
+
+  /**
+   * Give an empty root its first pane. The mint half of `open`, reachable again
+   * once a root can be emptied — otherwise the only way to get a pane into one
+   * would be to close and re-open it, which loses the root's identity and every
+   * task that names it.
+   */
+  #seed(state: RootState, init: PaneInit): PaneID {
+    const pane = makePane(init, this.#newPane);
+    state.tree = leaf(pane);
+    state.focusedPaneId = pane.id;
+    state.zoomedPaneId = null;
+    this.#changed(state.id);
+    return pane.id;
   }
 
   #endSession(pane: PaneID, session: SessionID): void {
@@ -578,7 +725,11 @@ export class LayoutStore {
       schemaVersion: 1,
       roots: [...this.#roots.values()].map((state) => ({
         id: state.id,
-        tree: serializeNode(state.tree),
+        // `null` for an emptied root, and it has to be written rather than
+        // skipped: a root dropped from the payload is a root that comes back
+        // MINTED on the next launch, which would refill the empty state with a
+        // shell the user closed on purpose.
+        tree: state.tree === null ? null : serializeNode(state.tree),
         focusedPaneId: state.focusedPaneId,
       })),
     };
@@ -614,9 +765,13 @@ export class LayoutStore {
     const saved = record.roots.find((candidate) => candidate.id === id);
     if (!saved) return undefined;
 
-    let tree: SplitNode;
+    let tree: SplitNode | null;
     try {
-      tree = deserializeNode(saved.tree, this.#newPane);
+      // A persisted `null` is a root the user emptied, restored empty. Handled
+      // before `deserializeNode`, which has no empty case by design and would
+      // report this as corruption — and "corrupt" here means `#restore` returns
+      // undefined and `open` mints a pane, i.e. the exact refill this is for.
+      tree = saved.tree === null ? null : deserializeNode(saved.tree, this.#newPane);
     } catch (error) {
       // A corrupt tree must not stop the app from starting. This is a restore
       // path; the cost of ignoring it is one lost layout, and the cost of
@@ -628,12 +783,12 @@ export class LayoutStore {
     const state: RootState = {
       id,
       tree,
-      focusedPaneId: firstLeafId(tree),
+      focusedPaneId: tree === null ? null : firstLeafId(tree),
       zoomedPaneId: null,
       viewport: { x: 0, y: 0, width: 0, height: 0 },
     };
     this.#roots.set(id, state);
-    this.#log.info(`restored ${leafIds(tree).length} pane(s) for ${id}`);
+    this.#log.info(`restored ${tree === null ? 0 : leafIds(tree).length} pane(s) for ${id}`);
     this.#notify(id);
     return state;
   }

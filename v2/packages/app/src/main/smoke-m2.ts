@@ -50,6 +50,14 @@ export async function runM2Smoke(
   // presence handlers in `index.ts` are registered AFTER a smoke returns, so
   // `appActive` is frozen true here — which means front-ness is decided purely
   // by `layout.focused(root)`, and that is what these legs vary.
+  //
+  // TWO calls, because the home root now opens EMPTY (`index.ts` mints it
+  // `{ empty: true }`, so "no tasks" is not drawn as a shell in a directory that
+  // has just been deleted). The first `split` SEEDS the empty root with its
+  // first pane — the store's own note says why that is one verb rather than two
+  // — and the second one actually splits it.
+  const seed = layout.split(options.root, 'row');
+  if (!seed.ok) return die(`could not seed the empty home root: ${seed.error}`);
   const split = layout.split(options.root, 'row');
   if (!split.ok) return die(`could not split: ${split.error}`);
 
