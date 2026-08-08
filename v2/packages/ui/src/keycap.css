@@ -1,0 +1,35 @@
+/*
+ * KeyCap — the mock's `.key`, which is a hairline box and nothing else.
+ *
+ * No fill: rule 5's "flat, bordered, honest". A filled keycap on a surface that
+ * also has filled buttons on it puts two things at the same volume, one of which
+ * cannot be pressed.
+ */
+
+.sh-ui-keycap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  flex: 0 0 auto;
+
+  /* A key legend is machine vocabulary — the character the machine will receive —
+     so mono, and the fixed advance is also what keeps `⌘T` and `⌘⇧A` from
+     rendering at two different densities beside each other. */
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-micro);
+  letter-spacing: var(--sh-micro-tracking);
+  line-height: 1;
+  color: var(--sh-text-dim);
+  white-space: nowrap;
+
+  padding: var(--sh-space-xs) var(--sh-space-sm);
+  border: var(--sh-hairline) solid var(--sh-line);
+  /* The machined corner, not the button's — a keycap is smaller than every
+     control and 6px on it would round it away. */
+  border-radius: var(--sh-radius-sm);
+  background: transparent;
+
+  /* Display only. Not a pointer, not selectable as a stray click-drag target. */
+  cursor: default;
+  user-select: none;
+}

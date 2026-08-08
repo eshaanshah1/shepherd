@@ -1,0 +1,46 @@
+/*
+ * Tooltip.
+ *
+ * A hairline box on the raised surface, and no arrow. The arrow is dropped
+ * because it is a second shape that has to stay on the hairline grid at every
+ * collision-flipped side, and it says nothing the position does not.
+ *
+ * No shadow (rule 2) and no fade-in (rule 7's ban on decorative motion applies
+ * doubly to something that appears while the pointer is still moving). The
+ * luminance step plus the border is the whole separation, which is enough
+ * because a tooltip is small and always over something.
+ */
+
+.sh-ui-tooltip {
+  max-width: 32ch;
+
+  background: var(--sh-surface-raised);
+  color: var(--sh-text);
+  border: var(--sh-hairline) solid var(--sh-line);
+  border-radius: var(--sh-radius-sm);
+  padding: var(--sh-space-xs) var(--sh-space-md);
+
+  font-family: var(--sh-font-sans);
+  font-size: var(--sh-font-size-small);
+  line-height: var(--sh-line-height);
+
+  /* It is placed by Radix's positioning engine; nothing here may set a position
+     or a transform, or the collision handling silently stops working. */
+  z-index: 30;
+
+  /* Never a click target. It follows the pointer's trigger, and a tooltip that
+     could be hovered is a tooltip that can keep itself open. */
+  pointer-events: none;
+  user-select: none;
+}
+
+/*
+ * `ch` here and nowhere else, and the exception is deliberate.
+ *
+ * Rule 1 as amended bans `ch` for LAYOUT: it is fractional, so a hairline landing
+ * on a subpixel boundary blurs, and in a language with no shadows the hairlines
+ * carry the whole hierarchy. This is a `max-width` on a text box with no
+ * hairlines inside it, and the thing being expressed is genuinely "about this
+ * many characters of prose before it wraps" — which is what the unit means. No
+ * edge in this element is positioned by it.
+ */

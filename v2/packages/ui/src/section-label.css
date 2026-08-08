@@ -1,0 +1,56 @@
+/*
+ * SectionLabel — the mock's `.group`.
+ *
+ * One row tall so a list has a single vertical rhythm, and that is the only
+ * thing it shares with `Row`: no hover, no selection, no leading slot.
+ */
+
+.sh-ui-section-label {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-md);
+  height: var(--sh-row-height);
+  padding: 0 var(--sh-space-xl);
+  margin: 0;
+
+  font-family: var(--sh-font-sans);
+  font-size: var(--sh-micro-font-size);
+  /* The WIDE tracking, not the narrow one: this is the instrument voice at its
+     most deliberate, and it is the shortest string on the surface. */
+  letter-spacing: var(--sh-micro-tracking-wide);
+  font-weight: 400;
+  line-height: 1;
+  text-transform: uppercase;
+  color: var(--sh-text-faint);
+  white-space: nowrap;
+}
+
+.sh-ui-section-label__text,
+.sh-ui-section-label__count {
+  flex: 0 0 auto;
+}
+
+/* Drawn, not typed — so a heading with no count has no orphaned separator, and
+   nobody has to remember which side it goes on. */
+.sh-ui-section-label__count::before {
+  content: '· ';
+}
+
+/*
+ * The trailing rule.
+ *
+ * A real `border-top` on a zero-height flex item, which is the one border in this
+ * package that is NOT a band's edge: the element has no content box for the
+ * pixel to be taken out of, so the inset-shadow argument (a 1px border stealing a
+ * pixel of content height and knocking everything half a pixel out of centre)
+ * does not apply. The shipped `.sh-group::after` reached the same conclusion.
+ */
+.sh-ui-section-label::after {
+  content: '';
+  flex: 1 1 auto;
+  border-top: var(--sh-hairline) solid var(--sh-line);
+}
+
+.sh-ui-section-label[data-rule='false']::after {
+  border-top-color: transparent;
+}

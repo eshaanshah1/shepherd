@@ -1,0 +1,78 @@
+/*
+ * Composer — the writing surface, and the one scoped role re-declaration in the
+ * primitive set.
+ *
+ * Read the block below before changing anything here: it is the mechanism spec
+ * §2 is about, and the three declarations are not decoration.
+ */
+
+.sh-ui-composer {
+  /*
+   * ---------------------------------------------------- the re-declaration
+   *
+   * Generic roles, re-declared for this subtree. Never a parallel
+   * `--sh-composer-*` family — that is what pane chrome does today
+   * (`--sh-pane-title-fg-on-dark` and friends) and the cost is that every
+   * component inside has to know where it is.
+   *
+   * `surface`        the card IS the surface for everything on it. This is what
+   *                  makes `accentText` (an alias OF surface) correct on a
+   *                  primary Button in here: its on-fill ink matches the card
+   *                  rather than the panel the card sits over.
+   * `surfaceSunken`  transparent. The role's own `notFor` names this exact case:
+   *                  "a writing surface. A composer is soft — its fields sit ON
+   *                  the card with no well of their own."
+   * `line`           transparent. This is what "no inner hairlines" MEANS as a
+   *                  rule rather than as a wish. Between them, the last two turn
+   *                  a default `<Field variant="bordered">` into a bare one with
+   *                  no prop and no knowledge of where it is.
+   *
+   * A control that genuinely needs an edge in here re-declares `--sh-line` back
+   * on itself. That is the same mechanism, used the other way, and it keeps the
+   * rule a property of this container instead of a list of components that
+   * remembered to opt out.
+   */
+  --sh-surface: var(--sh-surface-raised);
+  --sh-surface-sunken: transparent;
+  --sh-line: transparent;
+
+  display: flex;
+  flex-direction: column;
+  /* Space IS the structure here: with no hairlines inside, the gap is the only
+     thing separating one field from the next. */
+  gap: var(--sh-space-lg);
+
+  background: var(--sh-surface-raised);
+  color: var(--sh-text);
+
+  /*
+   * The one soft corner in the app, and it is a token rather than a literal so
+   * the fused-panel maths (`calc(radius - 1px)`) has one source. The plate, the
+   * sidebar and the status bar keep the industrial hairline look — this radius is
+   * a scoped decision about the composition surface, not drift, and it should not
+   * be "restored" to 6px.
+   */
+  border-radius: var(--sh-radius-soft);
+
+  /*
+   * Generous, and composed from the space scale rather than typed: the approved
+   * inset is 26px and the scale's top step is 14. `xl + lg` is exactly 26 and
+   * moves correctly with both the base size and density, which a literal would
+   * not. (FINDING, reported with this wave: there is no space step above 14px.)
+   */
+  padding: calc(var(--sh-space-xl) + var(--sh-space-lg));
+
+  /* The card is the whole surface, so it owns the padding and anything a caller
+     puts inside sits directly on it and never needs a box of its own to be
+     found. */
+  min-width: 0;
+}
+
+/*
+ * No border and no shadow.
+ *
+ * Rule 2 bans elevation theater, and the luminance step from `surface` to
+ * `surfaceRaised` IS the elevation — there is no second one. A hairline around a
+ * 16px radius would also be the one inner-looking edge on a surface whose entire
+ * premise is that it has none.
+ */

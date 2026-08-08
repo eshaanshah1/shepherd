@@ -1,0 +1,64 @@
+/*
+ * TextArea — only what a textarea adds to a field.
+ *
+ * The colours, the padding, the two variants and the invalid treatment are
+ * `field.css`'s, and this element carries `.sh-ui-field__control` so it gets
+ * them. If a rule here restates one of those, the two have started to drift and
+ * the fix is to delete it, not to keep them in step.
+ */
+
+.sh-ui-textarea {
+  display: block;
+  min-height: var(--sh-ui-textarea-min);
+
+  /*
+   * No resize grabber, ever.
+   *
+   * It draws diagonal hairlines in the corner of a field that is otherwise
+   * borderless — which on the `bare` variant is the only mark on it, so the one
+   * visible thing about a writing surface becomes a drag handle. The shipped
+   * composer already learned this and says so.
+   */
+  resize: none;
+}
+
+/*
+ * `field-sizing: content` is the whole of autoGrow.
+ *
+ * The bounds come in as custom properties from the component (`lines(n)`), so
+ * this file keeps the opinion about which CSS property they drive. Unsupported,
+ * the field sits at `min-height` and scrolls — i.e. it degrades to the
+ * non-growing behaviour rather than to a broken one.
+ */
+.sh-ui-textarea[data-auto-grow='true'] {
+  field-sizing: content;
+  max-height: var(--sh-ui-textarea-max);
+  overflow-y: auto;
+}
+
+/*
+ * The scrollbar, matching the shell's: a thumb of `line` and nothing else — no
+ * track, no arrows, no rounded chrome. A stock macOS bar on a warm-ink surface
+ * is the single loudest wrong pixel in a dark app.
+ */
+.sh-ui-textarea {
+  scrollbar-width: thin;
+  scrollbar-color: var(--sh-line) transparent;
+}
+
+.sh-ui-textarea::-webkit-scrollbar {
+  width: var(--sh-space-md);
+}
+
+.sh-ui-textarea::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sh-ui-textarea::-webkit-scrollbar-thumb {
+  background: var(--sh-line);
+  border-radius: 0;
+}
+
+.sh-ui-textarea::-webkit-scrollbar-thumb:hover {
+  background: var(--sh-text-faint);
+}

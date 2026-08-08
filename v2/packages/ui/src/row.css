@@ -1,0 +1,177 @@
+/*
+ * Row.
+ *
+ * ONE rule in this file declares a height, and it is the first one. That is not
+ * a coincidence to be preserved by care — a named test walks every
+ * `sh-ui-row` rule in the loaded stylesheet and fails if a second one declares
+ * `height`, `min-height` or `max-height`. Rule 9 is the invariant; the test is
+ * how it survives the next person who wants a taller selected row.
+ */
+
+.sh-ui-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-md);
+  width: 100%;
+
+  /*
+   * THE height. Every state below is a paint change and nothing else.
+   *
+   * `box-sizing: border-box` is assumed (the app sets it globally), so the
+   * padding lives inside this number — which is also why nothing here draws a
+   * border: a 1px edge would eat a pixel of the content box and drop everything
+   * flex-centred in the row half a pixel off the rows around it.
+   */
+  height: var(--sh-row-height);
+  flex: 0 0 auto;
+
+  padding: 0 var(--sh-space-lg) 0 var(--sh-space-xl);
+
+  font-family: var(--sh-font-sans);
+  font-size: var(--sh-font-size-body);
+  line-height: 1;
+  color: var(--sh-text);
+  text-align: left;
+  white-space: nowrap;
+  background: transparent;
+  border: 0;
+  cursor: default;
+
+  /* Rule 7: only what changes, near-linear. Never `all` — that would animate the
+     grid's own tracks when the trailing content swaps. */
+  transition:
+    background var(--sh-motion) linear,
+    color var(--sh-motion) linear;
+}
+
+/*
+ * Hover: a WASH of `text`, not a palette step.
+ *
+ * `fillHover` is a `color-mix` over `var(--sh-text)`, so a subtree that
+ * re-declared `--sh-text` gets a correct hover fill for free — which is the
+ * difference between an extension that themes and an extension that is a
+ * different colour from everything around it. The shipped `.sh-row:hover` uses
+ * `--sh-ink-raised`, a fixed palette step, and that is precisely what would not
+ * follow a contributed theme.
+ */
+.sh-ui-row:hover {
+  background: var(--sh-fill-hover);
+}
+
+/*
+ * Selection: inverse video (rule 4). A SOLID block of `text` with `textSelected`
+ * ink on it — never a tint, and never the hover wash at a higher alpha. The two
+ * are one glance apart because one is a wash and the other is a fill; make them
+ * both washes and the list stops telling you which row you are on.
+ *
+ * It wins over `:hover` by coming later at equal specificity, so a hovered
+ * selected row stays selected rather than going one step paler under the cursor.
+ */
+.sh-ui-row--selected,
+.sh-ui-row--selected:hover {
+  background: var(--sh-fill-selected);
+  color: var(--sh-text-selected);
+}
+
+/* ----------------------------------------------------------- leading slot */
+/*
+ * A fixed box. The CONTENTS vary — dot, spinner, glyph, eventually the sheep —
+ * and the box never does, including when it is empty. `flex: 0 0 auto` plus an
+ * explicit width and height, because a flex item sized from its content is a
+ * label whose x position depends on whether this row happens to have a status.
+ *
+ * FINDING, reported with this wave: 12px is `iconSizes.sm`, which lives in
+ * TypeScript (`icon.tsx`) and deliberately has no CSS variable — Tabler renders
+ * the size as an SVG attribute, and a variable beside it would be a second
+ * source. `--sh-font-size-medium` is the value that ramp is derived FROM
+ * (`evenUp(metrics.type.medium)`), so naming it here keeps the slot and the icon
+ * moving together when the base size moves. It is the closest thing to a right
+ * answer available, not the right answer.
+ */
+.sh-ui-row__leading {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: var(--sh-font-size-medium);
+  height: var(--sh-font-size-medium);
+}
+
+/* ------------------------------------------------------------------- label */
+
+.sh-ui-row__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------- trailing */
+/*
+ * ONE grid cell, two children stacked in it.
+ *
+ * This is the whole mechanism: `meta` and `actions` are both placed in the same
+ * named area, so the track is as wide as the wider of them and revealing the
+ * actions cannot change the row's layout. The alternative — swapping one for the
+ * other in the flow — makes a list twitch as the pointer runs down it, and
+ * re-truncates the label on every row it passes.
+ */
+.sh-ui-row__trailing {
+  display: grid;
+  grid-template-areas: 'stack';
+  align-items: center;
+  justify-items: end;
+  flex: 0 0 auto;
+}
+
+.sh-ui-row__meta,
+.sh-ui-row__actions {
+  grid-area: stack;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sh-space-xs);
+}
+
+.sh-ui-row__meta {
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-small);
+  color: var(--sh-text-faint);
+}
+
+/* On a selected row the metadata is ink on a solid block, so it cannot keep its
+   own faint colour — it would be one faint value against the opposite surface. */
+.sh-ui-row--selected .sh-ui-row__meta {
+  color: inherit;
+  opacity: 0.72;
+}
+
+/*
+ * Actions rest hidden and are revealed by hover OR by keyboard focus inside
+ * them. `:focus-within` is not optional politeness: without it a control that
+ * only exists on hover is a control a keyboard can tab to and cannot see.
+ *
+ * `visibility`, not `display: none`. The hidden child must keep occupying its
+ * grid cell — that is what makes the track wide enough for it before it appears,
+ * which is the entire point of stacking the two.
+ */
+.sh-ui-row__actions {
+  visibility: hidden;
+}
+
+.sh-ui-row:hover .sh-ui-row__actions,
+.sh-ui-row:focus-within .sh-ui-row__actions {
+  visibility: visible;
+}
+
+/* The metadata gives way to the actions in the shared cell rather than moving. */
+.sh-ui-row:hover .sh-ui-row__meta:not(:empty) + .sh-ui-row__actions:not(:empty),
+.sh-ui-row:focus-within .sh-ui-row__meta:not(:empty) + .sh-ui-row__actions:not(:empty) {
+  /* The actions paint over the metadata; both keep their cell. */
+  background: inherit;
+}
+
+.sh-ui-row:hover .sh-ui-row__meta:has(+ .sh-ui-row__actions:not(:empty)),
+.sh-ui-row:focus-within .sh-ui-row__meta:has(+ .sh-ui-row__actions:not(:empty)) {
+  visibility: hidden;
+}
