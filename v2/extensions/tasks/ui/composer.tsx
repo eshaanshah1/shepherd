@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
-import type { ExtensionViewProps } from '@shepherd/sdk';
-import { repoName } from '../src/model/repo-name.ts';
+import { useEffect, useState } from "react";
+import type { ExtensionViewProps } from "@shepherd/sdk";
+import { repoName } from "../src/model/repo-name.ts";
 
 /**
  * The composer — a task, created from inside the app (sketch §4).
@@ -51,25 +51,34 @@ function readSuggestions(value: unknown): readonly RepoSuggestion[] {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
   return value.flatMap((entry: unknown) => {
-    if (typeof entry !== 'object' || entry === null) return [];
+    if (typeof entry !== "object" || entry === null) return [];
     const { path } = entry as { path?: unknown };
-    if (typeof path !== 'string' || path === '' || seen.has(path)) return [];
+    if (typeof path !== "string" || path === "" || seen.has(path)) return [];
     seen.add(path);
     return [{ path, name: repoName(path) }];
   });
 }
 
-export function TaskComposer({ invoke, done }: ExtensionViewProps): React.JSX.Element {
-  const [title, setTitle] = useState('');
-  const [brief, setBrief] = useState('');
+export function TaskComposer({
+  invoke,
+  done,
+}: ExtensionViewProps): React.JSX.Element {
+  const [title, setTitle] = useState("");
+  const [brief, setBrief] = useState("");
   const [repos, setRepos] = useState<readonly RepoSuggestion[]>([]);
-  const [path, setPath] = useState('');
+  const [path, setPath] = useState("");
   const [suggestions, setSuggestions] = useState<readonly RepoSuggestion[]>([]);
-  const [status, setStatus] = useState('');
+  const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const askForSuggestions = async (forTitle: string, forBrief: string): Promise<void> => {
-    const answer = await invoke('tasks.suggestRepos', { title: forTitle, brief: forBrief });
+  const askForSuggestions = async (
+    forTitle: string,
+    forBrief: string,
+  ): Promise<void> => {
+    const answer = await invoke("tasks.suggestRepos", {
+      title: forTitle,
+      brief: forBrief,
+    });
     if (answer.ok) setSuggestions(readSuggestions(answer.value));
   };
 
@@ -79,21 +88,21 @@ export function TaskComposer({ invoke, done }: ExtensionViewProps): React.JSX.El
   // slow. There is no debounce because there is no timer here to get wrong.
   // Mount only — later asks are the blur handlers'.
   useEffect(() => {
-    void askForSuggestions('', '');
+    void askForSuggestions("", "");
   }, []);
 
   const add = (candidate: string): void => {
     const trimmed = candidate.trim();
-    if (trimmed === '') return;
+    if (trimmed === "") return;
     // Same repo twice is one worktree and one branch, so it is one entry.
     if (repos.some((repo) => repo.path === trimmed)) return;
     setRepos([...repos, { path: trimmed, name: repoName(trimmed) }]);
-    setPath('');
+    setPath("");
   };
 
   const create = async (): Promise<void> => {
     setBusy(true);
-    const result = await invoke('tasks.create', {
+    const result = await invoke("tasks.create", {
       title,
       brief,
       repos: repos.map((repo) => ({ path: repo.path, name: repo.name })),
@@ -103,12 +112,17 @@ export function TaskComposer({ invoke, done }: ExtensionViewProps): React.JSX.El
       setStatus(`${result.error.code}: ${result.error.message}`);
       return;
     }
-    const created = typeof result.value === 'object' && result.value !== null ? (result.value as { slug?: unknown }) : {};
-    setStatus(`created ${typeof created.slug === 'string' ? created.slug : 'a task'}`);
+    const created =
+      typeof result.value === "object" && result.value !== null
+        ? (result.value as { slug?: unknown })
+        : {};
+    setStatus(
+      `created ${typeof created.slug === "string" ? created.slug : "a task"}`,
+    );
     // Cleared only on success. A failed create keeps everything typed — the
     // form is the only copy of it.
-    setTitle('');
-    setBrief('');
+    setTitle("");
+    setBrief("");
     setRepos([]);
     // The composer's job is over; the shell decides what that means (an overlay
     // closes, a docked copy stays and is now empty).
@@ -117,15 +131,15 @@ export function TaskComposer({ invoke, done }: ExtensionViewProps): React.JSX.El
 
   return (
     <form
-      className="sh-ext-card"
+      className="sh-composer"
       data-testid="task-composer"
       onSubmit={(event) => {
         event.preventDefault();
         void create();
       }}
     >
-      <h2 className="sh-dock-title">new task</h2>
       <input
+        className="sh-composer-title"
         data-testid="composer-title"
         aria-label="task title"
         placeholder="what is this task"
@@ -134,6 +148,7 @@ export function TaskComposer({ invoke, done }: ExtensionViewProps): React.JSX.El
         onBlur={() => void askForSuggestions(title, brief)}
       />
       <textarea
+        className="sh-composer-brief"
         data-testid="composer-brief"
         aria-label="task brief"
         placeholder="the brief the orchestrator starts from"
@@ -142,59 +157,107 @@ export function TaskComposer({ invoke, done }: ExtensionViewProps): React.JSX.El
         onBlur={() => void askForSuggestions(title, brief)}
       />
 
-      <div className="sh-composer-repos">
-        <input
-          data-testid="composer-repo-path"
-          aria-label="repo path"
-          placeholder="/path/to/repo"
-          value={path}
-          onChange={(event) => setPath(event.target.value)}
-          onKeyDown={(event) => {
-            // Enter adds the repo rather than submitting the form: a task with
-            // the repo field half-typed is a task with the wrong repos.
-            if (event.key === 'Enter') {
-              event.preventDefault();
-              add(path);
-            }
-          }}
-        />
-        <button type="button" data-testid="composer-add-repo" onClick={() => add(path)}>
-          add repo
-        </button>
-      </div>
-
-      {suggestions.length > 0 && (
+      {/*
+        A suggestion already picked stops being offered — it is in the row
+        below, and showing it in both places reads as two different repos with
+        the same name.
+      */}
+      {suggestions.some(
+        (suggestion) => !repos.some((repo) => repo.path === suggestion.path),
+      ) && (
         <ul className="sh-composer-suggestions">
-          {suggestions.map((suggestion) => (
-            <li key={suggestion.path}>
-              <button
-                type="button"
-                data-testid="composer-suggestion"
-                data-path={suggestion.path}
-                title={suggestion.path}
-                onClick={() => add(suggestion.path)}
-              >
-                {suggestion.name}
-              </button>
-            </li>
-          ))}
+          {suggestions
+            .filter(
+              (suggestion) =>
+                !repos.some((repo) => repo.path === suggestion.path),
+            )
+            .map((suggestion) => (
+              <li key={suggestion.path}>
+                <button
+                  type="button"
+                  data-testid="composer-suggestion"
+                  data-path={suggestion.path}
+                  title={suggestion.path}
+                  onClick={() => add(suggestion.path)}
+                >
+                  {suggestion.name}
+                </button>
+              </li>
+            ))}
         </ul>
       )}
 
-      <ul className="sh-composer-picked" data-testid="composer-picked">
-        {repos.map((repo) => (
-          <li key={repo.path} data-testid="composer-picked-repo" data-path={repo.path}>
-            {repo.name}
-            <button type="button" onClick={() => setRepos(repos.filter((r) => r.path !== repo.path))}>
-              remove
-            </button>
-          </li>
-        ))}
-      </ul>
+      {/*
+        One control row: the repo affordance, then the single accent. The picked
+        repos sit *in* it rather than in a list of their own — an offered chip
+        and a picked chip are the same object at two moments, and putting the
+        picked ones next to the field they came from is what makes the ×
+        legible as "undo that".
+      */}
+      <div className="sh-composer-controls">
+        <div className="sh-composer-repos">
+          <ul className="sh-composer-picked" data-testid="composer-picked">
+            {repos.map((repo) => (
+              <li
+                key={repo.path}
+                data-testid="composer-picked-repo"
+                data-path={repo.path}
+              >
+                {repo.name}
+                <button
+                  type="button"
+                  aria-label={`remove ${repo.name}`}
+                  title={`remove ${repo.name}`}
+                  onClick={() =>
+                    setRepos(repos.filter((r) => r.path !== repo.path))
+                  }
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
+          <input
+            data-testid="composer-repo-path"
+            aria-label="repo path"
+            placeholder="+ repo path"
+            value={path}
+            onChange={(event) => setPath(event.target.value)}
+            onKeyDown={(event) => {
+              // Enter adds the repo rather than submitting the form: a task with
+              // the repo field half-typed is a task with the wrong repos.
+              if (event.key === "Enter") {
+                event.preventDefault();
+                add(path);
+              }
+            }}
+          />
+          {/*
+            Always rendered — it is a declared affordance and the smokes select
+            on it — but idle until there is something to add. Enter is the real
+            path, and a permanent button beside a borderless field reads as the
+            field's own edge, which is the border this restyle removed.
+          */}
+          <button
+            type="button"
+            className={`sh-composer-add${path.trim() === "" ? " is-idle" : ""}`}
+            data-testid="composer-add-repo"
+            onClick={() => add(path)}
+          >
+            add repo
+          </button>
+        </div>
 
-      <button type="submit" data-testid="composer-create" disabled={busy || title.trim() === ''}>
-        create task
-      </button>
+        <button
+          type="submit"
+          className="sh-composer-create"
+          data-testid="composer-create"
+          disabled={busy || title.trim() === ""}
+        >
+          create task
+        </button>
+      </div>
+
       <output className="sh-ext-answer" data-testid="composer-status">
         {status}
       </output>

@@ -90,6 +90,12 @@ export function ViewOverlay({
       }}
     >
       <div className="sh-modal" data-view-type={view.type}>
+        {/*
+          Folded INTO the card, not a bordered strip across the top of it: the
+          modal owns one padding box and this row is the first thing in it, so
+          the label and the ESC key read as part of the surface the contribution
+          is sitting on. The hairline under it is gone with the strip.
+        */}
         <div className="sh-modal-head">
           <span className="sh-group-label">{view.title ?? view.type}</span>
           <span className="sh-key" aria-hidden="true">
