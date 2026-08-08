@@ -222,7 +222,7 @@ function TreeView({
                     `StatusDot` also carries it for a screen reader, which the
                     bare `aria-hidden` span never did.
                   */
-                  <StatusDot role={statusRole(row.tint)} />
+                  <StatusDot role={statusRole(row.tint)} busy={row.busy === true} />
                 }
               >
                 {row.label}

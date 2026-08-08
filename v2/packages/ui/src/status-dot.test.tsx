@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { mount } from './test-dom.ts';
 import { rulesMentioning } from './css-rules.ts';
+import { BRAILLE_FRAMES } from './spinner.ts';
 import { StatusDot, statusWords, type StatusRole } from './status-dot.tsx';
 import './styles.css';
 
@@ -79,5 +80,26 @@ describe('StatusDot', () => {
     );
     expect(dot(dom.container).getAttribute('data-testid')).toBe('agent-state');
     expect(node).toBe(dot(dom.container));
+  });
+
+  it('shows the app’s working indicator instead of the mark while busy', () => {
+    // Rule 7's braille sequence — the SAME one `Button`'s busy uses, in the same
+    // fixed slot, so the app has one way of looking busy rather than two. Not a
+    // pulse on the dot: rule 7 bans that in the same breath as it names this.
+    const dom = mount(<StatusDot role="success" busy />);
+    const spinner = dot(dom.container).querySelector('.sh-ui-status-dot__spinner');
+    expect(spinner).not.toBeNull();
+    expect(BRAILLE_FRAMES).toContain(spinner?.textContent);
+    // Decorative: the word is the readable content, and a screen reader
+    // announcing a braille cell would read the animation aloud.
+    expect(spinner?.getAttribute('aria-hidden')).toBe('true');
+    expect(dot(dom.container).dataset.busy).toBe('true');
+  });
+
+  it('keeps saying what the thing IS while it is busy', () => {
+    // `busy` is orthogonal to `role`: a task being archived is still `success`,
+    // and the row it sits in must not change colour for the duration.
+    const dom = mount(<StatusDot role="success" busy />);
+    expect(dot(dom.container).dataset.status).toBe('success');
   });
 });

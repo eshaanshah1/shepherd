@@ -26,7 +26,8 @@
     "build": "pnpm --filter @shepherd/app build",
     "smoke:m1": "node tooling/scripts/smoke-m1.mjs",
     "smoke:m2": "node tooling/scripts/smoke-m2.mjs",
-    "smoke:m3": "node tooling/scripts/smoke-m3.mjs"
+    "smoke:m3": "node tooling/scripts/smoke-m3.mjs",
+    "ship": "node tooling/scripts/ship.mjs"
   },
   "dependencies": {
     "node-pty": "catalog:"

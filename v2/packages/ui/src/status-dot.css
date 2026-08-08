@@ -47,6 +47,29 @@
 }
 
 /*
+ * Busy: the mark is replaced by the braille frame, in the same box.
+ *
+ * The glyph is sized to the slot and inherits the role's colour through
+ * `currentColor`, so a busy dot is still the colour it would have been — the
+ * spinner says "and something is happening", not "and the state is unknown".
+ */
+.sh-ui-status-dot[data-busy='true']::before {
+  display: none;
+}
+
+.sh-ui-status-dot__spinner {
+  position: absolute;
+  font-size: var(--sh-font-size-small);
+  line-height: 1;
+}
+
+.sh-ui-status-dot[data-busy='true'][data-status='working'] { color: var(--sh-accent); }
+.sh-ui-status-dot[data-busy='true'][data-status='attention'] { color: var(--sh-attention); }
+.sh-ui-status-dot[data-busy='true'][data-status='success'] { color: var(--sh-success); }
+.sh-ui-status-dot[data-busy='true'][data-status='danger'] { color: var(--sh-danger); }
+.sh-ui-status-dot[data-busy='true'][data-status='idle'] { color: var(--sh-text-faint); }
+
+/*
  * Five roles, five roles — the mapping is one-to-one and there are no synonyms.
  * A sixth state does not get a sixth colour; it gets one of these five plus its
  * own word, which is the pairing the component exists to enforce.
