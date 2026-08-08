@@ -17,6 +17,7 @@ import { taskRootId } from './model/root-id.ts';
 import { displayState } from './model/lifecycle.ts';
 import { synthTaskRoot } from './model/root-synth.ts';
 import { planLaunch } from './model/launch.ts';
+import { writePastedImages, type PastedImage } from './images.ts';
 import { ARCHIVE_TTL_MS, expired } from './model/expiry.ts';
 import {
   archiveWorktree,
@@ -453,7 +454,12 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    */
   async function startSession(
     task: TaskRecord,
-    input: { readonly repo?: string; readonly prompt: string; readonly role: TaskSession['role'] },
+    input: {
+      readonly repo?: string;
+      readonly prompt: string;
+      readonly role: TaskSession['role'];
+      readonly images?: readonly PastedImage[];
+    },
   ): Promise<TaskSession> {
     const cwd = input.repo === undefined ? rootOf(task) : `${rootOf(task)}/${input.repo}`;
 
@@ -462,13 +468,31 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     // agent is about to describe.
     const promptDir = `${ctx.dataDir}/.prompts`;
     mkdirSync(promptDir, { recursive: true });
+
+    /**
+     * Pasted images land beside the prompt, and their tokens become paths.
+     *
+     * A directory per launch, not per extension: the files are `image-1.png`
+     * and so on, so two tasks sharing a directory would have the second
+     * overwrite the first's — and an agent would then read someone else's
+     * screenshot with total confidence.
+     */
+    const stem = `${task.slug}-${ctx.clock.now()}`;
+    const written =
+      input.images === undefined || input.images.length === 0
+        ? { brief: input.prompt, files: [] }
+        : writePastedImages(`${promptDir}/${stem}`, { brief: input.prompt, images: input.images });
+    if (written.files.length > 0) {
+      ctx.log.info(`task ${task.id}: ${written.files.length} pasted image(s) at ${promptDir}/${stem}`);
+    }
+
     const plan = planLaunch({
-      promptFile: `${promptDir}/${task.slug}-${ctx.clock.now()}.txt`,
-      prompt: input.prompt,
+      promptFile: `${promptDir}/${stem}.txt`,
+      prompt: written.brief,
     });
     // Before the split: the renderer types the command as soon as the pane's
     // session exists, and a `cat` that loses the race reads an empty prompt.
-    writeFileSync(plan.promptFile, input.prompt, 'utf8');
+    writeFileSync(plan.promptFile, written.brief, 'utf8');
 
     const root = taskRootId(task.id);
     /**
@@ -650,7 +674,13 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * reborn. It is also meaningless after a restart, since nothing is mid-provision
    * when the app is not running.
    */
-  async function provision(task: TaskRecord): Promise<void> {
+  /**
+   * `images` rides through to the orchestrator's launch — the composer's paste
+   * belongs to the FIRST prompt, and the orchestrator is what receives it.
+   * Nothing is stored: the bytes are written to disk in `startSession` and the
+   * record keeps only the task.
+   */
+  async function provision(task: TaskRecord, images?: readonly PastedImage[]): Promise<void> {
     const root = rootOf(task);
     const landed: { name: string; path: string; worktree: string }[] = [];
     for (const repo of task.repos) {
@@ -727,7 +757,11 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     const now = store.get(task.id);
     if (now !== undefined && now.sessions.length === 0) {
       try {
-        const session = await startSession(now, { prompt: orchestratorPrompt(now), role: 'orchestrator' });
+        const session = await startSession(now, {
+          prompt: orchestratorPrompt(now),
+          role: 'orchestrator',
+          ...(images === undefined || images.length === 0 ? {} : { images }),
+        });
         const latest = store.get(task.id) ?? now;
         store.put({ ...latest, sessions: [...latest.sessions, session], lifecycle: 'running' });
         changed();
@@ -747,6 +781,12 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         title: s.string(),
         brief: s.optional(s.string()),
         repos: s.optional(s.array(repoArg)),
+        /**
+         * Images pasted into the brief, base64, in the order their `[Image #N]`
+         * tokens appear. They cross the port as data because the page is where
+         * a clipboard exists and this side is where a filesystem does.
+         */
+        images: s.optional(s.array(s.object({ mediaType: s.string(), data: s.string() }))),
       }),
       handler: (args) => {
         // The slug is resolved ONCE against what is taken and then stored (D8).
@@ -791,7 +831,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         // 0.16s but one network round-trip is 2.51s, paid ONCE PER REPO, so a
         // three-repo task is ~7.5s of nothing before a file is written. The
         // caller gets the task; provisioning reports itself through the record.
-        void provision(task).catch((error: unknown) => {
+        void provision(task, args.images).catch((error: unknown) => {
           ctx.log.error(`task ${task.id}: provisioning threw — ${String(error)}`);
         });
         return task;

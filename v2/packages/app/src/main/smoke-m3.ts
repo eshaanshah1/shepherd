@@ -272,19 +272,33 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
   );
   check(composerSeen, 'the composer is on screen');
 
-  // React owns these inputs, so a plain `.value =` is a write it never hears
-  // about — the value reverts on the next render and the form submits empty.
-  // The native setter plus an `input` event is what a real keystroke looks like
-  // from React's side; `focusout` is the event React's `onBlur` is built on.
+  /**
+   * Typing into the brief, which is a CONTENTEDITABLE and not a textarea.
+   *
+   * It changed so a pasted image can render as a pill where it was pasted — an
+   * element cannot live inside a `<textarea>`. So there is no `value` setter to
+   * call: the text is written as the field's own content and an `input` event
+   * announces it, which is the same shape a keystroke produces. React does not
+   * own that subtree by design (`PromptField`: rewriting it per keystroke is
+   * what breaks undo), so writing it directly is the supported path rather than
+   * a way around one.
+   *
+   * A repo INPUT is still an input, so the native-setter dance below stays for
+   * it — the two fields are genuinely different elements now.
+   */
   await win.webContents.executeJavaScript(`(() => {
     const type = (el, value) => {
+      if (el.isContentEditable) {
+        el.textContent = value;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        return;
+      }
       const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
       Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, value);
       el.dispatchEvent(new Event('input', { bubbles: true }));
     };
-    // ONE field now: the composer's first line names the task, git-commit
-    // style, and the rest is the brief. Typing a separate title would be typing
-    // into an element that no longer exists.
+    // ONE field: the composer's first line names the task, git-commit style,
+    // and the rest is the brief.
     type(
       document.querySelector('[data-testid="composer-brief"]'),
       ['Composed task', 'Created from inside the app.'].join(String.fromCharCode(10)),

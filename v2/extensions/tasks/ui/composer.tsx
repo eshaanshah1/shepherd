@@ -1,9 +1,11 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { ExtensionViewProps } from "@shepherd/sdk";
-import { Button, Composer, Field, Row, TextArea } from "@shepherd/ui";
+import { Button, Composer, Field, PromptField, Row, type PromptFieldHandle } from "@shepherd/ui";
 import { repoName } from "../src/model/repo-name.ts";
 import { commonPrefix } from "../src/model/path-complete.ts";
+import type { PastedImage } from "../src/images.ts";
+import { readPastedImage } from "./paste-image.ts";
 
 /**
  * The composer — a task, created from inside the app (sketch §4).
@@ -147,6 +149,13 @@ export function TaskComposer({
   const inputId = useId();
   const listId = useId();
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const promptRef = useRef<PromptFieldHandle | null>(null);
+  /**
+   * The pasted images, in a ref rather than state: they are not rendered from
+   * here — the pills in the contenteditable are — and putting them in state
+   * would re-render the composer on every paste for no visible change.
+   */
+  const pasted = useRef<PastedImage[]>([]);
   /**
    * Which ask is the newest. Every keystroke starts one and they are answered
    * out of order eventually — a `readdir` on a cold directory finishing after
@@ -267,11 +276,34 @@ export function TaskComposer({
     return true;
   };
 
+  /**
+   * The pill, built as a DOM node because it is inserted into a contenteditable
+   * rather than rendered by React — React does not own that subtree, by design
+   * (see `PromptField`: rewriting it per keystroke is what breaks undo).
+   *
+   * It carries `data-token`, which is what `readValue` returns in its place and
+   * what the service half swaps for a real path.
+   */
+  const imagePill = (index: number): HTMLElement => {
+    const pill = document.createElement("span");
+    pill.className = "sh-ui-pill";
+    pill.contentEditable = "false";
+    pill.dataset["token"] = `[Image #${index}]`;
+    pill.innerHTML =
+      '<svg class="sh-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" ' +
+      'stroke="currentColor" stroke-width="1.5" aria-hidden="true">' +
+      '<path d="M15 8h.01"/><rect width="16" height="16" x="4" y="4" rx="3"/>' +
+      '<path d="m4 15 4-4a3 5 0 0 1 3 0l5 5"/><path d="m14 14 1-1a3 5 0 0 1 3 0l2 2"/></svg>';
+    pill.append(`Image ${index}`);
+    return pill;
+  };
+
   const create = async (): Promise<void> => {
     setBusy(true);
     const result = await invoke("tasks.create", {
       title: titleOf(brief),
       brief,
+      ...(pasted.current.length === 0 ? {} : { images: pasted.current }),
       repos: repos.map((repo) => ({ path: repo.path, name: repo.name })),
     });
     setBusy(false);
@@ -289,6 +321,8 @@ export function TaskComposer({
     // Cleared only on success. A failed create keeps everything typed — the
     // form is the only copy of it.
     setBrief("");
+    promptRef.current?.setValue("");
+    pasted.current = [];
     setRepos([]);
     // The composer's job is over; the shell decides what that means (an overlay
     // closes, a docked copy stays and is now empty).
@@ -328,18 +362,35 @@ export function TaskComposer({
           padding, and because a field that is bare BY CONTEXT reads as an
           accident when this component is mounted anywhere else.
         */}
-        <TextArea
-          variant="bare"
-          autoGrow
-          minLines={3}
-          maxLines={12}
+        <PromptField
+          ref={promptRef}
           className="sh-composer-brief"
           data-testid="composer-brief"
           aria-label="what needs doing"
           placeholder="what needs doing?"
-          value={brief}
-          onChange={(event) => setBrief(event.target.value)}
+          onChange={setBrief}
           onBlur={() => void askForSuggestions(titleOf(brief), brief, path)}
+          /*
+            A pasted image becomes a Pill in the text, right where it was
+            pasted, and its bytes ride along to `tasks.create`. The token in the
+            text is what the service half substitutes a path for, so the pill
+            carries it as `data-token` — the label says "Image", and the label
+            is not what the agent should be told.
+          */
+          onPasteFiles={(files) => {
+            const images = files.filter((file) => file.type.startsWith("image/"));
+            if (images.length === 0) return false;
+            void (async () => {
+              for (const file of images) {
+                const image = await readPastedImage(file);
+                if (image === null) continue;
+                const index = pasted.current.length + 1;
+                pasted.current.push(image);
+                promptRef.current?.insert(imagePill(index));
+              }
+            })();
+            return true;
+          }}
           onKeyDown={(event) => {
             // ⌘⏎ submits, ⏎ is a newline: this is prose, and a brief whose second
             // sentence created the task would be a brief nobody could write.
