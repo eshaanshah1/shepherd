@@ -93,6 +93,14 @@ export interface TaskRecord {
   readonly createdAt: number;
   /** Present only while archived. Added later; `s.stored` reads old records fine. */
   readonly archives?: readonly RepoArchive[];
+  /**
+   * When it was archived, so it can expire.
+   *
+   * Stored rather than derived from the snapshot commits' dates: a commit's
+   * timestamp is git's and can be anything, and the question here — how long
+   * has this been shelved — is about the app, not about the history.
+   */
+  readonly archivedAt?: number;
 }
 
 const repoSchema = s.stored({ path: s.string(), name: s.string() });
@@ -115,6 +123,7 @@ const taskSchema = s.stored({
   repos: s.array(repoSchema),
   sessions: s.array(sessionSchema),
   createdAt: s.int(),
+  archivedAt: s.optional(s.int()),
   archives: s.optional(
     s.array(
       s.stored({

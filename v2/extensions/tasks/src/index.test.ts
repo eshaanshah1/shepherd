@@ -93,6 +93,8 @@ function harness(
      * the defaults below, so a test overrides one verb without restating them.
      */
     invoke?: (id: string, args: unknown) => Result<unknown, CommandError> | undefined;
+    /** What `ctx.clock.now()` answers — the archive sweep reads it at activate. */
+    now?: number;
     /**
      * Every WARNING the extension writes.
      *
@@ -268,7 +270,7 @@ function harness(
       opts.onWarn === undefined
         ? nullLogger.child('extension')
         : { ...nullLogger.child('extension'), warn: opts.onWarn },
-    clock: manualClock(1),
+    clock: manualClock(opts.now ?? 1),
     permissions: [],
     isDev: false,
   };
@@ -935,5 +937,31 @@ describe('a pane that closes', () => {
     h.emit('session.exit', { sessionId: 'some-real-id', paneId: 'p1' });
 
     expect((await h.run<{ sessions: unknown[] }[]>('tasks.list'))[0]?.sessions).toEqual([]);
+  });
+});
+
+describe('archives that have run out', () => {
+  // Thirty days, swept at startup. The record is written by `tasks.archive`
+  // with `archivedAt`, so what this pins is the sweep firing the same delete a
+  // human would — no second removal path to keep in step.
+  const DAY = 86_400_000;
+
+  it('deletes an archive older than thirty days, through the ordinary verb', async () => {
+    const h = (live = harness({
+      tasks: [task({ id: 'old', lifecycle: 'archived', archivedAt: 1_000, sessions: [] })],
+      now: 1_000 + 31 * DAY,
+    }));
+    await until(() => h.invoked.some((call) => call.id === 'tasks.delete'));
+    expect(h.invoked.find((call) => call.id === 'tasks.delete')?.args).toEqual({ task: 'old' });
+  });
+
+  it('leaves one archived yesterday alone', async () => {
+    const h = (live = harness({
+      tasks: [task({ id: 'fresh', lifecycle: 'archived', archivedAt: 1_000, sessions: [] })],
+      now: 1_000 + DAY,
+    }));
+    // A tick is enough: the sweep runs synchronously inside activate.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(h.invoked.some((call) => call.id === 'tasks.delete')).toBe(false);
   });
 });
