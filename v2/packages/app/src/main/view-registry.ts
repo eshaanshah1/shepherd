@@ -40,6 +40,33 @@ export interface Contribution {
    * extension names a module, it does not supply one.
    */
   readonly component?: string;
+  /** Dock section or modal overlay. Components only; a tree is always a dock. */
+  readonly surface?: 'dock' | 'overlay';
+  /** The accelerator that raises an overlay. A modifier is required. */
+  readonly key?: string;
+  /** The heading the shell draws. Falls back to the view type. */
+  readonly title?: string;
+}
+
+/** Everything a contribution declares beyond its kind. */
+export interface ViewDeclaration {
+  readonly surface?: 'dock' | 'overlay';
+  readonly key?: string;
+  readonly title?: string;
+}
+
+const MODIFIERS = new Set(['command','cmd','control','ctrl','commandorcontrol','cmdorctrl','alt','option','altgr','shift','super','meta']);
+
+/**
+ * True when an accelerator can only fire with a modifier held.
+ *
+ * The same predicate `menu-template.ts` applies to the app's own menu, for the
+ * same reason and now on behalf of extensions: a bare letter bound globally is
+ * that letter untypeable in every terminal.
+ */
+export function hasModifier(accelerator: string): boolean {
+  const parts = accelerator.split('+').map((part) => part.trim().toLowerCase());
+  return parts.length > 1 && parts.slice(0, -1).every((part) => MODIFIERS.has(part));
 }
 
 export class ViewRegistry {
@@ -60,12 +87,24 @@ export class ViewRegistry {
    * never learns about and the dock stays empty forever. Measured: the tree
    * registered, main logged it, and the screen showed nothing.
    */
-  register(extension: string, type: string, kind: ViewKind = 'tree', component?: string): void {
+  register(
+    extension: string,
+    type: string,
+    kind: ViewKind = 'tree',
+    component?: string,
+    declaration: ViewDeclaration = {},
+  ): void {
     this.#owners.set(type, {
       extension,
       type,
       kind,
       ...(component === undefined ? {} : { component }),
+      // An accelerator with no modifier is dropped rather than honoured: a bare
+      // key bound here is a key deleted from every terminal in the app, which is
+      // v1's menu-accelerator lesson and not something an extension gets to do.
+      ...(declaration.surface === undefined ? {} : { surface: declaration.surface }),
+      ...(declaration.key === undefined || !hasModifier(declaration.key) ? {} : { key: declaration.key }),
+      ...(declaration.title === undefined ? {} : { title: declaration.title }),
     });
     this.#options.publish(type);
   }

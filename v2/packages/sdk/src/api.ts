@@ -48,6 +48,16 @@ export interface ExtensionContext {
   readonly clock: Clock;
   /** What the manifest asked for and the user granted. */
   readonly permissions: readonly Permission[];
+  /**
+   * Whether developer surfaces are on — a dev build, or a smoke run driving one.
+   *
+   * It exists so an extension can contribute something that belongs in front of
+   * a developer and nowhere else. `diagnostics` is the first caller: its tree
+   * and its card are how the view mechanism proves itself, and shipping them
+   * into a user's sidebar makes the app look like an instrument panel for its
+   * own internals.
+   */
+  readonly isDev: boolean;
 }
 
 /**

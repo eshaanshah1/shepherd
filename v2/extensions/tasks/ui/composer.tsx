@@ -59,7 +59,7 @@ function readSuggestions(value: unknown): readonly RepoSuggestion[] {
   });
 }
 
-export function TaskComposer({ invoke }: ExtensionViewProps): React.JSX.Element {
+export function TaskComposer({ invoke, done }: ExtensionViewProps): React.JSX.Element {
   const [title, setTitle] = useState('');
   const [brief, setBrief] = useState('');
   const [repos, setRepos] = useState<readonly RepoSuggestion[]>([]);
@@ -110,6 +110,9 @@ export function TaskComposer({ invoke }: ExtensionViewProps): React.JSX.Element 
     setTitle('');
     setBrief('');
     setRepos([]);
+    // The composer's job is over; the shell decides what that means (an overlay
+    // closes, a docked copy stays and is now empty).
+    done();
   };
 
   return (

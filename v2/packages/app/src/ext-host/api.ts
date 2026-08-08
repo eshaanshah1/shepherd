@@ -246,6 +246,8 @@ export interface ContextOptions {
   readonly dataDir: string;
   readonly clock: Clock;
   readonly services: ExtHostServices;
+  /** Whether developer surfaces are on. See `ExtensionContext.isDev`. */
+  readonly isDev: boolean;
 }
 
 export function createContext(options: ContextOptions): ExtensionContext {
@@ -266,6 +268,7 @@ export function createContext(options: ContextOptions): ExtensionContext {
     log,
     clock: options.clock,
     permissions: options.permissions,
+    isDev: options.isDev,
   };
 }
 
@@ -487,7 +490,15 @@ function createViews(services: ExtHostServices, providers: Map<string, ViewProvi
        */
       if (provider.kind === 'component') {
         services.tell(
-          { kind: 'view.register', type, viewKind: 'component', component: provider.component },
+          {
+            kind: 'view.register',
+            type,
+            viewKind: 'component',
+            component: provider.component,
+            ...(provider.surface === undefined ? {} : { surface: provider.surface }),
+            ...(provider.key === undefined ? {} : { key: provider.key }),
+            ...(provider.title === undefined ? {} : { title: provider.title }),
+          },
           `view.register ${type}`,
         );
         return toDisposable(() => {
@@ -496,7 +507,15 @@ function createViews(services: ExtHostServices, providers: Map<string, ViewProvi
       }
 
       providers.set(type, provider);
-      services.tell({ kind: 'view.register', type, viewKind: 'tree' }, `view.register ${type}`);
+      services.tell(
+        {
+          kind: 'view.register',
+          type,
+          viewKind: 'tree',
+          ...(provider.title === undefined ? {} : { title: provider.title }),
+        },
+        `view.register ${type}`,
+      );
       const changed = provider.data.onDidChange?.(() => {
         services.tell({ kind: 'view.changed', type }, `view.changed ${type}`);
       });

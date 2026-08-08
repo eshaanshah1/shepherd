@@ -110,8 +110,29 @@ export type ViewRef =
  * `src/` and `ui/` with a lint boundary between them.
  */
 export type ViewProvider =
-  | { readonly kind: 'tree'; readonly data: TreeDataProvider }
-  | { readonly kind: 'component'; readonly component: string }
+  | { readonly kind: 'tree'; readonly data: TreeDataProvider; readonly title?: string }
+  | {
+      readonly kind: 'component';
+      readonly component: string;
+      /**
+       * Where the shell puts it. `dock` is a section in the sidebar; `overlay`
+       * is a modal card over the whole window — a composer, not a panel.
+       *
+       * A form the user opens, fills in and dismisses does not belong in a
+       * sidebar permanently taking space; v1 learned that with its ⌘T composer,
+       * and this is the same shape declared rather than hardcoded.
+       */
+      readonly surface?: 'dock' | 'overlay';
+      /**
+       * The accelerator that raises it, in Electron's vocabulary
+       * (`CmdOrCtrl+T`). **A modifier is required** — a bare key here would be
+       * deleted from every terminal in the app, which is v1's menu-accelerator
+       * lesson. Ignored for a `dock` view, which is always on screen.
+       */
+      readonly key?: string;
+      /** Shown as the section/card heading. Falls back to the view type. */
+      readonly title?: string;
+    }
   | { readonly kind: 'panel'; readonly url: string };
 
 /**
@@ -130,6 +151,15 @@ export type ViewProvider =
  */
 export interface ExtensionViewProps {
   invoke(command: string, args?: unknown): Promise<Result<unknown, ViewInvokeError>>;
+  /**
+   * "I am finished." An overlay closes on it; a docked view ignores it.
+   *
+   * The component decides, not the shell: only the form knows whether a
+   * successful call was the submit or a lookup it made while you were typing.
+   * A shell that closed on any successful invoke would dismiss a composer the
+   * moment its repo picker answered.
+   */
+  done(): void;
 }
 
 /**
@@ -147,6 +177,16 @@ export interface ViewInvokeError {
 export interface TreeItem {
   readonly id: string;
   readonly label: string;
+  /**
+   * A heading rather than a row — drawn as an uppercase micro-label with its
+   * `description` as the count, and not clickable.
+   *
+   * Generic on purpose: grouping a list under headings is what every real
+   * sidebar does (tasks by state, channels by workspace, PRs by repo), and the
+   * alternative is each extension faking one with a row that lies about being
+   * clickable.
+   */
+  readonly section?: boolean;
   readonly description?: string;
   /** A design-token name, resolved by the renderer. Never a raw colour. */
   readonly tint?: string;

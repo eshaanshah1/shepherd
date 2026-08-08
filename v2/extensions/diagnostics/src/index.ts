@@ -1,5 +1,5 @@
-import { s, toDisposable, type ActivateFn } from '@shepherd/sdk';
-import { DIAGNOSTICS_COMMANDS, EXTENSIONS_LIST_COMMAND } from './manifest.ts';
+import { s, toDisposable, type ActivateFn } from "@shepherd/sdk";
+import { DIAGNOSTICS_COMMANDS, EXTENSIONS_LIST_COMMAND } from "./manifest.ts";
 
 /**
  * `shepherd.diagnostics` — the built-in you invoke to find out whether the
@@ -21,7 +21,7 @@ import { DIAGNOSTICS_COMMANDS, EXTENSIONS_LIST_COMMAND } from './manifest.ts';
  */
 
 /** How many times this host has been pinged. The one thing worth persisting here. */
-const PING_COUNT_KEY = 'pings';
+const PING_COUNT_KEY = "pings";
 
 interface HostFacts {
   readonly extensions: number;
@@ -35,7 +35,7 @@ export const activate: ActivateFn = (ctx, api) => {
 
   ctx.subscriptions.push(
     commands.register(DIAGNOSTICS_COMMANDS.ping, {
-      title: 'Diagnostics: Ping the Extension Host',
+      title: "Diagnostics: Ping the Extension Host",
       schema: s.nothing(),
       handler: async () => {
         // Through `ctx.storage`, which is this extension's one declared
@@ -48,10 +48,12 @@ export const activate: ActivateFn = (ctx, api) => {
         // half a diagnostic is worse than none, because it reads as healthy.
         const facts = await commands.invoke<HostFacts>(EXTENSIONS_LIST_COMMAND);
         if (!facts.ok) {
-          throw new Error(`could not read host facts: ${facts.error.code}: ${facts.error.message}`);
+          throw new Error(
+            `could not read host facts: ${facts.error.code}: ${facts.error.message}`,
+          );
         }
 
-        events.emit('diagnostics.pinged', { pings, at: ctx.clock.now() });
+        events.emit("diagnostics.pinged", { pings, at: ctx.clock.now() });
 
         return {
           api: api.version,
@@ -71,28 +73,34 @@ export const activate: ActivateFn = (ctx, api) => {
     }),
 
     commands.register(DIAGNOSTICS_COMMANDS.probeDenied, {
-      title: 'Diagnostics: Probe an Undeclared Capability',
+      title: "Diagnostics: Probe an Undeclared Capability",
       schema: s.nothing(),
       handler: async () => {
         // `attention.set` declares `permission: 'attention'`, and this extension's
         // manifest declares only `storage`. So this must come back as a typed
         // `denied` from the one authorizer in the dispatcher — not a crash, not a
         // silent no-op, and not a success.
-        const attempt = await commands.invoke('attention.set', {
-          target: 'diagnostics-probe',
-          level: 'attention',
-          reason: 'diagnostics is probing a capability it never declared',
+        const attempt = await commands.invoke("attention.set", {
+          target: "diagnostics-probe",
+          level: "attention",
+          reason: "diagnostics is probing a capability it never declared",
         });
 
         if (attempt.ok) {
           // Reported, not thrown: "the probe was allowed" is a finding about the
           // permission model, and a throw here would look like a broken probe.
-          ctx.log.error('probed attention.set without declaring it and was ALLOWED — the permission gate is open');
-          return { probed: 'attention', denied: false, declared: [...ctx.permissions] };
+          ctx.log.error(
+            "probed attention.set without declaring it and was ALLOWED — the permission gate is open",
+          );
+          return {
+            probed: "attention",
+            denied: false,
+            declared: [...ctx.permissions],
+          };
         }
 
         return {
-          probed: 'attention',
+          probed: "attention",
           denied: true,
           code: attempt.error.code,
           message: attempt.error.message,
@@ -115,46 +123,61 @@ export const activate: ActivateFn = (ctx, api) => {
    */
   let ticks = 0;
   const listeners = new Set<() => void>();
-  ctx.subscriptions.push(
-    views.registerViewType('diagnostics.tree', {
-      kind: 'tree',
-      data: {
-        children: (parent) =>
-          Promise.resolve(
-            parent === undefined
-              ? [
-                  { id: 'ticks', label: `ticks: ${ticks}`, tint: 'accent' },
-                  {
-                    id: 'ping',
-                    label: 'click me — the count above goes up',
-                    description: 'runs a command',
-                    command: { id: 'diagnostics.bump' },
-                  },
-                ]
-              : [],
-          ),
-        onDidChange: (fn) => {
-          listeners.add(fn);
-          return toDisposable(() => listeners.delete(fn));
-        },
-      },
-    }),
-  );
-
   /**
-   * A contributed COMPONENT — the trivial consumer the in-proc React seam was
-   * built against (ADR 0033), for the same reason the tree above exists here
-   * rather than in `tasks`.
-   *
-   * Registered next to the tree deliberately: the two kinds have to reach the
-   * dock through one mechanism, and a component that only ever ran in a unit
-   * test would leave "it works in the real app" resting on the extension that
-   * wrote the mechanism. `ui/card.tsx` holds the component; this file names it
-   * and imports nothing from it — that is what keeps react out of this process.
+   * **Developer surfaces only.** These two are how the view mechanism proves
+   * itself (a tree whose rows change, a component that runs a command and draws
+   * the answer) — they are instruments, and shipping them into a user's sidebar
+   * makes the app look like a panel for its own internals rather than a tool.
+   * `ctx.isDev` is true in a dev build and under a smoke.
    */
-  ctx.subscriptions.push(
-    views.registerViewType('diagnostics.card', { kind: 'component', component: 'diagnostics.card' }),
-  );
+  if (ctx.isDev) {
+    ctx.subscriptions.push(
+      views.registerViewType("diagnostics.tree", {
+        kind: "tree",
+        title: "Diagnostics tree",
+        data: {
+          children: (parent) =>
+            Promise.resolve(
+              parent === undefined
+                ? [
+                    { id: "ticks", label: `ticks: ${ticks}`, tint: "accent" },
+                    {
+                      id: "ping",
+                      label: "click me — the count above goes up",
+                      description: "runs a command",
+                      command: { id: "diagnostics.bump" },
+                    },
+                  ]
+                : [],
+            ),
+          onDidChange: (fn) => {
+            listeners.add(fn);
+            return toDisposable(() => listeners.delete(fn));
+          },
+        },
+      }),
+    );
+
+    /**
+     * A contributed COMPONENT — the trivial consumer the in-proc React seam was
+     * built against (ADR 0033), for the same reason the tree above exists here
+     * rather than in `tasks`.
+     *
+     * Registered next to the tree deliberately: the two kinds have to reach the
+     * dock through one mechanism, and a component that only ever ran in a unit
+     * test would leave "it works in the real app" resting on the extension that
+     * wrote the mechanism. `ui/card.tsx` holds the component; this file names it
+     * and imports nothing from it — that is what keeps react out of this process.
+     */
+    ctx.subscriptions.push(
+      views.registerViewType("diagnostics.card", {
+        kind: "component",
+        component: "diagnostics.card",
+        surface: "dock",
+        title: "Diagnostics",
+      }),
+    );
+  }
 
   /**
    * What the row's command does: change the tree.
@@ -166,7 +189,7 @@ export const activate: ActivateFn = (ctx, api) => {
    * exercises the command path AND `onDidChange` together, deterministically.
    */
   ctx.subscriptions.push(
-    commands.register('diagnostics.bump', {
+    commands.register("diagnostics.bump", {
       schema: s.nothing(),
       handler: () => {
         ticks += 1;
@@ -176,5 +199,7 @@ export const activate: ActivateFn = (ctx, api) => {
     }),
   );
 
-  ctx.log.info(`ready — granted ${ctx.permissions.join(', ') || 'nothing'}, api ${api.version}`);
+  ctx.log.info(
+    `ready — granted ${ctx.permissions.join(", ") || "nothing"}, api ${api.version}`,
+  );
 };

@@ -149,7 +149,13 @@ export interface ExtensionHostOptions {
   readonly support: string;
   /** Where contributed views are recorded. Optional so a test can omit it. */
   readonly views?: {
-    register(extension: string, type: string, kind: 'tree' | 'component', component?: string): void;
+    register(
+      extension: string,
+      type: string,
+      kind: 'tree' | 'component',
+      component?: string,
+      declaration?: { surface?: 'dock' | 'overlay'; key?: string; title?: string },
+    ): void;
     unregister(type: string): void;
     changed(type: string): void;
     forget(extension: string): void;
@@ -174,6 +180,17 @@ export interface ExtensionHostOptions {
    * here is whether a third-party extension runs at all.
    */
   readonly isDev: boolean;
+  /**
+   * Whether extensions may contribute developer-facing surfaces — what an
+   * extension reads as `ctx.isDev`.
+   *
+   * Deliberately NOT `isDev`. The dev build is the app being dogfooded every
+   * day, and a sidebar full of instruments for the app's own internals is what
+   * makes it read as its own test harness. A smoke turns this on (it drives the
+   * production bundle and asserts on those contributions), and so does
+   * `--shepherd-dev-views`.
+   */
+  readonly devSurfaces?: boolean;
   readonly spawn: () => ExtChildProcess;
   /** Injectable so a test's handles are readable; production uses a UUID. */
   /**
@@ -355,6 +372,9 @@ export class ExtensionHost {
       // Resolved here because the child cannot: it may not reach `node:os`
       // (D1b). Every hosted id is passed so the name can fall back to the full
       // id when two extensions want the same last segment.
+      // NOT `isDev`: see `devSurfaces` — a dev build is the app being dogfooded,
+      // and its sidebar should look like the product.
+      isDev: this.#options.devSurfaces === true,
       dataDir: extensionDataDir(id, this.#options.extensions().list().map((record) => record.manifest.id), this.#options.support),
     });
 
@@ -773,7 +793,11 @@ export class ExtensionHost {
       case 'view.register': {
         const verdict = this.#permitted(caller, 'views');
         if (verdict !== undefined) return verdict;
-        this.#options.views?.register(record.id, call.type, call.viewKind, call.component);
+        this.#options.views?.register(record.id, call.type, call.viewKind, call.component, {
+          ...(call.surface === undefined ? {} : { surface: call.surface }),
+          ...(call.key === undefined ? {} : { key: call.key }),
+          ...(call.title === undefined ? {} : { title: call.title }),
+        });
         this.#log.info(`${record.id} contributed the ${call.viewKind} view "${call.type}"`);
         return wireOk();
       }

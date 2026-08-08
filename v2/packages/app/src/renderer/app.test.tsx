@@ -214,7 +214,7 @@ describe('App as a projection of main’s layout', () => {
     // zero-pane projection never arrives.
     const { view } = render({ snapshot: null });
     expect(all(view.container, 'pane')).toHaveLength(0);
-    expect(view.container.textContent).toContain('PANES · 0');
+    expect(view.container.textContent).toContain('PANES');
     view.unmount();
   });
 });
@@ -222,48 +222,33 @@ describe('App as a projection of main’s layout', () => {
 // ------------------------------------------------------------- a transport
 
 describe('App as a transport into the one funnel', () => {
-  it('turns SPLIT RIGHT into layout.split{axis:row} and computes nothing itself', () => {
-    const { view, commands } = render();
-
-    clickButton(view.container, 'SPLIT RIGHT');
-
-    expect(commands.calls).toEqual([
-      { command: LAYOUT_COMMANDS.split, args: { axis: 'row' } },
-    ]);
-    // The tree did NOT change: main has not pushed anything back. This is the
-    // whole shape of the phase — an optimistic local edit here would be a second
-    // layout that can disagree with the kernel's.
-    expect(paneIds(view.container)).toHaveLength(1);
+  /**
+   * The chrome no longer carries SPLIT/CLOSE buttons.
+   *
+   * They were M0 scaffolding, and a strip of them across the top is what made
+   * the app read as its own test harness. The gestures did not go anywhere —
+   * they are menu items with accelerators, dispatched through `MENU_INVOCATIONS`
+   * and asserted end to end in `menu-dispatch.test.ts` against a real
+   * `LayoutStore`. What is asserted HERE is that the page does not grow a second
+   * route to them: the only invocations it makes are the two gestures with no
+   * menu item of their own.
+   */
+  it('offers no toolbar of layout buttons — the menu owns those gestures', () => {
+    const { view } = render();
+    const labels = [...view.container.querySelectorAll('button')].map((button) => button.textContent);
+    expect(labels).not.toContain('SPLIT RIGHT');
+    expect(labels).not.toContain('CLOSE PANE');
     view.unmount();
   });
 
-  it('SPLIT DOWN is the same verb with the other axis', () => {
-    const { view, commands } = render();
-    clickButton(view.container, 'SPLIT DOWN');
-    expect(commands.calls).toEqual([
-      { command: LAYOUT_COMMANDS.split, args: { axis: 'column' } },
-    ]);
-    view.unmount();
-  });
-
-  it('CLOSE PANE names no pane — core resolves "the one I am looking at"', () => {
-    const { view, commands } = render();
-    clickButton(view.container, 'CLOSE PANE');
-    expect(commands.calls).toEqual([{ command: LAYOUT_COMMANDS.close, args: {} }]);
-    view.unmount();
-  });
-
-  it('the toolbar button and the menu item are literally the same invocation', () => {
-    // In M0 this test compared two rendered trees. Now it can compare the calls,
-    // which is a stronger claim: they resolve through `MENU_INVOCATIONS`, so the
-    // menu in main and the button here cannot drift.
-    const { view, commands } = render();
-    clickButton(view.container, 'SPLIT RIGHT');
-
-    // Read off the shared table, so this file cannot restate it and be wrong.
-    const fromMenu = MENU_INVOCATIONS[COMMANDS.splitRight];
-    expect(commands.calls[0]).toEqual({ command: fromMenu.command, args: fromMenu.args });
-    view.unmount();
+  it('the menu table still resolves the gestures the chrome dropped', () => {
+    // The claim the deleted button test was really making: a menu item and the
+    // kernel verb cannot drift, because one table maps them.
+    expect(MENU_INVOCATIONS[COMMANDS.splitRight]).toEqual({
+      command: LAYOUT_COMMANDS.split,
+      args: { axis: 'row' },
+    });
+    expect(MENU_INVOCATIONS[COMMANDS.closePane]).toEqual({ command: LAYOUT_COMMANDS.close, args: {} });
   });
 
   it('clicking a pane asks core to focus it, rather than moving a local ring', () => {
@@ -282,7 +267,7 @@ describe('App as a transport into the one funnel', () => {
     view.unmount();
   });
 
-  it('reports a failed command instead of a button that silently did nothing', async () => {
+  it('reports a failed command instead of a gesture that silently did nothing', async () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     try {
       const session = new SpySession();
@@ -291,18 +276,25 @@ describe('App as a transport into the one funnel', () => {
         createTerminal: fakeTerminal,
         spec: (pane) => ({ paneId: pane.id }),
       });
+      // Through a gesture the chrome still has: clicking a pane asks core to
+      // focus it. The claim is about the FAILURE reaching a log rather than the
+      // particular verb — a refused command that reports nothing is the silent
+      // no-op this codebase refuses everywhere else.
+      const three = threePaneTree();
       const view = mount(
         <App
           terminals={registry}
-          layout={spyLayout(snapshotOf(leaf(makePane({})))).api}
+          layout={spyLayout(snapshotOf(three.tree, three.left)).api}
           commands={{
             invoke: () =>
               Promise.resolve({ ok: false, error: { code: 'denied', message: 'nope' } }),
           }}
-          initialSnapshot={snapshotOf(leaf(makePane({})))}
+          initialSnapshot={snapshotOf(three.tree, three.left)}
         />,
       );
-      clickButton(view.container, 'SPLIT RIGHT');
+      act(() =>
+        all(view.container, 'pane')[2]?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })),
+      );
       await act(async () => undefined);
 
       expect(errors).toHaveBeenCalledTimes(1);

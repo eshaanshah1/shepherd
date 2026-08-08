@@ -44,6 +44,32 @@ const repoArg = s.object({ path: s.string(), name: s.string() });
  * has a reason — no window, a renderer that never mounted it — and asking
  * forever would keep a timer alive for the life of the app to learn nothing.
  */
+/**
+ * The sidebar's groups, in the order you care.
+ *
+ * Attention first, then motion, then rest — the same ranking v1's aggregate dot
+ * used (blocked > error > done > working > idle), applied to a list instead of
+ * a single glyph. `archived` is deliberately absent: it is not work in flight.
+ */
+const TASK_GROUPS: readonly { label: string; states: readonly string[]; tint: string }[] = [
+  { label: 'NEEDS YOU', states: ['needs-you', 'review'], tint: 'hay' },
+  { label: 'WORKING', states: ['running'], tint: 'cobalt' },
+  { label: 'DRAFT', states: ['draft'], tint: 'wool-faint' },
+  { label: 'DONE', states: ['done'], tint: 'pasture' },
+  { label: 'ARCHIVED', states: ['archived'], tint: 'wool-faint' },
+];
+
+/** What this extension puts in a tree. Structural, so the SDK type stays the SDK's. */
+interface TreeItemOut {
+  id: string;
+  label: string;
+  description?: string;
+  section?: boolean;
+  tint?: string;
+  collapsed?: boolean;
+  command?: { id: string };
+}
+
 const CORRELATE_ATTEMPTS = 10;
 const CORRELATE_INTERVAL_MS = 500;
 
@@ -515,41 +541,75 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * separate directories with a lint rule between them.
    */
   ctx.subscriptions.push(
-    views.registerViewType(TASK_VIEWS.composer, { kind: 'component', component: TASK_VIEWS.composer }),
+    views.registerViewType(TASK_VIEWS.composer, {
+      kind: 'component',
+      component: TASK_VIEWS.composer,
+      // A form you open, fill in and dismiss — v1's ⌘T composer, declared rather
+      // than hardcoded into the shell. In the dock it would sit there taking a
+      // third of the sidebar forever.
+      surface: 'overlay',
+      key: 'CmdOrCtrl+T',
+      title: 'New task',
+    }),
   );
 
   ctx.subscriptions.push(
     views.registerViewType(TASK_VIEWS.tree, {
       kind: 'tree',
+      title: 'Tasks',
       data: {
         children: (parent) => {
-          if (parent === undefined) {
-            const tasks = [...store.list()].sort((a, b) => b.createdAt - a.createdAt);
-            if (tasks.length === 0) {
-              return Promise.resolve([{ id: 'empty', label: 'no tasks yet', description: 'shepherd task new' }]);
-            }
+          if (parent !== undefined) {
+            const task = store.get(parent);
             return Promise.resolve(
-              tasks.map((task) => ({
-                id: task.id,
-                label: task.title,
-                description: displayState(task.lifecycle, []),
-                tint: displayState(task.lifecycle, []),
-                collapsed: true,
-                // Clicking a task logs where it is. Attributed to THIS extension
-                // (D14), which is also why it may only name a command it is
-                // itself allowed to invoke.
-                command: { id: TASK_COMMANDS.list },
+              (task?.repos ?? []).map((repo) => ({
+                id: `${parent}:${repo.name}`,
+                label: repo.name,
+                description: provisioning.get(`${parent}:${repo.name}`) ?? 'ready',
               })),
             );
           }
-          const task = store.get(parent);
-          return Promise.resolve(
-            (task?.repos ?? []).map((repo) => ({
-              id: `${parent}:${repo.name}`,
-              label: repo.name,
-              description: provisioning.get(`${parent}:${repo.name}`) ?? 'ready',
-            })),
-          );
+
+          const tasks = [...store.list()].sort((a, b) => b.createdAt - a.createdAt);
+          if (tasks.length === 0) {
+            // The empty state is the SHELL's, not a fake row: a list saying
+            // "no tasks yet" in the shape of a task is a row you can click.
+            return Promise.resolve([]);
+          }
+
+          /**
+           * Grouped by state, which is how the sidebar is specified (§4) — and
+           * the grouping is a READ: `displayState` derives `needs-you` from the
+           * sessions' attention (D4) and nothing writes it.
+           *
+           * The order is the order you care in: what wants you, then what is
+           * moving, then what is not. A group with nothing in it is absent
+           * rather than an empty heading.
+           */
+          const rows: TreeItemOut[] = [];
+          for (const group of TASK_GROUPS) {
+            const inGroup = tasks.filter((task) => group.states.includes(displayState(task.lifecycle, [])));
+            if (inGroup.length === 0) continue;
+            rows.push({
+              id: `group:${group.label}`,
+              label: group.label,
+              description: String(inGroup.length),
+              section: true,
+              tint: group.tint,
+            });
+            for (const task of inGroup) {
+              const state = displayState(task.lifecycle, []);
+              rows.push({
+                id: task.id,
+                label: task.title,
+                description: state,
+                tint: state,
+                collapsed: true,
+                command: { id: TASK_COMMANDS.list },
+              });
+            }
+          }
+          return Promise.resolve(rows);
         },
         onDidChange: (fn) => {
           treeListeners.add(fn);
