@@ -124,6 +124,7 @@ describe('readFrames', () => {
         permissions: ['storage'],
         storage: { pings: 4 },
         dataDir: '/tmp/shepherd-test/ext',
+        homeDir: '/tmp/shepherd-test/home',
       },
     };
     expect(readFrames(ask, hostFrameSchema).frames).toEqual([ask]);

@@ -307,6 +307,15 @@ const hostAskSchema = s.union(
      */
     dataDir: s.string(),
     /**
+     * The user's home directory — see `ExtensionContext.homeDir`.
+     *
+     * Required rather than optional, unlike `isDev` below: there is no honest
+     * default for where a user's home is, and an extension that got the wrong
+     * one would write into a path that exists on nobody's machine. A fixture
+     * that builds an `activate` frame has to say, which is the right cost.
+     */
+    homeDir: s.string(),
+    /**
      * Whether developer surfaces are on (a dev build, or a smoke driving one).
      *
      * Optional on the wire, defaulting to false: a required field here breaks

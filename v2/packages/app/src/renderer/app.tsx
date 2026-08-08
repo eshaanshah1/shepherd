@@ -302,6 +302,7 @@ export function App({
           pane={pane}
           terminals={terminals}
           focused={focused}
+          {...(sessionId === undefined ? {} : { sessionId })}
           {...(agent === undefined ? {} : { agentState: agent.state })}
           {...(agent?.reason === undefined ? {} : { agentReason: agent.reason })}
         />

@@ -70,8 +70,17 @@ export type SessionSpecFactory = (pane: Pane) => SessionCreateRequest;
 
 /** The view's whole vocabulary. `TerminalPane` is written against this, not the class. */
 export interface PaneTerminals {
-  /** Mount a terminal for `pane` into `host` and stream its session into it. */
-  attach(pane: Pane, host: HTMLElement): void;
+  /**
+   * Mount a terminal for `pane` into `host` and stream its session into it.
+   *
+   * `existing` is a session id the LAYOUT already binds to this pane, and it is
+   * what makes a page reload survivable: sessions live in main and outlive the
+   * window, so a renderer that always created would start a second pty for a
+   * pane that already has one — leaving the first alive, rendered by nobody,
+   * and killable only through a pane that no longer points at it. Measured: one
+   * `window.reload` with two panes open left four sessions.
+   */
+  attach(pane: Pane, host: HTMLElement, existing?: string): void;
   /** The view went away. The session does not. */
   detach(paneId: PaneID): void;
   /**
@@ -146,10 +155,20 @@ export class PaneSessionRegistry implements PaneTerminals {
     this.#unsubscribe.push(this.#session.onExit((message) => this.#onExit(message)));
   }
 
-  attach(pane: Pane, host: HTMLElement): void {
+  attach(pane: Pane, host: HTMLElement, existing?: string): void {
     const entry = this.#ensure(pane);
     entry.pane = pane;
     if (entry.closed) return;
+
+    // Adopt before anything can create. `#sync` creates when `sessionId` is
+    // null, so this is the whole of the fix — and it is only ever an adoption:
+    // an entry that already knows its session is left alone, since main's
+    // binding and ours agreeing is the normal case and re-pointing it would
+    // orphan whatever we were streaming.
+    if (entry.sessionId === null && existing !== undefined && existing !== '') {
+      entry.sessionId = existing;
+      this.#bySession.set(existing, entry);
+    }
 
     if (entry.terminal === null) this.#buildTerminal(entry, host);
     const wrapper = entry.wrapper;

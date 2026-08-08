@@ -147,6 +147,12 @@ export interface ExtensionHostOptions {
    * should not re-derive one.
    */
   readonly support: string;
+  /**
+   * The user's home directory, for the same reason `support` is passed in: a
+   * boot-time fact resolved once at the platform boundary, not re-derived here.
+   * It reaches an extension as `ctx.homeDir`.
+   */
+  readonly homeDir: string;
   /** Where contributed views are recorded. Optional so a test can omit it. */
   readonly views?: {
     register(
@@ -376,6 +382,7 @@ export class ExtensionHost {
       // and its sidebar should look like the product.
       isDev: this.#options.devSurfaces === true,
       dataDir: extensionDataDir(id, this.#options.extensions().list().map((record) => record.manifest.id), this.#options.support),
+      homeDir: this.#options.homeDir,
     });
 
     if (!answer.ok) {

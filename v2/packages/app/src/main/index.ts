@@ -2,7 +2,14 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { app, BrowserWindow, ipcMain, webContents } from 'electron';
 import { color } from '@shepherd/design-tokens';
-import { appName, resolveAppPaths, runExec, runGit, shellDefaults } from '@shepherd/platform-darwin';
+import {
+  appName,
+  resolveAppPaths,
+  runExec,
+  runGit,
+  shellDefaults,
+  systemHome,
+} from '@shepherd/platform-darwin';
 import {
   CommandRegistry,
   EventBus,
@@ -37,6 +44,7 @@ import { installMenu } from './menu.ts';
 import {
   LOCAL_DEVICE_ID,
   LOCAL_DEVICE_PERMISSIONS,
+  resolveHome,
   resolveSupport,
   startIngress,
   type RunningIngress,
@@ -51,6 +59,7 @@ import { clearAgentState } from './agent-relay.ts';
 import { correlationEnv } from './correlation-env.ts';
 import { publishViewingEdges } from './viewing-topic.ts';
 import { registerCaptureCommand } from './capture-command.ts';
+import { registerReloadCommand } from './reload-command.ts';
 
 /**
  * The Electron entry point (electron-vite builds this to `out/main`, and
@@ -359,6 +368,12 @@ const extensionHost = new ExtensionHost({
   bus,
   kv: (namespace) => store.namespace(namespace),
   support,
+  // Resolved at the platform boundary, where `node:os` is allowed, and handed
+  // down: an extension cannot compute it and some of what it has to cooperate
+  // with lives at a fixed path under `~`. Overridable per run (`HOME_FLAG`)
+  // because an extension WRITES there — a smoke must not seed trust records
+  // into the developer's own Claude Code config.
+  homeDir: resolveHome(process.argv, systemHome()),
   views,
   // The one runner, from the one directory allowed to spawn (Rebuild checklist
   // item 4). Injected rather than imported by the host so a test can prove a
@@ -652,6 +667,22 @@ void app.whenReady().then(async () => {
       const image = await target.webContents.capturePage();
       const size = image.getSize();
       return { png: image.toPNG(), width: size.width, height: size.height };
+    },
+  });
+
+  /**
+   * New UI without killing anybody's agents — see `reload-command.ts` for why
+   * this works at all (the `SessionHost` above outlives every window, on
+   * purpose). Resolved late for the same reason `capture` is: there is no
+   * window yet, and macOS can hand the app a new one.
+   */
+  registerReloadCommand({
+    registry,
+    reload: () => {
+      const target = BrowserWindow.getAllWindows().find((win) => !win.isDestroyed());
+      if (target === undefined) return false;
+      target.webContents.reload();
+      return true;
     },
   });
 

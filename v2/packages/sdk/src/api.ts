@@ -41,6 +41,20 @@ export interface ExtensionContext {
    * you first need it.
    */
   readonly dataDir: string;
+  /**
+   * The user's home directory, resolved by the host for the same reason
+   * `dataDir` is: an extension may not reach `node:os`, so it cannot compute
+   * one.
+   *
+   * It exists because some of the things an extension has to cooperate with
+   * keep their state at a well-known path under `~` and nowhere else —
+   * `tasks` pre-seeds Claude Code's per-directory trust record in
+   * `~/.claude.json` so a spawned agent is not parked on a dialog. Deliberately
+   * the raw home rather than a menu of resolved paths: naming another
+   * program's file in this interface would make the kernel the authority on
+   * that program's layout, and it is the extension that knows the vendor.
+   */
+  readonly homeDir: string;
   readonly secrets: SecretStore;
   /** Category already bound to `extension`; the id rides the message. */
   readonly log: CategoryLogger;

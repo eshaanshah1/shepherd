@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -89,6 +97,8 @@ interface Harness {
    */
   registeredCommands(): ReadonlySet<string>;
   readonly dataDir: string;
+  /** A throwaway home — where the Claude Code trust store is read and written. */
+  readonly homeDir: string;
   dispose(): void;
 }
 
@@ -115,6 +125,9 @@ function harness(
   } = {},
 ): Harness {
   const dataDir = mkdtempSync(join(tmpdir(), 'shepherd-tasks-'));
+  // A home of its own, so the trust seeding in `provision` reads and writes a
+  // throwaway `.claude.json` and can never reach the developer's real one.
+  const homeDir = mkdtempSync(join(tmpdir(), 'shepherd-tasks-home-'));
   const raw = new Map<string, unknown>();
   for (const task of opts.tasks ?? []) raw.set(`task:${task.id}`, task);
 
@@ -269,6 +282,7 @@ function harness(
     subscriptions: [],
     storage,
     dataDir,
+    homeDir,
     secrets: {
       get: () => Promise.resolve(undefined),
       set: () => Promise.resolve(),
@@ -316,9 +330,11 @@ function harness(
     },
     registeredCommands: () => new Set(registered.keys()),
     dataDir,
+    homeDir,
     dispose: () => {
       for (const sub of ctx.subscriptions) sub.dispose();
       rmSync(dataDir, { recursive: true, force: true });
+      rmSync(homeDir, { recursive: true, force: true });
     },
   };
 }
@@ -1023,5 +1039,84 @@ describe('the actions a task row declares', () => {
       if ('separator' in entry) continue;
       expect(h.registeredCommands().has(entry.id), entry.id).toBe(true);
     }
+  });
+});
+
+/**
+ * The generated task root is pre-trusted before any agent opens in it.
+ *
+ * Measured, not assumed: Claude Code opens on *"Quick safety check: Is this a
+ * project you created or one you trust?"* in a directory it has not seen, and a
+ * task root is by construction a directory that did not exist a second ago — so
+ * the orchestrator this extension spawns would sit on a dialog forever. The
+ * shape of the record and every degradation live in `trust.test.ts`; what is
+ * claimed here is that provisioning does it, for the right paths, in time.
+ */
+describe('pre-trusting the directories it generates', () => {
+  const configOf = (h: Harness): Record<string, unknown> =>
+    JSON.parse(readFileSync(join(h.homeDir, '.claude.json'), 'utf8')) as Record<string, unknown>;
+
+  it('trusts the task root, so the orchestrator starts instead of waiting on a dialog', async () => {
+    const h = (live = harness());
+    writeFileSync(join(h.homeDir, '.claude.json'), '{}', 'utf8');
+
+    const created = await h.run<{ id: string }>('tasks.create', { title: 'Fix login', repos: [] });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    const projects = configOf(h)['projects'] as Record<string, unknown>;
+    expect(projects[join(h.dataDir, 'fix-login')]).toEqual({ hasTrustDialogAccepted: true });
+    expect(created.id).toBeTruthy();
+  });
+
+  it('trusts a repo worktree too, since that is where a workstream agent runs', async () => {
+    const h = (live = harness());
+    writeFileSync(join(h.homeDir, '.claude.json'), '{}', 'utf8');
+
+    await h.run('tasks.create', {
+      title: 'Fix login',
+      repos: [{ name: 'api', path: '/src/api' }],
+    });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    const projects = configOf(h)['projects'] as Record<string, unknown>;
+    expect(projects[join(h.dataDir, 'fix-login', 'api')]).toEqual({ hasTrustDialogAccepted: true });
+  });
+
+  it('trusts nothing but what it made — never the source repo', async () => {
+    // The narrowness IS the feature. Shepherd created the task root and can say
+    // so honestly; it did not create the user's checkout and has no standing to
+    // answer for it.
+    const h = (live = harness());
+    writeFileSync(join(h.homeDir, '.claude.json'), '{}', 'utf8');
+
+    await h.run('tasks.create', {
+      title: 'Fix login',
+      repos: [{ name: 'api', path: '/src/api' }],
+    });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    const projects = configOf(h)['projects'] as Record<string, unknown>;
+    // Both spellings of the data dir count as ours: the realpath is written too,
+    // because Claude Code resolves symlinks before it looks a directory up — and
+    // on macOS the temp dir these tests run in is itself behind one.
+    const mine = [h.dataDir, realpathSync(h.dataDir)];
+    for (const key of Object.keys(projects)) {
+      expect(mine.some((dir) => key.startsWith(dir)), key).toBe(true);
+    }
+    expect(projects['/src/api']).toBeUndefined();
+  });
+
+  it('provisions anyway when there is no config to seed', async () => {
+    // A machine that has never run Claude Code has no agent to unblock, and the
+    // task is not the trust record's to fail.
+    const warnings: string[] = [];
+    const h = (live = harness({ onWarn: (line) => warnings.push(line) }));
+
+    await h.run('tasks.create', { title: 'Fix login', repos: [] });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    // And it says so, because a skipped pre-trust is why an agent is sitting on
+    // a prompt.
+    expect(warnings.some((line) => line.includes('trust prompt'))).toBe(true);
   });
 });
