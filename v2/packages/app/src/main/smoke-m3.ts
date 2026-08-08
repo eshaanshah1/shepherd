@@ -122,6 +122,35 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
   check(taskRows.length > 0, `the task tree rendered: ${JSON.stringify(taskRows)}`);
   say('ok — the task tree drew the task, through the same mechanism');
 
+  // --- 6b. the OTHER extension's component, clicked, changing its own tree.
+  //
+  // Same argument as asserting both trees: a component that only ever ran in
+  // the extension that wrote the mechanism would say nothing about the
+  // mechanism. This one runs a command from inside the page and the answer
+  // comes back up the same wire the composer's does — and the tree it bumps is
+  // a second, independent contribution proving the invoke really happened.
+  await until(
+    'the diagnostics card to render',
+    () =>
+      win.webContents.executeJavaScript(
+        `document.querySelector('[data-testid="diagnostics-card"]') !== null`,
+      ) as Promise<boolean>,
+    (found) => found,
+  );
+  await win.webContents.executeJavaScript(
+    `document.querySelector('[data-testid="diagnostics-ping"]').click(), true`,
+  );
+  const bumped = await until(
+    "the card's command to change the tree it does not own",
+    () =>
+      win.webContents.executeJavaScript(
+        `Array.from(document.querySelectorAll('[data-view-type="diagnostics.tree"] [data-testid="view-row"]')).map((el) => el.textContent)`,
+      ) as Promise<string[]>,
+    (found) => found.some((row) => row.includes('ticks: 1')),
+  );
+  check(bumped.some((row) => row.includes('ticks: 1')), `the component's invoke ran: ${JSON.stringify(bumped)}`);
+  say('ok — a contributed component ran a command and the answer came back');
+
   // --- 7. a task created from INSIDE THE APP — the composer (ADR 0033).
   //
   // Everything above went through the control socket, which is the agent's

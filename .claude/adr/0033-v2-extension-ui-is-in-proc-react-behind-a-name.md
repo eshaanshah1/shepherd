@@ -56,7 +56,10 @@ quietly come back.
 built against a **trivial consumer** first — `diagnostics` contributes a card
 carrying the three axes a static one would not exercise: local state the host
 must not clobber, an `invoke` whose answer is drawn, and an `invoke` that fails
-(a denial, arriving as a value).
+(a denial, arriving as a value). It is **registered, not merely unit-tested**:
+the first look at the running app found the card absent from the dock, which
+would have left "a second extension can do this too" resting on a test written
+by the same hand as the mechanism.
 
 `smoke:m3` now drives the real form in the real DOM — typing through the native
 setter plus an `input` event, because a plain `.value =` is a write React never
@@ -65,7 +68,13 @@ point, and then asserts the worktree and the synthesized task root on disk. Its
 first live run failed on a hardcoded repo name: the CLI *supplies* a repo's name
 and the picker *derives* it, so the composed task's worktree is at its path's
 basename. That is the fifth time in this milestone that running the thing found
-what reading it did not.
+what reading it did not — and **looking** at it found three more: the card that
+was never registered, an "add repo" button wrapped onto two lines by a
+`width: 100%` field, and a suggestion chip advertising a name the composer would
+not use. A provider's `name` is therefore dropped and `repoName(path)` is the
+one derivation, because the built-in provider answers with the names of earlier
+tasks and honouring them would let one task's naming choice follow a repo
+forever.
 
 The renderer may import `@shepherd/ext-*/ui` and nothing else of an extension.
 Enforcing that took two lint entries and a measurement: a single

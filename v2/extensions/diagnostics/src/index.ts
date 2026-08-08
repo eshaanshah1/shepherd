@@ -142,6 +142,21 @@ export const activate: ActivateFn = (ctx, api) => {
   );
 
   /**
+   * A contributed COMPONENT — the trivial consumer the in-proc React seam was
+   * built against (ADR 0033), for the same reason the tree above exists here
+   * rather than in `tasks`.
+   *
+   * Registered next to the tree deliberately: the two kinds have to reach the
+   * dock through one mechanism, and a component that only ever ran in a unit
+   * test would leave "it works in the real app" resting on the extension that
+   * wrote the mechanism. `ui/card.tsx` holds the component; this file names it
+   * and imports nothing from it — that is what keeps react out of this process.
+   */
+  ctx.subscriptions.push(
+    views.registerViewType('diagnostics.card', { kind: 'component', component: 'diagnostics.card' }),
+  );
+
+  /**
    * What the row's command does: change the tree.
    *
    * A timer was the first version and was wrong twice over — `Clock` has no
