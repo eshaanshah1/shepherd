@@ -919,16 +919,41 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         // already gone answers with a failure nobody reads.
         await closeTaskRoot(task);
 
-        // The sessions first (its first review's finding #3): a deleted task's
-        // panes would keep running in a directory about to vanish, and ADR 0022
-        // makes `layout.close` the only thing that ends a session — nothing
-        // downstream of the rmSync could clean them up. A pane that is already
-        // gone answers with a failure, which is fine: closed is closed.
-        for (const session of task.sessions) {
-          if (session.pane !== undefined) {
-            await commands.invoke('layout.close', { pane: session.pane });
+        /**
+         * The sessions first: a deleted task's panes would keep running in a
+         * directory about to vanish, and ADR 0022 makes `layout.close` the only
+         * thing that ends a session.
+         *
+         * Closed by SESSION as well as by pane, because a recorded pane id goes
+         * stale: pane ids are regenerated when a layout is restored, so after a
+         * relaunch the record names a pane that no longer exists, `layout.close`
+         * closes nothing, and the agent outlives the task that owned it — which
+         * is what left a live shell sitting in a deleted directory. Measured,
+         * not theorised.
+         *
+         * `sessions.list` is the authority on which pane a session is on NOW.
+         * A pane that is already gone answers with a failure, which is fine:
+         * closed is closed.
+         */
+        // A command's answer is `unknown` and crossed a port; `ok` says the call
+        // succeeded, not that the value has the shape this file expects. The
+        // cost of assuming is that a task cannot be deleted at all.
+        const listed = await commands.invoke<unknown>('sessions.list');
+        const paneOf = new Map<string, string>();
+        if (listed.ok && Array.isArray(listed.value)) {
+          for (const entry of listed.value as { id?: unknown; paneId?: unknown }[]) {
+            if (typeof entry?.id === 'string' && typeof entry.paneId === 'string') {
+              paneOf.set(entry.id, entry.paneId);
+            }
           }
         }
+        const panes = new Set<string>();
+        for (const session of task.sessions) {
+          const live = paneOf.get(session.id);
+          if (live !== undefined) panes.add(live);
+          if (session.pane !== undefined) panes.add(session.pane);
+        }
+        for (const pane of panes) await commands.invoke('layout.close', { pane });
 
         // An ARCHIVED task's worktrees were already removed by the archive
         // (finding #2) — running `worktree remove` again fails per repo and made
