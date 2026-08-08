@@ -259,15 +259,44 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       for (const task of store.list()) {
         if (!task.sessions.some((session) => session.pane === pane)) continue;
         const sessions = task.sessions.filter((session) => session.pane !== pane);
-        store.put({
-          ...task,
-          sessions,
-          // Only a RUNNING task falls back — an archived or done one keeps the
-          // lifecycle it was deliberately put in.
-          lifecycle: sessions.length === 0 && task.lifecycle === 'running' ? 'draft' : task.lifecycle,
-        });
+        store.put({ ...task, sessions });
         changed();
         ctx.log.info(`task ${task.id}: pane ${pane} closed, ${sessions.length} session(s) left`);
+
+        /**
+         * The LAST pane closing means the task is done.
+         *
+         * That is the user's own reading of the gesture, and it is the right
+         * one: you do not close every window on a piece of work you intend to
+         * come back to this minute. So it archives — the worktrees are
+         * snapshotted and removed, and the row sinks to the bottom of the list
+         * rather than sitting among live work as a draft nobody will read.
+         *
+         * Archiving rather than deleting is what makes the gesture safe: every
+         * uncommitted line is in the snapshot, and `tasks.restore` puts it back
+         * exactly. A task with nothing in it archives to nothing, which is the
+         * "closing a scratch task disappears it" case with no special path.
+         *
+         * Only a RUNNING task — an already archived one has no worktrees to
+         * snapshot, and a draft never had a pane to close.
+         */
+        if (sessions.length === 0 && task.lifecycle === 'running') {
+          void commands
+            .invoke(TASK_COMMANDS.archive, { task: task.id })
+            .then((result) => {
+              // A refusal is the point of the verb: a conflicted worktree
+              // cannot be snapshotted, so the task stays exactly as it is and
+              // says why. Silence here would be work quietly not saved.
+              if (!result.ok) {
+                ctx.log.warn(
+                  `task ${task.id}: last pane closed but it could not be archived — ${result.error.message}`,
+                );
+              }
+            })
+            .catch((error: unknown) => {
+              ctx.log.error(`task ${task.id}: archiving on close threw — ${String(error)}`);
+            });
+        }
       }
     }),
   );

@@ -893,19 +893,22 @@ describe('a pane that closes', () => {
   // The bug this pins: closing a pane left the task reporting `running` for a
   // session that no longer existed, because nothing subscribed to the kernel's
   // own `session.exit` — the sidebar's one job, stated wrongly.
-  it('drops the session and stops calling the task running', async () => {
+  it('drops the session and ARCHIVES the task, because the last pane closing means done', async () => {
     const h = (live = harness({
       tasks: [task({ sessions: [{ id: 's1', role: 'orchestrator', pane: 'p1' }] })],
     }));
     expect(await listedState(h)).toBe('running');
 
     h.emit('session.exit', { sessionId: 's1', paneId: 'p1' });
+    await until(() => h.invoked.some((call) => call.id === 'tasks.archive'));
 
-    expect(await listedState(h)).toBe('draft');
     expect((await h.run<{ sessions: unknown[] }[]>('tasks.list'))[0]?.sessions).toEqual([]);
+    // Archive, not delete: the worktrees are snapshotted first, so every
+    // uncommitted line survives a gesture that looks like throwing work away.
+    expect(h.invoked.find((call) => call.id === 'tasks.archive')?.args).toEqual({ task: 't1' });
   });
 
-  it('keeps the task running while any other session is left', async () => {
+  it('does NOT archive while any other session is left — closing one pane is not finishing', async () => {
     const h = (live = harness({
       tasks: [
         task({
@@ -921,6 +924,7 @@ describe('a pane that closes', () => {
 
     expect(await listedState(h)).toBe('running');
     expect((await h.run<{ sessions: unknown[] }[]>('tasks.list'))[0]?.sessions).toHaveLength(1);
+    expect(h.invoked.some((call) => call.id === 'tasks.archive')).toBe(false);
   });
 
   it('matches on the PANE, since a dying session may still be a pending- id', async () => {
