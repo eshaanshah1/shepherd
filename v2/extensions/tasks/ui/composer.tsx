@@ -1,9 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
-import type { ReactNode } from "react";
 import type { ExtensionViewProps } from "@shepherd/sdk";
-import { Button, Composer, Field, PromptField, Row, type PromptFieldHandle } from "@shepherd/ui";
+import { Button, Composer, Field, PromptField, type PromptFieldHandle } from "@shepherd/ui";
 import { repoName } from "../src/model/repo-name.ts";
-import { commonPrefix } from "../src/model/path-complete.ts";
 import type { PastedImage } from "../src/images.ts";
 import { readPastedImage } from "./paste-image.ts";
 
@@ -38,8 +36,6 @@ interface RepoSuggestion {
   readonly isRepo: boolean;
   /** Where it came from. Only a filesystem row is a Tab target — see `complete`. */
   readonly source: "history" | "filesystem";
-  /** Indices into `path` that the query matched. Emphasised in the row. */
-  readonly matched: readonly number[];
 }
 
 /**
@@ -58,22 +54,20 @@ interface RepoSuggestion {
  * choice follow the repo into every later task — a chip reading `api` for a repo
  * about to be provisioned as `shepherd`. One derivation, `repoName`, everywhere.
  *
- * `isRepo`, `source` and `matched` default to the SAFE reading of a provider
- * that omits them: a candidate is treated as a repo (so no row is falsely
- * accused), as history (so it can never drive Tab into a path it does not share
- * a parent with) and as having matched nothing (so nothing is falsely
- * emphasised).
+ * `isRepo` and `source` default to the SAFE reading of a provider that omits
+ * them: a candidate is treated as a repo (so none is falsely accused) and as
+ * history (so it can never drive Tab into a path it does not share a parent
+ * with).
  */
 function readSuggestions(value: unknown): readonly RepoSuggestion[] {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
   return value.flatMap((entry: unknown) => {
     if (typeof entry !== "object" || entry === null) return [];
-    const { path, isRepo, source, matched } = entry as {
+    const { path, isRepo, source } = entry as {
       path?: unknown;
       isRepo?: unknown;
       source?: unknown;
-      matched?: unknown;
     };
     if (typeof path !== "string" || path === "" || seen.has(path)) return [];
     seen.add(path);
@@ -83,9 +77,6 @@ function readSuggestions(value: unknown): readonly RepoSuggestion[] {
         name: repoName(path),
         isRepo: isRepo !== false,
         source: source === "filesystem" ? "filesystem" : "history",
-        matched: Array.isArray(matched)
-          ? matched.filter((index): index is number => typeof index === "number")
-          : [],
       },
     ];
   });
@@ -102,38 +93,6 @@ function titleOf(brief: string): string {
   return first.length <= 72 ? first : `${first.slice(0, 71).trimEnd()}…`;
 }
 
-/**
- * The path, with the matched characters emphasised.
- *
- * The positions come from the ranker, so what is bold is exactly what earned the
- * row its place. Rendered as a run of spans rather than one per character: a
- * fuzzy match on a long path is mostly contiguous, and a span per character
- * makes the browser break the line between them.
- */
-function emphasise(path: string, matched: readonly number[]): ReactNode {
-  if (matched.length === 0) return path;
-  const hits = new Set(matched);
-  const parts: ReactNode[] = [];
-  let index = 0;
-  while (index < path.length) {
-    const isHit = hits.has(index);
-    let end = index;
-    while (end < path.length && hits.has(end) === isHit) end += 1;
-    const text = path.slice(index, end);
-    parts.push(
-      isHit ? (
-        <b key={index} className="sh-composer-repo-hit">
-          {text}
-        </b>
-      ) : (
-        text
-      ),
-    );
-    index = end;
-  }
-  return parts;
-}
-
 export function TaskComposer({
   invoke,
   done,
@@ -142,12 +101,10 @@ export function TaskComposer({
   const [repos, setRepos] = useState<readonly RepoSuggestion[]>([]);
   const [path, setPath] = useState("");
   const [suggestions, setSuggestions] = useState<readonly RepoSuggestion[]>([]);
-  const [active, setActive] = useState(0);
   const [listOpen, setListOpen] = useState(true);
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
   const inputId = useId();
-  const listId = useId();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const promptRef = useRef<PromptFieldHandle | null>(null);
   /**
@@ -176,10 +133,7 @@ export function TaskComposer({
       brief: forBrief,
       query: forQuery,
     });
-    if (answer.ok && mine === asked.current) {
-      setSuggestions(readSuggestions(answer.value));
-      setActive(0);
-    }
+    if (answer.ok && mine === asked.current) setSuggestions(readSuggestions(answer.value));
   };
 
   // On mount the query is empty, which the extension answers with the picked
@@ -196,11 +150,11 @@ export function TaskComposer({
   const visible = suggestions.filter(
     (suggestion) => !repos.some((repo) => repo.path === suggestion.path),
   );
-  const index = visible.length === 0 ? 0 : Math.min(active, visible.length - 1);
-  const current = listOpen ? visible[index] : undefined;
+  // ONE completion — the best-ranked row the extension answered with.
+  const current = listOpen ? visible[0] : undefined;
 
   /**
-   * Esc closes the LIST, and must not close the composer with it.
+   * Esc dismisses the completion, and must not close the composer with it.
    *
    * Radix's dismissable layer listens for Escape on the document in the CAPTURE
    * phase, so a React handler on the input cannot stop it — capture at the
@@ -231,7 +185,7 @@ export function TaskComposer({
     if (!repos.some((repo) => repo.path === trimmed)) {
       setRepos([
         ...repos,
-        { path: trimmed, name: repoName(trimmed), isRepo: true, source: "history", matched: [] },
+        { path: trimmed, name: repoName(trimmed), isRepo: true, source: "history" },
       ]);
     }
     setPath("");
@@ -242,37 +196,34 @@ export function TaskComposer({
 
   const retype = (next: string): void => {
     setPath(next);
-    setActive(0);
     setListOpen(true);
     void askForSuggestions(titleOf(brief), brief, next);
   };
 
   /**
-   * Tab completes, the way a shell does: as far as every match agrees, which for
-   * a single match is that match's whole path. It does NOT submit — completing
-   * to `~/Home/dev/` and carrying on typing is the whole point, and the field
-   * re-asks with the new text, so the next level appears with no second
-   * keystroke. Taking a SPECIFIC row is what ↓ and ⏎ are for.
+   * Take the completion that is on screen.
    *
-   * Only the FILESYSTEM rows are candidates. They are the ones that share a
-   * parent by construction (one level, one `readdir`), so their common prefix is
-   * always a real path; a history row can match the same query from anywhere on
-   * disk, and folding it in would complete to whatever two unrelated trees
-   * happen to share — usually `/Users/`.
+   * It is whatever the ghost text is showing, and that is the whole rule: with
+   * ONE suggestion visible there is nothing else it could honestly mean. The
+   * previous version completed to the common prefix of every filesystem match —
+   * shell behaviour, correct when a list was on screen — and once the list went
+   * away it promised `shepherd` in ghost text and gave you `she`.
    *
-   * The completion is the ABSOLUTE path, losing a typed `~`. The rows show
-   * absolute paths (which is what you asked to see), so the field agreeing with
-   * them is the smaller surprise, and `expandHome` still accepts a `~` typed by
-   * hand.
+   * Only a FILESYSTEM row is a Tab target. Those share a parent by construction
+   * (one level, one `readdir`), so completing to one is navigation; a history
+   * row can match the same query from anywhere on disk and is taken with ⏎.
+   * That is also what leaves ↹ free to move to the brief once the field is
+   * empty, which is the state ⏎ leaves you in.
+   *
+   * It re-asks with the completed text, so the next level appears with no
+   * second keystroke. The completion is the ABSOLUTE path, losing a typed `~`:
+   * `expandHome` still accepts one, and agreeing with what is on screen is the
+   * smaller surprise.
    */
   const complete = (): boolean => {
-    const target = commonPrefix(
-      visible.filter((suggestion) => suggestion.source === "filesystem").map((s) => s.path),
-    );
-    // No progress is not a completion: Tab then falls through and moves focus,
-    // which is what it does in a field with nothing to offer.
-    if (target.length <= path.length) return false;
-    retype(target);
+    if (current === undefined || current.source !== "filesystem") return false;
+    if (current.path.length <= path.length) return false;
+    retype(current.path);
     return true;
   };
 
@@ -362,6 +313,119 @@ export function TaskComposer({
           padding, and because a field that is bare BY CONTEXT reads as an
           accident when this component is mounted anywhere else.
         */}
+        {/*
+          Repos first, because that is the order the decision happens in: you
+          pick what you are working on, THEN say what to do to it. It read
+          backwards while it sat under the brief — and a field below the thing
+          it scopes is a field found after the brief has already been written.
+
+          ONE completion, inline, no dropdown: the single best match as ghost
+          text behind what you typed. ↹ takes it while there is something to
+          take and moves to the brief once there is not, ⏎ adds it and stays
+          here, so several repos are several ⏎s and no mouse.
+        */}
+        <div className="sh-composer-repos">
+          {/*
+          The repo field: ONE completion, inline, and no dropdown.
+          
+          It was a labelled, bordered input over a listbox of rows, and in a card
+          whose whole purpose is the brief it read louder than the brief — the
+          overcorrection from "too hidden". So: no label (the placeholder says
+          it), no border of its own, and the single best match rendered as ghost
+          text behind what you typed. ↹ takes it, ⏎ adds it, and there is nothing
+          on screen the rest of the time.
+        */}
+        <div className="sh-composer-repo">
+          {/*
+            The ghost sits UNDER the input, in the same box with the same type,
+            so the completion lines up with the cursor character for character.
+            A second element rather than a value the field holds: writing the
+            completion into the input would mean the user's next keystroke edits
+            text they did not type.
+          */}
+          {current === undefined ? null : (
+            <div className="sh-composer-repo-ghost" aria-hidden="true">
+              <span className="sh-composer-repo-typed">{path}</span>
+              <span
+                className="sh-composer-repo-rest"
+                data-testid="composer-suggestion"
+                data-path={current.path}
+              >
+                {current.path.slice(path.length)}
+              </span>
+              {current.isRepo ? null : <span className="sh-composer-repo-note">not a repo</span>}
+            </div>
+          )}
+          <Field
+            id={inputId}
+            ref={inputRef}
+            size="sm"
+            variant="bare"
+            data-testid="composer-repo-path"
+            placeholder="+ repo"
+            autoComplete="off"
+            spellCheck={false}
+            aria-label="repo path"
+            value={path}
+            onChange={(event) => retype(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Tab" && !event.shiftKey) {
+                // Tab does the two shell things in order: complete while there
+                // is something to complete, and once there is not — which is
+                // exactly the state you are in after ⏎ has taken your last repo
+                // — move on to the brief. Focusing it explicitly rather than
+                // letting the browser find the next tab stop, because the next
+                // one is a chip's × button.
+                event.preventDefault();
+                if (!complete()) promptRef.current?.focus();
+                return;
+              }
+              if (event.key === "ArrowRight" && current !== undefined) {
+                // At the end of the line, → takes the completion — the shell
+                // gesture, and the one people try before they try Tab. Anywhere
+                // else it is an ordinary cursor move.
+                const target = event.currentTarget;
+                if (target.selectionStart === path.length && target.selectionEnd === path.length) {
+                  event.preventDefault();
+                  complete();
+                }
+                return;
+              }
+              if (event.key === "Enter") {
+                // Enter adds the repo rather than submitting the form: a task
+                // with the repo field half-typed is a task with the wrong repos.
+                event.preventDefault();
+                add(current?.path ?? path);
+              }
+            }}
+          />
+        </div>
+
+        <ul className="sh-composer-picked" data-testid="composer-picked">
+            {repos.map((repo) => (
+              <li
+                key={repo.path}
+                data-testid="composer-picked-repo"
+                data-path={repo.path}
+                title={repo.path}
+              >
+                {repo.name}
+                <button
+                  type="button"
+                  aria-label={`remove ${repo.name}`}
+                  title={`remove ${repo.name}`}
+                  onClick={() =>
+                    setRepos(repos.filter((r) => r.path !== repo.path))
+                  }
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+        </ul>
+
+        </div>
+
         <PromptField
           ref={promptRef}
           className="sh-composer-brief"
@@ -392,12 +456,13 @@ export function TaskComposer({
             return true;
           }}
           onKeyDown={(event) => {
-            // ⌘⏎ submits, ⏎ is a newline: this is prose, and a brief whose second
-            // sentence created the task would be a brief nobody could write.
-            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-              event.preventDefault();
-              if (titleOf(brief) !== "") void create();
-            }
+            // ⏎ submits and ⇧⏎ newlines — the chat convention, and the one the
+            // repo field above hands you: ⏎ there adds a repo and stays, ↹
+            // brings you here, ⏎ here is done. ⌘⏎ still works because it is
+            // what the previous build bound and fingers remember it.
+            if (event.key !== "Enter" || event.shiftKey) return;
+            event.preventDefault();
+            if (titleOf(brief) !== "") void create();
           }}
         />
 
@@ -411,129 +476,6 @@ export function TaskComposer({
           which is exactly the escape hatch `composer.css` documents for "a
           control that genuinely needs an edge in here".
         */}
-        <div className="sh-composer-repo">
-          <label className="sh-composer-repo-label" htmlFor={inputId}>
-            repo
-          </label>
-          <Field
-            id={inputId}
-            ref={inputRef}
-            size="sm"
-            data-testid="composer-repo-path"
-            placeholder="~/dev/… — type a path, ↹ completes, ⏎ adds"
-            autoComplete="off"
-            spellCheck={false}
-            role="combobox"
-            aria-expanded={current !== undefined}
-            aria-controls={listId}
-            aria-autocomplete="list"
-            aria-activedescendant={current === undefined ? undefined : `${listId}-${index}`}
-            value={path}
-            onChange={(event) => retype(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "ArrowDown") {
-                event.preventDefault();
-                setListOpen(true);
-                // Wraps: a list you can arrow off the end of makes the last row
-                // harder to reach than the first, for no reason.
-                setActive(visible.length === 0 ? 0 : (index + 1) % visible.length);
-                return;
-              }
-              if (event.key === "ArrowUp") {
-                event.preventDefault();
-                setListOpen(true);
-                setActive(
-                  visible.length === 0 ? 0 : (index - 1 + visible.length) % visible.length,
-                );
-                return;
-              }
-              if (event.key === "Tab" && !event.shiftKey) {
-                // Only swallowed when it actually completed something, so Tab
-                // still moves focus out of a field with nothing to offer.
-                if (complete()) event.preventDefault();
-                return;
-              }
-              if (event.key === "Enter") {
-                // Enter adds the repo rather than submitting the form: a task
-                // with the repo field half-typed is a task with the wrong repos.
-                event.preventDefault();
-                add(current?.path ?? path);
-              }
-            }}
-          />
-
-          {current === undefined ? null : (
-            <div
-              className="sh-composer-repo-list"
-              id={listId}
-              role="listbox"
-              aria-label="repo suggestions"
-            >
-              {visible.map((suggestion, position) => (
-                <Row
-                  key={suggestion.path}
-                  id={`${listId}-${position}`}
-                  role="option"
-                  aria-selected={position === index}
-                  selected={position === index}
-                  data-testid="composer-suggestion"
-                  data-path={suggestion.path}
-                  className="sh-composer-repo-row"
-                  /*
-                   * A directory with no `.git` is still offered — it is how you
-                   * reach the repos inside it — so what stops it being picked by
-                   * accident is that it says so.
-                   */
-                  meta={suggestion.isRepo ? undefined : "not a repo"}
-                  /*
-                   * `mousemove`, not `mouseenter`. With the pointer resting in
-                   * the list, `mouseenter` never fires again — so arrowing down
-                   * moves the highlight, the pointer is now over a different row,
-                   * and the next jitter yanks the selection back.
-                   */
-                  onMouseMove={() => setActive(position)}
-                  onClick={() => add(suggestion.path)}
-                >
-                  {emphasise(suggestion.path, suggestion.matched)}
-                </Row>
-              ))}
-            </div>
-          )}
-
-          {/*
-            The picked repos. Chips rather than rows, because a picked repo is a
-            token in a sentence and an offered one is a place you might go — they
-            stopped being the same object the moment the offered one became a
-            path you can navigate through.
-
-            Still the shell's CSS and NOT a primitive: there is no `Chip` in the
-            fifteen, and a `Button` would gain a control treatment this cannot
-            have (it carries a nested ×, which would be a button in a button).
-          */}
-          <ul className="sh-composer-picked" data-testid="composer-picked">
-            {repos.map((repo) => (
-              <li
-                key={repo.path}
-                data-testid="composer-picked-repo"
-                data-path={repo.path}
-                title={repo.path}
-              >
-                {repo.name}
-                <button
-                  type="button"
-                  aria-label={`remove ${repo.name}`}
-                  title={`remove ${repo.name}`}
-                  onClick={() =>
-                    setRepos(repos.filter((r) => r.path !== repo.path))
-                  }
-                >
-                  ×
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-
         {/*
           The ONE loud thing on the card (rule 3: two primary buttons means
           neither is). `busy` is the primitive's, and it is a real improvement
@@ -541,7 +483,9 @@ export function TaskComposer({
           braille spinner with the width pinned, so the control does not narrow
           mid-click and take the row with it.
         */}
+        {/* The action row: one filled action, hard right, and nothing else. */}
         <div className="sh-composer-controls">
+          <span className="sh-composer-spacer" />
           <Button
             variant="primary"
             type="submit"

@@ -740,76 +740,78 @@ body.sh-dragging {
  * means "one step off the card", and a wash moves with a contributed theme's
  * `--sh-text` the way a fixed `--sh-ink-*` never did.
  */
-.sh-composer-repo {
-  --sh-line: color-mix(in srgb, var(--sh-text) 14%, transparent);
-  --sh-surface-sunken: color-mix(in srgb, var(--sh-text) 5%, transparent);
-
+/*
+ * The repo control, on the action row rather than above the brief.
+ *
+ * T3 Code's composer is the reference: secondary facts (the checkout, the
+ * branch, the model) are quiet text controls along the bottom of the box at ONE
+ * weight, with a single filled action at the end. This was a labelled, bordered
+ * field over a dropdown, which made the least important thing on the card the
+ * loudest — the overcorrection from "too hidden".
+ */
+/*
+ * The repo row: the field, then the chips it fills.
+ *
+ * Above the brief, because that is the order the decision happens in — what you
+ * are working on, then what to do to it.
+ */
+.sh-composer-repos {
   display: flex;
-  flex-direction: column;
-  gap: var(--sh-space-sm);
-  /* The completions are absolutely positioned against this — in the flow they
-     would push the create button down the card on every keystroke. */
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sh-space-sm) var(--sh-space-md);
+}
+
+.sh-composer-repo {
   position: relative;
+  flex: 0 1 auto;
   min-width: 0;
+  display: flex;
+  align-items: center;
 }
 
-/* A label, not a placeholder: a placeholder disappears the moment the field is
-   doing its job, which is exactly when you want to know what it is. */
-.sh-composer-repo-label {
+.sh-composer-repo input {
   font-size: var(--sh-font-size-small);
-  line-height: var(--sh-line-height);
   color: var(--sh-text-dim);
+  padding: 0;
+  width: 22ch;
 }
 
-/* A path is machine vocabulary, in the field and in the rows alike. */
-.sh-composer-repo .sh-ui-field__control,
-.sh-composer-repo-row {
-  font-family: var(--sh-font-mono);
-  font-size: var(--sh-font-size-small);
-}
+.sh-composer-repo input::placeholder { color: var(--sh-text-faint); }
+.sh-composer-repo input:focus::placeholder { color: transparent; }
 
 /*
- * The completions, over the card rather than in it.
+ * The completion, as ghost text under the caret.
  *
- * `top: 100%` hangs it off the field's own row, and the picked chips keep their
- * place underneath — so opening the list never moves anything the pointer is
- * travelling towards.
+ * Same box, same type, same padding as the input above it, or the suggestion
+ * does not line up with what you typed character for character — which is the
+ * one thing this has to get right to be readable rather than confusing.
  */
-.sh-composer-repo-list {
+.sh-composer-repo-ghost {
   position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
-  z-index: 1;
-  margin-top: var(--sh-space-xs);
-  padding: var(--sh-space-xs);
-  background: var(--sh-surface-raised);
-  border: var(--sh-hairline) solid var(--sh-line);
-  border-radius: var(--sh-radius-sm);
-  /* Ten rows is the cap the command answers with, so this only ever scrolls
-     when the density is turned up. */
-  max-height: 320px;
-  overflow-y: auto;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-sm);
+  pointer-events: none;
+  font-size: var(--sh-font-size-small);
+  white-space: pre;
+  overflow: hidden;
 }
 
-.sh-composer-repo-row {
-  cursor: pointer;
-  color: var(--sh-text-dim);
+/* Invisible, and present: it is what pushes the completion to the caret. */
+.sh-composer-repo-typed { color: transparent; }
+.sh-composer-repo-rest { color: var(--sh-text-faint); }
+
+.sh-composer-repo-note {
+  color: var(--sh-text-faint);
+  font-size: var(--sh-font-size-nano);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
-/*
- * What the query matched, and the only accent in the list.
- *
- * `accent` rather than a weight alone: a mono face's bold is a small step, and
- * the whole point of drawing the full path is that the matched part can be found
- * in it at a glance.
- */
-.sh-composer-repo-hit {
-  color: var(--sh-accent);
-  font-weight: inherit;
-}
+.sh-composer-spacer { flex: 1 1 auto; }
 
-/* The repos you have picked. */
 .sh-composer-picked {
   list-style: none;
   margin: 0;

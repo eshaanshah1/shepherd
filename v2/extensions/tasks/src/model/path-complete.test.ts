@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { commonPrefix, completionTarget } from './path-complete.ts';
+import { completionTarget } from './path-complete.ts';
 
 const HOME = '/Users/eshaan';
 
@@ -61,27 +61,5 @@ describe('completionTarget', () => {
     const deep = target(`${HOME}/Home/dev/sh`);
     expect(deep?.dir).toBe(`${HOME}/Home/dev`);
     expect(deep?.partial).not.toContain('/');
-  });
-});
-
-describe('commonPrefix', () => {
-  it('is the whole string when there is one candidate', () => {
-    expect(commonPrefix(['/a/b/dev'])).toBe('/a/b/dev');
-  });
-
-  it('advances as far as the answer is unambiguous', () => {
-    expect(commonPrefix(['/a/dev', '/a/devops'])).toBe('/a/dev');
-  });
-
-  it('is empty when the candidates share nothing', () => {
-    expect(commonPrefix(['alpha', 'beta'])).toBe('');
-  });
-
-  it('is empty for no candidates', () => {
-    expect(commonPrefix([])).toBe('');
-  });
-
-  it('is case-sensitive, because a path is', () => {
-    expect(commonPrefix(['/a/Dev', '/a/dev'])).toBe('/a/');
   });
 });
