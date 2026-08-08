@@ -56,6 +56,25 @@ export interface SessionApi {
  */
 export interface CommandsApi {
   invoke(command: string, args?: unknown): Promise<IpcResult<unknown>>;
+  /**
+   * What the command palette shows: every command that has a `title`.
+   *
+   * `title` is documented in the SDK as "shown in the palette and in `shepherd
+   * help`. Absent = not user-facing" — so the filter is not this method's policy,
+   * it is what the field already meant. Until now nothing read it, which is why
+   * `layout.zoom`, `layout.rename` and every `tasks.*` verb had a user-facing name
+   * and no way for a user to reach it.
+   *
+   * The return type says `title: string`, not `title?: string`, and that is the
+   * filter expressed as a type: an untitled command is not a member of this list,
+   * so a caller cannot render one with an empty label by forgetting to check.
+   *
+   * It is a SNAPSHOT, not a subscription. The registry changes when an extension
+   * activates or is disposed, which is rare and never while a palette is open —
+   * and an `onChanged` here would be a live feed of a list nobody is looking at
+   * for the whole life of the window.
+   */
+  list(): Promise<IpcResult<readonly { readonly id: string; readonly title: string }[]>>;
 }
 
 /**
@@ -168,7 +187,7 @@ export const BRIDGE_SURFACE = {
     'onData',
     'onExit',
   ],
-  commands: ['invoke'],
+  commands: ['invoke', 'list'],
   layout: ['get', 'onChanged', 'setViewport'],
   agents: ['get', 'onChanged'],
   /**

@@ -216,6 +216,38 @@ body.sh-dragging {
 }
 
 /*
+ * The ewe — Shepherd's mascot, and the app's half of the `Empty` primitive.
+ *
+ * She lives HERE and not in `@shepherd/ui` on purpose: `Empty` gives an
+ * illustration a box and a size ceiling and has no opinion about its fills,
+ * because a line drawing, a photograph and a spinner are three different things.
+ * This is the line drawing.
+ *
+ * These four lines are also a FINDING paid off. `.sh-ewe`, `.sh-ewe-eye`,
+ * `.sh-empty`, `.sh-empty-say` and `.sh-empty-hint` were referenced by
+ * `empty-state.tsx` and defined NOWHERE in the repo — so the ewe rendered as
+ * solid black default-filled circles, unpositioned, at the top-left of the
+ * stage. It had never been noticed because the component had never been
+ * reachable, which is the bug this wave fixes; the other three classes are gone
+ * now, absorbed by the primitive.
+ */
+.sh-ewe {
+  fill: none;
+  stroke: var(--sh-text-faint);
+  /* A hairline, like every other line in this language — and the one metric
+     that deliberately does not scale, so she stays a drawing rather than
+     thickening into a logo at a larger base size. */
+  stroke-width: var(--sh-hairline);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* The eyes are the one filled shape: `stroke="none"` on the elements, ink here. */
+.sh-ewe-eye {
+  fill: var(--sh-text-faint);
+}
+
+/*
   One per layout root. Every root is mounted; the inactive ones are hidden with
   `display: none` (set inline, from the snapshot) rather than left unrendered —
   unrendering one would tear its panes down, and a torn-down pane comes back as

@@ -10,6 +10,7 @@ import {
   paneById,
   say,
   short,
+  seedHomePane,
   snapshotOf,
   waiter,
   waitForLoad,
@@ -55,11 +56,9 @@ export async function runM0Smoke(win: BrowserWindow, host: SessionHost): Promise
   win.show();
   win.focus();
 
-  const booted = await until(
-    'the renderer to report a pane bound to a session',
-    snapshot,
-    (s) => s.ready && s.paneIds.length === 1 && (s.panes[0]?.sessionId ?? null) !== null,
-  );
+  // The app opens EMPTY — see `seedHomePane`. It asserts that, then asks for a
+  // pane through the page's own bridge and waits for it to be bound.
+  const booted = await seedHomePane(win, TIMEOUT_MS);
   const pane = booted.paneIds[0] as string;
   const session = paneById(booted, pane).sessionId as string;
   check(true, `booted: one pane ${short(pane)} bound to session ${short(session)}`);

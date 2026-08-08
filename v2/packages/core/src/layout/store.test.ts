@@ -339,6 +339,117 @@ describe('persistence', () => {
   });
 });
 
+/**
+ * A root that holds NO panes.
+ *
+ * The state that makes the app's empty state reachable. Before this, `close`
+ * left the last pane's tree intact and the shell closed the window, so a
+ * zero-pane projection could not exist — and "you have no tasks" was drawn as a
+ * live shell in whatever directory was current, which after deleting the last
+ * task is usually one that has just been removed from disk.
+ */
+describe('a root can hold no panes', () => {
+  it('opens empty when asked, with no pane and nothing focused', () => {
+    const store = build();
+    const root = store.open('window-1', undefined, { empty: true });
+    expect(store.panes(root)).toEqual([]);
+    expect(store.tree(root)).toBeUndefined();
+    expect(store.focused(root)).toBeNull();
+    // It EXISTS, which is the distinction `hasRoot` was split out to carry: the
+    // old `tree(root) === undefined` answered both questions with one value.
+    expect(store.hasRoot(root)).toBe(true);
+    expect(store.roots()).toEqual([root]);
+  });
+
+  it('still opens with a pane by default, so nothing else had to change', () => {
+    const store = build();
+    const root = store.open();
+    expect(store.panes(root)).toEqual(['p1']);
+  });
+
+  /**
+   * MUTATION TARGET. Reverting `close` to leave the tree intact (its behaviour
+   * before this change) must fail HERE and nowhere else in the old suite —
+   * `wasLastPane`, the session kill and the `onLastPaneClosed` fall-through are
+   * all still true when the tree is left alone, which is exactly why the defect
+   * survived: every existing test passed.
+   */
+  it('closing the last pane empties the root instead of leaving the tree intact', () => {
+    const store = build();
+    const root = store.open();
+    store.bindSession(paneId('p1'), sessionId('s-1'));
+
+    const outcome = store.close(paneId('p1'));
+    expect(outcome).toEqual({ ok: true, value: { closed: 'p1', endedSession: 's-1', wasLastPane: true } });
+    expect(store.panes(root)).toEqual([]);
+    expect(store.tree(root)).toBeUndefined();
+    expect(store.focused(root)).toBeNull();
+    // The root survives its last pane. Closing it is `removeRoot`'s job.
+    expect(store.hasRoot(root)).toBe(true);
+    expect(killed).toEqual(['s-1']);
+  });
+
+  it('announces the emptying, or the window would keep drawing the pane', () => {
+    const store = build();
+    const root = store.open();
+    const seen: RootID[] = [];
+    store.onDidChange((changed) => seen.push(changed));
+    store.close(paneId('p1'));
+    expect(seen).toEqual([root]);
+  });
+
+  it('splitting an empty root gives it its first pane', () => {
+    // ⌘D on the empty state has to do something other than log `nothing to
+    // split`, and it is the only way back in from the keyboard.
+    const store = build();
+    const root = store.open('window-1', undefined, { empty: true });
+    const seeded = store.split(root, 'row', { cwd: '/tmp/seed' });
+    expect(seeded).toEqual({ ok: true, value: 'p1' });
+    expect(store.panes(root)).toEqual(['p1']);
+    expect(store.focused(root)).toBe('p1');
+    expect(store.pane(paneId('p1'))?.cwd).toBe('/tmp/seed');
+    // And the next one really splits.
+    expect(store.split(root, 'row').ok).toBe(true);
+    expect(store.panes(root)).toHaveLength(2);
+  });
+
+  it('persists an emptied root as a null tree, and restores it empty', () => {
+    // Dropping it from the payload instead would bring it back MINTED, refilling
+    // the empty state with a shell the user closed on purpose.
+    const storage = fakeKV();
+    const first = build(storage);
+    first.open();
+    first.close(paneId('p1'));
+    first.flush();
+
+    const payload = storage.raw.get('layout') as { roots: { id: string; tree: unknown }[] };
+    expect(payload.roots).toEqual([{ id: 'window-1', tree: null, focusedPaneId: null }]);
+
+    const second = build(storage);
+    const root = second.open();
+    expect(second.hasRoot(root)).toBe(true);
+    expect(second.panes(root)).toEqual([]);
+  });
+
+  it('projects a paneless root with no regions rather than an empty one', () => {
+    // `regions` is a Partial record, so an absent key already means "nothing
+    // here" — an extension reading it needs no new case.
+    const store = build();
+    const root = store.open('window-1', undefined, { empty: true });
+    expect(store.project(root)).toEqual({ id: 'window-1', regions: {}, focused: null, zoomed: null });
+  });
+
+  it('answers the pane queries without walking a tree that is not there', () => {
+    const store = build();
+    const root = store.open('window-1', undefined, { empty: true });
+    expect(store.pane(paneId('p1'))).toBeNull();
+    expect(store.rootOf(paneId('p1'))).toBeUndefined();
+    expect(store.zoomed(root)).toBeNull();
+    expect(store.focusDirection(root, 'left')).toEqual({ ok: true, value: null });
+    expect(store.setRatio(root, [0], 0.5)).toEqual({ ok: false, error: 'window-1 has no panes' });
+  });
+});
+
 describe('change notification', () => {
   it('fires on a structural change and survives a throwing listener', () => {
     const store = build();
@@ -681,6 +792,47 @@ describe('the root-level commands', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.message).toContain('no root ghost');
     expect(switched).toEqual([]);
+  });
+
+  it('switchRoot goes to an EMPTY root, which is still a root', async () => {
+    // `hasRoot`, not `tree(root) === undefined`. The old spelling answered both
+    // questions with one value and would report "no root" about a root that is
+    // open and on which the window draws the empty state.
+    const { registry, store, switched } = wiredRoots();
+    store.open('empty-1', undefined, { empty: true });
+    const result = await registry.invoke(LAYOUT_COMMANDS.switchRoot, { root: 'empty-1' }, USER);
+    expect(result).toEqual({ ok: true, value: { root: 'empty-1' } });
+    expect(switched).toEqual(['empty-1']);
+  });
+
+  it('openRoot FILLS a root that exists but holds no panes', async () => {
+    /*
+     * The other half of the same split. `openRoot` means "there is a root here
+     * with something in it" — that is what every caller does with the answer —
+     * so an existence check would leave an emptied home root a dead end: it
+     * would report `created: false` with `pane: null` forever.
+     */
+    const { registry, store } = wiredRoots();
+    store.open('empty-1', undefined, { empty: true });
+    const result = await registry.invoke(
+      LAYOUT_COMMANDS.openRoot,
+      { root: 'empty-1', cwd: '/tmp/refill', title: 'back' },
+      USER,
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toMatchObject({ root: 'empty-1', created: true });
+    expect(store.panes(rootId('empty-1'))).toHaveLength(1);
+    const pane = store.pane(store.focused(rootId('empty-1')) as PaneID);
+    expect(pane?.cwd).toBe('/tmp/refill');
+    expect(pane?.userTitle).toBe('back');
+  });
+
+  it('closeRoot closes an EMPTY root rather than reporting it missing', async () => {
+    const { registry, store } = wiredRoots();
+    store.open('empty-1', undefined, { empty: true });
+    const result = await registry.invoke(LAYOUT_COMMANDS.closeRoot, { root: 'empty-1' }, USER);
+    expect(result).toEqual({ ok: true, value: { root: 'empty-1', closedPanes: 0 } });
+    expect(store.hasRoot(rootId('empty-1'))).toBe(false);
   });
 
   it('openRoot mints a root and shapes its first pane', async () => {

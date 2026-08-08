@@ -63,6 +63,8 @@ export type {
   StatusItem,
   TreeDataProvider,
   TreeItem,
+  TreeItemAction,
+  TreeItemSeparator,
   ViewAPI,
   ViewInvokeError,
   ViewProvider,

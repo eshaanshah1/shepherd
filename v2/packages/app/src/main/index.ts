@@ -598,29 +598,38 @@ void app.whenReady().then(async () => {
     // What "switch" means is the window's business: draw that root, and treat
     // its panes as the ones being looked at. Core validates and delegates.
     onSwitchRoot: (root) => layoutIpc.setActive(root),
-    // ⌘W's fall-through, decided in exactly one place. Core does not know what a
-    // window is; it knows that a root has run out of panes, which is the only
-    // case in which closing one may close a window.
+    // What running out of panes MEANS, decided in exactly one place. Core does
+    // not know what a window is; it knows that a root has run out of panes.
     onLastPaneClosed: (root) => {
       /**
-       * Only the HOME root's last pane closes the window. Any other root is a
-       * pane group the window merely shows — a task's, say — so running it out
-       * of panes means that group is finished with, not that the app is.
-       * Switching away FIRST, because a window drawing a root that has just
-       * been removed draws nothing at all.
+       * **The home root's last pane leaves an EMPTY WINDOW, and does not quit.**
+       *
+       * It used to call `win.close()`, and with `window-all-closed` that is an
+       * app which vanishes when you tidy up — you close your last pane and the
+       * thing you were working in is gone. The empty state is a real destination
+       * now: it says the app is running, that nothing is in flight, and ⌘T is
+       * right there. v1 closed the window because it had no empty state to fall
+       * back to, and v1 itself ended up here — a workspace may hold zero tabs
+       * and `WorkspaceEmptyView` is what it draws.
+       *
+       * There is nothing to do: `store.close` has already emptied the root and
+       * announced it, so the projection the page receives carries `tree: null`
+       * and the stage draws `EmptyState`. Quitting is ⌘Q or the window's own
+       * close button, both untouched — this removes a fall-through rather than
+       * adding a guard against closing.
+       *
+       * Any OTHER root is a pane group the window merely shows — a task's, say —
+       * so running it out of panes means that group is finished with, not that
+       * the app is. Switching away FIRST, because a window drawing a root that
+       * has just been removed draws nothing at all.
        */
-      if (root !== HOME_ROOT) {
-        layoutIpc.setActive(HOME_ROOT);
-        const removed = layout.removeRoot(root);
-        if (!removed.ok) logger.warn('layout', `could not remove ${root}: ${removed.error}`);
+      if (root === HOME_ROOT) {
+        logger.info('layout', 'the home root is empty; the window stays open on the empty state');
         return;
       }
-      const target = BrowserWindow.getAllWindows().find((win) => !win.isDestroyed());
-      if (target === undefined) {
-        logger.warn('app', 'last pane closed but there is no window to close');
-        return;
-      }
-      target.close();
+      layoutIpc.setActive(HOME_ROOT);
+      const removed = layout.removeRoot(root);
+      if (!removed.ok) logger.warn('layout', `could not remove ${root}: ${removed.error}`);
     },
   });
 
@@ -679,7 +688,19 @@ void app.whenReady().then(async () => {
   // next write would then persist the roots that had been opened and drop the
   // rest, so "invisible" would quietly become "gone". `open` is idempotent, so
   // home appearing in that list again costs nothing.
-  layout.open(HOME_ROOT);
+  /*
+   * The home root opens **EMPTY** on a first run.
+   *
+   * `{ empty: true }` applies to the MINT only — a restore brings back whatever
+   * the user left, panes and all — so this is the state of a profile that has
+   * never been used, and of one whose last pane was closed. Minting a shell
+   * there is what made the app's empty state unreachable: "you have no tasks"
+   * was drawn as a live terminal, sitting in whatever directory happened to be
+   * current, which after deleting the last task is one that has just been
+   * removed from disk. The unit of work here is a task; a shell nobody asked for
+   * is not a reasonable thing to open in its place.
+   */
+  layout.open(HOME_ROOT, undefined, { empty: true });
   for (const root of layout.persistedRoots()) layout.open(root);
 
   // After the lock (held in `bootstrap`) and after the command table is

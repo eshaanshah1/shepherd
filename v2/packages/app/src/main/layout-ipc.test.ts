@@ -111,7 +111,7 @@ describe('the layout envelope', () => {
     electron.sent.length = 0;
     store.split(TASK, 'row');
     const pushed = lastPush();
-    expect(pushed?.roots.find((root) => root.root === 'task-1')?.tree.kind).toBe('split');
+    expect(pushed?.roots.find((root) => root.root === 'task-1')?.tree?.kind).toBe('split');
   });
 
   it('reports no root at all rather than an empty window it invented', async () => {
@@ -172,5 +172,126 @@ describe('the active root', () => {
     const result = handler?.(null, { x: 0, y: 0, width: Number.NaN, height: 600 });
     expect(result).toMatchObject({ ok: false, error: { code: 'invalid-argument' } });
     expect(store.viewport(HOME)).toEqual({ x: 0, y: 0, width: 0, height: 0 });
+  });
+});
+
+/**
+ * `command:list` — what the palette reads.
+ *
+ * The filter is HERE rather than in the page, and it is not this handler's
+ * policy: the SDK documents `title` as "shown in the palette … Absent = not
+ * user-facing". Until this channel existed nothing read that field, which is why
+ * `layout.zoom`, `layout.rename` and every `tasks.*` verb had a user-facing name
+ * and no way for a user to say it.
+ */
+describe('command:list', () => {
+  const list = async (): Promise<IpcResult<readonly { id: string; title: string }[]>> => {
+    const handler = electron.handlers.get(INVOKE.commandList);
+    if (handler === undefined) throw new Error('command:list was never registered');
+    return (await handler(null)) as IpcResult<readonly { id: string; title: string }[]>;
+  };
+
+  function withCommands(): CommandRegistry {
+    const registry = new CommandRegistry({ logger: nullLogger, grants: () => emptyGrants() });
+    registry.register('layout.zoom', {
+      title: 'Toggle Zoom',
+      schema: { describe: 'any', parse: (value: unknown) => ({ ok: true as const, value }) },
+      handler: () => undefined,
+    });
+    // No title: its author said it is plumbing, not a verb a user names.
+    registry.register('internal.reconcile', {
+      schema: { describe: 'any', parse: (value: unknown) => ({ ok: true as const, value }) },
+      handler: () => undefined,
+    });
+    registry.register('tasks.create', {
+      title: 'Tasks: New Task',
+      permission: 'layout',
+      schema: { describe: 'any', parse: (value: unknown) => ({ ok: true as const, value }) },
+      handler: () => undefined,
+    });
+    return registry;
+  }
+
+  /**
+   * MUTATION TARGET. Dropping the filter — returning `registry.list()` straight
+   * through — leaves every other assertion in this file green and puts an
+   * untitled command in the palette with an empty label. The narrowed return
+   * type is the other half of the guard: `title: string`, not `title?: string`.
+   */
+  it('returns only the commands that have a title', async () => {
+    live = registerLayoutIpc({
+      store: new LayoutStore({ logger: nullLogger, clock: systemClock, sessions: { kill: () => {} } }),
+      registry: withCommands(),
+      active: HOME,
+    });
+    const result = await list();
+    expect(result).toEqual({
+      ok: true,
+      value: [
+        { id: 'layout.zoom', title: 'Toggle Zoom' },
+        { id: 'tasks.create', title: 'Tasks: New Task' },
+      ],
+    });
+  });
+
+  it('does not filter by permission, so there is one authorization model', async () => {
+    // Every palette command is invoked as `{kind:'user'}`, which `authorize`
+    // allows unconditionally — pre-filtering here would be a second model that
+    // could disagree with the real one. `tasks.create` declares a permission and
+    // is listed anyway; `command:invoke` is where the answer is decided.
+    live = registerLayoutIpc({
+      store: new LayoutStore({ logger: nullLogger, clock: systemClock, sessions: { kill: () => {} } }),
+      registry: withCommands(),
+      active: HOME,
+    });
+    const result = await list();
+    expect(result.ok && result.value.map((command) => command.id)).toContain('tasks.create');
+  });
+
+  it('is removed on dispose, like every other handler this file registers', () => {
+    live = registerLayoutIpc({
+      store: new LayoutStore({ logger: nullLogger, clock: systemClock, sessions: { kill: () => {} } }),
+      registry: withCommands(),
+      active: HOME,
+    });
+    expect(electron.handlers.has(INVOKE.commandList)).toBe(true);
+    live.dispose();
+    live = undefined;
+    expect(electron.handlers.has(INVOKE.commandList)).toBe(false);
+  });
+});
+
+/**
+ * A root with NO PANES still travels.
+ *
+ * Dropping it from the envelope would make `active` name a root the page cannot
+ * find, and the stage would draw nothing at all with nothing anywhere saying
+ * why — the old failure in reverse.
+ */
+describe('a paneless root in the envelope', () => {
+  it('carries the root with a null tree rather than omitting it', async () => {
+    const { store } = harness();
+    const pane = store.panes(HOME)[0];
+    if (pane === undefined) throw new Error('the home root has no pane to close');
+    store.close(pane);
+
+    const result = await get();
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.active).toBe(HOME);
+    const home = result.value.roots.find((root) => root.root === HOME);
+    expect(home).toMatchObject({ tree: null, focusedPaneId: null, sessions: {} });
+  });
+
+  it('still reports no root at all when there are none', async () => {
+    // The two "nothing" cases stay distinguishable: no ROOT is an error, an
+    // EMPTY root is a snapshot.
+    const store = new LayoutStore({ logger: nullLogger, clock: systemClock, sessions: { kill: () => {} } });
+    live = registerLayoutIpc({
+      store,
+      registry: new CommandRegistry({ logger: nullLogger, grants: () => emptyGrants() }),
+      active: HOME,
+    });
+    expect(await get()).toMatchObject({ ok: false, error: { code: 'no-root' } });
   });
 });

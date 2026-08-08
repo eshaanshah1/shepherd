@@ -24,6 +24,12 @@ export const INVOKE = {
   layoutViewport: 'layout:viewport',
   commandInvoke: 'command:invoke',
   /**
+   * What the palette lists. Pull-shaped like `layoutGet`, and a SNAPSHOT rather
+   * than a subscription: the registry changes when an extension activates or is
+   * disposed, which never happens while a palette is open.
+   */
+  commandList: 'command:list',
+  /**
    * Pull-shaped, mirroring `layoutGet`: the renderer asks on mount rather than
    * main pushing on `did-finish-load`, which races React's first commit. It also
    * makes an HMR remount re-pull for free.
@@ -149,7 +155,17 @@ export interface SessionDescriptor {
  */
 export interface LayoutSnapshot {
   readonly root: string;
-  readonly tree: SplitNode;
+  /**
+   * The pane tree, or **null for a root that holds no panes** — which is a real
+   * state since the empty-state fix: closing the last pane of the home root
+   * leaves it open and empty rather than closing the window.
+   *
+   * The root still travels. Dropping it from the envelope instead would make
+   * `active` name a root the page cannot find, and the stage would draw nothing
+   * at all with nothing anywhere saying why — the failure the old code had in
+   * reverse.
+   */
+  readonly tree: SplitNode | null;
   /** Already resolved: never a stale id, and never null while a pane exists. */
   readonly focusedPaneId: string | null;
   readonly zoomedPaneId: string | null;

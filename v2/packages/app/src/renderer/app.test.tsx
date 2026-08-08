@@ -92,6 +92,9 @@ function spyCommands() {
         calls.push({ command, args });
         return Promise.resolve({ ok: true, value: undefined });
       },
+      // What the palette reads. Empty here: these tests are about the stage, and
+      // a palette that is never opened never asks.
+      list: () => Promise.resolve({ ok: true as const, value: [] }),
     } satisfies CommandsApi,
   };
 }
@@ -302,6 +305,7 @@ describe('App as a transport into the one funnel', () => {
           commands={{
             invoke: () =>
               Promise.resolve({ ok: false, error: { code: 'denied', message: 'nope' } }),
+            list: () => Promise.resolve({ ok: true as const, value: [] }),
           }}
           initialSnapshot={snapshotOf(three.tree, three.left)}
         />,
@@ -587,6 +591,201 @@ describe('roots the window switches between', () => {
     // rect has not changed, and a push per snapshot would be one per keystroke.
     layout.push(both('task-1'));
     expect(layout.viewports).toHaveLength(2);
+    view.unmount();
+  });
+});
+
+/**
+ * The stage with nothing on it — and it is REACHABLE now.
+ *
+ * A root can hold no panes: closing the last pane of the home root empties it
+ * rather than closing the window, so `tree: null` is a real projection. Before
+ * this the only empty state was `snapshots === null`, the instant before main's
+ * first push — a state nobody could see, which is why the component had no CSS
+ * anywhere in the repo and nobody had noticed.
+ */
+describe('the empty state', () => {
+  const paneless = (root = 'window-1'): LayoutSnapshot => ({
+    root,
+    tree: null,
+    focusedPaneId: null,
+    zoomedPaneId: null,
+    sessions: {},
+  });
+
+  it('draws before main answers, as it always did', () => {
+    const { view } = render({ snapshot: null });
+    expect(all(view.container, 'empty-state')).toHaveLength(1);
+    expect(all(view.container, 'pane')).toHaveLength(0);
+    view.unmount();
+  });
+
+  /**
+   * MUTATION TARGET. Reverting the render gate to `snapshots === null` — its
+   * shipped condition — passes the test above and every other test in this file,
+   * and fails only here. That is the whole bug: the state existed in the
+   * component and could not be reached from the app.
+   */
+  it('draws when the ACTIVE root holds no panes', () => {
+    const { view } = render({ snapshot: { active: 'window-1', roots: [paneless()] } });
+    expect(all(view.container, 'empty-state')).toHaveLength(1);
+    expect(all(view.container, 'pane')).toHaveLength(0);
+    view.unmount();
+  });
+
+  it('does not draw while the active root still has one', () => {
+    const { view } = render({ snapshot: snapshotOf(leaf(makePane({}))) });
+    expect(all(view.container, 'empty-state')).toHaveLength(0);
+    view.unmount();
+  });
+
+  it('follows the ACTIVE root, not any root', () => {
+    // A hidden root running out of panes is not this window being empty.
+    const three = threePaneTree();
+    const { view } = render({
+      snapshot: snapshotsOf('window-1', rootOf(three.tree, three.left), paneless('task-1')),
+    });
+    expect(all(view.container, 'empty-state')).toHaveLength(0);
+    view.unmount();
+  });
+
+  it('keeps every other root mounted while it draws', () => {
+    // The hidden roots must not be torn down: a torn-down pane comes back as a
+    // second pty, which is v1-s recorded lesson and this file-s standing rule.
+    const three = threePaneTree();
+    const { view } = render({
+      snapshot: snapshotsOf('window-1', paneless(), rootOf(three.tree, three.left, 'task-1')),
+    });
+    expect(all(view.container, 'empty-state')).toHaveLength(1);
+    expect(all(view.container, 'pane')).toHaveLength(3);
+    view.unmount();
+  });
+});
+
+/**
+ * ⌘K — the palette, and the kernel-s own command registry behind it.
+ *
+ * M1 gave every command a `title` documented as "shown in the palette" and there
+ * was no palette, so `layout.zoom`, `layout.rename` and every `tasks.*` verb had
+ * a user-facing name and no way for a user to say it.
+ */
+describe('the command palette', () => {
+  const press = (key: string, init: KeyboardEventInit = {}): void => {
+    act(() =>
+      void window.dispatchEvent(
+        new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }),
+      ),
+    );
+  };
+
+  const items = (): HTMLElement[] => [
+    ...document.querySelectorAll<HTMLElement>('[data-testid="palette-item"]'),
+  ];
+
+  function palette(listed: readonly { id: string; title: string }[]) {
+    const calls: Array<{ command: string; args: unknown }> = [];
+    const api: CommandsApi = {
+      invoke: (command, args) => {
+        calls.push({ command, args });
+        return Promise.resolve({ ok: true as const, value: undefined });
+      },
+      list: () => Promise.resolve({ ok: true as const, value: listed }),
+    };
+    const view = mount(
+      <App terminals={null} layout={null} commands={api} initialSnapshot={snapshotOf(leaf(makePane({})))} />,
+    );
+    return { view, calls };
+  }
+
+  const LISTED = [
+    { id: 'layout.zoom', title: 'Toggle Zoom' },
+    { id: 'layout.rename', title: 'Rename Pane' },
+    { id: 'tasks.create', title: 'Tasks: New Task' },
+  ];
+
+  it('is closed until ⌘K, and closes on a second one', async () => {
+    const { view } = palette(LISTED);
+    expect(document.querySelector('[data-testid="palette-input"]')).toBeNull();
+
+    press('k', { metaKey: true });
+    await act(async () => undefined);
+    expect(document.querySelector('[data-testid="palette-input"]')).not.toBeNull();
+
+    press('k', { metaKey: true });
+    await act(async () => undefined);
+    expect(document.querySelector('[data-testid="palette-input"]')).toBeNull();
+    view.unmount();
+  });
+
+  it('ignores a plain k, and ⌥⌘K', () => {
+    const { view } = palette(LISTED);
+    press('k');
+    press('k', { metaKey: true, altKey: true });
+    expect(document.querySelector('[data-testid="palette-input"]')).toBeNull();
+    view.unmount();
+  });
+
+  it('lists exactly what the registry offered', async () => {
+    // The filter is main-s (`command:list` returns only titled commands); the
+    // page draws what it is given rather than deciding again.
+    const { view } = palette(LISTED);
+    press('k', { metaKey: true });
+    await act(async () => undefined);
+    expect(items().map((item) => item.dataset.commandId)).toEqual([
+      'layout.zoom',
+      'layout.rename',
+      'tasks.create',
+    ]);
+    view.unmount();
+  });
+
+  /**
+   * MUTATION TARGET. Running a palette entry through `views.activate` — the seam
+   * a tree row uses — would still run the command and still close the palette.
+   * It would run it as an EXTENSION. Here the user typed the command-s own name
+   * and can see what they are running, so `commands.invoke` (which main
+   * attributes to `{kind:"user"}`) is the correct and different answer.
+   */
+  it('runs the chosen command through commands.invoke, attributed as the user', async () => {
+    const { view, calls } = palette(LISTED);
+    press('k', { metaKey: true });
+    await act(async () => undefined);
+
+    act(() => items()[1]?.click());
+    await act(async () => undefined);
+
+    expect(calls).toEqual([{ command: 'layout.rename', args: {} }]);
+    // And it closed itself: a palette still on screen over the thing it just did
+    // is a palette you have to dismiss twice.
+    expect(document.querySelector('[data-testid="palette-input"]')).toBeNull();
+    view.unmount();
+  });
+
+  it('fetches the list every time it opens, not once on mount', async () => {
+    // An extension activating later registers more commands; a list taken at
+    // first paint would be short by exactly the ones a user is looking for.
+    let asked = 0;
+    const api: CommandsApi = {
+      invoke: () => Promise.resolve({ ok: true as const, value: undefined }),
+      list: () => {
+        asked += 1;
+        return Promise.resolve({ ok: true as const, value: LISTED });
+      },
+    };
+    const view = mount(
+      <App terminals={null} layout={null} commands={api} initialSnapshot={snapshotOf(leaf(makePane({})))} />,
+    );
+    await act(async () => undefined);
+    expect(asked).toBe(0);
+
+    press('k', { metaKey: true });
+    await act(async () => undefined);
+    expect(asked).toBe(1);
+
+    press('k', { metaKey: true });
+    press('k', { metaKey: true });
+    await act(async () => undefined);
+    expect(asked).toBe(2);
     view.unmount();
   });
 });

@@ -19,6 +19,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@radix-ui/react-context-menu": "catalog:",
     "@radix-ui/react-dialog": "catalog:",
     "@radix-ui/react-slot": "catalog:",
     "@radix-ui/react-tooltip": "catalog:",

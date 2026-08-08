@@ -10,6 +10,7 @@ import {
   paneById,
   same,
   say,
+  seedHomePane,
   short,
   snapshotOf,
   waiter,
@@ -54,6 +55,11 @@ export async function runTerminalSmoke(win: BrowserWindow, host: SessionHost): P
   win.show();
   win.focus();
 
+  // The app opens EMPTY (`seedHomePane` asserts it and says why). This smoke is
+  // about what happens to BYTES once a pane exists, which was never the same
+  // claim as "the app opens with one pane".
+  await seedHomePane(win, TIMEOUT_MS);
+
   // --- 1. bytes → IPC → xterm's parser → the buffer.
   const first = await until(
     'the pty needle in the xterm buffer',
@@ -61,7 +67,7 @@ export async function runTerminalSmoke(win: BrowserWindow, host: SessionHost): P
     (s) => s.ready && (s.panes[0]?.text.includes(NEEDLE) ?? false),
   );
   const pane0 = first.panes[0] as PaneDiagnostics;
-  check(first.paneIds.length === 1, 'the app opens with one pane');
+  check(first.paneIds.length === 1, 'the seeded pane is the only one');
   check(pane0.sessionId !== null, `pane ${short(pane0.paneId)} is bound to a session`);
   check(pane0.streaming, 'the pane is streaming');
   check(pane0.mounted, 'the pane’s terminal is parented into the view');
@@ -172,10 +178,41 @@ export async function runTerminalSmoke(win: BrowserWindow, host: SessionHost): P
   await until('the second-to-last pane to go', snapshot, (s) => s.paneIds.length === 1);
   check(!win.isDestroyed(), 'still one pane, still a window');
 
-  const closed = new Promise<void>((resolve) => win.once('closed', () => resolve()));
+  /*
+   * ⌘W on the LAST pane leaves an EMPTY WINDOW. It does not quit.
+   *
+   * This assertion used to be the opposite — it waited for `win.once('closed')`
+   * and checked `win.isDestroyed()`. That behaviour was v1's, and v1 only had it
+   * because it had no empty state to fall back to; an app that vanishes when you
+   * close a pane punishes you for tidying up. The empty state is a real
+   * destination now: the app is running, nothing is in flight, ⌘T is right
+   * there. Quitting is ⌘Q or the window's own close button, which this smoke
+   * exercises immediately below by asking the window to close.
+   *
+   * The negative half is what makes this worth asserting: a window that closed
+   * anyway would show up here as a destroyed window, not as a missing feature.
+   */
+  const lastSession = host.list()[0]?.id;
   clickMenu(COMMANDS.closePane);
+  await until('the last pane to go', snapshot, (s) => s.paneIds.length === 0);
+  check(!win.isDestroyed(), '⌘W on the LAST pane left an EMPTY WINDOW rather than quitting');
+  check(
+    lastSession !== undefined && !host.list().some((s) => s.id === lastSession),
+    'the last pane still took its session with it',
+  );
+  const emptied = await snapshot();
+  check(emptied.ready && emptied.outline === null, 'the projection carries a root with no tree');
+  const drewEmpty = (await win.webContents.executeJavaScript(
+    `document.querySelectorAll('[data-testid="empty-state"]').length`,
+  )) as number;
+  check(drewEmpty === 1, `the stage drew the empty state (${drewEmpty})`);
+
+  // And the window still closes when the window is asked to close — this removed
+  // a fall-through, it did not add a guard.
+  const closed = new Promise<void>((resolve) => win.once('closed', () => resolve()));
+  win.close();
   await closed;
-  check(win.isDestroyed(), '⌘W on the LAST pane fell through and closed the window');
+  check(win.isDestroyed(), 'the window still closes when asked directly');
 
   clearTimeout(deadline);
   say('OK');

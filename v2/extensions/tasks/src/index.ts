@@ -68,6 +68,15 @@ interface TreeItemOut {
   tint?: string;
   collapsed?: boolean;
   command?: { id: string; args?: unknown };
+  /**
+   * The row's context menu. Structural, like everything else here — the SDK's
+   * `TreeItemAction` is the contract and this is the shape that satisfies it,
+   * so the extension keeps compiling against types it does not import.
+   */
+  actions?: readonly (
+    | { id: string; label: string; icon?: string; danger?: boolean; shortcut?: string; args?: unknown }
+    | { separator: true }
+  )[];
 }
 
 const CORRELATE_ATTEMPTS = 10;
@@ -1070,6 +1079,45 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
               // names WHICH task rather than the handler having to guess from
               // whatever happens to be selected.
               command: { id: TASK_COMMANDS.reveal, args: { task: task.id } },
+              /*
+               * The row's right-click menu. Declared HERE because the shell
+               * cannot know a task's verbs — a sidebar that hardcoded Reveal /
+               * Archive / Delete would be a sidebar that knows what a task is,
+               * which is the special case ADR 0031 exists to prevent.
+               *
+               * Each entry is a command id plus the args naming WHICH task, the
+               * same shape `command` above uses, and each runs attributed to this
+               * extension rather than to the user (D14) — so `tasks.delete` from
+               * a menu is authorized exactly as `tasks.delete` from the CLI is.
+               *
+               * The separator is the sentence "and these two destroy things",
+               * said with a rule instead of in the labels. Both entries below it
+               * are `danger`, which is the ember treatment `Button`'s destructive
+               * variant already uses.
+               */
+              actions: [
+                {
+                  id: TASK_COMMANDS.reveal,
+                  label: 'Reveal',
+                  icon: 'eye',
+                  args: { task: task.id },
+                },
+                { separator: true },
+                {
+                  id: TASK_COMMANDS.archive,
+                  label: 'Archive',
+                  icon: 'archive',
+                  danger: true,
+                  args: { task: task.id },
+                },
+                {
+                  id: TASK_COMMANDS.delete,
+                  label: 'Delete',
+                  icon: 'trash',
+                  danger: true,
+                  args: { task: task.id },
+                },
+              ],
             });
           }
           return Promise.resolve(rows);

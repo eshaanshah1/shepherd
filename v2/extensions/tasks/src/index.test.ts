@@ -80,6 +80,14 @@ interface Harness {
   emit(topic: string, payload: unknown): void;
   /** The extension's own tree, as the shell would ask it. */
   tree(): TreeDataProvider;
+  /**
+   * Every command id this extension actually registered.
+   *
+   * Exposed for one claim: a row's declared actions must name commands that
+   * exist. An id that names nothing draws perfectly and fails only when chosen —
+   * as `unknown-command`, in a log, with the menu already closed.
+   */
+  registeredCommands(): ReadonlySet<string>;
   readonly dataDir: string;
   dispose(): void;
 }
@@ -306,6 +314,7 @@ function harness(
       if (provider?.kind !== 'tree') throw new Error('no tree view type was registered');
       return provider.data;
     },
+    registeredCommands: () => new Set(registered.keys()),
     dataDir,
     dispose: () => {
       for (const sub of ctx.subscriptions) sub.dispose();
@@ -963,5 +972,56 @@ describe('archives that have run out', () => {
     // A tick is enough: the sweep runs synchronously inside activate.
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(h.invoked.some((call) => call.id === 'tasks.delete')).toBe(false);
+  });
+});
+
+/**
+ * A task row's CONTEXT MENU, declared by this extension.
+ *
+ * The shell cannot know a task's verbs — a sidebar that hardcoded Reveal /
+ * Archive / Delete would be a sidebar that knows what a task is, which is the
+ * special case ADR 0031 exists to prevent. So they ride the row, and every one
+ * of them is a command id this extension registered, run attributed to this
+ * extension (D14) rather than to the user.
+ */
+describe('the actions a task row declares', () => {
+  it('offers reveal, archive and delete, each naming its own task', async () => {
+    const h = await harness();
+    const created = await h.run<{ id: string }>('tasks.create', { title: 'Ship the login fix' });
+    const row = await rowOf(h, created.id);
+
+    expect(row?.actions).toEqual([
+      { id: 'tasks.reveal', label: 'Reveal', icon: 'eye', args: { task: created.id } },
+      { separator: true },
+      { id: 'tasks.archive', label: 'Archive', icon: 'archive', danger: true, args: { task: created.id } },
+      { id: 'tasks.delete', label: 'Delete', icon: 'trash', danger: true, args: { task: created.id } },
+    ]);
+  });
+
+  it('marks exactly the destructive two', async () => {
+    const h = await harness();
+    const created = await h.run<{ id: string }>('tasks.create', { title: 'a' });
+    const row = await rowOf(h, created.id);
+    const danger = (row?.actions ?? [])
+      .filter((entry): entry is { id: string; label: string; danger?: boolean } => !('separator' in entry))
+      .filter((entry) => entry.danger === true)
+      .map((entry) => entry.id);
+    expect(danger).toEqual(['tasks.archive', 'tasks.delete']);
+  });
+
+  /**
+   * MUTATION TARGET. An action id that names no registered command would draw
+   * perfectly and fail only when chosen — as `unknown-command`, in a log, with
+   * the menu already closed. Every id here is checked against the table this
+   * extension actually registered.
+   */
+  it('names only commands this extension registered', async () => {
+    const h = await harness();
+    const created = await h.run<{ id: string }>('tasks.create', { title: 'a' });
+    const row = await rowOf(h, created.id);
+    for (const entry of row?.actions ?? []) {
+      if ('separator' in entry) continue;
+      expect(h.registeredCommands().has(entry.id), entry.id).toBe(true);
+    }
   });
 });

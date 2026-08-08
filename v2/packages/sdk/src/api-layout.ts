@@ -204,6 +204,70 @@ export interface TreeItem {
    * the permission for it, like everywhere else.
    */
   readonly command?: { readonly id: string; readonly args?: unknown };
+  /**
+   * The row's context menu — what a right-click on it offers.
+   *
+   * **Declared by the extension, because the shell cannot know the verbs.** The
+   * rows in the sidebar are contributed; a shell that hardcoded Reveal / Archive
+   * / Delete would be a shell that knows what a task is, which is the special
+   * case ADR 0031 exists to prevent. So the menu is data on the row, like
+   * `command` is.
+   *
+   * **Attributed exactly as `command` is: to the CONTRIBUTING EXTENSION, never to
+   * the user** (M3 D14). The reasoning is unchanged and applies with more force
+   * here, because a menu can carry destructive verbs: the right-click is
+   * genuinely the user's, but the command id behind the label is not, and they
+   * cannot see it. An extension that wants a privileged verb on a menu declares
+   * the permission for it, like everywhere else.
+   *
+   * An empty array and an absent one mean the same thing and both are legal — a
+   * row with no actions has no menu, and nothing appears on right-click.
+   *
+   * A `{ separator: true }` entry draws a rule between two groups, which is how
+   * "and these two delete things" is said without saying it in the labels.
+   */
+  readonly actions?: readonly (TreeItemAction | TreeItemSeparator)[];
+}
+
+/**
+ * One entry in a row's context menu. It IS a command, with a label on it.
+ *
+ * `id` is a **command id** — the same thing `command.id` is — rather than a
+ * separate action identity with a command inside it. There is nothing an action
+ * can be other than a command: it cannot carry a handler (functions do not cross
+ * the port) and it cannot be inert. Naming the command directly means the row's
+ * click and the row's menu are one shape, and there is one attribution rule for
+ * both rather than two that must agree.
+ *
+ * `args` rides the entry for the same reason it rides `command`: the entry names
+ * WHICH task it is about, rather than the handler guessing from whatever happens
+ * to be selected when the menu closes.
+ */
+export interface TreeItemAction {
+  /** A command id. Run as the contributing extension when chosen. */
+  readonly id: string;
+  /** What the user reads. */
+  readonly label: string;
+  /** A glyph NAME, resolved by the renderer against its own set. Never an SVG. */
+  readonly icon?: string;
+  /**
+   * Destructive — drawn in the danger role.
+   *
+   * A boolean rather than a `variant` string, because there are two kinds of
+   * menu entry and the second one is "this deletes something". A string invites
+   * a third that is a colour rather than a meaning, and an extension naming a
+   * colour is the thing `tint` already refuses.
+   */
+  readonly danger?: boolean;
+  /** Displayed beside the label. The menu binds nothing — see `KeyCap`. */
+  readonly shortcut?: string;
+  readonly disabled?: boolean;
+  readonly args?: unknown;
+}
+
+/** A rule between two groups of actions. */
+export interface TreeItemSeparator {
+  readonly separator: true;
 }
 
 export interface TreeDataProvider {

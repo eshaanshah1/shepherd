@@ -19,11 +19,17 @@ import type { LayoutSnapshot, LayoutSnapshots, ViewportRect } from '../shared/in
  * how to draw it.
  */
 export function layoutSnapshot(store: LayoutStore, root: RootID): LayoutSnapshot | null {
-  const tree = store.tree(root);
-  if (tree === undefined) return null;
+  /*
+   * `hasRoot` decides whether there is a snapshot; `tree` decides what is in it.
+   * The two questions parted company when a root became able to hold no panes —
+   * asking `tree(root) === undefined` here would drop an EMPTY root from the
+   * envelope, and `active` would then name a root the page cannot find.
+   */
+  if (!store.hasRoot(root)) return null;
+  const tree = store.tree(root) ?? null;
 
   const sessions: Record<string, string> = {};
-  for (const pane of leafIds(tree)) {
+  for (const pane of tree === null ? [] : leafIds(tree)) {
     const session = store.sessionFor(pane);
     if (session !== undefined) sessions[pane] = session;
   }

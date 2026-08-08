@@ -5,6 +5,7 @@
   "type": "module",
   "description": "The Electron shell: main-process wiring, preload bridge, React renderer.",
   "//main": "Electron's app loader reads `main` literally and never consults `exports`; workspace importers resolve through `exports` and never see `main`. So this field can be the built entry while the source stays the package's public face — neither has to lie.",
+  "//tabler": "@tabler/icons-react is a DIRECT dependency below, not a re-export from @shepherd/ui. `Icon` takes a Tabler COMPONENT (`icon={IconPlus}`), which is what keeps the bundle tree-shaken — a barrel re-exporting the set would ship every glyph to every page that imports one primitive. This note lives at the TOP level and not inside `dependencies`, which is where it was: pnpm reads every key in that object as a package name and every value as a specifier, so `\"//@tabler/icons-react\": \"A direct dependency, not a…\"` installed a dependency FROM A DIRECTORY NAMED AFTER THIS SENTENCE and left `packages/app/node_modules/@tabler/icons-react` a dangling symlink to it. It survived because an older node_modules still held a good copy; the next `pnpm install` broke the renderer's typecheck with `Cannot find module '@tabler/icons-react'`, in a file nobody had touched.",
   "main": "./out/main/index.js",
   "types": "./src/shared/index.ts",
   "exports": {
@@ -31,7 +32,6 @@
     "@shepherd/platform-darwin": "workspace:*",
     "@shepherd/sdk": "workspace:*",
     "@shepherd/ui": "workspace:*",
-    "//@tabler/icons-react": "A direct dependency, not a re-export from @shepherd/ui. `Icon` takes a Tabler COMPONENT (`icon={IconPlus}`), which is what keeps the bundle tree-shaken — a barrel re-exporting the set would ship every glyph to every page that imports one primitive.",
     "@tabler/icons-react": "catalog:",
     "@xterm/addon-fit": "catalog:",
     "@xterm/xterm": "catalog:",
