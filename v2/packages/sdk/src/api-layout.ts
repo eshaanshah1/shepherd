@@ -1,6 +1,7 @@
 import type { Disposable } from './disposable.ts';
 import type { NodeID, RootID, SessionID } from './ids.ts';
 import type { LayoutTarget, RegionName } from './api-sessions.ts';
+import type { Result } from './result.ts';
 
 /**
  * Layout and views (core-design §4.2).
@@ -98,14 +99,50 @@ export type ViewRef =
  *
  * M1's providers return **data**, not components. §7b decided community
  * extension UI is in-proc React, but extension *services* run in a utility
- * process — and every view M1/M2/M3 need (a task tree, a status item, a glyph)
- * is declarative and crosses that boundary as data. Typing a React element here
- * would paint a corner that is expensive to leave; the in-proc React seam is a
- * later, deliberate addition rather than something implied by these types.
+ * process — and a tree, a status item or a glyph is declarative and crosses
+ * that boundary as data.
+ *
+ * `component` is §7b's other half (ADR 0033), and it crosses as data too: a
+ * React component is functions, exactly like a `TreeDataProvider`, so what
+ * travels is the **name** of a UI module and the renderer resolves it. The
+ * service half of an extension never imports its own UI — that is what keeps
+ * react out of the utility process, and it is why the two halves live in
+ * `src/` and `ui/` with a lint boundary between them.
  */
 export type ViewProvider =
   | { readonly kind: 'tree'; readonly data: TreeDataProvider }
+  | { readonly kind: 'component'; readonly component: string }
   | { readonly kind: 'panel'; readonly url: string };
+
+/**
+ * What an in-proc React view is handed — the whole of it.
+ *
+ * Declared here rather than in the app because the component lives in the
+ * extension, and an extension may import nothing but the SDK. It is a prop, not
+ * a global: `main.tsx` is the one file that knows the bridge is a global, and a
+ * contributed component is further from it than any core component is.
+ *
+ * `invoke` names a command and **cannot name a caller**. The host attributes it
+ * to the extension that contributed the view — the same rule a tree row's click
+ * gets (ADR 0031 D14), for the same reason: the click is the user's, the
+ * command id is the extension's, and an extension's own UI must not be a way to
+ * borrow the user's unconditional trust.
+ */
+export interface ExtensionViewProps {
+  invoke(command: string, args?: unknown): Promise<Result<unknown, ViewInvokeError>>;
+}
+
+/**
+ * The failure half of `ExtensionViewProps.invoke`.
+ *
+ * Deliberately narrower than `CommandError`: what reaches a page has crossed an
+ * IPC boundary that carries `{code, message}` and nothing else, and a type
+ * promising `commandId` or `issues` here would promise fields the wire drops.
+ */
+export interface ViewInvokeError {
+  readonly code: string;
+  readonly message: string;
+}
 
 export interface TreeItem {
   readonly id: string;

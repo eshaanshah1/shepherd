@@ -8,6 +8,7 @@
  */
 
 export { slugify, uniqueSlug } from './slug.ts';
+export { repoName } from './repo-name.ts';
 export { LIFECYCLE_STATES, displayState, isLifecycle } from './lifecycle.ts';
 export type { TaskLifecycle, TaskDisplayState } from './lifecycle.ts';
 export { synthTaskRoot } from './root-synth.ts';

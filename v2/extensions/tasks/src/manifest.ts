@@ -13,6 +13,22 @@ export const TASK_COMMANDS = {
   spawn: 'tasks.spawn',
   archive: 'tasks.archive',
   restore: 'tasks.restore',
+  /**
+   * What the composer asks before it can offer a repo.
+   *
+   * A command rather than something the page reads directly, because the
+   * extension point lives in the utility process with the providers registered
+   * against it — the renderer cannot consult it and must not learn how. So the
+   * composer asks its own extension a question, and the extension asks the
+   * point (D5).
+   */
+  suggestRepos: 'tasks.suggestRepos',
+} as const;
+
+/** The composer's UI module, resolved by the renderer's table (ADR 0033). */
+export const TASK_VIEWS = {
+  tree: 'tasks.tree',
+  composer: 'tasks.composer',
 } as const;
 
 /**
@@ -55,6 +71,7 @@ export const tasksManifest: Manifest = {
       { id: TASK_COMMANDS.spawn, title: 'Tasks: Spawn a Session' },
       { id: TASK_COMMANDS.archive, title: 'Tasks: Archive' },
       { id: TASK_COMMANDS.restore, title: 'Tasks: Restore' },
+      { id: TASK_COMMANDS.suggestRepos, title: 'Tasks: Suggest Repos' },
     ],
   },
 };

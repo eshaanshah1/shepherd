@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { TreeItem } from '@shepherd/sdk';
-import type { ViewsApi } from '../shared/index.ts';
+import type { ViewContributionDTO, ViewsApi } from '../shared/index.ts';
+import { resolveExtensionUi } from './extension-ui.ts';
 
 /**
  * The left dock — the first place an extension's own UI appears on screen.
@@ -18,13 +19,8 @@ import type { ViewsApi } from '../shared/index.ts';
  * clicked" and main attributes it to the contributing extension (D14).
  */
 
-interface Contribution {
-  readonly extension: string;
-  readonly type: string;
-}
-
 export function ViewDock({ views: bridge }: { views: ViewsApi | null }): React.JSX.Element | null {
-  const [views, setViews] = useState<readonly Contribution[]>([]);
+  const [views, setViews] = useState<readonly ViewContributionDTO[]>([]);
   const [rows, setRows] = useState<Readonly<Record<string, readonly TreeItem[]>>>({});
 
   // Handed in, never read off the global: `main.tsx` is the ONE file that knows
@@ -47,7 +43,8 @@ export function ViewDock({ views: bridge }: { views: ViewsApi | null }): React.J
       const listed = await bridge.list();
       if (!listed.ok) return;
       setViews(listed.value);
-      for (const view of listed.value) await refresh(view.type);
+      // Only a tree has rows to ask for. A component owns what it shows.
+      for (const view of listed.value) if (view.kind === 'tree') await refresh(view.type);
     })();
     // A NUDGE arrives, and the renderer re-reads. The data is never pushed, so a
     // chatty extension cannot flood this and nothing draws a snapshot main did
@@ -61,7 +58,8 @@ export function ViewDock({ views: bridge }: { views: ViewsApi | null }): React.J
         const listed = await bridge.list();
         if (!listed.ok) return;
         setViews(listed.value);
-        for (const view of listed.value) await refresh(view.type);
+        // Only a tree has rows to ask for. A component owns what it shows.
+        for (const view of listed.value) if (view.kind === 'tree') await refresh(view.type);
       })();
     });
   }, [bridge, refresh]);
@@ -70,35 +68,97 @@ export function ViewDock({ views: bridge }: { views: ViewsApi | null }): React.J
 
   return (
     <aside className="sh-dock" data-testid="view-dock">
-      {views.map((view) => (
-        <section key={view.type} className="sh-dock-view" data-view-type={view.type}>
-          <h2 className="sh-dock-title">{view.type}</h2>
-          <ul className="sh-dock-rows">
-            {(rows[view.type] ?? []).map((row) => (
-              <li key={row.id}>
-                <button
-                  type="button"
-                  className="sh-dock-row"
-                  data-testid="view-row"
-                  data-row-id={row.id}
-                  // A token name, resolved here. An extension never sends a raw
-                  // colour, so a contribution cannot break the theme.
-                  data-tint={row.tint ?? 'none'}
-                  disabled={row.command === undefined}
-                  onClick={() => {
-                    if (row.command !== undefined) void bridge?.activate(view.type, row.command);
-                  }}
-                >
-                  <span className="sh-dock-label">{row.label}</span>
-                  {row.description !== undefined && (
-                    <span className="sh-dock-desc">{row.description}</span>
-                  )}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ))}
+      {views.map((view) =>
+        view.kind === 'component' ? (
+          <ComponentView key={view.type} view={view} bridge={bridge} />
+        ) : (
+          <TreeView key={view.type} view={view} rows={rows[view.type] ?? []} bridge={bridge} />
+        ),
+      )}
     </aside>
+  );
+}
+
+/** A contributed tree — P6's kind, drawn by the dock itself. */
+function TreeView({
+  view,
+  rows,
+  bridge,
+}: {
+  view: ViewContributionDTO;
+  rows: readonly TreeItem[];
+  bridge: ViewsApi | null;
+}): React.JSX.Element {
+  return (
+    <section className="sh-dock-view" data-view-type={view.type}>
+      <h2 className="sh-dock-title">{view.type}</h2>
+      <ul className="sh-dock-rows">
+        {rows.map((row) => (
+          <li key={row.id}>
+            <button
+              type="button"
+              className="sh-dock-row"
+              data-testid="view-row"
+              data-row-id={row.id}
+              // A token name, resolved here. An extension never sends a raw
+              // colour, so a contribution cannot break the theme.
+              data-tint={row.tint ?? 'none'}
+              disabled={row.command === undefined}
+              onClick={() => {
+                if (row.command !== undefined) void bridge?.activate(view.type, row.command);
+              }}
+            >
+              <span className="sh-dock-label">{row.label}</span>
+              {row.description !== undefined && <span className="sh-dock-desc">{row.description}</span>}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/**
+ * A contributed component — §7b's in-proc React, drawn by the extension itself.
+ *
+ * The dock's job shrinks to three things here, and each is a refusal: it
+ * resolves the declared NAME against a static table (so a page never runs code
+ * the build did not see), it hands the component an `invoke` bound to *this
+ * view type* (so the component cannot name a caller, and main attributes the
+ * call to the contributing extension — D14), and it draws an honest empty slot
+ * when the name resolves to nothing, rather than pretending the view is there.
+ */
+function ComponentView({
+  view,
+  bridge,
+}: {
+  view: ViewContributionDTO;
+  bridge: ViewsApi | null;
+}): React.JSX.Element {
+  const Component = resolveExtensionUi(view.component);
+  // Memoized so a contributed component's props are stable across the dock's
+  // own re-renders — a form that remounts on every parent render loses what the
+  // user has typed, which is v1's `_ConditionalContent` lesson in a page.
+  const props = useMemo(
+    () => ({
+      invoke: async (command: string, args?: unknown) => {
+        if (bridge === null) return { ok: false as const, error: { code: 'unavailable', message: 'no bridge' } };
+        const result = await bridge.invoke(view.type, command, args);
+        return result.ok ? { ok: true as const, value: result.value } : { ok: false as const, error: result.error };
+      },
+    }),
+    [bridge, view.type],
+  );
+
+  return (
+    <section className="sh-dock-view" data-view-type={view.type} data-view-kind="component">
+      {Component === undefined ? (
+        <p className="sh-dock-missing" data-testid="view-missing">
+          {view.extension} contributed “{view.component ?? 'nothing'}”, which this build has no UI for
+        </p>
+      ) : (
+        <Component {...props} />
+      )}
+    </section>
   );
 }

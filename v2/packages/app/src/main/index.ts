@@ -491,6 +491,28 @@ void app.whenReady().then(async () => {
     await views.activate(type, command);
     return { ok: true, value: undefined };
   });
+  /**
+   * The same gesture, for a contributed component that has to show the answer.
+   *
+   * The kernel's own `Result` is what comes back from `ViewRegistry.invoke`, and
+   * it is passed through rather than unwrapped: a failed create is a value the
+   * form draws ("that path is not a git repo"), not an exception the page has to
+   * reconstruct from a mangled Electron error string.
+   */
+  ipcMain.handle(INVOKE.viewsInvoke, async (_event, type: string, command: string, args?: unknown) => {
+    const result = (await views.invoke(type, command, args)) as
+      | { ok: true; value: unknown }
+      | { ok: false; error: { code: string; message: string } }
+      | undefined;
+    if (result === undefined) {
+      // A view nobody owns. Reported rather than silently resolved: a form whose
+      // submit does nothing is the "and then nothing happens" branch v1's log
+      // rule exists for.
+      return { ok: false, error: { code: 'unknown-view', message: `no extension owns the view "${type}"` } };
+    }
+    if (result.ok) return { ok: true, value: result.value };
+    return { ok: false, error: { code: result.error.code, message: result.error.message } };
+  });
 
   agentIpc = registerAgentIpc({
     bus,

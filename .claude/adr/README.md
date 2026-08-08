@@ -61,3 +61,4 @@ Same log, same numbering — one chronological record for the repo. These apply 
 - [0030](0030-v2-the-transport-deadline-is-the-callers-not-a-constant.md) — (v2) The transport deadline is the caller's, not a constant
 - [0031](0031-v2-a-contributed-view-declares-itself-and-a-row-click-is-the-extensions.md) — (v2) A contributed view declares itself, and a row click is the extension's
 - [0032](0032-v2-tasks-uses-the-same-kv-a-third-party-gets.md) — (v2) `tasks` uses the same KV a third party gets
+- [0033](0033-v2-extension-ui-is-in-proc-react-behind-a-name.md) — (v2) Extension UI is in-proc React (§7b's taxonomy, not a preference) and what crosses the port is a NAME the renderer resolves; a component's `invoke` is attributed like a row click

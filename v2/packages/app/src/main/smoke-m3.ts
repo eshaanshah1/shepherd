@@ -122,6 +122,96 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
   check(taskRows.length > 0, `the task tree rendered: ${JSON.stringify(taskRows)}`);
   say('ok — the task tree drew the task, through the same mechanism');
 
+  // --- 7. a task created from INSIDE THE APP — the composer (ADR 0033).
+  //
+  // Everything above went through the control socket, which is the agent's
+  // path. This is the human's, and it is asserted in the real DOM for the
+  // reason step 5 is: main's registry would report a healthy contribution even
+  // if the page had drawn nothing. What it proves end to end is the whole seam
+  // — a contributed React component mounted from a NAME, its `invoke` running a
+  // command as `shepherd.tasks`, and the answer landing back in the form.
+  const composerSeen = await until(
+    'the composer to render',
+    () =>
+      win.webContents.executeJavaScript(
+        `document.querySelector('[data-testid="task-composer"]') !== null`,
+      ) as Promise<boolean>,
+    (found) => found,
+  );
+  check(composerSeen, 'the composer is on screen');
+
+  // React owns these inputs, so a plain `.value =` is a write it never hears
+  // about — the value reverts on the next render and the form submits empty.
+  // The native setter plus an `input` event is what a real keystroke looks like
+  // from React's side; `focusout` is the event React's `onBlur` is built on.
+  await win.webContents.executeJavaScript(`(() => {
+    const type = (el, value) => {
+      const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, value);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    type(document.querySelector('[data-testid="composer-title"]'), 'Composed task');
+    type(document.querySelector('[data-testid="composer-brief"]'), 'Created from inside the app.');
+    document.querySelector('[data-testid="composer-title"]').dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+    return true;
+  })()`);
+
+  // The suggestion comes from `tasks.repoSuggestions` (D5) — the point, its
+  // default provider, and a command answering the page. Clicking it rather than
+  // typing a path is what makes this assert the chain instead of the field.
+  const suggested = await until(
+    'the repo picker to offer the repo this smoke already used',
+    () =>
+      win.webContents.executeJavaScript(
+        `Array.from(document.querySelectorAll('[data-testid="composer-suggestion"]')).map((el) => el.dataset.path)`,
+      ) as Promise<string[]>,
+    (paths) => paths.includes(repo),
+  );
+  check(suggested.includes(repo), `the picker consulted the point: ${JSON.stringify(suggested)}`);
+
+  await win.webContents.executeJavaScript(
+    `document.querySelector('[data-testid="composer-suggestion"][data-path=${JSON.stringify(repo)}]').click(), true`,
+  );
+  await win.webContents.executeJavaScript(
+    `document.querySelector('[data-testid="composer-create"]').click(), true`,
+  );
+
+  const composedStatus = await until(
+    'the composer to report what it created',
+    () =>
+      win.webContents.executeJavaScript(
+        `document.querySelector('[data-testid="composer-status"]').textContent`,
+      ) as Promise<string>,
+    (text) => text.includes('created'),
+  );
+  check(
+    composedStatus.includes('composed-task'),
+    `the answer came back to the page: ${JSON.stringify(composedStatus)}`,
+  );
+
+  // And it is a real task: the record, its worktree, and its synthesized root.
+  // The repo's NAME is derived from the path the picker offered (`repoName`),
+  // not supplied the way the CLI supplies it in step 1 — so the worktree is at
+  // `<root>/<basename of repo>`. Asserting a hardcoded `api/` here passed the
+  // command and failed the filesystem, which is what the first live run showed.
+  const composed = (await until(
+    'the composed task to provision',
+    async () =>
+      ((await invoke('tasks.list')) as { title: string; root: string; repos: { name: string }[] }[]).find(
+        (task) => task.title === 'Composed task',
+      ),
+    (task) =>
+      task !== undefined &&
+      task.repos.length === 1 &&
+      existsSync(join(task.root, task.repos[0]?.name ?? '', '.git')),
+  )) as { root: string; repos: { name: string }[] };
+  check(
+    composed.repos[0]?.name === repo.split('/').filter((s) => s !== '').pop(),
+    `the picked path became the repo's name: ${JSON.stringify(composed.repos)}`,
+  );
+  check(existsSync(join(composed.root, 'CLAUDE.md')), 'the composed task root was synthesized too');
+  say('ok — a task was created from inside the app, worktree and task root included');
+
   say('smoke: OK m3');
   app.exit(0);
 }

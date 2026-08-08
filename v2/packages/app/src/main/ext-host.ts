@@ -149,7 +149,7 @@ export interface ExtensionHostOptions {
   readonly support: string;
   /** Where contributed views are recorded. Optional so a test can omit it. */
   readonly views?: {
-    register(extension: string, type: string): void;
+    register(extension: string, type: string, kind: 'tree' | 'component', component?: string): void;
     unregister(type: string): void;
     changed(type: string): void;
     forget(extension: string): void;
@@ -773,7 +773,7 @@ export class ExtensionHost {
       case 'view.register': {
         const verdict = this.#permitted(caller, 'views');
         if (verdict !== undefined) return verdict;
-        this.#options.views?.register(record.id, call.type);
+        this.#options.views?.register(record.id, call.type, call.viewKind, call.component);
         this.#log.info(`${record.id} contributed the ${call.viewKind} view "${call.type}"`);
         return wireOk();
       }

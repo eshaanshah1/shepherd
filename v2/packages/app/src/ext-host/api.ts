@@ -472,9 +472,29 @@ function createSessions(): SessionAPI {
 function createViews(services: ExtHostServices, providers: Map<string, ViewProvider>): ViewAPI {
   return {
     registerViewType: (type, provider) => {
-      if (provider.kind !== 'tree') {
+      if (provider.kind === 'panel') {
         throw new NotImplementedError(`views.registerViewType("${type}")`, LANDS_IN('a later milestone (panel views)'));
       }
+
+      /**
+       * A component contributes a NAME and keeps no provider here.
+       *
+       * Nothing in this process can render it — there is no DOM in a utility
+       * process and `boundaries.js` denies react to it — so there is nothing to
+       * hold and nothing to ask for. The renderer resolves the name against its
+       * own table, which is also what stops an extension from naming a module
+       * that does not exist and getting anything but an empty slot.
+       */
+      if (provider.kind === 'component') {
+        services.tell(
+          { kind: 'view.register', type, viewKind: 'component', component: provider.component },
+          `view.register ${type}`,
+        );
+        return toDisposable(() => {
+          services.tell({ kind: 'view.unregister', type }, `view.unregister ${type}`);
+        });
+      }
+
       providers.set(type, provider);
       services.tell({ kind: 'view.register', type, viewKind: 'tree' }, `view.register ${type}`);
       const changed = provider.data.onDidChange?.(() => {

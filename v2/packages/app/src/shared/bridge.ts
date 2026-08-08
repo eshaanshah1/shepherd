@@ -106,10 +106,26 @@ export interface AgentsApi {
  * rows, and reports a click — and can name neither a bus topic nor a caller.
  * Who a click runs as is main's decision (D14).
  */
+export interface ViewContributionDTO {
+  readonly extension: string;
+  readonly type: string;
+  /** How the page must draw it. `component` resolves against the UI table. */
+  readonly kind: 'tree' | 'component';
+  readonly component?: string;
+}
+
 export interface ViewsApi {
-  list(): Promise<IpcResult<readonly { readonly extension: string; readonly type: string }[]>>;
+  list(): Promise<IpcResult<readonly ViewContributionDTO[]>>;
   children(type: string, parent?: string): Promise<IpcResult<readonly TreeItem[]>>;
   activate(type: string, command: { readonly id: string; readonly args?: unknown }): Promise<IpcResult<void>>;
+  /**
+   * A contributed component running a command **as the extension that
+   * contributed it** — never as the page, and never as the user.
+   *
+   * The page names the view type, which main told it about, and the command id.
+   * It cannot name a caller here any more than it can on `commands.invoke`.
+   */
+  invoke(type: string, command: string, args?: unknown): Promise<IpcResult<unknown>>;
   onChanged(listener: (type: string) => void): () => void;
 }
 
@@ -151,7 +167,7 @@ export const BRIDGE_SURFACE = {
    * topic or a caller, which is what the agent relay's allow-list was
    * protecting and what this generalizes without widening.
    */
-  views: ['list', 'children', 'activate', 'onChanged'],
+  views: ['list', 'children', 'activate', 'invoke', 'onChanged'],
   window: ['close'],
 } as const satisfies Record<keyof ShepherdBridge, readonly string[]>;
 
