@@ -11,6 +11,13 @@ appId: com.shepherd.shep
 productName: Shep
 copyright: MIT
 
+# Workspace packages export TypeScript SOURCE, which a packaged app cannot load
+# (Node refuses to strip types under node_modules). This compiles them to JS and
+# swaps the linked source for the compiled copy, in the one window where what
+# lands in app.asar can still be decided. See the script for why it is not a
+# bundler setting.
+beforePack: ../../tooling/scripts/before-pack.mjs
+
 directories:
   output: release
   buildResources: build

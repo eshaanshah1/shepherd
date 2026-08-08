@@ -1,8 +1,9 @@
-node_modules/
-out/
-out-tsc/
-dist/
-*.tsbuildinfo
-.vite/
 .DS_Store
+.vite/
+.workspace-dist/
+*.tsbuildinfo
+dist/
+node_modules/
+out-tsc/
+out/
 release/
