@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fuzzyFilter, fuzzyScore } from './fuzzy.ts';
+import { fuzzyFilter, fuzzyMatch, fuzzyScore } from './fuzzy.ts';
 
 const titles = (items: readonly string[]): readonly string[] => items;
 const filter = (query: string, items: readonly string[]): readonly string[] =>
@@ -82,5 +82,35 @@ describe('fuzzyFilter', () => {
 
   it('is stable when nothing matches', () => {
     expect(filter('qqqq', ['layout.zoom', 'tasks.create'])).toEqual([]);
+  });
+});
+
+describe('fuzzyMatch positions', () => {
+  it('names the index of every matched character, in the candidate as given', () => {
+    // Indices into the ORIGINAL casing, not the lowercased copy the matcher
+    // works on — a highlighter slices the string the user is reading.
+    const hit = fuzzyMatch('tc', 'Tasks: Create');
+    expect(hit?.positions).toEqual([0, 7]);
+  });
+
+  it('emits one position per query character, ascending', () => {
+    const hit = fuzzyMatch('layo', 'layout.zoom');
+    expect(hit?.positions).toEqual([0, 1, 2, 3]);
+  });
+
+  it('has no positions for an empty query, and is still a match', () => {
+    // The empty query matches everything at score 0 (that is what makes a list
+    // a list rather than a search result), so it must not highlight anything.
+    expect(fuzzyMatch('', 'layout.zoom')).toEqual({ score: 0, positions: [] });
+  });
+
+  it('is null for a miss, exactly as the score is', () => {
+    expect(fuzzyMatch('zl', 'layout.zoom')).toBeNull();
+  });
+
+  it('agrees with fuzzyScore, because one is the other', () => {
+    // The property that stops the ranker and the highlighter drifting: there is
+    // one matcher, and `fuzzyScore` is a projection of it.
+    expect(fuzzyMatch('tc', 'Tasks: Create')?.score).toBe(fuzzyScore('tc', 'Tasks: Create'));
   });
 });

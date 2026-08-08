@@ -709,12 +709,13 @@ body.sh-dragging {
  * `field.css` / `textarea.css` / `button.css`'s. Two things could not go with
  * them, and both are findings rather than leftovers:
  *
- *   - **The chips.** There is no `Chip` in the twelve. An offered repo and a
- *     picked repo are the same object at two moments and must stay drawn once;
- *     a `Button` for the offered one would gain a control treatment the picked
- *     one (which carries a nested ×) cannot have, and the pair would drift on
- *     the first hover state. Kept whole, here, until a `Chip` arrives with a
- *     second consumer.
+ *   - **The chips.** There is no `Chip` in the fifteen, and a picked repo is a
+ *     token in a sentence — a `Button` would gain a control treatment it cannot
+ *     have, since it carries a nested × and would be a button inside a button.
+ *     Kept whole, here, until a `Chip` arrives with a second consumer. (The
+ *     OFFERED repo is no longer one of these: it became a `Row` in the
+ *     completion list, because it is now a place you can navigate through rather
+ *     than a token you either take or do not.)
  *   - **The brief's type step.** The derived ramp names `large` (15px) as "a
  *     composer's brief" and `TextArea`'s two sizes stop at `body`. One
  *     declaration, reading the metric that already exists — not a fork of the
@@ -724,9 +725,91 @@ body.sh-dragging {
 
 .sh-composer-brief { font-size: var(--sh-font-size-large); }
 
-/* A repo is one chip whether it is offered or picked — the same object at two
-   moments, so it is drawn once. */
-.sh-composer-suggestions,
+/*
+ * The repo picker.
+ *
+ * The wrapper RE-DECLARES `--sh-line` and `--sh-surface-sunken` back on, which
+ * is the escape hatch `composer.css` documents in the same breath as the rule it
+ * escapes: "a control that genuinely needs an edge in here re-declares
+ * `--sh-line` back on itself". This one does. The field used to be a borderless
+ * `+ repo path` sharing a row with the create button and it was too hidden to be
+ * found, which is the entire reason this block exists.
+ *
+ * Both values are a WASH of `text` rather than a palette step, for the reason
+ * the chips below already record: inside a `Composer` there is no role that
+ * means "one step off the card", and a wash moves with a contributed theme's
+ * `--sh-text` the way a fixed `--sh-ink-*` never did.
+ */
+.sh-composer-repo {
+  --sh-line: color-mix(in srgb, var(--sh-text) 14%, transparent);
+  --sh-surface-sunken: color-mix(in srgb, var(--sh-text) 5%, transparent);
+
+  display: flex;
+  flex-direction: column;
+  gap: var(--sh-space-sm);
+  /* The completions are absolutely positioned against this — in the flow they
+     would push the create button down the card on every keystroke. */
+  position: relative;
+  min-width: 0;
+}
+
+/* A label, not a placeholder: a placeholder disappears the moment the field is
+   doing its job, which is exactly when you want to know what it is. */
+.sh-composer-repo-label {
+  font-size: var(--sh-font-size-small);
+  line-height: var(--sh-line-height);
+  color: var(--sh-text-dim);
+}
+
+/* A path is machine vocabulary, in the field and in the rows alike. */
+.sh-composer-repo .sh-ui-field__control,
+.sh-composer-repo-row {
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-small);
+}
+
+/*
+ * The completions, over the card rather than in it.
+ *
+ * `top: 100%` hangs it off the field's own row, and the picked chips keep their
+ * place underneath — so opening the list never moves anything the pointer is
+ * travelling towards.
+ */
+.sh-composer-repo-list {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  margin-top: var(--sh-space-xs);
+  padding: var(--sh-space-xs);
+  background: var(--sh-surface-raised);
+  border: var(--sh-hairline) solid var(--sh-line);
+  border-radius: var(--sh-radius-sm);
+  /* Ten rows is the cap the command answers with, so this only ever scrolls
+     when the density is turned up. */
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.sh-composer-repo-row {
+  cursor: pointer;
+  color: var(--sh-text-dim);
+}
+
+/*
+ * What the query matched, and the only accent in the list.
+ *
+ * `accent` rather than a weight alone: a mono face's bold is a small step, and
+ * the whole point of drawing the full path is that the matched part can be found
+ * in it at a glance.
+ */
+.sh-composer-repo-hit {
+  color: var(--sh-accent);
+  font-weight: inherit;
+}
+
+/* The repos you have picked. */
 .sh-composer-picked {
   list-style: none;
   margin: 0;
@@ -740,10 +823,8 @@ body.sh-dragging {
 /* Empty, it is still a flex item and would spend the row's gap on nothing. */
 .sh-composer-picked:empty { display: none; }
 
-/* A repo name and a path you type are both machine vocabulary. */
-.sh-composer-suggestions button,
-.sh-composer-picked li,
-.sh-composer-add {
+/* A repo name is machine vocabulary. */
+.sh-composer-picked li {
   font-family: var(--sh-font-mono);
   display: inline-flex;
   align-items: center;
@@ -769,11 +850,6 @@ body.sh-dragging {
   white-space: nowrap;
 }
 
-.sh-composer-suggestions button,
-.sh-composer-add { cursor: pointer; }
-.sh-composer-suggestions button:hover,
-.sh-composer-add:hover { color: var(--sh-text); }
-
 .sh-composer-picked li { color: var(--sh-text); }
 
 /* The × IS the remove affordance: a bordered "remove" button beside the chip
@@ -791,42 +867,12 @@ body.sh-dragging {
 
 .sh-composer-picked button:hover { color: var(--sh-text); }
 
-/* One line: the repo affordance, then the single accent, hard right. */
+/* The single accent, hard right. The repo field left this row when it stopped
+   being an afterthought and got a label of its own. */
 .sh-composer-controls {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  justify-content: flex-end;
 }
-
-.sh-composer-repos {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--sh-space-sm);
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-/*
- * The repo path field is a `Field`, and what is set here is its place in this
- * ROW — not its appearance, which is the primitive's.
- *
- * FINDING: it has to name `.sh-ui-field` (the wrapper) rather than the control,
- * because `Field` puts `className` and every spread prop on the INPUT — correct,
- * since that is what a caller means by "this field" — while the flex item is the
- * wrapper that stacks the validity message under it. So a `Field` cannot be told
- * how to size itself inside a flex row through its own props.
- */
-.sh-composer-repos .sh-ui-field {
-  flex: 1 1 90px;
-  min-width: 70px;
-}
-
-/* Kept in the DOM always (it is a declared affordance and the smokes select on
-   it) and out of the way until there is something to add — Enter is the real
-   path, and a permanent button beside a borderless field reads as its edge. */
-.sh-composer-add { flex: 0 0 auto; }
-.sh-composer-add.is-idle { display: none; }
 
 /* `.sh-composer-create` was the third of the shipped shell's three button
    treatments (with `.sh-key` and `.sh-ext-card button`), and the three disagreed
