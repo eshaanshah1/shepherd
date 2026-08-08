@@ -31,6 +31,16 @@ export const TASK_COMMANDS = {
    * tasks from a night of live testing is what that looks like on screen.
    */
   delete: 'tasks.delete',
+  /**
+   * Take me to this task — what clicking a row in the sidebar means.
+   *
+   * A task owns a layout root, so "show me" is a `layout.switchRoot` and nothing
+   * more interesting. It is a command rather than something the tree does
+   * directly because the row's click runs as THIS extension (D14) through the
+   * one verb table, and because the palette, the CLI and a keybinding all want
+   * the same gesture.
+   */
+  reveal: 'tasks.reveal',
 } as const;
 
 /** The composer's UI module, resolved by the renderer's table (ADR 0033). */
@@ -95,6 +105,7 @@ export const tasksManifest: Manifest = {
       { id: TASK_COMMANDS.restore, title: 'Tasks: Restore' },
       { id: TASK_COMMANDS.suggestRepos, title: 'Tasks: Suggest Repos' },
       { id: TASK_COMMANDS.delete, title: 'Tasks: Delete' },
+      { id: TASK_COMMANDS.reveal, title: 'Tasks: Reveal' },
     ],
   },
 };

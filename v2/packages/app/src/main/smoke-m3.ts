@@ -298,20 +298,53 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
   const composed = (await until(
     'the composed task to provision',
     async () =>
-      ((await invoke('tasks.list')) as { title: string; root: string; repos: { name: string }[] }[]).find(
+      ((await invoke('tasks.list')) as { id: string; title: string; root: string; repos: { name: string }[] }[]).find(
         (task) => task.title === 'Composed task',
       ),
     (task) =>
       task !== undefined &&
       task.repos.length === 1 &&
       existsSync(join(task.root, task.repos[0]?.name ?? '', '.git')),
-  )) as { root: string; repos: { name: string }[] };
+  )) as { id: string; root: string; repos: { name: string }[] };
   check(
     composed.repos[0]?.name === repo.split('/').filter((s) => s !== '').pop(),
     `the picked path became the repo's name: ${JSON.stringify(composed.repos)}`,
   );
   check(existsSync(join(composed.root, 'CLAUDE.md')), 'the composed task root was synthesized too');
   say('ok — a task was created from inside the app, worktree and task root included');
+
+  // --- 8. and it LANDED you in the task — read from the real DOM.
+  //
+  // A task owns a layout root, so creating one must take you to it: v1's
+  // composer behaviour, and the difference between "an agent started" and "an
+  // agent started somewhere you cannot see". Asserting main's active root would
+  // pass while the window drew the old one, which is the same argument step 5
+  // makes about the registry — so this reads the stage the user is looking at.
+  //
+  // The root id convention (`task:<id>`) is inlined rather than imported: it is
+  // public vocabulary, like a command id, and a smoke reaching into an
+  // extension's model to agree with itself would assert nothing.
+  //
+  // Both halves matter. The id says the window is showing THIS task; the count
+  // says exactly one root is visible, so a switch that revealed a second root
+  // instead of replacing the first is a failure rather than a pass.
+  const landed = await until(
+    'the window to switch to the composed task’s root',
+    () =>
+      win.webContents.executeJavaScript(`(() => {
+        const roots = Array.from(document.querySelectorAll('.sh-root'));
+        const visible = roots.filter((el) => el.style.display !== 'none');
+        const active = document.querySelector('.sh-root[data-active="true"]');
+        return { active: active === null ? null : active.dataset.root, visible: visible.length };
+      })()`) as Promise<{ active: string | null; visible: number }>,
+    (state) => state.active === `task:${composed.id}`,
+  );
+  check(
+    landed.active === `task:${composed.id}`,
+    `the window is showing the composed task's root: ${JSON.stringify(landed)}`,
+  );
+  check(landed.visible === 1, `exactly one root is on screen: ${JSON.stringify(landed)}`);
+  say('ok — creating a task took the window to it');
 
   say('smoke: OK m3');
   app.exit(0);

@@ -50,6 +50,7 @@ import { createSystemAlerts } from './system-alerts.ts';
 import { clearAgentState } from './agent-relay.ts';
 import { correlationEnv } from './correlation-env.ts';
 import { publishViewingEdges } from './viewing-topic.ts';
+import { registerCaptureCommand } from './capture-command.ts';
 
 /**
  * The Electron entry point (electron-vite builds this to `out/main`, and
@@ -620,6 +621,28 @@ void app.whenReady().then(async () => {
         return;
       }
       target.close();
+    },
+  });
+
+  /**
+   * The app photographing itself, beside the other kernel verbs and before the
+   * sockets open — so a CLI client cannot arrive ahead of the command it wants.
+   *
+   * The window is resolved INSIDE the closure, not captured: there is no window
+   * yet at this point (it is created after the ingress starts), and on macOS the
+   * app outlives its last window and can be handed a new one by `activate`. A
+   * captured reference would photograph a destroyed window forever.
+   */
+  registerCaptureCommand({
+    registry,
+    clock: systemClock,
+    supportDir: support,
+    capture: async () => {
+      const target = BrowserWindow.getAllWindows().find((win) => !win.isDestroyed());
+      if (target === undefined) return null;
+      const image = await target.webContents.capturePage();
+      const size = image.getSize();
+      return { png: image.toPNG(), width: size.width, height: size.height };
     },
   });
 
