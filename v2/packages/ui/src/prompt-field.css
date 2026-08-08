@@ -1,0 +1,34 @@
+/*
+ * The prompt field. A contenteditable, styled as the bare writing surface a
+ * `TextArea variant="bare"` was — it replaced one, and the composer's treatment
+ * must not change just because the element did.
+ */
+.sh-ui-prompt {
+  display: block;
+  width: 100%;
+  min-height: calc(3 * var(--sh-line-height));
+  max-height: calc(12 * var(--sh-line-height));
+  overflow-y: auto;
+  border: 0;
+  outline: 0;
+  background: none;
+  color: var(--sh-text);
+  font: inherit;
+  font-size: var(--sh-font-size-large);
+  line-height: var(--sh-line-height);
+  /* A prompt is prose: it wraps, and a long path in it breaks rather than
+     pushing the card wider. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/*
+ * `:empty` and not a class, so the placeholder cannot disagree with the field's
+ * real contents — a state flag would have to be updated on every keystroke,
+ * which is exactly the per-keystroke DOM work the component refuses to do.
+ */
+.sh-ui-prompt:empty::before {
+  content: attr(data-placeholder);
+  color: var(--sh-text-faint);
+  pointer-events: none;
+}
