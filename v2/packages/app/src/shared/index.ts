@@ -10,6 +10,7 @@ export {
   type IpcError,
   type IpcResult,
   type LayoutSnapshot,
+  type LayoutSnapshots,
   type SessionCreateRequest,
   type SessionDataMessage,
   type SessionDescriptor,

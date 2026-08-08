@@ -30,6 +30,11 @@ function harness() {
   registerLayoutCommands({
     store,
     registry,
+    homeRoot: ROOT,
+    // One root here, and it is the one the menu means — which is the whole
+    // claim: a menu item names no root and still reaches the right one.
+    activeRoot: () => ROOT,
+    onSwitchRoot: () => undefined,
     onLastPaneClosed: (root) => void closedRoots.push(root),
   });
   store.open(ROOT);

@@ -106,6 +106,18 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
   padding: var(--sh-hairline);
 }
 
+/*
+  One per layout root. Every root is mounted; the inactive ones are hidden with
+  `display: none` (set inline, from the snapshot) rather than left unrendered —
+  unrendering one would tear its panes down, and a torn-down pane comes back as
+  a second pty. Nothing here may set `display`, or it would fight that.
+*/
+.sh-root {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
 .sh-split-root,
 .sh-split,
 .sh-split-child {

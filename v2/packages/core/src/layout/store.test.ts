@@ -4,6 +4,8 @@ import {
   manualClock,
   paneId,
   type PaneID,
+  rootId,
+  type RootID,
   s,
   sessionId,
   type Caller,
@@ -58,6 +60,34 @@ function build(storage?: KV): LayoutStore {
 }
 
 const VIEWPORT = { x: 0, y: 0, width: 1000, height: 600 };
+
+/**
+ * A store with a home root and one task root, wired through the registry with
+ * the shell's own active-root state modelled. The root-level commands are all
+ * about the interplay between those two, so a helper that only ever had one
+ * root could not exercise any of them.
+ */
+function wiredRoots() {
+  const store = build();
+  const registry = new CommandRegistry({ logger, grants: () => emptyGrants() });
+  const home = rootId('window-1');
+  let active = home;
+  const switched: RootID[] = [];
+  registerLayoutCommands({
+    store,
+    registry,
+    homeRoot: home,
+    activeRoot: () => active,
+    onSwitchRoot: (root) => {
+      switched.push(root);
+      active = root;
+    },
+    onLastPaneClosed: () => {},
+  });
+  store.open(home);
+  store.open('task-1');
+  return { store, registry, home, switched, activeRoot: () => active };
+}
 
 describe('a root', () => {
   it('opens with one pane, focused', () => {
@@ -364,14 +394,39 @@ describe('projection', () => {
 });
 
 describe('as commands', () => {
-  function wired() {
-    const store = build();
+  function wired(storage?: KV) {
+    const store = build(storage);
     const registry = new CommandRegistry({ logger, grants: () => emptyGrants() });
     const lastPaneClosed = vi.fn();
-    const subscription = registerLayoutCommands({ store, registry, onLastPaneClosed: lastPaneClosed });
+    const home = rootId('window-1');
+    // The shell's own state, modelled: which root the window shows, and the one
+    // call that changes it. Mutable, because a test that could not change it
+    // could not tell "defaults to the active root" from "defaults to the first".
+    let active = home;
+    const switched: RootID[] = [];
+    const subscription = registerLayoutCommands({
+      store,
+      registry,
+      homeRoot: home,
+      activeRoot: () => active,
+      onSwitchRoot: (root) => {
+        switched.push(root);
+        active = root;
+      },
+      onLastPaneClosed: lastPaneClosed,
+    });
     const root = store.open();
     store.setViewport(root, VIEWPORT);
-    return { store, registry, root, lastPaneClosed, subscription };
+    return {
+      store,
+      registry,
+      root,
+      home,
+      lastPaneClosed,
+      subscription,
+      switched,
+      activeRoot: () => active,
+    };
   }
 
   it('splits through the registry', async () => {
@@ -385,6 +440,22 @@ describe('as commands', () => {
     const { registry } = wired();
     const result = await registry.invoke(LAYOUT_COMMANDS.focusDirection, { direction: 'left' }, USER);
     expect(result).toEqual({ ok: true, value: { focused: null } });
+  });
+
+  it('defaults to the ACTIVE root once a second one exists', async () => {
+    // The whole reason `activeRoot` is injected. This used to mean "the only
+    // root there is", which held right up until a second root existed and then
+    // broke every menu gesture at once — ⌘D and ⌘W send no `root` on purpose.
+    const { registry, store, root, switched } = wired();
+    await registry.invoke(LAYOUT_COMMANDS.openRoot, { root: 'task-1' }, USER);
+    await registry.invoke(LAYOUT_COMMANDS.switchRoot, { root: 'task-1' }, USER);
+    expect(switched).toEqual(['task-1']);
+
+    const split = await registry.invoke(LAYOUT_COMMANDS.split, { axis: 'row' }, USER);
+    expect(split.ok).toBe(true);
+    // The split landed in the root being looked at, and the home root is untouched.
+    expect(store.panes(rootId('task-1'))).toHaveLength(2);
+    expect(store.panes(root)).toHaveLength(1);
   });
 
   it('close defaults to the focused pane', async () => {
@@ -435,7 +506,14 @@ describe('as commands', () => {
     // So an extension cannot reshape the user's window without having asked.
     const store = build();
     const registry = new CommandRegistry({ logger, grants: () => emptyGrants() });
-    registerLayoutCommands({ store, registry, onLastPaneClosed: () => {} });
+    registerLayoutCommands({
+      store,
+      registry,
+      homeRoot: rootId('window-1'),
+      activeRoot: () => rootId('window-1'),
+      onSwitchRoot: () => {},
+      onLastPaneClosed: () => {},
+    });
     store.open();
 
     const caller: Caller = { kind: 'device', deviceId: 'phone' };
@@ -468,6 +546,209 @@ describe('as commands', () => {
     // The schema catches it first: `s.number()` is finite-only precisely so a NaN
     // cannot reach a split ratio.
     expect(result.ok).toBe(false);
+  });
+});
+
+describe('a root is opened once, and shaped only when it is minted', () => {
+  it('applies the init to the first pane of a FRESH root', () => {
+    const store = build();
+    const root = store.open('task-1', { cwd: '/w/api', userTitle: 'api', initialCommand: 'claude\n' });
+    const pane = store.pane(store.focused(root)!);
+    expect(pane?.cwd).toBe('/w/api');
+    expect(pane?.userTitle).toBe('api');
+    expect(pane?.initialCommand).toBe('claude\n');
+  });
+
+  it('ignores the init when the root is RESTORED from disk', () => {
+    // A restored root already has the panes the user left there. Re-pointing one
+    // at a cwd — or re-arming a command the persisted shape deliberately drops —
+    // would make every relaunch replay whatever created the root.
+    const kv = fakeKV();
+    const first = build(kv);
+    first.open('task-1', { cwd: '/w/api' });
+    first.flush();
+
+    const second = build(kv);
+    const root = second.open('task-1', { cwd: '/somewhere/else', initialCommand: 'claude\n' });
+    const pane = second.pane(second.focused(root)!);
+    expect(pane?.cwd).toBe('/w/api');
+    expect(pane?.initialCommand).toBeNull();
+  });
+
+  it('answers a LIVE root as-is rather than re-reading storage', () => {
+    // Re-restoring a live root replaces its tree with fresh pane ids, which
+    // orphans every session binding and leaves the ptys running with nothing
+    // pointing at them. `layout.openRoot` makes that reachable at runtime.
+    const kv = fakeKV();
+    const store = build(kv);
+    const root = store.open('task-1');
+    store.split(root, 'row');
+    store.bindSession(paneId('p1'), sessionId('s-1'));
+    store.flush();
+
+    expect(store.open('task-1')).toBe(root);
+    expect(store.panes(root)).toEqual(['p1', 'p2']);
+    expect(store.sessionFor(paneId('p1'))).toBe('s-1');
+  });
+});
+
+describe('removing a root', () => {
+  it('stops it being persisted', () => {
+    // `#writeNow` serializes whatever is in the map, so a root removed without a
+    // write comes back on every launch forever.
+    const kv = fakeKV();
+    const store = build(kv);
+    store.open('window-1');
+    store.open('task-1');
+    store.flush();
+    expect(store.persistedRoots()).toEqual(['window-1', 'task-1']);
+
+    expect(store.removeRoot(rootId('task-1'))).toEqual({ ok: true, value: undefined });
+    store.flush();
+    expect(store.persistedRoots()).toEqual(['window-1']);
+    expect(store.roots()).toEqual(['window-1']);
+  });
+
+  it('notifies, so the shell can republish and viewing can be re-evaluated', () => {
+    const store = build();
+    store.open('task-1');
+    const seen: string[] = [];
+    store.onDidChange((root) => seen.push(root));
+    store.removeRoot(rootId('task-1'));
+    expect(seen).toEqual(['task-1']);
+  });
+
+  it('kills nothing — layout.close is the one terminator', () => {
+    const store = build();
+    store.open('task-1');
+    store.bindSession(paneId('p1'), sessionId('s-1'));
+    store.removeRoot(rootId('task-1'));
+    expect(killed).toEqual([]);
+  });
+
+  it('drops pending initial input for panes that never got a session', () => {
+    const store = build();
+    const root = store.open('task-1');
+    const pane = store.focused(root)!;
+    store.setInitialInput(pane, 'claude\n');
+    store.removeRoot(rootId('task-1'));
+    expect(store.takeInitialInput(pane)).toBeUndefined();
+  });
+
+  it('reports a root that was never there', () => {
+    expect(build().removeRoot(rootId('ghost'))).toEqual({ ok: false, error: 'no root ghost' });
+  });
+});
+
+describe('persistedRoots', () => {
+  it('lists what a relaunch would have to open, before anything is open', () => {
+    // Main opens every one of these at launch. Reading only the home root would
+    // leave a task's layout on disk and invisible — and the next write would
+    // then persist the roots that HAD been opened and drop the rest.
+    const kv = fakeKV();
+    const first = build(kv);
+    first.open('window-1');
+    first.open('task-1');
+    first.flush();
+
+    expect(build(kv).persistedRoots()).toEqual(['window-1', 'task-1']);
+  });
+
+  it('is empty rather than throwing on a blob it does not recognize', () => {
+    const kv = fakeKV();
+    kv.set('layout', { schemaVersion: 99, roots: [] });
+    expect(build(kv).persistedRoots()).toEqual([]);
+  });
+
+  it('is empty with no storage at all', () => {
+    expect(build().persistedRoots()).toEqual([]);
+  });
+});
+
+describe('the root-level commands', () => {
+  it('switchRoot hands an existing root to the shell', async () => {
+    const { registry, switched } = wiredRoots();
+    const result = await registry.invoke(LAYOUT_COMMANDS.switchRoot, { root: 'task-1' }, USER);
+    expect(result).toEqual({ ok: true, value: { root: 'task-1' } });
+    expect(switched).toEqual(['task-1']);
+  });
+
+  it('switchRoot refuses a root that does not exist, informatively', async () => {
+    // Switching to nothing leaves the window drawing nothing, with the failure
+    // visible only as a blank stage.
+    const { registry, switched } = wiredRoots();
+    const result = await registry.invoke(LAYOUT_COMMANDS.switchRoot, { root: 'ghost' }, USER);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain('no root ghost');
+    expect(switched).toEqual([]);
+  });
+
+  it('openRoot mints a root and shapes its first pane', async () => {
+    const { registry, store } = wiredRoots();
+    const result = await registry.invoke(
+      LAYOUT_COMMANDS.openRoot,
+      { root: 'task-2', cwd: '/w/api', title: 'api', initialCommand: 'claude\n' },
+      USER,
+    );
+    expect(result).toMatchObject({ ok: true, value: { root: 'task-2', created: true } });
+    const pane = store.pane(store.focused(rootId('task-2'))!);
+    expect(pane?.cwd).toBe('/w/api');
+    expect(pane?.userTitle).toBe('api');
+    expect(pane?.initialCommand).toBe('claude\n');
+  });
+
+  it('openRoot on a root that is already open is not a second root', async () => {
+    const { registry, store } = wiredRoots();
+    const before = store.panes(rootId('task-1'));
+    const result = await registry.invoke(LAYOUT_COMMANDS.openRoot, { root: 'task-1' }, USER);
+    expect(result).toEqual({ ok: true, value: { root: 'task-1', pane: before[0], created: false } });
+    expect(store.panes(rootId('task-1'))).toEqual(before);
+  });
+
+  it('closeRoot ends every session in it, through the sink', async () => {
+    // ADR 0022: `layout.close` is the one terminator. Dropping the root without
+    // draining it would leak a live pty per pane with nothing pointing at it.
+    const { registry, store } = wiredRoots();
+    store.split(rootId('task-1'), 'row');
+    const [a, b] = store.panes(rootId('task-1'));
+    store.bindSession(a!, sessionId('s-a'));
+    store.bindSession(b!, sessionId('s-b'));
+
+    const result = await registry.invoke(LAYOUT_COMMANDS.closeRoot, { root: 'task-1' }, USER);
+    expect(result).toMatchObject({ ok: true, value: { root: 'task-1', closedPanes: 2 } });
+    expect(killed).toEqual(['s-a', 's-b']);
+    expect(store.roots()).toEqual(['window-1']);
+  });
+
+  it('closeRoot switches off a root it just removed', async () => {
+    const { registry, switched, activeRoot } = wiredRoots();
+    await registry.invoke(LAYOUT_COMMANDS.switchRoot, { root: 'task-1' }, USER);
+    await registry.invoke(LAYOUT_COMMANDS.closeRoot, { root: 'task-1' }, USER);
+    expect(switched).toEqual(['task-1', 'window-1']);
+    expect(activeRoot()).toBe('window-1');
+  });
+
+  it('closeRoot leaves the active root alone when it closed another one', async () => {
+    const { registry, switched } = wiredRoots();
+    await registry.invoke(LAYOUT_COMMANDS.closeRoot, { root: 'task-1' }, USER);
+    expect(switched).toEqual([]);
+  });
+
+  it('refuses to close the home root', async () => {
+    // It is what everything falls back to; closing it leaves the window with no
+    // root to draw and no root to switch to.
+    const { registry, store } = wiredRoots();
+    const result = await registry.invoke(LAYOUT_COMMANDS.closeRoot, { root: 'window-1' }, USER);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain('home root');
+    expect(store.roots()).toContain('window-1');
+  });
+
+  it('closeRoot reports a root that does not exist', async () => {
+    const { registry } = wiredRoots();
+    const result = await registry.invoke(LAYOUT_COMMANDS.closeRoot, { root: 'ghost' }, USER);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain('no root ghost');
   });
 });
 

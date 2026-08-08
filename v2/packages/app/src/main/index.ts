@@ -18,7 +18,7 @@ import { diagnosticsManifest } from '@shepherd/ext-diagnostics/manifest';
 import { agentsCoreManifest } from '@shepherd/ext-agents-core/manifest';
 import { claudeCodeManifest } from '@shepherd/ext-claude-code/manifest';
 import { tasksManifest } from '@shepherd/ext-tasks/manifest';
-import { KERNEL, createLogger, extensionId, rootId, systemClock } from '@shepherd/sdk';
+import { KERNEL, createLogger, extensionId, rootId, systemClock, type RootID } from '@shepherd/sdk';
 import { ExtensionHost } from './ext-host.ts';
 import { forkExtensionHost } from './ext-host-process.ts';
 import { IS_DEV } from './build-flags.ts';
@@ -209,7 +209,20 @@ const layout = new LayoutStore({
   sessions: { kill: (id) => void host.kill(id) },
 });
 
-const ROOT = rootId('window-1');
+/**
+ * The root the window falls back to — v1's "the window", and the one root that
+ * always exists. Every OTHER root is a pane group something else owns (a task
+ * owns one; the sidebar switches between them), and those come and go.
+ */
+const HOME_ROOT = rootId('window-1');
+
+/**
+ * Which root the window is currently showing. `layout-ipc.ts` owns the value —
+ * it is a property of the window, not of the layout — and this is reassigned to
+ * its getter inside `whenReady`, where every other IPC handler is registered.
+ * Before then there is no window, so the home root is the only possible answer.
+ */
+let activeRoot: () => RootID = () => HOME_ROOT;
 
 /**
  * Where the sockets live. Overridable per run — see `SUPPORT_FLAG`; a throwaway
@@ -245,10 +258,31 @@ let ingress: RunningIngress | undefined;
  */
 const viewing = new ViewingResolver(
   layout,
-  { appActive: true, focusedRoot: ROOT, overlay: false },
+  { appActive: true, focusedRoot: HOME_ROOT, overlay: false },
   logger,
 );
 const attention = new AttentionStore({ layout, viewing, bus, logger });
+
+/**
+ * Presence, in one place, because it has two independent inputs now.
+ *
+ * `appActive` comes from Electron's focus/blur; `focusedRoot` comes from which
+ * root is on screen, which the user can change without the app ever losing
+ * focus. Recomputing both together is what stops `isFrontPane` from answering
+ * about a hidden root — attention would then clear on panes nobody has seen
+ * (ADR 0020: viewing is ONE predicate, so it gets one writer).
+ */
+let appActive = true;
+
+function syncPresence(): void {
+  viewing.setPresence({
+    appActive,
+    // Not ours to be frontmost in: a switch driven from the CLI while the app is
+    // in the background must not resurrect a focused root.
+    focusedRoot: appActive ? activeRoot() : null,
+    overlay: false,
+  });
+}
 
 /**
  * The same predicate, on the bus as `session.viewing`, for the agent extension a
@@ -482,8 +516,16 @@ void app.whenReady().then(async () => {
   registerSessionIpc(bridge, { defaults: shellDefaults() });
   registerWindowIpc();
 
-  const layoutIpc = registerLayoutIpc({ store: layout, registry, root: ROOT });
+  const layoutIpc = registerLayoutIpc({
+    store: layout,
+    registry,
+    active: HOME_ROOT,
+    // Presence follows the active root, wired here rather than at each switch
+    // site so no future caller can move the window without moving the predicate.
+    onActiveChanged: () => syncPresence(),
+  });
   publishLayout = layoutIpc.publish;
+  activeRoot = layoutIpc.getActive;
 
   registerAttentionCommands({ store: attention, registry });
 
@@ -550,10 +592,28 @@ void app.whenReady().then(async () => {
   registerLayoutCommands({
     store: layout,
     registry,
+    homeRoot: HOME_ROOT,
+    activeRoot: layoutIpc.getActive,
+    // What "switch" means is the window's business: draw that root, and treat
+    // its panes as the ones being looked at. Core validates and delegates.
+    onSwitchRoot: (root) => layoutIpc.setActive(root),
     // ⌘W's fall-through, decided in exactly one place. Core does not know what a
     // window is; it knows that a root has run out of panes, which is the only
     // case in which closing one may close a window.
-    onLastPaneClosed: () => {
+    onLastPaneClosed: (root) => {
+      /**
+       * Only the HOME root's last pane closes the window. Any other root is a
+       * pane group the window merely shows — a task's, say — so running it out
+       * of panes means that group is finished with, not that the app is.
+       * Switching away FIRST, because a window drawing a root that has just
+       * been removed draws nothing at all.
+       */
+      if (root !== HOME_ROOT) {
+        layoutIpc.setActive(HOME_ROOT);
+        const removed = layout.removeRoot(root);
+        if (!removed.ok) logger.warn('layout', `could not remove ${root}: ${removed.error}`);
+        return;
+      }
       const target = BrowserWindow.getAllWindows().find((win) => !win.isDestroyed());
       if (target === undefined) {
         logger.warn('app', 'last pane closed but there is no window to close');
@@ -590,7 +650,14 @@ void app.whenReady().then(async () => {
   // The tree exists before the page can ask for it: `layout:get` is the first
   // thing the renderer does, and a root that is not open yet would answer
   // `no-root` and leave a blank window with nothing anywhere saying why.
-  layout.open(ROOT);
+  //
+  // EVERY persisted root, not just the home one. With a root per task, opening
+  // only home would leave every task's layout on disk and invisible — and the
+  // next write would then persist the roots that had been opened and drop the
+  // rest, so "invisible" would quietly become "gone". `open` is idempotent, so
+  // home appearing in that list again costs nothing.
+  layout.open(HOME_ROOT);
+  for (const root of layout.persistedRoots()) layout.open(root);
 
   // After the lock (held in `bootstrap`) and after the command table is
   // registered, so the first CLI client cannot arrive before there is anything
@@ -633,7 +700,7 @@ void app.whenReady().then(async () => {
       hookSocket: HOOK_SOCKET,
       attentionCount: () => attention.count(),
       layout,
-      root: ROOT,
+      root: HOME_ROOT,
       alerts: () => ((globalThis as { __shepherdAlerts?: { sessionId: string }[] }).__shepherdAlerts ?? []),
       agentStates: () => agentIpc?.relay.snapshot() ?? [],
     }).catch((error: unknown) => {
@@ -646,8 +713,14 @@ void app.whenReady().then(async () => {
   // The two signals Electron does give us. Without these, `isViewing` is frozen
   // at "yes" and a turn that finished while you were in another app would read
   // as one you had already seen — v1's bug, in reverse.
-  app.on('browser-window-focus', () => viewing.setPresence({ appActive: true, focusedRoot: ROOT, overlay: false }));
-  app.on('browser-window-blur', () => viewing.setPresence({ appActive: false, focusedRoot: null, overlay: false }));
+  app.on('browser-window-focus', () => {
+    appActive = true;
+    syncPresence();
+  });
+  app.on('browser-window-blur', () => {
+    appActive = false;
+    syncPresence();
+  });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

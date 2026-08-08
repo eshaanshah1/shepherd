@@ -15,6 +15,7 @@ import {
   type IpcResult,
   type LayoutApi,
   type LayoutSnapshot,
+  type LayoutSnapshots,
   type ViewportRect,
 } from '../shared/index.ts';
 import { MENU_INVOCATIONS } from '../shared/menu-commands.ts';
@@ -40,8 +41,8 @@ import { all, mount } from './test-dom.ts';
 // ---------------------------------------------------------------- the doubles
 
 /** A `LayoutApi` whose pushes the test drives by hand. */
-function spyLayout(initial: LayoutSnapshot | null = null) {
-  let listeners: Array<(snapshot: LayoutSnapshot) => void> = [];
+function spyLayout(initial: LayoutSnapshots | null = null) {
+  let listeners: Array<(snapshots: LayoutSnapshots) => void> = [];
   const viewports: ViewportRect[] = [];
   let answer = initial;
 
@@ -51,11 +52,11 @@ function spyLayout(initial: LayoutSnapshot | null = null) {
       return listeners.length;
     },
     /** What main would answer `layout:get` with. */
-    set snapshot(next: LayoutSnapshot | null) {
+    set snapshot(next: LayoutSnapshots | null) {
       answer = next;
     },
     api: {
-      get: (): Promise<IpcResult<LayoutSnapshot>> =>
+      get: (): Promise<IpcResult<LayoutSnapshots>> =>
         Promise.resolve(
           answer === null
             ? { ok: false, error: { code: 'no-root', message: 'no root' } }
@@ -73,7 +74,7 @@ function spyLayout(initial: LayoutSnapshot | null = null) {
       },
     } satisfies LayoutApi,
     /** Main pushed a new projection. Structure-cloned, exactly as IPC would. */
-    push: (snapshot: LayoutSnapshot) => {
+    push: (snapshot: LayoutSnapshots) => {
       answer = snapshot;
       act(() => {
         for (const listener of [...listeners]) listener(structuredClone(snapshot));
@@ -95,14 +96,25 @@ function spyCommands() {
   };
 }
 
-function snapshotOf(tree: SplitNode, focused?: Pane): LayoutSnapshot {
+/** One root's projection. `snapshotOf` wraps it as the envelope the page reads. */
+function rootOf(tree: SplitNode, focused?: Pane, root = 'window-1'): LayoutSnapshot {
   return {
-    root: 'window-1',
+    root,
     tree,
     focusedPaneId: focused?.id ?? firstPaneId(tree),
     zoomedPaneId: null,
     sessions: {},
   };
+}
+
+/** The single-root envelope — what almost every test here is about. */
+function snapshotOf(tree: SplitNode, focused?: Pane): LayoutSnapshots {
+  return { active: 'window-1', roots: [rootOf(tree, focused)] };
+}
+
+/** Several roots, one of them active. The multi-root claims below. */
+function snapshotsOf(active: string, ...roots: LayoutSnapshot[]): LayoutSnapshots {
+  return { active, roots };
 }
 
 function firstPaneId(node: SplitNode): string {
@@ -131,7 +143,7 @@ interface Rendered {
   readonly built: FakeTerminal[];
 }
 
-function render(options: { snapshot?: LayoutSnapshot | null; noTerminals?: boolean } = {}): Rendered {
+function render(options: { snapshot?: LayoutSnapshots | null; noTerminals?: boolean } = {}): Rendered {
   const session = new SpySession();
   const built: FakeTerminal[] = [];
   const registry = new PaneSessionRegistry({
@@ -436,6 +448,133 @@ describe('terminals across a reshape', () => {
     const three = threePaneTree();
     const { view } = render({ snapshot: snapshotOf(three.tree, three.left) });
     expect(all(view.container, 'terminal-host')).toHaveLength(3);
+    view.unmount();
+  });
+});
+
+// -------------------------------------------------- several roots, one visible
+
+describe('roots the window switches between', () => {
+  it('mounts every root and shows only the active one', () => {
+    // A flat keyed list with the inactive ones hidden, NEVER a conditional
+    // mount: unrendering a root tears its panes down, and a torn-down pane is a
+    // released terminal. v1's `_ConditionalContent` lesson, one language over.
+    const home = makePane({ userTitle: 'home' });
+    const task = makePane({ userTitle: 'task' });
+    const { view } = render({
+      snapshot: snapshotsOf('window-1', rootOf(leaf(home)), rootOf(leaf(task), task, 'task-1')),
+    });
+
+    // Both trees are in the DOM…
+    expect(paneIds(view.container)).toEqual([home.id, task.id]);
+    // …and exactly one of them is on screen.
+    const roots = [...view.container.querySelectorAll<HTMLElement>('.sh-root')];
+    expect(roots.map((el) => el.dataset['root'])).toEqual(['window-1', 'task-1']);
+    expect(roots.map((el) => el.style.display)).toEqual(['flex', 'none']);
+    view.unmount();
+  });
+
+  it('gives the hidden root no focused pane, so it cannot steal the keyboard', () => {
+    // `TerminalPane` calls `terminals.focus()` for whichever pane it is told is
+    // focused. With every root mounted, a hidden root's focused pane would fight
+    // the visible one for the keyboard on every render.
+    const home = makePane({ userTitle: 'home' });
+    const task = makePane({ userTitle: 'task' });
+    const { view } = render({
+      snapshot: snapshotsOf('window-1', rootOf(leaf(home)), rootOf(leaf(task), task, 'task-1')),
+    });
+    expect(focusedId(view.container)).toBe(home.id);
+    expect(all(view.container, 'pane').filter((el) => el.dataset['focused'] === 'true')).toHaveLength(1);
+    view.unmount();
+  });
+
+  it('does NOT release a hidden root’s terminals when the active root changes', async () => {
+    /**
+     * THE multi-root trap.
+     *
+     * The release pass drops the terminal of any pane absent from the snapshot.
+     * "Absent" has to mean absent from the UNION of every root: read off the
+     * active root alone, switching releases the hidden root's panes, and
+     * switching back creates a SECOND pty for each while the first keeps running
+     * with nothing pointing at it — unkillable from the UI.
+     */
+    const home = makePane({ userTitle: 'home' });
+    const task = makePane({ userTitle: 'task' });
+    const both = (active: string): LayoutSnapshots =>
+      snapshotsOf(active, rootOf(leaf(home)), rootOf(leaf(task), task, 'task-1'));
+
+    const { view, layout, built, session, registry } = render({ snapshot: both('window-1') });
+    await registry.settled();
+    expect(built).toHaveLength(2);
+    session.calls.length = 0;
+
+    layout.push(both('task-1'));
+    await registry.settled();
+    layout.push(both('window-1'));
+    await registry.settled();
+
+    // No terminal was thrown away…
+    expect(built).toHaveLength(2);
+    expect(built.map((terminal) => terminal.disposed)).toEqual([false, false]);
+    // …so nothing had to be rebuilt, and no second session was created.
+    expect(session.names).not.toContain('create');
+    expect(registry.inspect(home.id)?.sessionId).toBe('s1');
+    expect(registry.inspect(task.id)?.sessionId).toBe('s2');
+    view.unmount();
+  });
+
+  it('still releases a pane that really has left every root', async () => {
+    // The negative control for the union above: widening "present" must not
+    // widen it to everything, or a closed pane's terminal leaks forever.
+    const home = makePane({ userTitle: 'home' });
+    const gone = makePane({ userTitle: 'gone' });
+    const { view, layout, built, registry } = render({
+      snapshot: snapshotsOf('window-1', rootOf(leaf(home)), rootOf(leaf(gone), gone, 'task-1')),
+    });
+    await registry.settled();
+    expect(built).toHaveLength(2);
+
+    layout.push(snapshotsOf('window-1', rootOf(leaf(home))));
+    await registry.settled();
+
+    expect(registry.inspect(gone.id)).toBeUndefined();
+    expect(built[1]?.disposed).toBe(true);
+    view.unmount();
+  });
+
+  it('counts the panes on screen, not the ones behind them', () => {
+    const home = makePane({ userTitle: 'home' });
+    const task = makePane({ userTitle: 'task' });
+    const { view } = render({
+      snapshot: snapshotsOf(
+        'window-1',
+        rootOf(leaf(home)),
+        rootOf(split('row', 0.5, leaf(task), leaf(makePane({}))), task, 'task-1'),
+      ),
+    });
+    expect(view.container.textContent).toContain('PANES 01');
+    view.unmount();
+  });
+
+  it('re-publishes the viewport when the active root changes', () => {
+    // The rect is stored PER ROOT and main applies it to whichever is active, so
+    // a root that has never been on screen would keep a 0x0 viewport — every
+    // pane frame degenerate and ⌘⌥← answering null in every direction, silently.
+    const home = makePane({ userTitle: 'home' });
+    const task = makePane({ userTitle: 'task' });
+    const both = (active: string): LayoutSnapshots =>
+      snapshotsOf(active, rootOf(leaf(home)), rootOf(leaf(task), task, 'task-1'));
+
+    const { view, layout } = render({ snapshot: both('window-1'), noTerminals: true });
+    expect(layout.viewports).toHaveLength(1);
+
+    layout.push(both('task-1'));
+    expect(layout.viewports).toHaveLength(2);
+
+    // A push that does NOT change which root is active must not re-publish: the
+    // rect has not changed, and a push per snapshot would be one per keystroke.
+    layout.push(both('task-1'));
+    expect(layout.viewports).toHaveLength(2);
     view.unmount();
   });
 });

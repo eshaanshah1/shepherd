@@ -151,12 +151,31 @@ export class LayoutStore {
 
   // ------------------------------------------------------------------ lifecycle
 
-  /** Creates a root with one empty pane, or restores it from storage. */
-  open(id: string = 'window-1'): RootID {
+  /**
+   * Creates a root with one empty pane, or restores it from storage.
+   *
+   * **Idempotent.** A root that is already open is answered as-is, and nothing
+   * is read from storage: re-restoring a live root would replace its tree with
+   * FRESH pane ids (`#restore` mints them by design), which orphans every
+   * session binding and leaves the ptys running with no pane pointing at them.
+   * Multi-root makes that reachable at runtime — `layout.openRoot` names a root
+   * the caller may well have open already — where a single window could only
+   * ever call this once.
+   *
+   * `init` shapes the FIRST pane, and only when the root is minted fresh. A
+   * restored root already has the panes the user left there; applying a cwd or
+   * an initial command to one of them would re-run a command that the persisted
+   * shape deliberately drops (see `serialize.ts`) and re-point a pane the user
+   * had moved elsewhere.
+   */
+  open(id: string = 'window-1', init?: PaneInit): RootID {
+    const live = this.#roots.get(rootId(id));
+    if (live) return live.id;
+
     const restored = this.#restore(rootId(id));
     if (restored) return restored.id;
 
-    const pane = makePane({}, this.#newPane);
+    const pane = makePane(init ?? {}, this.#newPane);
     const state: RootState = {
       id: rootId(id),
       tree: leaf(pane),
@@ -167,6 +186,30 @@ export class LayoutStore {
     this.#roots.set(state.id, state);
     this.#changed(state.id);
     return state.id;
+  }
+
+  /**
+   * Forget a root entirely — the multi-root counterpart of closing a window.
+   *
+   * It does NOT end sessions: `layout.close` is the one terminator (ADR 0022),
+   * so a caller drains the root's panes through `close` first and this drops
+   * what is left. Going through `#changed` is what makes it stick: the notify
+   * lets the shell republish (and `ViewingResolver` announce the vanished panes
+   * as no longer viewed), and the scheduled write is the only reason the root
+   * stops being persisted — `#writeNow` serializes whatever is in `#roots`, so
+   * a root removed without it comes back on the next launch forever.
+   */
+  removeRoot(id: RootID): Result<void, string> {
+    const state = this.#roots.get(id);
+    if (!state) return err(`no root ${id}`);
+    // Pending initial input for panes that never got a session would otherwise
+    // outlive the panes it names, and every entry here is keyed by a pane id
+    // that can never be minted again.
+    for (const pane of leafIds(state.tree)) this.#initialInput.delete(pane);
+    this.#roots.delete(id);
+    this.#changed(id);
+    this.#log.info(`removed root ${id}`);
+    return ok(undefined);
   }
 
   /** For app teardown: the pending layout write must not be lost on quit. */
@@ -183,6 +226,27 @@ export class LayoutStore {
 
   roots(): readonly RootID[] {
     return [...this.#roots.keys()];
+  }
+
+  /**
+   * Root ids sitting in storage, whether or not they are open.
+   *
+   * The shell needs this at launch: with one root per task, opening only the
+   * home root would leave every task's panes persisted but invisible — the
+   * layout would look like it had been forgotten while the record of it sat on
+   * disk. Deliberately a *query* rather than an "open everything" method, so
+   * the decision about which roots a window puts on screen stays in the shell.
+   *
+   * Reads the same payload `#restore` does, and is equally forgiving: a
+   * corrupt or unrecognized blob is no roots, never a throw. This runs before
+   * the first window exists.
+   */
+  persistedRoots(): readonly RootID[] {
+    const record = this.#persisted();
+    if (record === undefined) return [];
+    return record.roots
+      .filter((saved) => typeof saved?.id === 'string' && saved.id !== '')
+      .map((saved) => rootId(saved.id));
   }
 
   tree(root: RootID): SplitNode | undefined {
@@ -522,11 +586,11 @@ export class LayoutStore {
   }
 
   /**
-   * A restored root comes back with **fresh pane ids and no sessions**: live
-   * state never survives a restart, and reusing an id would let a stale binding
-   * from the previous run resolve to a new pane. `deserializeNode` mints them.
+   * The persisted payload, decoded once — `#restore` and `persistedRoots` ask
+   * the same question of it, and two decoders would be two chances to disagree
+   * about what a recognizable blob is.
    */
-  #restore(id: RootID): RootState | undefined {
+  #persisted(): PersistedLayout | undefined {
     if (!this.#storage) return undefined;
     const raw = this.#storage.get<unknown>(STORAGE_KEY, PASSTHROUGH);
     if (raw === undefined) return undefined;
@@ -536,6 +600,17 @@ export class LayoutStore {
       this.#log.warn('persisted layout has no recognizable schemaVersion — starting fresh');
       return undefined;
     }
+    return record;
+  }
+
+  /**
+   * A restored root comes back with **fresh pane ids and no sessions**: live
+   * state never survives a restart, and reusing an id would let a stale binding
+   * from the previous run resolve to a new pane. `deserializeNode` mints them.
+   */
+  #restore(id: RootID): RootState | undefined {
+    const record = this.#persisted();
+    if (record === undefined) return undefined;
     const saved = record.roots.find((candidate) => candidate.id === id);
     if (!saved) return undefined;
 

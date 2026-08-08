@@ -1,6 +1,6 @@
 import { leafIds, type LayoutStore } from '@shepherd/core/layout';
 import type { RootID } from '@shepherd/sdk';
-import type { LayoutSnapshot, ViewportRect } from '../shared/index.ts';
+import type { LayoutSnapshot, LayoutSnapshots, ViewportRect } from '../shared/index.ts';
 
 /**
  * `LayoutStore` → the wire DTO. Electron-free on purpose, so the projection can
@@ -35,6 +35,27 @@ export function layoutSnapshot(store: LayoutStore, root: RootID): LayoutSnapshot
     zoomedPaneId: store.zoomed(root),
     sessions,
   };
+}
+
+/**
+ * Every root the store holds, plus which one the window is showing.
+ *
+ * The renderer keeps all of them mounted (see `LayoutSnapshots`), so this sends
+ * all of them. `active` is passed through verbatim rather than sanity-checked
+ * against the list: the two places that set it — `layout.switchRoot`, which
+ * refuses a root that does not exist, and the last-pane fall-through, which
+ * lands on the home root — are where that invariant is kept, and a second
+ * opinion here could only ever disagree with them.
+ *
+ * `null` when there are no roots at all, matching `layoutSnapshot`: the page
+ * then draws nothing rather than an empty window it invented.
+ */
+export function layoutSnapshots(store: LayoutStore, active: RootID): LayoutSnapshots | null {
+  const roots = store
+    .roots()
+    .map((root) => layoutSnapshot(store, root))
+    .filter((snapshot): snapshot is LayoutSnapshot => snapshot !== null);
+  return roots.length === 0 ? null : { active, roots };
 }
 
 /**
