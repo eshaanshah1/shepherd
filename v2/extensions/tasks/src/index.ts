@@ -878,6 +878,23 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         // the screen once what is on disk is safe.
         await closeTaskRoot(task);
 
+        /**
+         * The task root goes too — the whole directory, not just the worktrees.
+         *
+         * `archiveWorktree` removes each repo's checkout and leaves everything
+         * the extension GENERATED: the synthesized `CLAUDE.md`, the aggregated
+         * `.claude/` links, the now-empty repo folders. So an archived task left
+         * a directory you could still `cd` into that described work no longer
+         * there, and `~/.shepherd/v2-dev/tasks` grew a folder per task forever.
+         *
+         * Safe because the root is DERIVED and nothing else: every file in it is
+         * either generated from the record (root-synth) or a worktree already
+         * snapshotted into `refs/shepherd/*`. Restoring re-provisions and
+         * re-materializes it, which is the same path that built it the first
+         * time — one code path for "make this task real", not two.
+         */
+        rmSync(root, { recursive: true, force: true });
+
         store.put({ ...task, lifecycle: 'archived', archives, archivedAt: ctx.clock.now() });
         changed();
         for (const warning of warnings) ctx.log.warn(`task ${task.id}: ${warning}`);

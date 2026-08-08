@@ -1172,3 +1172,19 @@ describe('finished work', () => {
     expect(h.invoked.some((call) => call.id === 'tasks.restore')).toBe(false);
   });
 });
+
+describe('what archiving leaves on disk', () => {
+  // The worktrees were removed and the generated root was not, so an archived
+  // task left a directory you could still `cd` into, describing work that is no
+  // longer there — and one such directory per task, forever.
+  it('takes the generated task root with it', async () => {
+    const h = (live = harness({ tasks: [task({ id: 't1', repos: [] })] }));
+    const root = `${h.dataDir}/fix-login`;
+    mkdirSync(root, { recursive: true });
+    writeFileSync(`${root}/CLAUDE.md`, '# generated');
+
+    await h.run('tasks.archive', { task: 't1' });
+
+    expect(existsSync(root)).toBe(false);
+  });
+});
