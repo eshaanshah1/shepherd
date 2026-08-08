@@ -1,0 +1,69 @@
+/*
+ * Tier 3: the COMPONENT tokens, and the primitives' own rules.
+ *
+ * The three tiers (design-system spec §2):
+ *
+ *   tier 1  palette    ink, wool, cobalt …          PRIVATE to @shepherd/design-tokens
+ *   tier 2  roles      --sh-surface, --sh-text …    PUBLIC — what an extension writes
+ *   tier 3  component  --sh-icon-* …                PRIVATE to the primitive that declares it
+ *
+ * Every value in this file resolves from a tier-2 ROLE or from the derived scale,
+ * and there is no hex literal here and never may be. A colour typed into a
+ * component stylesheet is a colour that does not move when a theme does, which is
+ * the failure this whole package exists to make structurally impossible.
+ *
+ * A component token is declared beside the component that owns it — this file is
+ * the whole set today because wave 1 ships one primitive. It is NOT a place to
+ * park a value that two components share: two components sharing a value means it
+ * is a role or a metric, one tier up.
+ *
+ * The page loads this once (`import '@shepherd/ui/styles.css'`). It is not
+ * injected by the barrel: a stylesheet that mounts itself is a stylesheet whose
+ * cascade order nobody controls, and the shell's own rules have to be able to
+ * come after it.
+ */
+
+/*
+ * The icon primitive.
+ *
+ * `currentColor` is not a default here, it is the contract: an icon takes the
+ * colour of the text it sits in, so it is correct inside a hover state, inside an
+ * inverse-video selection, and inside a `[data-surface]` subtree that re-declared
+ * `--sh-text`, without any of those knowing it exists.
+ *
+ * The SIZE and the STROKE are not custom properties, deliberately. Both are
+ * rendered by Tabler as SVG *attributes* (`width`/`height`/`stroke-width`), so
+ * `icon.tsx` is where they come from — `iconSizes` derives the ramp from the type
+ * scale and `ICON_STROKE` is the one weight. A CSS variable beside them would be
+ * a second source that silently wins or silently loses depending on which
+ * stylesheet loaded last.
+ */
+.sh-icon {
+  display: inline-block;
+  flex: 0 0 auto;
+  color: inherit;
+  /* An icon aligned on the text baseline sits low; centring it on the line box is
+     what makes a glyph inside a 28px row read as centred with its label. */
+  vertical-align: middle;
+}
+
+/*
+ * The theme-swap class (spec §2, reference item #5).
+ *
+ * A theme swap is custom properties on the root — never a re-render — and the
+ * transitions declared across the chrome would otherwise animate every colour in
+ * the window from the old palette to the new one over 140ms, all at slightly
+ * different times. The root carries this for the duration of the swap.
+ *
+ * It kills TRANSITIONS and deliberately leaves ANIMATIONS running. Orca measured
+ * that one (`main.css:35-41`): zeroing animations too freezes every spinner
+ * mid-frame, and a frozen spinner reads as a hung app rather than as a theme
+ * changing. Same finding as Flock's reduced-motion rule, arrived at from the
+ * other side.
+ */
+.sh-no-transitions,
+.sh-no-transitions *,
+.sh-no-transitions *::before,
+.sh-no-transitions *::after {
+  transition: none !important;
+}

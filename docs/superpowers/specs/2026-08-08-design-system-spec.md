@@ -58,10 +58,37 @@ tier 1  palette      ink-deep, ink, ink-raised, ink-line, wool, wool-dim,
                      wool-faint, cobalt, hay, pasture, ember, signal
                      — PRIVATE. Nothing outside packages/design-tokens names these.
 
-tier 2  roles        canvas, surface, surfaceRaised, line, text, textDim,
-                     textFaint, accent, accentText, attention, success, danger,
-                     fillHover, fillSelected, focusRing …
+tier 2  roles        canvas, surface, surfaceSunken, surfaceRaised, terminal,
+                     line, text, textDim, textFaint, textSelected, accent,
+                     accentText, attention, success, danger, prompt,
+                     fillHover, fillSelected, focusRing
                      — PUBLIC. This is what an extension writes: var(--sh-surface).
+
+                     Nineteen, not the fifteen this section first listed. The
+                     four additions were found by walking the shipped CSS rather
+                     than reasoned: `surfaceSunken` (a recessed field is not the
+                     window backdrop, even where they share a value today),
+                     `terminal` (the one surface whose colour the app does not
+                     own, and the thing `contrast.ts` measures), `prompt`
+                     (`signal` was the one palette accent with a declared job and
+                     no role, which guarantees a call site stays on tier 1
+                     forever), and `textSelected`.
+
+                     A role is one of three KINDS, and this matters more than the
+                     list: `token` paints from the palette, `alias` emits
+                     `var(--sh-other-role)`, `wash` emits a `color-mix` over
+                     another role. Aliases and washes emit REFERENCES rather than
+                     resolved values — which is what makes the scoped
+                     re-declaration below work at all, since re-declaring
+                     `--sh-text` on a subtree then moves the hover fill and the
+                     selection ink with it, for free.
+
+                     CORRECTION to this section's first draft: `fillSelected` is
+                     NOT a wash. Flock rule 4 is inverse video for selection —
+                     a solid block of `text` with `surface`-coloured ink — and
+                     making it a 10% wash would put hover and selection one
+                     luminance step apart instead of one glance. Hover is the
+                     wash; selection is solid. Pinned by a named test.
 
 tier 3  component    --sh-button-bg, --sh-row-height …
                      — PRIVATE to a primitive, declared in its own file.

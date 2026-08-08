@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "out-tsc",
+    "tsBuildInfoFile": "out-tsc/tsconfig.tsbuildinfo",
+    // No `"types": ["node"]`: this package runs in a page and nowhere else, so
+    // pulling node's globals in would let a primitive reach for `process` and
+    // typecheck. The boundary rule says the same thing; this makes the type layer
+    // agree with it rather than leaving lint to carry it alone.
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx"
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "references": [{ "path": "../design-tokens" }]
+}

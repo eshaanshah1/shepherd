@@ -30,6 +30,7 @@
     "@shepherd/ext-tasks": "workspace:*",
     "@shepherd/platform-darwin": "workspace:*",
     "@shepherd/sdk": "workspace:*",
+    "@shepherd/ui": "workspace:*",
     "@xterm/addon-fit": "catalog:",
     "@xterm/xterm": "catalog:",
     "react": "catalog:",

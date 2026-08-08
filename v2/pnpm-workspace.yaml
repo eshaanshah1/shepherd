@@ -47,5 +47,18 @@ catalog:
   '@types/react': 19.2.18
   '@types/react-dom': 19.2.4
 
+  # the design system (packages/ui)
+  #
+  # `cva` is the variant plumbing shadcn uses, taken on its own: ~1 kB, no
+  # Tailwind in its dependency graph, and it does the one thing a primitive set
+  # needs (variant × size × compound → a class string). `clsx`/`tailwind-merge`
+  # are deliberately absent — with no Tailwind there is nothing to merge, and
+  # `cn` is three lines (design-system spec §1).
+  class-variance-authority: 0.7.1
+  # Tabler, which Flock already named. Bundled with the primitives rather than
+  # after them, because half of them have an icon-shaped hole and a hole filled
+  # later is filled twelve different ways (spec §7, answer 3).
+  '@tabler/icons-react': 3.46.0
+
   # test
   jsdom: 30.0.1
