@@ -4,15 +4,16 @@
 //   core            -> stdlib + node-pty + sdk        (no electron, no react, no OS APIs)
 //   sdk             -> stdlib only                    (types + pure helpers; imports nobody)
 //   design-tokens   -> nothing                        (data + generators)
+//   ui              -> react + sdk + design-tokens    (the primitive set; a page and nothing else)
 //   platform/*      -> stdlib + OS APIs + electron    (the ONLY place OS APIs appear)
 //   app/main|preload-> electron + core + sdk + platform
-//   app/renderer    -> react + xterm + tokens + sdk + @shepherd/core/layout
+//   app/renderer    -> react + xterm + tokens + ui + sdk + @shepherd/core/layout
 //                      + @shepherd/ext-*/ui           (in-proc extension views, ADR 0033)
 //   app/ext-host    -> sdk + app/shared + built-in extensions
 //                                                     (a utility process: no electron, no core)
 //   extensions/*/src-> sdk only, + TYPE-only imports of another extension
 //                                                     (values go through extensions.get)
-//   extensions/*/ui -> the above + react               (the extension's own half of the page)
+//   extensions/*/ui -> the above + react + ui          (the extension's own half of the page)
 //
 // Enforced with the core `no-restricted-imports` rule so the lint step needs no
 // type information and stays fast enough to run on every save. One rule — the
@@ -59,9 +60,25 @@ const WORKSPACE = {
   sdk: ['@shepherd/sdk'],
   core: ['@shepherd/core'],
   tokens: ['@shepherd/design-tokens'],
+  ui: ['@shepherd/ui', '@shepherd/ui/*'],
   platform: ['@shepherd/platform-*'],
   app: ['@shepherd/app'],
 };
+
+// Why `@shepherd/ui` is denied nearly everywhere despite being the one package
+// that is PUBLIC by design.
+//
+// It is a set of React components and a stylesheet. There are exactly two places
+// in this repo that can mount one — the renderer, and an extension's `ui/` half,
+// which runs in the renderer's process (§7b, ADR 0033). Everywhere else the
+// import would either evaluate a component module in a process with no document
+// (main, the extension host, an extension's service half) or pull react into a
+// package whose whole claim is that it is headless (core, sdk, platform,
+// design-tokens). Both failures are silent at typecheck — `packages/app` compiles
+// with DOM in `lib`, and so does an extension — which is why the boundary is here
+// rather than in a tsconfig.
+const NO_PAGE =
+  '@shepherd/ui draws: it is importable only from packages/app/src/renderer and extensions/*/ui, which are the two things that run in the page.';
 
 function deny(groups, message) {
   return { group: groups, message };
@@ -115,7 +132,7 @@ export const boundaries = [
       deny(XTERM, 'xterm is a renderer concern; core owns bytes, not views.'),
       deny(OS_APIS, 'OS APIs live in packages/platform/darwin only (node-pty is the one exception).'),
       deny(
-        [...WORKSPACE.app, ...WORKSPACE.platform, ...WORKSPACE.tokens],
+        [...WORKSPACE.app, ...WORKSPACE.platform, ...WORKSPACE.tokens, ...WORKSPACE.ui],
         'core may only import @shepherd/sdk.',
       ),
     ),
@@ -139,7 +156,7 @@ export const boundaries = [
       deny(REACT, 'core is headless: no react, not even in a test.'),
       deny(XTERM, 'xterm is a renderer concern.'),
       deny(
-        [...WORKSPACE.app, ...WORKSPACE.platform, ...WORKSPACE.tokens],
+        [...WORKSPACE.app, ...WORKSPACE.platform, ...WORKSPACE.tokens, ...WORKSPACE.ui],
         'core may only import @shepherd/sdk.',
       ),
     ),
@@ -153,7 +170,7 @@ export const boundaries = [
       deny(NODE_PTY, 'sdk describes sessions; core implements them.'),
       deny(OS_APIS, 'sdk is pure: no OS APIs.'),
       deny(
-        [...WORKSPACE.core, ...WORKSPACE.app, ...WORKSPACE.platform, ...WORKSPACE.tokens],
+        [...WORKSPACE.core, ...WORKSPACE.app, ...WORKSPACE.platform, ...WORKSPACE.tokens, ...WORKSPACE.ui],
         'sdk sits below everything and imports no other workspace package.',
       ),
     ),
@@ -166,8 +183,42 @@ export const boundaries = [
       deny(REACT, 'tokens are data: no react (the consumer applies them).'),
       deny(OS_APIS, 'tokens are data: no OS APIs.'),
       deny(
-        [...WORKSPACE.core, ...WORKSPACE.app, ...WORKSPACE.platform, ...WORKSPACE.sdk],
-        'design-tokens imports nobody.',
+        [...WORKSPACE.core, ...WORKSPACE.app, ...WORKSPACE.platform, ...WORKSPACE.sdk, ...WORKSPACE.ui],
+        'design-tokens imports nobody — and it sits BELOW @shepherd/ui, which reads it.',
+      ),
+    ),
+  },
+  {
+    // The primitive set. It is the one package written to be imported BY code we
+    // do not control, which makes its own import list the more interesting half
+    // of the boundary: whatever `@shepherd/ui` can reach, every contributed view
+    // reaches through it.
+    //
+    //   - **react + design-tokens**: the two it is made of. Tokens are where the
+    //     roles live, and the roles are what a primitive styles from — a hex or a
+    //     px literal in here is the drift this package exists to end.
+    //   - **sdk**: permitted, unused today. A primitive that eventually takes a
+    //     host-shaped value (a session id, an agent state) should name it with the
+    //     sdk's type rather than restate it, which is exactly the duplication the
+    //     extension type-import carve-out was added to prevent.
+    //   - **no electron**: a component that reached `ipcRenderer` would hand every
+    //     extension mounting it the main process. The props an extension is given
+    //     (`ExtensionViewProps`) are supposed to be the whole of its power.
+    //   - **no core, no platform, no app**: a primitive draws. It does not know
+    //     what a session is, and a `<Row>` that fetched its own data would make
+    //     every consumer inherit the kernel.
+    //   - **no OS APIs, no node-pty, no xterm**: there is no machine here, this
+    //     runs in the page — and a terminal is a core view, not a primitive.
+    name: 'boundary/ui',
+    files: ['packages/ui/**/*.ts', 'packages/ui/**/*.tsx'],
+    rules: restrict(
+      deny(ELECTRON, 'a primitive draws; it never holds ipcRenderer, or every view that mounts it does too.'),
+      deny(XTERM, 'a terminal is a core view; @shepherd/ui is the chrome around it.'),
+      deny(NODE_PTY, 'there is no pty in the page.'),
+      deny(OS_APIS, 'there is no machine here — this runs in the page.'),
+      deny(
+        [...WORKSPACE.core, ...WORKSPACE.app, ...WORKSPACE.platform, '@shepherd/ext-*'],
+        '@shepherd/ui may import react, @shepherd/design-tokens and @shepherd/sdk. It is below the app and below every extension: a primitive that imported one would invert the dependency it exists to serve.',
       ),
     ),
   },
@@ -177,7 +228,7 @@ export const boundaries = [
     rules: restrict(
       deny(REACT, 'platform is headless: no react.'),
       deny(NODE_PTY, 'sessions belong to core; platform is presence/notifications/keychain.'),
-      deny([...WORKSPACE.core, ...WORKSPACE.app], 'platform may only import @shepherd/sdk.'),
+      deny([...WORKSPACE.core, ...WORKSPACE.app, ...WORKSPACE.ui], 'platform may only import @shepherd/sdk.'),
     ),
   },
   {
@@ -187,6 +238,7 @@ export const boundaries = [
       ...restrict(
         deny(REACT, 'react belongs to packages/app/src/renderer.'),
         deny(OS_APIS, 'OS APIs live in packages/platform/darwin only.'),
+        deny(WORKSPACE.ui, NO_PAGE),
       ),
       ...noDom,
     },
@@ -199,9 +251,15 @@ export const boundaries = [
     rules: restrict(
       deny(REACT, 'react belongs to packages/app/src/renderer.'),
       deny(OS_APIS, 'OS APIs live in packages/platform/darwin only.'),
+      // The preload sees the page but does not DRAW in it: it runs before the
+      // document exists and its whole job is to expose a bridge object.
+      deny(WORKSPACE.ui, NO_PAGE),
     ),
   },
   {
+    // One of the two places `@shepherd/ui` is importable, by omission from every
+    // list below — this and `boundary/extension-ui` are the only rules in the file
+    // that do not deny it, and that is the permission.
     name: 'boundary/app-renderer',
     files: ['packages/app/src/renderer/**/*.ts', 'packages/app/src/renderer/**/*.tsx'],
     rules: restrict(
@@ -286,7 +344,7 @@ export const boundaries = [
         deny(NODE_PTY, 'an extension asks the session API; it never spawns a pty.'),
         deny(OS_APIS, 'OS APIs live in packages/platform/darwin only.'),
         deny(
-          [...WORKSPACE.core, ...WORKSPACE.platform, ...WORKSPACE.tokens],
+          [...WORKSPACE.core, ...WORKSPACE.platform, ...WORKSPACE.tokens, ...WORKSPACE.ui],
           'the kernel lives in main and is reached over the message port; a core import here would be a second, empty kernel.',
         ),
       ),
@@ -301,6 +359,7 @@ export const boundaries = [
       deny(REACT, 'shared code is loaded in both processes: no react.'),
       deny(NODE_PTY, 'shared code is loaded in both processes: no node-pty.'),
       deny(OS_APIS, 'OS APIs live in packages/platform/darwin only.'),
+      deny(WORKSPACE.ui, NO_PAGE),
     ),
   },
   {
@@ -323,8 +382,8 @@ export const boundaries = [
         // Its home is `<extension>/ui`, which the renderer imports.
         deny(REACT, "extension UI lives in <extension>/ui and is mounted by the renderer; the service half has no DOM."),
         deny(
-          [...WORKSPACE.core, ...WORKSPACE.app, ...WORKSPACE.platform],
-          'an extension may only import @shepherd/sdk.',
+          [...WORKSPACE.core, ...WORKSPACE.app, ...WORKSPACE.platform, ...WORKSPACE.ui],
+          'an extension may only import @shepherd/sdk. ' + NO_PAGE,
         ),
       ),
       // One extension may TYPE-import another and may not VALUE-import it.
@@ -383,7 +442,7 @@ export const boundaries = [
         deny(OS_APIS, 'there is no machine here — this runs in the page.'),
         deny(
           [...WORKSPACE.core, ...WORKSPACE.app, ...WORKSPACE.platform],
-          'a contributed view may import @shepherd/sdk, react, and its own package.',
+          'a contributed view may import @shepherd/sdk, @shepherd/ui, react, and its own package.',
         ),
       ),
       '@typescript-eslint/no-restricted-imports': [
@@ -427,7 +486,7 @@ export const boundaries = [
         'an extension asks ProcessAPI; a test that spawned directly would prove nothing about the seam.',
       ),
       deny(
-        [...WORKSPACE.core, ...WORKSPACE.app, ...WORKSPACE.platform],
+        [...WORKSPACE.core, ...WORKSPACE.app, ...WORKSPACE.platform, ...WORKSPACE.ui],
         'an extension may only import @shepherd/sdk.',
       ),
     ),

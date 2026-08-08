@@ -1,6 +1,34 @@
 export type { ColorToken, ThemeMode, TokenSpec } from './palette.ts';
 export { color, colorTokens, palette } from './palette.ts';
-export { fonts, metrics, motion } from './metrics.ts';
+export {
+  defaultScaleInputs,
+  densities,
+  deriveMetrics,
+  fonts,
+  lines,
+  metrics,
+  motion,
+  ratios,
+  type ControlScale,
+  type Density,
+  type Metrics,
+  type RadiusScale,
+  type ScaleInputs,
+  type SpaceScale,
+  type TypeScale,
+} from './metrics.ts';
+export {
+  roleNames,
+  roleToken,
+  roleValue,
+  roleVarName,
+  roles,
+  type AliasRole,
+  type RoleName,
+  type RoleSpec,
+  type TokenRole,
+  type WashRole,
+} from './roles.ts';
 export { cssVarName, cssVariableBlock, cssVariables } from './css.ts';
 export { xtermTheme, type XtermTheme } from './xterm.ts';
 export {

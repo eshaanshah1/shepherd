@@ -1,0 +1,39 @@
+{
+  "name": "@shepherd/ui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The Shepherd primitive set. PUBLIC: an extension imports this so its view looks native and re-themes for free.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "//exports": "Two entries and no more. `.` is the components; `./styles.css` is the component tier of custom properties, which a page must load once (it is not injected — a stylesheet that mounts itself is a stylesheet whose order nobody controls).",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./styles.css": "./src/tokens.css"
+  },
+  "scripts": {
+    "typecheck": "tsc -b",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@shepherd/design-tokens": "workspace:*",
+    "@tabler/icons-react": "catalog:",
+    "class-variance-authority": "catalog:"
+  },
+  "//peerDependencies": "React is the HOST's, not ours. Two copies of react in one page is two reconcilers, and the hook errors it produces name a file that is not the problem.",
+  "peerDependencies": {
+    "react": "catalog:"
+  },
+  "devDependencies": {
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "jsdom": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
