@@ -21,8 +21,8 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "start": "env -u NODE_OPTIONS electron-vite preview",
-    "package": "env -u NODE_OPTIONS electron-vite build && electron-builder --config electron-builder.yml",
-    "package:dev": "env -u NODE_OPTIONS electron-vite build --mode development && electron-builder --config electron-builder.yml --config.productName='Shep Night' --config.appId=com.shepherd.shep.night --config.mac.icon=build/icon-dev.icns"
+    "package": "env -u NODE_OPTIONS electron-vite build && electron-builder --config electron-builder.yml; env -u NODE_OPTIONS pnpm -w install --silent >/dev/null 2>&1",
+    "package:dev": "env -u NODE_OPTIONS electron-vite build --mode development && electron-builder --config electron-builder.yml --config.productName='Shep Night' --config.appId=com.shepherd.shep.night --config.mac.icon=build/icon-dev.icns; env -u NODE_OPTIONS pnpm -w install --silent >/dev/null 2>&1"
   },
   "dependencies": {
     "@shepherd/core": "workspace:*",
