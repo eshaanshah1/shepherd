@@ -24,15 +24,28 @@ export interface ViewRegistryOptions {
   publish(type: string): void;
 }
 
+/** What a contributed view is drawn as. `panel` still refuses (ADR 0031). */
+export type ViewKind = 'tree' | 'component';
+
 export interface Contribution {
   readonly extension: string;
   readonly type: string;
+  readonly kind: ViewKind;
+  /**
+   * The UI module the renderer resolves, for a `component` view (ADR 0033).
+   *
+   * A name, never code: this registry runs in main and has no DOM, and the
+   * child that declared it has no react. The renderer is the only process that
+   * can turn this into pixels, and it does so from its own static table — so an
+   * extension names a module, it does not supply one.
+   */
+  readonly component?: string;
 }
 
 export class ViewRegistry {
   readonly #options: ViewRegistryOptions;
-  /** view type → the extension that contributed it. */
-  readonly #owners = new Map<string, string>();
+  /** view type → what was contributed, including which extension owns it. */
+  readonly #owners = new Map<string, Contribution>();
 
   constructor(options: ViewRegistryOptions) {
     this.#options = options;
@@ -47,8 +60,13 @@ export class ViewRegistry {
    * never learns about and the dock stays empty forever. Measured: the tree
    * registered, main logged it, and the screen showed nothing.
    */
-  register(extension: string, type: string): void {
-    this.#owners.set(type, extension);
+  register(extension: string, type: string, kind: ViewKind = 'tree', component?: string): void {
+    this.#owners.set(type, {
+      extension,
+      type,
+      kind,
+      ...(component === undefined ? {} : { component }),
+    });
     this.#options.publish(type);
   }
 
@@ -66,8 +84,8 @@ export class ViewRegistry {
    * nothing can refresh and whose clicks reach nobody.
    */
   forget(extension: string): void {
-    for (const [type, owner] of [...this.#owners]) {
-      if (owner === extension) {
+    for (const [type, contribution] of [...this.#owners]) {
+      if (contribution.extension === extension) {
         this.#owners.delete(type);
         this.#options.publish(type);
       }
@@ -75,7 +93,7 @@ export class ViewRegistry {
   }
 
   list(): readonly Contribution[] {
-    return [...this.#owners].map(([type, extension]) => ({ extension, type }));
+    return [...this.#owners.values()];
   }
 
   changed(type: string): void {
@@ -83,9 +101,12 @@ export class ViewRegistry {
   }
 
   async children(type: string, parent: string | undefined): Promise<readonly TreeItem[]> {
-    const owner = this.#owners.get(type);
-    if (owner === undefined) return [];
-    return this.#options.read(owner, type, parent);
+    const contribution = this.#owners.get(type);
+    // A component view has no provider to ask — its rows are its own business,
+    // inside the page. Answering `[]` rather than asking anyway keeps the child
+    // from being woken for a question it cannot answer.
+    if (contribution === undefined || contribution.kind !== 'tree') return [];
+    return this.#options.read(contribution.extension, type, parent);
   }
 
   /**
@@ -106,9 +127,26 @@ export class ViewRegistry {
    * run it anyway is the failure this method exists to prevent.
    */
   async activate(type: string, command: { id: string; args?: unknown }): Promise<void> {
-    const owner = this.#owners.get(type);
-    if (owner === undefined) return;
-    const caller: Caller = { kind: 'extension', id: extensionId(owner) };
-    await this.#options.invoke(command.id, command.args, caller);
+    await this.invoke(type, command.id, command.args);
+  }
+
+  /**
+   * The same gesture, for a caller that needs the answer.
+   *
+   * A tree row's click is a gesture and discards its result; a contributed
+   * **component** (ADR 0033) is a UI that has to show what happened — a created
+   * task, a refused one, a list of suggestions. So this is `activate` with the
+   * value kept, and deliberately the same method underneath: the attribution
+   * rule above is the thing that must not have two implementations, because the
+   * second one is where it would quietly become `{kind:'user'}`.
+   *
+   * A view nobody owns answers `undefined` and runs nothing, for the reason
+   * `activate` gives.
+   */
+  async invoke(type: string, command: string, args?: unknown): Promise<unknown> {
+    const contribution = this.#owners.get(type);
+    if (contribution === undefined) return undefined;
+    const caller: Caller = { kind: 'extension', id: extensionId(contribution.extension) };
+    return this.#options.invoke(command, args, caller);
   }
 }

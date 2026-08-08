@@ -32,20 +32,25 @@ fight it.
    — **always current**: what is built, what is next, and the traps of the moment.
    M0–M3 are done (kernel, agents, tasks: real worktrees, a synthesized task
    root, archive/restore, the `shepherd` CLI, and a sidebar an extension draws
-   into). **M3b's composer is next, and it is blocked on a contribution kind that
-   does not exist yet — read ADR 0031 before starting it.**
+   into), and so is **M3b's composer** — a task is creatable from inside the app
+   through a contributed React component (ADR 0033). **Scratch (D9) and then M4,
+   the dogfood gate, are next.**
 2. [`docs/superpowers/specs/2026-08-06-ade-minimal-core-sketch.md`](docs/superpowers/specs/2026-08-06-ade-minimal-core-sketch.md)
    — thesis and **every decision** (§7, §7b, §7c the headless-agent seam, §7d presence).
 3. [`docs/superpowers/specs/2026-08-06-ade-v2-core-design.md`](docs/superpowers/specs/2026-08-06-ade-v2-core-design.md)
    — the API and the M0–M4 milestones.
 4. [`docs/superpowers/specs/2026-08-06-architecture-review.md`](docs/superpowers/specs/2026-08-06-architecture-review.md)
    — what v1 got wrong; **its Rebuild checklist is normative for v2**.
-5. ADRs [0021](.claude/adr/0021-v2-store-is-node-sqlite.md)–[0032](.claude/adr/0032-v2-tasks-uses-the-same-kv-a-third-party-gets.md).
+5. ADRs [0021](.claude/adr/0021-v2-store-is-node-sqlite.md)–[0033](.claude/adr/0033-v2-extension-ui-is-in-proc-react-behind-a-name.md).
    **0029–0032 are M3's**, and each records something measured rather than
    reasoned: what Claude Code actually reads at a generated task root, why the
    transport deadline is the caller's, how a contributed view declares itself
    (and why a row click is the extension's, not the user's), and why `tasks`
-   uses the same KV a third party gets.
+   uses the same KV a third party gets. **0033 is M3b's**: extension UI is
+   in-proc React because §7b is a taxonomy rather than a menu, and what crosses
+   the port is a **name** the renderer resolves — so an extension's two halves
+   are two directories (`src/` service, `ui/` page) with a lint rule between
+   them, and the renderer may import `@shepherd/ext-*/ui` and nothing else.
 
 **Two rules that will bite you immediately in `v2/`:**
 - **`env -u NODE_OPTIONS` every command.** An ambient `NODE_OPTIONS` makes

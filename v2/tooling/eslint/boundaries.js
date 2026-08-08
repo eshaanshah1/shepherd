@@ -7,11 +7,12 @@
 //   platform/*      -> stdlib + OS APIs + electron    (the ONLY place OS APIs appear)
 //   app/main|preload-> electron + core + sdk + platform
 //   app/renderer    -> react + xterm + tokens + sdk + @shepherd/core/layout
-//                                                     (the ONLY place react appears)
+//                      + @shepherd/ext-*/ui           (in-proc extension views, ADR 0033)
 //   app/ext-host    -> sdk + app/shared + built-in extensions
 //                                                     (a utility process: no electron, no core)
-//   extensions/*    -> sdk only, + TYPE-only imports of another extension
+//   extensions/*/src-> sdk only, + TYPE-only imports of another extension
 //                                                     (values go through extensions.get)
+//   extensions/*/ui -> the above + react               (the extension's own half of the page)
 //
 // Enforced with the core `no-restricted-imports` rule so the lint step needs no
 // type information and stays fast enough to run on every save. One rule — the
@@ -48,6 +49,11 @@ const OS_APIS = [
   'node:v8',
   'node:vm',
 ];
+
+// Why the renderer may import an extension's `ui` subpath and nothing else of it.
+const SERVICE_HALF =
+  "the renderer may import only an extension's `/ui` subpath (§7b's in-proc React). Everything else is its " +
+  'service half and runs in the extension host — importing it here evaluates it in the page.';
 
 const WORKSPACE = {
   sdk: ['@shepherd/sdk'],
@@ -218,6 +224,32 @@ export const boundaries = [
         ['@shepherd/core/session*'],
         'the session registry lives in main; the renderer attaches over IPC.',
       ),
+      // §7b's in-proc React seam, kept to ONE subpath (ADR 0033).
+      //
+      // `@shepherd/ext-*/ui` is an extension's own half of the page and is the
+      // reason `renderer/extension-ui.ts` exists. Everything else in an
+      // extension package is its SERVICE half — it runs in a utility process,
+      // and importing it here would run its module graph inside the page,
+      // undoing §7b's process split in one line and (for `.`) evaluating an
+      // `activate` module in the renderer.
+      //
+      // It takes TWO entries, and the shape is measured rather than reasoned.
+      // A single `['@shepherd/ext-*', '!@shepherd/ext-*/ui']` denies the `/ui`
+      // import as well: these are gitignore-style patterns, and gitignore
+      // cannot re-include a path under an excluded *directory* — the same
+      // measurement that put `denyExact` in this file for `@shepherd/core`.
+      // Matching one segment down (`/*`) makes `/ui` a file-level match, which
+      // a negation does rescue.
+      //
+      // So the roots are named exactly, one line per extension. That is a
+      // maintenance cost paid deliberately: this file is the architecture
+      // diagram, and a new extension whose service half becomes importable from
+      // the page should require an edit here to say so.
+      denyExact('@shepherd/ext-tasks', SERVICE_HALF),
+      denyExact('@shepherd/ext-diagnostics', SERVICE_HALF),
+      denyExact('@shepherd/ext-agents-core', SERVICE_HALF),
+      denyExact('@shepherd/ext-claude-code', SERVICE_HALF),
+      deny(['@shepherd/ext-*/*', '!@shepherd/ext-*/ui'], SERVICE_HALF),
     ),
   },
   {
@@ -272,8 +304,10 @@ export const boundaries = [
     ),
   },
   {
+    // An extension's SERVICE half. `ui/` is the other half and has its own rule
+    // below — the split is a process boundary (§7b), so it is two rules.
     name: 'boundary/extensions',
-    files: ['extensions/**/*.ts', 'extensions/**/*.tsx'],
+    files: ['extensions/*/src/**/*.ts'],
     // The TS variant of the same rule, for `allowTypeImports` below. It needs no
     // type information either, so the "fast enough to run on every save" property
     // this file is built on is intact.
@@ -283,6 +317,11 @@ export const boundaries = [
         deny(ELECTRON, 'an extension sees the host only through @shepherd/sdk.'),
         deny(NODE_PTY, 'an extension asks the session API; it never spawns a pty.'),
         deny(OS_APIS, 'an extension asks the platform through @shepherd/sdk.'),
+        // The service half runs in a utility process with no DOM (§7b). React
+        // here would typecheck — `ui/` compiles under the same tsconfig — and
+        // then be a component nothing can mount, in a process that cannot draw.
+        // Its home is `<extension>/ui`, which the renderer imports.
+        deny(REACT, "extension UI lives in <extension>/ui and is mounted by the renderer; the service half has no DOM."),
         deny(
           [...WORKSPACE.core, ...WORKSPACE.app, ...WORKSPACE.platform],
           'an extension may only import @shepherd/sdk.',
@@ -312,6 +351,51 @@ export const boundaries = [
               message:
                 'one extension may only TYPE-import another (`import type`). The runtime path is ' +
                 'manifest `dependencies` + `extensions.get`, which the host gates; a value import routes around it.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // An extension's UI half — §7b's in-proc React, ADR 0033.
+    //
+    // It is the only place outside `app/src/renderer` where react is allowed,
+    // and the allowance is the whole point: a granted extension renders a real
+    // view in the real page rather than being handed a widget vocabulary
+    // through a port. What it may NOT reach is everything the service half may
+    // not reach either — it is in the renderer's process, so an electron import
+    // here would be an extension holding `ipcRenderer`, and the props it is
+    // handed (`ExtensionViewProps`) would stop being the whole of its power.
+    //
+    // It may import its own package's `src/` (the pure model is where a
+    // derivation like `repoName` belongs, so the picker and the provisioner
+    // cannot disagree). It may not import ANOTHER extension's, by the same
+    // declared-not-discovered rule the service half keeps.
+    name: 'boundary/extension-ui',
+    files: ['extensions/*/ui/**/*.tsx', 'extensions/*/ui/**/*.ts'],
+    plugins: { '@typescript-eslint': tseslint.plugin },
+    rules: {
+      ...restrict(
+        deny(ELECTRON, 'a contributed view sees the host through its props (ExtensionViewProps), never electron.'),
+        deny(XTERM, 'a terminal is a core view; an extension contributes around it.'),
+        deny(NODE_PTY, 'an extension asks the session API; it never spawns a pty.'),
+        deny(OS_APIS, 'there is no machine here — this runs in the page.'),
+        deny(
+          [...WORKSPACE.core, ...WORKSPACE.app, ...WORKSPACE.platform],
+          'a contributed view may import @shepherd/sdk, react, and its own package.',
+        ),
+      ),
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['@shepherd/ext-*'],
+              allowTypeImports: true,
+              message:
+                'one extension may only TYPE-import another (`import type`), in its UI half too. The runtime path is ' +
+                'manifest `dependencies` + `extensions.get`, which is the service half\'s to walk.',
             },
           ],
         },

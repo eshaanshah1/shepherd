@@ -37,6 +37,13 @@ export const INVOKE = {
   viewsList: 'views:list',
   viewsChildren: 'views:children',
   viewsActivate: 'views:activate',
+  /**
+   * `activate` with the answer kept — what a contributed **component** needs
+   * (ADR 0033). It is the same attribution in main, deliberately: a second
+   * channel that ran a command a second way is where `{kind:'user'}` would
+   * quietly come back.
+   */
+  viewsInvoke: 'views:invoke',
 } as const;
 
 /** Main → renderer, fire-and-forget (`webContents.send`). */

@@ -1,11 +1,20 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "rootDir": "src",
+    // `.` rather than `src`, because an extension is TWO halves: `src/` is the
+    // service, `ui/` is the in-proc React view the renderer mounts (ADR 0033).
+    // Both must be typechecked here — M3's lesson was a package missing from the
+    // references where a planted type error produced no output at all.
+    "rootDir": ".",
     "outDir": "out-tsc",
     "tsBuildInfoFile": "out-tsc/tsconfig.tsbuildinfo",
-    "types": ["node"]
+    "types": ["node"],
+    // DOM + jsx are for `ui/` alone. That `src/` also compiles with them is why
+    // "no react in the service half" is a LINT rule, not a type one — the same
+    // trade `packages/app` makes for `noDom`.
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx"
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "ui/**/*.tsx"],
   "references": [{ "path": "../../packages/sdk" }]
 }

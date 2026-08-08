@@ -223,7 +223,19 @@ const apiCallSchema = s.union(
    * decides when to read, which is also what keeps a chatty extension from
    * flooding the renderer.
    */
-  s.object({ kind: s.literal('view.register'), type: s.string(), viewKind: s.enumOf(['tree'] as const) }),
+  /**
+   * `component` (ADR 0033) crosses the same way, and for the same reason: a
+   * React component is functions. What travels is the NAME of a UI module the
+   * renderer resolves — so the declaration is still the only thing on the wire,
+   * and the child still never sends a rendered anything.
+   */
+  s.object({
+    kind: s.literal('view.register'),
+    type: s.string(),
+    viewKind: s.enumOf(['tree', 'component'] as const),
+    /** Present iff `viewKind` is `component`. Meaningless for a tree. */
+    component: s.optional(s.string()),
+  }),
   s.object({ kind: s.literal('view.unregister'), type: s.string() }),
   s.object({ kind: s.literal('view.changed'), type: s.string() }),
 

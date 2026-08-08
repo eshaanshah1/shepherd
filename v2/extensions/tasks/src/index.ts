@@ -1,5 +1,5 @@
 import { s, toDisposable, type ExtensionContext, type Shepherd } from '@shepherd/sdk';
-import { REPO_SUGGESTIONS_POINT, TASK_COMMANDS } from './manifest.ts';
+import { REPO_SUGGESTIONS_POINT, TASK_COMMANDS, TASK_VIEWS } from './manifest.ts';
 import { TaskStore, type RepoArchive, type RepoRef, type TaskRecord, type TaskSession } from './store.ts';
 import { slugify, uniqueSlug } from './model/slug.ts';
 import { displayState } from './model/lifecycle.ts';
@@ -66,6 +66,35 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       },
       { priority: 0 },
     ),
+  );
+
+  /**
+   * The composer's question, answered by the point and nothing else.
+   *
+   * Every provider is asked and the answers are concatenated in priority order,
+   * deduped by path — a second provider must be able to ADD a repo the first
+   * did not think of, which is the whole reason this is a point. A provider that
+   * throws is dropped with a line in the log rather than taking the picker down:
+   * a suggestion is an accelerator, and losing one must not stop a task being
+   * created by hand.
+   */
+  ctx.subscriptions.push(
+    commands.register(TASK_COMMANDS.suggestRepos, {
+      title: 'Tasks: Suggest Repos',
+      schema: s.object({ title: s.optional(s.string()), brief: s.optional(s.string()) }),
+      handler: (args) => {
+        const input = { title: args.title ?? '', brief: args.brief ?? '' };
+        const seen = new Map<string, RepoRef>();
+        for (const provider of suggestions.all()) {
+          try {
+            for (const repo of provider.suggest(input)) if (!seen.has(repo.path)) seen.set(repo.path, repo);
+          } catch (error: unknown) {
+            ctx.log.warn(`a repo-suggestion provider threw and was skipped — ${String(error)}`);
+          }
+        }
+        return [...seen.values()];
+      },
+    }),
   );
 
   const nextId = (): string => `task-${ctx.clock.now()}-${store.list().length}`;
@@ -319,8 +348,20 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
   const changed = (): void => {
     for (const fn of treeListeners) fn();
   };
+  /**
+   * The composer — M3b's point, and a view like any other (ADR 0033).
+   *
+   * What crosses from here is the NAME of a UI module. The component itself is
+   * in `ui/`, which this file must never import: react in the utility process
+   * is react in a process with no DOM, and the reason the two halves are
+   * separate directories with a lint rule between them.
+   */
   ctx.subscriptions.push(
-    views.registerViewType('tasks.tree', {
+    views.registerViewType(TASK_VIEWS.composer, { kind: 'component', component: TASK_VIEWS.composer }),
+  );
+
+  ctx.subscriptions.push(
+    views.registerViewType(TASK_VIEWS.tree, {
       kind: 'tree',
       data: {
         children: (parent) => {

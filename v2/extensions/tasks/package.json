@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "shepherd.tasks \u2014 a task is intent plus 1..n repos plus the sessions working them; worktrees, never copies.",
-  "//exports": "The agents-core split: main imports ./manifest to register, the utility process imports the root. ./model is a THIRD subpath for the pure layer \u2014 the task vocabulary, the root synthesis and the git decisions \u2014 so a consumer reaching it does not pull in `activate`.",
+  "description": "shepherd.tasks — a task is intent plus 1..n repos plus the sessions working them; worktrees, never copies.",
+  "//exports": "The agents-core split: main imports ./manifest to register, the utility process imports the root. ./model is a THIRD subpath for the pure layer — the task vocabulary, the root synthesis and the git decisions — so a consumer reaching it does not pull in `activate`.",
   "exports": {
     ".": {
       "types": "./src/index.ts",
@@ -17,6 +17,10 @@
     "./model": {
       "types": "./src/model/index.ts",
       "default": "./src/model/index.ts"
+    },
+    "./ui": {
+      "types": "./ui/composer.tsx",
+      "default": "./ui/composer.tsx"
     }
   },
   "scripts": {
@@ -28,6 +32,8 @@
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "react": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   },
@@ -66,9 +72,14 @@
         {
           "id": "tasks.restore",
           "title": "Tasks: Restore"
+        },
+        {
+          "id": "tasks.suggestRepos",
+          "title": "Tasks: Suggest Repos"
         }
       ]
     }
   },
-  "//shepherd": "The manifest, as an extension declares it. `src/manifest.ts` is the typed copy the host loads, and `manifest.test.ts` asserts the two are identical."
+  "//shepherd": "The manifest, as an extension declares it. `src/manifest.ts` is the typed copy the host loads, and `manifest.test.ts` asserts the two are identical.",
+  "//ui": "The UI half, imported ONLY by the renderer (boundaries.js). It is a separate subpath because it is a separate PROCESS: `.` is the service half and runs in a utility process with no DOM, and react must not follow it there."
 }

@@ -52,6 +52,7 @@ export type {
 export { REGIONS } from './api-sessions.ts';
 export type {
   FocusDirection,
+  ExtensionViewProps,
   LayoutAPI,
   LayoutLeaf,
   LayoutNode,
@@ -63,6 +64,7 @@ export type {
   TreeDataProvider,
   TreeItem,
   ViewAPI,
+  ViewInvokeError,
   ViewProvider,
   ViewRef,
 } from './api-layout.ts';

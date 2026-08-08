@@ -317,3 +317,31 @@ body.sh-dragging {
 .sh-dock-row:disabled { cursor: default; }
 .sh-dock-row:hover:not(:disabled) { background: var(--sh-hover, #1b1b1b); }
 .sh-dock-desc { color: var(--sh-dim, #777); font-size: 11px; }
+
+/*
+ * A contributed COMPONENT view (ADR 0033) — an extension's own React inside the
+ * dock. The shell styles the SLOT and the primitives; it does not style the
+ * extension, which owns its own markup. Deliberately plain: a form the core
+ * cannot see the fields of cannot be laid out by the core either, and the
+ * alternative — a widget vocabulary the shell knows — is the special case §2b
+ * says would mean the view model is wrong.
+ */
+.sh-ext-card {
+  display: flex; flex-direction: column; gap: 6px; padding: 8px 12px;
+  border-bottom: 1px solid var(--sh-line, #222);
+}
+.sh-ext-card input, .sh-ext-card textarea {
+  background: var(--sh-hover, #1b1b1b); color: inherit; font: inherit; font-size: 12px;
+  border: 1px solid var(--sh-line, #222); border-radius: 4px; padding: 4px 6px; width: 100%;
+}
+.sh-ext-card textarea { min-height: 48px; resize: vertical; }
+.sh-ext-card button {
+  background: var(--sh-hover, #1b1b1b); color: inherit; font: inherit; font-size: 11px;
+  border: 1px solid var(--sh-line, #222); border-radius: 4px; padding: 3px 8px; cursor: pointer;
+}
+.sh-ext-card button:disabled { opacity: 0.5; cursor: default; }
+.sh-ext-answer { color: var(--sh-dim, #777); font-size: 11px; word-break: break-word; }
+.sh-composer-repos { display: flex; gap: 4px; align-items: center; }
+.sh-composer-suggestions, .sh-composer-picked { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px; }
+.sh-composer-picked li { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--sh-dim, #777); }
+.sh-dock-missing { color: var(--sh-dim, #777); font-size: 11px; padding: 8px 12px; margin: 0; }

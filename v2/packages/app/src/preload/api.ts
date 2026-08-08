@@ -78,6 +78,8 @@ export function createBridge(ipc: IpcLike): ShepherdBridge {
       children: (type: string, parent?: string) => invoke(INVOKE.viewsChildren, type, parent),
       activate: (type: string, command: { id: string; args?: unknown }) =>
         invoke(INVOKE.viewsActivate, type, command),
+      invoke: (type: string, command: string, args?: unknown) =>
+        invoke(INVOKE.viewsInvoke, type, command, args),
       onChanged: (listener: (type: string) => void) => subscribe<string>(EMIT.viewsChanged, listener),
     },
     window: {
