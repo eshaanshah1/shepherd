@@ -2,7 +2,6 @@ import { useEffect, useRef, type CSSProperties, type ReactNode } from 'react';
 import { displayTitle, type Pane } from '@shepherd/core/layout';
 import { paneTitleSurface } from '@shepherd/design-tokens';
 import type { PaneTerminals } from './pane-sessions.ts';
-import { AgentBadge } from './agent-badge.tsx';
 import { terminalBackground } from './theme.ts';
 
 /**
@@ -114,16 +113,23 @@ export function TerminalPane({
     <div
       className="sh-pane"
       data-pane-id={pane.id}
+      /*
+       * The agent's state as DATA and nothing else.
+       *
+       * There was a chip here reading "working" / "blocked" / "idle". It is
+       * gone: the sidebar's dot already carries the state, and a second copy on
+       * the surface you are looking at is the app telling you what you can see.
+       * The attribute stays because the state still has to reach something —
+       * the smoke reads it to prove the hook→bus→renderer chain is live, and a
+       * future indicator will read it too.
+       */
+      data-agent-state={agentState ?? ''}
       data-pane-title-surface={surface}
       style={style}
     >
       <div className="sh-pane-head" data-testid="pane-head">
         <span className="sh-pane-name">{name}</span>
         {where === null ? null : <span className="sh-pane-branch">· {where}</span>}
-        <AgentBadge
-          {...(agentState === undefined ? {} : { state: agentState })}
-          {...(agentReason === undefined ? {} : { reason: agentReason })}
-        />
       </div>
       <div className="sh-term" data-testid="terminal-host" data-pane-id={pane.id} ref={hostRef} />
     </div>
