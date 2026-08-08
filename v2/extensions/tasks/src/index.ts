@@ -9,6 +9,7 @@ import {
 import { REPO_SUGGESTIONS_POINT, TASK_COMMANDS, TASK_VIEWS } from './manifest.ts';
 import { TaskStore, type RepoArchive, type RepoRef, type TaskRecord, type TaskSession } from './store.ts';
 import { slugify, uniqueSlug } from './model/slug.ts';
+import { expandHome } from './model/repo-path.ts';
 import { taskRootId } from './model/root-id.ts';
 import { displayState } from './model/lifecycle.ts';
 import { synthTaskRoot } from './model/root-synth.ts';
@@ -683,7 +684,12 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           title: args.title,
           brief: args.brief ?? '',
           lifecycle: 'draft',
-          repos: args.repos ?? [],
+          // Expanded HERE rather than in the composer, so the CLI's `--repo`
+          // gets it too — the field and the flag are two doors into one verb.
+          repos: (args.repos ?? []).map((repo) => ({
+            ...repo,
+            path: expandHome(repo.path, ctx.homeDir),
+          })),
           sessions: [],
           createdAt: ctx.clock.now(),
         };
