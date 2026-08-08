@@ -130,7 +130,8 @@ export interface SessionDescriptor {
 
 /**
  * The layout, as the renderer receives it. Main owns the tree; this is the
- * projection it pushes on `layout:changed` and answers `layout:get` with.
+ * projection of ONE root; `LayoutSnapshots` below is the envelope it pushes on
+ * `layout:changed` and answers `layout:get` with.
  *
  * **The tree crosses as plain `SplitNode` data.** That is why the type above
  * refuses to alias core's session DTOs but this one aliases core's tree: the
@@ -154,6 +155,23 @@ export interface LayoutSnapshot {
   readonly zoomedPaneId: string | null;
   /** paneId -> sessionId, for panes showing a live session. */
   readonly sessions: Readonly<Record<string, string>>;
+}
+
+/**
+ * **Every** root, and which one the window is showing.
+ *
+ * A root is a pane group; the window draws one at a time and the sidebar
+ * switches between them (v1's workspaces). The renderer is sent all of them
+ * rather than just the active one because it keeps every root MOUNTED and hides
+ * the inactive ones with `display: none` — a root it had never been told about
+ * would have to be built on the switch, and building a pane is creating a pty.
+ * That is the same rule v1 learned as "a remounted pane is a new PTY", one
+ * process along, and it is why this is an envelope rather than a swap.
+ */
+export interface LayoutSnapshots {
+  /** The root the window shows. Every other root is mounted and hidden. */
+  readonly active: string;
+  readonly roots: readonly LayoutSnapshot[];
 }
 
 /** The pane area, in its own coordinates. Pushed by the renderer on resize. */

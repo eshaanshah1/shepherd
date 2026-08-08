@@ -1,7 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { ShepherdBridge } from '../shared/index.ts';
-import { App, placeholderSnapshot } from './app.tsx';
+import { App, placeholderSnapshots } from './app.tsx';
 import { PaneSessionRegistry } from './pane-sessions.ts';
 import { defaultSessionSpec, smokeSessionSpec } from './session-spec.ts';
 import { installSmokeHook } from './smoke-hook.ts';
@@ -94,7 +94,7 @@ createRoot(host).render(
       // With no bridge there is no main process to project a tree, so the page
       // draws one placeholder pane rather than nothing at all — which is what
       // `pnpm --filter @shepherd/app dev`-without-electron shows you.
-      {...(bridge === null ? { initialSnapshot: placeholderSnapshot() } : {})}
+      {...(bridge === null ? { initialSnapshot: placeholderSnapshots() } : {})}
       {...(smoke === null ? {} : { onSnapshot: smoke.onSnapshot })}
     />
   </StrictMode>,

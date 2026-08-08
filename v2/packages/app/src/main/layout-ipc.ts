@@ -2,8 +2,8 @@ import { ipcMain, webContents } from 'electron';
 import { USER, type Disposable, type RootID } from '@shepherd/sdk';
 import type { CommandRegistry } from '@shepherd/core';
 import type { LayoutStore } from '@shepherd/core/layout';
-import { EMIT, INVOKE, type IpcResult, type LayoutSnapshot } from '../shared/index.ts';
-import { layoutSnapshot, parseViewport } from './layout-snapshot.ts';
+import { EMIT, INVOKE, type IpcResult, type LayoutSnapshots } from '../shared/index.ts';
+import { layoutSnapshots, parseViewport } from './layout-snapshot.ts';
 
 /**
  * The layout's electron-shaped twenty lines: get the projection, push it when it
@@ -14,13 +14,26 @@ import { layoutSnapshot, parseViewport } from './layout-snapshot.ts';
  * main-process end. Every decision (which pane is focused, what ⌘W does on the
  * last pane, whether a ratio is legal) is in core, reached through
  * `registry.invoke`.
+ *
+ * The one piece of state it does own is **which root is active** — which is a
+ * property of the window, not of the layout: the store holds N pane groups and
+ * has no opinion about which one a window puts on screen. It lives here so that
+ * the snapshot, the viewport and presence all read the same answer.
  */
 
 export interface LayoutIpcOptions {
   readonly store: LayoutStore;
   readonly registry: CommandRegistry;
-  /** The single root this window shows. Multi-window is a later milestone. */
-  readonly root: RootID;
+  /** The root the window shows to begin with. */
+  readonly active: RootID;
+  /**
+   * The active root changed. Presence follows it (`ViewingResolver`), and a
+   * callback here rather than a duty on each caller is what stops the two from
+   * drifting: a switch that updated the window but not `focusedRoot` would make
+   * `isFrontPane` answer about a root nobody can see, and attention would clear
+   * on panes the user never looked at.
+   */
+  readonly onActiveChanged?: (root: RootID) => void;
 }
 
 export interface LayoutIpc extends Disposable {
@@ -34,12 +47,16 @@ export interface LayoutIpc extends Disposable {
    * one caller that knows better says so.
    */
   publish(): void;
+  /** Show this root. Publishes, so the page follows in the same turn. */
+  setActive(root: RootID): void;
+  getActive(): RootID;
 }
 
 export function registerLayoutIpc(options: LayoutIpcOptions): LayoutIpc {
-  const { store, registry, root } = options;
+  const { store, registry, onActiveChanged } = options;
+  let active: RootID = options.active;
 
-  const snapshot = (): LayoutSnapshot | null => layoutSnapshot(store, root);
+  const snapshot = (): LayoutSnapshots | null => layoutSnapshots(store, active);
 
   const publish = (): void => {
     const current = snapshot();
@@ -53,10 +70,17 @@ export function registerLayoutIpc(options: LayoutIpcOptions): LayoutIpc {
     }
   };
 
-  ipcMain.handle(INVOKE.layoutGet, (): IpcResult<LayoutSnapshot> => {
+  const setActive = (root: RootID): void => {
+    if (root === active) return;
+    active = root;
+    onActiveChanged?.(root);
+    publish();
+  };
+
+  ipcMain.handle(INVOKE.layoutGet, (): IpcResult<LayoutSnapshots> => {
     const current = snapshot();
     return current === null
-      ? { ok: false, error: { code: 'no-root', message: `no layout root ${root}` } }
+      ? { ok: false, error: { code: 'no-root', message: 'no layout root is open' } }
       : { ok: true, value: current };
   });
 
@@ -68,7 +92,11 @@ export function registerLayoutIpc(options: LayoutIpcOptions): LayoutIpc {
         error: { code: 'invalid-argument', message: 'viewport expects finite x/y/width/height' },
       };
     }
-    store.setViewport(root, rect);
+    // The ACTIVE root: every root is drawn into the same stage, and a hidden one
+    // measures 0x0, so the rect the page just measured describes exactly this
+    // one. The page re-publishes on a switch, which is what gives a root that
+    // has never been on screen a viewport at all.
+    store.setViewport(active, rect);
     return { ok: true, value: undefined };
   });
 
@@ -91,12 +119,16 @@ export function registerLayoutIpc(options: LayoutIpcOptions): LayoutIpc {
     },
   );
 
-  const subscription = store.onDidChange((changed) => {
-    if (changed === root) publish();
-  });
+  // ANY root's change republishes the whole envelope. The page holds all of them
+  // mounted, so a change in a hidden root is one it still has to draw — its
+  // panes keep running, and a snapshot that stopped at the active root would
+  // leave a task's layout frozen at whatever it looked like when you left it.
+  const subscription = store.onDidChange(() => publish());
 
   return {
     publish,
+    setActive,
+    getActive: () => active,
     dispose: () => {
       subscription.dispose();
       for (const channel of [INVOKE.layoutGet, INVOKE.layoutViewport, INVOKE.commandInvoke]) {

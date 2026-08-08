@@ -23,6 +23,11 @@ import type { LayoutStore } from './store.ts';
  *   - **`pane` is optional and defaults to the focused pane.** A keystroke means
  *     "the pane I am looking at"; a CLI or an extension names one. Both arrive
  *     here as the same call.
+ *   - **`root` is optional and defaults to the ACTIVE root.** Same reason, one
+ *     level up: a keystroke means "the root I am looking at", and the shell is
+ *     what knows which that is. It used to mean "the only root there is", which
+ *     was true right up until a second root existed and then made every menu
+ *     gesture fail — ⌘D and ⌘W deliberately send no `root`.
  *   - **A no-op is a value, not an error.** ⌘⌥← at the left edge, or un-zooming
  *     when nothing is zoomed, returns a result saying nothing moved. Reporting a
  *     failure would make the CLI print an error for a gesture that behaved
@@ -38,6 +43,24 @@ export interface LayoutCommandsOptions {
    * place instead of every caller re-deciding.
    */
   readonly onLastPaneClosed: (root: RootID) => void;
+  /**
+   * Which root an unqualified gesture means. A getter, not a value: the shell
+   * changes it whenever the user switches, and a snapshot taken at registration
+   * would pin every menu command to whatever was active when the app started.
+   */
+  readonly activeRoot: () => RootID;
+  /**
+   * The root the window falls back to — the one that always exists. Closing it
+   * is refused (there would be nothing left to show), and closing any other
+   * root lands here.
+   */
+  readonly homeRoot: RootID;
+  /**
+   * Make a root the active one. The shell owns what "active" means (which
+   * snapshot the window draws, whose panes count as being looked at), so core
+   * validates the request and hands it over rather than deciding.
+   */
+  readonly onSwitchRoot: (root: RootID) => void;
 }
 
 const AXIS = s.enumOf(['row', 'column'] as const);
@@ -52,22 +75,27 @@ export const LAYOUT_COMMANDS = {
   setRatio: 'layout.setRatio',
   zoom: 'layout.zoom',
   rename: 'layout.rename',
+  switchRoot: 'layout.switchRoot',
+  openRoot: 'layout.openRoot',
+  closeRoot: 'layout.closeRoot',
 } as const;
 
 export function registerLayoutCommands(options: LayoutCommandsOptions): Disposable {
-  const { store, registry, onLastPaneClosed } = options;
+  const { store, registry, onLastPaneClosed, activeRoot, homeRoot, onSwitchRoot } = options;
 
-  /** The root a command acts on: the named one, else the only one there is. */
-  const resolveRoot = (root: string | undefined): RootID | undefined => {
-    if (root !== undefined) return toRootId(root);
-    const roots = store.roots();
-    return roots.length === 1 ? roots[0] : undefined;
-  };
+  /**
+   * The root a command acts on: the named one, else the one being looked at.
+   *
+   * Always answers with a root — a NAME, which may still be a root that does
+   * not exist. That check belongs to the store (`no root <id>`), so a typo from
+   * the CLI and a stale id from an extension produce the same one message
+   * rather than two half-answers written in two places.
+   */
+  const resolveRoot = (root: string | undefined): RootID =>
+    root === undefined ? activeRoot() : toRootId(root);
 
-  const resolvePane = (pane: string | undefined, root: RootID | undefined): PaneID | null => {
-    if (pane !== undefined) return toPaneId(pane);
-    return root === undefined ? null : store.focused(root);
-  };
+  const resolvePane = (pane: string | undefined, root: RootID): PaneID | null =>
+    pane === undefined ? store.focused(root) : toPaneId(pane);
 
   const subscriptions: Disposable[] = [
     registry.register(LAYOUT_COMMANDS.split, {
@@ -94,10 +122,8 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
         initialCommand: s.optional(s.string()),
       }),
       handler: (args) => {
-        const root = resolveRoot(args.root);
-        if (root === undefined) return unwrap(errNoRoot(args.root));
         return unwrap(
-          store.split(root, args.axis, {
+          store.split(resolveRoot(args.root), args.axis, {
             ...(args.cwd === undefined ? {} : { cwd: args.cwd }),
             ...(args.initialCommand === undefined ? {} : { initialCommand: args.initialCommand }),
           }),
@@ -110,10 +136,8 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
       permission: 'layout',
       schema: s.object({ direction: DIRECTION, root: s.optional(s.string()) }),
       handler: (args) => {
-        const root = resolveRoot(args.root);
-        if (root === undefined) return unwrap(errNoRoot(args.root));
         // `null` = the edge of the layout. A legitimate answer, not a failure.
-        return { focused: unwrap(store.focusDirection(root, args.direction)) };
+        return { focused: unwrap(store.focusDirection(resolveRoot(args.root), args.direction)) };
       },
     }),
 
@@ -132,8 +156,7 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
       permission: 'layout',
       schema: s.object({ pane: s.optional(s.string()), root: s.optional(s.string()) }),
       handler: (args) => {
-        const root = resolveRoot(args.root);
-        const pane = resolvePane(args.pane, root);
+        const pane = resolvePane(args.pane, resolveRoot(args.root));
         if (pane === null) return unwrap(errNoRoot(args.root));
 
         const owning = store.rootOf(pane);
@@ -151,9 +174,7 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
       permission: 'layout',
       schema: s.object({ path: s.array(s.int()), ratio: s.number(), root: s.optional(s.string()) }),
       handler: (args) => {
-        const root = resolveRoot(args.root);
-        if (root === undefined) return unwrap(errNoRoot(args.root));
-        unwrap(store.setRatio(root, args.path, args.ratio));
+        unwrap(store.setRatio(resolveRoot(args.root), args.path, args.ratio));
         return { ok: true };
       },
     }),
@@ -164,9 +185,8 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
       schema: s.object({ pane: s.optional(s.string()), root: s.optional(s.string()) }),
       handler: (args) => {
         const root = resolveRoot(args.root);
-        const pane = resolvePane(args.pane, root);
-        unwrap(store.zoom(pane, root));
-        return { zoomed: root === undefined ? null : store.zoomed(root) };
+        unwrap(store.zoom(resolvePane(args.pane, root), root));
+        return { zoomed: store.zoomed(root) };
       },
     }),
 
@@ -177,6 +197,96 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
       handler: (args) => {
         unwrap(store.rename(toPaneId(args.pane), args.title));
         return { ok: true };
+      },
+    }),
+
+    /**
+     * The three root-level verbs.
+     *
+     * A root is a pane group the window shows one of at a time — v1's workspace,
+     * and what a task will own one of. They are commands for the same reason
+     * every other mutation here is: the sidebar, the CLI and the `tasks`
+     * extension all switch roots, and three implementations of "and now fix up
+     * the focus and the presence" is exactly what this file exists to prevent.
+     */
+    registry.register(LAYOUT_COMMANDS.switchRoot, {
+      title: 'Switch Root',
+      permission: 'layout',
+      schema: s.object({ root: s.string() }),
+      handler: (args) => {
+        const root = toRootId(args.root);
+        // Named explicitly rather than left to the shell: switching to a root
+        // that does not exist would leave the window drawing nothing, with the
+        // failure visible only as a blank stage.
+        if (store.tree(root) === undefined) return unwrap(errNoRoot(args.root));
+        onSwitchRoot(root);
+        return { root: args.root };
+      },
+    }),
+
+    registry.register(LAYOUT_COMMANDS.openRoot, {
+      title: 'Open Root',
+      permission: 'layout',
+      schema: s.object({
+        root: s.string(),
+        cwd: s.optional(s.string()),
+        /** One line, typed once into the new root's pane. `layout.split` documents why. */
+        initialCommand: s.optional(s.string()),
+        title: s.optional(s.string()),
+      }),
+      handler: (args) => {
+        const root = toRootId(args.root);
+        /**
+         * "Exists" means LIVE, not persisted.
+         *
+         * `store.open` restores a persisted root, which would report `created`
+         * here for something the user had before — but the shell opens every
+         * persisted root at launch, so by the time anything invokes this, a root
+         * on disk is a root in the map. Naming the check `store.tree` keeps it
+         * the same question the store answers everywhere else.
+         */
+        const existing = store.tree(root) !== undefined;
+        if (existing) return { root: args.root, pane: store.focused(root), created: false };
+
+        store.open(args.root, {
+          ...(args.cwd === undefined ? {} : { cwd: args.cwd }),
+          ...(args.initialCommand === undefined ? {} : { initialCommand: args.initialCommand }),
+          // A title given here is the USER's name for the pane, not an OSC one:
+          // the caller is naming the thing it just made, and a program's own
+          // title must still be able to lose to it.
+          ...(args.title === undefined ? {} : { userTitle: args.title }),
+        });
+        return { root: args.root, pane: store.focused(root), created: true };
+      },
+    }),
+
+    registry.register(LAYOUT_COMMANDS.closeRoot, {
+      title: 'Close Root',
+      permission: 'layout',
+      schema: s.object({ root: s.string() }),
+      handler: (args) => {
+        const root = toRootId(args.root);
+        if (store.tree(root) === undefined) return unwrap(errNoRoot(args.root));
+        // The home root is what everything falls back to. Closing it would
+        // leave the window with no root to draw and no root to switch to.
+        if (root === homeRoot) return unwrap(fail(`${args.root} is the home root and cannot be closed`));
+
+        /**
+         * Every pane goes through `store.close`, which is the ONE terminator
+         * (ADR 0022) — that is what kills the ptys behind them. `removeRoot`
+         * deliberately kills nothing, so dropping the root without draining it
+         * would leak a live session per pane with nothing left pointing at it.
+         *
+         * `store.close` directly, not the `layout.close` command: the command
+         * fires `onLastPaneClosed`, and having the shell react to the last pane
+         * of a root we are already tearing down would race this handler.
+         */
+        const panes = store.panes(root);
+        for (const pane of panes) unwrap(store.close(pane));
+        unwrap(store.removeRoot(root));
+        // A window showing a root that no longer exists draws nothing at all.
+        if (activeRoot() === root) onSwitchRoot(homeRoot);
+        return { root: args.root, closedPanes: panes.length };
       },
     }),
   ];
@@ -196,11 +306,9 @@ function unwrap<T>(result: { ok: true; value: T } | { ok: false; error: string }
 }
 
 function errNoRoot(named: string | undefined): { ok: false; error: string } {
-  return {
-    ok: false,
-    error:
-      named === undefined
-        ? 'no root given and there is not exactly one open — name it explicitly'
-        : `no root ${named}`,
-  };
+  return fail(named === undefined ? 'the active root has no panes' : `no root ${named}`);
+}
+
+function fail(error: string): { ok: false; error: string } {
+  return { ok: false, error };
 }

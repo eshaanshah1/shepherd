@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { LayoutStore } from '@shepherd/core/layout';
 import { nullLogger, paneId, rootId, sessionId, systemClock, type SessionID } from '@shepherd/sdk';
-import { layoutSnapshot, parseViewport } from './layout-snapshot.ts';
+import { layoutSnapshot, layoutSnapshots, parseViewport } from './layout-snapshot.ts';
 
 /**
  * What crosses to the renderer.
@@ -91,6 +91,34 @@ describe('layoutSnapshot', () => {
     const snapshot = layoutSnapshot(s, ROOT);
     expect(() => structuredClone(snapshot)).not.toThrow();
     expect(structuredClone(snapshot)).toEqual(snapshot);
+  });
+});
+
+describe('layoutSnapshots', () => {
+  it('carries every root and the active one', () => {
+    const { store: s } = store();
+    s.open('task-1');
+    const envelope = layoutSnapshots(s, rootId('task-1'));
+    expect(envelope?.active).toBe('task-1');
+    expect(envelope?.roots.map((root) => root.root)).toEqual(['window-1', 'task-1']);
+  });
+
+  it('passes `active` through verbatim rather than second-guessing it', () => {
+    // The two places that set it — `layout.switchRoot`, which refuses a root
+    // that does not exist, and the last-pane fall-through, which lands on home —
+    // are where that invariant is kept. A second opinion here could only ever
+    // disagree with them.
+    const { store: s } = store();
+    expect(layoutSnapshots(s, rootId('ghost'))?.active).toBe('ghost');
+  });
+
+  it('is null with no roots at all', () => {
+    const empty = new LayoutStore({
+      logger: nullLogger,
+      clock: systemClock,
+      sessions: { kill: () => {} },
+    });
+    expect(layoutSnapshots(empty, ROOT)).toBeNull();
   });
 });
 

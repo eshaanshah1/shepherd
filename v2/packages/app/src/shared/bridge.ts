@@ -7,6 +7,7 @@ import type { TreeItem } from '@shepherd/sdk';
 import type {
   IpcResult,
   LayoutSnapshot,
+  LayoutSnapshots,
   SessionCreateRequest,
   SessionDataMessage,
   SessionDescriptor,
@@ -66,9 +67,15 @@ export interface CommandsApi {
  * argument and stay invokable from a CLI or an extension.
  */
 export interface LayoutApi {
-  get(): Promise<IpcResult<LayoutSnapshot>>;
+  get(): Promise<IpcResult<LayoutSnapshots>>;
   /** Returns an unsubscribe function. */
-  onChanged(listener: (snapshot: LayoutSnapshot) => void): () => void;
+  onChanged(listener: (snapshots: LayoutSnapshots) => void): () => void;
+  /**
+   * The pane area, for the ACTIVE root. Every root is drawn into the same box,
+   * so main applies it to whichever is active — and the page re-publishes on a
+   * switch, or a root that has never been on screen keeps a 0x0 viewport and
+   * `layout.focusDirection` answers `null` for every direction, silently.
+   */
   setViewport(rect: ViewportRect): Promise<IpcResult<void>>;
 }
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { PaneID } from '@shepherd/sdk';
 import {
   LAYOUT_COMMANDS,
@@ -17,6 +17,7 @@ import {
   type CommandsApi,
   type LayoutApi,
   type LayoutSnapshot,
+  type LayoutSnapshots,
 } from '../shared/index.ts';
 import { MENU_INVOCATIONS } from '../shared/menu-commands.ts';
 import { ViewDock } from './view-dock.tsx';
@@ -56,19 +57,30 @@ export interface AppProps {
   /** Contributed views (M3). Absent = no dock, not a crash. */
   readonly views?: ViewsApi | null;
   /** Rendered until (or instead of) main's first push. The no-bridge and test seam. */
-  readonly initialSnapshot?: LayoutSnapshot;
-  /** Diagnostics seam: the smoke reads the live projection through this. */
+  readonly initialSnapshot?: LayoutSnapshots;
+  /**
+   * Diagnostics seam: the smoke reads the live projection through this.
+   *
+   * It receives the ACTIVE root's snapshot, not the envelope — what the smokes
+   * assert about is what the window is showing, and that is one root whether or
+   * not others exist behind it.
+   */
   readonly onSnapshot?: (snapshot: LayoutSnapshot) => void;
 }
 
-/** A one-pane projection, for a page with no main process behind it. */
-export function placeholderSnapshot(tree: SplitNode = leaf(makePane({}))): LayoutSnapshot {
+/** A one-root, one-pane projection, for a page with no main process behind it. */
+export function placeholderSnapshots(tree: SplitNode = leaf(makePane({}))): LayoutSnapshots {
   return {
-    root: 'window-1',
-    tree,
-    focusedPaneId: leafIds(tree)[0] ?? null,
-    zoomedPaneId: null,
-    sessions: {},
+    active: 'window-1',
+    roots: [
+      {
+        root: 'window-1',
+        tree,
+        focusedPaneId: leafIds(tree)[0] ?? null,
+        zoomedPaneId: null,
+        sessions: {},
+      },
+    ],
   };
 }
 
@@ -81,24 +93,33 @@ export function App({
   initialSnapshot,
   onSnapshot,
 }: AppProps): ReactNode {
-  const [snapshot, setSnapshot] = useState<LayoutSnapshot | null>(initialSnapshot ?? null);
+  const [snapshots, setSnapshots] = useState<LayoutSnapshots | null>(initialSnapshot ?? null);
   const stageRef = useRef<HTMLElement>(null);
 
+  /**
+   * The root on screen. Every other root stays mounted and hidden — see the
+   * stage below, and `LayoutSnapshots` for why that is not an optimisation.
+   */
+  const active = useMemo(
+    () => snapshots?.roots.find((root) => root.root === snapshots.active) ?? null,
+    [snapshots],
+  );
+
   useEffect(() => {
-    if (snapshot !== null) onSnapshot?.(snapshot);
-  }, [snapshot, onSnapshot]);
+    if (active !== null) onSnapshot?.(active);
+  }, [active, onSnapshot]);
 
   // Subscribe FIRST, then ask. The other order drops any change that lands while
   // the request is in flight, and the app would then draw a tree one gesture old
   // until the next unrelated change happened to arrive.
   useEffect(() => {
     if (layout === null) return;
-    const off = layout.onChanged(setSnapshot);
+    const off = layout.onChanged(setSnapshots);
     void layout.get().then((result) => {
       // `prev ?? value` rather than an assignment: if a push has already arrived
       // it is strictly newer than this answer, and overwriting it would undo a
       // gesture that has already happened.
-      if (result.ok) setSnapshot((prev) => prev ?? result.value);
+      if (result.ok) setSnapshots((prev) => prev ?? result.value);
     });
     return off;
   }, [layout]);
@@ -142,22 +163,35 @@ export function App({
     const observer = new ResizeObserver(publish);
     observer.observe(stage);
     return () => observer.disconnect();
-  }, [layout]);
+    // `snapshots?.active` is a dependency because the rect is stored PER ROOT and
+    // main applies it to whichever is active. A root that has never been on
+    // screen would otherwise keep a 0x0 viewport, every pane frame would be
+    // degenerate, and ⌘⌥← would answer null in every direction — silently.
+    // Measuring the shared stage is correct for all of them: they are drawn into
+    // the same box, and the hidden ones measure 0x0 because they are hidden.
+  }, [layout, snapshots?.active]);
 
   // --- a pane that has left the tree takes its terminal with it.
   //
   // The session is already gone — core's `layout.close` killed it (see
   // `pane-sessions.ts`). What is left is this renderer's xterm, which nothing else
   // would ever drop: React unmounts the view, and unmounting only ever detaches.
+  //
+  // "Absent" means absent from the UNION of every root, never from the one on
+  // screen. With several roots mounted, reading only the active one would
+  // release the hidden roots' terminals on every switch — and switching back
+  // would then build a SECOND pty per pane while the first kept running with
+  // nothing pointing at it, which is unkillable from the UI. This is v1's
+  // remount lesson arriving through a different door.
   const knownPanes = useRef<readonly PaneID[]>([]);
   useEffect(() => {
-    if (snapshot === null) return;
-    const present = leafIds(snapshot.tree);
+    if (snapshots === null) return;
+    const present = snapshots.roots.flatMap((root) => leafIds(root.tree));
     for (const paneId of knownPanes.current) {
       if (!present.includes(paneId)) terminals?.release(paneId);
     }
     knownPanes.current = present;
-  }, [snapshot, terminals]);
+  }, [snapshots, terminals]);
 
   /**
    * Agent state per session, pulled once and then followed.
@@ -187,12 +221,23 @@ export function App({
     };
   }, [agentsApi]);
 
+  /**
+   * paneId -> sessionId across EVERY root. Pane ids are unique across roots (one
+   * store mints them all), so one flat map answers for whichever root is being
+   * drawn — and a hidden root's panes keep their session badge for free.
+   */
+  const sessionsByPane = useMemo(() => {
+    const merged: Record<string, string> = {};
+    for (const root of snapshots?.roots ?? []) Object.assign(merged, root.sessions);
+    return merged;
+  }, [snapshots]);
+
   const renderPane = useCallback(
     (pane: Pane, focused: boolean): ReactNode => {
       if (terminals === null) return null;
       // A pane shows a session; a session may have an agent. Both hops can be
       // absent, and an absent one renders the empty slot rather than no slot.
-      const sessionId = snapshot?.sessions[pane.id];
+      const sessionId = sessionsByPane[pane.id];
       const agent = sessionId === undefined ? undefined : agents[sessionId];
       return (
         <TerminalPane
@@ -204,10 +249,12 @@ export function App({
         />
       );
     },
-    [terminals, snapshot, agents],
+    [terminals, sessionsByPane, agents],
   );
 
-  const paneCount = snapshot === null ? 0 : leafIds(snapshot.tree).length;
+  // What is ON SCREEN, not what exists: a count including hidden roots would
+  // read as a window with panes the user cannot find.
+  const paneCount = active === null ? 0 : leafIds(active.tree).length;
 
   const contributions = useContributions(viewsApi);
   /** Every accelerator an overlay declared, for the footer's keycap strip. */
@@ -243,22 +290,42 @@ export function App({
             </>
           }
         />
+        {/*
+          Every root, mounted; one of them visible.
+
+          A FLAT keyed list, never `active === root.root && <SplitView/>`. A
+          conditional mount tears the hidden root's subtree down, and a torn-down
+          pane is a released terminal and then — on the way back — a second pty.
+          This is v1's `_ConditionalContent` lesson, and the reason the hidden
+          roots are hidden with `display: none` rather than not rendered.
+        */}
         <main className="sh-stage" ref={stageRef}>
-          {snapshot === null ? null : (
-            <SplitView
-              tree={snapshot.tree}
-              focusedPaneId={snapshot.focusedPaneId}
-              // The two gestures with no menu item of their own. They name the
-              // kernel's verb directly, off `LAYOUT_COMMANDS` rather than as a
-              // string, for the same reason `menu-commands.ts` does.
-              onFocusPane={(id) => invoke(LAYOUT_COMMANDS.focusPane, { pane: id })}
-              onSetRatio={(path, ratio) =>
-                invoke(LAYOUT_COMMANDS.setRatio, { path: [...path], ratio })
-              }
-              {...(terminals === null ? {} : { renderPane })}
-              home=""
-            />
-          )}
+          {(snapshots?.roots ?? []).map((root) => (
+            <div
+              className="sh-root"
+              key={root.root}
+              data-root={root.root}
+              data-active={root.root === snapshots?.active}
+              style={{ display: root.root === snapshots?.active ? 'flex' : 'none' }}
+            >
+              <SplitView
+                tree={root.tree}
+                // Only the visible root has a focused pane. `TerminalPane` calls
+                // `terminals.focus()` for the pane it is told is focused, so a
+                // hidden root would fight the one on screen for the keyboard.
+                focusedPaneId={root.root === snapshots?.active ? root.focusedPaneId : null}
+                // The two gestures with no menu item of their own. They name the
+                // kernel's verb directly, off `LAYOUT_COMMANDS` rather than as a
+                // string, for the same reason `menu-commands.ts` does.
+                onFocusPane={(id) => invoke(LAYOUT_COMMANDS.focusPane, { pane: id })}
+                onSetRatio={(path, ratio) =>
+                  invoke(LAYOUT_COMMANDS.setRatio, { path: [...path], ratio, root: root.root })
+                }
+                {...(terminals === null ? {} : { renderPane })}
+                home=""
+              />
+            </div>
+          ))}
         </main>
       </div>
 
