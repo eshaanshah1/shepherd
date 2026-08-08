@@ -77,6 +77,28 @@ const STRIPPED = new Set([
 ]);
 
 
+/**
+ * Session-scoped variables another AGENT's process planted in our environment.
+ *
+ * Measured, not hypothetical: the dev app launched from inside a Claude Code
+ * session inherits that session's `CLAUDE_CODE_CHILD_SESSION` et al., and every
+ * agent spawned in a pane then believes it is a nested child of a session it
+ * has never met — transcript saving off, a warning banner, wrong attribution.
+ * ADR 0024's class of bug (a pane inheriting another Shepherd's correlation
+ * env), one vendor over.
+ *
+ * A prefix match rather than a list, deliberately: these names are another
+ * program's private vocabulary and grow without notice — an allow-list here
+ * would be stale the day it shipped. `CLAUDE_CONFIG_DIR` survives via the
+ * explicit carve-out because it is the USER's setting (which account/profile to
+ * use), not a session's breadcrumb — v1's profiles feature depends on exactly
+ * that distinction.
+ */
+export function isForeignAgentVar(key: string): boolean {
+  if (key === 'CLAUDE_CONFIG_DIR') return false;
+  return key.startsWith('CLAUDE_CODE_') || key.startsWith('CLAUDE_') || key === 'CLAUDECODE';
+}
+
 export function shellDefaultsFrom({ home, env }: ShellInputs): ShellDefaults {
   const shell = env['SHELL'];
   const command =
@@ -84,7 +106,7 @@ export function shellDefaultsFrom({ home, env }: ShellInputs): ShellDefaults {
 
   const inherited: Record<string, string> = {};
   for (const [key, value] of Object.entries(env)) {
-    if (value === undefined || STRIPPED.has(key)) continue;
+    if (value === undefined || STRIPPED.has(key) || isForeignAgentVar(key)) continue;
     inherited[key] = value;
   }
   inherited['HOME'] = home;

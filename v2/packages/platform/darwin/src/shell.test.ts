@@ -123,3 +123,33 @@ describe('shellDefaultsFrom', () => {
     expect(Array.isArray(leaking)).toBe(true);
   });
 });
+
+describe('isForeignAgentVar', () => {
+  // The dev app launched from inside a Claude Code session inherits that
+  // session's markers, and an agent spawned in a pane then believes it is a
+  // nested child of a session it has never met. Measured on the first live
+  // spawn: a transcript-saving-off warning in a brand-new pane.
+  it('strips another agent session’s breadcrumbs from a pane', () => {
+    const defaults = shellDefaultsFrom({
+      home: '/Users/u',
+      env: {
+        SHELL: '/bin/zsh',
+        CLAUDE_CODE_CHILD_SESSION: '1',
+        CLAUDE_CODE_SESSION_ID: 'abc',
+        CLAUDECODE: '1',
+        CLAUDE_PID: '123',
+        PATH: '/usr/bin',
+      },
+    });
+    expect(Object.keys(defaults.env).filter((k) => k.includes('CLAUDE'))).toEqual([]);
+    expect(defaults.env['PATH']).toBe('/usr/bin');
+  });
+
+  it('keeps CLAUDE_CONFIG_DIR — the USER’s profile choice, not a session breadcrumb', () => {
+    const defaults = shellDefaultsFrom({
+      home: '/Users/u',
+      env: { SHELL: '/bin/zsh', CLAUDE_CONFIG_DIR: '/Users/u/.claude-work' },
+    });
+    expect(defaults.env['CLAUDE_CONFIG_DIR']).toBe('/Users/u/.claude-work');
+  });
+});
