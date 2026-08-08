@@ -120,18 +120,32 @@ function TreeView({
   onSelect: (id: string) => void;
 }): React.JSX.Element {
   /*
-   * A heading earns its line only when it separates something FROM something.
-   * One group is the whole list, and "WORKING · 1" over a single row is a
-   * label for a distinction that does not exist yet — it appears as soon as a
-   * second group does, which is when the list actually needs reading.
+   * A heading earns its line when it separates something FROM something — and
+   * a heading that is not the first row does exactly that, whatever the count.
+   * "DONE" over the finished tasks divides them from the live ones above it.
+   *
+   * The rule this replaces suppressed every heading when there was only one,
+   * which was right for the state-buckets it was written against ("WORKING · 1"
+   * over the whole list) and wrong the moment a single heading became a real
+   * division. What actually reads as a label for nothing is a heading with
+   * nothing above it, so that is what is dropped.
    */
-  const groups = rows.filter((row) => row.section === true).length;
-  const shown = groups > 1 ? rows : rows.filter((row) => row.section !== true);
+  const shown = rows.filter((row, index) => row.section !== true || index > 0);
 
-  return (
-    <section className="sh-side-view" data-view-type={view.type}>
-      {shown.length === 0 ? null : <ul className="sh-rows">
-        {shown.map((row) => {
+  /**
+   * Everything after the LAST heading is pinned to the bottom of the sidebar.
+   *
+   * Finished work belongs at the physical bottom, not merely last in the list —
+   * with three tasks the difference is nothing, and it is the whole point when
+   * the list is short and the sidebar is tall. The split is on the last section
+   * rather than on a name, because the dock must not know what "done" means.
+   */
+  const lastSection = shown.map((row) => row.section === true).lastIndexOf(true);
+  const top = lastSection === -1 ? shown : shown.slice(0, lastSection);
+  const bottom = lastSection === -1 ? [] : shown.slice(lastSection);
+
+  const renderRow = (row: TreeItem): React.JSX.Element => {
+    {
           if (row.section === true) {
             // A heading, not a row: `SectionLabel` draws the uppercase
             // micro-label, the `·` before the count and the rule to the edge.
@@ -238,8 +252,21 @@ function TreeView({
               )}
             </li>
           );
-        })}
-      </ul>}
+    }
+  };
+
+  return (
+    <section className="sh-side-view" data-view-type={view.type}>
+      {top.length === 0 ? null : <ul className="sh-rows">{top.map(renderRow)}</ul>}
+      {/*
+        The finished tasks, pinned to the FOOT of the sidebar rather than merely
+        placed after the live ones. With three tasks there is no difference; with
+        three tasks and a tall window there is nothing but difference, and "at
+        the bottom" is what was asked for.
+      */}
+      {bottom.length === 0 ? null : (
+        <ul className="sh-rows sh-rows-foot">{bottom.map(renderRow)}</ul>
+      )}
     </section>
   );
 }

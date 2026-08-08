@@ -513,11 +513,53 @@ body.sh-dragging {
   border-right: var(--sh-hairline) solid var(--sh-ink-line);
 }
 
-.sh-side-scroll { flex: 1 1 auto; overflow-y: auto; padding: var(--sh-space-md) 0 10px; }
+/*
+ * The scroll area is a COLUMN, so a view can push part of itself to the foot.
+ * `min-height: 100%` rather than `height`, or the box stops at its content and
+ * there is no space to push into; with it, a short list still fills the sidebar
+ * and a long one scrolls as before.
+ */
+.sh-side-scroll {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: var(--sh-space-md) 0 10px;
+  display: flex;
+  flex-direction: column;
+}
+
+.sh-side-view { display: flex; flex-direction: column; min-height: 0; }
+
+/*
+ * A view that has a foot list is the one that grows, so the foot can be pushed
+ * to the bottom of the sidebar.
+ *
+ * Keyed on `:has()` rather than on position, and both position rules I tried
+ * first were wrong in the same way: `:only-child` failed because the dev build
+ * contributes a second view, and `:last-child` failed because that second view
+ * renders AFTER tasks. Either way the tasks view never grew and the DONE
+ * heading floated wherever the list happened to end. Which view needs the
+ * space is a property of what it contains, not of where it sits.
+ */
+.sh-side-view:has(.sh-rows-foot) { flex: 1 1 auto; }
+
+
 .sh-side-view + .sh-side-view {
   box-shadow: inset 0 var(--sh-hairline) 0 var(--sh-line);
 }
 .sh-rows { list-style: none; margin: 0; padding: 0; }
+
+/*
+ * Finished work sits at the FOOT of the sidebar. `margin-top: auto` in a column
+ * is what "at the bottom" means when the content above is shorter than the box;
+ * with a full list it simply follows, which is the same answer.
+ *
+ * AFTER `.sh-rows`, and that is the whole fix rather than a detail: the two
+ * selectors have equal specificity, so `.sh-rows { margin: 0 }` was winning on
+ * source order and computing the margin to 0px. Measured in the running app —
+ * the grower had its `flex-grow: 1` and 468px of room the entire time, which is
+ * why three plausible rewrites of the SELECTOR changed nothing.
+ */
+.sh-rows-foot { margin-top: auto; }
 
 /*
  * The ONE thing a row still says that `Row` has no vocabulary for: a task that is
