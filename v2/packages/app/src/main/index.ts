@@ -645,6 +645,23 @@ void app.whenReady().then(async () => {
       layoutIpc.setActive(HOME_ROOT);
       const removed = layout.removeRoot(root);
       if (!removed.ok) logger.warn('layout', `could not remove ${root}: ${removed.error}`);
+
+      /**
+       * And SAY so, because an extension that owns the root needs to know.
+       *
+       * `tasks` archives a task when you close the last of its panes, and it
+       * used to infer that from `session.exit` — count the task's own recorded
+       * panes down to zero. That inference is wrong across a relaunch: pane ids
+       * are regenerated when a layout is restored, so the record names panes
+       * that no longer exist, the count never reaches zero, and closing the last
+       * pane archives nothing. (The delete path had already learned this and
+       * says so in its own comment; the close path did not carry it over.)
+       *
+       * The layout is the only thing that knows a root ran out of panes, and it
+       * knows it whoever opened them and however many times the app restarted.
+       * So it is the layout that announces it, and the extension reacts.
+       */
+      bus.emit('layout.rootClosed', { root }, KERNEL);
     },
   });
 

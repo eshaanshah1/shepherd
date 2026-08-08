@@ -308,8 +308,9 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
   })()`);
 
   // The suggestion comes from `tasks.repoSuggestions` (D5) — the point, its
-  // default provider, and a command answering the page. Clicking it rather than
-  // typing a path is what makes this assert the chain instead of the field.
+  // default provider, and a command answering the page. TAKING the offered one
+  // rather than typing a path is what makes this assert the chain instead of
+  // the field.
   const suggested = await until(
     'the repo picker to offer the repo this smoke already used',
     () =>
@@ -320,8 +321,22 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
   );
   check(suggested.includes(repo), `the picker consulted the point: ${JSON.stringify(suggested)}`);
 
-  await win.webContents.executeJavaScript(
-    `document.querySelector('[data-testid="composer-suggestion"][data-path=${JSON.stringify(repo)}]').click(), true`,
+  // ⏎ in the repo field takes the completion on screen — the real gesture, and
+  // the only one there is: the suggestion is ghost text behind the caret rather
+  // than a row, so it has no click for a smoke to borrow.
+  await win.webContents.executeJavaScript(`(() => {
+    const field = document.querySelector('[data-testid="composer-repo-path"]');
+    field.focus();
+    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    return true;
+  })()`);
+  await until(
+    'the picked repo to become a chip',
+    () =>
+      win.webContents.executeJavaScript(
+        `Array.from(document.querySelectorAll('[data-testid="composer-picked-repo"]')).map((el) => el.dataset.path)`,
+      ) as Promise<string[]>,
+    (paths) => paths.includes(repo),
   );
   await win.webContents.executeJavaScript(
     `document.querySelector('[data-testid="composer-create"]').click(), true`,
@@ -397,6 +412,39 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
   );
   check(landed.visible === 1, `exactly one root is on screen: ${JSON.stringify(landed)}`);
   say('ok — creating a task took the window to it');
+
+  // --- 9. and closing its panes FINISHES it.
+  //
+  // The one step whose absence shipped a bug: the archive-on-close was wired to
+  // `session.exit`, counting the task's own recorded panes down to zero, and
+  // pane ids are regenerated when a layout is restored — so after a relaunch
+  // the record named panes that did not exist, the count never reached zero,
+  // and closing the last pane of a task did nothing at all. Every unit test
+  // passed, because every one of them emitted an exit for a pane the record
+  // agreed with. This closes the root the way ⌘W's last press does and asks the
+  // record what it thinks, which is the only version of the question that
+  // spans the bus.
+  // Through `layout.close`, one pane at a time — which is ⌘W's own path and
+  // the only one that fires `onLastPaneClosed`. `layout.closeRoot` deliberately
+  // drains the root through `store.close` instead, precisely so that tearing a
+  // root down does not fire the last-pane handler at itself; using it here
+  // would test a path the keyboard never takes.
+  for (;;) {
+    const closed = (await invoke('layout.close', { root: `task:${composed.id}` }).catch(() => null)) as {
+      wasLastPane?: boolean;
+    } | null;
+    if (closed === null || closed.wasLastPane === true) break;
+  }
+  const finished = await until(
+    'the composed task to archive itself',
+    async () => ((await invoke('tasks.list')) as { id: string; lifecycle: string }[]).find((t) => t.id === composed.id),
+    (task) => task?.lifecycle === 'archived',
+  );
+  check(
+    (finished as { lifecycle: string }).lifecycle === 'archived',
+    `closing the task's panes archived it: ${JSON.stringify(finished)}`,
+  );
+  say('ok — closing a task finishes it');
 
   say('smoke: OK m3');
   app.exit(0);

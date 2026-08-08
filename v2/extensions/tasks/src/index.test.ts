@@ -920,22 +920,7 @@ describe('a pane that closes', () => {
   // The bug this pins: closing a pane left the task reporting `running` for a
   // session that no longer existed, because nothing subscribed to the kernel's
   // own `session.exit` — the sidebar's one job, stated wrongly.
-  it('drops the session and ARCHIVES the task, because the last pane closing means done', async () => {
-    const h = (live = harness({
-      tasks: [task({ sessions: [{ id: 's1', role: 'orchestrator', pane: 'p1' }] })],
-    }));
-    expect(await listedState(h)).toBe('running');
-
-    h.emit('session.exit', { sessionId: 's1', paneId: 'p1' });
-    await until(() => h.invoked.some((call) => call.id === 'tasks.archive'));
-
-    expect((await h.run<{ sessions: unknown[] }[]>('tasks.list'))[0]?.sessions).toEqual([]);
-    // Archive, not delete: the worktrees are snapshotted first, so every
-    // uncommitted line survives a gesture that looks like throwing work away.
-    expect(h.invoked.find((call) => call.id === 'tasks.archive')?.args).toEqual({ task: 't1' });
-  });
-
-  it('does NOT archive while any other session is left — closing one pane is not finishing', async () => {
+  it('drops the session from the record', async () => {
     const h = (live = harness({
       tasks: [
         task({
@@ -949,8 +934,24 @@ describe('a pane that closes', () => {
 
     h.emit('session.exit', { sessionId: 's1', paneId: 'p1' });
 
-    expect(await listedState(h)).toBe('running');
     expect((await h.run<{ sessions: unknown[] }[]>('tasks.list'))[0]?.sessions).toHaveLength(1);
+  });
+
+  it('does NOT archive on a session exit — the layout decides that, not a count', async () => {
+    /*
+     * The shipped bug, pinned. This counted the task's own recorded panes down
+     * to zero, and pane ids are REGENERATED when a layout is restored: after a
+     * relaunch the record names panes that do not exist, so the count never
+     * reaches zero and closing the last pane archived nothing. The count is
+     * gone; `layout.rootClosed` is the trigger, and it holds across restarts.
+     */
+    const h = (live = harness({
+      tasks: [task({ sessions: [{ id: 's1', role: 'orchestrator', pane: 'p1' }] })],
+    }));
+
+    h.emit('session.exit', { sessionId: 's1', paneId: 'p1' });
+    await Promise.resolve();
+
     expect(h.invoked.some((call) => call.id === 'tasks.archive')).toBe(false);
   });
 
@@ -962,6 +963,46 @@ describe('a pane that closes', () => {
     h.emit('session.exit', { sessionId: 'some-real-id', paneId: 'p1' });
 
     expect((await h.run<{ sessions: unknown[] }[]>('tasks.list'))[0]?.sessions).toEqual([]);
+  });
+});
+
+describe('a task whose pane group empties', () => {
+  it('archives it — closing every pane on a task is finishing it', async () => {
+    const h = (live = harness({
+      tasks: [task({ sessions: [{ id: 's1', role: 'orchestrator', pane: 'p1' }] })],
+    }));
+    expect(await listedState(h)).toBe('running');
+
+    h.emit('layout.rootClosed', { root: 'task:t1' });
+    await until(() => h.invoked.some((call) => call.id === 'tasks.archive'));
+
+    // Archive, not delete: the worktrees are snapshotted first, so every
+    // uncommitted line survives a gesture that looks like throwing work away.
+    expect(h.invoked.find((call) => call.id === 'tasks.archive')?.args).toEqual({ task: 't1' });
+    expect((await h.run<{ sessions: unknown[] }[]>('tasks.list'))[0]?.sessions).toEqual([]);
+  });
+
+  it('archives it whatever the record says its panes were', async () => {
+    // The restart case, which is the one that was broken: the layout restored
+    // and minted new pane ids, so the record names panes that do not exist —
+    // and it makes no difference, because nothing counts them any more.
+    const h = (live = harness({
+      tasks: [task({ sessions: [{ id: 's1', role: 'orchestrator', pane: 'a-pane-from-last-run' }] })],
+    }));
+
+    h.emit('layout.rootClosed', { root: 'task:t1' });
+    await until(() => h.invoked.some((call) => call.id === 'tasks.archive'));
+    expect(h.invoked.find((call) => call.id === 'tasks.archive')?.args).toEqual({ task: 't1' });
+  });
+
+  it('ignores a root that is not a task, and one already archived', async () => {
+    const h = (live = harness({ tasks: [task({ lifecycle: 'archived' })] }));
+
+    h.emit('layout.rootClosed', { root: 'home' });
+    h.emit('layout.rootClosed', { root: 'task:t1' });
+    await Promise.resolve();
+
+    expect(h.invoked.some((call) => call.id === 'tasks.archive')).toBe(false);
   });
 });
 
