@@ -85,6 +85,39 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
   );
   say('ok — the worktree and the task root are on disk');
 
+  /**
+   * --- 2b. the generated directories are pre-trusted, so an agent can start.
+   *
+   * Measured against Claude Code 2.1.226: a directory it has not seen opens on
+   * *"Quick safety check: Is this a project you created or one you trust?"* and
+   * waits for a keypress. Every task root is by construction a directory that
+   * did not exist a second ago, so without this the orchestrator this smoke goes
+   * on to spawn is parked on a dialog nobody is sitting in front of.
+   *
+   * Asserted here rather than only in `trust.test.ts` because the unit tests own
+   * the file's SHAPE and this owns the wiring: that the extension is handed a
+   * home at all, that it is the throwaway one this run was given, and that the
+   * paths written are the ones actually provisioned.
+   */
+  const home = flagValue(process.argv, '--shepherd-home');
+  if (home === undefined) die('no --shepherd-home: this smoke must not write into the real ~/.claude.json');
+  const trusted = JSON.parse(readFileSync(join(home, '.claude.json'), 'utf8')) as {
+    projects?: Record<string, { hasTrustDialogAccepted?: boolean }>;
+  };
+  // `endsWith`, not `===`: both the literal path and its realpath are written,
+  // and on macOS a temp directory is reached through `/var` while its real name
+  // is `/private/var`. Either spelling answers the same question.
+  const names = (dir: string): string[] =>
+    Object.keys(trusted.projects ?? {}).filter((key) => key.endsWith(dir));
+  const isTrusted = (dir: string): boolean =>
+    names(dir).some((key) => trusted.projects?.[key]?.hasTrustDialogAccepted === true);
+  check(isTrusted(listed.root), 'the task root is pre-trusted');
+  check(isTrusted(worktree), "the repo's worktree is pre-trusted");
+  // And nothing else: the source repo is the user's, and Shepherd has no
+  // standing to answer a trust question about a directory it did not create.
+  check(names(repo).length === 0, 'the source repo was NOT trusted — only what this app generated');
+  say('ok — the generated directories are pre-trusted');
+
   // --- 2b. the orchestrator started itself, in a real pane, in the task root.
   //
   // §7b: "composer auto-starts the orchestrator". What is asserted is the

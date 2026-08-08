@@ -24,6 +24,11 @@ export interface TerminalPaneProps {
   readonly focused: boolean;
   /** This pane's agent state, if it has one. Absent = a plain shell. */
   readonly agentState?: string;
+  /**
+   * The session the LAYOUT says is on this pane, if any. Handed to `attach` so
+   * a reloaded page adopts it rather than creating a second one.
+   */
+  readonly sessionId?: string;
   readonly agentReason?: string;
   /**
    * The colour THIS pane's grid is painted with, `#RRGGBB`.
@@ -41,11 +46,14 @@ export function TerminalPane({
   focused,
   agentState,
   agentReason,
+  sessionId,
   background = terminalBackground(),
 }: TerminalPaneProps): ReactNode {
   const hostRef = useRef<HTMLDivElement>(null);
   const paneRef = useRef(pane);
   paneRef.current = pane;
+  const sessionRef = useRef(sessionId);
+  sessionRef.current = sessionId;
 
   useEffect(() => {
     const host = hostRef.current;
@@ -54,7 +62,11 @@ export function TerminalPane({
     // may already be the pane that replaced this one, and detaching that id
     // would leave the old pane streaming and silence the new one.
     const attached = paneRef.current;
-    terminals.attach(attached, host);
+    // `sessionRef`, not `sessionId`: this effect must not re-run when the
+    // binding arrives, or a pane would detach and re-attach the moment its
+    // session is created. The value is only READ at mount, which is exactly
+    // when adoption matters.
+    terminals.attach(attached, host, sessionRef.current);
     return () => terminals.detach(attached.id);
   }, [pane.id, terminals]);
 

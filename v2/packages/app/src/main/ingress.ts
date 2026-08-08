@@ -29,6 +29,22 @@ export function resolveSupport(argv: readonly string[], fallback: string): strin
 }
 
 /**
+ * Where `ctx.homeDir` points, and for the third time the same reason: a
+ * throwaway run must not reach the real user's files.
+ *
+ * It exists because `homeDir` is not read-only. `tasks` pre-seeds Claude Code's
+ * trust record for the directories it generates, which is a write into
+ * `~/.claude.json` — so without this a smoke would leave records for a dozen
+ * deleted temp directories in the developer's own Claude Code configuration on
+ * every run.
+ */
+export const HOME_FLAG = '--shepherd-home';
+
+export function resolveHome(argv: readonly string[], fallback: string): string {
+  return flagValue(argv, HOME_FLAG) ?? fallback;
+}
+
+/**
  * The entitlements a caller reaching the LOCAL control socket gets.
  *
  * The socket is `0600` in the user's own support directory, so opening it already

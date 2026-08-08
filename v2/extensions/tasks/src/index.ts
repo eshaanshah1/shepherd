@@ -22,6 +22,7 @@ import {
   removeWorktree,
   restoreWorktree,
 } from './provision.ts';
+import { seedClaudeTrust } from './trust.ts';
 
 /**
  * `tasks` — the extension M3 exists for, and the one that has to prove the ADE
@@ -609,6 +610,30 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     for (const notice of plan.notices) ctx.log.warn(`task ${task.id}: ${notice}`);
     for (const failure of out.failed) ctx.log.warn(`task ${task.id}: ${failure}`);
     ctx.log.info(`task ${task.id}: ${landed.length}/${task.repos.length} repo(s), ${out.linked} link(s) at ${root}`);
+
+    /**
+     * Say, once, that Shepherd created these directories — before any agent
+     * opens in one.
+     *
+     * A task root and its worktrees did not exist a second ago, so Claude Code
+     * opens on its trust dialog and waits for a keypress, and the orchestrator
+     * below would spawn into a prompt nobody is sitting in front of. `trust.ts`
+     * has the whole measurement and the reasoning; what belongs here is the
+     * ordering (before the spawn, after the directories exist) and the scope:
+     * exactly the paths this function just materialized.
+     *
+     * Logged either way, because a pre-trust is a write into another program's
+     * configuration and a silent one is not something a user can audit. A
+     * failure is a warn and nothing more — the task is provisioned, the agent
+     * still starts, and what the user gets is the dialog they get today.
+     */
+    const seeded = seedClaudeTrust({
+      homeDir: ctx.homeDir,
+      dirs: [root, ...landed.map((repo) => repo.worktree)],
+      nonce: ctx.clock.now(),
+    });
+    if (seeded.ok) ctx.log.info(`task ${task.id}: ${seeded.detail}`);
+    else ctx.log.warn(`task ${task.id}: agents may open on Claude Code's trust prompt — ${seeded.detail}`);
 
     /**
      * The orchestrator starts itself (§7b: "composer auto-starts the

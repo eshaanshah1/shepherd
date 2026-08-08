@@ -23,6 +23,16 @@ killStrays(FLAG);
 const userData = mkdtempSync(join(tmpdir(), 'shepherd-v2-m3-'));
 const support = mkdtempSync(join(tmpdir(), 'shepherd-v2-m3-sup-'));
 const repo = mkdtempSync(join(tmpdir(), 'shepherd-v2-m3-repo-'));
+// A throwaway HOME as well as a throwaway support dir, because `ctx.homeDir` is
+// written to: `tasks` pre-seeds Claude Code's trust record for every task root
+// it generates, and without this the smoke would leave records for a dozen
+// deleted temp directories in the developer's own ~/.claude.json on every run.
+const home = mkdtempSync(join(tmpdir(), 'shepherd-v2-m3-home-'));
+// An empty but VALID config, because that is the case the seeding is for: the
+// extension refuses to create a `.claude.json` that is not there (a machine
+// that has never run Claude Code has no agent to unblock), so a run with no
+// file would assert nothing.
+writeFileSync(join(home, '.claude.json'), '{}\n');
 
 // `-c user.*` per command: an unset user.name fails the commit, and gpgsign
 // would block it on a passphrase prompt with no UI to answer (v1's lesson).
@@ -43,7 +53,14 @@ let status = 1;
 try {
   const result = spawnSync(
     electronBinary,
-    [entry, FLAG, `--shepherd-user-data=${userData}`, `--shepherd-support=${support}`, `--shepherd-m3-repo=${repo}`],
+    [
+      entry,
+      FLAG,
+      `--shepherd-user-data=${userData}`,
+      `--shepherd-support=${support}`,
+      `--shepherd-home=${home}`,
+      `--shepherd-m3-repo=${repo}`,
+    ],
     {
       encoding: 'utf8',
       timeout: 180_000,
@@ -58,12 +75,17 @@ try {
 } finally {
   rmSync(userData, { recursive: true, force: true });
   rmSync(support, { recursive: true, force: true });
+  rmSync(home, { recursive: true, force: true });
   rmSync(repo, { recursive: true, force: true });
 }
 
 check(status === 0, `electron exited ${status}`);
 check(output.includes('smoke: OK m3'), 'the m3 smoke reported OK');
 check(output.includes('ok — the worktree and the task root are on disk'), 'the task became real work');
+check(
+  output.includes('ok — the generated directories are pre-trusted'),
+  'a spawned agent will not open on Claude Code’s trust dialog',
+);
 check(output.includes('ok — the round trip is byte-identical'), 'archive/restore kept the work');
 check(output.includes('ok — creating a task alerted nobody'), 'the silence held');
 finish('m3');

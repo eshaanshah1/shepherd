@@ -343,3 +343,46 @@ describe('PaneSessionRegistry streaming', () => {
     expect(h.session.calls).toEqual([]);
   });
 });
+
+describe('a page reload', () => {
+  /**
+   * The claim the live-update story rests on: sessions live in main and outlive
+   * the window, so reloading the renderer to pick up new UI must not cost a pty.
+   *
+   * Measured before this existed: one `window.reload` with two panes open left
+   * FOUR sessions — the page created a second one per pane, and the originals
+   * were left alive, rendered by nobody and killable only through a pane that
+   * no longer pointed at them.
+   */
+  it('adopts the session the layout already binds, instead of creating a second', async () => {
+    const h = harness();
+    h.registry.attach(h.pane, h.host(), 's-existing');
+    await h.registry.settled();
+
+    expect(h.session.names).not.toContain('create');
+    expect(h.registry.inspect(h.pane.id)?.sessionId).toBe('s-existing');
+    // It still streams: adopting is not the same as doing nothing.
+    expect(h.session.names).toContain('attach');
+  });
+
+  it('creates when the layout knows of no session — the control', async () => {
+    const h = harness();
+    h.registry.attach(h.pane, h.host());
+    await h.registry.settled();
+    expect(h.session.names).toContain('create');
+  });
+
+  it('never re-points a pane that already has a session', async () => {
+    // Main's binding and ours agreeing is the normal case; re-pointing would
+    // orphan whatever this pane was already streaming.
+    const h = harness();
+    h.registry.attach(h.pane, h.host());
+    await h.registry.settled();
+    const first = h.registry.inspect(h.pane.id)?.sessionId;
+
+    h.registry.attach(h.pane, h.host(), 's-other');
+    await h.registry.settled();
+
+    expect(h.registry.inspect(h.pane.id)?.sessionId).toBe(first);
+  });
+});

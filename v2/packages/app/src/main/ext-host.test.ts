@@ -150,6 +150,7 @@ function harness(options: { isDev?: boolean; spawnThrows?: boolean } = {}): Harn
     permissions,
     bus,
     support: '/tmp/shepherd-test-support',
+    homeDir: '/tmp/shepherd-test-home',
     kv: (namespace) => store.namespace(namespace),
     logger,
     clock,
