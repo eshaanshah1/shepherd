@@ -81,6 +81,10 @@
         {
           "id": "tasks.delete",
           "title": "Tasks: Delete"
+        },
+        {
+          "id": "tasks.reveal",
+          "title": "Tasks: Reveal"
         }
       ]
     }

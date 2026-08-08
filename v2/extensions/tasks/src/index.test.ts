@@ -93,6 +93,15 @@ function harness(
      * the defaults below, so a test overrides one verb without restating them.
      */
     invoke?: (id: string, args: unknown) => Result<unknown, CommandError> | undefined;
+    /**
+     * Every WARNING the extension writes.
+     *
+     * D15 says a degraded path reports itself, which makes "did it warn" a real
+     * claim rather than logging trivia — and its opposite is a claim too: the
+     * closeRoot classifier exists so that the ordinary case (a task that never
+     * spawned) produces no line at all, and only a recorder can show that.
+     */
+    onWarn?: (line: string) => void;
   } = {},
 ): Harness {
   const dataDir = mkdtempSync(join(tmpdir(), 'shepherd-tasks-'));
@@ -114,6 +123,15 @@ function harness(
   const invoked: { id: string; args: unknown }[] = [];
   const registered = new Map<string, CommandSpec<unknown, unknown>>();
   let panes = 0;
+  /**
+   * Which roots are live — the one piece of state the layout fakes below share.
+   *
+   * `layout.openRoot` is idempotent and reports whether it MINTED the root, and
+   * that answer is the only thing `startSession` branches on. A fake with no
+   * memory would answer `created: true` forever, so every spawn would look like
+   * a task's first and the split path would never run in a test.
+   */
+  const roots = new Set<string>();
   const commands: CommandAPI = {
     register: (id, spec) => {
       registered.set(id, spec as unknown as CommandSpec<unknown, unknown>);
@@ -126,10 +144,41 @@ function harness(
       if (spec !== undefined) return { ok: true, value: (await spec.handler(args, CALLER)) as never };
       const override = opts.invoke?.(id, args);
       if (override !== undefined) return override as never;
+      // A task owns a ROOT, and `openRoot` mints it once: the first call for a
+      // given id creates it and hands back its first pane, every later call
+      // answers `created: false` with no side effect — which is exactly what the
+      // real command does, and what tells a first spawn from a second.
+      if (id === 'layout.openRoot') {
+        const root = String((args as { root?: unknown }).root);
+        if (roots.has(root)) return { ok: true, value: { root, pane: null, created: false } as never };
+        roots.add(root);
+        return { ok: true, value: { root, pane: `p${(panes += 1)}`, created: true } as never };
+      }
+      // A root that was never opened fails the way the real one does — the
+      // store's `no root <id>`, wrapped by the registry into `handler-failed`.
+      // That exact shape is what the extension classifies as "this task never
+      // spawned" and stays silent about, so a fake that answered OK would let
+      // the classifier rot untested.
+      if (id === 'layout.closeRoot') {
+        const root = String((args as { root?: unknown }).root);
+        if (!roots.delete(root)) {
+          return {
+            ok: false,
+            error: {
+              code: 'handler-failed',
+              message: `"layout.closeRoot" failed: no root ${root}`,
+              commandId: 'layout.closeRoot',
+            },
+          } as never;
+        }
+        return { ok: true, value: { root, closedPanes: 1 } as never };
+      }
       // `layout.split` answers with the pane id ITSELF, which is what the kernel
       // returns and what `startSession` records. The blanket `undefined` below
       // would make every spawn key its session on a pane that is not a string,
-      // and the tests would agree with each other about nothing.
+      // and the tests would agree with each other about nothing. The counter is
+      // shared with `openRoot` above, so a pane id names one pane whichever verb
+      // opened it.
       if (id === 'layout.split') return { ok: true, value: `p${(panes += 1)}` as never };
       // Everything else the extension does not own answers OK and nothing else,
       // which is what `layout.close` and `layout.rename` on a live pane do. The
@@ -215,7 +264,10 @@ function harness(
       set: () => Promise.resolve(),
       delete: () => Promise.resolve(),
     },
-    log: nullLogger.child('extension'),
+    log:
+      opts.onWarn === undefined
+        ? nullLogger.child('extension')
+        : { ...nullLogger.child('extension'), warn: opts.onWarn },
     clock: manualClock(1),
     permissions: [],
     isDev: false,
@@ -278,6 +330,18 @@ const refusesRemoval = (call: GitCall): ExecOk | ExecErr =>
   call.args[0] === 'worktree' && call.args[1] === 'remove'
     ? { ok: false, code: 128, stdout: '', stderr: "fatal: '/x' is a main working tree\n" }
     : OK;
+
+/**
+ * git's answers for an archive that SUCCEEDS.
+ *
+ * `commit-tree` and `write-tree` have to hand back something that looks like a
+ * sha, or `archiveWorktree` refuses ("could not write the archive commit") and
+ * every ordering claim downstream of it is vacuous. The `ls-files` calls stay
+ * empty on purpose: one asks whether anything is unmerged and the other lists
+ * ignored files, and both mean "nothing" when they print nothing.
+ */
+const archivable = (call: GitCall): ExecOk =>
+  call.args[0] === 'ls-files' ? OK : { ok: true, stdout: 'abc123\n', stderr: '' };
 
 interface DeleteResult {
   readonly id: string;
@@ -542,24 +606,30 @@ describe('attention reaching the task tree', () => {
  * is the state v1's sidebar was built to get out of.
  */
 describe('naming the pane a session runs in', () => {
-  it('renames the orchestrator’s pane with the task title', async () => {
+  it('names the orchestrator’s pane AT MINT, with the task title and no second call', async () => {
     const h = (live = harness());
-    await h.run('tasks.create', { title: 'Fix login', brief: 'Make it work.', repos: [] });
-    await until(() => h.invoked.some((call) => call.id === 'layout.rename'));
+    const created = await h.run<{ id: string }>('tasks.create', {
+      title: 'Fix login',
+      brief: 'Make it work.',
+      repos: [],
+    });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
 
-    expect(h.invoked.filter((call) => call.id === 'layout.rename')).toEqual([
-      { id: 'layout.rename', args: { pane: 'p1', title: 'Fix login' } },
-    ]);
-    // After the split, necessarily: the pane id is the split's answer.
-    expect(h.trace.indexOf('invoke layout.rename')).toBeGreaterThan(h.trace.indexOf('invoke layout.split'));
+    expect(h.invoked.find((call) => call.id === 'layout.openRoot')?.args).toMatchObject({
+      root: `task:${created.id}`,
+      title: 'Fix login',
+    });
+    // And NOT renamed afterwards: `openRoot` takes the title, so a rename here
+    // would be the same title set twice — one invoke that exists only because
+    // nobody noticed the first one had already done it.
+    expect(h.invoked.filter((call) => call.id === 'layout.rename')).toEqual([]);
   });
 
   it('names a workstream by its repo, since that is what distinguishes it', async () => {
     const h = (live = harness({ tasks: [task()] }));
     await h.run('tasks.spawn', { task: 't1', repo: 'api', prompt: 'go' });
 
-    expect(h.invoked.find((call) => call.id === 'layout.rename')?.args).toEqual({
-      pane: 'p1',
+    expect(h.invoked.find((call) => call.id === 'layout.openRoot')?.args).toMatchObject({
       title: 'Fix login · api',
     });
   });
@@ -568,10 +638,21 @@ describe('naming the pane a session runs in', () => {
     const h = (live = harness({ tasks: [task()] }));
     await h.run('tasks.spawn', { task: 't1', prompt: 'go' });
 
-    expect(h.invoked.find((call) => call.id === 'layout.rename')?.args).toEqual({
-      pane: 'p1',
+    expect(h.invoked.find((call) => call.id === 'layout.openRoot')?.args).toMatchObject({
       title: 'Fix login · workstream',
     });
+  });
+
+  it('renames the SECOND agent’s pane, because a split carries no title', async () => {
+    const h = (live = harness({ tasks: [task()] }));
+    await h.run('tasks.spawn', { task: 't1', prompt: 'first' });
+    await h.run('tasks.spawn', { task: 't1', repo: 'api', prompt: 'second' });
+
+    expect(h.invoked.filter((call) => call.id === 'layout.rename')).toEqual([
+      { id: 'layout.rename', args: { pane: 'p2', title: 'Fix login · api' } },
+    ]);
+    // After the split, necessarily: the pane id is the split's answer.
+    expect(h.trace.indexOf('invoke layout.rename')).toBeGreaterThan(h.trace.indexOf('invoke layout.split'));
   });
 
   it('does NOT fail the spawn when the rename fails — the pane is real, the title is decoration', async () => {
@@ -585,12 +666,221 @@ describe('naming the pane a session runs in', () => {
             }
           : undefined,
     }));
+    // The first spawn mints the root and is named at mint; only the second goes
+    // through `layout.rename`, so it is the one that can see it fail.
+    await h.run('tasks.spawn', { task: 't1', prompt: 'first' });
     const session = await h.run<{ pane?: string; role: string }>('tasks.spawn', { task: 't1', prompt: 'go' });
 
-    expect(session.pane).toBe('p1');
+    expect(session.pane).toBe('p2');
     // And the session is recorded, so the pane is not left running with nothing
     // in the store pointing at it — which is the leak a throw here would make.
     const listed = await h.run<{ sessions: { pane?: string }[] }[]>('tasks.list');
-    expect(listed[0]?.sessions.map((entry) => entry.pane)).toEqual(['p1']);
+    expect(listed[0]?.sessions.map((entry) => entry.pane)).toEqual(['p1', 'p2']);
+  });
+});
+
+/**
+ * A task owns a root — M3c, and the whole of what "landing in a task" means.
+ *
+ * The interesting claims are all about WHICH layout verb runs and in what
+ * order, because every one of them is invisible to a unit test of the pieces:
+ * `openRoot` is idempotent and `split` is not, `closeRoot` ends the sessions in
+ * a root and the per-session loop does not, and the archive's refusal has to
+ * come before anything touches the screen. So the seams are faked and the
+ * handlers are real, exactly as `tasks.delete`'s tests above are.
+ */
+describe('a task owns a layout root', () => {
+  it('opens the task’s OWN root for the first agent, with its cwd and the line to type', async () => {
+    const h = (live = harness({ tasks: [task()] }));
+    await h.run('tasks.spawn', { task: 't1', prompt: 'go' });
+
+    const opened = h.invoked.find((call) => call.id === 'layout.openRoot')?.args as {
+      root: string;
+      cwd: string;
+      initialCommand: string;
+    };
+    expect(opened.root).toBe('task:t1');
+    expect(opened.cwd).toBe(join(h.dataDir, 'fix-login'));
+    // The prompt rides a FILE that the typed line reads back and deletes — one
+    // line, because a newline is an Enter press.
+    expect(opened.initialCommand).toContain('cat ');
+    // And no split: the root did not exist, so there was nothing to split into.
+    expect(h.invoked.filter((call) => call.id === 'layout.split')).toEqual([]);
+  });
+
+  it('splits into the SAME root for the second agent, rather than opening a second one', async () => {
+    const h = (live = harness({ tasks: [task()] }));
+    await h.run('tasks.spawn', { task: 't1', prompt: 'first' });
+    await h.run('tasks.spawn', { task: 't1', repo: 'api', prompt: 'second' });
+
+    // Named explicitly: an unqualified split means "the root I am looking at",
+    // and a spawn from the CLI while another task is on screen must not open a
+    // pane in somebody else's task.
+    expect(h.invoked.filter((call) => call.id === 'layout.split').map((call) => call.args)).toEqual([
+      { axis: 'row', root: 'task:t1', cwd: join(h.dataDir, 'fix-login', 'api'), initialCommand: expect.any(String) },
+    ]);
+  });
+
+  it('LANDS you in the task — every spawn switches to its root', async () => {
+    // v1's composer behaviour: you asked for work, so you are taken to it. A
+    // pane opened in a root nobody switched to is an agent running off screen.
+    const h = (live = harness({ tasks: [task()] }));
+    await h.run('tasks.spawn', { task: 't1', prompt: 'go' });
+
+    expect(h.invoked.filter((call) => call.id === 'layout.switchRoot')).toEqual([
+      { id: 'layout.switchRoot', args: { root: 'task:t1' } },
+    ]);
+    // After the pane exists, or the window moves to a root with nothing in it.
+    expect(h.trace.indexOf('invoke layout.switchRoot')).toBeGreaterThan(
+      h.trace.indexOf('invoke layout.openRoot'),
+    );
+  });
+
+  it('does NOT fail the spawn when the switch fails — the agent is running either way', async () => {
+    const h = (live = harness({
+      tasks: [task()],
+      invoke: (id) =>
+        id === 'layout.switchRoot'
+          ? { ok: false, error: { code: 'handler-failed', message: 'no root', commandId: 'layout.switchRoot' } }
+          : undefined,
+    }));
+    const session = await h.run<{ pane?: string }>('tasks.spawn', { task: 't1', prompt: 'go' });
+    expect(session.pane).toBe('p1');
+  });
+
+  describe('tasks.reveal', () => {
+    it('switches to the task’s root', async () => {
+      const h = (live = harness({ tasks: [task()] }));
+      await h.run('tasks.spawn', { task: 't1', prompt: 'go' });
+      const before = h.invoked.length;
+
+      await h.run('tasks.reveal', { task: 't1' });
+
+      expect(h.invoked.slice(before).filter((call) => call.id === 'layout.switchRoot')).toEqual([
+        { id: 'layout.switchRoot', args: { root: 'task:t1' } },
+      ]);
+    });
+
+    it('OPENS the root first when there is none — a task that never spawned is still somewhere', async () => {
+      // A plain shell at the task's own directory is the honest "here is your
+      // task": no `initialCommand`, because starting an agent would spend a
+      // session on a glance.
+      const h = (live = harness({ tasks: [task()] }));
+      await h.run('tasks.reveal', { task: 't1' });
+
+      const opened = h.invoked.find((call) => call.id === 'layout.openRoot')?.args as {
+        root: string;
+        cwd: string;
+        initialCommand?: string;
+      };
+      expect(opened).toMatchObject({ root: 'task:t1', cwd: join(h.dataDir, 'fix-login') });
+      expect(opened.initialCommand).toBeUndefined();
+      expect(h.trace.indexOf('invoke layout.switchRoot')).toBeGreaterThan(
+        h.trace.indexOf('invoke layout.openRoot'),
+      );
+    });
+
+    it('refuses an unknown task BY NAME, rather than switching to a root that means nothing', async () => {
+      const h = (live = harness({ tasks: [task()] }));
+      await expect(h.run('tasks.reveal', { task: 'ghost' })).rejects.toThrow('ghost');
+      expect(h.invoked.filter((call) => call.id === 'layout.switchRoot')).toEqual([]);
+    });
+  });
+
+  describe('closing the root when a task ends', () => {
+    it('closes the task’s root BEFORE delete touches the disk its panes are running on', async () => {
+      const h = (live = harness({ tasks: [task()] }));
+      await h.run('tasks.spawn', { task: 't1', prompt: 'go' });
+      // The spawn's own trace is dropped, so the indices below are the delete's.
+      const spawned = h.trace.length;
+      await h.run('tasks.delete', { task: 't1' });
+      const deleting = h.trace.slice(spawned);
+
+      const closed = deleting.indexOf('invoke layout.closeRoot');
+      const firstGit = deleting.findIndex((entry) => entry.startsWith('git '));
+      // Both indices asserted present first: `indexOf` answers -1 for a line
+      // that never happened, and -1 is less than everything, so a comparison
+      // alone would pass loudest when neither call was made.
+      expect(closed).toBeGreaterThanOrEqual(0);
+      expect(firstGit).toBeGreaterThanOrEqual(0);
+      expect(firstGit).toBeGreaterThan(closed);
+    });
+
+    it('keeps the per-session close as well, for panes that were never in the root', async () => {
+      // Idempotent, and not redundant: a record from before a task owned a root
+      // — or a pane moved elsewhere — has a session `closeRoot` cannot reach.
+      const h = (live = harness({
+        tasks: [task({ sessions: [{ id: 's1', role: 'orchestrator', pane: 'p9' }] })],
+      }));
+      await h.run('tasks.delete', { task: 't1' });
+
+      expect(h.invoked.filter((call) => call.id === 'layout.close')).toEqual([
+        { id: 'layout.close', args: { pane: 'p9' } },
+      ]);
+    });
+
+    it('says NOTHING when the task never spawned, because that is the ordinary case', async () => {
+      // A draft deleted the day it was created never opened a root. Warning
+      // about it would put a line in the log for the most common thing this
+      // verb does — and the extension has only the message text to tell that
+      // from a real failure, so the classifier is worth a test of its own.
+      const warnings: string[] = [];
+      const h = (live = harness({ tasks: [task()], onWarn: (line) => warnings.push(line) }));
+      await h.run('tasks.delete', { task: 't1' });
+
+      expect(h.invoked.some((call) => call.id === 'layout.closeRoot')).toBe(true);
+      expect(warnings.filter((line) => line.includes('root'))).toEqual([]);
+    });
+
+    it('WARNS when the root refuses for any other reason', async () => {
+      const warnings: string[] = [];
+      const h = (live = harness({
+        tasks: [task()],
+        onWarn: (line) => warnings.push(line),
+        invoke: (id) =>
+          id === 'layout.closeRoot'
+            ? {
+                ok: false,
+                error: {
+                  code: 'handler-failed',
+                  message: '"layout.closeRoot" failed: task:t1 is the home root and cannot be closed',
+                  commandId: 'layout.closeRoot',
+                },
+              }
+            : undefined,
+      }));
+      await h.run('tasks.delete', { task: 't1' });
+
+      expect(warnings.some((line) => line.includes('its root was not closed'))).toBe(true);
+    });
+
+    it('archives by closing the root AFTER the worktrees are snapshotted', async () => {
+      const h = (live = harness({ tasks: [task()], git: archivable }));
+      await h.run('tasks.spawn', { task: 't1', prompt: 'go' });
+      await h.run('tasks.archive', { task: 't1' });
+
+      const removed = h.trace.lastIndexOf(`git worktree remove --force ${join(h.dataDir, 'fix-login', 'api')}`);
+      const closed = h.trace.lastIndexOf('invoke layout.closeRoot');
+      expect(removed).toBeGreaterThanOrEqual(0);
+      expect(closed).toBeGreaterThan(removed);
+    });
+
+    it('REFUSES a conflicted worktree before it closes anything', async () => {
+      // git cannot write a tree from a conflicted index, so the archive fails —
+      // and a refusal that had already closed the task's panes would leave the
+      // work on disk with no agent left to finish resolving it.
+      const h = (live = harness({
+        tasks: [task()],
+        git: (call) =>
+          call.args[0] === 'ls-files' && call.args[1] === '-u'
+            ? { ok: true, stdout: '100644 abc 1\tREADME.md\n', stderr: '' }
+            : OK,
+      }));
+      await h.run('tasks.spawn', { task: 't1', prompt: 'go' });
+      const before = h.invoked.length;
+
+      await expect(h.run('tasks.archive', { task: 't1' })).rejects.toThrow('unmerged');
+      expect(h.invoked.slice(before).filter((call) => call.id === 'layout.closeRoot')).toEqual([]);
+    });
   });
 });

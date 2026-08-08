@@ -9,6 +9,7 @@ import {
 import { REPO_SUGGESTIONS_POINT, TASK_COMMANDS, TASK_VIEWS } from './manifest.ts';
 import { TaskStore, type RepoArchive, type RepoRef, type TaskRecord, type TaskSession } from './store.ts';
 import { slugify, uniqueSlug } from './model/slug.ts';
+import { taskRootId } from './model/root-id.ts';
 import { displayState } from './model/lifecycle.ts';
 import { synthTaskRoot } from './model/root-synth.ts';
 import { planLaunch } from './model/launch.ts';
@@ -80,7 +81,7 @@ interface TreeItemOut {
   section?: boolean;
   tint?: string;
   collapsed?: boolean;
-  command?: { id: string };
+  command?: { id: string; args?: unknown };
 }
 
 const CORRELATE_ATTEMPTS = 10;
@@ -244,10 +245,19 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * Start an agent, in a directory, in a pane — the whole of what "spawn"
    * means today.
    *
-   * Three seams, none of them new: `layout.split` opens the pane (with the cwd
+   * Three seams, none of them new: a layout verb opens the pane (with the cwd
    * and the one line to type), the renderer creates the session when it mounts,
    * and the kernel injects the correlation env into it (ADR 0025) so the
    * agent's hooks land like any other pane's.
+   *
+   * **A task owns a root**, and that is what decides which layout verb runs.
+   * `layout.openRoot` is invoked unconditionally and its `created` answer is the
+   * branch: minted, and the task's first agent is the root's first pane; already
+   * live, and this is a second agent joining a root that exists, which is a
+   * `layout.split` into it. Asking the layout rather than counting the record's
+   * sessions is deliberate — a restored task HAS sessions and may have no root
+   * (archiving closed it), and a task whose root is live may have none recorded
+   * yet. The store is the authority on which roots exist; the record is not.
    *
    * **The pane is created before the session exists**, so the record is written
    * optimistically with a placeholder id and the real one is filled in behind —
@@ -279,36 +289,87 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     // session exists, and a `cat` that loses the race reads an empty prompt.
     writeFileSync(plan.promptFile, input.prompt, 'utf8');
 
-    const opened = await commands.invoke<string>('layout.split', {
-      axis: 'row',
-      cwd,
-      initialCommand: plan.command,
-    });
-    if (!opened.ok) {
-      rmSync(plan.promptFile, { force: true });
-      throw new Error(`could not open a pane for the agent: ${opened.error.code}: ${opened.error.message}`);
-    }
-
+    const root = taskRootId(task.id);
     /**
-     * Name the pane, because a column of identical shell titles is what a task
-     * with three agents looks like otherwise.
-     *
-     * A separate command from the split on purpose: `layout.split` takes the cwd
-     * and the command to type and nothing else, and widening it so this one
-     * caller could pass a title would put a `tasks` convenience into the kernel's
-     * layout verb. Renaming afterwards costs one more invoke and keeps the seam.
-     *
-     * A failure is logged and stepped over: the pane is open, the agent is
-     * running in it and the session is about to be recorded — a title is the one
-     * part of a spawn that is decoration, and throwing here would discard a real
-     * pane over it.
+     * The name a column of identical shell titles is otherwise missing — what a
+     * task with three agents looks like without it.
      */
     const title =
       input.role === 'orchestrator' ? task.title : `${task.title} · ${input.repo ?? 'workstream'}`;
-    const renamed = await commands.invoke('layout.rename', { pane: opened.value, title });
-    if (!renamed.ok) {
+
+    const opened = await commands.invoke<{ root: string; pane: string | null; created: boolean }>(
+      'layout.openRoot',
+      { root, cwd, initialCommand: plan.command, title },
+    );
+    if (!opened.ok) {
+      rmSync(plan.promptFile, { force: true });
+      throw new Error(`could not open the task's root: ${opened.error.code}: ${opened.error.message}`);
+    }
+
+    let pane: string;
+    if (opened.value.created) {
+      // The root was minted for this task, and its first pane IS the agent's.
+      // `openRoot` names the pane at mint through its own `title` field, so
+      // there is deliberately no rename on this path: a second invoke would set
+      // the title the layout has already set.
+      if (typeof opened.value.pane !== 'string') {
+        rmSync(plan.promptFile, { force: true });
+        throw new Error(`the task's root was created with no pane to run the agent in`);
+      }
+      pane = opened.value.pane;
+    } else {
+      // The root is already live — a second agent joining the first, or a spawn
+      // after a restore. `root` is named explicitly rather than left to default:
+      // an unqualified split means "the root I am looking at", and a spawn
+      // requested from the CLI while another task is on screen must not open a
+      // pane in somebody else's task.
+      const split = await commands.invoke<string>('layout.split', {
+        axis: 'row',
+        root,
+        cwd,
+        initialCommand: plan.command,
+      });
+      if (!split.ok) {
+        rmSync(plan.promptFile, { force: true });
+        throw new Error(`could not open a pane for the agent: ${split.error.code}: ${split.error.message}`);
+      }
+      pane = split.value;
+
+      /**
+       * Name the pane, in the one case the layout did not name it for us.
+       *
+       * A separate command from the split on purpose: `layout.split` takes the
+       * cwd and the command to type and nothing else, and widening it so this
+       * one caller could pass a title would put a `tasks` convenience into the
+       * kernel's layout verb.
+       *
+       * A failure is logged and stepped over: the pane is open, the agent is
+       * running in it and the session is about to be recorded — a title is the
+       * one part of a spawn that is decoration, and throwing here would discard
+       * a real pane over it.
+       */
+      const renamed = await commands.invoke('layout.rename', { pane, title });
+      if (!renamed.ok) {
+        ctx.log.warn(
+          `task ${task.id}: pane ${pane} kept its own title — ${renamed.error.code}: ${renamed.error.message}`,
+        );
+      }
+    }
+
+    /**
+     * And LAND you in it — v1's composer behaviour: you asked for work, so you
+     * are taken to it. A spawn that opened a pane in a root nobody switched to
+     * is an agent running somewhere off screen, which is the thing the sidebar
+     * exists to stop being the normal case.
+     *
+     * A failure is a warn, not a failed spawn: the pane is real and the agent is
+     * running in it either way, and refusing the spawn because the window would
+     * not move would throw away work over navigation.
+     */
+    const switched = await commands.invoke('layout.switchRoot', { root });
+    if (!switched.ok) {
       ctx.log.warn(
-        `task ${task.id}: pane ${opened.value} kept its own title — ${renamed.error.code}: ${renamed.error.message}`,
+        `task ${task.id}: the window stayed where it was — ${switched.error.code}: ${switched.error.message}`,
       );
     }
 
@@ -316,9 +377,9 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       id: `pending-${ctx.clock.now()}`,
       ...(input.repo === undefined ? {} : { repo: input.repo }),
       role: input.role,
-      pane: opened.value,
+      pane,
     };
-    ctx.log.info(`task ${task.id}: opened pane ${opened.value} in ${cwd} for a ${input.role}`);
+    ctx.log.info(`task ${task.id}: opened pane ${pane} in ${cwd} (root ${root}) for a ${input.role}`);
     void correlate(task.id, session).catch((error: unknown) => {
       ctx.log.error(`task ${task.id}: correlating ${session.pane ?? '?'} threw — ${String(error)}`);
     });
@@ -367,6 +428,31 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
 
   /** Where a task's worktrees live. `ctx.dataDir` is the host's answer to D1b. */
   const rootOf = (task: TaskRecord): string => `${ctx.dataDir}/${task.slug}`;
+
+  /**
+   * End the task's pane group — every agent in it, through the one terminator.
+   *
+   * `layout.closeRoot` drains the root through `store.close`, which is what
+   * ADR 0022 makes the only thing that ends a session, so this kills the ptys
+   * as well as removing the group.
+   *
+   * **A task that never spawned has no root, and that is not a failure.** A
+   * draft deleted the day it was created never opened one, and warning about it
+   * would put a line in the log for the most ordinary thing this verb does. The
+   * distinction is drawn from the message text because that is all there is: the
+   * error crossed a port as `{code, message}`, and there is no "does this root
+   * exist" command to ask instead. Scoped to THIS root's id so an unrelated
+   * failure that happens to mention a root is still reported.
+   */
+  async function closeTaskRoot(task: TaskRecord): Promise<void> {
+    const root = taskRootId(task.id);
+    const closed = await commands.invoke('layout.closeRoot', { root });
+    if (closed.ok) return;
+    if (closed.error.code === 'handler-failed' && closed.error.message.includes(`no root ${root}`)) return;
+    ctx.log.warn(
+      `task ${task.id}: its root was not closed — ${closed.error.code}: ${closed.error.message}`,
+    );
+  }
 
   /**
    * Provision a task's repos, then synthesize its root.
@@ -569,6 +655,48 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
   );
 
   ctx.subscriptions.push(
+    commands.register(TASK_COMMANDS.reveal, {
+      title: 'Tasks: Reveal',
+      schema: s.object({ task: s.string() }),
+      /**
+       * Show me this task — the whole of what clicking a row means.
+       *
+       * `layout.openRoot` first, unconditionally, and then the switch. The root
+       * may be missing for two ordinary reasons — the task never spawned, or it
+       * was archived and its root closed — and `openRoot` is idempotent, so
+       * asking for it costs nothing when it is already there and is the answer
+       * when it is not. The alternative (switch, read the failure, decide what
+       * it meant) makes an error string load-bearing for a path that runs every
+       * time you click a task.
+       *
+       * With **no `initialCommand`**: a plain shell at the task's own directory
+       * is the honest "here is your task" for one with no live agents. Starting
+       * an agent because you clicked a row would spend a session on a glance.
+       */
+      handler: async (args) => {
+        const task = store.get(args.task);
+        if (task === undefined) throw new Error(`no task ${args.task}`);
+        const root = taskRootId(task.id);
+
+        const opened = await commands.invoke<{ created: boolean }>('layout.openRoot', {
+          root,
+          cwd: rootOf(task),
+          title: task.title,
+        });
+        if (!opened.ok) {
+          throw new Error(`could not open the task's root: ${opened.error.code}: ${opened.error.message}`);
+        }
+
+        const switched = await commands.invoke('layout.switchRoot', { root });
+        if (!switched.ok) {
+          throw new Error(`could not switch to the task: ${switched.error.code}: ${switched.error.message}`);
+        }
+        return { id: task.id, root, opened: opened.value.created };
+      },
+    }),
+  );
+
+  ctx.subscriptions.push(
     commands.register(TASK_COMMANDS.archive, {
       schema: s.object({ task: s.string() }),
       handler: async (args) => {
@@ -591,6 +719,13 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           // Gitignored files go either way; the user hears about it first.
           for (const warning of out.warnings) warnings.push(`${repo.name}: ${warning}`);
         }
+        // AFTER the snapshots, and that order is the whole of it: a conflicted
+        // worktree refuses above, and a refusal that had already closed the
+        // task's panes would leave the user with the work still on disk and no
+        // agent left to finish resolving it. Shelving is only allowed to touch
+        // the screen once what is on disk is safe.
+        await closeTaskRoot(task);
+
         store.put({ ...task, lifecycle: 'archived', archives });
         changed();
         for (const warning of warnings) ctx.log.warn(`task ${task.id}: ${warning}`);
@@ -678,6 +813,14 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         const root = rootOf(task);
         const kept: string[] = [];
         const failed: string[] = [];
+
+        // The ROOT first: a task owns one, and closing it ends every session in
+        // it through the same terminator the loop below uses. The loop stays,
+        // and is not redundant — it covers sessions whose panes were never in
+        // this root (a record from before a task owned one, or a pane moved
+        // elsewhere) — and it is idempotent, because closing a pane that is
+        // already gone answers with a failure nobody reads.
+        await closeTaskRoot(task);
 
         // The sessions first (its first review's finding #3): a deleted task's
         // panes would keep running in a directory about to vanish, and ADR 0022
@@ -812,7 +955,11 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
                 description: state,
                 tint: state,
                 collapsed: true,
-                command: { id: TASK_COMMANDS.list },
+                // Clicking a task takes you to it. The args ride the row (the
+                // registry passes `command.args` straight through), so the row
+                // names WHICH task rather than the handler having to guess from
+                // whatever happens to be selected.
+                command: { id: TASK_COMMANDS.reveal, args: { task: task.id } },
               });
             }
           }
