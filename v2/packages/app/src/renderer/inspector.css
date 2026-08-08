@@ -1,0 +1,161 @@
+/*
+ * The token inspector's own chrome — dev-only, and imported by `inspector.tsx`
+ * rather than by the shell's stylesheet.
+ *
+ * That is a deliberate consequence of how the tool is gated: `main.tsx` loads
+ * `./inspector.tsx` behind `import.meta.env.DEV`, which is statically false in a
+ * production build, so the whole dynamic import — this file with it — is dropped
+ * rather than shipped and never used. A section appended to `styles.css` would
+ * have left sixty lines of dead CSS in the release bundle for a panel that
+ * cannot be opened.
+ *
+ * Everything here paints from tier-2 ROLES, with one exception that is data
+ * rather than design: the swatch's `background` is set inline from the colour the
+ * probe MEASURED. That is the reading, not a choice.
+ *
+ * Pointer discipline, which is the one thing a badly built inspector gets wrong:
+ * the container is `pointer-events: none` so the app underneath keeps every
+ * hover, focus and cursor it had. Only the pinned panel takes events back, and
+ * only so its text can be selected and copied — every listener that drives the
+ * tool is on `window`, in the capture phase, and none of them is on this markup.
+ */
+
+.sh-insp {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  pointer-events: none;
+  font-family: var(--sh-font-sans);
+}
+
+/*
+ * The highlight, drawn with `outline` rather than `border` so it costs the
+ * element no layout — the box is positioned over a live surface and a border
+ * would report a rect one pixel bigger than the one being measured.
+ */
+.sh-insp-box {
+  position: fixed;
+  outline: var(--sh-hairline) solid var(--sh-accent);
+  background: color-mix(in srgb, var(--sh-accent) 12%, transparent);
+  pointer-events: none;
+}
+
+.sh-insp-box[data-pinned='true'] {
+  outline-color: var(--sh-prompt);
+  background: color-mix(in srgb, var(--sh-prompt) 12%, transparent);
+}
+
+/*
+ * The panel is a `Card` — the primitive, restyled by nothing. What is set here
+ * is where it sits and how wide it is, which is the shell's business, exactly as
+ * `.sh-composer-repos .sh-ui-field` sets a field's place in a row and not its
+ * appearance.
+ */
+.sh-insp-panel {
+  position: fixed;
+  bottom: var(--sh-space-xl);
+  width: 400px;
+  max-width: calc(100vw - var(--sh-space-xl) * 2);
+  background: var(--sh-surface-raised);
+}
+
+/* An element with two painting pseudos reports twelve rows, not four. Bounded so
+   the panel cannot outgrow the window; scrollable only once pinned, which is the
+   only state in which it takes pointer events at all. */
+.sh-insp-rows {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.sh-insp-panel[data-side='right'] { right: var(--sh-space-xl); }
+.sh-insp-panel[data-side='left'] { left: var(--sh-space-xl); }
+.sh-insp-panel[data-pinned='true'] { pointer-events: auto; user-select: text; }
+
+.sh-insp-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-md);
+  width: 100%;
+  min-width: 0;
+  padding: 0 var(--sh-space-lg) 0 var(--sh-space-xl);
+}
+
+/* The element under the pointer, in the machine's voice: it is a selector. */
+.sh-insp-target {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-small);
+  color: var(--sh-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The measured colour, as a colour. The 12×12 slot's occupant for these rows —
+   `StatusDot` takes a role and this is not one of the five, so it is a plain
+   box in the same box the dot would have used. */
+.sh-insp-swatch {
+  display: block;
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  /* Over a checker of nothing: a transparent measurement has to LOOK
+     transparent, or `rgba(0, 0, 0, 0)` and black are the same swatch. */
+  border: var(--sh-hairline) solid var(--sh-line);
+}
+
+.sh-insp-prop {
+  display: inline-block;
+  width: 108px;
+  color: var(--sh-text-faint);
+  font-size: var(--sh-font-size-small);
+}
+
+.sh-insp-pseudo {
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-nano);
+  color: var(--sh-prompt);
+}
+
+.sh-insp-role {
+  font-family: var(--sh-font-mono);
+  color: var(--sh-text);
+}
+
+/* The verdict this tool exists to produce, and it is painted like one. */
+.sh-insp-role[data-missing='true'] { color: var(--sh-danger); }
+
+/* A property that reaches no pixel is still reported — the rhythm is four rows,
+   always — but it is not a finding, so it does not read as one. */
+[data-drawn='false'] .sh-insp-role,
+[data-drawn='false'] .sh-insp-meta { color: var(--sh-text-faint); }
+[data-drawn='false'] .sh-insp-swatch { opacity: 0.35; }
+
+.sh-insp-via {
+  color: var(--sh-text-faint);
+  font-size: var(--sh-font-size-small);
+}
+
+.sh-insp-meta {
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-nano);
+  color: var(--sh-text-dim);
+}
+
+.sh-insp-where { color: var(--sh-text-faint); }
+
+.sh-insp-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-md);
+  padding: var(--sh-space-sm) var(--sh-space-xl) var(--sh-space-md);
+  font-size: var(--sh-font-size-small);
+  color: var(--sh-text-faint);
+}
+
+/* While inspecting, the pointer is an instrument. `!important` because it has to
+   beat every cursor the app sets on its own surfaces (the divider's
+   `col-resize`, the terminal's text cursor) — this is the one rule in the repo
+   where a global override is the correct scope, since the mode IS global. */
+[data-sh-inspecting='true'] * { cursor: crosshair !important; }

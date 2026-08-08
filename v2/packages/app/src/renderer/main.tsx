@@ -71,6 +71,27 @@ if (import.meta.env?.DEV === true) {
   void import('react-grab').catch((error: unknown) => {
     console.warn('[shepherd] react-grab did not load; continuing without it:', error);
   });
+
+  /**
+   * The token inspector (⌘⇧I) — design-system spec §4, the other half of the
+   * same loop.
+   *
+   * `react-grab` answers "what component is this"; the inspector answers "which
+   * ROLE paints it", which is the question every wrong colour in this project
+   * has been a guess at. Loaded on exactly the same terms and for the same
+   * reason: a build-time constant, so the module and its stylesheet are dropped
+   * from a production bundle rather than shipped and never opened, and a failure
+   * to load is a log rather than a throw — a devtool that can stop the app from
+   * starting is a devtool that has become load-bearing.
+   *
+   * It mounts its OWN React root (see `mountInspector`) so nothing about `App`
+   * changes between the two build configurations.
+   */
+  void import('./inspector.tsx')
+    .then((module) => module.mountInspector())
+    .catch((error: unknown) => {
+      console.warn('[shepherd] the token inspector did not load; continuing without it:', error);
+    });
 }
 
 const terminals =
