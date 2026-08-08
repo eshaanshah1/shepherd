@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { PaneID } from '@shepherd/sdk';
+import { paneId, type PaneID } from '@shepherd/sdk';
 import {
   LAYOUT_COMMANDS,
+  findPane,
   leaf,
   leafIds,
   makePane,
@@ -257,6 +258,28 @@ export function App({
   // read as a window with panes the user cannot find.
   const paneCount = active === null ? 0 : leafIds(active.tree).length;
 
+  /**
+   * Where you are: the focused pane's own name, and the path under it.
+   *
+   * Read off the pane rather than off the task list, because the renderer knows
+   * nothing about tasks — `tasks` sets a pane's `userTitle` when it spawns
+   * (`Ship the login fix · api`), so the name the pane carries IS the task's,
+   * with no coupling in this file. A window with no snapshot yet says the app's
+   * name, which is the one moment that is honest.
+   */
+  const focused = active === null || active.focusedPaneId === null
+    ? null
+    : findPane(active.tree, paneId(active.focusedPaneId));
+  // A pane nobody named shows its path where the name would be, rather than a
+  // placeholder: "Untitled" tells you nothing, and a plain shell in ~/dev is a
+  // thing you can recognise.
+  const named = focused?.userTitle ?? (focused?.title === '' ? null : focused?.title) ?? null;
+  const where = focused?.cwd === null || focused?.cwd === undefined ? '' : shorten(focused.cwd);
+  const crumb = {
+    task: named ?? (where === '' ? 'Shepherd' : where),
+    pane: named === null ? '' : where,
+  };
+
   const contributions = useContributions(viewsApi);
   /** Every accelerator an overlay declared, for the footer's keycap strip. */
   const raisable = contributions.filter((view) => view.surface === 'overlay' && view.key !== undefined);
@@ -264,13 +287,23 @@ export function App({
   return (
     <div className="sh-app">
       {/*
-        The spec plate, not a toolbar. Splitting and closing panes are menu
-        commands with accelerators (⌘D / ⌘⇧D / ⌘W) — buttons for them were
-        scaffolding from M0, and a row of debug buttons across the top is the
-        thing that makes an app look like its own test harness.
+        The window's OWN titlebar (`titleBarStyle: 'hiddenInset'`), carrying the
+        traffic lights and a breadcrumb — where you are, which is the one fact
+        the sidebar cannot show while it is scrolled somewhere else.
+        It said "SHEPHERD" before, under a native bar that also said Shepherd.
       */}
       <header className="sh-plate">
-        <span className="sh-brand">SHEPHERD</span>
+        <span className="sh-crumb">
+          <span className="sh-crumb-task">{crumb.task}</span>
+          {crumb.pane !== '' && (
+            <>
+              <span className="sh-crumb-sep" aria-hidden="true">
+                /
+              </span>
+              <span className="sh-crumb-pane">{crumb.pane}</span>
+            </>
+          )}
+        </span>
         <span className="sh-plate-spacer" />
         <span className="sh-plate-cell">
           PANES <b>{String(paneCount).padStart(2, '0')}</b>
@@ -354,6 +387,14 @@ export function App({
       <ViewOverlay views={contributions} bridge={viewsApi} />
     </div>
   );
+}
+
+/** `~/dev/shepherd/api` — a path in the width a titlebar has for one. */
+function shorten(cwd: string): string {
+  const home = '/Users/';
+  const path = cwd.startsWith(home) ? `~/${cwd.split('/').slice(3).join('/')}` : cwd;
+  const parts = path.split('/');
+  return parts.length <= 4 ? path : `…/${parts.slice(-3).join('/')}`;
 }
 
 /**

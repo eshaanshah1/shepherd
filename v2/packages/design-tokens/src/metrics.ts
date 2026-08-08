@@ -61,6 +61,20 @@ export const motion = {
  * hand-retune of the whole chrome.
  */
 export const fonts = {
+  /**
+   * The CHROME's face — v1's, ported.
+   *
+   * v1 bundled two faces and split them by job (`Theme.swift`: DM Sans for the
+   * sidebar and every label, JetBrains Mono for the grid and for code), and v2
+   * shipped one token used for everything. The result was prose set in
+   * monospace: a composer that reads as terminal output rather than as a form,
+   * which is the first thing anyone said about the UI.
+   *
+   * A face is a JOB here, not a preference: if it is something the app SAYS,
+   * it is sans; if it is something the machine produced — a path, an id, a
+   * command, the grid — it is mono.
+   */
+  sans: "'DM Sans', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif",
   mono: "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace",
   /** Rule 6: serif only where the app speaks in sentences. */
   serif: "'Iowan Old Style', Palatino, Georgia, serif",
