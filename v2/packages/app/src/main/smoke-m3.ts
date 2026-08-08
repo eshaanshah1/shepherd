@@ -249,9 +249,14 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
       Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, value);
       el.dispatchEvent(new Event('input', { bubbles: true }));
     };
-    type(document.querySelector('[data-testid="composer-title"]'), 'Composed task');
-    type(document.querySelector('[data-testid="composer-brief"]'), 'Created from inside the app.');
-    document.querySelector('[data-testid="composer-title"]').dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+    // ONE field now: the composer's first line names the task, git-commit
+    // style, and the rest is the brief. Typing a separate title would be typing
+    // into an element that no longer exists.
+    type(
+      document.querySelector('[data-testid="composer-brief"]'),
+      ['Composed task', 'Created from inside the app.'].join(String.fromCharCode(10)),
+    );
+    document.querySelector('[data-testid="composer-brief"]').dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
     return true;
   })()`);
 

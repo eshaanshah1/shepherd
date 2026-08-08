@@ -70,10 +70,26 @@ export function ViewOverlay({
         }
       }
     };
+    /**
+     * The same overlay, raised by a click instead of a key.
+     *
+     * An event rather than a prop drilled down through the sidebar: the button
+     * lives in the dock's header and the overlay is a sibling three levels up,
+     * and the alternative is threading a setter through two components that
+     * have no other reason to know overlays exist.
+     */
+    const onRaise = (event: Event): void => {
+      const type = (event as CustomEvent<string>).detail;
+      if (raisable.some((view) => view.type === type)) setOpen(type);
+    };
     // Capture: a terminal has focus almost always, and xterm handles keydown on
     // the way down. Without this the accelerator reaches the pty first.
     window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
+    window.addEventListener('sh:raise-view', onRaise);
+    return () => {
+      window.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('sh:raise-view', onRaise);
+    };
   }, [raisable]);
 
   const view = raisable.find((candidate) => candidate.type === open);
@@ -90,18 +106,6 @@ export function ViewOverlay({
       }}
     >
       <div className="sh-modal" data-view-type={view.type}>
-        {/*
-          Folded INTO the card, not a bordered strip across the top of it: the
-          modal owns one padding box and this row is the first thing in it, so
-          the label and the ESC key read as part of the surface the contribution
-          is sitting on. The hairline under it is gone with the strip.
-        */}
-        <div className="sh-modal-head">
-          <span className="sh-group-label">{view.title ?? view.type}</span>
-          <span className="sh-key" aria-hidden="true">
-            ESC
-          </span>
-        </div>
         <ComponentView view={view} bridge={bridge} onDone={() => setOpen(null)} />
       </div>
     </div>

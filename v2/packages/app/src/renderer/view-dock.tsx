@@ -28,11 +28,17 @@ import { resolveExtensionUi } from './extension-ui.ts';
 
 export function ViewDock({
   views: bridge,
-  footer,
+  actions,
 }: {
   views: ViewsApi | null;
-  /** The keycap strip at the bottom. The shell's, not an extension's. */
-  footer?: React.ReactNode;
+  /**
+   * Buttons in the sidebar's header — the shell's, not an extension's.
+   *
+   * At the TOP, because that is where a list's "add" lives in every app that
+   * has one. It was a keycap parked at the bottom saying "⌘T NEW TASK", which
+   * is a legend: it told you a shortcut existed rather than being the control.
+   */
+  actions?: React.ReactNode;
 }): React.JSX.Element | null {
   const [views, setViews] = useState<readonly ViewContributionDTO[]>([]);
   const [rows, setRows] = useState<Readonly<Record<string, readonly TreeItem[]>>>({});
@@ -70,10 +76,11 @@ export function ViewDock({
   }, [bridge, refresh]);
 
   const docked = views.filter((view) => view.kind === 'tree' || (view.surface ?? 'dock') === 'dock');
-  if (docked.length === 0 && footer === undefined) return null;
+  if (docked.length === 0 && actions === undefined) return null;
 
   return (
     <nav className="sh-side" data-testid="view-dock">
+      {actions === undefined ? null : <div className="sh-side-head">{actions}</div>}
       <div className="sh-side-scroll">
         {docked.map((view) =>
           view.kind === 'component' ? (
@@ -90,7 +97,6 @@ export function ViewDock({
           ),
         )}
       </div>
-      {footer === undefined ? null : <div className="sh-side-foot">{footer}</div>}
     </nav>
   );
 }
@@ -109,10 +115,19 @@ function TreeView({
   selected: string | null;
   onSelect: (id: string) => void;
 }): React.JSX.Element {
+  /*
+   * A heading earns its line only when it separates something FROM something.
+   * One group is the whole list, and "WORKING · 1" over a single row is a
+   * label for a distinction that does not exist yet — it appears as soon as a
+   * second group does, which is when the list actually needs reading.
+   */
+  const groups = rows.filter((row) => row.section === true).length;
+  const shown = groups > 1 ? rows : rows.filter((row) => row.section !== true);
+
   return (
     <section className="sh-side-view" data-view-type={view.type}>
-      {rows.length === 0 ? null : <ul className="sh-rows">
-        {rows.map((row) =>
+      {shown.length === 0 ? null : <ul className="sh-rows">
+        {shown.map((row) =>
           row.section === true ? (
             // A heading, not a row: uppercase micro-label with its count, and
             // deliberately not a button — a group that looked clickable and did
@@ -131,14 +146,22 @@ function TreeView({
                 // A token name, resolved here. An extension never sends a raw
                 // colour, so a contribution cannot break the theme.
                 data-tint={row.tint ?? 'none'}
+                title={row.description ?? row.label}
                 onClick={() => {
                   onSelect(row.id);
                   if (row.command !== undefined) void bridge?.activate(view.type, row.command);
                 }}
               >
+                {/*
+                  The dot IS the status. A coloured dot beside the word RUNNING
+                  says one thing twice and gives the row a third column to align
+                  — v1 signalled state with the dot's colour alone, deliberately
+                  (an earlier version grew alerted rows and was reverted for
+                  noise). The description stays as the row's tooltip, so the
+                  word is a hover away rather than gone.
+                */}
                 <span className="sh-dot" data-tint={row.tint ?? 'none'} aria-hidden="true" />
                 <span className="sh-row-label">{row.label}</span>
-                {row.description !== undefined && <span className="sh-row-word">{row.description}</span>}
               </button>
             </li>
           ),

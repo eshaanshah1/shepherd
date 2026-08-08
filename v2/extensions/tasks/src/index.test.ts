@@ -354,9 +354,14 @@ interface DeleteResult {
 const listedState = async (h: Harness): Promise<string> =>
   (await h.run<{ displayState: string }[]>('tasks.list'))[0]?.displayState ?? 'no such task';
 
-/** The tree's headings, in order — which is where a task MOVING shows. */
-const sections = async (h: Harness): Promise<string[]> =>
-  (await h.tree().children(undefined)).filter((row) => row.section === true).map((row) => row.label);
+/**
+ * A task's row as the tree draws it — where its state shows now that the list
+ * is flat. It used to be read off the group HEADINGS; grouping was removed
+ * because tasks are independent work and bucketing asserted a relationship
+ * between them that does not exist, so the state reaches the row as its tint.
+ */
+const rowOf = async (h: Harness, id: string): Promise<TreeItem | undefined> =>
+  (await h.tree().children(undefined)).find((row) => row.id === id);
 
 /**
  * Wait for work the extension started and did not hand back.
@@ -540,20 +545,19 @@ describe('attention reaching the task tree', () => {
   const attentive = task({ sessions: [{ id: 'pending-1', role: 'orchestrator', pane: 'p1' }] });
   const ASKING = { pane: 'p1', level: 'attention', reason: 'answer needed' };
 
-  it('moves a task to needs-you, in tasks.list AND in the tree’s grouping', async () => {
+  it('moves a task to needs-you, in tasks.list AND on its row', async () => {
     const h = (live = harness({ tasks: [attentive] }));
     expect(await listedState(h)).toBe('running');
-    expect(await sections(h)).toEqual(['WORKING']);
+    expect((await rowOf(h, 't1'))?.tint).toBe('running');
 
     h.emit('attention.changed', ASKING);
 
     expect(await listedState(h)).toBe('needs-you');
-    // The heading AND the row: the grouping filter and the row it draws are two
-    // separate `displayState` calls, and one of them being left behind is a
-    // task drawn as `running` under a NEEDS YOU heading.
-    expect(await sections(h)).toEqual(['NEEDS YOU']);
-    const rows: readonly TreeItem[] = await h.tree().children(undefined);
-    expect(rows.find((row) => row.id === 't1')?.description).toBe('needs-you');
+    // The command's answer AND the row: two separate `displayState` calls, and
+    // one being left behind is a sidebar that disagrees with the CLI.
+    const row = await rowOf(h, 't1');
+    expect(row?.tint).toBe('needs-you');
+    expect(row?.description).toBe('needs-you');
   });
 
   it('clears back on level "none", which is why the mirror needs no reconciliation', async () => {
@@ -567,7 +571,7 @@ describe('attention reaching the task tree', () => {
     h.emit('attention.changed', { pane: 'p1', level: 'none', reason: 'viewed' });
 
     expect(await listedState(h)).toBe('running');
-    expect(await sections(h)).toEqual(['WORKING']);
+    expect((await rowOf(h, 't1'))?.tint).toBe('running');
   });
 
   it('ignores a pane no task is running in, rather than colouring the nearest one', async () => {
@@ -575,13 +579,13 @@ describe('attention reaching the task tree', () => {
     h.emit('attention.changed', { pane: 'p9', level: 'urgent', reason: 'approve Bash' });
 
     expect(await listedState(h)).toBe('running');
-    expect(await sections(h)).toEqual(['WORKING']);
+    expect((await rowOf(h, 't1'))?.tint).toBe('running');
   });
 
   it('nudges the tree on a delta, because the host only re-reads when asked', async () => {
     // The tree is pull-based: `children()` is re-run on an `onDidChange` and at
     // no other time, so a mirror that updates silently is a sidebar that keeps
-    // showing the old grouping until something unrelated happens to change.
+    // showing the old state until something unrelated happens to change.
     const h = (live = harness({ tasks: [attentive] }));
     let nudges = 0;
     const data = h.tree();
@@ -882,5 +886,50 @@ describe('a task owns a layout root', () => {
       await expect(h.run('tasks.archive', { task: 't1' })).rejects.toThrow('unmerged');
       expect(h.invoked.slice(before).filter((call) => call.id === 'layout.closeRoot')).toEqual([]);
     });
+  });
+});
+
+describe('a pane that closes', () => {
+  // The bug this pins: closing a pane left the task reporting `running` for a
+  // session that no longer existed, because nothing subscribed to the kernel's
+  // own `session.exit` — the sidebar's one job, stated wrongly.
+  it('drops the session and stops calling the task running', async () => {
+    const h = (live = harness({
+      tasks: [task({ sessions: [{ id: 's1', role: 'orchestrator', pane: 'p1' }] })],
+    }));
+    expect(await listedState(h)).toBe('running');
+
+    h.emit('session.exit', { sessionId: 's1', paneId: 'p1' });
+
+    expect(await listedState(h)).toBe('draft');
+    expect((await h.run<{ sessions: unknown[] }[]>('tasks.list'))[0]?.sessions).toEqual([]);
+  });
+
+  it('keeps the task running while any other session is left', async () => {
+    const h = (live = harness({
+      tasks: [
+        task({
+          sessions: [
+            { id: 's1', role: 'orchestrator', pane: 'p1' },
+            { id: 's2', role: 'workstream', pane: 'p2' },
+          ],
+        }),
+      ],
+    }));
+
+    h.emit('session.exit', { sessionId: 's1', paneId: 'p1' });
+
+    expect(await listedState(h)).toBe('running');
+    expect((await h.run<{ sessions: unknown[] }[]>('tasks.list'))[0]?.sessions).toHaveLength(1);
+  });
+
+  it('matches on the PANE, since a dying session may still be a pending- id', async () => {
+    const h = (live = harness({
+      tasks: [task({ sessions: [{ id: 'pending-9', role: 'orchestrator', pane: 'p1' }] })],
+    }));
+
+    h.emit('session.exit', { sessionId: 'some-real-id', paneId: 'p1' });
+
+    expect((await h.run<{ sessions: unknown[] }[]>('tasks.list'))[0]?.sessions).toEqual([]);
   });
 });

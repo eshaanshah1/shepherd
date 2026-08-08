@@ -59,11 +59,21 @@ function readSuggestions(value: unknown): readonly RepoSuggestion[] {
   });
 }
 
+/**
+ * The task's name: the brief's first line, git-commit style.
+ *
+ * Trimmed and capped, because it becomes a slug, a branch name and a pane
+ * title — and somebody's first line is occasionally a paragraph.
+ */
+function titleOf(brief: string): string {
+  const first = brief.split("\n")[0]?.trim() ?? "";
+  return first.length <= 72 ? first : `${first.slice(0, 71).trimEnd()}…`;
+}
+
 export function TaskComposer({
   invoke,
   done,
 }: ExtensionViewProps): React.JSX.Element {
-  const [title, setTitle] = useState("");
   const [brief, setBrief] = useState("");
   const [repos, setRepos] = useState<readonly RepoSuggestion[]>([]);
   const [path, setPath] = useState("");
@@ -103,7 +113,7 @@ export function TaskComposer({
   const create = async (): Promise<void> => {
     setBusy(true);
     const result = await invoke("tasks.create", {
-      title,
+      title: titleOf(brief),
       brief,
       repos: repos.map((repo) => ({ path: repo.path, name: repo.name })),
     });
@@ -121,7 +131,6 @@ export function TaskComposer({
     );
     // Cleared only on success. A failed create keeps everything typed — the
     // form is the only copy of it.
-    setTitle("");
     setBrief("");
     setRepos([]);
     // The composer's job is over; the shell decides what that means (an overlay
@@ -138,23 +147,28 @@ export function TaskComposer({
         void create();
       }}
     >
-      <input
-        className="sh-composer-title"
-        data-testid="composer-title"
-        aria-label="task title"
-        placeholder="what is this task"
-        value={title}
-        onChange={(event) => setTitle(event.target.value)}
-        onBlur={() => void askForSuggestions(title, brief)}
-      />
+      {/*
+        ONE field. A separate title box asked the same question twice — nobody
+        writes a title that is not the first sentence of the brief, and the
+        empty second box was the thing that made this read as a form.
+        The convention is git's: first line names it, the rest is the body.
+      */}
       <textarea
         className="sh-composer-brief"
         data-testid="composer-brief"
-        aria-label="task brief"
-        placeholder="the brief the orchestrator starts from"
+        aria-label="what needs doing"
+        placeholder="what needs doing?"
         value={brief}
         onChange={(event) => setBrief(event.target.value)}
-        onBlur={() => void askForSuggestions(title, brief)}
+        onBlur={() => void askForSuggestions(titleOf(brief), brief)}
+        onKeyDown={(event) => {
+          // ⌘⏎ submits, ⏎ is a newline: this is prose, and a brief whose second
+          // sentence created the task would be a brief nobody could write.
+          if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+            event.preventDefault();
+            if (titleOf(brief) !== "") void create();
+          }
+        }}
       />
 
       {/*
@@ -252,7 +266,7 @@ export function TaskComposer({
           type="submit"
           className="sh-composer-create"
           data-testid="composer-create"
-          disabled={busy || title.trim() === ""}
+          disabled={busy || titleOf(brief) === ""}
         >
           create task
         </button>

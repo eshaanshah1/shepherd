@@ -624,8 +624,7 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
 /* Rule 4: inverse video is the emphasis — a solid block with ink text, never a
    tinted wash. One glance separates selected from hovered forever. */
 .sh-row.is-sel { background: var(--sh-wool); color: var(--sh-ink); }
-.sh-row.is-sel .sh-row-word { color: var(--sh-ink); opacity: 0.55; border-color: transparent; }
-
+.sh-row.is-sel 
 .sh-row-label {
   flex: 1 1 auto;
   overflow: hidden;
@@ -638,48 +637,6 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
 .sh-row[data-tint='archived'] .sh-row-label,
 .sh-row[data-tint='draft'] .sh-row-label { color: var(--sh-wool-dim); }
 .sh-row.is-sel .sh-row-label { color: inherit; }
-
-/* The mock's `.word`: a hairline box, tinted by the row's own token. */
-.sh-row-word {
-  flex: 0 0 auto;
-  font-size: 9px;
-  line-height: 15px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--sh-wool-dim);
-  border: var(--sh-hairline) solid var(--sh-ink-line);
-  border-radius: 3px;
-  padding: 0 5px;
-}
-
-.sh-row[data-tint='needs-you'] .sh-row-word,
-.sh-row[data-tint='blocked'] .sh-row-word,
-.sh-row[data-tint='hay'] .sh-row-word,
-.sh-row[data-tint='review'] .sh-row-word {
-  color: var(--sh-hay);
-  border-color: color-mix(in srgb, var(--sh-hay) 45%, transparent);
-}
-
-.sh-row[data-tint='done'] .sh-row-word,
-.sh-row[data-tint='pasture'] .sh-row-word,
-.sh-row[data-tint='needs-check'] .sh-row-word {
-  color: var(--sh-pasture);
-  border-color: color-mix(in srgb, var(--sh-pasture) 45%, transparent);
-}
-
-.sh-row[data-tint='error'] .sh-row-word,
-.sh-row[data-tint='ember'] .sh-row-word {
-  color: var(--sh-ember);
-  border-color: color-mix(in srgb, var(--sh-ember) 45%, transparent);
-}
-
-.sh-row[data-tint='working'] .sh-row-word,
-.sh-row[data-tint='running'] .sh-row-word,
-.sh-row[data-tint='cobalt'] .sh-row-word,
-.sh-row[data-tint='accent'] .sh-row-word {
-  color: var(--sh-cobalt);
-  border-color: color-mix(in srgb, var(--sh-cobalt) 45%, transparent);
-}
 
 /*
  * The state dot. Rule 8's micro fallback: the animated sheep is the eventual
@@ -704,81 +661,65 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
 /* The dot survives inverse video: on a wool block it would otherwise vanish. */
 .sh-row.is-sel .sh-dot[data-tint='none'] { background: var(--sh-ink); }
 
-/* The mock's `.side-foot`: keycaps at the bottom, no rule above them — the last
-   group's own hairline is already the separation. */
-.sh-side-foot {
-  flex: 0 0 auto;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 10px 14px 2px;
-}
-
-.sh-side-missing { color: var(--sh-wool-faint); font-size: 11px; padding: 6px 14px; margin: 0; }
-
-/* --------------------------------------------------------------- statusbar */
-
-.sh-status {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  height: 26px;
-  padding: 0 14px;
-  background: var(--sh-ink);
-  /* 26px of content box, so the dots and their counts centre on the same line. */
-  box-shadow: inset 0 var(--sh-hairline) 0 var(--sh-ink-line);
-  font-size: 10px;
-  letter-spacing: 0.1em;
-  color: var(--sh-wool-faint);
-  white-space: nowrap;
-}
-
-.sh-status-cell { display: inline-flex; align-items: center; gap: 6px; }
-
-/* ------------------------------------------------------------ empty stage */
 /*
- * The mock's `.empty` section. Rule 6: the serif appears only where the app
- * speaks in sentences, and rule 9 puts personality in moments — this is one.
+ * The sidebar's own header: what this list is, and the one control that adds to
+ * it. At the TOP, where an add lives in every app that has a list — it was a
+ * keycap at the bottom reading "⌘T NEW TASK", which teaches a shortcut instead
+ * of being a button.
+ *
+ * It lines up with the pane title bar across the divider (both 28px inside a
+ * band), so the two chrome rows read as one horizon rather than two ledges.
  */
-
-.sh-empty {
-  flex: 1 1 auto;
+.sh-side-head {
+  flex: 0 0 auto;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 14px;
-  padding: 24px;
+  gap: 8px;
+  height: 44px;
+  padding: 0 10px 0 14px;
+  /* The titlebar's own drag region ends at the sidebar; this row is part of the
+     same band visually, so it drags too. */
+  -webkit-app-region: drag;
 }
 
-.sh-ewe {
-  stroke: var(--sh-wool-dim);
-  fill: none;
-  stroke-width: 1.6;
-  stroke-linecap: round;
-  opacity: 0.85;
-}
-
-.sh-ewe-eye { fill: var(--sh-wool-dim); }
-
-.sh-empty-say {
-  margin: 0;
-  font-family: var(--sh-font-serif);
-  font-style: italic;
-  font-size: 16px;
+.sh-side-title {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
   color: var(--sh-wool-dim);
 }
 
-.sh-empty-hint {
-  margin: 0;
-  display: flex;
+/*
+ * A quiet square that becomes a real control on hover. Borderless at rest
+ * because a bordered box beside a 12px label is louder than the list it adds
+ * to; the hover fill is what says it is pressable.
+ */
+.sh-icon-button {
+  -webkit-app-region: no-drag;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  font-size: 10px;
-  letter-spacing: 0.1em;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
   color: var(--sh-wool-faint);
+  /* 18px so the glyph is a glyph rather than text that happens to be a plus. */
+  font: inherit;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color var(--sh-motion) linear, background var(--sh-motion) linear;
 }
+
+.sh-icon-button:hover {
+  background: var(--sh-ink-raised);
+  color: var(--sh-wool);
+}
+
+.sh-side-missing { color: var(--sh-wool-faint); font-size: 11px; padding: 6px 14px; margin: 0; }
 
 /* ----------------------------------------------------------------- overlay */
 /*
@@ -806,35 +747,22 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
 }
 
 .sh-modal {
-  width: 460px;
+  /* Wide enough that a brief is a paragraph rather than a column of six-word
+     lines — this is where you describe a piece of work, and 460px made it
+     read as a search box. */
+  width: 620px;
   max-width: 92vw;
   background: var(--sh-ink-raised);
   border: var(--sh-hairline) solid var(--sh-ink-line);
   border-radius: 16px;
   /* The CARD owns the padding, so everything a contribution puts inside sits
-     directly on it and never needs a box of its own to be found. */
-  padding: 20px 20px 14px;
+     directly on it and never needs a box of its own to be found. Generous,
+     because with no borders inside, the space IS the structure. */
+  padding: 26px 26px 20px;
 }
 
-/* Folded into the card, not a strip across the top of it: a micro-label and the
-   ESC key, with no hairline under them. Depth is the radius and the scrim. */
-.sh-modal-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 14px;
-}
-
-/* The bordered keycap is chrome vocabulary; inside the card it would be the
-   only hairline. Same quiet chip the composer's repos use. */
-.sh-modal-head .sh-key {
-  border-color: transparent;
-  border-radius: 6px;
-  background: var(--sh-ink);
-  color: var(--sh-wool-faint);
-}
-
-/* `ComponentView` draws its own heading; in a modal the head above is it. */
+/* `ComponentView` draws a heading for the dock; a modal needs none — the field
+   inside it asks the question. */
 .sh-modal .sh-side-view { border: 0; }
 .sh-modal .sh-group { display: none; }
 
@@ -965,7 +893,8 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
 /* `resize: none` on purpose: a resize grabber draws diagonal hairlines in the
    corner of a field that is otherwise borderless. It scrolls instead. */
 .sh-composer textarea.sh-composer-brief {
-  font-size: 13px;
+  font-size: 15px;
+  line-height: 24px;
   color: var(--sh-wool-dim);
   min-height: 72px;
   resize: none;

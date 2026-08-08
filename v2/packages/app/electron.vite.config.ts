@@ -1,4 +1,5 @@
 import { defineConfig } from 'electron-vite';
+import react from '@vitejs/plugin-react';
 
 /**
  * electron-vite's defaults already name every path this app uses
@@ -21,12 +22,14 @@ import { defineConfig } from 'electron-vite';
  *     the workspace packages — and those resolve to TypeScript *sources*, which
  *     Electron cannot load. They must be bundled. `node-pty` is the one thing
  *     that genuinely has to stay external (a native .node cannot be bundled).
- *   - **JSX with no plugin.** `@vitejs/plugin-react`'s current major peers on
- *     vite 8 and electron-vite 5 peers on vite ≤7, so the plugin is out until
- *     that clears. Vite's own esbuild transform reads `jsx: react-jsx` from
- *     tsconfig, so the only thing missing is Fast Refresh: a save reloads the
- *     page instead of patching it. In M0 the renderer holds no state worth
- *     preserving across a reload.
+ *   - **Fast Refresh, on the 4.x line.** The note here used to say the plugin
+ *     was out because its current major peers on vite 8 while electron-vite 5
+ *     caps at 7 — true of `@vitejs/plugin-react@6`, and it made a save RELOAD
+ *     the page. That is no longer a cosmetic cost: a reload rebuilds every
+ *     terminal in the window, so editing a stylesheet kills the agents you were
+ *     looking at. `@vitejs/plugin-react@4.7` peers on `^7.0.0`, which is where
+ *     this workspace is, so Fast Refresh patches components in place and the
+ *     ptys survive.
  *   - **`__SHEPHERD_IS_DEV__` substituted into the main bundle.** Which build
  *     this is decides which userData directory it owns, and therefore which
  *     single-instance lock it takes. A runtime read (`process.env`, argv,
@@ -71,6 +74,8 @@ export default defineConfig(({ mode }) => {
         },
       },
     },
-    renderer: {},
+    renderer: {
+      plugins: [react()],
+    },
   };
 });
