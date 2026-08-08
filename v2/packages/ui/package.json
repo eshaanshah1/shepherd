@@ -6,26 +6,30 @@
   "description": "The Shepherd primitive set. PUBLIC: an extension imports this so its view looks native and re-themes for free.",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
-  "//exports": "Two entries and no more. `.` is the components; `./styles.css` is the component tier of custom properties, which a page must load once (it is not injected — a stylesheet that mounts itself is a stylesheet whose order nobody controls).",
+  "//exports": "Two entries and no more. `.` is the components; `./styles.css` is the ONE stylesheet a page loads (it is not injected — a stylesheet that mounts itself is a stylesheet whose order nobody controls). Behind that single specifier is a file per component, chained by `@import`: the specifier is the public contract and the split is an implementation detail, so a thirteenth primitive is a new file plus one import line rather than an edit to what consumers write.",
   "exports": {
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
     },
-    "./styles.css": "./src/tokens.css"
+    "./styles.css": "./src/styles.css"
   },
   "scripts": {
     "typecheck": "tsc -b",
     "test": "vitest run"
   },
   "dependencies": {
+    "@radix-ui/react-dialog": "catalog:",
+    "@radix-ui/react-slot": "catalog:",
+    "@radix-ui/react-tooltip": "catalog:",
     "@shepherd/design-tokens": "workspace:*",
     "@tabler/icons-react": "catalog:",
     "class-variance-authority": "catalog:"
   },
-  "//peerDependencies": "React is the HOST's, not ours. Two copies of react in one page is two reconcilers, and the hook errors it produces name a file that is not the problem.",
+  "//peerDependencies": "React is the HOST's, not ours. Two copies of react in one page is two reconcilers, and the hook errors it produces name a file that is not the problem. `react-dom` joined it with Radix, which portals — and a portal from a second react-dom renders into a tree the host's reconciler does not own.",
   "peerDependencies": {
-    "react": "catalog:"
+    "react": "catalog:",
+    "react-dom": "catalog:"
   },
   "devDependencies": {
     "@types/react": "catalog:",

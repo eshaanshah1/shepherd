@@ -1,0 +1,101 @@
+/*
+ * Modal.
+ *
+ * No blur, no shadow, no scale-in — rule 2 bans elevation theater and rule 7
+ * bans the spring. The card separates from what is behind it by ONE luminance
+ * step (`surfaceRaised`) over a plain scrim, and that is the whole of the
+ * elevation available.
+ */
+
+/*
+ * The scrim.
+ *
+ * FINDING, reported with this wave: there is no `scrim` role, and the shipped
+ * shell types `rgb(0 0 0 / 45%)` — a literal black that is wrong in light mode,
+ * where dimming toward black rather than toward the paper is exactly the "dead
+ * gray" rule 2 bans. Mixing the CANVAS role instead means the scrim is the
+ * window's own backdrop at 78%, so it darkens in dark mode and lightens in light
+ * mode, and a contributed theme's backdrop carries it.
+ */
+.sh-ui-modal__scrim {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in srgb, var(--sh-canvas) 78%, transparent);
+  z-index: 20;
+}
+
+.sh-ui-modal {
+  position: fixed;
+  /*
+   * Near the top, not centred. A dialog centred vertically moves as its content
+   * grows, so a composer whose brief is growing under `autoGrow` would crawl up
+   * the window while you type. Pinned to a top offset, it grows downward from a
+   * fixed edge — the same reason a terminal scrolls rather than recentres.
+   */
+  top: 12vh;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 21;
+
+  max-width: 92vw;
+  max-height: 76vh;
+  overflow: auto;
+
+  background: var(--sh-surface-raised);
+  color: var(--sh-text);
+  border: var(--sh-hairline) solid var(--sh-line);
+  /* Soft, like the composer: a modal in this app is a composition surface, and
+     the two are almost always the same element. */
+  border-radius: var(--sh-radius-soft);
+
+  /* The CARD owns the inset, so anything a contribution puts inside sits directly
+     on it and never needs a box of its own to be found. Composed from the scale
+     rather than typed — see composer.css for the same sum and the same reason. */
+  padding: calc(var(--sh-space-xl) + var(--sh-space-lg));
+}
+
+/*
+ * FINDING: 460 and 620 are approved literals with no metric behind them. They
+ * are declared here as component tokens rather than inline in the width, so
+ * there is exactly one place either number is written and the dev inspector has
+ * a name to report.
+ */
+.sh-ui-modal--md {
+  --sh-ui-modal-width: 460px;
+  width: var(--sh-ui-modal-width);
+}
+
+.sh-ui-modal--lg {
+  --sh-ui-modal-width: 620px;
+  width: var(--sh-ui-modal-width);
+}
+
+/*
+ * A modal that IS a composer needs no second card. When one is nested, it drops
+ * its own surface, radius and padding and keeps only its role re-declaration —
+ * which is the part that was never about the box.
+ */
+.sh-ui-modal > .sh-ui-composer {
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+}
+
+/* The scrollbar, matching everything else in the app: a thumb and nothing else. */
+.sh-ui-modal {
+  scrollbar-width: thin;
+  scrollbar-color: var(--sh-line) transparent;
+}
+
+.sh-ui-modal::-webkit-scrollbar {
+  width: var(--sh-space-md);
+}
+
+.sh-ui-modal::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sh-ui-modal::-webkit-scrollbar-thumb {
+  background: var(--sh-line);
+  border-radius: 0;
+}

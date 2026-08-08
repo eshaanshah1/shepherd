@@ -1,0 +1,125 @@
+/*
+ * Field, and the control treatment `TextArea` shares with it.
+ *
+ * `.sh-ui-field__control` is the shared half deliberately: a textarea is this
+ * component with more lines, and the shipped shell is the argument — its two
+ * input treatments (`.sh-ext-card input`, `.sh-composer input`) disagree about
+ * padding, radius, background, focus and placeholder colour, and each of those
+ * disagreements is a separate decision somebody had to make twice.
+ */
+
+.sh-ui-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sh-space-xs);
+  min-width: 0;
+}
+
+.sh-ui-field__control {
+  width: 100%;
+  min-width: 0;
+
+  /* What you type is what the machine receives — but it is also prose most of the
+     time (a task title, a filter). Sans, per styles.css's job rule: a field is a
+     place the USER speaks, and the mono voice is for what the machine produced. */
+  font-family: var(--sh-font-sans);
+  font-size: var(--sh-font-size-body);
+  line-height: var(--sh-line-height);
+  color: var(--sh-text);
+
+  border: var(--sh-hairline) solid transparent;
+  background: transparent;
+
+  transition:
+    border-color var(--sh-motion) linear,
+    background var(--sh-motion) linear;
+}
+
+.sh-ui-field__control::placeholder {
+  color: var(--sh-text-faint);
+}
+
+/* ------------------------------------------------------------------- sizes */
+/*
+ * A field's height is its own — `padding` + `line-height`, not a fixed control
+ * height — because it has to grow for a message, for a two-line value, and (in
+ * TextArea) for content. What the control scale DOES fix is the horizontal
+ * rhythm, so a field beside a `sm` button lines up with it.
+ */
+
+.sh-ui-field__control--sm {
+  font-size: var(--sh-font-size-small);
+  padding: var(--sh-space-xs) var(--sh-space-sm);
+}
+
+.sh-ui-field__control--md {
+  padding: var(--sh-space-sm) var(--sh-space-md);
+}
+
+/* ---------------------------------------------------------------- variants */
+
+/*
+ * `bordered` — the instrument. A recessed well: `surfaceSunken` is exactly the
+ * role for it ("an instrument's recessed well — a bordered field, an input"), and
+ * it is recessed by LUMINANCE, not by an inset shadow (rule 2).
+ */
+.sh-ui-field__control--bordered {
+  background: var(--sh-surface-sunken);
+  border-color: var(--sh-line);
+  border-radius: var(--sh-radius-sm);
+}
+
+.sh-ui-field__control--bordered:focus {
+  outline: 0;
+  border-color: var(--sh-focus-ring);
+}
+
+/*
+ * `bare` — the writing surface. No border, no background, no radius, and no
+ * focus ring either: it sits on a Composer's card, the caret is the focus signal,
+ * and a ring drawn around a borderless field invents the edge the variant exists
+ * to remove.
+ *
+ * It carries no colour of its own, which is what makes the Composer's scoped
+ * role re-declaration reach it: `--sh-text` is inherited from wherever it sits.
+ */
+.sh-ui-field__control--bare {
+  background: transparent;
+  border-color: transparent;
+  border-radius: 0;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.sh-ui-field__control--bare:focus {
+  outline: 0;
+}
+
+/* ----------------------------------------------------------------- invalid */
+/*
+ * Ember on the edge, and a message under it. Both, always — the `attention`
+ * role's `notFor` names the failure mode (a state encoded only as a colour), and
+ * a bare field has no edge to colour at all, which is the other half of why the
+ * message is not optional in spirit.
+ */
+
+.sh-ui-field[data-invalid='true'] .sh-ui-field__control--bordered {
+  border-color: var(--sh-danger);
+}
+
+.sh-ui-field[data-invalid='true'] .sh-ui-field__control--bare {
+  /* The bare variant's only edge: a rule under the text, which is the least a
+     borderless surface can say without becoming a box. */
+  border-bottom-color: var(--sh-danger);
+}
+
+.sh-ui-field__message {
+  font-family: var(--sh-font-sans);
+  font-size: var(--sh-font-size-small);
+  line-height: var(--sh-line-height);
+  color: var(--sh-text-faint);
+}
+
+.sh-ui-field[data-invalid='true'] .sh-ui-field__message {
+  color: var(--sh-danger);
+}

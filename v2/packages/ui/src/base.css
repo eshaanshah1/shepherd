@@ -1,0 +1,52 @@
+/*
+ * The two things every primitive needs and no primitive owns.
+ *
+ * This is NOT a place for shared component values — a value two components share
+ * is a role or a metric, one tier up (tokens.css states the rule). It is a place
+ * for two mechanisms that are structurally shared because they are the same
+ * mechanism wherever they appear.
+ */
+
+/*
+ * Text for a screen reader and for nobody else.
+ *
+ * StatusDot's whole point is that it carries a WORD alongside a colour, because
+ * two states will eventually share a hue and a colour alone is then a lie to
+ * everyone — not only to a colour-blind user. Modal uses it for the accessible
+ * name Radix's Dialog requires while the spec forbids drawing a header.
+ *
+ * `clip-path` and not `clip`: the old `clip: rect(...)` recipe depends on a
+ * deprecated property, and a 1px box with `overflow: hidden` alone still lets a
+ * long string reflow the line it sits in — which for StatusDot would be a
+ * screen-reader-only string changing a row's height, i.e. exactly rule 9.
+ */
+.sh-ui-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/*
+ * The focus ring, on ONE selector, so it cannot be drawn two ways.
+ *
+ * `:focus-visible` and never `:focus` — the role's own `notFor` says it: focus is
+ * a keyboard fact, and painting it on every mouse press makes the one thing a
+ * keyboard user needs illegible by making it constant. An `outline` rather than a
+ * `border` or a `box-shadow` because outline does not participate in layout, so a
+ * focused control is the same size as an unfocused one (rule 9, applied to a
+ * control instead of a row).
+ *
+ * Two hairlines wide. There is no focus-ring width in the derived scale, and a
+ * one-device-pixel ring against a warm dark surface is not visible at arm's
+ * length — see the findings in this wave's report.
+ */
+.sh-ui-focusable:focus-visible {
+  outline: calc(2 * var(--sh-hairline)) solid var(--sh-focus-ring);
+  outline-offset: var(--sh-hairline);
+}

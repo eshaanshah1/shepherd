@@ -1,0 +1,46 @@
+/*
+ * `@shepherd/ui/styles.css` — the ONE stylesheet a page loads.
+ *
+ * Behind this single specifier is a file per component. That split is an
+ * implementation detail and the specifier is the contract, which is the whole
+ * reason for an entry file: a thirteenth primitive is a new file plus one line
+ * here, never an edit to what a consumer writes.
+ *
+ * Why per-component files rather than one flat sheet:
+ *
+ *   - **Tier 3 is declared beside its owner.** `tokens.css` already states the
+ *     rule ("a component token is declared beside the component that owns it").
+ *     A `--sh-ui-modal-md` in a shared file is a value two components can start
+ *     reading, and a value two components share is a role or a metric one tier
+ *     up — the file boundary is what makes that mistake visible.
+ *   - **Deleting a primitive deletes its CSS.** The failure this package exists
+ *     to prevent is a rule outliving the thing it styled; v1's `styles.css` grew
+ *     to 1049 lines partly that way.
+ *   - **The import ORDER is stated once, here, in one readable list.** With
+ *     `@import` the cascade order is this file's line order and nothing else —
+ *     no bundler's module graph deciding it, which is the same argument
+ *     `package.json` makes for not self-injecting the sheet.
+ *
+ * ORDER MATTERS AND IT IS THE ONLY THING THAT DOES: `base` first (it declares
+ * `.sh-ui-sr-only`, which components reference), then the rest alphabetically.
+ * Nothing below depends on anything else below it — every primitive's rules are
+ * scoped to its own `sh-ui-*` namespace, and if a rule here ever needs to come
+ * after another to win, that is two components fighting over one element and the
+ * fix is not reordering this list.
+ */
+
+@import './tokens.css';
+@import './base.css';
+
+@import './button.css';
+@import './card.css';
+@import './composer.css';
+@import './field.css';
+@import './icon-button.css';
+@import './keycap.css';
+@import './modal.css';
+@import './row.css';
+@import './section-label.css';
+@import './status-dot.css';
+@import './textarea.css';
+@import './tooltip.css';

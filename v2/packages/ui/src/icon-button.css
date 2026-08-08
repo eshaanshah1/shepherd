@@ -1,0 +1,32 @@
+/*
+ * IconButton — Button's rules, made square.
+ *
+ * Nothing here restates a colour, a hover or a disabled state: those are
+ * `button.css`'s and this element carries `.sh-ui-button` too. All this file
+ * does is turn the horizontal padding into a fixed width, which is the entire
+ * difference between a button with a label and a button that IS a glyph.
+ */
+
+.sh-ui-icon-button {
+  padding: 0;
+  /* A square has no label to set its width, so the height token sets both. */
+  aspect-ratio: 1;
+}
+
+/*
+ * `width` as well as `aspect-ratio`, deliberately.
+ *
+ * `aspect-ratio` needs one resolved dimension to work from, and inside a flex
+ * row a `flex: 0 0 auto` item can be measured from its CONTENT before the ratio
+ * is applied — which for a 14px glyph is a 14px-wide button. Stating the width
+ * from the same control token the height comes from means the two can never
+ * disagree, and the ratio above is then a statement of intent rather than the
+ * mechanism.
+ */
+.sh-ui-icon-button--sm {
+  width: var(--sh-control-sm);
+}
+
+.sh-ui-icon-button--md {
+  width: var(--sh-control-md);
+}

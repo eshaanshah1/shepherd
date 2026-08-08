@@ -59,6 +59,22 @@ catalog:
   # after them, because half of them have an icon-shaped hole and a hole filled
   # later is filled twelve different ways (spec §7, answer 3).
   '@tabler/icons-react': 3.46.0
+  # Radix, and ONLY where the behaviour is real (design-system spec §3). Three
+  # packages, not the umbrella `radix-ui` bundle: taking the whole set would pull
+  # in a Select, a Menu and a Tabs that the spec's "deliberately not in v1" list
+  # exists to keep out, and a primitive with no consumer is a design nobody has
+  # tested.
+  #
+  #   dialog   focus trap, scrim, Esc, click-out, portal, aria wiring — Modal
+  #   tooltip  the delay/dismiss state machine and the collision-aware position
+  #   slot     `asChild`, so a Button can BE a link without a second component
+  #
+  # Notably absent: `react-visually-hidden`. `.sh-ui-sr-only` is four lines of
+  # CSS this package needs anyway (StatusDot's paired text), and a dependency for
+  # four lines is a dependency whose version you now own.
+  '@radix-ui/react-dialog': 1.1.23
+  '@radix-ui/react-tooltip': 1.2.16
+  '@radix-ui/react-slot': 1.3.3
 
   # test
   jsdom: 30.0.1
