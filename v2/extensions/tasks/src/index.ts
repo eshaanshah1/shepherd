@@ -1,5 +1,11 @@
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { s, toDisposable, type ExtensionContext, type Shepherd } from '@shepherd/sdk';
+import {
+  s,
+  toDisposable,
+  type AttentionLevel,
+  type ExtensionContext,
+  type Shepherd,
+} from '@shepherd/sdk';
 import { REPO_SUGGESTIONS_POINT, TASK_COMMANDS, TASK_VIEWS } from './manifest.ts';
 import { TaskStore, type RepoArchive, type RepoRef, type TaskRecord, type TaskSession } from './store.ts';
 import { slugify, uniqueSlug } from './model/slug.ts';
@@ -81,6 +87,23 @@ const CORRELATE_ATTEMPTS = 10;
 const CORRELATE_INTERVAL_MS = 500;
 
 /**
+ * Core's `ATTENTION_TOPIC` and its payload, as a literal and a local shape.
+ *
+ * Extension code may import `@shepherd/sdk` and nothing else, so it cannot
+ * reach `@shepherd/core` for either — the same reason `ext-host/api.ts` keeps
+ * its own copy of this string. A topic name is public vocabulary, like a command
+ * id; the interface is a read of what the bus carries and is deliberately
+ * narrower than core's (a `PaneID` is an opaque string out here).
+ */
+const ATTENTION_TOPIC = 'attention.changed';
+
+interface AttentionChanged {
+  readonly pane: string;
+  readonly level: AttentionLevel;
+  readonly reason: string;
+}
+
+/**
  * What the orchestrator is told. Deliberately thin: the generated `CLAUDE.md`
  * at its cwd already carries the brief and the repo map (ADR 0029), so
  * restating them here would be the same text twice, drifting.
@@ -90,10 +113,74 @@ function orchestratorPrompt(task: { title: string; brief: string }): string {
 }
 
 export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
-  const { commands, points, views } = api.proposed;
+  const { commands, events, points, views } = api.proposed;
   const store = new TaskStore(ctx.storage);
   /** Per-repo provisioning state. In memory, deliberately — see `provision`. */
   const provisioning = new Map<string, 'working' | 'ready' | 'failed'>();
+
+  /**
+   * What each pane is currently asking of you, mirrored from the bus.
+   *
+   * **Keyed by PANE, and that is not an implementation detail.** The topic is
+   * pane-keyed because core stores attention by pane (a session can be rebound,
+   * a pane cannot), and a task's session may still be carrying its `pending-*`
+   * placeholder id while `correlate` catches up — so keying this by session id
+   * would lose exactly the attention raised in the first seconds of a spawn,
+   * which is when an agent is most likely to ask something.
+   *
+   * In memory and never stored, for the same reason `provisioning` is not: it is
+   * somebody else's fact, it changes on a second timescale, and after a restart
+   * there is no attention because there are no panes.
+   *
+   * It also self-cleans without a reconciliation pass: the store emits on every
+   * clear as well as every change, including the viewing-clear and the purge
+   * when a pane closes, so a `none` always arrives for an entry that stops
+   * mattering.
+   */
+  const attention = new Map<string, AttentionLevel>();
+
+  /**
+   * D4, made real: `needs-you` is READ from the panes, never written anywhere.
+   *
+   * A task's sessions may include ones whose pane never mounted (`pane`
+   * undefined); those contribute nothing rather than a guess.
+   */
+  const attentionOf = (task: TaskRecord): readonly AttentionLevel[] =>
+    task.sessions.flatMap((session) => {
+      const level = session.pane === undefined ? undefined : attention.get(session.pane);
+      return level === undefined ? [] : [level];
+    });
+
+  /**
+   * Subscribing to the topic, WITHOUT declaring the permission.
+   *
+   * `events.on` is membership-gated only — being a loaded extension is the whole
+   * of the check — while `attention.set`/`clear` are what the `attention`
+   * permission guards. So this is a read of a fact `agents-core` publishes, and
+   * ADR 0026's single-writer rule is untouched: nothing below writes attention,
+   * it only mirrors what was announced. See the manifest's comment for why
+   * declaring the permission would be the actual violation.
+   */
+  ctx.subscriptions.push(
+    events.on<AttentionChanged>(ATTENTION_TOPIC, (payload) => {
+      // Structural, not schematic: the payload crossed a port, and a malformed
+      // one must be dropped rather than keying the mirror on `undefined` — which
+      // would then never be cleared, since no `none` can name that key.
+      if (typeof payload?.pane !== 'string') return;
+      let delta: boolean;
+      if (payload.level === 'none') {
+        delta = attention.delete(payload.pane);
+      } else {
+        delta = attention.get(payload.pane) !== payload.level;
+        attention.set(payload.pane, payload.level);
+      }
+      // The tree is pull-based (ADR 0031): the host re-asks `children()` only
+      // when nudged, so a mirror that changed and did not nudge is a sidebar
+      // still showing the old grouping. Nudged on a real delta only, because a
+      // level can be re-announced with a new reason and nothing here has moved.
+      if (delta) changed();
+    }),
+  );
 
   const suggestions = points.define<RepoSuggestionProvider>(REPO_SUGGESTIONS_POINT, {
     order: 'priority',
@@ -200,6 +287,29 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     if (!opened.ok) {
       rmSync(plan.promptFile, { force: true });
       throw new Error(`could not open a pane for the agent: ${opened.error.code}: ${opened.error.message}`);
+    }
+
+    /**
+     * Name the pane, because a column of identical shell titles is what a task
+     * with three agents looks like otherwise.
+     *
+     * A separate command from the split on purpose: `layout.split` takes the cwd
+     * and the command to type and nothing else, and widening it so this one
+     * caller could pass a title would put a `tasks` convenience into the kernel's
+     * layout verb. Renaming afterwards costs one more invoke and keeps the seam.
+     *
+     * A failure is logged and stepped over: the pane is open, the agent is
+     * running in it and the session is about to be recorded — a title is the one
+     * part of a spawn that is decoration, and throwing here would discard a real
+     * pane over it.
+     */
+    const title =
+      input.role === 'orchestrator' ? task.title : `${task.title} · ${input.repo ?? 'workstream'}`;
+    const renamed = await commands.invoke('layout.rename', { pane: opened.value, title });
+    if (!renamed.ok) {
+      ctx.log.warn(
+        `task ${task.id}: pane ${opened.value} kept its own title — ${renamed.error.code}: ${renamed.error.message}`,
+      );
     }
 
     const session: TaskSession = {
@@ -392,10 +502,10 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         }
         return store.list().map((task) => ({
           ...task,
-          // Derived here, never stored (D4). `attention` is not this extension's
-          // to read yet — until the tree consumes it (M3b) every task reports its
-          // lifecycle, which is honest rather than a guess.
-          displayState: displayState(task.lifecycle, []),
+          // Derived here, never stored (D4) — from the live attention of the
+          // panes this task's sessions are running in, read at the moment the
+          // question is asked.
+          displayState: displayState(task.lifecycle, attentionOf(task)),
           root: rootOf(task),
           repos: task.repos.map((repo) => ({
             ...repo,
@@ -683,7 +793,9 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
            */
           const rows: TreeItemOut[] = [];
           for (const group of TASK_GROUPS) {
-            const inGroup = tasks.filter((task) => group.states.includes(displayState(task.lifecycle, [])));
+            const inGroup = tasks.filter((task) =>
+              group.states.includes(displayState(task.lifecycle, attentionOf(task))),
+            );
             if (inGroup.length === 0) continue;
             rows.push({
               id: `group:${group.label}`,
@@ -693,7 +805,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
               tint: group.tint,
             });
             for (const task of inGroup) {
-              const state = displayState(task.lifecycle, []);
+              const state = displayState(task.lifecycle, attentionOf(task));
               rows.push({
                 id: task.id,
                 label: task.title,
