@@ -806,6 +806,30 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         if (task === undefined) throw new Error(`no task ${args.task}`);
         const root = taskRootId(task.id);
 
+        /**
+         * An archived task is brought BACK by looking at it.
+         *
+         * Its worktrees were removed and its uncommitted work snapshotted, so
+         * opening a root at its directory would show an empty shell in a folder
+         * with nothing in it — the app pretending the task is there. Restoring
+         * first is what makes closing a task safe to do casually: the gesture
+         * that ends it is the same one that undoes it.
+         *
+         * Awaited, because the pane opens at the task root and a pane that
+         * mounted before the worktrees landed would be a shell in a directory
+         * being rebuilt underneath it. `tasks.restore` provisions optimistically
+         * (the record flips first, the git work follows), so this returns before
+         * every repo is back — the tree reports the rest, which is the same
+         * bargain creating a task already makes.
+         */
+        if (task.lifecycle === 'archived') {
+          const restored = await commands.invoke(TASK_COMMANDS.restore, { task: task.id });
+          if (!restored.ok) {
+            throw new Error(`could not restore the task: ${restored.error.code}: ${restored.error.message}`);
+          }
+          ctx.log.info(`task ${task.id}: restored by being revealed`);
+        }
+
         const opened = await commands.invoke<{ created: boolean }>('layout.openRoot', {
           root,
           cwd: rootOf(task),
@@ -1074,35 +1098,39 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
             );
           }
 
-          const tasks = [...store.list()].sort((a, b) => b.createdAt - a.createdAt);
-          if (tasks.length === 0) {
+          const all = [...store.list()].sort((a, b) => b.createdAt - a.createdAt);
+          if (all.length === 0) {
             // The empty state is the SHELL's, not a fake row: a list saying
             // "no tasks yet" in the shape of a task is a row you can click.
             return Promise.resolve([]);
           }
 
           /**
-           * Grouped by state, which is how the sidebar is specified (§4) — and
-           * the grouping is a READ: `displayState` derives `needs-you` from the
-           * sessions' attention (D4) and nothing writes it.
+           * Live work, then DONE — the one division the list makes.
            *
-           * The order is the order you care in: what wants you, then what is
-           * moving, then what is not. A group with nothing in it is absent
-           * rather than an empty heading.
+           * It is not the state-grouping that was removed: that sorted live
+           * tasks into buckets they have no relationship through. This is the
+           * difference between work in flight and work you have finished with,
+           * which is the one thing you asked the sidebar for by closing a task.
+           * Archived tasks go under a heading at the bottom and nowhere else,
+           * so finished work stops competing with the rest for the eye.
            */
+          const live = all.filter((task) => task.lifecycle !== 'archived');
+          const done = all.filter((task) => task.lifecycle === 'archived');
+
           const rows: TreeItemOut[] = [];
-          for (const task of tasks) {
+          const rowFor = (task: TaskRecord): TreeItemOut => {
             const state = displayState(task.lifecycle, attentionOf(task));
-            rows.push({
+            return {
               id: task.id,
               label: task.title,
               description: state,
               tint: state,
               collapsed: true,
-              // Clicking a task takes you to it. The args ride the row (the
-              // registry passes `command.args` straight through), so the row
-              // names WHICH task rather than the handler having to guess from
-              // whatever happens to be selected.
+              // Clicking a task takes you to it — and for an archived one that
+              // means bringing it BACK: `tasks.reveal` restores the worktrees
+              // first (see its handler). One gesture, whatever state the task
+              // is in, because "show me this task" is one intention.
               command: { id: TASK_COMMANDS.reveal, args: { task: task.id } },
               /*
                * The row's right-click menu. Declared HERE because the shell
@@ -1115,26 +1143,30 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
                * extension rather than to the user (D14) — so `tasks.delete` from
                * a menu is authorized exactly as `tasks.delete` from the CLI is.
                *
-               * The separator is the sentence "and these two destroy things",
-               * said with a rule instead of in the labels. Both entries below it
-               * are `danger`, which is the ember treatment `Button`'s destructive
-               * variant already uses.
+               * An archived task offers Restore where a live one offers Archive:
+               * the verb that is available is the one that changes its state,
+               * and offering "Archive" on something already archived is an item
+               * that either fails or does nothing.
                */
               actions: [
                 {
                   id: TASK_COMMANDS.reveal,
-                  label: 'Reveal',
+                  label: task.lifecycle === 'archived' ? 'Restore' : 'Reveal',
                   icon: 'eye',
                   args: { task: task.id },
                 },
                 { separator: true },
-                {
-                  id: TASK_COMMANDS.archive,
-                  label: 'Archive',
-                  icon: 'archive',
-                  danger: true,
-                  args: { task: task.id },
-                },
+                ...(task.lifecycle === 'archived'
+                  ? []
+                  : [
+                      {
+                        id: TASK_COMMANDS.archive,
+                        label: 'Archive',
+                        icon: 'archive',
+                        danger: true,
+                        args: { task: task.id },
+                      },
+                    ]),
                 {
                   id: TASK_COMMANDS.delete,
                   label: 'Delete',
@@ -1143,8 +1175,22 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
                   args: { task: task.id },
                 },
               ],
+            };
+          };
+
+          for (const task of live) rows.push(rowFor(task));
+
+          if (done.length > 0) {
+            rows.push({
+              id: 'group:done',
+              label: 'DONE',
+              description: String(done.length),
+              section: true,
+              tint: 'wool-faint',
             });
+            for (const task of done) rows.push(rowFor(task));
           }
+
           return Promise.resolve(rows);
         },
         onDidChange: (fn) => {

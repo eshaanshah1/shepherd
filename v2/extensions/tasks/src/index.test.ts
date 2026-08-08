@@ -1120,3 +1120,55 @@ describe('pre-trusting the directories it generates', () => {
     expect(warnings.some((line) => line.includes('trust prompt'))).toBe(true);
   });
 });
+
+describe('finished work', () => {
+  // Closing a task archives it (its own test above). This is what the sidebar
+  // then does with it, and what clicking it does — the two halves of the
+  // gesture being safe to make casually.
+  const archived = (id: string): TaskRecord =>
+    task({ id, title: `T ${id}`, lifecycle: 'archived', archivedAt: 5, sessions: [] });
+
+  it('puts archived tasks under a DONE heading at the bottom, not among live work', async () => {
+    const h = (live = harness({ tasks: [archived('old'), task({ id: 'now', title: 'T now' })] }));
+    const rows = await h.tree().children(undefined);
+
+    const ids = rows.map((row) => row.id);
+    expect(ids).toEqual(['now', 'group:done', 'old']);
+    expect(rows.find((row) => row.id === 'group:done')?.section).toBe(true);
+  });
+
+  it('draws no DONE heading when nothing is finished', async () => {
+    const h = (live = harness({ tasks: [task({ id: 'now' })] }));
+    const rows = await h.tree().children(undefined);
+    expect(rows.some((row) => row.section === true)).toBe(false);
+  });
+
+  it('offers Restore where a live task offers Archive', async () => {
+    const h = (live = harness({ tasks: [archived('old'), task({ id: 'now' })] }));
+    const rows = await h.tree().children(undefined);
+    const labels = (id: string): unknown[] =>
+      (rows.find((row) => row.id === id)?.actions ?? []).map((a) =>
+        'separator' in a ? '—' : a.label,
+      );
+
+    expect(labels('old')).toEqual(['Restore', '—', 'Delete']);
+    expect(labels('now')).toEqual(['Reveal', '—', 'Archive', 'Delete']);
+  });
+
+  it('brings an archived task BACK when it is revealed, before opening its root', async () => {
+    // Opening a root at a directory whose worktrees were removed would show an
+    // empty shell — the app pretending the task is there.
+    const h = (live = harness({ tasks: [archived('old')] }));
+    await h.run('tasks.reveal', { task: 'old' });
+
+    const order = h.invoked.map((call) => call.id);
+    expect(order).toContain('tasks.restore');
+    expect(order.indexOf('tasks.restore')).toBeLessThan(order.indexOf('layout.openRoot'));
+  });
+
+  it('does not restore a live task on the way to revealing it', async () => {
+    const h = (live = harness({ tasks: [task({ id: 'now' })] }));
+    await h.run('tasks.reveal', { task: 'now' });
+    expect(h.invoked.some((call) => call.id === 'tasks.restore')).toBe(false);
+  });
+});
