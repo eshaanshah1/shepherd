@@ -5,10 +5,18 @@
  * know about, which is precisely the drift v1 had between Theme.swift and
  * writeBaseTheme().
  *
- * The same rule applies to the font: the chrome reads `--sh-font-mono`, which is
- * the identical string `xterm-terminal.ts` hands xterm. A second stack typed
- * here would fork the chrome's face from the grid's — the drift above, wearing
- * different clothes.
+ * The same rule applies to the fonts, of which there are TWO and the split is a
+ * job description, ported from v1 (`Theme.swift`: `Font.ui` = DM Sans for the
+ * sidebar and every label, `Font.mono` = JetBrains Mono for the grid and code).
+ *
+ *   `--sh-font-sans`  what the APP says: names, labels, prose, buttons.
+ *   `--sh-font-mono`  what the MACHINE produced: the grid, paths, ids, commands.
+ *
+ * Both come from @shepherd/design-tokens, and the mono one is the identical
+ * string `xterm-terminal.ts` hands xterm — a second stack typed here would fork
+ * the chrome's face from the grid's. v2 shipped with only the mono token and
+ * used it everywhere, which set prose in monospace and made a composer read as
+ * terminal output. Reach for mono deliberately; sans is the default.
  *
  * Metrics are INTEGER PX and traceable to the approved mock
  * (docs/superpowers/specs/2026-08-06-flock-mock.html) or to
@@ -33,6 +41,31 @@
  * real `border` — it has four edges and no content to align with anything.
  */
 
+/*
+ * Bundled, not installed. Both faces ship in the app (v1 did the same, and for
+ * the same reason: a UI whose typography depends on what the user happens to
+ * have installed is a UI that looks different on every machine). `font-src
+ * 'self'` in index.html's CSP is what lets these load; a CDN would need a
+ * widened policy, which is not a trade worth making for a font.
+ */
+@font-face {
+  font-family: 'DM Sans';
+  /* One variable file covering the whole ramp, so a weight is a real weight and
+     never a synthesised one. */
+  src: url('./fonts/DMSans.ttf') format('truetype-variations');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('./fonts/JetBrainsMono-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -48,7 +81,7 @@ body,
 body {
   background: var(--sh-ink-deep);
   color: var(--sh-wool);
-  font-family: var(--sh-font-mono);
+  font-family: var(--sh-font-sans);
   font-size: var(--sh-font-size);
   line-height: var(--sh-line-height);
   -webkit-font-smoothing: antialiased;
@@ -68,27 +101,29 @@ body.sh-dragging {
   background: var(--sh-ink);
 }
 
-/* ------------------------------------------------------------- spec plate */
+/* --------------------------------------------------------------- titlebar */
 /*
- * Rule 5: industrial labeling. A strip of uppercase micro-labels with tracking,
- * not a toolbar — the gestures it used to carry buttons for are menu commands
- * with accelerators, and a row of debug buttons is what made this app read as
- * its own test harness.
+ * THE titlebar, not a bar underneath one.
  *
- * Geometry is the mock's `.titlebar` verbatim: 38px, 11px/.1em, and the whole
- * strip in `wool-faint` with the spec *values* one step up in `wool-dim`. The
- * emphasis is the luminance step, not a weight or a colour.
+ * `titleBarStyle: 'hiddenInset'` hides the native bar and keeps the traffic
+ * lights, so this row is the window's own chrome: the lights sit in it. Before
+ * that it was a second 38px band below a native titlebar — two headers stacked,
+ * one of them saying only the app's own name back to you.
+ *
+ * What it carries is where you ARE (the task, then the pane), because that is
+ * the only thing a titlebar owes you and it is the one fact the sidebar cannot
+ * show while it is scrolled elsewhere. 44px is the height at which the lights
+ * are centred with room for a real breadcrumb beside them.
  */
 
 .sh-plate {
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 38px;
+  height: 44px;
   flex: 0 0 auto;
-  padding: 0 14px;
-  /* The window is frameless-ish on macOS; the traffic lights own the left. */
-  padding-left: 78px;
+  /* Clears the traffic lights, which the window keeps. */
+  padding: 0 14px 0 84px;
   background: var(--sh-ink);
   /* 38px of CONTENT box, so the brand and the cells centre where the traffic
      lights do. A border-bottom here would make it 37. */
@@ -99,19 +134,46 @@ body.sh-dragging {
   -webkit-app-region: drag;
 }
 
-.sh-brand,
-.sh-plate-cell {
+/* Where you are: the task in the app's voice, the pane in the machine's. */
+.sh-crumb {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  letter-spacing: 0;
+}
+
+.sh-crumb-task {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--sh-wool);
+  white-space: nowrap;
+}
+
+.sh-crumb-sep { color: var(--sh-wool-faint); }
+
+.sh-crumb-pane {
+  font-family: var(--sh-font-mono);
   font-size: 11px;
-  letter-spacing: 0.1em;
+  color: var(--sh-wool-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.sh-plate-cell {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
   color: var(--sh-wool-faint);
   white-space: nowrap;
 }
 
-/* The mock's `.spec span b`: the value, one luminance step up. Not bolder — a
-   weight change in a mono face is a different face. */
+/* The value, one luminance step up. The emphasis is luminance, not weight. */
 .sh-plate-cell b {
   color: var(--sh-wool-dim);
-  font-weight: 400;
+  font-weight: 500;
 }
 
 .sh-plate-cell.is-ember,
@@ -264,12 +326,16 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
 
 /* The pane's identity — Orca's "input fg" step, the strongest thing in the bar. */
 .sh-pane-name {
+  font-weight: 500;
   color: var(--sh-pane-title-strong, var(--sh-wool-dim));
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+/* A path is machine output, so it is mono — the rule at the top of this file,
+   applied to the one part of the bar the app did not write. */
 .sh-pane-branch {
+  font-family: var(--sh-font-mono);
   color: var(--sh-pane-title-faint, var(--sh-wool-faint));
   overflow: hidden;
   text-overflow: ellipsis;
@@ -831,7 +897,13 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
 }
 .sh-ext-card button[type='submit']:hover:not(:disabled) { background: var(--sh-cobalt); color: var(--sh-ink); }
 
-.sh-ext-answer { color: var(--sh-wool-faint); font-size: 11px; word-break: break-word; }
+.sh-ext-answer {
+  /* Whatever a command answered — JSON, an error code. Machine output. */
+  font-family: var(--sh-font-mono);
+  color: var(--sh-wool-faint);
+  font-size: 11px;
+  word-break: break-word;
+}
 
 /* ------------------------------------------------------------ the composer */
 /*
@@ -915,9 +987,11 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
 /* Empty, it is still a flex item and would spend the row's gap on nothing. */
 .sh-composer-picked:empty { display: none; }
 
+/* A repo name and a path you type are both machine vocabulary. */
 .sh-composer-suggestions button,
 .sh-composer-picked li,
 .sh-composer-add {
+  font-family: var(--sh-font-mono);
   display: inline-flex;
   align-items: center;
   gap: 6px;

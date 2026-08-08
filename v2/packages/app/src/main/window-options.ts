@@ -44,6 +44,16 @@ export function windowOptions(input: WindowOptionsInput): BrowserWindowConstruct
     height: input.height ?? DEFAULT_WINDOW_SIZE.height,
     // Shown on `ready-to-show`, so the window never appears mid-paint.
     show: false,
+    /**
+     * The app draws its own titlebar and macOS keeps the traffic lights.
+     *
+     * Without this the window has a native bar saying "Shepherd" and the app
+     * draws a second band under it saying "SHEPHERD" — two headers stacked, the
+     * top one carrying no information the bottom one lacked. The renderer's
+     * `.sh-plate` is now that bar, so it reserves the lights' width and marks
+     * itself `-webkit-app-region: drag`.
+     */
+    titleBarStyle: 'hiddenInset',
     backgroundColor: input.backgroundColor,
     webPreferences: {
       preload: input.preloadPath,

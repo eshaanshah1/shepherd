@@ -12,6 +12,7 @@ export function cssVariables(mode: ThemeMode): Record<string, string> {
   const vars: Record<string, string> = {};
   for (const token of colorTokens) vars[cssVarName(token)] = palette[token][mode];
 
+  vars[cssVarName('font-sans')] = fonts.sans;
   vars[cssVarName('font-mono')] = fonts.mono;
   vars[cssVarName('font-serif')] = fonts.serif;
   vars[cssVarName('font-size')] = `${metrics.fontSize}px`;
