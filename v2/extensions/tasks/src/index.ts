@@ -6,7 +6,14 @@ import { slugify, uniqueSlug } from './model/slug.ts';
 import { displayState } from './model/lifecycle.ts';
 import { synthTaskRoot } from './model/root-synth.ts';
 import { planLaunch } from './model/launch.ts';
-import { archiveWorktree, materializeTaskRoot, provisionRepo, readContribution, restoreWorktree } from './provision.ts';
+import {
+  archiveWorktree,
+  materializeTaskRoot,
+  provisionRepo,
+  readContribution,
+  removeWorktree,
+  restoreWorktree,
+} from './provision.ts';
 
 /**
  * `tasks` — the extension M3 exists for, and the one that has to prove the ADE
@@ -532,6 +539,94 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
   const changed = (): void => {
     for (const fn of treeListeners) fn();
   };
+  ctx.subscriptions.push(
+    commands.register(TASK_COMMANDS.delete, {
+      title: 'Tasks: Delete',
+      schema: s.object({ task: s.string() }),
+      /**
+       * Gone for good: the worktrees, the generated root, the record.
+       *
+       * The order matters and is the opposite of provisioning's. Worktrees go
+       * first, through git — `rm -rf` on one leaves a registration behind in the
+       * source repo, and the next `worktree add` on that branch then fails with
+       * "already checked out" pointing at a directory that no longer exists.
+       * The record goes LAST, because it is the only thing that knows where any
+       * of the rest lives: dropping it first turns a failure halfway through
+       * into orphaned directories nothing can find.
+       *
+       * A repo whose worktree will not come off does NOT abort the delete — it
+       * is reported and the rest proceeds, because a task that half-exists is
+       * worse than one whose leftovers are named.
+       *
+       * **Branches are left**, and named in the answer. They live in the source
+       * repo and may carry commits; deleting them is a larger destruction than
+       * this verb was asked for.
+       */
+      handler: async (args) => {
+        const task = store.get(args.task);
+        if (task === undefined) throw new Error(`no task ${args.task}`);
+        const root = rootOf(task);
+        const kept: string[] = [];
+        const failed: string[] = [];
+
+        // The sessions first (its first review's finding #3): a deleted task's
+        // panes would keep running in a directory about to vanish, and ADR 0022
+        // makes `layout.close` the only thing that ends a session — nothing
+        // downstream of the rmSync could clean them up. A pane that is already
+        // gone answers with a failure, which is fine: closed is closed.
+        for (const session of task.sessions) {
+          if (session.pane !== undefined) {
+            await commands.invoke('layout.close', { pane: session.pane });
+          }
+        }
+
+        // An ARCHIVED task's worktrees were already removed by the archive
+        // (finding #2) — running `worktree remove` again fails per repo and made
+        // a clean delete report itself as broken. The pinned archive refs are
+        // deliberately left: refs/shepherd/* is tiny, local-only, and deleting
+        // snapshots is a bigger destruction than "remove this task's entry".
+        const stranded: string[] = [];
+        if (task.lifecycle !== 'archived') {
+          for (const repo of task.repos) {
+            const out = await removeWorktree(api.proposed.process, repo.path, `${root}/${repo.name}`);
+            if (out.ok) {
+              if (out.branch !== null) kept.push(`${repo.name}: ${out.branch}`);
+            } else {
+              failed.push(`${repo.name}: ${out.reason}`);
+              stranded.push(repo.path);
+            }
+          }
+        }
+
+        rmSync(root, { recursive: true, force: true });
+
+        // The rmSync just took directories out from under any registration git
+        // still holds (finding #1) — exactly the state this handler's comment
+        // warns about, where the next `worktree add` on that branch fails
+        // pointing at a directory that no longer exists. `worktree prune` is
+        // git's own repair for a registration whose directory is gone, and it
+        // only works AFTER the directory is gone — pruning before the rmSync is
+        // a no-op, because the directory still answers. Best-effort: a source
+        // repo that is itself gone has no registration to strand.
+        for (const repoPath of stranded) {
+          await api.proposed.process
+            .gitWrite(['worktree', 'prune'], { cwd: repoPath, timeoutMs: 30_000 })
+            .catch(() => undefined);
+        }
+
+        store.remove(task.id);
+        changed();
+
+        for (const failure of failed) ctx.log.warn(`task ${task.id}: ${failure}`);
+        ctx.log.info(
+          `deleted task ${task.id} (${task.slug})` +
+            `${kept.length === 0 ? '' : `; branches left: ${kept.join(', ')}`}`,
+        );
+        return { id: task.id, slug: task.slug, branchesLeft: kept, failed };
+      },
+    }),
+  );
+
   /**
    * The composer — M3b's point, and a view like any other (ADR 0033).
    *

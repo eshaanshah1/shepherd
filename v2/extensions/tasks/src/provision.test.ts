@@ -2,7 +2,8 @@ import { mkdtempSync, mkdirSync, readFileSync, readlinkSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { materializeTaskRoot } from './provision.ts';
+import type { ExecErr, ExecOk, ExecOptions, ProcessAPI } from '@shepherd/sdk';
+import { materializeTaskRoot, removeWorktree } from './provision.ts';
 import { synthTaskRoot } from './model/root-synth.ts';
 
 /**
@@ -125,5 +126,113 @@ describe('materializeTaskRoot', () => {
     materializeTaskRoot(root, plan());
     expect(existsSync(join(root, '..', '.claude'))).toBe(false);
     expect(existsSync(join(root, '..', 'CLAUDE.md'))).toBe(false);
+  });
+});
+
+interface GitCall {
+  readonly fn: 'gitRead' | 'gitWrite';
+  readonly args: readonly string[];
+  readonly opts: ExecOptions;
+}
+
+/**
+ * Git, without git — the same shape `fakeKV` has in `store.test.ts`: canned
+ * answers plus a record of what was asked.
+ *
+ * Recording the calls is not incidental here. `removeWorktree` runs two git
+ * invocations in two different directories, and WHICH directory each ran in is
+ * the thing that has to be true — asserting only the return value would pass
+ * for a version that ran both in the wrong place.
+ */
+function fakeGit(canned: {
+  read?: ExecOk | ExecErr;
+  write?: ExecOk | ExecErr;
+}): ProcessAPI & { calls: GitCall[] } {
+  const calls: GitCall[] = [];
+  const ok: ExecOk = { ok: true, stdout: '', stderr: '' };
+  return {
+    calls,
+    exec: () => Promise.resolve(ok),
+    gitRead: (args, opts) => {
+      calls.push({ fn: 'gitRead', args, opts });
+      return Promise.resolve(canned.read ?? ok);
+    },
+    gitWrite: (args, opts) => {
+      calls.push({ fn: 'gitWrite', args, opts });
+      return Promise.resolve(canned.write ?? ok);
+    },
+  };
+}
+
+describe('removeWorktree', () => {
+  const repoPath = '/src/api';
+  const worktree = '/data/fix-login/api';
+
+  it('removes the worktree from the SOURCE repo, and reads the branch in the worktree', async () => {
+    // The two cwds are the whole invariant. `git worktree remove` names a path
+    // it is about to delete, so it cannot be run from inside it; the branch, by
+    // contrast, is the worktree's own HEAD and reading it from the source repo
+    // would report whatever that repo happens to have checked out.
+    const git = fakeGit({ read: { ok: true, stdout: 'fix-login\n', stderr: '' } });
+    const out = await removeWorktree(git, repoPath, worktree);
+
+    expect(out).toEqual({ ok: true, branch: 'fix-login' });
+    const removal = git.calls.find((call) => call.fn === 'gitWrite');
+    expect(removal?.args).toEqual(['worktree', 'remove', '--force', worktree]);
+    expect(removal?.opts.cwd).toBe(repoPath);
+    expect(git.calls.find((call) => call.fn === 'gitRead')?.opts.cwd).toBe(worktree);
+  });
+
+  it('reads the branch BEFORE the removal, since afterwards there is nothing to read', async () => {
+    // Ordering, not sequencing for its own sake: the directory whose HEAD is
+    // being read is the one the next call deletes.
+    const git = fakeGit({ read: { ok: true, stdout: 'fix-login\n', stderr: '' } });
+    await removeWorktree(git, repoPath, worktree);
+    expect(git.calls.map((call) => call.fn)).toEqual(['gitRead', 'gitWrite']);
+  });
+
+  it('reports NO branch for a detached HEAD, rather than a branch called "HEAD"', async () => {
+    // `rev-parse --abbrev-ref HEAD` prints the literal string `HEAD` when
+    // nothing is checked out, so a caller listing what it left behind would
+    // otherwise tell the user about a branch that does not exist.
+    const git = fakeGit({ read: { ok: true, stdout: 'HEAD\n', stderr: '' } });
+    expect(await removeWorktree(git, repoPath, worktree)).toEqual({ ok: true, branch: null });
+  });
+
+  it('fails with git’s own stderr when the removal will not go through', async () => {
+    const git = fakeGit({
+      write: { ok: false, code: 128, stdout: '', stderr: "fatal: '/data/fix-login/api' is not a working tree\n" },
+    });
+    const out = await removeWorktree(git, repoPath, worktree);
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.reason).toBe("fatal: '/data/fix-login/api' is not a working tree");
+  });
+
+  it('still fails, with the exit code, when git says nothing at all', async () => {
+    // A reason of "" would surface to the user as a failure with no cause,
+    // which reads as a bug in Shepherd rather than a refusal from git.
+    const git = fakeGit({ write: { ok: false, code: 128, stdout: '', stderr: '   ' } });
+    const out = await removeWorktree(git, repoPath, worktree);
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.reason).toBe('git exited 128');
+  });
+
+  it('succeeds with no branch when the branch could not be read at all', async () => {
+    // The removal is what this verb was asked to do, and it happened. Failing
+    // the whole call because the NAME of the branch was unavailable would leave
+    // the caller believing a worktree is still there when it is gone — the
+    // half-delete state the record-goes-last ordering exists to avoid.
+    const git = fakeGit({
+      read: { ok: false, code: 128, stdout: '', stderr: 'fatal: not a git repository\n' },
+    });
+    expect(await removeWorktree(git, repoPath, worktree)).toEqual({ ok: true, branch: null });
+  });
+
+  it('does not delete the branch, which lives in the source repo and may carry commits', async () => {
+    // The doc comment's promise, pinned: `git branch -D` here would be a second,
+    // larger destruction than deleting a task asked for.
+    const git = fakeGit({ read: { ok: true, stdout: 'fix-login\n', stderr: '' } });
+    await removeWorktree(git, repoPath, worktree);
+    expect(git.calls.some((call) => call.args.includes('branch'))).toBe(false);
   });
 });

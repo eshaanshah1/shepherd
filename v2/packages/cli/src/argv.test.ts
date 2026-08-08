@@ -44,6 +44,17 @@ describe('parseArgv', () => {
     });
   });
 
+  it('maps `task delete` onto the command that destroys, which must not be reachable by accident', () => {
+    // Named here because this verb is the one that removes worktrees for good:
+    // a typo that resolved to some other command id would be a surprise, and a
+    // typo that resolved to THIS one would be a loss.
+    expect(parseArgv(['task', 'delete', '--task', 'x'])).toMatchObject({
+      ok: true,
+      command: 'tasks.delete',
+      args: { task: 'x' },
+    });
+  });
+
   it('claims an agent caller when a session id is in the environment', () => {
     // This is what makes `tasks.spawn` scoped rather than ambient: an agent in a
     // pane is a session, and the kernel authorizes it as one (D9b).

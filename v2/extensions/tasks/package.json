@@ -77,6 +77,10 @@
         {
           "id": "tasks.suggestRepos",
           "title": "Tasks: Suggest Repos"
+        },
+        {
+          "id": "tasks.delete",
+          "title": "Tasks: Delete"
         }
       ]
     }
