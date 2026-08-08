@@ -23,6 +23,14 @@ export const TASK_COMMANDS = {
    * point (D5).
    */
   suggestRepos: 'tasks.suggestRepos',
+  /**
+   * Gone for good — the verb the model was missing.
+   *
+   * Without it a task created to try something out is permanent: `archive`
+   * keeps it (that is its job) and nothing else removes a record. Ten throwaway
+   * tasks from a night of live testing is what that looks like on screen.
+   */
+  delete: 'tasks.delete',
 } as const;
 
 /** The composer's UI module, resolved by the renderer's table (ADR 0033). */
@@ -77,6 +85,7 @@ export const tasksManifest: Manifest = {
       { id: TASK_COMMANDS.archive, title: 'Tasks: Archive' },
       { id: TASK_COMMANDS.restore, title: 'Tasks: Restore' },
       { id: TASK_COMMANDS.suggestRepos, title: 'Tasks: Suggest Repos' },
+      { id: TASK_COMMANDS.delete, title: 'Tasks: Delete' },
     ],
   },
 };

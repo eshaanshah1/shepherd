@@ -211,6 +211,37 @@ export async function archiveWorktree(
 }
 
 /**
+ * Remove a worktree for good — the counterpart to `provisionRepo`, and the one
+ * operation in this file that destroys work rather than moving it.
+ *
+ * `--force` is passed because the caller has already decided: a task being
+ * deleted is one whose contents are not wanted, and a `worktree remove` that
+ * refuses over an untracked file would leave the record gone and the directory
+ * behind — half a delete, which is the state nothing can clean up later.
+ *
+ * The **branch is left alone**, deliberately. It lives in the source repo, it
+ * may have commits somebody wants, and `git branch -D` on it is a second,
+ * larger destruction the caller did not ask for. What is reported instead is
+ * its name, so a caller can say what remains.
+ */
+export async function removeWorktree(
+  process_: ProcessAPI,
+  repoPath: string,
+  worktree: string,
+  timeoutMs = 60_000,
+): Promise<{ ok: true; branch: string | null } | { ok: false; reason: string }> {
+  const at = { cwd: worktree, timeoutMs };
+  const branch = await process_.gitRead(['rev-parse', '--abbrev-ref', 'HEAD'], at);
+  const removed = await process_.gitWrite(['worktree', 'remove', '--force', worktree], {
+    cwd: repoPath,
+    timeoutMs,
+  });
+  if (!removed.ok) return { ok: false, reason: removed.stderr.trim() || `git exited ${removed.code}` };
+  const name = branch.ok ? branch.stdout.trim() : '';
+  return { ok: true, branch: name === '' || name === 'HEAD' ? null : name };
+}
+
+/**
  * Put the uncommitted work back — the half `worktree add` cannot do.
  *
  * Re-provisioning gives you the branch; it gives you a CLEAN tree, which is not
