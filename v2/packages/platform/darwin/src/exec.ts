@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { statSync } from 'node:fs';
 
 /**
  * The one runner — Rebuild checklist item 4, and the only place in the app that
@@ -20,6 +21,10 @@ import { execFile } from 'node:child_process';
  *   - **`gitWrite` MERGES into the inherited environment.** Replacing it loses
  *     `HOME`, and with it git's config — so a commit fails on an unset
  *     `user.name` in a repo that is configured perfectly well.
+ *   - **Every program is resolved to an absolute path, and every child is
+ *     handed a PATH that contains the standard locations.** A GUI-launched
+ *     `.app` inherits whatever launchd gave it, which is not the PATH the user
+ *     configured in their shell — see `resolveProgram` for the whole story.
  *
  * Arguments are arrays and reach `execFile`, never a shell. There is no string
  * to quote, so there is nothing to quote wrongly.
@@ -59,6 +64,124 @@ export function truncate(text: string): { text: string; truncated: boolean } {
   };
 }
 
+/**
+ * Where a program is looked for, ahead of whatever PATH this process inherited.
+ *
+ * A pane is fine without this because it spawns `$SHELL -l`, and a login shell
+ * reads the user's profile; this runner is the other half of the app, and it
+ * spawns `git` straight out of main with the PATH the app process happens to
+ * have. Launched from Finder or the Dock that PATH is launchd's, not the one
+ * the user configured — no `/opt/homebrew/bin`, no `/usr/local/bin` — and the
+ * symptom is `spawn git ENOENT` from provisioning, archiving and deleting a
+ * task, which are exactly the operations a dogfood week is made of.
+ *
+ * v1 recorded the discipline and `GH.executablePath` implemented it: probe the
+ * standard locations FIRST, then fall back to the inherited PATH. The order is
+ * that way round on purpose. The inherited PATH is the untrustworthy input here
+ * — it is minimal precisely when the app was launched the way a user launches
+ * it — so putting it first would make which `git` we run depend on how the app
+ * was started. v1 also records why the fallback is not `bash -lc "command -v"`:
+ * that reads BASH profiles, so a PATH configured in zsh is invisible and the
+ * probe concludes the tool is not installed.
+ */
+export const STANDARD_BIN_DIRS = ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin'] as const;
+
+/**
+ * The one search order, used for BOTH our own lookup and the PATH we hand the
+ * child.
+ *
+ * Sharing it is the point: `git` shells out constantly — credential helpers,
+ * `ssh`, `gpg`, hooks, `git-lfs` — and resolving our own `git` while handing it
+ * a PATH that cannot find its helpers moves the failure one process along
+ * instead of fixing it. Duplicates are dropped so the string stays readable in
+ * a log line.
+ */
+export function searchDirs(inheritedPath: string | undefined): readonly string[] {
+  const dirs: string[] = [];
+  const seen = new Set<string>();
+  for (const dir of [...STANDARD_BIN_DIRS, ...(inheritedPath ?? '').split(':')]) {
+    // An empty entry means "the current directory" to execvp, which is a place
+    // we never want a program found.
+    if (dir === '' || seen.has(dir)) continue;
+    seen.add(dir);
+    dirs.push(dir);
+  }
+  return dirs;
+}
+
+/** The PATH every child of this runner gets. Pure. */
+export function execPath(inheritedPath: string | undefined): string {
+  return searchDirs(inheritedPath).join(':');
+}
+
+/**
+ * Which of `dirs` holds `program`. Pure — the filesystem arrives as a predicate
+ * so the probe order can be tested without one.
+ *
+ * A name with a separator in it is already a path and is returned untouched: a
+ * caller who said `/usr/bin/git` or `./script` means that file, and searching
+ * for its basename would run a different program than the one they named.
+ */
+export function findProgram(
+  program: string,
+  dirs: readonly string[],
+  isExecutable: (path: string) => boolean,
+): string | undefined {
+  if (program.includes('/')) return program;
+  for (const dir of dirs) {
+    const candidate = `${dir}/${program}`;
+    if (isExecutable(candidate)) return candidate;
+  }
+  return undefined;
+}
+
+/**
+ * The cache, and it holds successes only.
+ *
+ * A resolved `git` does not move while the app runs, so the probe is worth
+ * doing once. A FAILED probe is a different thing: it means the tool is not
+ * installed yet, and caching that would make installing git mid-session require
+ * a restart to take effect. Re-probing is a handful of `stat` calls against a
+ * fixed list — nothing next to the process spawn it precedes.
+ */
+const resolved = new Map<string, string>();
+
+function isExecutableFile(path: string): boolean {
+  try {
+    // `statSync` follows symlinks deliberately: Homebrew's `git` is a link into
+    // the Cellar, and refusing to follow it would miss the one directory this
+    // probe exists for. The `isFile` check is what keeps a traversable
+    // DIRECTORY named `git` from reading as an executable, since a directory
+    // carries the same x bits.
+    const stat = statSync(path);
+    return stat.isFile() && (stat.mode & 0o111) !== 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A program's absolute path, or the name back unchanged when nothing has it.
+ *
+ * Unresolved falls through to `execFile` with the bare name on purpose. It will
+ * fail — but it fails as `spawn git ENOENT`, which is the true and recognisable
+ * error for "git is not installed", rather than as an invented one from here
+ * that a caller would then have to translate back.
+ */
+export function resolveProgram(program: string, inheritedPath = process.env['PATH']): string {
+  const cached = resolved.get(program);
+  if (cached !== undefined) return cached;
+  const found = findProgram(program, searchDirs(inheritedPath), isExecutableFile);
+  if (found === undefined) return program;
+  resolved.set(program, found);
+  return found;
+}
+
+/** Drop the cache. For tests, which need each case to probe for itself. */
+export function clearResolvedPrograms(): void {
+  resolved.clear();
+}
+
 /** The environment a git invocation runs in. Pure, so both rules are testable. */
 export function gitEnv(
   mode: 'read' | 'write',
@@ -75,6 +198,12 @@ export function gitEnv(
   // An explicit override wins — that is what an override is — including over the
   // flag above, so a caller who genuinely needs locks on a read can say so.
   for (const [key, value] of Object.entries(overrides)) env[key] = value;
+  // Last, and over the override too, because this is not a value anybody is
+  // choosing: it PREPENDS the standard locations to whatever PATH was decided
+  // and keeps every entry of it. Git's own subprocesses — credential helpers,
+  // `ssh`, hooks — are looked up in this string, and inheriting launchd's PATH
+  // for them is the same bug as inheriting it for `git` itself.
+  env['PATH'] = execPath(env['PATH']);
   return env;
 }
 
@@ -83,7 +212,14 @@ export function runExec(cmd: readonly string[], opts: RunOptions): Promise<RunRe
   if (program === undefined) {
     return Promise.resolve({ ok: false, code: -1, stdout: '', stderr: 'no program to run' });
   }
-  return spawn(program, args, opts, { ...opts.env });
+  // The caller's env is kept exactly as given except for PATH, which is theirs
+  // plus the standard locations. `exec` is the grant that lets an extension run
+  // an arbitrary program, and a program that cannot be found is not a
+  // permission decision anybody made.
+  return spawn(program, args, opts, {
+    ...opts.env,
+    PATH: execPath(opts.env?.['PATH'] ?? process.env['PATH']),
+  });
 }
 
 export function runGit(
@@ -102,7 +238,12 @@ function spawn(
 ): Promise<RunResult> {
   return new Promise((resolve) => {
     const child = execFile(
-      program,
+      // Resolved rather than left to the child's own PATH lookup. The PATH
+      // above would find it too, but doing it here means the log line, the
+      // error and the process table all name the file we actually ran — which
+      // is the difference between debugging "git is missing" and debugging
+      // "which git is this".
+      resolveProgram(program),
       [...args],
       {
         cwd: opts.cwd,

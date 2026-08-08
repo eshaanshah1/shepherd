@@ -169,13 +169,19 @@ function stateOf(
   return states.find((s) => s.sessionId === sessionId)?.state;
 }
 
-/** The rendered label, read out of the real DOM. */
+/**
+ * The agent state, read out of the real DOM.
+ *
+ * `[data-agent-state]` is part of the selector, not an afterthought: two
+ * elements share `.sh-pane` and `data-pane-id` — split-view's wrapper, which
+ * owns focus and the click, and terminal-pane's own div — and a bare
+ * `querySelector` takes the outer one, which knows nothing about agents.
+ */
 async function labelFor(win: BrowserWindow, paneId: string): Promise<string> {
   return (await win.webContents.executeJavaScript(
     `(() => {
-       const pane = document.querySelector('.sh-pane[data-pane-id=${JSON.stringify(paneId)}]');
-       const badge = pane?.querySelector('[data-testid="agent-badge"]');
-       return badge?.getAttribute('data-agent-state') ?? '';
+       const pane = document.querySelector('.sh-pane[data-pane-id=${JSON.stringify(paneId)}][data-agent-state]');
+       return pane?.getAttribute('data-agent-state') ?? '';
      })()`,
   )) as string;
 }
