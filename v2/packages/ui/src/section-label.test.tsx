@@ -29,6 +29,17 @@ describe('SectionLabel', () => {
     expect(absent.container.querySelector('.sh-ui-section-label__count')).toBeNull();
   });
 
+  it('takes a count a contribution wrote, not only a number', () => {
+    // The shell port's finding. A sidebar heading is a contributed row, and what
+    // a contribution supplies is `TreeItem.description` — a string it chose.
+    // Typed `number`, the shell would have to parse an extension's text to hand
+    // it over, and the first unparseable one reaches the screen as `NaN`.
+    const dom = mount(<SectionLabel count="3 archived">Shelved</SectionLabel>);
+    expect(dom.container.querySelector('.sh-ui-section-label__count')?.textContent).toBe(
+      '3 archived',
+    );
+  });
+
   it('draws the separator rather than making the caller type it', () => {
     // The caller supplies two values; the stylesheet supplies the `·`. A heading
     // with no count then has no orphaned dot, and nobody has to remember which

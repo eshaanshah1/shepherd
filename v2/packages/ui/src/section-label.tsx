@@ -1,4 +1,4 @@
-import type { ComponentPropsWithRef, ReactElement } from 'react';
+import type { ComponentPropsWithRef, ReactElement, ReactNode } from 'react';
 import { cn } from './cn.ts';
 
 /**
@@ -21,8 +21,19 @@ import { cn } from './cn.ts';
  */
 
 export interface SectionLabelProps extends ComponentPropsWithRef<'div'> {
-  /** Shown after the label, separated by a drawn `·`. `0` still renders. */
-  readonly count?: number;
+  /**
+   * Shown after the label, separated by a drawn `·`. `0` still renders.
+   *
+   * `ReactNode` rather than `number`, and that widening is a finding from the
+   * shell port rather than a convenience. A heading in the sidebar is a
+   * CONTRIBUTED row, and what a contribution supplies is `TreeItem.description`
+   * — an opaque string it wrote (`2`, but also `3 archived`, and whatever the
+   * next extension decides). Typed `number`, the shell would have to parse an
+   * extension's text to hand it over, and the first unparseable one becomes
+   * `NaN` on screen. The `·` is drawn either way, so nothing about the treatment
+   * depends on which it is.
+   */
+  readonly count?: ReactNode;
   /**
    * The hairline that runs from the label to the container's edge. On by
    * default: it is what makes the heading read as a rule with a name on it

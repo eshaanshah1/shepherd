@@ -7,6 +7,17 @@ import { defaultSessionSpec, smokeSessionSpec } from './session-spec.ts';
 import { installSmokeHook } from './smoke-hook.ts';
 import { applyThemeVariables, DEFAULT_THEME_MODE } from './theme.ts';
 import { createXtermTerminal } from './xterm-terminal.ts';
+/*
+ * The primitive set's stylesheet, FIRST — and the order is the whole reason it
+ * is imported here rather than injected by `@shepherd/ui` itself.
+ *
+ * A stylesheet that mounts itself is a stylesheet whose cascade order nobody
+ * controls, and the shell's own rules have to be able to come after it: the
+ * places where the shell still owns a rule (a section it has not ported, a slot
+ * around a contributed view) win at equal specificity only because `./styles.css`
+ * is loaded second.
+ */
+import '@shepherd/ui/styles.css';
 import './styles.css';
 
 /**

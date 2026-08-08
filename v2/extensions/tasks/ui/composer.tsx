@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ExtensionViewProps } from "@shepherd/sdk";
+import { Button, Composer, Field, TextArea } from "@shepherd/ui";
 import { repoName } from "../src/model/repo-name.ts";
 
 /**
@@ -139,142 +140,182 @@ export function TaskComposer({
   };
 
   return (
+    /*
+      The `<form>` is OUTSIDE the `Composer`, and it is a bare block element that
+      draws nothing.
+
+      `Composer` renders a `<div>` and has no `asChild`, so it cannot BE the form
+      — and a form is worth keeping (it is what makes `type="submit"` mean
+      something and what a screen reader reports as a form). Wrapping costs one
+      element and no CSS, which is why this is a finding reported rather than a
+      prop added: a primitive that grows an escape hatch for its first awkward
+      caller grows one for every later caller too.
+    */
     <form
-      className="sh-composer"
       data-testid="task-composer"
       onSubmit={(event) => {
         event.preventDefault();
         void create();
       }}
     >
-      {/*
-        ONE field. A separate title box asked the same question twice — nobody
-        writes a title that is not the first sentence of the brief, and the
-        empty second box was the thing that made this read as a form.
-        The convention is git's: first line names it, the rest is the body.
-      */}
-      <textarea
-        className="sh-composer-brief"
-        data-testid="composer-brief"
-        aria-label="what needs doing"
-        placeholder="what needs doing?"
-        value={brief}
-        onChange={(event) => setBrief(event.target.value)}
-        onBlur={() => void askForSuggestions(titleOf(brief), brief)}
-        onKeyDown={(event) => {
-          // ⌘⏎ submits, ⏎ is a newline: this is prose, and a brief whose second
-          // sentence created the task would be a brief nobody could write.
-          if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-            event.preventDefault();
-            if (titleOf(brief) !== "") void create();
-          }
-        }}
-      />
+      <Composer className="sh-composer">
+        {/*
+          ONE field. A separate title box asked the same question twice — nobody
+          writes a title that is not the first sentence of the brief, and the
+          empty second box was the thing that made this read as a form.
+          The convention is git's: first line names it, the rest is the body.
 
-      {/*
+          `bare` needs no prop of its own — the `Composer` around it re-declared
+          `--sh-line` and `--sh-surface-sunken` to transparent for its whole
+          subtree, so a default `bordered` field would already be borderless. It
+          is passed anyway because the variant is also what removes the horizontal
+          padding, and because a field that is bare BY CONTEXT reads as an
+          accident when this component is mounted anywhere else.
+        */}
+        <TextArea
+          variant="bare"
+          autoGrow
+          minLines={3}
+          maxLines={12}
+          className="sh-composer-brief"
+          data-testid="composer-brief"
+          aria-label="what needs doing"
+          placeholder="what needs doing?"
+          value={brief}
+          onChange={(event) => setBrief(event.target.value)}
+          onBlur={() => void askForSuggestions(titleOf(brief), brief)}
+          onKeyDown={(event) => {
+            // ⌘⏎ submits, ⏎ is a newline: this is prose, and a brief whose second
+            // sentence created the task would be a brief nobody could write.
+            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+              event.preventDefault();
+              if (titleOf(brief) !== "") void create();
+            }
+          }}
+        />
+
+        {/*
         A suggestion already picked stops being offered — it is in the row
         below, and showing it in both places reads as two different repos with
         the same name.
       */}
-      {suggestions.some(
-        (suggestion) => !repos.some((repo) => repo.path === suggestion.path),
-      ) && (
-        <ul className="sh-composer-suggestions">
-          {suggestions
-            .filter(
-              (suggestion) =>
-                !repos.some((repo) => repo.path === suggestion.path),
-            )
-            .map((suggestion) => (
-              <li key={suggestion.path}>
-                <button
-                  type="button"
-                  data-testid="composer-suggestion"
-                  data-path={suggestion.path}
-                  title={suggestion.path}
-                  onClick={() => add(suggestion.path)}
-                >
-                  {suggestion.name}
-                </button>
-              </li>
-            ))}
-        </ul>
-      )}
-
-      {/*
-        One control row: the repo affordance, then the single accent. The picked
-        repos sit *in* it rather than in a list of their own — an offered chip
-        and a picked chip are the same object at two moments, and putting the
-        picked ones next to the field they came from is what makes the ×
-        legible as "undo that".
-      */}
-      <div className="sh-composer-controls">
-        <div className="sh-composer-repos">
-          <ul className="sh-composer-picked" data-testid="composer-picked">
-            {repos.map((repo) => (
-              <li
-                key={repo.path}
-                data-testid="composer-picked-repo"
-                data-path={repo.path}
-              >
-                {repo.name}
-                <button
-                  type="button"
-                  aria-label={`remove ${repo.name}`}
-                  title={`remove ${repo.name}`}
-                  onClick={() =>
-                    setRepos(repos.filter((r) => r.path !== repo.path))
-                  }
-                >
-                  ×
-                </button>
-              </li>
-            ))}
+        {suggestions.some(
+          (suggestion) => !repos.some((repo) => repo.path === suggestion.path),
+        ) && (
+          <ul className="sh-composer-suggestions">
+            {suggestions
+              .filter(
+                (suggestion) =>
+                  !repos.some((repo) => repo.path === suggestion.path),
+              )
+              .map((suggestion) => (
+                <li key={suggestion.path}>
+                  <button
+                    type="button"
+                    data-testid="composer-suggestion"
+                    data-path={suggestion.path}
+                    title={suggestion.path}
+                    onClick={() => add(suggestion.path)}
+                  >
+                    {suggestion.name}
+                  </button>
+                </li>
+              ))}
           </ul>
-          <input
-            data-testid="composer-repo-path"
-            aria-label="repo path"
-            placeholder="+ repo path"
-            value={path}
-            onChange={(event) => setPath(event.target.value)}
-            onKeyDown={(event) => {
-              // Enter adds the repo rather than submitting the form: a task with
-              // the repo field half-typed is a task with the wrong repos.
-              if (event.key === "Enter") {
-                event.preventDefault();
-                add(path);
-              }
-            }}
-          />
+        )}
+
+        {/*
+          One control row: the repo affordance, then the single accent. The picked
+          repos sit *in* it rather than in a list of their own — an offered chip
+          and a picked chip are the same object at two moments, and putting the
+          picked ones next to the field they came from is what makes the ×
+          legible as "undo that".
+
+          The chips are still the shell's CSS and NOT a primitive, deliberately:
+          there is no `Chip` in the twelve, and the one thing that must not happen
+          to these two is that they stop being the same object drawn once. Made a
+          `Button` the offered one would gain a control treatment the picked one
+          cannot have (it carries a nested × and would be a button in a button),
+          and the pair would drift on the first hover state. Reported as a finding.
+        */}
+        <div className="sh-composer-controls">
+          <div className="sh-composer-repos">
+            <ul className="sh-composer-picked" data-testid="composer-picked">
+              {repos.map((repo) => (
+                <li
+                  key={repo.path}
+                  data-testid="composer-picked-repo"
+                  data-path={repo.path}
+                >
+                  {repo.name}
+                  <button
+                    type="button"
+                    aria-label={`remove ${repo.name}`}
+                    title={`remove ${repo.name}`}
+                    onClick={() =>
+                      setRepos(repos.filter((r) => r.path !== repo.path))
+                    }
+                  >
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <Field
+              variant="bare"
+              size="sm"
+              data-testid="composer-repo-path"
+              aria-label="repo path"
+              placeholder="+ repo path"
+              value={path}
+              onChange={(event) => setPath(event.target.value)}
+              onKeyDown={(event) => {
+                // Enter adds the repo rather than submitting the form: a task with
+                // the repo field half-typed is a task with the wrong repos.
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  add(path);
+                }
+              }}
+            />
+            {/*
+              Always rendered — it is a declared affordance and the smokes select
+              on it — but idle until there is something to add. Enter is the real
+              path, and a permanent button beside a borderless field reads as the
+              field's own edge, which is the border this restyle removed.
+            */}
+            <button
+              type="button"
+              className={`sh-composer-add${path.trim() === "" ? " is-idle" : ""}`}
+              data-testid="composer-add-repo"
+              onClick={() => add(path)}
+            >
+              add repo
+            </button>
+          </div>
+
           {/*
-            Always rendered — it is a declared affordance and the smokes select
-            on it — but idle until there is something to add. Enter is the real
-            path, and a permanent button beside a borderless field reads as the
-            field's own edge, which is the border this restyle removed.
+            The ONE loud thing on the card (rule 3: two primary buttons means
+            neither is). `busy` is the primitive's, and it is a real improvement
+            over the shipped disabled-while-creating: the label is replaced by a
+            braille spinner with the width pinned, so the control does not narrow
+            mid-click and take the row with it.
           */}
-          <button
-            type="button"
-            className={`sh-composer-add${path.trim() === "" ? " is-idle" : ""}`}
-            data-testid="composer-add-repo"
-            onClick={() => add(path)}
+          <Button
+            variant="primary"
+            type="submit"
+            data-testid="composer-create"
+            disabled={titleOf(brief) === ""}
+            busy={busy}
           >
-            add repo
-          </button>
+            create task
+          </Button>
         </div>
 
-        <button
-          type="submit"
-          className="sh-composer-create"
-          data-testid="composer-create"
-          disabled={busy || titleOf(brief) === ""}
-        >
-          create task
-        </button>
-      </div>
-
-      <output className="sh-ext-answer" data-testid="composer-status">
-        {status}
-      </output>
+        <output className="sh-ext-answer" data-testid="composer-status">
+          {status}
+        </output>
+      </Composer>
     </form>
   );
 }

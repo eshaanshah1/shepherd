@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { KeyCap } from '@shepherd/ui';
 
 /**
  * The stage with nothing on it — Flock rule 9's "personality lives in moments".
@@ -34,8 +35,18 @@ export function EmptyState(): ReactNode {
         <path d="M26.5 36 C27.5 37.2, 30.5 37.2, 31.5 36" />
       </svg>
       <p className="sh-empty-say">Nothing grazing here yet.</p>
+      {/*
+        `KeyCap`, not a `<span class="sh-key">` — and not a button either. The
+        primitive is display-only by construction (no `onClick` in its type), which
+        is the rule this hint has to obey: v2's sidebar footer put a pressable
+        `⌘T NEW TASK` keycap at the bottom of the list as the only way to add a
+        task, which teaches a shortcut instead of being a control. It was replaced
+        by a real `IconButton` at the top of the dock, and this line survives as
+        what it always was — a legend, in the one place where a legend is the
+        whole point.
+      */}
       <p className="sh-empty-hint">
-        <span className="sh-key">⌘T</span> COMPOSE A TASK
+        <KeyCap>⌘T</KeyCap> COMPOSE A TASK
       </p>
     </div>
   );

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Modal } from '@shepherd/ui';
 import type { ViewContributionDTO, ViewsApi } from '../shared/index.ts';
 import { ComponentView } from './view-dock.tsx';
 
@@ -10,10 +11,18 @@ import { ComponentView } from './view-dock.tsx';
  * dismiss. Parked permanently in a 220px sidebar it takes a third of the list
  * forever; as an overlay it costs nothing until you ask for it.
  *
- * The shell owns the *layer*, never the contents: it draws a scrim, a card and
- * a heading, binds the accelerator the contribution declared, and closes on Esc,
- * on a click outside, or when the component says `done()`. Which fields the
- * card has is the extension's business, and this file cannot name one.
+ * The shell owns the *layer*, never the contents: it raises a `Modal`, binds the
+ * accelerator the contribution declared, and closes when the component says
+ * `done()`. Which fields the card has is the extension's business, and this file
+ * cannot name one.
+ *
+ * **The scrim, Esc and click-out are `Modal`'s now** — Radix's Dialog, which also
+ * brings the four things a hand-rolled layer was silently missing: a focus trap,
+ * focus restored to whatever raised it, `inert` on the rest of the page, and a
+ * portal so the card cannot be clipped by an ancestor's `overflow: hidden`. What
+ * stays here is the part that is app logic rather than modal behaviour: matching
+ * an extension's accelerator against the real modifiers, and the `sh:raise-view`
+ * event the sidebar button dispatches.
  *
  * **Accelerators are handled here, not in the menu.** A menu key equivalent is
  * consumed by AppKit before the page's key handler runs, so an extension's key
@@ -55,11 +64,11 @@ export function ViewOverlay({
   const raisable = views.filter((view) => view.kind === 'component' && view.surface === 'overlay');
 
   useEffect(() => {
+    // Esc is deliberately NOT handled here any more. Radix's Dialog closes on it
+    // and restores focus on the way out; a second listener would close the same
+    // dialog twice and, worse, would keep firing after the modal is gone — which
+    // is a global Esc handler the terminal never asked for.
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        setOpen(null);
-        return;
-      }
       for (const view of raisable) {
         if (view.key !== undefined && matchesAccelerator(view.key, event)) {
           // Swallowed, or the keystroke reaches the focused terminal as well and
@@ -96,18 +105,23 @@ export function ViewOverlay({
   if (view === undefined) return null;
 
   return (
-    <div
-      className="sh-scrim"
-      data-testid="view-overlay"
-      onMouseDown={(event) => {
-        // Only a click on the scrim itself — a mousedown that started inside the
-        // card and ended outside it (a text drag) must not dismiss the form.
-        if (event.target === event.currentTarget) setOpen(null);
+    <Modal
+      open
+      onOpenChange={(next) => {
+        if (!next) setOpen(null);
       }}
+      // The view's declared title IS the accessible name. `Modal` draws no
+      // header — the composer proved a title bar over a form asking one question
+      // is a label for nothing — so this is the only place the dialog says what
+      // it is, and Radix would otherwise announce it as "dialog".
+      title={view.title ?? view.type}
+      // `lg`, because 460px made a brief read as a search box. Recorded in the
+      // stylesheet this replaced.
+      size="lg"
+      data-testid="view-overlay"
+      data-view-type={view.type}
     >
-      <div className="sh-modal" data-view-type={view.type}>
-        <ComponentView view={view} bridge={bridge} onDone={() => setOpen(null)} />
-      </div>
-    </div>
+      <ComponentView view={view} bridge={bridge} onDone={() => setOpen(null)} />
+    </Modal>
   );
 }

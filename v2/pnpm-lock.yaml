@@ -156,6 +156,9 @@ importers:
       '@shepherd/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
+      '@shepherd/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -175,6 +178,9 @@ importers:
 
   packages/app:
     dependencies:
+      //@tabler/icons-react:
+        specifier: A direct dependency, not a re-export from @shepherd/ui. `Icon` takes a Tabler COMPONENT (`icon={IconPlus}`), which is what keeps the bundle tree-shaken — a barrel re-exporting the set would ship every glyph to every page that imports one primitive.
+        version: link:A direct dependency, not a re-export from @shepherd/ui. `Icon` takes a Tabler COMPONENT (`icon={IconPlus}`), which is what keeps the bundle tree-shaken — a barrel re-exporting the set would ship every glyph to every page that imports one primitive.
       '@shepherd/core':
         specifier: workspace:*
         version: link:../core
@@ -202,6 +208,9 @@ importers:
       '@shepherd/ui':
         specifier: workspace:*
         version: link:../ui
+      '@tabler/icons-react':
+        specifier: 'catalog:'
+        version: 3.46.0(react@19.2.8)
       '@xterm/addon-fit':
         specifier: 'catalog:'
         version: 0.11.0

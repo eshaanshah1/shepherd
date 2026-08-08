@@ -25,12 +25,18 @@ describe('AgentBadge', () => {
     expect(badge?.textContent).toContain('approve Bash');
   });
 
-  it('reads needsCheck as done, in pasture', () => {
-    // Flock rule 8: grazing = done, waiting for you. The word and the colour are
-    // the token's declared job, not a local choice.
+  it('reads needsCheck as done, and names no colour doing it', () => {
+    // Flock rule 8: grazing = done, waiting for you. The WORD is the component's;
+    // the colour is not. This used to assert an inline `--sh-pasture` on a
+    // `.sh-agent-dot` — a tier-1 palette name written at a call site, on an
+    // element the pane head hid with `display: none`. The state now leaves this
+    // file as `data-agent-state` alone and the stylesheet decides what it looks
+    // like, which is the only way a contributed theme can move it.
     const dom = mount(<AgentBadge state="needsCheck" />);
+    const badge = dom.container.querySelector('[data-testid="agent-badge"]');
     expect(dom.container.querySelector('.sh-agent-label')?.textContent).toBe('done');
-    expect(dom.container.querySelector('.sh-agent-dot')?.getAttribute('style')).toContain('--sh-pasture');
+    expect(badge?.getAttribute('data-agent-state')).toBe('needsCheck');
+    expect(dom.container.innerHTML).not.toContain('--sh-');
   });
 
   it('treats an unknown state as no agent rather than inventing a label', () => {
