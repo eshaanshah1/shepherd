@@ -48,10 +48,11 @@ describe('Pill', () => {
     }
   });
 
-  it('rounds its ends off its own height rather than a named radius', () => {
-    // A pill's corner is a fact about its height, not a step on the radius
-    // scale — which is why there is no `--sh-radius-full` for it to reach for.
-    expect(base().style.borderRadius).toBe('calc(var(--sh-ui-pill-height) / 2)');
+  it('is a rounded rectangle, not a capsule', () => {
+    // Half its height was the first version and it read as an oval, which is
+    // not the reference: soft corners on a rectangular box. It is a step on the
+    // radius scale like everything else in the kit.
+    expect(base().style.borderRadius).toBe('var(--sh-radius-md)');
   });
 
   it('draws in accent — hairline, label and the tint under them', () => {

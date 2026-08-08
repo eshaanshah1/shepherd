@@ -71,24 +71,3 @@ export function completionTarget({ path, home, isDirectory }: CompletionInput): 
   if (!isDirectory(target.dir)) return null;
   return target;
 }
-
-/**
- * The longest prefix every candidate shares — what Tab completes to.
- *
- * Shell behaviour, and the reason Tab is not just "take the highlighted one":
- * with several matches it advances as far as the answer is unambiguous and then
- * stops, which is a keystroke that never guesses wrong. Case-SENSITIVE, because
- * the result is typed back into the field and a path is case-sensitive on the
- * filesystems that matter.
- */
-export function commonPrefix(values: readonly string[]): string {
-  const [first, ...rest] = values;
-  if (first === undefined) return '';
-  let length = first.length;
-  for (const value of rest) {
-    let index = 0;
-    while (index < length && index < value.length && first[index] === value[index]) index += 1;
-    length = index;
-  }
-  return first.slice(0, length);
-}

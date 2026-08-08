@@ -66,10 +66,9 @@ describe('completeDirectories', () => {
     expect(found.find((entry) => entry.path.endsWith('scratch'))?.isRepo).toBe(false);
   });
 
-  it('reports the matched positions as indices into the WHOLE path', () => {
+  it('fuzzy-matches the last segment, so `shp` reaches `shepherd`', () => {
     const [first] = completeDirectories(join(home, 'dev/shp'), home);
-    const chars = first?.matched.map((index) => first.path[index]).join('');
-    expect(chars).toBe('shp');
+    expect(first?.path).toBe(join(home, 'dev/shepherd'));
   });
 
   it('never enumerates home itself', () => {

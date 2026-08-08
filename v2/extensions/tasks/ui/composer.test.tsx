@@ -9,10 +9,12 @@ import { TaskComposer } from './composer.tsx';
  * The picker's keyboard, which is the half a smoke cannot see.
  *
  * Everything asserted here is a rule somebody has to be able to change without
- * finding out from a screenshot: ↓/↑ move, ⏎ picks, ↹ completes WITHOUT
- * submitting, and ⎋ closes the list and not the composer — the last one being
- * the only place this component reaches past React, because Radix's dismissable
- * layer listens for Escape on the document in the capture phase.
+ * finding out from a screenshot. The shape of it is: repos first, ⏎ adds one
+ * and stays so several are several ⏎s, ↹ completes while there is something to
+ * complete and hands over to the brief once there is not, ⏎ in the brief is
+ * done. And ⎋ dismisses the completion without closing the composer — the only
+ * place this component reaches past React, because Radix's dismissable layer
+ * listens for Escape on the document in the capture phase.
  */
 
 // React refuses to run `act` outside an act environment, and says so at the top
@@ -25,18 +27,18 @@ const suggestion = (path: string, over: Record<string, unknown> = {}) => ({
   name: path.slice(path.lastIndexOf('/') + 1),
   isRepo: true,
   source: 'filesystem',
-  matched: [],
   ...over,
 });
 
 /** What the extension would answer, for the three queries these tests type. */
 const ANSWERS: Record<string, readonly unknown[]> = {
-  '': [suggestion(`${HOME}/dev/api`, { source: 'history', matched: [0, 1] })],
+  '': [suggestion(`${HOME}/dev/api`, { source: 'history' })],
   [`${HOME}/dev/sh`]: [
-    suggestion(`${HOME}/dev/shepherd`, { matched: [13, 14] }),
-    suggestion(`${HOME}/dev/shepherd-ios`, { matched: [13, 14] }),
+    suggestion(`${HOME}/dev/shepherd`),
+    suggestion(`${HOME}/dev/shepherd-ios`),
     suggestion(`${HOME}/dev/shell-notes`, { isRepo: false }),
   ],
+  [`${HOME}/dev/shell`]: [suggestion(`${HOME}/dev/shell-notes`, { isRepo: false })],
 };
 
 /** Typed through a factory, so the mock keeps the prop's signature. */
@@ -108,56 +110,65 @@ afterEach(() => {
 });
 
 describe('the repo picker', () => {
-  it('is a labelled input, not an inline afterthought', () => {
-    // The whole reason it was rebuilt: it has to read as the place repos go.
-    const label = container.querySelector<HTMLLabelElement>('.sh-composer-repo-label');
-    expect(label?.htmlFor).toBe(input().id);
-    expect(label?.textContent).toBe('repo');
+  it('comes BEFORE the brief in the document, because that is the order', () => {
+    // What you are working on, then what to do to it. Under the brief it read
+    // backwards, and a field below the thing it scopes is a field you find
+    // after the brief is already written. Asserted as document order rather
+    // than as CSS, which is what the tab order and a screen reader follow.
+    const composer = container.querySelector('[data-testid="task-composer"]')!;
+    const order = composer.compareDocumentPosition(
+      container.querySelector('[data-testid="composer-brief"]')!,
+    );
+    const repo = container.querySelector('.sh-composer-repo')!;
+    expect(order & Node.DOCUMENT_POSITION_CONTAINED_BY).toBeTruthy();
+    expect(
+      repo.compareDocumentPosition(container.querySelector('[data-testid="composer-brief"]')!) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it('offers the picked history before anything is typed', () => {
     expect(rows().map((row) => row.dataset.path)).toEqual([`${HOME}/dev/api`]);
   });
 
-  it('draws the whole path with the matched characters emphasised', async () => {
+  it('shows ONE completion, as ghost text, never a list', async () => {
+    // A dropdown of rows in a card whose purpose is the brief is a second thing
+    // competing with it. One answer, inline, behind the caret.
     await type(`${HOME}/dev/sh`);
-    const [first] = rows();
-    expect(first?.textContent).toContain(`${HOME}/dev/shepherd`);
-    // What is bold is what the RANKER matched — the positions crossed the port
-    // with the row rather than being re-derived here.
-    expect(first?.querySelector('.sh-composer-repo-hit')?.textContent).toBe('sh');
+    expect(rows()).toHaveLength(1);
+    expect(rows()[0]?.dataset.path).toBe(`${HOME}/dev/shepherd`);
+    expect(container.querySelector('[role="listbox"]')).toBeNull();
+  });
+
+  it('draws only the part you have NOT typed, so it reads as a completion', async () => {
+    await type(`${HOME}/dev/sh`);
+    // The typed half is transparent rather than absent: it is what pushes the
+    // rest to the caret, and dropping it would left-align the suggestion.
+    expect(container.querySelector('.sh-composer-repo-typed')?.textContent).toBe(`${HOME}/dev/sh`);
+    expect(rows()[0]?.textContent).toBe('epherd');
   });
 
   it('marks a directory that is not a repo, and still offers it', async () => {
-    await type(`${HOME}/dev/sh`);
-    const notRepo = rows().find((row) => row.dataset.path === `${HOME}/dev/shell-notes`);
-    expect(notRepo?.textContent).toContain('not a repo');
+    await type(`${HOME}/dev/shell`);
+    expect(container.querySelector('.sh-composer-repo-note')?.textContent).toBe('not a repo');
   });
 });
 
 describe('the picker keyboard', () => {
-  it('moves the highlight with ↓ and ↑, and wraps', async () => {
+  it('takes the completion with → at the end of the line', async () => {
+    // The gesture people try before they try Tab. Anywhere but the end of the
+    // line it stays an ordinary cursor move.
     await type(`${HOME}/dev/sh`);
-    expect(rows()[0]?.getAttribute('aria-selected')).toBe('true');
-
-    await press('ArrowDown');
-    expect(rows()[1]?.getAttribute('aria-selected')).toBe('true');
-
-    await press('ArrowUp');
-    expect(rows()[0]?.getAttribute('aria-selected')).toBe('true');
-
-    // A list you can arrow off the end of makes the last row harder to reach
-    // than the first, for no reason.
-    await press('ArrowUp');
-    expect(rows()[2]?.getAttribute('aria-selected')).toBe('true');
+    input().setSelectionRange(input().value.length, input().value.length);
+    await press('ArrowRight');
+    expect(input().value).toBe(`${HOME}/dev/shepherd`);
   });
 
-  it('picks the highlighted row with ⏎, and never submits the form', async () => {
+  it('picks the completion with ⏎, and never submits the form', async () => {
     await type(`${HOME}/dev/sh`);
-    await press('ArrowDown');
     const enter = await press('Enter');
 
-    expect(picked()).toEqual([`${HOME}/dev/shepherd-ios`]);
+    expect(picked()).toEqual([`${HOME}/dev/shepherd`]);
     expect(input().value).toBe('');
     // A task with the repo field half-typed is a task with the wrong repos.
     expect(enter.defaultPrevented).toBe(true);
@@ -171,13 +182,15 @@ describe('the picker keyboard', () => {
     expect(picked()).toEqual([`${HOME}/dev/sh`]);
   });
 
-  it('completes with ↹ as far as every filesystem match agrees, without submitting', async () => {
+  it('completes with ↹ to what the ghost is showing, without submitting', async () => {
     await type(`${HOME}/dev/sh`);
     const tab = await press('Tab');
 
-    // `shepherd` and `shepherd-ios` agree that far; `shell-notes` does not, and
-    // is why the answer is not the highlighted row's whole path.
-    expect(input().value).toBe(`${HOME}/dev/she`);
+    // Whatever is on screen — with one suggestion visible there is nothing else
+    // it could honestly mean. It used to complete to the common prefix of every
+    // match (`she`), which was right while a list was on screen and became a
+    // promise the ghost text did not keep once the list went away.
+    expect(input().value).toBe(`${HOME}/dev/shepherd`);
     expect(tab.defaultPrevented).toBe(true);
     expect(picked()).toEqual([]);
     // And it immediately asks again with the completed text, which is what makes
@@ -185,16 +198,57 @@ describe('the picker keyboard', () => {
     expect(invoke).toHaveBeenCalledWith('tasks.suggestRepos', {
       title: '',
       brief: '',
-      query: `${HOME}/dev/she`,
+      query: `${HOME}/dev/shepherd`,
     });
   });
 
-  it('lets ↹ move focus when there is nothing to complete', async () => {
-    // The history is not a Tab target: those rows can match the same query from
-    // anywhere on disk, so their common prefix is not a real path.
+  it('hands ↹ to the brief once there is nothing left to complete', async () => {
+    // Which is exactly the state ⏎ leaves you in after it takes your last repo:
+    // an empty field, the history alone (never a Tab target — those rows can
+    // match from anywhere on disk, so their common prefix is not a real path).
+    // Focus moves explicitly because the next tab stop is a chip's × button.
     const tab = await press('Tab');
-    expect(tab.defaultPrevented).toBe(false);
+    expect(tab.defaultPrevented).toBe(true);
     expect(input().value).toBe('');
+    expect(document.activeElement).toBe(
+      container.querySelector('[data-testid="composer-brief"]'),
+    );
+  });
+});
+
+describe('the brief', () => {
+  const brief = (): HTMLElement =>
+    container.querySelector<HTMLElement>('[data-testid="composer-brief"]')!;
+
+  const write = async (text: string): Promise<void> => {
+    await act(async () => {
+      brief().textContent = text;
+      brief().dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  };
+
+  it('submits on ⏎ — the chat convention the repo field hands you', async () => {
+    await write('ship it');
+    const enter = await press('Enter', brief());
+    expect(enter.defaultPrevented).toBe(true);
+    expect(invoke).toHaveBeenCalledWith('tasks.create', expect.objectContaining({ brief: 'ship it' }));
+  });
+
+  it('newlines on ⇧⏎, and creates nothing', async () => {
+    await write('ship it');
+    const event = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(async () => {
+      brief().dispatchEvent(event);
+    });
+    // Not swallowed: the newline is contenteditable's to insert, and taking
+    // the key to reimplement it is how the undo stack gets broken.
+    expect(event.defaultPrevented).toBe(false);
+    expect(invoke).not.toHaveBeenCalledWith('tasks.create', expect.anything());
   });
 });
 
@@ -236,11 +290,9 @@ describe('⎋', () => {
   });
 });
 
-describe('clicking a suggestion', () => {
-  it('adds it, and stops it being offered twice', async () => {
-    await act(async () => {
-      rows()[0]?.click();
-    });
+describe('a picked repo', () => {
+  it('stops being offered — it is a chip now, and two of it reads as two repos', async () => {
+    await press('Enter');
     expect(picked()).toEqual([`${HOME}/dev/api`]);
     expect(rows().map((row) => row.dataset.path)).not.toContain(`${HOME}/dev/api`);
   });

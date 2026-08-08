@@ -3,9 +3,10 @@
  *
  * Two things here are load-bearing and everything else is the usual roles: the
  * height, which is what keeps a pill from opening the line box it sits in, and
- * the radius, which is half that height and is therefore derived rather than
- * named (there is no `--sh-radius-full`, and there should not be — a pill's
- * corner is a fact about its own height, not a step on the radius scale).
+ * the radius, which is the scale's `md` step — a ROUNDED RECTANGLE, not a
+ * capsule. Half the height was the first version and it read as an oval, which
+ * is not the reference: the "+ Add action" control has soft corners on a
+ * rectangular box, and the difference is the whole character of the thing.
  */
 
 .sh-ui-pill {
@@ -48,7 +49,7 @@
   white-space: nowrap;
 
   border: var(--sh-hairline) solid var(--sh-accent);
-  border-radius: calc(var(--sh-ui-pill-height) / 2);
+  border-radius: var(--sh-radius-md);
   /*
    * A TINT of the same accent, not the neutral wash and not a solid fill: on a
    * tint the role colour carries the signal (the `accentText` role's own

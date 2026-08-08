@@ -53,7 +53,7 @@ export interface RepoSuggestionProvider {
 
 /**
  * One row of the picker. A `RepoRef` plus the three things a picker draws with:
- * whether it is a repo at all, where it came from, and which characters matched.
+ * whether it is a repo at all, and where it came from.
  *
  * The positions are computed by the ranker and carried across the port rather
  * than re-derived in the view — a highlighter that re-runs the matcher is a
@@ -62,7 +62,6 @@ export interface RepoSuggestionProvider {
 export interface RepoSuggestion extends RepoRef {
   readonly isRepo: boolean;
   readonly source: 'history' | 'filesystem';
-  readonly matched: readonly number[];
 }
 
 /** See the `suggestRepos` handler: a list you arrow through, not one you scroll. */
@@ -308,7 +307,6 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
             name: repo.name,
             isRepo: looksLikeRepo(repo.path),
             source: 'history',
-            matched: hit.positions,
           });
         }
 
@@ -319,7 +317,6 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
             name: repoName(candidate.path),
             isRepo: candidate.isRepo,
             source: 'filesystem',
-            matched: candidate.matched,
           });
         }
 

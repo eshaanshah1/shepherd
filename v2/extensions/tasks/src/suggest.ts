@@ -21,8 +21,6 @@ export interface DirCandidate {
   /** Whether it holds a `.git`. Marked, never used to exclude — see `index.ts`. */
   readonly isRepo: boolean;
   readonly score: number;
-  /** Indices into `path` the query matched, for the picker's emphasis. */
-  readonly matched: readonly number[];
 }
 
 /** `statSync` rather than `existsSync`, so a file named like a directory is not one. */
@@ -79,7 +77,6 @@ export function completeDirectories(path: string, home: string): readonly DirCan
       score: hit.score,
       // The match happened against the NAME; the picker draws the whole path,
       // so the indices are shifted into it here rather than re-derived there.
-      matched: hit.positions.map((position) => position + prefix.length),
     });
   }
 
