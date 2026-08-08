@@ -226,7 +226,9 @@ describe('App as a projection of main’s layout', () => {
     // zero-pane projection never arrives.
     const { view } = render({ snapshot: null });
     expect(all(view.container, 'pane')).toHaveLength(0);
-    expect(view.container.textContent).toContain('PANES');
+    // The titlebar says the app's name in the one moment that is honest — there
+    // is nothing to be in yet.
+    expect(view.container.textContent).toContain('Shepherd');
     view.unmount();
   });
 });
@@ -542,7 +544,11 @@ describe('roots the window switches between', () => {
     view.unmount();
   });
 
-  it('counts the panes on screen, not the ones behind them', () => {
+  it('names the ACTIVE root\'s focused pane, not one behind it', () => {
+    // A pane count used to live here and it counted what you can already see.
+    // What the titlebar carries now is where you ARE, and the claim worth
+    // pinning is the same one: it reads from the active root, so a hidden root's
+    // focused pane can never be what the window says you are looking at.
     const home = makePane({ userTitle: 'home' });
     const task = makePane({ userTitle: 'task' });
     const { view } = render({
@@ -552,7 +558,13 @@ describe('roots the window switches between', () => {
         rootOf(split('row', 0.5, leaf(task), leaf(makePane({}))), task, 'task-1'),
       ),
     });
-    expect(view.container.textContent).toContain('PANES 01');
+    // The TITLEBAR's text, not the document's: every root stays mounted by
+    // design, so the hidden root's pane is legitimately in the DOM — asserting
+    // over the whole container would be asserting that the mount rule is
+    // broken.
+    const crumb = view.container.querySelector('.sh-crumb')?.textContent ?? '';
+    expect(crumb).toContain('home');
+    expect(crumb).not.toContain('task');
     view.unmount();
   });
 

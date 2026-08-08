@@ -58,21 +58,6 @@ const repoArg = s.object({ path: s.string(), name: s.string() });
  * has a reason — no window, a renderer that never mounted it — and asking
  * forever would keep a timer alive for the life of the app to learn nothing.
  */
-/**
- * The sidebar's groups, in the order you care.
- *
- * Attention first, then motion, then rest — the same ranking v1's aggregate dot
- * used (blocked > error > done > working > idle), applied to a list instead of
- * a single glyph. `archived` is deliberately absent: it is not work in flight.
- */
-const TASK_GROUPS: readonly { label: string; states: readonly string[]; tint: string }[] = [
-  { label: 'NEEDS YOU', states: ['needs-you', 'review'], tint: 'hay' },
-  { label: 'WORKING', states: ['running'], tint: 'cobalt' },
-  { label: 'DRAFT', states: ['draft'], tint: 'wool-faint' },
-  { label: 'DONE', states: ['done'], tint: 'pasture' },
-  { label: 'ARCHIVED', states: ['archived'], tint: 'wool-faint' },
-];
-
 /** What this extension puts in a tree. Structural, so the SDK type stays the SDK's. */
 interface TreeItemOut {
   id: string;
@@ -102,6 +87,21 @@ interface AttentionChanged {
   readonly pane: string;
   readonly level: AttentionLevel;
   readonly reason: string;
+}
+
+/**
+ * A session ended — the kernel's own signal, carrying the pane it was on.
+ *
+ * The exact event, not the reconciliation sweep's inference: closing a pane is
+ * something the user DID, and a task that goes on reporting `running` because
+ * nothing told it otherwise is the app lying about the only thing its sidebar
+ * is for.
+ */
+const SESSION_EXIT_TOPIC = 'session.exit';
+
+interface SessionExited {
+  readonly sessionId: string;
+  readonly paneId?: string;
 }
 
 /**
@@ -236,6 +236,39 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         }
         return [...seen.values()];
       },
+    }),
+  );
+
+  /**
+   * A pane closed, so the session that ran in it is gone.
+   *
+   * Dropped from the record, and if it was the LAST one the task stops being
+   * `running` — it goes back to `draft`, which is what a task with no agent
+   * working it is. Its worktrees and its root are untouched: closing a pane is
+   * not deleting work, and `tasks.spawn` (or a click, which opens a root) picks
+   * it up again exactly where it was.
+   *
+   * Matched on the PANE, not the session id, for the reason the attention
+   * mirror is pane-keyed: a session may still be carrying its `pending-*`
+   * placeholder when it dies, and then its id matches nothing.
+   */
+  ctx.subscriptions.push(
+    events.on<SessionExited>(SESSION_EXIT_TOPIC, (payload) => {
+      const pane = payload?.paneId;
+      if (typeof pane !== 'string') return;
+      for (const task of store.list()) {
+        if (!task.sessions.some((session) => session.pane === pane)) continue;
+        const sessions = task.sessions.filter((session) => session.pane !== pane);
+        store.put({
+          ...task,
+          sessions,
+          // Only a RUNNING task falls back — an archived or done one keeps the
+          // lifecycle it was deliberately put in.
+          lifecycle: sessions.length === 0 && task.lifecycle === 'running' ? 'draft' : task.lifecycle,
+        });
+        changed();
+        ctx.log.info(`task ${task.id}: pane ${pane} closed, ${sessions.length} session(s) left`);
+      }
     }),
   );
 
@@ -776,9 +809,12 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * the core knows what a task is. If this had needed a special case there, the
    * view model would have been wrong (sketch §2b).
    *
-   * Rows are grouped by state because that is how the sidebar is specified (§4)
-   * and because the grouping is a READ — `displayState` derives `needs-you` from
-   * the sessions' attention (D4), and nothing writes it.
+   * A FLAT list, newest first. It was grouped by state, and the grouping was
+   * an invention: tasks are independent pieces of work, so bucketing them
+   * asserts a relationship they do not have — and with two tasks it spent a
+   * heading on a distinction between one row and one other row. The state is
+   * still read per task (`displayState` derives `needs-you` from the sessions'
+   * attention, D4, and nothing writes it); it reaches the row as its tint.
    */
   const treeListeners = new Set<() => void>();
   const changed = (): void => {
@@ -935,33 +971,20 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
            * rather than an empty heading.
            */
           const rows: TreeItemOut[] = [];
-          for (const group of TASK_GROUPS) {
-            const inGroup = tasks.filter((task) =>
-              group.states.includes(displayState(task.lifecycle, attentionOf(task))),
-            );
-            if (inGroup.length === 0) continue;
+          for (const task of tasks) {
+            const state = displayState(task.lifecycle, attentionOf(task));
             rows.push({
-              id: `group:${group.label}`,
-              label: group.label,
-              description: String(inGroup.length),
-              section: true,
-              tint: group.tint,
+              id: task.id,
+              label: task.title,
+              description: state,
+              tint: state,
+              collapsed: true,
+              // Clicking a task takes you to it. The args ride the row (the
+              // registry passes `command.args` straight through), so the row
+              // names WHICH task rather than the handler having to guess from
+              // whatever happens to be selected.
+              command: { id: TASK_COMMANDS.reveal, args: { task: task.id } },
             });
-            for (const task of inGroup) {
-              const state = displayState(task.lifecycle, attentionOf(task));
-              rows.push({
-                id: task.id,
-                label: task.title,
-                description: state,
-                tint: state,
-                collapsed: true,
-                // Clicking a task takes you to it. The args ride the row (the
-                // registry passes `command.args` straight through), so the row
-                // names WHICH task rather than the handler having to guess from
-                // whatever happens to be selected.
-                command: { id: TASK_COMMANDS.reveal, args: { task: task.id } },
-              });
-            }
           }
           return Promise.resolve(rows);
         },

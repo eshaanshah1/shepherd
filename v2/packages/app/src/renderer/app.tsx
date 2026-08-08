@@ -254,9 +254,6 @@ export function App({
     [terminals, sessionsByPane, agents],
   );
 
-  // What is ON SCREEN, not what exists: a count including hidden roots would
-  // read as a window with panes the user cannot find.
-  const paneCount = active === null ? 0 : leafIds(active.tree).length;
 
   /**
    * Where you are: the focused pane's own name, and the path under it.
@@ -305,21 +302,36 @@ export function App({
           )}
         </span>
         <span className="sh-plate-spacer" />
-        <span className="sh-plate-cell">
-          PANES <b>{String(paneCount).padStart(2, '0')}</b>
-        </span>
+        {/*
+          A pane count was here and it counted what you can see. The one cell
+          that survives is the one you CANNOT see: a renderer with no bridge
+          looks like an app with no panes, and that is worth a word.
+        */}
         {terminals === null && <span className="sh-plate-cell is-ember">NO BRIDGE</span>}
       </header>
 
       <div className="sh-body">
         <ViewDock
           views={viewsApi}
-          footer={
+          actions={
             <>
+              <span className="sh-side-title">Tasks</span>
+              <span className="sh-plate-spacer" />
               {raisable.map((view) => (
-                <span className="sh-key" key={view.type}>
-                  {accelLabel(view.key ?? '')} {(view.title ?? view.type).toUpperCase()}
-                </span>
+                <button
+                  type="button"
+                  className="sh-icon-button"
+                  key={view.type}
+                  data-testid="raise-view"
+                  data-view-type={view.type}
+                  // The keystroke is in the tooltip, not painted next to the
+                  // control: a button that already says what it does does not
+                  // need to also teach its shortcut.
+                  title={`${view.title ?? view.type} (${accelLabel(view.key ?? '')})`}
+                  onClick={() => window.dispatchEvent(new CustomEvent('sh:raise-view', { detail: view.type }))}
+                >
+                  +
+                </button>
               ))}
             </>
           }
@@ -371,19 +383,6 @@ export function App({
         </main>
       </div>
 
-      <footer className="sh-status">
-        {STATUS_CELLS.map((cell) => {
-          const count = Object.values(agents).filter((agent) => agent.state === cell.state).length;
-          return count === 0 ? null : (
-            <span className="sh-status-cell" key={cell.state}>
-              <i className="sh-dot" data-tint={cell.tint} /> {count} {cell.label}
-            </span>
-          );
-        })}
-        <span className="sh-plate-spacer" />
-        <span className="sh-status-cell">{contributions.length} VIEWS</span>
-      </footer>
-
       <ViewOverlay views={contributions} bridge={viewsApi} />
     </div>
   );
@@ -416,13 +415,16 @@ function accelLabel(accelerator: string): string {
 }
 
 /**
- * The status bar's cells — the flock at a glance, in the ranking v1's aggregate
- * dot used: what needs you, then what is moving. A cell with a count of zero is
- * absent rather than a `0`, because a status bar full of zeroes reads as noise.
+ * There is deliberately no status bar.
+ *
+ * The shell had one counting agent states, and it was the sidebar's own
+ * information restated along the bottom edge — the dots are already there, in
+ * the list the counts were about. A permanent band spent on a duplicate is the
+ * "instrument panel for its own internals" the app kept drifting into.
+ *
+ * It stays POSSIBLE: `views.registerStatusItem` is declared in the SDK and
+ * refuses with the milestone it lands in, so a status bar is a contribution
+ * somebody makes, not a thing the shell decided everyone wants. That is the
+ * distinction the whole extension model rests on — removing our own is not the
+ * same as making it unbuildable.
  */
-const STATUS_CELLS: readonly { state: string; label: string; tint: string }[] = [
-  { state: 'blocked', label: 'BLOCKED', tint: 'hay' },
-  { state: 'error', label: 'ERROR', tint: 'ember' },
-  { state: 'needs-check', label: 'DONE', tint: 'pasture' },
-  { state: 'working', label: 'WORKING', tint: 'cobalt' },
-];
