@@ -1,7 +1,15 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { fonts, metrics, xtermTheme, type ThemeMode } from '@shepherd/design-tokens';
+import {
+  fonts,
+  metrics,
+  minimumContrastRatio,
+  paneTitleSurface,
+  xtermTheme,
+  type ThemeMode,
+} from '@shepherd/design-tokens';
 import type { TerminalLike } from './pane-sessions.ts';
+import { DEFAULT_THEME_MODE } from './theme.ts';
 import '@xterm/xterm/css/xterm.css';
 
 /**
@@ -16,12 +24,24 @@ import '@xterm/xterm/css/xterm.css';
  * multiplier, so it is derived from the two token values rather than typed as
  * a third number that can drift from them.
  */
-export function createXtermTerminal(mode: ThemeMode = 'dark'): TerminalLike {
+export function createXtermTerminal(mode: ThemeMode = DEFAULT_THEME_MODE): TerminalLike {
+  const theme = xtermTheme(mode);
   const terminal = new Terminal({
     fontFamily: fonts.mono,
     fontSize: metrics.fontSize,
     lineHeight: metrics.lineHeight / metrics.fontSize,
-    theme: xtermTheme(mode),
+    theme,
+    /*
+     * The contrast floor, gated by the SAME reading the pane chrome uses — and
+     * taken from the theme object just built, not from `mode`. There is one
+     * source for "is this a light surface" (`paneTitleSurface`) and its input is
+     * the background actually painted, so a themed grid and the bar above it
+     * cannot come to different conclusions about what they are sitting on.
+     *
+     * 4.5 light / 3 dark, from the Orca reading in the UI reference notes: the
+     * 4.5 floor over-brightens vibrant ANSI colours on a near-black grid.
+     */
+    minimumContrastRatio: minimumContrastRatio(paneTitleSurface(theme.background)),
     cursorBlink: true,
     cursorStyle: 'block',
     // steps(), not ease — rule 7. xterm's blink is already a hard toggle.

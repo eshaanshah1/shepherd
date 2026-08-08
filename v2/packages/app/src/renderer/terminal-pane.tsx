@@ -1,7 +1,9 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, type CSSProperties, type ReactNode } from 'react';
 import { displayTitle, type Pane } from '@shepherd/core/layout';
+import { paneTitleSurface } from '@shepherd/design-tokens';
 import type { PaneTerminals } from './pane-sessions.ts';
 import { AgentBadge } from './agent-badge.tsx';
+import { terminalBackground } from './theme.ts';
 
 /**
  * One leaf's view. It owns a `<div>` and nothing else.
@@ -24,6 +26,14 @@ export interface TerminalPaneProps {
   /** This pane's agent state, if it has one. Absent = a plain shell. */
   readonly agentState?: string;
   readonly agentReason?: string;
+  /**
+   * The colour THIS pane's grid is painted with, `#RRGGBB`.
+   *
+   * A prop rather than a theme lookup because it is per-pane by construction: an
+   * extension may theme one terminal and not its neighbour, and the head has to
+   * follow the pane it belongs to. Absent = the app's own terminal background.
+   */
+  readonly background?: string;
 }
 
 export function TerminalPane({
@@ -32,6 +42,7 @@ export function TerminalPane({
   focused,
   agentState,
   agentReason,
+  background = terminalBackground(),
 }: TerminalPaneProps): ReactNode {
   const hostRef = useRef<HTMLDivElement>(null);
   const paneRef = useRef(pane);
@@ -70,6 +81,27 @@ export function TerminalPane({
   const named = (pane.userTitle ?? '') !== '' || pane.title !== '';
   const where = named ? pathTail(pane.cwd) : null;
 
+  /*
+   * The pane head is painted on the GRID's background, not on `--sh-ink`, so the
+   * pane and the terminal inside it read as one surface — the strip stops being a
+   * lid on a window into another program. The seam is then the hairline alone.
+   *
+   * Two things follow, and both are the point (reference notes, takeaway 8):
+   *
+   *   - the background travels as a custom property rather than a class, so the
+   *     bar and the grid cannot be painted with different colours; and
+   *   - the FOREGROUND set is chosen from that colour's measured luminance,
+   *     published as `data-pane-title-surface`. Never from the app's theme mode:
+   *     a light terminal palette inside a dark app would leave the head drawing
+   *     near-white text on near-white ground, and it would fail silently, only
+   *     for users who themed something.
+   */
+  const surface = paneTitleSurface(background);
+  // `CSSProperties & Record<string, string>` is how a custom property gets past
+  // the type: `CSSProperties` has no index signature, and a cast would also
+  // silence a real typo in one of the known keys.
+  const style: CSSProperties & Record<string, string> = { '--sh-pane-title-bg': background };
+
   return (
     // The host must never be wrapped conditionally, and this element must never
     // become a positionally-keyed list — those are the two shapes that remount a
@@ -79,8 +111,13 @@ export function TerminalPane({
     // The head is a STATIC element in the same slot the badge used to occupy, so
     // the terminal host keeps index 1 and its own identity for the life of the
     // pane. Nothing here may become `{cond && <div/>}` around the host.
-    <div className="sh-pane" data-pane-id={pane.id}>
-      <div className="sh-pane-head">
+    <div
+      className="sh-pane"
+      data-pane-id={pane.id}
+      data-pane-title-surface={surface}
+      style={style}
+    >
+      <div className="sh-pane-head" data-testid="pane-head">
         <span className="sh-pane-name">{name}</span>
         {where === null ? null : <span className="sh-pane-branch">· {where}</span>}
         <AgentBadge

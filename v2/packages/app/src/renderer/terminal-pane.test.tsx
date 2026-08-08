@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
 import { makePane, type Pane } from '@shepherd/core/layout';
+import { palette } from '@shepherd/design-tokens';
 import type { PaneDiagnostics, PaneTerminals } from './pane-sessions.ts';
 import { TerminalPane } from './terminal-pane.tsx';
+import { terminalBackground } from './theme.ts';
 import { mount, one } from './test-dom.ts';
 
 /**
@@ -37,8 +39,15 @@ function spyTerminals(): SpyTerminals {
 
 const names = (spy: SpyTerminals): string[] => spy.calls.map((call) => call.name);
 
-function render(spy: SpyTerminals, pane: Pane, focused = false) {
-  return mount(<TerminalPane pane={pane} terminals={spy} focused={focused} />);
+function render(spy: SpyTerminals, pane: Pane, focused = false, background?: string) {
+  return mount(
+    <TerminalPane
+      pane={pane}
+      terminals={spy}
+      focused={focused}
+      {...(background === undefined ? {} : { background })}
+    />,
+  );
 }
 
 describe('TerminalPane lifecycle', () => {
@@ -112,6 +121,73 @@ describe('TerminalPane lifecycle', () => {
 
     view.rerender(<TerminalPane pane={pane} terminals={spy} focused />);
     expect(names(spy)).toEqual(['attach', 'focus']);
+    view.unmount();
+  });
+});
+
+/**
+ * The pane chrome half. The bar is painted on the terminal's OWN background, so
+ * everything about how it reads is decided by a colour this component is handed
+ * rather than by the app's theme — and the wiring below is what makes that true
+ * of the real DOM and not only of `paneTitleSurface`'s unit tests.
+ */
+describe('TerminalPane chrome surface', () => {
+  const paneRoot = (container: HTMLElement): HTMLElement => {
+    const found = container.querySelector<HTMLElement>('.sh-pane');
+    if (found === null) throw new Error('no .sh-pane rendered');
+    return found;
+  };
+
+  it('publishes its grid colour and the surface measured from it', () => {
+    const spy = spyTerminals();
+    const view = render(spy, makePane({}));
+    const root = paneRoot(view.container);
+
+    expect(root.style.getPropertyValue('--sh-pane-title-bg')).toBe(terminalBackground());
+    expect(root.dataset['paneTitleSurface']).toBe('dark');
+    view.unmount();
+  });
+
+  it('reads a light terminal background as a light surface, with the app theme untouched', () => {
+    // The case the app-mode flag cannot express: an extension themes ONE pane's
+    // grid light while everything around it stays dark. Without this the head
+    // would draw near-white text on near-white ground — and silently, because
+    // nothing else in the app changes.
+    const spy = spyTerminals();
+    const view = render(spy, makePane({}), false, palette['ink-term'].light);
+    const root = paneRoot(view.container);
+
+    expect(root.style.getPropertyValue('--sh-pane-title-bg')).toBe(palette['ink-term'].light);
+    expect(root.dataset['paneTitleSurface']).toBe('light');
+    view.unmount();
+  });
+
+  it('re-reads the surface when the grid colour changes under it', () => {
+    const spy = spyTerminals();
+    const pane = makePane({});
+    const view = render(spy, pane, false, '#000000');
+    expect(paneRoot(view.container).dataset['paneTitleSurface']).toBe('dark');
+
+    view.rerender(
+      <TerminalPane pane={pane} terminals={spy} focused={false} background="#FFFFFF" />,
+    );
+    expect(paneRoot(view.container).dataset['paneTitleSurface']).toBe('light');
+    // And it is a re-render, not a remount: a live theme swap must not cost the
+    // scrollback. Same rule as the title-change case above.
+    expect(names(spy)).toEqual(['attach']);
+    view.unmount();
+  });
+
+  it('puts the head and the grid host under the same colour variable', () => {
+    // One declaration, inherited by both — the bar and the padding around the
+    // grid cannot end up a shade apart.
+    const spy = spyTerminals();
+    const view = render(spy, makePane({}), false, '#123456');
+    const root = paneRoot(view.container);
+
+    expect(root.contains(one(view.container, 'pane-head'))).toBe(true);
+    expect(root.contains(one(view.container, 'terminal-host'))).toBe(true);
+    expect(root.style.getPropertyValue('--sh-pane-title-bg')).toBe('#123456');
     view.unmount();
   });
 });
