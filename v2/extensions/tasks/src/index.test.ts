@@ -9,7 +9,10 @@ import {
   toDisposable,
   type Caller,
   type CommandAPI,
+  type CommandError,
   type CommandSpec,
+  type Envelope,
+  type EventAPI,
   type ExecErr,
   type ExecOk,
   type ExecOptions,
@@ -18,9 +21,13 @@ import {
   type KV,
   type PointsAPI,
   type ProcessAPI,
+  type Result,
   type Schema,
   type Shepherd,
+  type TreeDataProvider,
+  type TreeItem,
   type ViewAPI,
+  type ViewProvider,
 } from '@shepherd/sdk';
 import { activate } from './index.ts';
 import { TASK_SCHEMA_VERSION, type TaskRecord } from './store.ts';
@@ -65,12 +72,28 @@ interface Harness {
   readonly git: GitCall[];
   /** Invocations and git calls interleaved, which is where the ordering shows. */
   readonly trace: string[];
+  /**
+   * The HOST announcing something — the opposite direction from `EventAPI.emit`,
+   * which is the extension's own. This is how a test plays `agents-core` and
+   * puts a pane into attention.
+   */
+  emit(topic: string, payload: unknown): void;
+  /** The extension's own tree, as the shell would ask it. */
+  tree(): TreeDataProvider;
   readonly dataDir: string;
   dispose(): void;
 }
 
 function harness(
-  opts: { tasks?: readonly TaskRecord[]; git?: (call: GitCall) => ExecOk | ExecErr } = {},
+  opts: {
+    tasks?: readonly TaskRecord[];
+    git?: (call: GitCall) => ExecOk | ExecErr;
+    /**
+     * Answer a command the extension does not own. `undefined` falls through to
+     * the defaults below, so a test overrides one verb without restating them.
+     */
+    invoke?: (id: string, args: unknown) => Result<unknown, CommandError> | undefined;
+  } = {},
 ): Harness {
   const dataDir = mkdtempSync(join(tmpdir(), 'shepherd-tasks-'));
   const raw = new Map<string, unknown>();
@@ -90,6 +113,7 @@ function harness(
   const trace: string[] = [];
   const invoked: { id: string; args: unknown }[] = [];
   const registered = new Map<string, CommandSpec<unknown, unknown>>();
+  let panes = 0;
   const commands: CommandAPI = {
     register: (id, spec) => {
       registered.set(id, spec as unknown as CommandSpec<unknown, unknown>);
@@ -99,13 +123,42 @@ function harness(
       invoked.push({ id, args });
       trace.push(`invoke ${id}`);
       const spec = registered.get(id);
-      // A command the extension does not own answers OK and nothing else, which
-      // is what `layout.close` on a live pane does. The failing case is its own
-      // test, so a blanket failure here would hide it.
-      const value = spec === undefined ? undefined : await spec.handler(args, CALLER);
-      return { ok: true, value: value as never };
+      if (spec !== undefined) return { ok: true, value: (await spec.handler(args, CALLER)) as never };
+      const override = opts.invoke?.(id, args);
+      if (override !== undefined) return override as never;
+      // `layout.split` answers with the pane id ITSELF, which is what the kernel
+      // returns and what `startSession` records. The blanket `undefined` below
+      // would make every spawn key its session on a pane that is not a string,
+      // and the tests would agree with each other about nothing.
+      if (id === 'layout.split') return { ok: true, value: `p${(panes += 1)}` as never };
+      // Everything else the extension does not own answers OK and nothing else,
+      // which is what `layout.close` and `layout.rename` on a live pane do. The
+      // failing cases are their own tests, so a blanket failure here would hide
+      // them.
+      return { ok: true, value: undefined as never };
     },
     list: () => [...registered.keys()].map((id) => ({ id })),
+  };
+
+  /**
+   * The bus, as a table of subscribers plus a way to drive it.
+   *
+   * A real fake rather than a cast, because the extension's whole attention
+   * feature is what it does when a payload arrives — a stub that accepted a
+   * subscription and never called it would let every assertion below be about
+   * an empty mirror.
+   */
+  const subscribers = new Map<string, Set<(payload: unknown, envelope: Envelope) => void>>();
+  let seq = 0;
+  const events: EventAPI = {
+    emit: (topic) => void trace.push(`emit ${topic}`),
+    on: (topic, fn) => {
+      const listener = fn as (payload: unknown, envelope: Envelope) => void;
+      const set = subscribers.get(topic) ?? new Set();
+      set.add(listener);
+      subscribers.set(topic, set);
+      return toDisposable(() => void set.delete(listener));
+    },
   };
 
   const git: GitCall[] = [];
@@ -142,8 +195,12 @@ function harness(
     get: () => undefined,
   };
 
+  const viewTypes = new Map<string, ViewProvider>();
   const views: ViewAPI = {
-    registerViewType: () => toDisposable(() => {}),
+    registerViewType: (type, provider) => {
+      viewTypes.set(type, provider);
+      return toDisposable(() => void viewTypes.delete(type));
+    },
     registerStatusItem: () => toDisposable(() => {}),
   };
 
@@ -164,14 +221,15 @@ function harness(
     isDev: false,
   };
 
-  // The four groups `activate` reaches are typed at their declaration, so the
-  // compiler still checks the shapes that matter. The other five are cast past
+  // The five groups `activate` reaches are typed at their declaration, so the
+  // compiler still checks the shapes that matter. The other four are cast past
   // rather than stubbed: a stub for `attention` or `layout` here would be
   // surface that looks exercised and never is, and the next reader would have to
-  // find that out by grepping.
+  // find that out by grepping. `attention` in particular stays absent on
+  // purpose — this extension reads the topic and never touches that API.
   const api = {
     version: '1.0.0',
-    proposed: { commands, points, views, process: process_ },
+    proposed: { commands, events, points, views, process: process_ },
   } as unknown as Shepherd;
 
   activate(ctx, api);
@@ -185,6 +243,15 @@ function harness(
     invoked,
     git,
     trace,
+    emit: (topic, payload) => {
+      seq += 1;
+      for (const fn of [...(subscribers.get(topic) ?? [])]) fn(payload, { seq, ts: 0, source: CALLER });
+    },
+    tree: () => {
+      const provider = viewTypes.get('tasks.tree');
+      if (provider?.kind !== 'tree') throw new Error('no tree view type was registered');
+      return provider.data;
+    },
     dataDir,
     dispose: () => {
       for (const sub of ctx.subscriptions) sub.dispose();
@@ -217,6 +284,30 @@ interface DeleteResult {
   readonly slug: string;
   readonly branchesLeft: readonly string[];
   readonly failed: readonly string[];
+}
+
+/** A task's state as `tasks.list` answers it — the derived one, not the stored one. */
+const listedState = async (h: Harness): Promise<string> =>
+  (await h.run<{ displayState: string }[]>('tasks.list'))[0]?.displayState ?? 'no such task';
+
+/** The tree's headings, in order — which is where a task MOVING shows. */
+const sections = async (h: Harness): Promise<string[]> =>
+  (await h.tree().children(undefined)).filter((row) => row.section === true).map((row) => row.label);
+
+/**
+ * Wait for work the extension started and did not hand back.
+ *
+ * `tasks.create` provisions optimistically (`void provision(task)`), so the
+ * orchestrator's pane is opened after the handler has already answered. Real
+ * timers, deliberately: the clock is manual so `correlate`'s poll never fires,
+ * and this must not wait on it.
+ */
+async function until(holds: () => boolean, ticks = 50): Promise<void> {
+  for (let attempt = 0; attempt < ticks; attempt += 1) {
+    if (holds()) return;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error(`the condition never held after ${ticks} ticks`);
 }
 
 let live: Harness | undefined;
@@ -363,5 +454,143 @@ describe('tasks.delete', () => {
     const firstGit = h.trace.findIndex((entry) => entry.startsWith('git '));
     expect(closed).toBeGreaterThanOrEqual(0);
     expect(firstGit).toBeGreaterThan(closed);
+  });
+});
+
+/**
+ * `needs-you`, end to end — the bus to the row.
+ *
+ * D4 says it is derived at read and never stored, which makes the interesting
+ * failures invisible to a unit test of `displayState`: a mirror keyed on the
+ * wrong id, a group filter that still passes `[]` while the row it draws does
+ * not, a delta nobody nudges the tree about. Every one of those leaves
+ * `lifecycle.test.ts` green, so these go through `activate` with a real
+ * subscription and the real tree provider.
+ *
+ * The session below carries a `pending-` id ON PURPOSE: that is what a session
+ * looks like for the first seconds after a spawn, and it is exactly when an
+ * agent is most likely to ask something. A mirror keyed by session id would
+ * drop it.
+ */
+describe('attention reaching the task tree', () => {
+  const attentive = task({ sessions: [{ id: 'pending-1', role: 'orchestrator', pane: 'p1' }] });
+  const ASKING = { pane: 'p1', level: 'attention', reason: 'answer needed' };
+
+  it('moves a task to needs-you, in tasks.list AND in the tree’s grouping', async () => {
+    const h = (live = harness({ tasks: [attentive] }));
+    expect(await listedState(h)).toBe('running');
+    expect(await sections(h)).toEqual(['WORKING']);
+
+    h.emit('attention.changed', ASKING);
+
+    expect(await listedState(h)).toBe('needs-you');
+    // The heading AND the row: the grouping filter and the row it draws are two
+    // separate `displayState` calls, and one of them being left behind is a
+    // task drawn as `running` under a NEEDS YOU heading.
+    expect(await sections(h)).toEqual(['NEEDS YOU']);
+    const rows: readonly TreeItem[] = await h.tree().children(undefined);
+    expect(rows.find((row) => row.id === 't1')?.description).toBe('needs-you');
+  });
+
+  it('clears back on level "none", which is why the mirror needs no reconciliation', async () => {
+    // The store emits `none` on every clear it makes — viewing the pane, closing
+    // it, the purge — so an entry that stops mattering always announces itself
+    // and nothing here has to go looking.
+    const h = (live = harness({ tasks: [attentive] }));
+    h.emit('attention.changed', ASKING);
+    expect(await listedState(h)).toBe('needs-you');
+
+    h.emit('attention.changed', { pane: 'p1', level: 'none', reason: 'viewed' });
+
+    expect(await listedState(h)).toBe('running');
+    expect(await sections(h)).toEqual(['WORKING']);
+  });
+
+  it('ignores a pane no task is running in, rather than colouring the nearest one', async () => {
+    const h = (live = harness({ tasks: [attentive] }));
+    h.emit('attention.changed', { pane: 'p9', level: 'urgent', reason: 'approve Bash' });
+
+    expect(await listedState(h)).toBe('running');
+    expect(await sections(h)).toEqual(['WORKING']);
+  });
+
+  it('nudges the tree on a delta, because the host only re-reads when asked', async () => {
+    // The tree is pull-based: `children()` is re-run on an `onDidChange` and at
+    // no other time, so a mirror that updates silently is a sidebar that keeps
+    // showing the old grouping until something unrelated happens to change.
+    const h = (live = harness({ tasks: [attentive] }));
+    let nudges = 0;
+    const data = h.tree();
+    data.onDidChange?.(() => {
+      nudges += 1;
+    });
+
+    h.emit('attention.changed', ASKING);
+    expect(nudges).toBe(1);
+
+    // The same level again is not a delta — the store re-announces a level with
+    // a new reason, and rebuilding the tree for that is work with no change in it.
+    h.emit('attention.changed', { ...ASKING, reason: 'plan approval' });
+    expect(nudges).toBe(1);
+  });
+});
+
+/**
+ * A spawned pane is named, and the name is the task.
+ *
+ * Three agents on one task is three identically-titled shells otherwise, which
+ * is the state v1's sidebar was built to get out of.
+ */
+describe('naming the pane a session runs in', () => {
+  it('renames the orchestrator’s pane with the task title', async () => {
+    const h = (live = harness());
+    await h.run('tasks.create', { title: 'Fix login', brief: 'Make it work.', repos: [] });
+    await until(() => h.invoked.some((call) => call.id === 'layout.rename'));
+
+    expect(h.invoked.filter((call) => call.id === 'layout.rename')).toEqual([
+      { id: 'layout.rename', args: { pane: 'p1', title: 'Fix login' } },
+    ]);
+    // After the split, necessarily: the pane id is the split's answer.
+    expect(h.trace.indexOf('invoke layout.rename')).toBeGreaterThan(h.trace.indexOf('invoke layout.split'));
+  });
+
+  it('names a workstream by its repo, since that is what distinguishes it', async () => {
+    const h = (live = harness({ tasks: [task()] }));
+    await h.run('tasks.spawn', { task: 't1', repo: 'api', prompt: 'go' });
+
+    expect(h.invoked.find((call) => call.id === 'layout.rename')?.args).toEqual({
+      pane: 'p1',
+      title: 'Fix login · api',
+    });
+  });
+
+  it('falls back to "workstream" for one that runs at the task root', async () => {
+    const h = (live = harness({ tasks: [task()] }));
+    await h.run('tasks.spawn', { task: 't1', prompt: 'go' });
+
+    expect(h.invoked.find((call) => call.id === 'layout.rename')?.args).toEqual({
+      pane: 'p1',
+      title: 'Fix login · workstream',
+    });
+  });
+
+  it('does NOT fail the spawn when the rename fails — the pane is real, the title is decoration', async () => {
+    const h = (live = harness({
+      tasks: [task()],
+      invoke: (id) =>
+        id === 'layout.rename'
+          ? {
+              ok: false,
+              error: { code: 'handler-failed', message: 'no such pane', commandId: 'layout.rename' },
+            }
+          : undefined,
+    }));
+    const session = await h.run<{ pane?: string; role: string }>('tasks.spawn', { task: 't1', prompt: 'go' });
+
+    expect(session.pane).toBe('p1');
+    // And the session is recorded, so the pane is not left running with nothing
+    // in the store pointing at it — which is the leak a throw here would make.
+    const listed = await h.run<{ sessions: { pane?: string }[] }[]>('tasks.list');
+    expect(listed[0]?.sessions.map((entry) => entry.pane)).toEqual(['p1']);
   });
 });

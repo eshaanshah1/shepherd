@@ -75,6 +75,15 @@ export const tasksManifest: Manifest = {
    * sessions' attention at read time (D4), and `agents-core` is the only writer
    * of agent attention (ADR 0026) — enforced by being the only extension in the
    * repo that declares it. `tasks` asking for it would break that by manifest.
+   *
+   * And `tasks` DOES read it — it subscribes to the `attention.changed` topic to
+   * mirror what each pane is asking for. That is not a hole in the rule above,
+   * because the permission and the subscription gate different things:
+   * `attention.set`/`clear` are what the permission guards, while `events.on` is
+   * membership-gated only — any loaded extension may listen to any topic, which
+   * is what makes the bus an announcement rather than a private channel. So the
+   * single-writer rule stays exactly as strong as it was: declaring the
+   * permission would add a second writer, and listening adds a reader.
    */
   permissions: ['storage', 'process.exec', 'sessions', 'views', 'layout'],
   contributes: {
