@@ -5,7 +5,7 @@ import { App, placeholderSnapshots } from './app.tsx';
 import { PaneSessionRegistry } from './pane-sessions.ts';
 import { defaultSessionSpec, smokeSessionSpec } from './session-spec.ts';
 import { installSmokeHook } from './smoke-hook.ts';
-import { applyThemeVariables } from './theme.ts';
+import { applyThemeVariables, DEFAULT_THEME_MODE } from './theme.ts';
 import { createXtermTerminal } from './xterm-terminal.ts';
 import './styles.css';
 
@@ -67,7 +67,7 @@ const terminals =
     ? null
     : new PaneSessionRegistry({
         session: bridge.session,
-        createTerminal: () => createXtermTerminal('dark'),
+        createTerminal: () => createXtermTerminal(DEFAULT_THEME_MODE),
         spec: isSmoke ? smokeSessionSpec : defaultSessionSpec,
         onError: (error, context) => {
           // Rule carried from v1: every branch that ends in "and then nothing
@@ -81,7 +81,7 @@ const smoke = isSmoke ? installSmokeHook(terminals) : null;
 
 // Tokens before the first paint: a stylesheet that reads `--sh-ink-deep` before
 // anything sets it renders the app on transparent, which on macOS is white.
-applyThemeVariables(document.documentElement, 'dark');
+applyThemeVariables(document.documentElement, DEFAULT_THEME_MODE);
 
 createRoot(host).render(
   <StrictMode>

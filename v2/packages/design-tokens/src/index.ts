@@ -3,3 +3,14 @@ export { color, colorTokens, palette } from './palette.ts';
 export { fonts, metrics, motion } from './metrics.ts';
 export { cssVarName, cssVariableBlock, cssVariables } from './css.ts';
 export { xtermTheme, type XtermTheme } from './xterm.ts';
+export {
+  LIGHT_SURFACE_LUMINANCE,
+  minimumContrastRatio,
+  paneTitleAlphas,
+  paneTitleInk,
+  paneTitleSurface,
+  relativeLuminance,
+  withAlpha,
+  type PaneTitleAlphas,
+  type SurfaceKind,
+} from './contrast.ts';

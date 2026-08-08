@@ -15,6 +15,22 @@
  * `@shepherd/design-tokens`'s frozen scale. Never `ch` (rule 1 as amended: it is
  * a fractional *width* unit, and a hairline on a subpixel boundary is a blurred
  * hairline — which in a language with no shadows carries the whole hierarchy).
+ *
+ * ------------------------------------------------------------------ hairlines
+ *
+ * A chrome BAND draws its rule as `box-shadow: inset`, never as a border.
+ *
+ * `box-sizing: border-box` keeps the band's outer height either way, but a
+ * border eats a pixel of the CONTENT box — so a 38px bar becomes 37px of content
+ * and everything flex-centred in it lands at y=18.5 instead of y=19, half a pixel
+ * off whatever it is supposed to line up with outside the bar (on macOS, the
+ * traffic lights). Measured and recorded by Orca (`main.css:780-802`); see
+ * docs/superpowers/specs/2026-08-08-ui-reference-notes.md, takeaway 7.
+ *
+ * This is the one place a `box-shadow` is not the elevation theater rule 2 bans:
+ * it is drawing a 1px rule, and in a language with no shadows the hairlines carry
+ * the whole hierarchy. A BOX (a keycap, a chip, a card, a field) still uses a
+ * real `border` — it has four edges and no content to align with anything.
  */
 
 * {
@@ -74,7 +90,9 @@ body.sh-dragging {
   /* The window is frameless-ish on macOS; the traffic lights own the left. */
   padding-left: 78px;
   background: var(--sh-ink);
-  border-bottom: var(--sh-hairline) solid var(--sh-ink-line);
+  /* 38px of CONTENT box, so the brand and the cells centre where the traffic
+     lights do. A border-bottom here would make it 37. */
+  box-shadow: inset 0 calc(-1 * var(--sh-hairline)) 0 var(--sh-ink-line);
   color: var(--sh-wool-faint);
   font-size: 11px;
   letter-spacing: 0.1em;
@@ -179,17 +197,53 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
   flex: 1 1 0;
   min-width: 0;
   min-height: 0;
-  background: var(--sh-ink-term);
+  /* `--sh-pane-title-bg` is the pane's OWN grid colour, published inline by
+     `TerminalPane`. The token is the fallback for a pane that has no terminal
+     behind it (the placeholder card) and for the layout leaf outside it. */
+  background: var(--sh-pane-title-bg, var(--sh-ink-term));
   overflow: hidden;
 }
 
 .sh-pane[data-focused] { transition: opacity var(--sh-motion) linear; }
 .sh-pane[data-focused='false'] { opacity: 0.62; }
 
+/* ------------------------------------------------------- pane chrome surface */
 /*
- * The mock's `.pane-title`: one 28px line of chrome above the grid. It is
- * `--sh-ink`, not `--sh-ink-term`, so the strip reads as chrome and the hairline
- * under it is the seam between chrome and grid.
+ * The foreground set for chrome painted on a background we do not own.
+ *
+ * `data-pane-title-surface` is `paneTitleSurface(background)` — the MEASURED
+ * luminance of that pane's own grid colour, not the app's theme mode. The two
+ * sets are generated in `@shepherd/design-tokens` (`contrast.ts`) and emitted as
+ * `--sh-pane-title-*-on-dark` / `-on-light`; all this does is choose which pair
+ * of names the head reads. Note the light set's alphas are HIGHER: dark ink on a
+ * bright surface needs more weight than light ink on a dark one, which is why
+ * one table cannot serve both. See the UI reference notes, takeaway 8.
+ *
+ * Every use site keeps a token fallback, so a pane that declares no surface (a
+ * placeholder, a test, a future contributed leaf) still renders the chrome it
+ * rendered before this existed rather than inheriting nothing.
+ */
+.sh-pane[data-pane-title-surface='dark'] {
+  --sh-pane-title-fg: var(--sh-pane-title-fg-on-dark);
+  --sh-pane-title-strong: var(--sh-pane-title-strong-on-dark);
+  --sh-pane-title-faint: var(--sh-pane-title-faint-on-dark);
+  --sh-pane-title-rule: var(--sh-pane-title-rule-on-dark);
+}
+
+.sh-pane[data-pane-title-surface='light'] {
+  --sh-pane-title-fg: var(--sh-pane-title-fg-on-light);
+  --sh-pane-title-strong: var(--sh-pane-title-strong-on-light);
+  --sh-pane-title-faint: var(--sh-pane-title-faint-on-light);
+  --sh-pane-title-rule: var(--sh-pane-title-rule-on-light);
+}
+
+/*
+ * The mock's `.pane-title`: one 28px line of chrome above the grid — painted on
+ * the GRID's background, so pane and terminal read as one surface and the strip
+ * is not a lid on a window into another program. The hairline under it is then
+ * the only seam, which is why it is drawn from the surface's own separator alpha
+ * rather than from `--sh-ink-line` (a token tuned against `--sh-ink`, which this
+ * bar no longer sits on).
  */
 .sh-pane-head {
   display: flex;
@@ -198,22 +252,25 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
   flex: 0 0 auto;
   height: var(--sh-row-height);
   padding: 0 14px;
-  background: var(--sh-ink);
-  border-bottom: var(--sh-hairline) solid var(--sh-ink-line);
+  background: var(--sh-pane-title-bg, var(--sh-ink-term));
+  /* Inset, not `border-bottom`: 28px of content box, so the name and the badge
+     centre on the same line the grid's first row is measured from. */
+  box-shadow: inset 0 calc(-1 * var(--sh-hairline)) 0 var(--sh-pane-title-rule, var(--sh-ink-line));
   font-size: 11px;
-  color: var(--sh-wool-dim);
+  color: var(--sh-pane-title-fg, var(--sh-wool-dim));
   white-space: nowrap;
   overflow: hidden;
 }
 
+/* The pane's identity — Orca's "input fg" step, the strongest thing in the bar. */
 .sh-pane-name {
-  color: var(--sh-wool-dim);
+  color: var(--sh-pane-title-strong, var(--sh-wool-dim));
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .sh-pane-branch {
-  color: var(--sh-wool-faint);
+  color: var(--sh-pane-title-faint, var(--sh-wool-faint));
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
@@ -231,7 +288,9 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
   min-width: 0;
   min-height: 0;
   padding: calc(var(--sh-line-height) / 4) calc(var(--sh-line-height) / 2);
-  background: var(--sh-ink-term);
+  /* The same colour the head above it is painted with, from the same variable —
+     the padding around the grid must not be a third of a shade off it. */
+  background: var(--sh-pane-title-bg, var(--sh-ink-term));
   overflow: hidden;
 }
 
@@ -413,11 +472,28 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
   flex-direction: column;
   min-height: 0;
   background: var(--sh-ink);
+  /*
+   * The ONE chrome edge that stays a real border, deliberately.
+   *
+   * An inset shadow paints under the element's own children, and a sidebar row's
+   * hover/selected fill is `width: 100%` — with the seam inset, the content box
+   * grows to the full 268px and a hovered row paints straight over the rightmost
+   * pixel, so the sidebar↔content edge flickers away under the cursor. A border
+   * reserves the pixel in layout instead, which is what an edge with full-width
+   * children needs.
+   *
+   * The alignment argument for `inset` does not apply here anyway: this is a
+   * vertical edge and everything inside is measured from the LEFT, so the 1px has
+   * nothing to knock out of step. (Synara draws the same seam as an inset stroke,
+   * but on a `::before` OVER the content rather than on the container.)
+   */
   border-right: var(--sh-hairline) solid var(--sh-ink-line);
 }
 
 .sh-side-scroll { flex: 1 1 auto; overflow-y: auto; padding: 8px 0 10px; }
-.sh-side-view + .sh-side-view { border-top: var(--sh-hairline) solid var(--sh-ink-line); }
+.sh-side-view + .sh-side-view {
+  box-shadow: inset 0 var(--sh-hairline) 0 var(--sh-ink-line);
+}
 .sh-rows { list-style: none; margin: 0; padding: 0; }
 
 /* A heading, not a row: uppercase micro-label, its count, then a rule that runs
@@ -432,6 +508,9 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
   font-weight: 400;
 }
 
+/* The one border that is NOT a band's edge, so the inset-shadow rule above does
+   not apply: this element has no height and no content — the border IS the rule,
+   and there is no content box for it to shrink. */
 .sh-group::after {
   content: '';
   flex: 1 1 auto;
@@ -581,7 +660,8 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
   height: 26px;
   padding: 0 14px;
   background: var(--sh-ink);
-  border-top: var(--sh-hairline) solid var(--sh-ink-line);
+  /* 26px of content box, so the dots and their counts centre on the same line. */
+  box-shadow: inset 0 var(--sh-hairline) 0 var(--sh-ink-line);
   font-size: 10px;
   letter-spacing: 0.1em;
   color: var(--sh-wool-faint);
