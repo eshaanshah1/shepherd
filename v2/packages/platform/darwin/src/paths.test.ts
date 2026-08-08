@@ -9,8 +9,8 @@ describe('appPaths', () => {
     const prod = appPaths({ home, isDev: false });
     const dev = appPaths({ home, isDev: true });
     expect(prod.userData).not.toBe(dev.userData);
-    expect(prod.userData).toBe(`${home}/Library/Application Support/Shepherd v2`);
-    expect(dev.userData).toBe(`${home}/Library/Application Support/Shepherd v2 (dev)`);
+    expect(prod.userData).toBe(`${home}/Library/Application Support/Shep`);
+    expect(dev.userData).toBe(`${home}/Library/Application Support/Shep Night`);
   });
 
   it('separates every dev path from every prod path', () => {
@@ -37,8 +37,11 @@ describe('appPaths', () => {
   });
 
   it('names the app so the dev build is unmistakable in the menu bar', () => {
-    expect(appName(false)).toBe('Shepherd v2');
-    expect(appName(true)).toContain('dev');
+    expect(appName(false)).toBe('Shep');
+    // Different NAME, not a suffix: the two run side by side, and telling them
+    // apart in the Dock and the menu bar is the whole point of the split.
+    expect(appName(true)).toBe('Shep Night');
+    expect(appName(true)).not.toBe(appName(false));
   });
 });
 

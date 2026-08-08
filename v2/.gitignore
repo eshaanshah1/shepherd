@@ -5,3 +5,4 @@ dist/
 *.tsbuildinfo
 .vite/
 .DS_Store
+release/

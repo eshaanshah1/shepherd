@@ -31,8 +31,18 @@ export interface PathOptions {
 }
 
 /** The user-visible app name; also Electron's userData directory name. */
+/**
+ * What the app is called — **Shep**, and the dev build is **Shep Night**.
+ *
+ * Two names because they are two apps that must never share state: the dev
+ * build is where a testing session creates and deletes tasks, and it takes its
+ * own userData directory, its own sockets and its own Dock identity from this
+ * one function. v1 learned that as Shepherd/ShepherdDev; the icons differ for
+ * the same reason (day/night), so you can tell at a glance which one just asked
+ * you something.
+ */
 export function appName(isDev: boolean): string {
-  return isDev ? 'Shepherd v2 (dev)' : 'Shepherd v2';
+  return isDev ? 'Shep Night' : 'Shep';
 }
 
 export function appPaths({ home, isDev }: PathOptions): AppPaths {
