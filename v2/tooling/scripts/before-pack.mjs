@@ -2,6 +2,7 @@ import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 import { build } from 'esbuild';
 
 /**
@@ -252,11 +253,42 @@ async function stagePackage(relDir) {
 }
 
 /**
+ * Put the pnpm links back.
+ *
+ * Registered as an `exit` handler rather than left to the `pnpm package`
+ * script, because a failed or interrupted pack must not leave the workspace
+ * broken: the compiled copies resolve for the app and NOT for the test suite,
+ * whose first symptom is `Cannot find package '@radix-ui/react-slot' imported
+ * from …/@shepherd/ui/dist/button.js` in three renderer files that nobody
+ * touched. Measured, one commit too late.
+ *
+ * `execFileSync` at exit, because the process is on its way out and there is
+ * no await left to give.
+ */
+function restoreLinksOnExit() {
+  let done = false;
+  const restore = () => {
+    if (done) return;
+    done = true;
+    try {
+      execFileSync('pnpm', ['install', '--silent'], { cwd: root, stdio: 'ignore' });
+    } catch {
+      process.stderr.write(
+        '  ⚠ could not restore the workspace links — run `pnpm install` before the next build\n',
+      );
+    }
+  };
+  process.on('exit', restore);
+  process.on('SIGINT', restore);
+}
+
+/**
  * electron-builder's hook. It runs after the app is built and before the files
  * are copied, which is exactly the window in which app.asar's contents can
  * still be decided.
  */
 export default async function beforePack(context) {
+  restoreLinksOnExit();
   await rm(STAGE, { recursive: true, force: true });
   const staged = [];
   for (const dir of PACKAGES) staged.push(await stagePackage(dir));
