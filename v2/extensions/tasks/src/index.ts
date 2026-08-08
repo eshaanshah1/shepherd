@@ -169,6 +169,37 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
   const provisioning = new Map<string, 'working' | 'ready' | 'failed'>();
 
   /**
+   * Which tasks are mid-operation, and what the operation is called.
+   *
+   * Archiving snapshots and removes a worktree per repo, and restoring rebuilds
+   * them; both take git-shaped seconds, during which a row that says nothing is
+   * a row you press again. In memory for the same reasons `provisioning` is:
+   * it is meaningless after a restart (nothing is mid-anything) and routing it
+   * through KV would make each transition a write across the port.
+   *
+   * A word rather than a percentage, and the row draws a spinner rather than a
+   * bar, because there is no honest denominator here — `git worktree add` and a
+   * snapshot commit report no progress, and a bar over them would be an
+   * animation pretending to measure something.
+   */
+  const busy = new Map<string, 'archiving' | 'restoring'>();
+
+  /** Run a long operation with the row saying so, whatever the outcome. */
+  async function whileBusy<T>(taskId: string, what: 'archiving' | 'restoring', run: () => Promise<T>): Promise<T> {
+    busy.set(taskId, what);
+    changed();
+    try {
+      return await run();
+    } finally {
+      // `finally`, so a refusal — the conflicted-worktree case the archive verb
+      // exists to have — leaves a row that is idle and wrong-looking rather than
+      // one that spins forever.
+      busy.delete(taskId);
+      changed();
+    }
+  }
+
+  /**
    * What each pane is currently asking of you, mirrored from the bus.
    *
    * **Keyed by PANE, and that is not an implementation detail.** The topic is
@@ -1020,6 +1051,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       handler: async (args) => {
         const task = store.get(args.task);
         if (task === undefined) throw new Error(`no task ${args.task}`);
+        return whileBusy(task.id, 'archiving', async () => {
         const root = rootOf(task);
         const warnings: string[] = [];
         const archives: RepoArchive[] = [];
@@ -1065,6 +1097,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         changed();
         for (const warning of warnings) ctx.log.warn(`task ${task.id}: ${warning}`);
         return { id: task.id, lifecycle: 'archived', warnings };
+        });
       },
     }),
   );
@@ -1080,7 +1113,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         // Re-provisioning is the restore: `worktree add` recreates each repo at
         // the same path on the same branch, and the root is re-materialized from
         // what lands. Optimistic, for the same reason creating one is.
-        void (async () => {
+        void whileBusy(task.id, 'restoring', async () => {
           await provision(store.get(task.id) as TaskRecord);
           // Re-provisioning gives back the branch and a CLEAN tree, which is not
           // what was archived. Replaying the snapshot is a separate step, and
@@ -1095,7 +1128,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           // work with the old snapshot.
           const now = store.get(task.id);
           if (now !== undefined) store.put({ ...now, archives: [] });
-        })().catch((error: unknown) => {
+        }).catch((error: unknown) => {
           ctx.log.error(`task ${task.id}: restore threw — ${String(error)}`);
         });
         return { id: task.id, lifecycle: 'running' };
@@ -1310,6 +1343,10 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
               description: state,
               tint: state,
               collapsed: true,
+              // Something is happening to it right now — a snapshot being taken,
+              // worktrees being rebuilt. The row says so where its status mark
+              // is, rather than looking idle for the seconds git takes.
+              ...(busy.has(task.id) ? { busy: true, description: `${busy.get(task.id) ?? ''}…` } : {}),
               // Clicking a task takes you to it — and for an archived one that
               // means bringing it BACK: `tasks.reveal` restores the worktrees
               // first (see its handler). One gesture, whatever state the task

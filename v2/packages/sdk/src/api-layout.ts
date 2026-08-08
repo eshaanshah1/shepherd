@@ -190,6 +190,16 @@ export interface TreeItem {
   readonly description?: string;
   /** A design-token name, resolved by the renderer. Never a raw colour. */
   readonly tint?: string;
+  /**
+   * Something is happening to this row's subject right now — the renderer draws
+   * the app's working indicator in place of its status mark.
+   *
+   * Orthogonal to `tint`, which still says what the thing IS. A boolean rather
+   * than a percentage on purpose: the operations behind a contributed row (a
+   * git snapshot, a worktree being rebuilt) have no honest denominator, and a
+   * progress bar that invents one is a bar that sticks at 90%.
+   */
+  readonly busy?: boolean;
   readonly icon?: string;
   readonly collapsed?: boolean;
   /**

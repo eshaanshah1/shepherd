@@ -105,7 +105,11 @@ interface Harness {
 function harness(
   opts: {
     tasks?: readonly TaskRecord[];
-    git?: (call: GitCall) => ExecOk | ExecErr;
+    /**
+     * A promise is allowed so a test can HOLD a call open and ask what the app
+     * looks like mid-operation — which is the only way to assert a spinner.
+     */
+    git?: (call: GitCall) => ExecOk | ExecErr | Promise<ExecOk | ExecErr>;
     /**
      * Answer a command the extension does not own. `undefined` falls through to
      * the defaults below, so a test overrides one verb without restating them.
@@ -963,6 +967,34 @@ describe('a pane that closes', () => {
     h.emit('session.exit', { sessionId: 'some-real-id', paneId: 'p1' });
 
     expect((await h.run<{ sessions: unknown[] }[]>('tasks.list'))[0]?.sessions).toEqual([]);
+  });
+});
+
+describe('a long operation', () => {
+  it('says so on the row, with the app’s working indicator, and stops when it ends', async () => {
+    // The seconds git takes are seconds a row that says nothing is a row you
+    // press again. A word and a spinner, never a bar: `worktree add` and a
+    // snapshot commit report no progress, so a denominator would be invented.
+    let finish = (): void => undefined;
+    const held = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const h = (live = harness({
+      tasks: [task()],
+      // `write-tree` is the archive's first read, held open so the row can be
+      // asked what it looks like mid-operation. Everything else answers as
+      // `archivable` does, or the archive refuses and the test is vacuous.
+      git: (call) => (call.args[0] === 'write-tree' ? held.then(() => archivable(call)) : archivable(call)),
+    }));
+
+    const archiving = h.run('tasks.archive', { task: 't1' });
+    const during = await rowOf(h, 't1');
+    expect(during?.busy).toBe(true);
+    expect(during?.description).toBe('archiving…');
+
+    finish();
+    await archiving;
+    expect((await rowOf(h, 't1'))?.busy).toBeUndefined();
   });
 });
 
