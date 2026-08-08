@@ -97,3 +97,25 @@ describe('the remount trap — what actually remounts a sibling', () => {
     expect(hostOf(dom), 'the terminal host was remounted when the agent appeared').toBe(before);
   });
 });
+
+describe('the resting state', () => {
+  // `idle` is an agent that is neither doing nor wanting anything. A chip
+  // saying so is a label for the absence of news, on the surface you are
+  // already looking at — v1's model is that a pane earns a mark by NEEDING
+  // something.
+  it('draws no label for idle, but still says so in the data', () => {
+    const dom = mount(<AgentBadge state="idle" />);
+    const badge = dom.container.querySelector('[data-testid="agent-badge"]');
+    expect(badge?.textContent).toBe('');
+    // Still distinguishable from a plain shell, which is a different fact.
+    expect(badge?.getAttribute('data-agent-state')).toBe('idle');
+  });
+
+  it('still labels every state that wants you', () => {
+    for (const state of ['working', 'blocked', 'needsCheck', 'error']) {
+      const dom = mount(<AgentBadge state={state} />);
+      expect(dom.container.querySelector('[data-testid="agent-badge"]')?.textContent).not.toBe('');
+      dom.unmount();
+    }
+  });
+});

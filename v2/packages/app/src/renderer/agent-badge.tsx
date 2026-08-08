@@ -56,11 +56,27 @@ const LABEL: Readonly<Record<string, string>> = {
   blocked: 'blocked',
   needsCheck: 'done',
   error: 'error',
-  idle: 'idle',
 };
 
+/**
+ * `idle` has no label, deliberately.
+ *
+ * It is the resting state — an agent that is neither doing nor wanting
+ * anything — so a chip reading "idle" is a label for the absence of news, on
+ * the one surface you are already looking at. v1's whole attention model is
+ * that a pane earns a mark by NEEDING something; a badge on every idle pane is
+ * the same noise as a status bar full of zeroes.
+ *
+ * The state still reaches the DOM as `data-agent-state`, because "idle" and
+ * "no agent at all" are different facts and a smoke has to tell them apart.
+ */
+
 export function AgentBadge({ state, reason }: AgentBadgeProps): ReactNode {
-  const known = state !== undefined && state !== 'shell' && state in LABEL;
+  // `idle` is a state we KNOW and deliberately do not label — distinct from one
+  // we do not recognise, which must not reach the DOM as data (a smoke reading
+  // `data-agent-state` would then be reading a vendor's typo).
+  const live = state !== undefined && (state in LABEL || state === 'idle');
+  const known = state !== undefined && state in LABEL;
   return (
     <div
       className="sh-agent-badge"
@@ -68,7 +84,7 @@ export function AgentBadge({ state, reason }: AgentBadgeProps): ReactNode {
       // Always present, and empty for a plain shell — so a smoke can tell
       // "no agent" from "the channel never delivered", which are the same
       // pixels and very different bugs.
-      data-agent-state={known ? state : ''}
+      data-agent-state={live ? state : ''}
       title={reason ?? ''}
     >
       {known ? (
