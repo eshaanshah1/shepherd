@@ -106,4 +106,47 @@ describe('TaskStore', () => {
       expect((kv.raw.get('task:t1') as TaskRecord).schemaVersion).toBe(TASK_SCHEMA_VERSION);
     });
   });
+
+  describe('the repo picker\'s history', () => {
+    it('round-trips through the same KV a third party gets', () => {
+      const kv = fakeKV();
+      const store = new TaskStore(kv);
+      store.recordRepoUses(['/repos/api'], 1_000);
+      expect(store.repoHistory()).toEqual([{ path: '/repos/api', uses: 1, lastUsedAt: 1_000 }]);
+      // In ONE key, not one per path: `list()` walks `keys()`, and fifty more
+      // of them would be fifty more strings to skip on every task read.
+      expect(kv.keys()).toEqual(['repo-history']);
+    });
+
+    it('counts a repo picked again rather than duplicating it', () => {
+      const store = new TaskStore(fakeKV());
+      store.recordRepoUses(['/repos/api'], 1_000);
+      store.recordRepoUses(['/repos/api', '/repos/web'], 2_000);
+      expect(store.repoHistory()).toEqual([
+        { path: '/repos/api', uses: 2, lastUsedAt: 2_000 },
+        { path: '/repos/web', uses: 1, lastUsedAt: 2_000 },
+      ]);
+    });
+
+    it('counts one task naming a repo twice as one pick', () => {
+      const store = new TaskStore(fakeKV());
+      store.recordRepoUses(['/repos/api', '/repos/api'], 1_000);
+      expect(store.repoHistory()[0]?.uses).toBe(1);
+    });
+
+    it('reads a malformed history as empty rather than refusing to open', () => {
+      // An accelerator. A picker that would not open because a preference blob
+      // was bad is worse than one that has forgotten.
+      const store = new TaskStore(fakeKV({ 'repo-history': { nope: true } }));
+      expect(store.repoHistory()).toEqual([]);
+    });
+
+    it('is not read as a task by `list()`', () => {
+      const store = new TaskStore(fakeKV());
+      store.put(draft());
+      store.recordRepoUses(['/repos/api'], 1_000);
+      expect(store.list()).toHaveLength(1);
+      expect(store.unreadable()).toEqual([]);
+    });
+  });
 });

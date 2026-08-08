@@ -197,7 +197,12 @@ export const boundaries = [
     //   - **react + design-tokens**: the two it is made of. Tokens are where the
     //     roles live, and the roles are what a primitive styles from — a hex or a
     //     px literal in here is the drift this package exists to end.
-    //   - **sdk**: permitted, unused today. A primitive that eventually takes a
+    //   - **sdk**: permitted, and now used. `fuzzy.ts` moved down there with the
+    //     repo picker, because an extension's SERVICE half needs the same ranking
+    //     the ⌘K palette uses — it is the side that holds the history and reads a
+    //     directory, so it is the side that must filter and cap before an answer
+    //     crosses a message port, and this package is importable only from the
+    //     page. The original reason stands too: a primitive that takes a
     //     host-shaped value (a session id, an agent state) should name it with the
     //     sdk's type rather than restate it, which is exactly the duplication the
     //     extension type-import carve-out was added to prevent.

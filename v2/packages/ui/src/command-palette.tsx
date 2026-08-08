@@ -5,7 +5,7 @@ import { Field } from './field.tsx';
 import { KeyCap } from './keycap.tsx';
 import { Modal } from './modal.tsx';
 import { Row } from './row.tsx';
-import { fuzzyFilter } from './fuzzy.ts';
+import { fuzzyFilter } from '@shepherd/sdk';
 import { cn } from './cn.ts';
 
 /**
@@ -41,9 +41,9 @@ import { cn } from './cn.ts';
  *     convention beside `sh-ui-*`, in the one package a third party reads to
  *     learn ours.
  *   - Its ranking is `command-score`, which nobody here can tune and nobody can
- *     test without mounting a component. `fuzzy.ts` is a pure function with the
- *     ranking argued in comments, and the four bonuses in it are each a pair of
- *     results that would otherwise tie.
+ *     test without mounting a component. `@shepherd/sdk`'s `fuzzyFilter` is a
+ *     pure function with the ranking argued in comments, and the four bonuses in
+ *     it are each a pair of results that would otherwise tie.
  *
  * What Radix genuinely buys — the focus trap, Esc, click-out, the portal, the
  * scrim, restoring focus to whatever opened the palette — is bought here too. It

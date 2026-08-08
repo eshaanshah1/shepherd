@@ -1,5 +1,6 @@
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import {
+  fuzzyMatch,
   s,
   toDisposable,
   type AttentionLevel,
@@ -10,6 +11,8 @@ import { REPO_SUGGESTIONS_POINT, TASK_COMMANDS, TASK_VIEWS } from './manifest.ts
 import { TaskStore, type RepoArchive, type RepoRef, type TaskRecord, type TaskSession } from './store.ts';
 import { slugify, uniqueSlug } from './model/slug.ts';
 import { expandHome } from './model/repo-path.ts';
+import { repoName } from './model/repo-name.ts';
+import { completeDirectories, looksLikeRepo } from './suggest.ts';
 import { taskRootId } from './model/root-id.ts';
 import { displayState } from './model/lifecycle.ts';
 import { synthTaskRoot } from './model/root-synth.ts';
@@ -46,6 +49,23 @@ import { seedClaudeTrust } from './trust.ts';
 export interface RepoSuggestionProvider {
   suggest(input: { readonly title: string; readonly brief: string }): readonly RepoRef[];
 }
+
+/**
+ * One row of the picker. A `RepoRef` plus the three things a picker draws with:
+ * whether it is a repo at all, where it came from, and which characters matched.
+ *
+ * The positions are computed by the ranker and carried across the port rather
+ * than re-derived in the view — a highlighter that re-runs the matcher is a
+ * second chance to disagree with the thing that did the ordering.
+ */
+export interface RepoSuggestion extends RepoRef {
+  readonly isRepo: boolean;
+  readonly source: 'history' | 'filesystem';
+  readonly matched: readonly number[];
+}
+
+/** See the `suggestRepos` handler: a list you arrow through, not one you scroll. */
+const SUGGESTION_LIMIT = 10;
 
 export interface TasksAPI {
   list(): readonly TaskRecord[];
@@ -203,50 +223,106 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
   /**
    * The dogfood rule one level deeper: the built-in ranking registers through the
    * point like anybody else, so replacing it is a registration rather than a fork.
-   * Usage-and-recency ranking needs history this extension has not gathered yet
-   * (P4 records it), so today it answers with the repos of the most recent tasks —
-   * which is the same shape and honestly thin rather than absent.
+   *
+   * It answers from the PICKED HISTORY — every path the user has actually put on
+   * a task, with a count and a timestamp, ranked by `historyScore` (frequency ×
+   * recency; the formula is argued in `repo-history.ts`). It used to answer with
+   * the repos of the most recent tasks, which was a proxy for the question and a
+   * bad one: a repo added to nine tasks and a repo added to one looked identical,
+   * and a task archived months ago kept voting.
+   *
+   * It ignores `title`/`brief`, deliberately. The canonical third-party provider
+   * is the one that reads the brief and guesses; this one knows what you use.
    */
   ctx.subscriptions.push(
     suggestions.register(
       {
-        suggest: () => {
-          const seen = new Map<string, RepoRef>();
-          for (const task of [...store.list()].sort((a, b) => b.createdAt - a.createdAt)) {
-            for (const repo of task.repos) if (!seen.has(repo.path)) seen.set(repo.path, repo);
-          }
-          return [...seen.values()];
-        },
+        // Stored already ranked, so this is a projection and not a second
+        // opinion about the order.
+        suggest: () => store.repoHistory().map((use) => ({ path: use.path, name: repoName(use.path) })),
       },
       { priority: 0 },
     ),
   );
 
   /**
-   * The composer's question, answered by the point and nothing else.
+   * The composer's question — now two questions with one answer.
    *
-   * Every provider is asked and the answers are concatenated in priority order,
-   * deduped by path — a second provider must be able to ADD a repo the first
-   * did not think of, which is the whole reason this is a point. A provider that
-   * throws is dropped with a line in the log rather than taking the picker down:
-   * a suggestion is an accelerator, and losing one must not stop a task being
-   * created by hand.
+   * **History**, from the point and nothing else. Every provider is asked and the
+   * answers are concatenated in priority order, deduped by path — a second
+   * provider must be able to ADD a repo the first did not think of, which is the
+   * whole reason this is a point. A provider that throws is dropped with a line
+   * in the log rather than taking the picker down: a suggestion is an
+   * accelerator, and losing one must not stop a task being created by hand. The
+   * `query` filters them (as a fuzzy match over the whole path, so `shep` finds
+   * `~/Home/dev/shepherd`) and never REORDERS them: the point's order is the
+   * ranking, and re-sorting it by match quality here would silently overrule a
+   * provider that had a better reason.
+   *
+   * **The filesystem**, one level, for the same query — so a path you have never
+   * used is still one keystroke and a Tab away. `suggest.ts` has that half.
+   *
+   * Ranked history-first because a repo you have worked in is a better guess
+   * than a directory that merely sits nearby, and **capped at ten** because the
+   * list is a keyboard target: ten is the whole of it under one thumb of
+   * arrowing, and past that the honest answer is "type another character", which
+   * the fuzzy filter rewards immediately.
+   *
+   * **A candidate that is not a repo is MARKED, never dropped.** Excluding them
+   * would make the completion useless as a navigator — `~/Home/dev` is not a
+   * repo and is exactly the row you need in order to reach the ones inside it —
+   * and the mark is what stops a non-repo being picked by accident.
    */
   ctx.subscriptions.push(
     commands.register(TASK_COMMANDS.suggestRepos, {
       title: 'Tasks: Suggest Repos',
-      schema: s.object({ title: s.optional(s.string()), brief: s.optional(s.string()) }),
+      schema: s.object({
+        title: s.optional(s.string()),
+        brief: s.optional(s.string()),
+        query: s.optional(s.string()),
+      }),
       handler: (args) => {
         const input = { title: args.title ?? '', brief: args.brief ?? '' };
-        const seen = new Map<string, RepoRef>();
+        // Expanded HERE, like `tasks.create` does, so the field and the CLI flag
+        // keep agreeing about what `~` means.
+        const query = expandHome((args.query ?? '').trim(), ctx.homeDir);
+
+        const fromPoint = new Map<string, RepoRef>();
         for (const provider of suggestions.all()) {
           try {
-            for (const repo of provider.suggest(input)) if (!seen.has(repo.path)) seen.set(repo.path, repo);
+            for (const repo of provider.suggest(input)) {
+              if (!fromPoint.has(repo.path)) fromPoint.set(repo.path, repo);
+            }
           } catch (error: unknown) {
             ctx.log.warn(`a repo-suggestion provider threw and was skipped — ${String(error)}`);
           }
         }
-        return [...seen.values()];
+
+        const out: RepoSuggestion[] = [];
+        for (const repo of fromPoint.values()) {
+          const hit = fuzzyMatch(query, repo.path);
+          if (hit === null) continue;
+          out.push({
+            path: repo.path,
+            name: repo.name,
+            isRepo: looksLikeRepo(repo.path),
+            source: 'history',
+            matched: hit.positions,
+          });
+        }
+
+        for (const candidate of completeDirectories(query, ctx.homeDir)) {
+          if (fromPoint.has(candidate.path)) continue;
+          out.push({
+            path: candidate.path,
+            name: repoName(candidate.path),
+            isRepo: candidate.isRepo,
+            source: 'filesystem',
+            matched: candidate.matched,
+          });
+        }
+
+        return out.slice(0, SUGGESTION_LIMIT);
       },
     }),
   );
@@ -694,6 +770,19 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           createdAt: ctx.clock.now(),
         };
         store.put(task);
+        /**
+         * The picker's history, written where the pick actually happens.
+         *
+         * Here rather than in the composer because this is the one door every
+         * pick goes through — the field, a clicked suggestion and the CLI's
+         * `--repo` all arrive as this verb — and because a history the UI
+         * maintained would be a second writer of a namespace whose whole
+         * soundness rests on there being one (`store.ts`).
+         */
+        store.recordRepoUses(
+          task.repos.map((repo) => repo.path),
+          ctx.clock.now(),
+        );
         changed();
         ctx.log.info(`created task ${task.id} (${slug}) with ${task.repos.length} repo(s)`);
 

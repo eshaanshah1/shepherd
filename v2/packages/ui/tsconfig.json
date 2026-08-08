@@ -12,5 +12,5 @@
     "jsx": "react-jsx"
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"],
-  "references": [{ "path": "../design-tokens" }]
+  "references": [{ "path": "../design-tokens" }, { "path": "../sdk" }]
 }

@@ -24,6 +24,7 @@
     "@radix-ui/react-slot": "catalog:",
     "@radix-ui/react-tooltip": "catalog:",
     "@shepherd/design-tokens": "workspace:*",
+    "@shepherd/sdk": "workspace:*",
     "@tabler/icons-react": "catalog:",
     "class-variance-authority": "catalog:"
   },

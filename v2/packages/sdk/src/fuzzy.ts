@@ -1,12 +1,18 @@
 /**
- * The palette's filter — a pure function, and the whole reason the palette
- * needed no dependency.
+ * Subsequence matching, ranked — the one matcher in the tree.
  *
- * `cmdk` was the alternative and it was declined (the argument is in
- * `command-palette.tsx`); what it would have brought here is `command-score`, an
- * opaque ranking nobody in this repo could tune and nobody could test without
- * mounting a component. This is thirty lines and it is the half of a palette that
- * is actually a decision: which of two matches is the better one.
+ * **It lives in the sdk, and that is a move rather than a new file.** It was
+ * `@shepherd/ui/fuzzy.ts`, written for the ⌘K palette, and `@shepherd/ui` is
+ * importable from exactly two places (the renderer and an extension's `ui/`
+ * half). The repo picker needs the same ranking in an extension's SERVICE half —
+ * it is the side that holds the history and reads the directory, so it is the
+ * side that must filter and cap before a few hundred entries cross a message
+ * port. The sdk is the one floor both halves stand on, and "types + pure
+ * helpers" is exactly what this is: no host, no clock, no IO.
+ *
+ * The alternative was a second matcher in the extension, which is the drift the
+ * design system exists to prevent — two ideas about what a better match is, in
+ * one app.
  *
  * **Subsequence matching, ranked.** Every character of the query must appear in
  * the candidate, in order, but not adjacently — so `lz` finds `layout.zoom` and
@@ -33,9 +39,18 @@
  * scatter `layout.*` through `tasks.*` for no gain.
  */
 
-export interface FuzzyMatch<T> {
-  readonly item: T;
+/**
+ * One candidate's match: what it scored, and WHERE it matched.
+ *
+ * The positions are the half a highlighter needs and the reason this function
+ * exists beside `fuzzyScore` — a view that re-derives them runs the matcher
+ * twice and, worse, can disagree with the ranker about which characters were the
+ * match. They are indices into the candidate as given (not the lowercased copy),
+ * ascending, one per character of the query.
+ */
+export interface FuzzyMatch {
   readonly score: number;
+  readonly positions: readonly number[];
 }
 
 /** A word starts after anything that is not a letter or a digit. */
@@ -46,16 +61,17 @@ const isBoundary = (text: string, index: number): boolean => {
 };
 
 /**
- * Score one candidate against one query. `null` means "not a match" — which is
- * different from a score of zero, and conflating the two is how an empty query
- * ends up filtering everything out.
+ * Score one candidate against one query, and say where it matched. `null` means
+ * "not a match" — which is different from a score of zero, and conflating the
+ * two is how an empty query ends up filtering everything out.
  */
-export function fuzzyScore(query: string, candidate: string): number | null {
-  if (query === '') return 0;
+export function fuzzyMatch(query: string, candidate: string): FuzzyMatch | null {
+  if (query === '') return { score: 0, positions: [] };
 
   const needle = query.toLowerCase();
   const hay = candidate.toLowerCase();
 
+  const positions: number[] = [];
   let score = 0;
   let cursor = 0;
   let run = 0;
@@ -70,13 +86,19 @@ export function fuzzyScore(query: string, candidate: string): number | null {
     // 10 for the match, +10 at a word start, +4 per character of an unbroken
     // run, and a gap penalty that never takes more than the match is worth.
     score += 10 + (isBoundary(hay, found) ? 10 : 0) + run * 4 - Math.min(gap, 8);
+    positions.push(found);
     cursor = found + 1;
   }
 
   // The whole match's position, once — not per character, which would punish a
   // long query for being long.
   const first = hay.indexOf(needle[0] ?? '');
-  return score - Math.min(first, 20);
+  return { score: score - Math.min(first, 20), positions };
+}
+
+/** The score alone, for a caller that ranks and does not draw. */
+export function fuzzyScore(query: string, candidate: string): number | null {
+  return fuzzyMatch(query, candidate)?.score ?? null;
 }
 
 /**

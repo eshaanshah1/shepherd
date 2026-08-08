@@ -1,0 +1,63 @@
+/*
+ * Pill — the mock's "+ Add action" shape, used as a token inside prose.
+ *
+ * Two things here are load-bearing and everything else is the usual roles: the
+ * height, which is what keeps a pill from opening the line box it sits in, and
+ * the radius, which is half that height and is therefore derived rather than
+ * named (there is no `--sh-radius-full`, and there should not be — a pill's
+ * corner is a fact about its own height, not a step on the radius scale).
+ */
+
+.sh-ui-pill {
+  /*
+   * Tier 3, declared beside its owner. One line box minus a step, so an
+   * inline-flex box — which contributes its whole margin box to the line — can
+   * never be the tallest thing on that line.
+   */
+  --sh-ui-pill-height: calc(var(--sh-line-height) - var(--sh-space-xs));
+
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sh-space-xs);
+  flex: 0 0 auto;
+
+  height: var(--sh-ui-pill-height);
+  /* No margin, deliberately: a vertical margin on an inline-level box is added
+     to the line box, which is exactly what the height above is avoiding. */
+  padding: 0 var(--sh-space-sm);
+  /* Centred on the line box rather than sat on the baseline — a baseline-aligned
+     box hangs below the text it is beside. */
+  vertical-align: middle;
+
+  /* The app SAYS this word, so sans (styles.css's job rule). */
+  font-family: var(--sh-font-sans);
+  font-size: var(--sh-font-size-small);
+  /* 1, so the line box around the label is the label. The pill's height is the
+     box's, and a second opinion here would fight it. */
+  line-height: 1;
+  /*
+   * Accent, on the hairline and on the label both.
+   *
+   * A pill is not a state, so it does not take a status hue; it is a thing the
+   * app is holding for you, which is what rule 3 gives `accent` to say. The
+   * ROLE is named rather than the colour — an extension that re-declares
+   * `--sh-accent` gets its own pill for free, and cobalt stays a fact about the
+   * token layer.
+   */
+  color: var(--sh-accent);
+  white-space: nowrap;
+
+  border: var(--sh-hairline) solid var(--sh-accent);
+  border-radius: calc(var(--sh-ui-pill-height) / 2);
+  /*
+   * A TINT of the same accent, not the neutral wash and not a solid fill: on a
+   * tint the role colour carries the signal (the `accentText` role's own
+   * `notFor` says on-fill ink is legal only over a solid block), and 12% is low
+   * enough that a line of prose with three pills in it still reads as prose.
+   */
+  background: color-mix(in srgb, var(--sh-accent) 12%, transparent);
+
+  /* Display only, like a keycap: not a pointer, not a stray drag target. */
+  cursor: default;
+  user-select: none;
+}

@@ -45,6 +45,12 @@ export { ICON_STROKE, Icon, iconSizes, type IconProps, type IconSize } from './i
 export { Button, buttonVariants, type ButtonProps, type ButtonSize, type ButtonVariant } from './button.tsx';
 export { IconButton, type IconButtonProps, type IconButtonSize } from './icon-button.tsx';
 export { KeyCap, type KeyCapProps } from './keycap.tsx';
+/**
+ * Display only, and here beside `KeyCap` for that reason rather than because a
+ * pill is a control. It is a token that stands INSIDE a sentence — a pasted
+ * image, an attachment — and it is shaped so it cannot open the line it is in.
+ */
+export { Pill, type PillProps } from './pill.tsx';
 
 // Input surfaces
 export { Field, fieldControlVariants, type FieldProps, type FieldSize, type FieldVariant } from './field.tsx';
@@ -57,13 +63,20 @@ export {
   type PaletteCommand,
 } from './command-palette.tsx';
 /**
- * The palette's ranking, exported as the pure function it is.
+ * The palette's ranking, re-exported from where it now lives.
  *
  * A contributed view with its own list to filter should rank it the way the
  * palette does, or the app has two ideas about what a better match is. The
  * component is the one that owns a dialog; the scoring is just a comparison.
+ *
+ * It MOVED to `@shepherd/sdk` with the repo picker, because an extension's
+ * service half needs the same ranking — it holds the history and reads the
+ * directory, so it is the side that must filter and cap before the answer
+ * crosses a message port, and this package is importable only from the page.
+ * Re-exported rather than deleted: a view that already had it should not have to
+ * learn a second import path to keep it.
  */
-export { fuzzyFilter, fuzzyScore, type FuzzyMatch } from './fuzzy.ts';
+export { fuzzyFilter, fuzzyMatch, fuzzyScore, type FuzzyMatch } from '@shepherd/sdk';
 
 // Structure
 export { Row, rowClasses, type RowProps } from './row.tsx';

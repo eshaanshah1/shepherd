@@ -105,3 +105,14 @@ export type { ActivateFn, ExtensionContext, ProposedAPI, Shepherd } from './api.
  */
 export { DuplicatePointError, PointRegistry } from './points.ts';
 export type { DefinePointOptions, PointRegistryOptions } from './points.ts';
+
+/**
+ * The one fuzzy matcher, exported as the pure functions they are.
+ *
+ * Here rather than in `@shepherd/ui` because both halves of an extension need
+ * it: the view highlights what matched, and the SERVICE half filters and ranks
+ * before answering — and `@shepherd/ui` is importable only from the page.
+ * `@shepherd/ui` re-exports these so a contributed view keeps ranking its own
+ * lists the way the ⌘K palette does.
+ */
+export { fuzzyFilter, fuzzyMatch, fuzzyScore, type FuzzyMatch } from './fuzzy.ts';

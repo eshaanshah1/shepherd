@@ -1,5 +1,6 @@
 import { s, type KV } from '@shepherd/sdk';
 import { LIFECYCLE_STATES, type TaskLifecycle } from './model/lifecycle.ts';
+import { recordUse, type RepoUse } from './model/repo-history.ts';
 
 /**
  * The task store — D2 and D15.
@@ -37,6 +38,18 @@ export const TASK_SCHEMA_VERSION = 1;
 
 /** Prefix, so a stray key in this namespace is not read as a task. */
 const KEY_PREFIX = 'task:';
+
+/**
+ * Which repos the user picks, and how often — the picker's history.
+ *
+ * ONE key holding the whole list rather than a key per path, because it is read
+ * and rewritten as a unit (`recordUse` ranks and caps the whole thing) and
+ * because `keys()` is how `list()` finds tasks: fifty more keys in this
+ * namespace would be fifty more strings to skip on every task read.
+ *
+ * The same KV a third party gets (ADR 0032). `SqliteStore.db` stays shut.
+ */
+const REPO_HISTORY_KEY = 'repo-history';
 
 export interface RepoRef {
   /** The repo's own directory, as the user picked it. */
@@ -137,6 +150,8 @@ const taskSchema = s.stored({
   ),
 });
 
+const repoHistorySchema = s.array(s.stored({ path: s.string(), uses: s.int(), lastUsedAt: s.int() }));
+
 export class TaskStore {
   readonly #kv: KV;
   /** Ids present in storage that could not be read. Reportable, not silent. */
@@ -195,5 +210,23 @@ export class TaskStore {
   /** Ids whose stored record could not be read. For a warning the user can act on. */
   unreadable(): readonly string[] {
     return [...this.#unreadable];
+  }
+
+  /**
+   * The repos the user has picked, already ranked (`recordUse` sorts on write).
+   *
+   * An unreadable value reads as an empty history rather than as a failure: this
+   * is an accelerator, and a picker that refused to open because a preference
+   * blob was malformed would be worse than one that has forgotten.
+   */
+  repoHistory(): readonly RepoUse[] {
+    return this.#kv.get(REPO_HISTORY_KEY, repoHistorySchema) ?? [];
+  }
+
+  /** The user picked these. Deduped, because one task may name a repo once. */
+  recordRepoUses(paths: readonly string[], now: number): void {
+    let history = this.repoHistory();
+    for (const path of new Set(paths)) history = recordUse(history, path, now);
+    this.#kv.set(REPO_HISTORY_KEY, history);
   }
 }
