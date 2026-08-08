@@ -34,8 +34,11 @@ fight it.
    root, archive/restore, the `shepherd` CLI, and a sidebar an extension draws
    into), and so is **M3b's composer** — a task is creatable from inside the app
    through a contributed React component (ADR 0033), and `tasks.spawn` now opens a
-   real agent in the task's worktree (ADR 0034). **Scratch (D9) and then M4, the
-   dogfood gate, are next.**
+   real agent in the task's worktree (ADR 0034). The app **ships as `Shep.app`**
+   with a design system (`@shepherd/ui`), and a task's full circle is live:
+   closing its panes archives it, clicking it restores the worktrees and
+   **reattaches its agents** rather than re-prompting them. **Scratch (D9) and
+   then M4, the dogfood gate, are next.**
 2. [`docs/superpowers/specs/2026-08-06-ade-minimal-core-sketch.md`](docs/superpowers/specs/2026-08-06-ade-minimal-core-sketch.md)
    — thesis and **every decision** (§7, §7b, §7c the headless-agent seam, §7d presence).
 3. [`docs/superpowers/specs/2026-08-06-ade-v2-core-design.md`](docs/superpowers/specs/2026-08-06-ade-v2-core-design.md)
@@ -55,7 +58,60 @@ fight it.
    **0034** is why a spawned agent is a pane rather than a headless session, and
    why its prompt travels as a file — a typed newline is an Enter press.
 
-**Two rules that will bite you immediately in `v2/`:**
+### Working in `v2/` — the loop
+
+Everything below runs from `v2/`, and **every command takes `env -u NODE_OPTIONS`**
+(see the rules under it).
+
+```sh
+env -u NODE_OPTIONS pnpm typecheck && env -u NODE_OPTIONS pnpm lint && env -u NODE_OPTIONS pnpm test
+env -u NODE_OPTIONS pnpm smoke:m3     # the end-to-end gate — see below
+env -u NODE_OPTIONS pnpm dev          # a throwaway instance, Vite HMR, ~/.shepherd/v2-dev
+env -u NODE_OPTIONS pnpm ship         # → /Applications/Shep.app, and relaunch it
+env -u NODE_OPTIONS pnpm ship --dev   # → /Applications/Shep Night.app, daily app untouched
+```
+
+- **`pnpm ship` is the only way a change reaches the app you use.** It builds,
+  packages, restores the workspace links (`beforePack` swaps them for compiled
+  copies and the next build fails on files the stage does not contain), swaps
+  `/Applications` and relaunches. It **survives killing the app it runs inside** —
+  a session is a `node-pty` child of main, so shipping from an agent's pane kills
+  the process running the script; the swap-and-relaunch is a detached shell script
+  that waits for the app to exit. Your agents do not survive it: main's code is in
+  the bundle being replaced. Use `--dev` while iterating.
+- **There is no hot reload for the installed app.** It loads its renderer from
+  inside the `app.asar` being swapped. `window.reload` (⌘K, or `shepherd raw
+  window.reload`) throws the renderer away and keeps the ptys — real, and only
+  useful under `pnpm dev`. Making a restart cheap is the daemon seam (§7b), not a
+  flag.
+- **A green unit suite is not a working app, and this repo has the scars.** The
+  archive-on-close was wired to a pane id the layout regenerates on restore: every
+  unit test passed because every one of them supplied *both halves* of the
+  correlation. A test that provides both sides of a correlation cannot discover
+  that the two sides disagree in the app. **Run `pnpm smoke:m3` before calling any
+  task/layout/composer work done** — it drives the real Electron app and asserts
+  through the real bus.
+- **The app logs to stdout, so a Finder-launched build has no log.** Read the
+  running app instead, over its control socket (`~/.shepherd/v2/control.sock`,
+  `v2-dev` for Shep Night):
+  ```sh
+  curl -s --unix-socket ~/.shepherd/v2/control.sock -X POST \
+    -H 'content-type: application/json' \
+    -d '{"command":"tasks.list","args":{},"caller":{"kind":"device","deviceId":"local-cli"}}' \
+    http://localhost/invoke
+  ```
+  A caller is required and **cannot be `user`** — that kind is minted in-process
+  only. Inside a pane, `shepherd <verb>` does this for you.
+- **`@shepherd/ui` is the design system; do not hand-roll a control.** Roles →
+  derived metrics → primitives (`packages/ui/src`), and a component paints in
+  ROLE tokens (`--sh-accent`), never a hue. Rule 7's working indicator is the
+  braille spinner (`useBrailleFrame`), and pulses/shimmer are banned — a row that
+  is busy sets `TreeItem.busy`.
+- **Answers from a command are `unknown`, and a cast is not a check.** They have
+  crossed an IPC port and come from an extension this code has never seen. `ok`
+  says the call succeeded, not that the value has a shape. Read defensively.
+
+**Three rules that will bite you immediately in `v2/`:**
 - **`env -u NODE_OPTIONS` every command.** An ambient `NODE_OPTIONS` makes
   Electron exit **9** before running a line of our code, and the symptom is every
   check failing at once with no app output to explain why.
@@ -63,6 +119,12 @@ fight it.
   import something because a line there says so. Widening it deliberately, with
   the reason in the rule's own comment, is fine; widening it quietly is the drift
   the file exists to prevent.
+- **An extension never names a vendor.** `tasks` asks `agents.resumeTarget`, not
+  `claudeCode.resumeTarget`, and stores what comes back **unread** (D11). The
+  moment a consumer interprets that string it has learned which agent it hired,
+  and the second kind will not fit. The same rule is why extension UI crosses the
+  port as a *name* (ADR 0033) and why a row's verbs are declared by the extension
+  rather than known by the shell (ADR 0031).
 
 The rest of this file is v1. The two share a repo, a decision log and two months
 of recorded gotchas (which are v2's test plan) — and nothing else. `v2/` touches
