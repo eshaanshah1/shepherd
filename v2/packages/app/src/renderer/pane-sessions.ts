@@ -319,6 +319,23 @@ export class PaneSessionRegistry implements PaneTerminals {
         }
         entry.sessionId = created.value.sessionId;
         this.#bySession.set(entry.sessionId, entry);
+
+        /**
+         * The pane's one-shot command, typed into the pty it just got.
+         *
+         * Inside the create branch, which is what makes it one-shot: `#sync`
+         * runs again on every attach, and a command re-typed on a remount would
+         * start a second agent in a pane that already has one.
+         *
+         * `write`, not `paste`: this is a single line by contract
+         * (`layout.split`'s schema says so), and the trailing newline IS the
+         * Enter that runs it.
+         */
+        const command = entry.pane.initialCommand;
+        if (command !== null && command !== '') {
+          const typed = await this.#session.write(entry.sessionId, `${command}\n`);
+          if (!typed.ok) this.#onError(typed.error, `initialCommand ${entry.paneId}`);
+        }
       }
 
       const id = entry.sessionId;

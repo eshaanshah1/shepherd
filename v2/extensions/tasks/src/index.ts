@@ -1,9 +1,11 @@
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { s, toDisposable, type ExtensionContext, type Shepherd } from '@shepherd/sdk';
 import { REPO_SUGGESTIONS_POINT, TASK_COMMANDS, TASK_VIEWS } from './manifest.ts';
 import { TaskStore, type RepoArchive, type RepoRef, type TaskRecord, type TaskSession } from './store.ts';
 import { slugify, uniqueSlug } from './model/slug.ts';
 import { displayState } from './model/lifecycle.ts';
 import { synthTaskRoot } from './model/root-synth.ts';
+import { planLaunch } from './model/launch.ts';
 import { archiveWorktree, materializeTaskRoot, provisionRepo, readContribution, restoreWorktree } from './provision.ts';
 
 /**
@@ -34,6 +36,25 @@ export interface TasksAPI {
 }
 
 const repoArg = s.object({ path: s.string(), name: s.string() });
+
+/**
+ * How long a pane is given to report its session, and how often it is asked.
+ *
+ * Five seconds of 500ms polls. A pane that has not produced a session by then
+ * has a reason — no window, a renderer that never mounted it — and asking
+ * forever would keep a timer alive for the life of the app to learn nothing.
+ */
+const CORRELATE_ATTEMPTS = 10;
+const CORRELATE_INTERVAL_MS = 500;
+
+/**
+ * What the orchestrator is told. Deliberately thin: the generated `CLAUDE.md`
+ * at its cwd already carries the brief and the repo map (ADR 0029), so
+ * restating them here would be the same text twice, drifting.
+ */
+function orchestratorPrompt(task: { title: string; brief: string }): string {
+  return task.brief.trim() === '' ? `Start on the task "${task.title}".` : task.brief;
+}
 
 export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
   const { commands, points, views } = api.proposed;
@@ -99,6 +120,108 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
 
   const nextId = (): string => `task-${ctx.clock.now()}-${store.list().length}`;
 
+  /**
+   * Start an agent, in a directory, in a pane — the whole of what "spawn"
+   * means today.
+   *
+   * Three seams, none of them new: `layout.split` opens the pane (with the cwd
+   * and the one line to type), the renderer creates the session when it mounts,
+   * and the kernel injects the correlation env into it (ADR 0025) so the
+   * agent's hooks land like any other pane's.
+   *
+   * **The pane is created before the session exists**, so the record is written
+   * optimistically with a placeholder id and the real one is filled in behind —
+   * the same shape provisioning already has, for the same reason: the caller
+   * gets an answer now and the slow half reports itself.
+   *
+   * A session with **no pane anywhere** is the sketch's other case (§4: a task
+   * created on a phone, run on the Mac, rendered only there). It is not this:
+   * ADR 0022 makes `layout.close` the one thing that ends a session, so a
+   * session with no pane has no owner and no terminator. That is the remote
+   * milestone's architecture, deliberately not widened here.
+   */
+  async function startSession(
+    task: TaskRecord,
+    input: { readonly repo?: string; readonly prompt: string; readonly role: TaskSession['role'] },
+  ): Promise<TaskSession> {
+    const cwd = input.repo === undefined ? rootOf(task) : `${rootOf(task)}/${input.repo}`;
+
+    // Under the extension's data dir but OUTSIDE any task root: the root is an
+    // agent's cwd, and a prompt file sitting in it is junk in the workspace the
+    // agent is about to describe.
+    const promptDir = `${ctx.dataDir}/.prompts`;
+    mkdirSync(promptDir, { recursive: true });
+    const plan = planLaunch({
+      promptFile: `${promptDir}/${task.slug}-${ctx.clock.now()}.txt`,
+      prompt: input.prompt,
+    });
+    // Before the split: the renderer types the command as soon as the pane's
+    // session exists, and a `cat` that loses the race reads an empty prompt.
+    writeFileSync(plan.promptFile, input.prompt, 'utf8');
+
+    const opened = await commands.invoke<string>('layout.split', {
+      axis: 'row',
+      cwd,
+      initialCommand: plan.command,
+    });
+    if (!opened.ok) {
+      rmSync(plan.promptFile, { force: true });
+      throw new Error(`could not open a pane for the agent: ${opened.error.code}: ${opened.error.message}`);
+    }
+
+    const session: TaskSession = {
+      id: `pending-${ctx.clock.now()}`,
+      ...(input.repo === undefined ? {} : { repo: input.repo }),
+      role: input.role,
+      pane: opened.value,
+    };
+    ctx.log.info(`task ${task.id}: opened pane ${opened.value} in ${cwd} for a ${input.role}`);
+    void correlate(task.id, session).catch((error: unknown) => {
+      ctx.log.error(`task ${task.id}: correlating ${session.pane ?? '?'} threw — ${String(error)}`);
+    });
+    return session;
+  }
+
+  /**
+   * Learn the session id of a pane that was just opened.
+   *
+   * A poll, because there is no event to wait on: the renderer creates the
+   * session, and what the host publishes is a layout snapshot rather than "this
+   * pane got a pty". Bounded, and a `setTimeout` chain rather than an interval —
+   * `Clock` has no `setInterval`, and reaching for one is what took a
+   * contribution down in M3b (ADR 0031).
+   *
+   * A session that never appears leaves the record with its placeholder id and
+   * a WARNING (D15): the pane is real either way, and a task quietly holding a
+   * session id that addresses nothing is worse than one that says it does not
+   * know.
+   */
+  async function correlate(taskId: string, session: TaskSession): Promise<void> {
+    for (let attempt = 0; attempt < CORRELATE_ATTEMPTS; attempt += 1) {
+      await new Promise<void>((resolve) => ctx.clock.setTimeout(() => resolve(), CORRELATE_INTERVAL_MS));
+      const listed = await commands.invoke<{ id: string; paneId?: string }[]>('sessions.list');
+      if (!listed.ok) continue;
+      const found = listed.value.find((candidate) => candidate.paneId === session.pane);
+      if (found === undefined) continue;
+
+      // Re-read: provisioning and other spawns may have written since.
+      const current = store.get(taskId);
+      if (current === undefined) return;
+      store.put({
+        ...current,
+        sessions: current.sessions.map((existing) =>
+          existing.pane === session.pane ? { ...existing, id: found.id } : existing,
+        ),
+      });
+      changed();
+      ctx.log.info(`task ${taskId}: pane ${session.pane ?? '?'} is session ${found.id}`);
+      return;
+    }
+    ctx.log.warn(
+      `task ${taskId}: pane ${session.pane ?? '?'} never reported a session — the record keeps its placeholder id`,
+    );
+  }
+
   /** Where a task's worktrees live. `ctx.dataDir` is the host's answer to D1b. */
   const rootOf = (task: TaskRecord): string => `${ctx.dataDir}/${task.slug}`;
 
@@ -154,6 +277,34 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     for (const notice of plan.notices) ctx.log.warn(`task ${task.id}: ${notice}`);
     for (const failure of out.failed) ctx.log.warn(`task ${task.id}: ${failure}`);
     ctx.log.info(`task ${task.id}: ${landed.length}/${task.repos.length} repo(s), ${out.linked} link(s) at ${root}`);
+
+    /**
+     * The orchestrator starts itself (§7b: "composer auto-starts the
+     * orchestrator"), and starts **after** provisioning — its whole context is
+     * the synthesized root, and an agent that opened before the `CLAUDE.md`
+     * existed would read a directory that does not describe its task yet.
+     *
+     * Guarded on the task having no sessions, which is also what keeps
+     * `tasks.restore` — which re-provisions — from opening a second one beside
+     * the first. Restoring a task's *agents* is a resume, a separate verb, and
+     * spawning a fresh orchestrator in its place would silently drop the
+     * transcript the archive was taken to preserve.
+     */
+    const now = store.get(task.id);
+    if (now !== undefined && now.sessions.length === 0) {
+      try {
+        const session = await startSession(now, { prompt: orchestratorPrompt(now), role: 'orchestrator' });
+        const latest = store.get(task.id) ?? now;
+        store.put({ ...latest, sessions: [...latest.sessions, session], lifecycle: 'running' });
+        changed();
+      } catch (error: unknown) {
+        // A task with no agent is degraded, not broken — the worktrees and the
+        // root are real and `tasks.spawn` still works. Reported for the same
+        // reason a failed repo is: silence here reads as "there was no agent to
+        // start".
+        ctx.log.warn(`task ${task.id}: no orchestrator started — ${String(error)}`);
+      }
+    }
   }
 
   ctx.subscriptions.push(
@@ -240,7 +391,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
        * An agent omitting `task` means "mine". An agent NAMING another task is
        * refused: that is the whole point of the scope.
        */
-      handler: (args, caller) => {
+      handler: async (args, caller) => {
         const owning = caller.kind === 'agent' ? taskOfSession(store, caller.sessionId) : undefined;
         if (caller.kind === 'agent' && owning === undefined) {
           throw new Error('this session does not belong to a task, so it cannot spawn into one');
@@ -253,15 +404,22 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         const task = store.get(id);
         if (task === undefined) throw new Error(`no task ${id}`);
 
-        // P3 records the intent; P4 gives it a real session in a real worktree.
-        const session: TaskSession = {
-          id: `pending-${ctx.clock.now()}`,
+        // A named repo must be one of the task's, or the cwd would be a
+        // directory that does not exist and the agent would start in a shell
+        // reporting a path nobody asked for.
+        if (args.repo !== undefined && !task.repos.some((repo) => repo.name === args.repo)) {
+          throw new Error(`task ${task.id} has no repo "${args.repo}"`);
+        }
+
+        const session = await startSession(task, {
           ...(args.repo === undefined ? {} : { repo: args.repo }),
+          prompt: args.prompt ?? '',
           role: 'workstream',
-        };
-        store.put({ ...task, sessions: [...task.sessions, session], lifecycle: 'running' });
+        });
+        // Re-read: `startSession` awaits, and provisioning may have written.
+        const current = store.get(id) ?? task;
+        store.put({ ...current, sessions: [...current.sessions, session], lifecycle: 'running' });
         changed();
-        ctx.log.info(`task ${id}: spawned ${session.id}${args.repo === undefined ? '' : ` in ${args.repo}`}`);
         return session;
       },
     }),

@@ -32,6 +32,26 @@ export function defaultSessionSpec(pane: Pane): SessionCreateRequest {
 export const SMOKE_NEEDLE = 'hello-from-pty';
 
 export function smokeSessionSpec(pane: Pane): SessionCreateRequest {
+  /**
+   * A pane an EXTENSION opened gets a real shell, in its own directory.
+   *
+   * `exec cat` is right for the pane the terminal smoke types into — it echoes
+   * a keystroke and nothing else, which is exactly what that smoke asserts. It
+   * is wrong for a pane carrying an `initialCommand`, because `cat` does not
+   * run commands: the line would be echoed, the agent would never start, and
+   * the smoke would be asserting against its own fixture rather than the
+   * product. Measured — `tasks.spawn`'s first live run put the orchestrator's
+   * session in `/tmp` with its prompt file still on disk.
+   */
+  if (pane.cwd !== null || pane.initialCommand !== null) {
+    return {
+      paneId: pane.id,
+      cwd: pane.cwd ?? '/tmp',
+      command: '/bin/sh',
+      args: [],
+      env: { PATH: '/usr/bin:/bin', TERM: 'xterm-256color' },
+    };
+  }
   return {
     paneId: pane.id,
     cwd: '/tmp',

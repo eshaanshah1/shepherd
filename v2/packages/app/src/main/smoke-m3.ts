@@ -1,11 +1,27 @@
 import { app, type BrowserWindow } from 'electron';
-import { existsSync, readFileSync, rmSync, writeFileSync, appendFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync, appendFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { join } from 'node:path';
 import { runGit } from '@shepherd/platform-darwin';
 import { flagValue } from './bootstrap.ts';
 import { check, die, say, waiter } from './smoke-support.ts';
 import type { M1SmokeOptions } from './smoke-m1.ts';
+
+/** A task's session, as `tasks.list` reports it. */
+interface TaskSessionDTO {
+  readonly id: string;
+  readonly role: string;
+  readonly pane?: string;
+}
+
+/**
+ * The extension's data dir, from a task root. `<dataDir>/<slug>` is the root, so
+ * its parent is where `.prompts` lives — derived rather than re-resolved,
+ * because this smoke must not own a second opinion about that path.
+ */
+function supportTasksDir(taskRoot: string): string {
+  return join(taskRoot, '..');
+}
 
 /**
  * M3: a task is real work on disk, and it survives being shelved.
@@ -54,7 +70,12 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
   const listed = (await until(
     'the worktree to land',
     async () => ((await invoke('tasks.list')) as { id: string; root: string }[]).find((t) => t.id === created.id),
-    (task) => task !== undefined && existsSync(join(task.root, 'api', '.git')),
+    // BOTH, because they land in that order: the worktree is `git worktree add`
+    // and the root is synthesized from what landed, a beat later. Waiting on the
+    // first and asserting the second is a race that passes on the timing of the
+    // day — it failed once here for an unrelated reason and blamed the wrong
+    // thing, which is what a racy gate always does.
+    (task) => task !== undefined && existsSync(join(task.root, 'api', '.git')) && existsSync(join(task.root, 'CLAUDE.md')),
   )) as { root: string };
   const worktree = join(listed.root, 'api');
   check(existsSync(join(listed.root, 'CLAUDE.md')), 'the generated CLAUDE.md exists');
@@ -63,6 +84,48 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
     'the CLAUDE.md carries the repo map — the only one loaded at session start',
   );
   say('ok — the worktree and the task root are on disk');
+
+  // --- 2b. the orchestrator started itself, in a real pane, in the task root.
+  //
+  // §7b: "composer auto-starts the orchestrator". What is asserted is the
+  // MECHANISM, not `claude` — this box has no such binary, and a smoke that
+  // needed one would be untestable in CI. So: a session exists whose cwd is the
+  // task root, the task's record points at it, and the prompt file is GONE,
+  // which is only true if the typed line actually ran (`rm -f` precedes the
+  // agent, deliberately, so this holds whether or not the agent exists).
+  const orchestrated = (await until(
+    'the orchestrator session to be recorded',
+    async () => ((await invoke('tasks.list')) as { id: string; sessions: TaskSessionDTO[] }[]).find((t) => t.id === created.id),
+    (task) => task !== undefined && task.sessions.some((session) => session.role === 'orchestrator'),
+  )) as { sessions: TaskSessionDTO[] };
+  const orchestrator = orchestrated.sessions.find((session) => session.role === 'orchestrator') as TaskSessionDTO;
+
+  const live = (await until(
+    'the pane to report its session',
+    async () => (await invoke('sessions.list')) as { id: string; cwd: string; paneId?: string }[],
+    (sessions) => sessions.some((session) => session.paneId === orchestrator.pane),
+  )) as { id: string; cwd: string; paneId?: string }[];
+  const paneSession = live.find((session) => session.paneId === orchestrator.pane) as { id: string; cwd: string };
+  check(paneSession.cwd === listed.root, `the agent runs AT THE TASK ROOT: ${paneSession.cwd}`);
+
+  // The placeholder is replaced by the real id, or `tasks.spawn`'s scoping —
+  // which resolves an agent's task from its session id — addresses nothing.
+  const correlated = (await until(
+    'the record to learn the session id',
+    async () => ((await invoke('tasks.list')) as { id: string; sessions: TaskSessionDTO[] }[]).find((t) => t.id === created.id),
+    (task) => task?.sessions.some((session) => session.id === paneSession.id) === true,
+  )) as { sessions: TaskSessionDTO[] };
+  check(
+    correlated.sessions.some((session) => session.id === paneSession.id),
+    `the task points at the live session: ${JSON.stringify(correlated.sessions)}`,
+  );
+
+  const prompts = join(supportTasksDir(listed.root), '.prompts');
+  check(
+    !existsSync(prompts) || readdirSync(prompts).length === 0,
+    `the prompt file was consumed by the line that was typed: ${existsSync(prompts) ? readdirSync(prompts).join(', ') : 'no dir'}`,
+  );
+  say('ok — an agent is running in the task, and its prompt reached it');
 
   // --- 3. the silence: none of that alerted anybody.
   check(options.alerts().length === 0, `creating a task raised ${options.alerts().length} alert(s)`);

@@ -75,6 +75,33 @@ describe('PaneSessionRegistry lifetime', () => {
     expect(h.registry.inspect(h.pane.id)?.mounted).toBe(true);
   });
 
+  it("types a pane's initialCommand once, and never again on a remount", async () => {
+    // The seam `tasks.spawn` runs an agent through. Once is the whole point: a
+    // remount re-runs `#sync`, and a command typed a second time starts a
+    // SECOND agent in a pane that already has one — v1's remount lesson with a
+    // process attached to it.
+    const h = harness();
+    const pane = makePane({ userTitle: 'agent', initialCommand: 'echo hi' });
+
+    h.registry.attach(pane, h.host());
+    await h.registry.settled();
+    const typed = h.session.calls.filter((call) => call.name === 'write');
+    expect(typed).toHaveLength(1);
+    expect(decode(typed[0]?.args[1] as string)).toBe('echo hi\n');
+
+    h.registry.detach(pane.id);
+    h.registry.attach(pane, h.host());
+    await h.registry.settled();
+    expect(h.session.calls.filter((call) => call.name === 'write')).toHaveLength(1);
+  });
+
+  it('types nothing for an ordinary pane — the control for the test above', async () => {
+    const h = harness();
+    h.registry.attach(h.pane, h.host());
+    await h.registry.settled();
+    expect(h.session.names).not.toContain('write');
+  });
+
   it('unmounting only unparents: no kill, and not even a torn-down terminal', async () => {
     const h = harness();
     const host = h.host();
