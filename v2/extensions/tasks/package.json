@@ -27,8 +27,10 @@
     "typecheck": "tsc -b",
     "test": "vitest run"
   },
+  "//dependencies": "`@shepherd/ui` is the primitive set, and it is a dependency of the UI half only — boundaries.js permits it from `extensions/*/ui/**` and nowhere else. It is what makes a contributed view look native and re-theme for free, which is the substrate claim made real rather than marketed.",
   "dependencies": {
-    "@shepherd/sdk": "workspace:*"
+    "@shepherd/sdk": "workspace:*",
+    "@shepherd/ui": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "catalog:",

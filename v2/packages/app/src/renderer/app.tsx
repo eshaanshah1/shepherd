@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { IconPlus } from '@tabler/icons-react';
 import { paneId, type PaneID } from '@shepherd/sdk';
+import { IconButton } from '@shepherd/ui';
 import {
   LAYOUT_COMMANDS,
   findPane,
@@ -318,10 +320,16 @@ export function App({
               <span className="sh-side-title">Tasks</span>
               <span className="sh-plate-spacer" />
               {raisable.map((view) => (
-                <button
-                  type="button"
-                  className="sh-icon-button"
+                <IconButton
                   key={view.type}
+                  icon={IconPlus}
+                  size="sm"
+                  // Required by the type, which is the whole point of the
+                  // primitive: this control shipped as a bare `+` with no
+                  // accessible name and — the spec's opening anecdote — no CSS
+                  // at all.
+                  label={view.title ?? view.type}
+                  className="sh-side-add"
                   data-testid="raise-view"
                   data-view-type={view.type}
                   // The keystroke is in the tooltip, not painted next to the
@@ -329,9 +337,7 @@ export function App({
                   // need to also teach its shortcut.
                   title={`${view.title ?? view.type} (${accelLabel(view.key ?? '')})`}
                   onClick={() => window.dispatchEvent(new CustomEvent('sh:raise-view', { detail: view.type }))}
-                >
-                  +
-                </button>
+                />
               ))}
             </>
           }

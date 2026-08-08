@@ -1,9 +1,20 @@
 /*
- * Every colour in this file is a `--sh-*` variable set by `theme.ts` from
- * @shepherd/design-tokens. There are no hex literals here, and there must never
- * be: a colour typed into a stylesheet is a colour the terminal grid does not
- * know about, which is precisely the drift v1 had between Theme.swift and
- * writeBaseTheme().
+ * What is LEFT after the primitives.
+ *
+ * `@shepherd/ui/styles.css` is loaded before this file (see `main.tsx`) and owns
+ * every control, row, heading, field, keycap and modal on screen. This sheet is
+ * now the shell's own three jobs and nothing else: the window's frame (titlebar,
+ * body, stage, dock), the pane and its terminal, and the SLOTS around a
+ * contributed view. A rule here that could be a primitive's is a rule that has
+ * started to drift from one — that is the whole reason the file shrank.
+ *
+ * Colours are tier-2 ROLES (`--sh-surface`, `--sh-text`, `--sh-line`) wherever a
+ * rule was touched by the port. The tier-1 palette names (`--sh-ink`,
+ * `--sh-wool`) still appear in the sections nobody has been through yet; both are
+ * emitted, so the migration is call site by call site rather than one commit.
+ * There are no hex literals here and there must never be: a colour typed into a
+ * stylesheet is a colour the terminal grid does not know about, which is
+ * precisely the drift v1 had between Theme.swift and writeBaseTheme().
  *
  * The same rule applies to the fonts, of which there are TWO and the split is a
  * job description, ported from v1 (`Theme.swift`: `Font.ui` = DM Sans for the
@@ -186,27 +197,9 @@ body.sh-dragging {
 /* The plate's right-hand cells sit in the mock's 14px spec rhythm. */
 .sh-plate .sh-plate-cell + .sh-plate-cell { margin-left: 4px; }
 
-/* A control looks like a key: flat, bordered, honest. No pills, no shadows, and
-   (per the mock's `.key`) no fill either — the hairline is the whole control. */
-.sh-key {
-  font: inherit;
-  font-size: 10px;
-  letter-spacing: 0.06em;
-  line-height: 15px;
-  color: var(--sh-wool-dim);
-  background: none;
-  border: var(--sh-hairline) solid var(--sh-ink-line);
-  border-radius: 3px;
-  padding: 1px 6px;
-  white-space: nowrap;
-  cursor: default;
-  -webkit-app-region: no-drag;
-  transition: color var(--sh-motion) linear, background var(--sh-motion) linear;
-}
-
-button.sh-key { cursor: pointer; }
-button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-wool); }
-.sh-key:disabled { color: var(--sh-wool-faint); cursor: default; }
+/* `.sh-key` was here — the boxed key legend, with a pressable variant nothing
+   ever used. It is `KeyCap` now, which is display-only in its TYPE (no `onClick`
+   to pass) rather than by everyone remembering. */
 
 /* ------------------------------------------------------------------- panes */
 
@@ -271,55 +264,66 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
 
 /* ------------------------------------------------------- pane chrome surface */
 /*
- * The foreground set for chrome painted on a background we do not own.
+ * Chrome painted on a background we do not own — and the one place in this app
+ * that re-declares the GENERIC roles for a subtree (spec §2).
  *
- * `data-pane-title-surface` is `paneTitleSurface(background)` — the MEASURED
- * luminance of that pane's own grid colour, not the app's theme mode. The two
- * sets are generated in `@shepherd/design-tokens` (`contrast.ts`) and emitted as
- * `--sh-pane-title-*-on-dark` / `-on-light`; all this does is choose which pair
- * of names the head reads. Note the light set's alphas are HIGHER: dark ink on a
- * bright surface needs more weight than light ink on a dark one, which is why
- * one table cannot serve both. See the UI reference notes, takeaway 8.
+ * `data-pane-title-surface` is `paneTitleSurface(background)`: the MEASURED
+ * luminance of that pane's own grid colour, never the app's theme mode — an
+ * extension may ship a light terminal palette inside a dark app. That decision is
+ * `contrast.ts`'s and is untouched, including the two per-kind alpha tables (the
+ * light set's alphas are HIGHER on purpose; one table cannot serve both).
  *
- * Every use site keeps a token fallback, so a pane that declares no surface (a
- * placeholder, a test, a future contributed leaf) still renders the chrome it
- * rendered before this existed rather than inheriting nothing.
+ * WHAT CHANGED is only where those values land. They used to be chosen into a
+ * PARALLEL family (`--sh-pane-title-fg`, `--sh-pane-title-strong`), so every rule
+ * had to know that family's names — which means a `<Button>` or a `<StatusDot>`
+ * dropped in here would paint itself with the APP's `--sh-text` on the TERMINAL's
+ * background, the one combination nobody checked. They re-declare the generic
+ * roles instead, so anything mounted in here adopts the pane's palette knowing
+ * nothing about where it is; `fillHover` and `fillSelected` are a wash and a fill
+ * OVER `--sh-text` and follow for free. The mapping is the alphas' own job
+ * description: `strong` = the pane's identity, `fg` = the bar's voice, `faint` =
+ * the dim tail, `rule` = the seam.
  */
 .sh-pane[data-pane-title-surface='dark'] {
-  --sh-pane-title-fg: var(--sh-pane-title-fg-on-dark);
-  --sh-pane-title-strong: var(--sh-pane-title-strong-on-dark);
-  --sh-pane-title-faint: var(--sh-pane-title-faint-on-dark);
-  --sh-pane-title-rule: var(--sh-pane-title-rule-on-dark);
+  --sh-text: var(--sh-pane-title-strong-on-dark);
+  --sh-text-dim: var(--sh-pane-title-fg-on-dark);
+  --sh-text-faint: var(--sh-pane-title-faint-on-dark);
+  --sh-line: var(--sh-pane-title-rule-on-dark);
+  --sh-surface: var(--sh-pane-title-bg, var(--sh-ink-term));
 }
 
 .sh-pane[data-pane-title-surface='light'] {
-  --sh-pane-title-fg: var(--sh-pane-title-fg-on-light);
-  --sh-pane-title-strong: var(--sh-pane-title-strong-on-light);
-  --sh-pane-title-faint: var(--sh-pane-title-faint-on-light);
-  --sh-pane-title-rule: var(--sh-pane-title-rule-on-light);
+  --sh-text: var(--sh-pane-title-strong-on-light);
+  --sh-text-dim: var(--sh-pane-title-fg-on-light);
+  --sh-text-faint: var(--sh-pane-title-faint-on-light);
+  --sh-line: var(--sh-pane-title-rule-on-light);
+  --sh-surface: var(--sh-pane-title-bg, var(--sh-ink-term));
 }
 
 /*
  * The mock's `.pane-title`: one 28px line of chrome above the grid — painted on
  * the GRID's background, so pane and terminal read as one surface and the strip
  * is not a lid on a window into another program. The hairline under it is then
- * the only seam, which is why it is drawn from the surface's own separator alpha
- * rather than from `--sh-ink-line` (a token tuned against `--sh-ink`, which this
- * bar no longer sits on).
+ * the only seam.
+ *
+ * Every colour below is now a plain role. The `var(…, fallback)` pairs are gone
+ * with the parallel family: a pane that declares no surface (the placeholder
+ * card, a test, a future contributed leaf) simply inherits the app's roles, which
+ * is what the fallbacks were spelling out by hand.
  */
 .sh-pane-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sh-space-md);
   flex: 0 0 auto;
   height: var(--sh-row-height);
-  padding: 0 14px;
-  background: var(--sh-pane-title-bg, var(--sh-ink-term));
+  padding: 0 var(--sh-space-xl);
+  background: var(--sh-surface);
   /* Inset, not `border-bottom`: 28px of content box, so the name and the badge
      centre on the same line the grid's first row is measured from. */
-  box-shadow: inset 0 calc(-1 * var(--sh-hairline)) 0 var(--sh-pane-title-rule, var(--sh-ink-line));
-  font-size: 11px;
-  color: var(--sh-pane-title-fg, var(--sh-wool-dim));
+  box-shadow: inset 0 calc(-1 * var(--sh-hairline)) 0 var(--sh-line);
+  font-size: var(--sh-font-size-small);
+  color: var(--sh-text-dim);
   white-space: nowrap;
   overflow: hidden;
 }
@@ -327,7 +331,7 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
 /* The pane's identity — Orca's "input fg" step, the strongest thing in the bar. */
 .sh-pane-name {
   font-weight: 500;
-  color: var(--sh-pane-title-strong, var(--sh-wool-dim));
+  color: var(--sh-text);
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -336,7 +340,7 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
    applied to the one part of the bar the app did not write. */
 .sh-pane-branch {
   font-family: var(--sh-font-mono);
-  color: var(--sh-pane-title-faint, var(--sh-wool-faint));
+  color: var(--sh-text-faint);
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
@@ -441,6 +445,15 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
  * pill, no fill, no dot — the dot is the sidebar's micro fallback, and a dot
  * *plus* coloured text *plus* a coloured border is one fact encoded three times.
  *
+ * **Deliberately NOT a `StatusDot`** — the one place in this port where the
+ * primitive was the wrong answer. A dot's word is screen-reader-only, and its own
+ * docstring calls it the *micro fallback* for "any row too small for a
+ * silhouette". The pane head is not that: it is the surface you are watching
+ * while the agent works, and the chip says the state AND its reason ("blocked ·
+ * approve Bash") in visible text. A dot here would delete the only place in the
+ * app that tells you *why* an agent stopped, for consistency with a list. The
+ * sidebar row is where the dot belongs, and that is where it went.
+ *
  * The tint is selected off `data-agent-state`, which the component already
  * publishes for the smokes. Note `needsCheck` is camelCase and attribute values
  * are case-sensitive: spelled `needs-check` this rule would silently style
@@ -456,14 +469,18 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
   margin-left: auto;
   flex: 0 1 auto;
   min-width: 0;
-  padding: 0 5px;
-  border: var(--sh-hairline) solid var(--sh-ink-line);
-  border-radius: 3px;
-  font-size: 9px;
+  padding: 0 var(--sh-space-sm);
+  /* `line` here is the PANE's re-declared seam alpha, not the app's — the chip
+     sits on the terminal's background and so does its edge. That it needed no
+     rule of its own to follow the pane is the whole argument for §2's scoped
+     re-declaration. */
+  border: var(--sh-hairline) solid var(--sh-line);
+  border-radius: var(--sh-radius-sm);
+  font-size: var(--sh-font-size-nano);
   line-height: 15px;
-  letter-spacing: 0.12em;
+  letter-spacing: var(--sh-micro-tracking);
   text-transform: uppercase;
-  color: var(--sh-wool-dim);
+  color: var(--sh-text-dim);
   overflow: hidden;
   transition: none; /* rule 7: no easing on a state indicator. */
 }
@@ -475,34 +492,43 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
  */
 .sh-agent-badge[data-agent-state=''] { display: none; }
 
+/*
+ * Four accents, by ROLE. An accent is saturated and reads on both a dark and a
+ * light terminal, so these are deliberately NOT re-declared by the surface scope
+ * above — only the neutrals are. `idle` is the exception and takes the pane's own
+ * faint ink, because a neutral is exactly the value that would vanish.
+ */
+
 .sh-agent-badge[data-agent-state='working'] {
-  color: var(--sh-cobalt);
-  border-color: color-mix(in srgb, var(--sh-cobalt) 45%, transparent);
+  color: var(--sh-accent);
+  border-color: color-mix(in srgb, var(--sh-accent) 45%, transparent);
 }
 
 .sh-agent-badge[data-agent-state='blocked'] {
-  color: var(--sh-hay);
-  border-color: color-mix(in srgb, var(--sh-hay) 45%, transparent);
+  color: var(--sh-attention);
+  border-color: color-mix(in srgb, var(--sh-attention) 45%, transparent);
 }
 
 .sh-agent-badge[data-agent-state='needsCheck'] {
-  color: var(--sh-pasture);
-  border-color: color-mix(in srgb, var(--sh-pasture) 45%, transparent);
+  color: var(--sh-success);
+  border-color: color-mix(in srgb, var(--sh-success) 45%, transparent);
 }
 
 .sh-agent-badge[data-agent-state='error'] {
-  color: var(--sh-ember);
-  border-color: color-mix(in srgb, var(--sh-ember) 45%, transparent);
+  color: var(--sh-danger);
+  border-color: color-mix(in srgb, var(--sh-danger) 45%, transparent);
 }
 
 .sh-agent-badge[data-agent-state='idle'] {
-  color: var(--sh-wool-faint);
-  border-color: var(--sh-ink-line);
+  color: var(--sh-text-faint);
+  border-color: var(--sh-line);
 }
 
-/* Kept for the fallback the language names (a collapsed pip, a status cell); in
-   the chip the border already carries the colour. */
-.sh-pane-head .sh-agent-dot { display: none; }
+/* `.sh-pane-head .sh-agent-dot { display: none }` was here, and so was the dot it
+   hid — an element painted by an inline `var(--sh-cobalt)` at a call site, in the
+   one surface that never drew it. The micro fallback rule 8 names is `StatusDot`,
+   which the sidebar row now uses; a hidden second implementation of it was not a
+   fallback, it was a fact encoded a third time. */
 
 /* The state word never truncates; only the reason beside it gives way. */
 .sh-agent-label { color: inherit; flex: 0 0 auto; }
@@ -520,13 +546,18 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
 
 /* ---------------------------------------------------------------- sidebar */
 /*
- * v1's discipline, carried: every row is ONE fixed height whatever its state,
- * and a row that needs you is signalled by its dot's COLOUR alone. v1 tried
- * growing an alerted row into a two-line card and reverted it for being noisy —
- * so nothing here keys a size or a layout off state.
+ * The dock is now a CONTAINER and nothing more.
  *
- * Geometry is the mock's `.sidebar` / `.group` / `.task` verbatim: 268px wide,
- * 28px rows, 14px of left inset, the group's trailing hairline rule.
+ * Everything inside a row — the fixed 28px height, the 12px leading slot, the
+ * hover wash, the inverse-video selection, the state dot's five colours, the
+ * uppercase heading with its drawn `·` and its rule to the edge — belongs to
+ * `Row`, `StatusDot` and `SectionLabel`, and the rules for all of it are gone
+ * from this file. v1's discipline is not weaker for that, it is enforced: `Row`
+ * carries a NAMED TEST that no second rule may declare a height, which is
+ * stronger than the comment that used to sit here asking nobody to add one.
+ *
+ * What is left is the panel: its width, its seam, its scroll box and its header
+ * band.
  */
 
 .sh-body { display: flex; flex: 1 1 auto; min-height: 0; }
@@ -556,110 +587,31 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
   border-right: var(--sh-hairline) solid var(--sh-ink-line);
 }
 
-.sh-side-scroll { flex: 1 1 auto; overflow-y: auto; padding: 8px 0 10px; }
+.sh-side-scroll { flex: 1 1 auto; overflow-y: auto; padding: var(--sh-space-md) 0 10px; }
 .sh-side-view + .sh-side-view {
-  box-shadow: inset 0 var(--sh-hairline) 0 var(--sh-ink-line);
+  box-shadow: inset 0 var(--sh-hairline) 0 var(--sh-line);
 }
 .sh-rows { list-style: none; margin: 0; padding: 0; }
 
-/* A heading, not a row: uppercase micro-label, its count, then a rule that runs
-   to the edge (the mock's `.group::after`). */
-.sh-group {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: var(--sh-row-height);
-  padding: 0 14px;
-  margin: 0;
-  font-weight: 400;
-}
-
-/* The one border that is NOT a band's edge, so the inset-shadow rule above does
-   not apply: this element has no height and no content — the border IS the rule,
-   and there is no content box for it to shrink. */
-.sh-group::after {
-  content: '';
-  flex: 1 1 auto;
-  border-top: var(--sh-hairline) solid var(--sh-ink-line);
-}
-
-.sh-group-label {
-  font-size: 10px;
-  letter-spacing: 0.16em;
-  color: var(--sh-wool-faint);
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.sh-group-count {
-  font-size: 10px;
-  letter-spacing: 0.16em;
-  color: var(--sh-wool-faint);
-  white-space: nowrap;
-}
-
-/* The mock reads "NEEDS YOU · 2" as one label; the contribution supplies the two
-   halves separately, so the separator is drawn rather than typed. */
-.sh-group-count::before { content: '· '; }
-
-.sh-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  height: var(--sh-row-height);
-  padding: 0 12px 0 14px;
-  background: none;
-  border: 0;
-  text-align: left;
-  font: inherit;
-  font-size: var(--sh-font-size);
-  color: var(--sh-wool);
-  white-space: nowrap;
-  cursor: default;
-}
-
-.sh-row:hover { background: var(--sh-ink-raised); }
-
-/* Rule 4: inverse video is the emphasis — a solid block with ink text, never a
-   tinted wash. One glance separates selected from hovered forever. */
-.sh-row.is-sel { background: var(--sh-wool); color: var(--sh-ink); }
-.sh-row.is-sel 
-.sh-row-label {
-  flex: 1 1 auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* An idle row steps its NAME down, not its height (the mock's `.task.dim`). */
-.sh-row[data-tint='idle'] .sh-row-label,
-.sh-row[data-tint='archived'] .sh-row-label,
-.sh-row[data-tint='draft'] .sh-row-label { color: var(--sh-wool-dim); }
-.sh-row.is-sel .sh-row-label { color: inherit; }
-
 /*
- * The state dot. Rule 8's micro fallback: the animated sheep is the eventual
- * indicator, and a dot in the state's accent is what keeps the colour-meaning
- * system readable at a squint until it exists.
+ * The ONE thing a row still says that `Row` has no vocabulary for: a task that is
+ * not moving steps its NAME down — never its height (the mock's `.task.dim`).
+ *
+ * FINDING, and the reason this stayed: `Row` has `selected` and nothing else. A
+ * `dim`/`quiet` variant would be a fourth state on a primitive whose whole
+ * discipline is that state changes paint and nothing else, and the tint it keys
+ * off is a CONTRIBUTION's word — `Row` is not allowed to know that `archived` is
+ * a thing (the boundary rule says a primitive does not know what a task is). So
+ * the shell keeps it, scoped to the dock, keyed off the `data-tint` the row
+ * already carries. It is one declaration and it paints only the label.
  */
-.sh-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  flex: 0 0 auto;
-  background: var(--sh-wool-faint);
-}
-
-.sh-dot[data-tint='working'], .sh-dot[data-tint='cobalt'], .sh-dot[data-tint='accent'] { background: var(--sh-cobalt); }
-.sh-dot[data-tint='running'] { background: var(--sh-cobalt); }
-.sh-dot[data-tint='needs-you'], .sh-dot[data-tint='blocked'], .sh-dot[data-tint='hay'], .sh-dot[data-tint='review'] { background: var(--sh-hay); }
-.sh-dot[data-tint='done'], .sh-dot[data-tint='pasture'], .sh-dot[data-tint='needs-check'] { background: var(--sh-pasture); }
-.sh-dot[data-tint='error'], .sh-dot[data-tint='ember'] { background: var(--sh-ember); }
-.sh-dot[data-tint='draft'], .sh-dot[data-tint='idle'], .sh-dot[data-tint='archived'], .sh-dot[data-tint='wool-faint'] { background: var(--sh-wool-faint); }
-
-/* The dot survives inverse video: on a wool block it would otherwise vanish. */
-.sh-row.is-sel .sh-dot[data-tint='none'] { background: var(--sh-ink); }
+.sh-side [data-tint='idle'] .sh-ui-row__label,
+.sh-side [data-tint='archived'] .sh-ui-row__label,
+.sh-side [data-tint='draft'] .sh-ui-row__label { color: var(--sh-text-dim); }
+/* Inverse video wins: on a solid block the dim step is a second faint value
+   against the wrong surface, which is the same argument `Row` makes for its own
+   metadata. */
+.sh-side .sh-ui-row--selected .sh-ui-row__label { color: inherit; }
 
 /*
  * The sidebar's own header: what this list is, and the one control that adds to
@@ -683,88 +635,46 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
 }
 
 .sh-side-title {
-  font-size: 12px;
+  font-size: var(--sh-font-size-medium);
   font-weight: 500;
   letter-spacing: 0.02em;
-  color: var(--sh-wool-dim);
+  color: var(--sh-text-dim);
 }
 
 /*
- * A quiet square that becomes a real control on hover. Borderless at rest
- * because a bordered box beside a 12px label is louder than the list it adds
- * to; the hover fill is what says it is pressable.
+ * `.sh-icon-button` is `IconButton` now — a `ghost` Button made square, which is
+ * where its hover fill, its focus ring, its disabled treatment and its coarse-
+ * pointer hit target come from. The one thing left is a fact about the WINDOW
+ * that no primitive can know: the header shares the titlebar's drag region, and a
+ * control inside a drag region is a control you cannot click.
  */
-.sh-icon-button {
-  -webkit-app-region: no-drag;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: 0;
-  border-radius: 6px;
-  background: none;
-  color: var(--sh-wool-faint);
-  /* 18px so the glyph is a glyph rather than text that happens to be a plus. */
-  font: inherit;
-  font-size: 18px;
-  line-height: 1;
-  cursor: pointer;
-  transition: color var(--sh-motion) linear, background var(--sh-motion) linear;
-}
+.sh-side-add { -webkit-app-region: no-drag; }
 
-.sh-icon-button:hover {
-  background: var(--sh-ink-raised);
-  color: var(--sh-wool);
-}
-
-.sh-side-missing { color: var(--sh-wool-faint); font-size: 11px; padding: 6px 14px; margin: 0; }
+.sh-side-missing { color: var(--sh-text-faint); font-size: var(--sh-font-size-small); padding: var(--sh-space-sm) var(--sh-space-xl); margin: 0; }
 
 /* ----------------------------------------------------------------- overlay */
 /*
- * A raised contributed component (⌘T). Still no blur and no shadow — rule 2's
- * ban on elevation theater holds — and the card still separates by a luminance
- * step (`ink-raised`) over a plain scrim.
+ * `.sh-scrim` and `.sh-modal` are gone: the raised contributed component (⌘T) is
+ * a `Modal`, which is Radix's Dialog restyled. Along with the two rules this file
+ * used to carry, that bought a focus trap, focus restored on close, `inert` on
+ * the rest of the page, scroll locking and a portal — none of which the
+ * hand-rolled scrim had, and each of which this codebase would have got wrong
+ * once and then got wrong again. The scrim also stops being a literal black
+ * (`rgb(0 0 0 / 45%)` dims toward black in light mode, which is the dead gray
+ * rule 2 bans) and becomes a mix of the `canvas` role.
  *
- * What changed, deliberately and by the user's own choice: this one surface is
- * SOFT. A 16px well with its controls sitting directly on it, modelled on T3
- * Chat's composer, because the composer is the app's one *composition* surface
- * and reading it as a settings dialog is what the boxes were doing. The plate,
- * the sidebar and the status bar keep the 3px industrial hairline look — so the
- * radius here is a scoped decision, not drift, and it should not be "restored".
+ * What is left is the SLOT: `ComponentView` wraps every contributed view in its
+ * own section with a heading, which is right in the dock and wrong here — the
+ * field inside a one-question form asks the question, and `Modal` draws no header
+ * for exactly that reason.
  */
-
-.sh-scrim {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding-top: 12vh;
-  background: rgb(0 0 0 / 45%);
-  z-index: 20;
-}
-
-.sh-modal {
-  /* Wide enough that a brief is a paragraph rather than a column of six-word
-     lines — this is where you describe a piece of work, and 460px made it
-     read as a search box. */
-  width: 620px;
-  max-width: 92vw;
-  background: var(--sh-ink-raised);
-  border: var(--sh-hairline) solid var(--sh-ink-line);
-  border-radius: 16px;
-  /* The CARD owns the padding, so everything a contribution puts inside sits
-     directly on it and never needs a box of its own to be found. Generous,
-     because with no borders inside, the space IS the structure. */
-  padding: 26px 26px 20px;
-}
-
-/* `ComponentView` draws a heading for the dock; a modal needs none — the field
-   inside it asks the question. */
-.sh-modal .sh-side-view { border: 0; }
-.sh-modal .sh-group { display: none; }
+.sh-ui-modal .sh-side-view { border: 0; }
+/*
+ * The SHELL's heading, not a contribution's. The child combinator is the whole
+ * point: a contributed view that draws its own `SectionLabel` inside its markup
+ * keeps it, and only the slot's own title is suppressed.
+ */
+.sh-ui-modal .sh-side-view > .sh-ui-section-label { display: none; }
 
 /* ------------------------------------------------- a contributed component */
 /*
@@ -782,25 +692,11 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
 
 .sh-ext-card h2 { display: none; }
 
-/* An input is an ink-deep well: recessed by luminance, not by an inset shadow. */
-.sh-ext-card input,
-.sh-ext-card textarea {
-  background: var(--sh-ink-deep);
-  color: var(--sh-wool);
-  font: inherit;
-  font-size: var(--sh-font-size);
-  line-height: var(--sh-line-height);
-  border: var(--sh-hairline) solid var(--sh-ink-line);
-  border-radius: 3px;
-  padding: 4px 7px;
-  width: 100%;
-}
-
-.sh-ext-card input:focus,
-.sh-ext-card textarea:focus { outline: 0; border-color: var(--sh-cobalt); }
-.sh-ext-card input::placeholder,
-.sh-ext-card textarea::placeholder { color: var(--sh-wool-faint); }
-.sh-ext-card textarea { min-height: 60px; resize: vertical; }
+/* The `.sh-ext-card input` / `textarea` treatment is deleted, and it had no
+   caller: `Field` and `TextArea` own an input's well, its focus edge and its
+   placeholder now, and the two shipped treatments this file carried
+   (`.sh-ext-card` and `.sh-composer`) disagreed about padding, radius, colour and
+   focus — which is the argument for one component, made by the code itself. */
 
 /* A button is a key (rule 5): flat, bordered, honest. Hover inverts it. */
 .sh-ext-card button {
@@ -835,70 +731,30 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
 
 /* ------------------------------------------------------------ the composer */
 /*
- * The ⌘T task composer: ONE well, not a form of boxes.
+ * What is left of the ⌘T composer after `Composer`, `TextArea`, `Field` and
+ * `Button` took their halves.
  *
- * It deliberately does not reuse `.sh-ext-card`. That class is the dock's
- * compact bordered card (diagnostics still wears it), and serving both looks
- * from one block would mean an override for nearly every rule in it — which is
- * how the two would drift into each other later.
+ * The well itself — the 16px radius, the 26px inset, the column gap, and the
+ * scoped re-declaration that makes a field inside it borderless without being
+ * told it is inside a composer — is `composer.css`'s. The input treatment, the
+ * placeholder, the missing resize grabber and the `create task` fill are
+ * `field.css` / `textarea.css` / `button.css`'s. Two things could not go with
+ * them, and both are findings rather than leftovers:
  *
- * Two rules hold the whole thing up. Fields are separated by SPACE, never by a
- * border or a hairline: they sit on the card, and the caret plus the raised
- * surface are the focus signal, so there are no focus rings either. And there
- * is exactly ONE loud element — CREATE TASK, cobalt-filled. Everything else
- * (chips, the repo field, the ESC key) is a luminance step on the same card.
+ *   - **The chips.** There is no `Chip` in the twelve. An offered repo and a
+ *     picked repo are the same object at two moments and must stay drawn once;
+ *     a `Button` for the offered one would gain a control treatment the picked
+ *     one (which carries a nested ×) cannot have, and the pair would drift on
+ *     the first hover state. Kept whole, here, until a `Chip` arrives with a
+ *     second consumer.
+ *   - **The brief's type step.** The derived ramp names `large` (15px) as "a
+ *     composer's brief" and `TextArea`'s two sizes stop at `body`. One
+ *     declaration, reading the metric that already exists — not a fork of the
+ *     control, which keeps its padding, colour, focus and growth from the
+ *     primitive.
  */
 
-.sh-composer {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  /* `.sh-modal` already paid the padding; a second one would double the inset. */
-  padding: 0;
-}
-
-/* The card's own label is the modal head's. */
-.sh-composer h2 { display: none; }
-
-.sh-composer input,
-.sh-composer textarea {
-  background: transparent;
-  color: var(--sh-wool);
-  font: inherit;
-  line-height: var(--sh-line-height);
-  border: 0;
-  border-radius: 0;
-  outline: 0;
-  padding: 0;
-  width: 100%;
-}
-
-.sh-composer input::placeholder,
-.sh-composer textarea::placeholder { color: var(--sh-wool-faint); }
-
-/* The title carries the weight, because it is the thing being named. Without a
-   step here the brief reads as a second title and the card has no first line —
-   the hierarchy has to come from type, since there are no rules to draw it. */
-/* `input.` on purpose: `.sh-composer input` is class+element and outranks a
-   bare class, so the plain selector silently lost and the title rendered at
-   body size — the hierarchy this rule exists to create was invisible. */
-.sh-composer input.sh-composer-title {
-  font-size: 17px;
-  color: var(--sh-wool);
-  line-height: 26px;
-}
-
-.sh-composer input.sh-composer-title::placeholder { color: var(--sh-wool-dim); }
-
-/* `resize: none` on purpose: a resize grabber draws diagonal hairlines in the
-   corner of a field that is otherwise borderless. It scrolls instead. */
-.sh-composer textarea.sh-composer-brief {
-  font-size: 15px;
-  line-height: 24px;
-  color: var(--sh-wool-dim);
-  min-height: 72px;
-  resize: none;
-}
+.sh-composer-brief { font-size: var(--sh-font-size-large); }
 
 /* A repo is one chip whether it is offered or picked — the same object at two
    moments, so it is drawn once. */
@@ -910,7 +766,7 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: var(--sh-space-sm);
 }
 
 /* Empty, it is still a flex item and would spend the row's gap on nothing. */
@@ -923,25 +779,34 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
   font-family: var(--sh-font-mono);
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sh-space-sm);
   font: inherit;
-  font-size: 11px;
+  font-size: var(--sh-font-size-small);
   letter-spacing: 0;
   text-transform: none;
-  color: var(--sh-wool-dim);
-  background: var(--sh-ink);
+  color: var(--sh-text-dim);
+  /*
+   * A WASH of `text`, not a palette step — and this is the second half of the
+   * Chip finding. The chip needs to read as a discrete block one step off the
+   * card, and inside a `Composer` there is no role that means that: `surface` is
+   * re-declared to the card itself and `surfaceSunken` to transparent, which is
+   * the container saying (correctly) that its FIELDS have no well. A wash is the
+   * same mechanism `fillHover` uses, so a contributed theme's `--sh-text` moves
+   * it, which a fixed `--sh-ink` never did.
+   */
+  background: color-mix(in srgb, var(--sh-text) 8%, transparent);
   border: 0;
-  border-radius: 6px;
-  padding: 3px 8px;
+  border-radius: var(--sh-radius-md);
+  padding: 3px var(--sh-space-md);
   white-space: nowrap;
 }
 
 .sh-composer-suggestions button,
 .sh-composer-add { cursor: pointer; }
 .sh-composer-suggestions button:hover,
-.sh-composer-add:hover { color: var(--sh-wool); }
+.sh-composer-add:hover { color: var(--sh-text); }
 
-.sh-composer-picked li { color: var(--sh-wool); }
+.sh-composer-picked li { color: var(--sh-text); }
 
 /* The × IS the remove affordance: a bordered "remove" button beside the chip
    was two controls for one job, and the wider of them said nothing. */
@@ -949,14 +814,14 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
   background: none;
   border: 0;
   padding: 0;
-  color: var(--sh-wool-faint);
+  color: var(--sh-text-faint);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--sh-font-size-medium);
   line-height: 1;
   cursor: pointer;
 }
 
-.sh-composer-picked button:hover { color: var(--sh-wool); }
+.sh-composer-picked button:hover { color: var(--sh-text); }
 
 /* One line: the repo affordance, then the single accent, hard right. */
 .sh-composer-controls {
@@ -969,16 +834,24 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--sh-space-sm);
   flex: 1 1 auto;
   min-width: 0;
 }
 
-.sh-composer-repos input {
+/*
+ * The repo path field is a `Field`, and what is set here is its place in this
+ * ROW — not its appearance, which is the primitive's.
+ *
+ * FINDING: it has to name `.sh-ui-field` (the wrapper) rather than the control,
+ * because `Field` puts `className` and every spread prop on the INPUT — correct,
+ * since that is what a caller means by "this field" — while the flex item is the
+ * wrapper that stacks the validity message under it. So a `Field` cannot be told
+ * how to size itself inside a flex row through its own props.
+ */
+.sh-composer-repos .sh-ui-field {
   flex: 1 1 90px;
   min-width: 70px;
-  font-size: 11px;
-  color: var(--sh-wool-dim);
 }
 
 /* Kept in the DOM always (it is a declared affordance and the smokes select on
@@ -987,60 +860,49 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
 .sh-composer-add { flex: 0 0 auto; }
 .sh-composer-add.is-idle { display: none; }
 
-/* The one loud element in the card. */
-.sh-composer-create {
-  flex: 0 0 auto;
-  background: var(--sh-cobalt);
-  color: var(--sh-ink);
-  font: inherit;
-  font-size: 12px;
-  letter-spacing: 0;
-  text-transform: none;
-  border: 0;
-  border-radius: 8px;
-  padding: 6px 14px;
-  cursor: pointer;
-}
-
-.sh-composer-create:disabled { opacity: 0.4; cursor: default; }
+/* `.sh-composer-create` was the third of the shipped shell's three button
+   treatments (with `.sh-key` and `.sh-ext-card button`), and the three disagreed
+   about height, radius, case and what a hover does. It is
+   `<Button variant="primary">` now — one component, four variants, one answer. */
 
 /* Only ever holds a failure; empty it must not spend a row's gap. */
 .sh-composer .sh-ext-answer:empty { display: none; }
 
 /* -------------------------------------------------------------- scrollbars */
 /*
- * A thumb of ink-line and nothing else: no track, no arrows, no rounded chrome.
+ * A thumb of `line` and nothing else: no track, no arrows, no rounded chrome.
  * xterm draws its own viewport scrollbar, so it needs the same treatment or the
  * grid gets a stock macOS bar sitting on a warm-ink surface.
+ *
+ * The composer's and the card's textareas are gone from this list: `TextArea`
+ * carries the identical treatment, which is why the list is now the two surfaces
+ * this file actually owns.
+ *
+ * These two keep the tier-1 `--sh-ink-line` deliberately, and it is the one place
+ * in this port where a role would have been WRONG. Inside a pane, `--sh-line` is
+ * the surface scope's re-declared SEAM alpha (6% of the pane's own ink), which is
+ * correct for a hairline under a bar and invisible as a scrollbar thumb — a
+ * thumb has to be found, not merely not-noticed. A `scrollThumb` role is the real
+ * answer and it does not exist; reported.
  */
 
 .sh-side-scroll,
-.sh-term .xterm-viewport,
-.sh-ext-card textarea,
-.sh-composer textarea { scrollbar-width: thin; scrollbar-color: var(--sh-ink-line) transparent; }
+.sh-term .xterm-viewport { scrollbar-width: thin; scrollbar-color: var(--sh-ink-line) transparent; }
 
 .sh-side-scroll::-webkit-scrollbar,
-.sh-term .xterm-viewport::-webkit-scrollbar,
-.sh-ext-card textarea::-webkit-scrollbar,
-.sh-composer textarea::-webkit-scrollbar { width: 8px; height: 8px; }
+.sh-term .xterm-viewport::-webkit-scrollbar { width: var(--sh-space-md); height: var(--sh-space-md); }
 
 .sh-side-scroll::-webkit-scrollbar-track,
-.sh-term .xterm-viewport::-webkit-scrollbar-track,
-.sh-ext-card textarea::-webkit-scrollbar-track,
-.sh-composer textarea::-webkit-scrollbar-track { background: transparent; }
+.sh-term .xterm-viewport::-webkit-scrollbar-track { background: transparent; }
 
 .sh-side-scroll::-webkit-scrollbar-thumb,
-.sh-term .xterm-viewport::-webkit-scrollbar-thumb,
-.sh-ext-card textarea::-webkit-scrollbar-thumb,
-.sh-composer textarea::-webkit-scrollbar-thumb {
+.sh-term .xterm-viewport::-webkit-scrollbar-thumb {
   background: var(--sh-ink-line);
   border-radius: 0;
 }
 
 .sh-side-scroll::-webkit-scrollbar-thumb:hover,
-.sh-term .xterm-viewport::-webkit-scrollbar-thumb:hover,
-.sh-ext-card textarea::-webkit-scrollbar-thumb:hover,
-.sh-composer textarea::-webkit-scrollbar-thumb:hover { background: var(--sh-wool-faint); }
+.sh-term .xterm-viewport::-webkit-scrollbar-thumb:hover { background: var(--sh-wool-faint); }
 
 @media (prefers-reduced-motion: reduce) {
   * {

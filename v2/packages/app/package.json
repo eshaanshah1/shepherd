@@ -31,6 +31,8 @@
     "@shepherd/platform-darwin": "workspace:*",
     "@shepherd/sdk": "workspace:*",
     "@shepherd/ui": "workspace:*",
+    "//@tabler/icons-react": "A direct dependency, not a re-export from @shepherd/ui. `Icon` takes a Tabler COMPONENT (`icon={IconPlus}`), which is what keeps the bundle tree-shaken — a barrel re-exporting the set would ship every glyph to every page that imports one primitive.",
+    "@tabler/icons-react": "catalog:",
     "@xterm/addon-fit": "catalog:",
     "@xterm/xterm": "catalog:",
     "react": "catalog:",

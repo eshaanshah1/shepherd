@@ -40,19 +40,17 @@ export interface AgentBadgeProps {
 }
 
 /**
- * Colour is the token's declared job, not a choice made here (rule 3: if it is
- * saturated, it means something). `needsCheck` is `pasture` because rule 8 reads
- * that state as *grazing — done, waiting for you*.
+ * The word on the label. Uppercased in CSS, not here — this is the content.
+ *
+ * There is deliberately no colour table beside it any more. There was one, and it
+ * painted a `.sh-agent-dot` through an inline `style` — a call site naming
+ * `var(--sh-cobalt)`, which is a tier-1 palette name and exactly the accidental
+ * public API the token layer exists to retire. The dot it painted was
+ * `display: none` in the only surface that renders this badge, so the fact was
+ * encoded three times (border, text, an invisible dot) and drawn twice. The
+ * colour is now the stylesheet's, keyed off `data-agent-state`, and the visible
+ * micro-fallback dot is `StatusDot` — which takes a role and cannot name a hue.
  */
-const TOKEN: Readonly<Record<string, string>> = {
-  working: 'var(--sh-cobalt)',
-  blocked: 'var(--sh-hay)',
-  needsCheck: 'var(--sh-pasture)',
-  error: 'var(--sh-ember)',
-  idle: 'var(--sh-wool-faint)',
-};
-
-/** The word on the label. Uppercased in CSS, not here — this is the content. */
 const LABEL: Readonly<Record<string, string>> = {
   working: 'working',
   blocked: 'blocked',
@@ -75,7 +73,6 @@ export function AgentBadge({ state, reason }: AgentBadgeProps): ReactNode {
     >
       {known ? (
         <>
-          <span className="sh-agent-dot" style={{ background: TOKEN[state] ?? 'var(--sh-wool-faint)' }} />
           <span className="sh-agent-label">{LABEL[state]}</span>
           {reason === undefined || reason === '' ? null : (
             <span className="sh-agent-reason">{reason}</span>

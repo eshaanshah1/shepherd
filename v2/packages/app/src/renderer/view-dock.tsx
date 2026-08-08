@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { TreeItem } from '@shepherd/sdk';
+import { Row, SectionLabel, StatusDot, type StatusRole } from '@shepherd/ui';
 import type { ViewContributionDTO, ViewsApi } from '../shared/index.ts';
 import { resolveExtensionUi } from './extension-ui.ts';
 
@@ -127,48 +128,114 @@ function TreeView({
   return (
     <section className="sh-side-view" data-view-type={view.type}>
       {shown.length === 0 ? null : <ul className="sh-rows">
-        {shown.map((row) =>
-          row.section === true ? (
-            // A heading, not a row: uppercase micro-label with its count, and
-            // deliberately not a button — a group that looked clickable and did
+        {shown.map((row) => {
+          if (row.section === true) {
+            // A heading, not a row: `SectionLabel` draws the uppercase
+            // micro-label, the `·` before the count and the rule to the edge.
+            // Deliberately not a button — a group that looked clickable and did
             // nothing is the affordance lie this field exists to avoid.
-            <li key={row.id} className="sh-group" data-testid="view-group">
-              <span className="sh-group-label">{row.label}</span>
-              {row.description !== undefined && <span className="sh-group-count">{row.description}</span>}
-            </li>
-          ) : (
+            return (
+              <li key={row.id}>
+                <SectionLabel data-testid="view-group" {...(row.description === undefined ? {} : { count: row.description })}>
+                  {row.label}
+                </SectionLabel>
+              </li>
+            );
+          }
+
+          const activate = (): void => {
+            onSelect(row.id);
+            if (row.command !== undefined) void bridge?.activate(view.type, row.command);
+          };
+
+          return (
             <li key={row.id}>
-              <button
-                type="button"
-                className={`sh-row${selected === row.id ? ' is-sel' : ''}`}
+              {/*
+                `Row`'s root is a `<div>`, not the `<button>` this used to be, and
+                the keyboard semantics come back here rather than from the
+                element. That is the primitive's own trade (row.tsx states it): a
+                row's trailing area holds hover ACTIONS, and a control inside a
+                button is invalid HTML and unreachable by keyboard. So the row
+                announces itself as a button and activates like one, and a
+                contributed row can grow an action without the shell having to
+                change what it is.
+              */}
+              <Row
+                role="button"
+                tabIndex={0}
+                selected={selected === row.id}
                 data-testid="view-row"
                 data-row-id={row.id}
                 // A token name, resolved here. An extension never sends a raw
                 // colour, so a contribution cannot break the theme.
                 data-tint={row.tint ?? 'none'}
                 title={row.description ?? row.label}
-                onClick={() => {
-                  onSelect(row.id);
-                  if (row.command !== undefined) void bridge?.activate(view.type, row.command);
+                onClick={activate}
+                onKeyDown={(event) => {
+                  // What `<button>` gave for free. Space is `preventDefault`ed
+                  // because its default on a focused div is to scroll the list
+                  // out from under the row you just pressed.
+                  if (event.key !== 'Enter' && event.key !== ' ') return;
+                  event.preventDefault();
+                  activate();
                 }}
+                leading={
+                  /*
+                    The dot IS the status, and it takes a ROLE — never a colour
+                    and never the extension's own tint spelling. A coloured dot
+                    beside the word RUNNING says one thing twice and gives the row
+                    a third column to align; v1 signalled state with the dot's
+                    colour alone, deliberately. The description stays as the row's
+                    tooltip, so the word is a hover away rather than gone — and
+                    `StatusDot` also carries it for a screen reader, which the
+                    bare `aria-hidden` span never did.
+                  */
+                  <StatusDot role={statusRole(row.tint)} />
+                }
               >
-                {/*
-                  The dot IS the status. A coloured dot beside the word RUNNING
-                  says one thing twice and gives the row a third column to align
-                  — v1 signalled state with the dot's colour alone, deliberately
-                  (an earlier version grew alerted rows and was reverted for
-                  noise). The description stays as the row's tooltip, so the
-                  word is a hover away rather than gone.
-                */}
-                <span className="sh-dot" data-tint={row.tint ?? 'none'} aria-hidden="true" />
-                <span className="sh-row-label">{row.label}</span>
-              </button>
+                {row.label}
+              </Row>
             </li>
-          ),
-        )}
+          );
+        })}
       </ul>}
     </section>
   );
+}
+
+/**
+ * A contribution's tint word → one of `StatusDot`'s five roles.
+ *
+ * The translation lives HERE, at the boundary, and that is the point of it. An
+ * extension writes whatever vocabulary its own model uses (`tasks` says
+ * `needs-you`, an agent says `blocked`, a future PR view will say `review`), and
+ * the shipped `.sh-dot` accepted all of those as separate CSS selectors — four
+ * spellings of one colour, which is how a rename became impossible. Reducing
+ * them to a role once, in a function, means the primitive never learns any of
+ * these words and a new spelling costs one line here.
+ *
+ * Anything unrecognised is `idle` rather than an invented sixth state: a tint the
+ * shell does not know is not an emergency, and rule 3 says a saturated colour
+ * always means something specific.
+ */
+const TINT_ROLES: Readonly<Record<string, StatusRole>> = {
+  working: 'working',
+  running: 'working',
+  cobalt: 'working',
+  accent: 'working',
+  'needs-you': 'attention',
+  blocked: 'attention',
+  review: 'attention',
+  hay: 'attention',
+  done: 'success',
+  'needs-check': 'success',
+  pasture: 'success',
+  error: 'danger',
+  ember: 'danger',
+};
+
+export function statusRole(tint: string | undefined): StatusRole {
+  return (tint === undefined ? undefined : TINT_ROLES[tint]) ?? 'idle';
 }
 
 /**
@@ -208,9 +275,16 @@ export function ComponentView({
 
   return (
     <section className="sh-side-view" data-view-type={view.type} data-view-kind="component">
-      <h2 className="sh-group">
-        <span className="sh-group-label">{view.title ?? view.type}</span>
-      </h2>
+      {/*
+        `SectionLabel` renders a `<div>`, so the heading semantics the `<h2>`
+        carried come back as ARIA rather than as an element. A `headingLevel`
+        prop was the alternative and it would be a prop that exists to satisfy
+        one call site — `role`/`aria-level` are props the component already
+        spreads, and they say exactly the same thing to the same readers.
+      */}
+      <SectionLabel role="heading" aria-level={2}>
+        {view.title ?? view.type}
+      </SectionLabel>
       {Component === undefined ? (
         <p className="sh-side-missing" data-testid="view-missing">
           {view.extension} contributed “{view.component ?? 'nothing'}”, which this build has no UI for
