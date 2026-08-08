@@ -341,7 +341,13 @@ body.sh-dragging {
 }
 .sh-ext-card button:disabled { opacity: 0.5; cursor: default; }
 .sh-ext-answer { color: var(--sh-dim, #777); font-size: 11px; word-break: break-word; }
-.sh-composer-repos { display: flex; gap: 4px; align-items: center; }
+.sh-composer-repos { display: flex; gap: 4px; align-items: stretch; }
+/* The field takes the slack and the button keeps its one line: `width: 100%`
+ * on the input inside a 220px dock squeezed "add repo" onto two rows, which is
+ * what the first look at the rendered form showed. */
+.sh-composer-repos input { flex: 1 1 auto; min-width: 0; }
+.sh-composer-repos button { flex: 0 0 auto; white-space: nowrap; }
+.sh-composer-suggestions button, .sh-composer-picked button { white-space: nowrap; }
 .sh-composer-suggestions, .sh-composer-picked { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px; }
 .sh-composer-picked li { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--sh-dim, #777); }
 .sh-dock-missing { color: var(--sh-dim, #777); font-size: 11px; padding: 8px 12px; margin: 0; }

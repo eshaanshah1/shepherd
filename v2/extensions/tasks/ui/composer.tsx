@@ -38,14 +38,24 @@ interface RepoSuggestion {
  * `.length` off it is how a suggestion provider that answers `undefined` takes
  * the whole composer down with a `TypeError`, which is what the first run of
  * this component's own test did.
+ *
+ * A suggestion is reduced to its **path**, and its name is re-derived. A
+ * provider may carry a name (`RepoRef` has one) and it is deliberately not
+ * used: the name becomes the worktree's directory, and the built-in provider
+ * answers with the names of *earlier tasks*, so honouring it would let one
+ * task's naming choice follow the repo into every later task — a chip reading
+ * `api` for a repo about to be provisioned as `shepherd`. One derivation,
+ * `repoName`, everywhere.
  */
 function readSuggestions(value: unknown): readonly RepoSuggestion[] {
   if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
   return value.flatMap((entry: unknown) => {
     if (typeof entry !== 'object' || entry === null) return [];
-    const { path, name } = entry as { path?: unknown; name?: unknown };
-    if (typeof path !== 'string' || path === '') return [];
-    return [{ path, name: typeof name === 'string' && name !== '' ? name : repoName(path) }];
+    const { path } = entry as { path?: unknown };
+    if (typeof path !== 'string' || path === '' || seen.has(path)) return [];
+    seen.add(path);
+    return [{ path, name: repoName(path) }];
   });
 }
 
@@ -158,6 +168,7 @@ export function TaskComposer({ invoke }: ExtensionViewProps): React.JSX.Element 
                 type="button"
                 data-testid="composer-suggestion"
                 data-path={suggestion.path}
+                title={suggestion.path}
                 onClick={() => add(suggestion.path)}
               >
                 {suggestion.name}
