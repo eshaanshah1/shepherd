@@ -20,6 +20,8 @@ import {
 } from '../shared/index.ts';
 import { MENU_INVOCATIONS } from '../shared/menu-commands.ts';
 import { ViewDock } from './view-dock.tsx';
+import { ViewOverlay } from './view-overlay.tsx';
+import { useContributions } from './contributions.ts';
 import { SplitView } from './split-view.tsx';
 import { TerminalPane } from './terminal-pane.tsx';
 import type { PaneTerminals } from './pane-sessions.ts';
@@ -207,50 +209,103 @@ export function App({
 
   const paneCount = snapshot === null ? 0 : leafIds(snapshot.tree).length;
 
+  const contributions = useContributions(viewsApi);
+  /** Every accelerator an overlay declared, for the footer's keycap strip. */
+  const raisable = contributions.filter((view) => view.surface === 'overlay' && view.key !== undefined);
+
   return (
     <div className="sh-app">
-      <header className="sh-bar">
+      {/*
+        The spec plate, not a toolbar. Splitting and closing panes are menu
+        commands with accelerators (⌘D / ⌘⇧D / ⌘W) — buttons for them were
+        scaffolding from M0, and a row of debug buttons across the top is the
+        thing that makes an app look like its own test harness.
+      */}
+      <header className="sh-plate">
         <span className="sh-brand">SHEPHERD</span>
-        <span className="sh-bar-sep" />
-        <button
-          className="sh-key"
-          onClick={() => runMenuCommand(COMMANDS.splitRight)}
-          type="button"
-        >
-          SPLIT RIGHT
-        </button>
-        <button className="sh-key" onClick={() => runMenuCommand(COMMANDS.splitDown)} type="button">
-          SPLIT DOWN
-        </button>
-        <button className="sh-key" onClick={() => runMenuCommand(COMMANDS.closePane)} type="button">
-          CLOSE PANE
-        </button>
-        <span className="sh-bar-spacer" />
-        <span className="sh-plate">
-          PANES · {paneCount}
-          <span className="sh-plate-dim">{terminals === null ? ' / NO BRIDGE' : ''}</span>
+        <span className="sh-plate-spacer" />
+        <span className="sh-plate-cell">
+          PANES <b>{String(paneCount).padStart(2, '0')}</b>
         </span>
+        {terminals === null && <span className="sh-plate-cell is-ember">NO BRIDGE</span>}
       </header>
+
       <div className="sh-body">
-        <ViewDock views={viewsApi} />
+        <ViewDock
+          views={viewsApi}
+          footer={
+            <>
+              {raisable.map((view) => (
+                <span className="sh-key" key={view.type}>
+                  {accelLabel(view.key ?? '')} {(view.title ?? view.type).toUpperCase()}
+                </span>
+              ))}
+            </>
+          }
+        />
         <main className="sh-stage" ref={stageRef}>
-        {snapshot === null ? null : (
-          <SplitView
-            tree={snapshot.tree}
-            focusedPaneId={snapshot.focusedPaneId}
-            // The two gestures with no menu item of their own. They name the
-            // kernel's verb directly, off `LAYOUT_COMMANDS` rather than as a
-            // string, for the same reason `menu-commands.ts` does.
-            onFocusPane={(id) => invoke(LAYOUT_COMMANDS.focusPane, { pane: id })}
-            onSetRatio={(path, ratio) =>
-              invoke(LAYOUT_COMMANDS.setRatio, { path: [...path], ratio })
-            }
-            {...(terminals === null ? {} : { renderPane })}
-            home=""
-          />
-        )}
+          {snapshot === null ? null : (
+            <SplitView
+              tree={snapshot.tree}
+              focusedPaneId={snapshot.focusedPaneId}
+              // The two gestures with no menu item of their own. They name the
+              // kernel's verb directly, off `LAYOUT_COMMANDS` rather than as a
+              // string, for the same reason `menu-commands.ts` does.
+              onFocusPane={(id) => invoke(LAYOUT_COMMANDS.focusPane, { pane: id })}
+              onSetRatio={(path, ratio) =>
+                invoke(LAYOUT_COMMANDS.setRatio, { path: [...path], ratio })
+              }
+              {...(terminals === null ? {} : { renderPane })}
+              home=""
+            />
+          )}
         </main>
       </div>
+
+      <footer className="sh-status">
+        {STATUS_CELLS.map((cell) => {
+          const count = Object.values(agents).filter((agent) => agent.state === cell.state).length;
+          return count === 0 ? null : (
+            <span className="sh-status-cell" key={cell.state}>
+              <i className="sh-dot" data-tint={cell.tint} /> {count} {cell.label}
+            </span>
+          );
+        })}
+        <span className="sh-plate-spacer" />
+        <span className="sh-status-cell">{contributions.length} VIEWS</span>
+      </footer>
+
+      <ViewOverlay views={contributions} bridge={viewsApi} />
     </div>
   );
 }
+
+/**
+ * `CmdOrCtrl+T` → `⌘T`. Presentation only: the accelerator itself is matched
+ * against the real modifiers, never against this string.
+ */
+function accelLabel(accelerator: string): string {
+  return accelerator
+    .split('+')
+    .map((part) => {
+      const key = part.trim().toLowerCase();
+      if (key === 'cmdorctrl' || key === 'commandorcontrol' || key === 'cmd' || key === 'command') return '⌘';
+      if (key === 'ctrl' || key === 'control') return '⌃';
+      if (key === 'alt' || key === 'option') return '⌥';
+      if (key === 'shift') return '⇧';
+      return part.toUpperCase();
+    })
+    .join('');
+}
+
+/**
+ * The status bar's cells — the flock at a glance, in the ranking v1's aggregate
+ * dot used: what needs you, then what is moving. A cell with a count of zero is
+ * absent rather than a `0`, because a status bar full of zeroes reads as noise.
+ */
+const STATUS_CELLS: readonly { state: string; label: string; tint: string }[] = [
+  { state: 'blocked', label: 'BLOCKED', tint: 'hay' },
+  { state: 'error', label: 'ERROR', tint: 'ember' },
+  { state: 'needs-check', label: 'DONE', tint: 'pasture' },
+  { state: 'working', label: 'WORKING', tint: 'cobalt' },
+];

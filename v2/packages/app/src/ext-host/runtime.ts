@@ -308,6 +308,10 @@ export class ExtHostRuntime {
       // where they become the closed union, and an unknown one is dropped rather
       // than handed on as a `Permission` it is not.
       permissions: knownPermissions(ask.permissions),
+      // Absent on the wire means false: an old host that does not send it is a
+      // host whose build we cannot vouch for, and the safe answer to "show
+      // developer UI" is no.
+      isDev: ask.isDev ?? false,
       storage: ask.storage,
       clock: this.#clock,
       services,

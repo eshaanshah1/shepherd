@@ -222,6 +222,13 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
   // if the page had drawn nothing. What it proves end to end is the whole seam
   // — a contributed React component mounted from a NAME, its `invoke` running a
   // command as `shepherd.tasks`, and the answer landing back in the form.
+  // ⌘T, as a real key event into the real window — the composer is an OVERLAY
+  // (ADR 0033's `surface`), declared by the extension with its own accelerator,
+  // so it does not exist in the DOM until somebody asks for it. Sending the
+  // keystroke is the only way to assert that the binding works; asserting the
+  // component in isolation would pass with the accelerator wired to nothing.
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 't', modifiers: ['meta'] });
+
   const composerSeen = await until(
     'the composer to render',
     () =>
@@ -268,18 +275,20 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
     `document.querySelector('[data-testid="composer-create"]').click(), true`,
   );
 
-  const composedStatus = await until(
-    'the composer to report what it created',
+  // The overlay CLOSES on success — the component said `done()` and the shell
+  // acted on it. That is the assertion, and it is stronger than reading a status
+  // line: it proves the answer came back to the page AND that the shell's own
+  // half of the seam works. (A failed create keeps the form open with what you
+  // typed, which is the behaviour that makes this a meaningful signal.)
+  const dismissed = await until(
+    'the composer to close itself once the task exists',
     () =>
       win.webContents.executeJavaScript(
-        `document.querySelector('[data-testid="composer-status"]').textContent`,
-      ) as Promise<string>,
-    (text) => text.includes('created'),
+        `document.querySelector('[data-testid="task-composer"]') === null`,
+      ) as Promise<boolean>,
+    (gone) => gone,
   );
-  check(
-    composedStatus.includes('composed-task'),
-    `the answer came back to the page: ${JSON.stringify(composedStatus)}`,
-  );
+  check(dismissed, 'the composer dismissed itself after creating the task');
 
   // And it is a real task: the record, its worktree, and its synthesized root.
   // The repo's NAME is derived from the path the picker offered (`repoName`),

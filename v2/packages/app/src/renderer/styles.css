@@ -44,9 +44,15 @@ body.sh-dragging {
   height: 100%;
 }
 
-/* ------------------------------------------------------------------ top bar */
+/* ------------------------------------------------------------- spec plate */
+/*
+ * Rule 5: industrial labeling. A strip of uppercase micro-labels with tracking,
+ * not a toolbar — the gestures it used to carry buttons for are menu commands
+ * with accelerators, and a row of debug buttons is what made this app read as
+ * its own test harness.
+ */
 
-.sh-bar {
+.sh-plate {
   display: flex;
   align-items: center;
   gap: calc(var(--sh-line-height) / 2);
@@ -55,28 +61,22 @@ body.sh-dragging {
   background: var(--sh-ink);
   border-bottom: var(--sh-hairline) solid var(--sh-ink-line);
   flex: 0 0 auto;
+  /* The window is frameless-ish on macOS; the traffic lights own the left. */
+  padding-left: 78px;
+  -webkit-app-region: drag;
 }
 
 .sh-brand,
-.sh-plate {
+.sh-plate-cell {
   font-size: 10px;
   letter-spacing: 0.16em;
   color: var(--sh-wool-dim);
 }
 
-.sh-plate-dim {
-  color: var(--sh-wool-faint);
-}
-
-.sh-bar-spacer {
-  flex: 1 1 auto;
-}
-
-.sh-bar-sep {
-  width: var(--sh-hairline);
-  height: 60%;
-  background: var(--sh-ink-line);
-}
+.sh-brand { color: var(--sh-wool); }
+.sh-plate-cell b { color: var(--sh-wool); font-weight: 500; }
+.sh-plate-cell.is-ember { color: var(--sh-ember); }
+.sh-plate-spacer { flex: 1 1 auto; }
 
 /* A control looks like a key: flat, bordered, honest. No pills, no shadows. */
 .sh-key {
@@ -88,19 +88,14 @@ body.sh-dragging {
   border: var(--sh-hairline) solid var(--sh-ink-line);
   border-radius: 2px;
   padding: 2px 8px;
-  cursor: pointer;
+  cursor: default;
+  -webkit-app-region: no-drag;
   transition: color var(--sh-motion) linear, background var(--sh-motion) linear;
 }
 
-.sh-key:hover:not(:disabled) {
-  color: var(--sh-ink);
-  background: var(--sh-wool);
-}
-
-.sh-key:disabled {
-  color: var(--sh-wool-faint);
-  cursor: default;
-}
+button.sh-key { cursor: pointer; }
+button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-wool); }
+.sh-key:disabled { color: var(--sh-wool-faint); cursor: default; }
 
 /* ------------------------------------------------------------------- panes */
 
@@ -299,55 +294,243 @@ body.sh-dragging {
 
 /* The left dock — where a contributed view lands. Deliberately plain: the dock
    is a container, and what goes in it is somebody else's design. */
-.sh-body { display: flex; flex: 1; min-height: 0; }
-.sh-dock {
-  width: 220px; flex: 0 0 220px; overflow-y: auto;
-  border-right: 1px solid var(--sh-line, #222); padding: 8px 0;
+.sh-body { display: flex; flex: 1 1 auto; min-height: 0; }
+
+/* ---------------------------------------------------------------- sidebar */
+/*
+ * v1's discipline, carried: every row is ONE fixed height whatever its state,
+ * and a row that needs you is signalled by its dot's COLOUR alone. v1 tried
+ * growing an alerted row into a two-line card and reverted it for being noisy —
+ * so nothing here keys a size or a layout off state.
+ */
+
+.sh-side {
+  width: 232px;
+  flex: 0 0 232px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--sh-ink);
+  border-right: var(--sh-hairline) solid var(--sh-ink-line);
 }
-.sh-dock-title {
-  font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
-  color: var(--sh-dim, #777); margin: 8px 12px 4px; font-weight: 500;
+
+.sh-side-scroll { flex: 1 1 auto; overflow-y: auto; padding: 4px 0 8px; }
+.sh-side-view + .sh-side-view { border-top: var(--sh-hairline) solid var(--sh-ink-line); }
+.sh-rows { list-style: none; margin: 0; padding: 0; }
+
+/* A heading, not a row: uppercase micro-label + its count. */
+.sh-group {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: var(--sh-row-height);
+  padding: 0 12px;
+  margin: 0;
 }
-.sh-dock-rows { list-style: none; margin: 0; padding: 0; }
-.sh-dock-row {
-  display: flex; align-items: baseline; gap: 6px; width: 100%;
-  background: none; border: 0; text-align: left; padding: 4px 12px;
-  font: inherit; font-size: 12px; color: inherit; cursor: pointer;
+
+.sh-group-label {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: var(--sh-wool-faint);
+  text-transform: uppercase;
 }
-.sh-dock-row:disabled { cursor: default; }
-.sh-dock-row:hover:not(:disabled) { background: var(--sh-hover, #1b1b1b); }
-.sh-dock-desc { color: var(--sh-dim, #777); font-size: 11px; }
+
+.sh-group-count { font-size: 10px; color: var(--sh-wool-faint); letter-spacing: 0.1em; }
+
+.sh-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: var(--sh-row-height);
+  padding: 0 12px;
+  background: none;
+  border: 0;
+  text-align: left;
+  font: inherit;
+  font-size: var(--sh-font-size);
+  color: var(--sh-wool);
+  cursor: pointer;
+}
+
+.sh-row:hover { background: var(--sh-ink-raised); }
+
+/* Rule 4: inverse video is the emphasis — a solid block with ink text, never a
+   tinted wash. One glance separates selected from hovered forever. */
+.sh-row.is-sel { background: var(--sh-wool); color: var(--sh-ink); }
+.sh-row.is-sel .sh-row-word { color: var(--sh-ink); opacity: 0.7; }
+
+.sh-row-label {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sh-row-word {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--sh-wool-faint);
+  flex: 0 0 auto;
+}
 
 /*
- * A contributed COMPONENT view (ADR 0033) — an extension's own React inside the
- * dock. The shell styles the SLOT and the primitives; it does not style the
- * extension, which owns its own markup. Deliberately plain: a form the core
- * cannot see the fields of cannot be laid out by the core either, and the
- * alternative — a widget vocabulary the shell knows — is the special case §2b
- * says would mean the view model is wrong.
+ * The state dot. Rule 8's micro fallback: the animated sheep is the eventual
+ * indicator, and a dot in the state's accent is what keeps the colour-meaning
+ * system readable at a squint until it exists.
  */
+.sh-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--sh-wool-faint);
+}
+
+.sh-dot[data-tint='working'], .sh-dot[data-tint='cobalt'], .sh-dot[data-tint='accent'] { background: var(--sh-cobalt); }
+.sh-dot[data-tint='running'] { background: var(--sh-cobalt); }
+.sh-dot[data-tint='needs-you'], .sh-dot[data-tint='blocked'], .sh-dot[data-tint='hay'], .sh-dot[data-tint='review'] { background: var(--sh-hay); }
+.sh-dot[data-tint='done'], .sh-dot[data-tint='pasture'], .sh-dot[data-tint='needs-check'] { background: var(--sh-pasture); }
+.sh-dot[data-tint='error'], .sh-dot[data-tint='ember'] { background: var(--sh-ember); }
+.sh-dot[data-tint='draft'], .sh-dot[data-tint='idle'], .sh-dot[data-tint='archived'], .sh-dot[data-tint='wool-faint'] { background: var(--sh-wool-faint); }
+
+.sh-side-foot {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+  padding: 6px 12px;
+  border-top: var(--sh-hairline) solid var(--sh-ink-line);
+}
+
+.sh-side-missing { color: var(--sh-wool-faint); font-size: 11px; padding: 6px 12px; margin: 0; }
+
+/* --------------------------------------------------------------- statusbar */
+
+.sh-status {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 22px;
+  padding: 0 12px;
+  background: var(--sh-ink);
+  border-top: var(--sh-hairline) solid var(--sh-ink-line);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--sh-wool-faint);
+}
+
+.sh-status-cell { display: inline-flex; align-items: center; gap: 6px; }
+
+/* ----------------------------------------------------------------- overlay */
+/*
+ * A raised contributed component (⌘T). No blur, no shadow — rule 2 bans
+ * elevation theater — so the card separates by a luminance step and a hairline,
+ * over a plain scrim.
+ */
+
+.sh-scrim {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+  background: rgb(0 0 0 / 45%);
+  z-index: 20;
+}
+
+.sh-modal {
+  width: 460px;
+  max-width: 92vw;
+  background: var(--sh-ink);
+  border: var(--sh-hairline) solid var(--sh-ink-line);
+  border-radius: 3px;
+}
+
+.sh-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: var(--sh-row-height);
+  padding: 0 12px;
+  border-bottom: var(--sh-hairline) solid var(--sh-ink-line);
+}
+
+.sh-modal .sh-side-view { border: 0; }
+.sh-modal .sh-group { display: none; }
+
+/* ------------------------------------------------- a contributed component */
+/*
+ * The shell styles the SLOT and the primitives; it does not style the
+ * extension, which owns its own markup. An extension that uses the tokens is
+ * themed for free (rule 10) and a hard-coded colour is a review flag.
+ */
+
 .sh-ext-card {
-  display: flex; flex-direction: column; gap: 6px; padding: 8px 12px;
-  border-bottom: 1px solid var(--sh-line, #222);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
 }
-.sh-ext-card input, .sh-ext-card textarea {
-  background: var(--sh-hover, #1b1b1b); color: inherit; font: inherit; font-size: 12px;
-  border: 1px solid var(--sh-line, #222); border-radius: 4px; padding: 4px 6px; width: 100%;
+
+.sh-ext-card h2 { display: none; }
+
+.sh-ext-card input,
+.sh-ext-card textarea {
+  background: var(--sh-ink-deep);
+  color: var(--sh-wool);
+  font: inherit;
+  font-size: var(--sh-font-size);
+  border: var(--sh-hairline) solid var(--sh-ink-line);
+  border-radius: 2px;
+  padding: 5px 7px;
+  width: 100%;
 }
-.sh-ext-card textarea { min-height: 48px; resize: vertical; }
+
+.sh-ext-card input:focus,
+.sh-ext-card textarea:focus { outline: 0; border-color: var(--sh-cobalt); }
+.sh-ext-card input::placeholder,
+.sh-ext-card textarea::placeholder { color: var(--sh-wool-faint); }
+.sh-ext-card textarea { min-height: 56px; resize: vertical; }
+
 .sh-ext-card button {
-  background: var(--sh-hover, #1b1b1b); color: inherit; font: inherit; font-size: 11px;
-  border: 1px solid var(--sh-line, #222); border-radius: 4px; padding: 3px 8px; cursor: pointer;
+  background: var(--sh-ink-raised);
+  color: var(--sh-wool-dim);
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  border: var(--sh-hairline) solid var(--sh-ink-line);
+  border-radius: 2px;
+  padding: 4px 9px;
+  cursor: pointer;
 }
-.sh-ext-card button:disabled { opacity: 0.5; cursor: default; }
-.sh-ext-answer { color: var(--sh-dim, #777); font-size: 11px; word-break: break-word; }
-.sh-composer-repos { display: flex; gap: 4px; align-items: stretch; }
-/* The field takes the slack and the button keeps its one line: `width: 100%`
- * on the input inside a 220px dock squeezed "add repo" onto two rows, which is
- * what the first look at the rendered form showed. */
+
+.sh-ext-card button:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-wool); }
+.sh-ext-card button:disabled { color: var(--sh-wool-faint); cursor: default; }
+.sh-ext-card button[type='submit'] { border-color: var(--sh-cobalt); color: var(--sh-cobalt); }
+.sh-ext-card button[type='submit']:hover:not(:disabled) { background: var(--sh-cobalt); color: var(--sh-ink); }
+
+.sh-ext-answer { color: var(--sh-wool-faint); font-size: 11px; word-break: break-word; }
+
+.sh-composer-repos { display: flex; gap: 6px; align-items: stretch; }
 .sh-composer-repos input { flex: 1 1 auto; min-width: 0; }
 .sh-composer-repos button { flex: 0 0 auto; white-space: nowrap; }
-.sh-composer-suggestions button, .sh-composer-picked button { white-space: nowrap; }
-.sh-composer-suggestions, .sh-composer-picked { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px; }
-.sh-composer-picked li { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--sh-dim, #777); }
-.sh-dock-missing { color: var(--sh-dim, #777); font-size: 11px; padding: 8px 12px; margin: 0; }
+
+.sh-composer-suggestions,
+.sh-composer-picked { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.sh-composer-suggestions button { white-space: nowrap; text-transform: none; letter-spacing: 0; font-size: 11px; }
+.sh-composer-picked li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--sh-wool);
+  background: var(--sh-ink-raised);
+  border: var(--sh-hairline) solid var(--sh-ink-line);
+  border-radius: 2px;
+  padding: 2px 6px;
+}
+.sh-composer-picked button { padding: 0 4px; border: 0; background: none; color: var(--sh-wool-faint); }

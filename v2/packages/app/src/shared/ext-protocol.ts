@@ -235,6 +235,10 @@ const apiCallSchema = s.union(
     viewKind: s.enumOf(['tree', 'component'] as const),
     /** Present iff `viewKind` is `component`. Meaningless for a tree. */
     component: s.optional(s.string()),
+    /** Where the shell draws it, and what raises it. Components only. */
+    surface: s.optional(s.enumOf(['dock', 'overlay'] as const)),
+    key: s.optional(s.string()),
+    title: s.optional(s.string()),
   }),
   s.object({ kind: s.literal('view.unregister'), type: s.string() }),
   s.object({ kind: s.literal('view.changed'), type: s.string() }),
@@ -302,6 +306,14 @@ const hostAskSchema = s.union(
      * call because it is a fact about this extension, fixed for its lifetime.
      */
     dataDir: s.string(),
+    /**
+     * Whether developer surfaces are on (a dev build, or a smoke driving one).
+     *
+     * Optional on the wire, defaulting to false: a required field here breaks
+     * every test fixture that builds an `activate` frame, and the honest default
+     * for "should I show developer UI" is no.
+     */
+    isDev: s.optional(s.boolean()),
   }),
   s.object({ kind: s.literal('deactivate'), extension: s.string() }),
   /** Read a contributed tree. The provider lives in the child; this is the read. */

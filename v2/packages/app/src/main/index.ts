@@ -332,6 +332,15 @@ const extensionHost = new ExtensionHost({
   logger,
   clock: systemClock,
   isDev: IS_DEV,
+  /**
+   * Developer surfaces are **opt-in, not implied by a dev build**.
+   *
+   * The dev build is the app being dogfooded daily, so "is this a dev build"
+   * is the wrong question for "should the sidebar show instruments for the
+   * app's own internals". A smoke asserts on them (it drives the production
+   * bundle deliberately), and `--shepherd-dev-views` turns them on by hand.
+   */
+  devSurfaces: SMOKE !== undefined || process.argv.includes('--shepherd-dev-views'),
   spawn: () => forkExtensionHost({ logger }),
   // Every indicator on screen came from that process. Leaving them is a
   // confident lie — a pane frozen at WORKING after the only thing that could

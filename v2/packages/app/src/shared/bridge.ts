@@ -112,6 +112,9 @@ export interface ViewContributionDTO {
   /** How the page must draw it. `component` resolves against the UI table. */
   readonly kind: 'tree' | 'component';
   readonly component?: string;
+  readonly surface?: 'dock' | 'overlay';
+  readonly key?: string;
+  readonly title?: string;
 }
 
 export interface ViewsApi {
