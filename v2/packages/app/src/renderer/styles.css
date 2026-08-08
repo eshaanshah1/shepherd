@@ -5,9 +5,16 @@
  * know about, which is precisely the drift v1 had between Theme.swift and
  * writeBaseTheme().
  *
- * Spacing is in cell multiples (--sh-line-height / --sh-row-height), per the
- * design language's first rule: the character cell is the grid, not a 4px web
- * scale.
+ * The same rule applies to the font: the chrome reads `--sh-font-mono`, which is
+ * the identical string `xterm-terminal.ts` hands xterm. A second stack typed
+ * here would fork the chrome's face from the grid's — the drift above, wearing
+ * different clothes.
+ *
+ * Metrics are INTEGER PX and traceable to the approved mock
+ * (docs/superpowers/specs/2026-08-06-flock-mock.html) or to
+ * `@shepherd/design-tokens`'s frozen scale. Never `ch` (rule 1 as amended: it is
+ * a fractional *width* unit, and a hairline on a subpixel boundary is a blurred
+ * hairline — which in a language with no shadows carries the whole hierarchy).
  */
 
 * {
@@ -42,6 +49,7 @@ body.sh-dragging {
   display: flex;
   flex-direction: column;
   height: 100%;
+  background: var(--sh-ink);
 }
 
 /* ------------------------------------------------------------- spec plate */
@@ -50,44 +58,67 @@ body.sh-dragging {
  * not a toolbar — the gestures it used to carry buttons for are menu commands
  * with accelerators, and a row of debug buttons is what made this app read as
  * its own test harness.
+ *
+ * Geometry is the mock's `.titlebar` verbatim: 38px, 11px/.1em, and the whole
+ * strip in `wool-faint` with the spec *values* one step up in `wool-dim`. The
+ * emphasis is the luminance step, not a weight or a colour.
  */
 
 .sh-plate {
   display: flex;
   align-items: center;
-  gap: calc(var(--sh-line-height) / 2);
-  height: var(--sh-row-height);
-  padding: 0 calc(var(--sh-line-height) / 2);
-  background: var(--sh-ink);
-  border-bottom: var(--sh-hairline) solid var(--sh-ink-line);
+  gap: 10px;
+  height: 38px;
   flex: 0 0 auto;
+  padding: 0 14px;
   /* The window is frameless-ish on macOS; the traffic lights own the left. */
   padding-left: 78px;
+  background: var(--sh-ink);
+  border-bottom: var(--sh-hairline) solid var(--sh-ink-line);
+  color: var(--sh-wool-faint);
+  font-size: 11px;
+  letter-spacing: 0.1em;
   -webkit-app-region: drag;
 }
 
 .sh-brand,
 .sh-plate-cell {
-  font-size: 10px;
-  letter-spacing: 0.16em;
-  color: var(--sh-wool-dim);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--sh-wool-faint);
+  white-space: nowrap;
 }
 
-.sh-brand { color: var(--sh-wool); }
-.sh-plate-cell b { color: var(--sh-wool); font-weight: 500; }
-.sh-plate-cell.is-ember { color: var(--sh-ember); }
+/* The mock's `.spec span b`: the value, one luminance step up. Not bolder — a
+   weight change in a mono face is a different face. */
+.sh-plate-cell b {
+  color: var(--sh-wool-dim);
+  font-weight: 400;
+}
+
+.sh-plate-cell.is-ember,
+.sh-plate-cell.is-ember b {
+  color: var(--sh-ember);
+}
+
 .sh-plate-spacer { flex: 1 1 auto; }
 
-/* A control looks like a key: flat, bordered, honest. No pills, no shadows. */
+/* The plate's right-hand cells sit in the mock's 14px spec rhythm. */
+.sh-plate .sh-plate-cell + .sh-plate-cell { margin-left: 4px; }
+
+/* A control looks like a key: flat, bordered, honest. No pills, no shadows, and
+   (per the mock's `.key`) no fill either — the hairline is the whole control. */
 .sh-key {
   font: inherit;
   font-size: 10px;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.06em;
+  line-height: 15px;
   color: var(--sh-wool-dim);
-  background: var(--sh-ink-raised);
+  background: none;
   border: var(--sh-hairline) solid var(--sh-ink-line);
-  border-radius: 2px;
-  padding: 2px 8px;
+  border-radius: 3px;
+  padding: 1px 6px;
+  white-space: nowrap;
   cursor: default;
   -webkit-app-region: no-drag;
   transition: color var(--sh-motion) linear, background var(--sh-motion) linear;
@@ -103,7 +134,12 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
-  padding: var(--sh-hairline);
+  /*
+   * No padding and no per-pane border. Hairlines come from the CONTAINERS — the
+   * plate's bottom rule, the dock's right rule, the status bar's top rule, and
+   * one `.sh-divider` between siblings. A border on the pane itself doubled
+   * every one of them into a 2px trench.
+   */
 }
 
 /*
@@ -127,30 +163,60 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
   min-height: 0;
 }
 
+/*
+ * ONE rule for both `.sh-pane` elements — the layout leaf (which carries
+ * `data-focused`) and the terminal pane nested inside it (which does not).
+ *
+ * The focus dim is therefore keyed off `[data-focused='false']` rather than off
+ * the class, which is the fix for a real defect: the inner element matched a
+ * bare `.sh-pane { opacity: .62 }` and could never match `[data-focused='true']`,
+ * so a FOCUSED pane rendered at .62 and an unfocused one at .38. Carried from
+ * v1: inactive panes dim by opacity, never by a border ring.
+ */
 .sh-pane {
+  display: flex;
+  flex-direction: column;
   flex: 1 1 0;
   min-width: 0;
   min-height: 0;
-  display: flex;
-  /* `stretch`, so a terminal fills its pane. The placeholder card sets its own
-     alignment; a terminal that only filled the space its first line needed
-     would look like a layout bug and read as a terminal bug. */
-  align-items: stretch;
   background: var(--sh-ink-term);
-  border: var(--sh-hairline) solid var(--sh-ink-line);
   overflow: hidden;
-  /* Inactive panes dim by opacity, never by a border ring (carried from v1). */
-  opacity: 0.62;
-  transition: opacity var(--sh-motion) linear;
 }
 
-.sh-pane[data-focused='true'] {
-  opacity: 1;
+.sh-pane[data-focused] { transition: opacity var(--sh-motion) linear; }
+.sh-pane[data-focused='false'] { opacity: 0.62; }
+
+/*
+ * The mock's `.pane-title`: one 28px line of chrome above the grid. It is
+ * `--sh-ink`, not `--sh-ink-term`, so the strip reads as chrome and the hairline
+ * under it is the seam between chrome and grid.
+ */
+.sh-pane-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  height: var(--sh-row-height);
+  padding: 0 14px;
+  background: var(--sh-ink);
+  border-bottom: var(--sh-hairline) solid var(--sh-ink-line);
+  font-size: 11px;
+  color: var(--sh-wool-dim);
+  white-space: nowrap;
+  overflow: hidden;
 }
 
-.sh-pane-body {
-  padding: calc(var(--sh-line-height) / 2) var(--sh-line-height);
-  align-self: flex-start;
+.sh-pane-name {
+  color: var(--sh-wool-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sh-pane-branch {
+  color: var(--sh-wool-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 /* ------------------------------------------------------------------ terminal */
@@ -165,6 +231,7 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
   min-width: 0;
   min-height: 0;
   padding: calc(var(--sh-line-height) / 4) calc(var(--sh-line-height) / 2);
+  background: var(--sh-ink-term);
   overflow: hidden;
 }
 
@@ -185,6 +252,12 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
    is already the focus signal, and two of them fight. */
 .sh-term .xterm-helper-textarea:focus {
   outline: none;
+}
+
+/* The placeholder card, for a pane with no session behind it (no bridge). */
+.sh-pane-body {
+  padding: calc(var(--sh-line-height) / 2) var(--sh-line-height);
+  align-self: flex-start;
 }
 
 .sh-pane-title {
@@ -236,77 +309,89 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
   background: var(--sh-cobalt);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  * {
-    transition: none !important;
-  }
-}
-
+/* --------------------------------------------------------- the agent chip */
 /*
- * The pane, as a column: an agent badge slot over the terminal.
+ * The mock's `.live` cell, at the right end of the pane head: an uppercase
+ * micro-label inside a hairline box tinted with the state's own accent. Not a
+ * pill, no fill, no dot — the dot is the sidebar's micro fallback, and a dot
+ * *plus* coloured text *plus* a coloured border is one fact encoded three times.
  *
- * The slot is ALWAYS in the tree — see AgentBadge for why (a conditional
- * sibling shifts the terminal's reconciliation index and remounts xterm). Empty
- * it collapses to nothing visible, so a plain shell looks exactly as it did.
- */
-.sh-pane {
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 0;
-  min-width: 0;
-  min-height: 0;
-}
-
-/*
- * Fixed height whenever it carries anything, per rule 9: attention changes what
- * a row says, never how big it is. v1 grew alerted rows into two-line cards and
- * reverted it for being noisy — the lesson survives the rewrite.
+ * The tint is selected off `data-agent-state`, which the component already
+ * publishes for the smokes. Note `needsCheck` is camelCase and attribute values
+ * are case-sensitive: spelled `needs-check` this rule would silently style
+ * nothing.
+ *
+ * Rule 9 fixes the height: attention changes what a row says, never how big it
+ * is — v1 shipped a growing alert row and reverted it.
  */
 .sh-agent-badge {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: calc(var(--sh-line-height) / 3);
-  padding: 0 calc(var(--sh-line-height) / 2);
-  height: 0;
-  overflow: hidden;
-  border-bottom: 1px solid transparent;
-  font-size: var(--sh-micro-size, 10px);
-  letter-spacing: 0.14em;
+  gap: 5px;
+  margin-left: auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 0 5px;
+  border: var(--sh-hairline) solid var(--sh-ink-line);
+  border-radius: 3px;
+  font-size: 9px;
+  line-height: 15px;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--sh-wool-dim);
+  overflow: hidden;
   transition: none; /* rule 7: no easing on a state indicator. */
 }
 
-/* Only an actual agent opens the slot. `''` is a plain shell. */
-.sh-agent-badge[data-agent-state]:not([data-agent-state='']) {
-  height: var(--sh-row-height, 28px);
-  border-bottom-color: var(--sh-ink-line);
+/*
+ * A plain shell draws nothing — but the element STAYS in the tree. A smoke reads
+ * `data-agent-state` off it to tell "this pane has no agent" from "the channel
+ * never delivered", which are identical pixels and very different bugs.
+ */
+.sh-agent-badge[data-agent-state=''] { display: none; }
+
+.sh-agent-badge[data-agent-state='working'] {
+  color: var(--sh-cobalt);
+  border-color: color-mix(in srgb, var(--sh-cobalt) 45%, transparent);
 }
 
-.sh-agent-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  flex: 0 0 auto;
+.sh-agent-badge[data-agent-state='blocked'] {
+  color: var(--sh-hay);
+  border-color: color-mix(in srgb, var(--sh-hay) 45%, transparent);
 }
 
-.sh-agent-label {
-  color: var(--sh-wool);
+.sh-agent-badge[data-agent-state='needsCheck'] {
+  color: var(--sh-pasture);
+  border-color: color-mix(in srgb, var(--sh-pasture) 45%, transparent);
 }
 
-/* The reason is prose, not a label — it keeps its case and dims. */
+.sh-agent-badge[data-agent-state='error'] {
+  color: var(--sh-ember);
+  border-color: color-mix(in srgb, var(--sh-ember) 45%, transparent);
+}
+
+.sh-agent-badge[data-agent-state='idle'] {
+  color: var(--sh-wool-faint);
+  border-color: var(--sh-ink-line);
+}
+
+/* Kept for the fallback the language names (a collapsed pip, a status cell); in
+   the chip the border already carries the colour. */
+.sh-pane-head .sh-agent-dot { display: none; }
+
+/* The state word never truncates; only the reason beside it gives way. */
+.sh-agent-label { color: inherit; flex: 0 0 auto; }
+
+/* The reason is prose, not a label — it keeps its case and steps down. */
 .sh-agent-reason {
   text-transform: none;
   letter-spacing: 0;
-  color: var(--sh-wool-faint);
+  opacity: 0.72;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
-
-/* The left dock — where a contributed view lands. Deliberately plain: the dock
-   is a container, and what goes in it is somebody else's design. */
-.sh-body { display: flex; flex: 1 1 auto; min-height: 0; }
 
 /* ---------------------------------------------------------------- sidebar */
 /*
@@ -314,11 +399,16 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
  * and a row that needs you is signalled by its dot's COLOUR alone. v1 tried
  * growing an alerted row into a two-line card and reverted it for being noisy —
  * so nothing here keys a size or a layout off state.
+ *
+ * Geometry is the mock's `.sidebar` / `.group` / `.task` verbatim: 268px wide,
+ * 28px rows, 14px of left inset, the group's trailing hairline rule.
  */
 
+.sh-body { display: flex; flex: 1 1 auto; min-height: 0; }
+
 .sh-side {
-  width: 232px;
-  flex: 0 0 232px;
+  width: 268px;
+  flex: 0 0 268px;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -326,18 +416,26 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
   border-right: var(--sh-hairline) solid var(--sh-ink-line);
 }
 
-.sh-side-scroll { flex: 1 1 auto; overflow-y: auto; padding: 4px 0 8px; }
+.sh-side-scroll { flex: 1 1 auto; overflow-y: auto; padding: 8px 0 10px; }
 .sh-side-view + .sh-side-view { border-top: var(--sh-hairline) solid var(--sh-ink-line); }
 .sh-rows { list-style: none; margin: 0; padding: 0; }
 
-/* A heading, not a row: uppercase micro-label + its count. */
+/* A heading, not a row: uppercase micro-label, its count, then a rule that runs
+   to the edge (the mock's `.group::after`). */
 .sh-group {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   height: var(--sh-row-height);
-  padding: 0 12px;
+  padding: 0 14px;
   margin: 0;
+  font-weight: 400;
+}
+
+.sh-group::after {
+  content: '';
+  flex: 1 1 auto;
+  border-top: var(--sh-hairline) solid var(--sh-ink-line);
 }
 
 .sh-group-label {
@@ -345,9 +443,19 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
   letter-spacing: 0.16em;
   color: var(--sh-wool-faint);
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
-.sh-group-count { font-size: 10px; color: var(--sh-wool-faint); letter-spacing: 0.1em; }
+.sh-group-count {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: var(--sh-wool-faint);
+  white-space: nowrap;
+}
+
+/* The mock reads "NEEDS YOU · 2" as one label; the contribution supplies the two
+   halves separately, so the separator is drawn rather than typed. */
+.sh-group-count::before { content: '· '; }
 
 .sh-row {
   display: flex;
@@ -355,14 +463,15 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
   gap: 8px;
   width: 100%;
   height: var(--sh-row-height);
-  padding: 0 12px;
+  padding: 0 12px 0 14px;
   background: none;
   border: 0;
   text-align: left;
   font: inherit;
   font-size: var(--sh-font-size);
   color: var(--sh-wool);
-  cursor: pointer;
+  white-space: nowrap;
+  cursor: default;
 }
 
 .sh-row:hover { background: var(--sh-ink-raised); }
@@ -370,7 +479,7 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
 /* Rule 4: inverse video is the emphasis — a solid block with ink text, never a
    tinted wash. One glance separates selected from hovered forever. */
 .sh-row.is-sel { background: var(--sh-wool); color: var(--sh-ink); }
-.sh-row.is-sel .sh-row-word { color: var(--sh-ink); opacity: 0.7; }
+.sh-row.is-sel .sh-row-word { color: var(--sh-ink); opacity: 0.55; border-color: transparent; }
 
 .sh-row-label {
   flex: 1 1 auto;
@@ -379,12 +488,52 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
   white-space: nowrap;
 }
 
+/* An idle row steps its NAME down, not its height (the mock's `.task.dim`). */
+.sh-row[data-tint='idle'] .sh-row-label,
+.sh-row[data-tint='archived'] .sh-row-label,
+.sh-row[data-tint='draft'] .sh-row-label { color: var(--sh-wool-dim); }
+.sh-row.is-sel .sh-row-label { color: inherit; }
+
+/* The mock's `.word`: a hairline box, tinted by the row's own token. */
 .sh-row-word {
-  font-size: 10px;
+  flex: 0 0 auto;
+  font-size: 9px;
+  line-height: 15px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--sh-wool-faint);
-  flex: 0 0 auto;
+  color: var(--sh-wool-dim);
+  border: var(--sh-hairline) solid var(--sh-ink-line);
+  border-radius: 3px;
+  padding: 0 5px;
+}
+
+.sh-row[data-tint='needs-you'] .sh-row-word,
+.sh-row[data-tint='blocked'] .sh-row-word,
+.sh-row[data-tint='hay'] .sh-row-word,
+.sh-row[data-tint='review'] .sh-row-word {
+  color: var(--sh-hay);
+  border-color: color-mix(in srgb, var(--sh-hay) 45%, transparent);
+}
+
+.sh-row[data-tint='done'] .sh-row-word,
+.sh-row[data-tint='pasture'] .sh-row-word,
+.sh-row[data-tint='needs-check'] .sh-row-word {
+  color: var(--sh-pasture);
+  border-color: color-mix(in srgb, var(--sh-pasture) 45%, transparent);
+}
+
+.sh-row[data-tint='error'] .sh-row-word,
+.sh-row[data-tint='ember'] .sh-row-word {
+  color: var(--sh-ember);
+  border-color: color-mix(in srgb, var(--sh-ember) 45%, transparent);
+}
+
+.sh-row[data-tint='working'] .sh-row-word,
+.sh-row[data-tint='running'] .sh-row-word,
+.sh-row[data-tint='cobalt'] .sh-row-word,
+.sh-row[data-tint='accent'] .sh-row-word {
+  color: var(--sh-cobalt);
+  border-color: color-mix(in srgb, var(--sh-cobalt) 45%, transparent);
 }
 
 /*
@@ -407,15 +556,20 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
 .sh-dot[data-tint='error'], .sh-dot[data-tint='ember'] { background: var(--sh-ember); }
 .sh-dot[data-tint='draft'], .sh-dot[data-tint='idle'], .sh-dot[data-tint='archived'], .sh-dot[data-tint='wool-faint'] { background: var(--sh-wool-faint); }
 
+/* The dot survives inverse video: on a wool block it would otherwise vanish. */
+.sh-row.is-sel .sh-dot[data-tint='none'] { background: var(--sh-ink); }
+
+/* The mock's `.side-foot`: keycaps at the bottom, no rule above them — the last
+   group's own hairline is already the separation. */
 .sh-side-foot {
   flex: 0 0 auto;
   display: flex;
-  gap: 6px;
-  padding: 6px 12px;
-  border-top: var(--sh-hairline) solid var(--sh-ink-line);
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 14px 2px;
 }
 
-.sh-side-missing { color: var(--sh-wool-faint); font-size: 11px; padding: 6px 12px; margin: 0; }
+.sh-side-missing { color: var(--sh-wool-faint); font-size: 11px; padding: 6px 14px; margin: 0; }
 
 /* --------------------------------------------------------------- statusbar */
 
@@ -423,23 +577,68 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 14px;
-  height: 22px;
-  padding: 0 12px;
+  gap: 16px;
+  height: 26px;
+  padding: 0 14px;
   background: var(--sh-ink);
   border-top: var(--sh-hairline) solid var(--sh-ink-line);
   font-size: 10px;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.1em;
   color: var(--sh-wool-faint);
+  white-space: nowrap;
 }
 
 .sh-status-cell { display: inline-flex; align-items: center; gap: 6px; }
 
+/* ------------------------------------------------------------ empty stage */
+/*
+ * The mock's `.empty` section. Rule 6: the serif appears only where the app
+ * speaks in sentences, and rule 9 puts personality in moments — this is one.
+ */
+
+.sh-empty {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 24px;
+}
+
+.sh-ewe {
+  stroke: var(--sh-wool-dim);
+  fill: none;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  opacity: 0.85;
+}
+
+.sh-ewe-eye { fill: var(--sh-wool-dim); }
+
+.sh-empty-say {
+  margin: 0;
+  font-family: var(--sh-font-serif);
+  font-style: italic;
+  font-size: 16px;
+  color: var(--sh-wool-dim);
+}
+
+.sh-empty-hint {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--sh-wool-faint);
+}
+
 /* ----------------------------------------------------------------- overlay */
 /*
  * A raised contributed component (⌘T). No blur, no shadow — rule 2 bans
- * elevation theater — so the card separates by a luminance step and a hairline,
- * over a plain scrim.
+ * elevation theater — so the card separates by a luminance step (`ink-raised`)
+ * and a hairline, over a plain scrim.
  */
 
 .sh-scrim {
@@ -456,7 +655,7 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
 .sh-modal {
   width: 460px;
   max-width: 92vw;
-  background: var(--sh-ink);
+  background: var(--sh-ink-raised);
   border: var(--sh-hairline) solid var(--sh-ink-line);
   border-radius: 3px;
 }
@@ -466,7 +665,7 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
   align-items: center;
   justify-content: space-between;
   height: var(--sh-row-height);
-  padding: 0 12px;
+  padding: 0 12px 0 14px;
   border-bottom: var(--sh-hairline) solid var(--sh-ink-line);
 }
 
@@ -484,20 +683,22 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 10px 12px;
+  padding: 10px 14px 14px;
 }
 
 .sh-ext-card h2 { display: none; }
 
+/* An input is an ink-deep well: recessed by luminance, not by an inset shadow. */
 .sh-ext-card input,
 .sh-ext-card textarea {
   background: var(--sh-ink-deep);
   color: var(--sh-wool);
   font: inherit;
   font-size: var(--sh-font-size);
+  line-height: var(--sh-line-height);
   border: var(--sh-hairline) solid var(--sh-ink-line);
-  border-radius: 2px;
-  padding: 5px 7px;
+  border-radius: 3px;
+  padding: 4px 7px;
   width: 100%;
 }
 
@@ -505,24 +706,29 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
 .sh-ext-card textarea:focus { outline: 0; border-color: var(--sh-cobalt); }
 .sh-ext-card input::placeholder,
 .sh-ext-card textarea::placeholder { color: var(--sh-wool-faint); }
-.sh-ext-card textarea { min-height: 56px; resize: vertical; }
+.sh-ext-card textarea { min-height: 60px; resize: vertical; }
 
+/* A button is a key (rule 5): flat, bordered, honest. Hover inverts it. */
 .sh-ext-card button {
-  background: var(--sh-ink-raised);
+  background: none;
   color: var(--sh-wool-dim);
   font: inherit;
   font-size: 10px;
+  line-height: 15px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   border: var(--sh-hairline) solid var(--sh-ink-line);
-  border-radius: 2px;
-  padding: 4px 9px;
+  border-radius: 3px;
+  padding: 2px 8px;
   cursor: pointer;
 }
 
 .sh-ext-card button:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-wool); }
 .sh-ext-card button:disabled { color: var(--sh-wool-faint); cursor: default; }
-.sh-ext-card button[type='submit'] { border-color: var(--sh-cobalt); color: var(--sh-cobalt); }
+.sh-ext-card button[type='submit'] {
+  border-color: color-mix(in srgb, var(--sh-cobalt) 50%, transparent);
+  color: var(--sh-cobalt);
+}
 .sh-ext-card button[type='submit']:hover:not(:disabled) { background: var(--sh-cobalt); color: var(--sh-ink); }
 
 .sh-ext-answer { color: var(--sh-wool-faint); font-size: 11px; word-break: break-word; }
@@ -540,9 +746,45 @@ button.sh-key:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-
   gap: 6px;
   font-size: 11px;
   color: var(--sh-wool);
-  background: var(--sh-ink-raised);
+  background: var(--sh-ink);
   border: var(--sh-hairline) solid var(--sh-ink-line);
-  border-radius: 2px;
+  border-radius: 3px;
   padding: 2px 6px;
 }
 .sh-composer-picked button { padding: 0 4px; border: 0; background: none; color: var(--sh-wool-faint); }
+
+/* -------------------------------------------------------------- scrollbars */
+/*
+ * A thumb of ink-line and nothing else: no track, no arrows, no rounded chrome.
+ * xterm draws its own viewport scrollbar, so it needs the same treatment or the
+ * grid gets a stock macOS bar sitting on a warm-ink surface.
+ */
+
+.sh-side-scroll,
+.sh-term .xterm-viewport,
+.sh-ext-card textarea { scrollbar-width: thin; scrollbar-color: var(--sh-ink-line) transparent; }
+
+.sh-side-scroll::-webkit-scrollbar,
+.sh-term .xterm-viewport::-webkit-scrollbar,
+.sh-ext-card textarea::-webkit-scrollbar { width: 8px; height: 8px; }
+
+.sh-side-scroll::-webkit-scrollbar-track,
+.sh-term .xterm-viewport::-webkit-scrollbar-track,
+.sh-ext-card textarea::-webkit-scrollbar-track { background: transparent; }
+
+.sh-side-scroll::-webkit-scrollbar-thumb,
+.sh-term .xterm-viewport::-webkit-scrollbar-thumb,
+.sh-ext-card textarea::-webkit-scrollbar-thumb {
+  background: var(--sh-ink-line);
+  border-radius: 0;
+}
+
+.sh-side-scroll::-webkit-scrollbar-thumb:hover,
+.sh-term .xterm-viewport::-webkit-scrollbar-thumb:hover,
+.sh-ext-card textarea::-webkit-scrollbar-thumb:hover { background: var(--sh-wool-faint); }
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
+}
