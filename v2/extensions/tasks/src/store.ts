@@ -58,6 +58,15 @@ export interface TaskSession {
   readonly repo?: string;
   readonly role: 'orchestrator' | 'workstream';
   readonly resumeTarget?: string;
+  /**
+   * The pane it was opened in.
+   *
+   * Recorded because the pane exists BEFORE the session does: the layout is
+   * mutated by a command and the session is created when the pane mounts, so
+   * for a moment `id` is a placeholder and this is the only true fact about
+   * where the work went. It is also what a later reconciliation would key on.
+   */
+  readonly pane?: string;
 }
 
 /** Where a repo's uncommitted work went when the task was archived. */
@@ -93,6 +102,7 @@ const sessionSchema = s.stored({
   repo: s.optional(s.string()),
   role: s.enumOf(['orchestrator', 'workstream'] as const),
   resumeTarget: s.optional(s.string()),
+  pane: s.optional(s.string()),
 });
 
 const taskSchema = s.stored({

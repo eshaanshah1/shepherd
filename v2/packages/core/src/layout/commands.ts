@@ -73,11 +73,35 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
     registry.register(LAYOUT_COMMANDS.split, {
       title: 'Split Pane',
       permission: 'layout',
-      schema: s.object({ axis: AXIS, root: s.optional(s.string()), cwd: s.optional(s.string()) }),
+      schema: s.object({
+        axis: AXIS,
+        root: s.optional(s.string()),
+        cwd: s.optional(s.string()),
+        /**
+         * One line typed into the new pane's pty, once, when its session starts.
+         *
+         * `Pane` has carried this since M0 and nothing set it: it is how a
+         * caller opens a pane that is already doing something — `tasks.spawn`
+         * starting an agent in a worktree is the first. Transient by
+         * construction (`serialize.ts` drops it), so a relaunch restores a pane,
+         * never a command.
+         *
+         * It is **one line**. A newline is an Enter press, so a multi-line
+         * prompt typed here would submit its first line and scatter the rest
+         * into whatever is running next — v1's lesson, and the reason `tasks`
+         * spills a prompt to a file and types a command that reads it back.
+         */
+        initialCommand: s.optional(s.string()),
+      }),
       handler: (args) => {
         const root = resolveRoot(args.root);
         if (root === undefined) return unwrap(errNoRoot(args.root));
-        return unwrap(store.split(root, args.axis, args.cwd === undefined ? {} : { cwd: args.cwd }));
+        return unwrap(
+          store.split(root, args.axis, {
+            ...(args.cwd === undefined ? {} : { cwd: args.cwd }),
+            ...(args.initialCommand === undefined ? {} : { initialCommand: args.initialCommand }),
+          }),
+        );
       },
     }),
 

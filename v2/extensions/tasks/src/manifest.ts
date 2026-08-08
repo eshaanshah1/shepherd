@@ -58,12 +58,17 @@ export const tasksManifest: Manifest = {
    * (P4). `storage` holds the task store, which is the authority — the folder is
    * derived from it and must be reconstructible from it alone.
    *
+   * `layout` is what `tasks.spawn` needs: an agent runs in a PANE, and the pane
+   * is opened by `layout.split` like every other pane in the app. It is the
+   * permission that makes "this extension can open windows on your screen" a
+   * reviewable fact rather than a surprise.
+   *
    * Deliberately absent: `attention`. A task's `needs-you` is DERIVED from its
    * sessions' attention at read time (D4), and `agents-core` is the only writer
    * of agent attention (ADR 0026) — enforced by being the only extension in the
    * repo that declares it. `tasks` asking for it would break that by manifest.
    */
-  permissions: ['storage', 'process.exec', 'sessions', 'views'],
+  permissions: ['storage', 'process.exec', 'sessions', 'views', 'layout'],
   contributes: {
     commands: [
       { id: TASK_COMMANDS.create, title: 'Tasks: New Task' },

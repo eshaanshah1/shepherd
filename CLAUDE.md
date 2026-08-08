@@ -33,15 +33,16 @@ fight it.
    M0–M3 are done (kernel, agents, tasks: real worktrees, a synthesized task
    root, archive/restore, the `shepherd` CLI, and a sidebar an extension draws
    into), and so is **M3b's composer** — a task is creatable from inside the app
-   through a contributed React component (ADR 0033). **Scratch (D9) and then M4,
-   the dogfood gate, are next.**
+   through a contributed React component (ADR 0033), and `tasks.spawn` now opens a
+   real agent in the task's worktree (ADR 0034). **Scratch (D9) and then M4, the
+   dogfood gate, are next.**
 2. [`docs/superpowers/specs/2026-08-06-ade-minimal-core-sketch.md`](docs/superpowers/specs/2026-08-06-ade-minimal-core-sketch.md)
    — thesis and **every decision** (§7, §7b, §7c the headless-agent seam, §7d presence).
 3. [`docs/superpowers/specs/2026-08-06-ade-v2-core-design.md`](docs/superpowers/specs/2026-08-06-ade-v2-core-design.md)
    — the API and the M0–M4 milestones.
 4. [`docs/superpowers/specs/2026-08-06-architecture-review.md`](docs/superpowers/specs/2026-08-06-architecture-review.md)
    — what v1 got wrong; **its Rebuild checklist is normative for v2**.
-5. ADRs [0021](.claude/adr/0021-v2-store-is-node-sqlite.md)–[0033](.claude/adr/0033-v2-extension-ui-is-in-proc-react-behind-a-name.md).
+5. ADRs [0021](.claude/adr/0021-v2-store-is-node-sqlite.md)–[0034](.claude/adr/0034-v2-a-spawned-agent-is-a-pane-and-its-prompt-is-a-file.md).
    **0029–0032 are M3's**, and each records something measured rather than
    reasoned: what Claude Code actually reads at a generated task root, why the
    transport deadline is the caller's, how a contributed view declares itself
@@ -51,6 +52,8 @@ fight it.
    the port is a **name** the renderer resolves — so an extension's two halves
    are two directories (`src/` service, `ui/` page) with a lint rule between
    them, and the renderer may import `@shepherd/ext-*/ui` and nothing else.
+   **0034** is why a spawned agent is a pane rather than a headless session, and
+   why its prompt travels as a file — a typed newline is an Enter press.
 
 **Two rules that will bite you immediately in `v2/`:**
 - **`env -u NODE_OPTIONS` every command.** An ambient `NODE_OPTIONS` makes
