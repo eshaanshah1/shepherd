@@ -82,6 +82,19 @@ export interface AgentKind {
    * version, so name matching matches nothing).
    */
   reduce(input: AgentEventInput): AgentDecision;
+
+  /**
+   * What would have to be handed back to reattach to this session's agent.
+   *
+   * The vendor's own token — a Claude Code session id, whatever the next kind
+   * calls its equivalent — read out of the slot this kind owns. It leaves here
+   * **opaque** and travels as a string: a consumer stores it and gives it back,
+   * and the moment it interprets it, it has learned about a vendor (D11).
+   *
+   * Optional, and `capabilities.resume` is the honest declaration alongside it:
+   * a kind whose agent cannot reattach implements neither.
+   */
+  resumeTargetOf?(slot: unknown): string | null;
 }
 
 /** The id of the extension point vendors register through. */

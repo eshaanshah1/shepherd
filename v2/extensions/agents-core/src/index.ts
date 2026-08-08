@@ -256,6 +256,32 @@ export const activate: ActivateFn<AgentsAPI> = async (ctx: ExtensionContext, api
     }),
   );
 
+  ctx.subscriptions.push(
+    commands.register(AGENTS_COMMANDS.resumeTarget, {
+      title: 'Agents: Resume Target',
+      schema: s.object({ sessionId: s.string() }),
+      /**
+       * Ask whichever kind adopted this session what would reattach to it.
+       *
+       * The value is the vendor's and stays opaque on the way through: this
+       * extension does not read it either. `null` is a real answer and means
+       * three different true things — nothing adopted the session, the kind
+       * cannot resume, or it has not captured a target yet — and none of them
+       * is an error, so none of them throws.
+       */
+      handler: (args) => {
+        const record = registry.get(args.sessionId);
+        const kind = kinds.all().find((candidate) => candidate.id === record?.kindId);
+        const slot = registry.slotOf(args.sessionId);
+        return {
+          sessionId: args.sessionId,
+          kindId: record?.kindId ?? null,
+          resumeTarget: kind?.resumeTargetOf?.(slot) ?? null,
+        };
+      },
+    }),
+  );
+
   // Deliberately does not count topics: a kind subscribes them when it registers,
   // which happens after this line, so any number here would read as a fault
   // ("0 agent topics") while being momentarily true. A count that is only ever

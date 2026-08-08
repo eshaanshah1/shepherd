@@ -14,9 +14,14 @@ import { expandHome } from './model/repo-path.ts';
 import { repoName } from './model/repo-name.ts';
 import { completeDirectories, looksLikeRepo } from './suggest.ts';
 import { taskRootId } from './model/root-id.ts';
+/**
+ * Asked of `agents-core`, never of a vendor: a task that named `claudeCode.*`
+ * would be a task that knows which agent it hired (D11).
+ */
+const AGENTS_RESUME_TARGET = 'agents.resumeTarget';
 import { displayState } from './model/lifecycle.ts';
 import { synthTaskRoot } from './model/root-synth.ts';
-import { planLaunch } from './model/launch.ts';
+import { planLaunch, planResume } from './model/launch.ts';
 import { writePastedImages, type PastedImage } from './images.ts';
 import { ARCHIVE_TTL_MS, expired } from './model/expiry.ts';
 import {
@@ -422,11 +427,6 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       const task = store.list().find((candidate) => taskRootId(candidate.id) === root);
       if (task === undefined || task.lifecycle !== 'running') return;
 
-      // Its panes are gone with the root, so the record saying otherwise is
-      // already stale — and leaving it would make the NEXT close of this task
-      // read as "one session left".
-      store.put({ ...task, sessions: [] });
-      changed();
       ctx.log.info(`task ${task.id}: its pane group closed`);
 
       void commands
@@ -514,62 +514,34 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * session with no pane has no owner and no terminator. That is the remote
    * milestone's architecture, deliberately not widened here.
    */
-  async function startSession(
+  /**
+   * Open a pane in the task's root and type one line into it.
+   *
+   * The half `startSession` and `resumeSession` share: which layout verb opens
+   * the pane (mint the root, or split the live one), naming it, and taking the
+   * window there. What differs between them is the LINE — a fresh agent reads a
+   * prompt file, a resumed one names a session — and that is the whole of the
+   * difference, which is why it is the only parameter.
+   */
+  async function openAgentPane(
     task: TaskRecord,
     input: {
-      readonly repo?: string;
-      readonly prompt: string;
-      readonly role: TaskSession['role'];
-      readonly images?: readonly PastedImage[];
+      readonly cwd: string;
+      readonly command: string;
+      readonly title: string;
+      /** Undo whatever was staged for the line that will now never run. */
+      readonly onFailure: () => void;
     },
-  ): Promise<TaskSession> {
-    const cwd = input.repo === undefined ? rootOf(task) : `${rootOf(task)}/${input.repo}`;
-
-    // Under the extension's data dir but OUTSIDE any task root: the root is an
-    // agent's cwd, and a prompt file sitting in it is junk in the workspace the
-    // agent is about to describe.
-    const promptDir = `${ctx.dataDir}/.prompts`;
-    mkdirSync(promptDir, { recursive: true });
-
-    /**
-     * Pasted images land beside the prompt, and their tokens become paths.
-     *
-     * A directory per launch, not per extension: the files are `image-1.png`
-     * and so on, so two tasks sharing a directory would have the second
-     * overwrite the first's — and an agent would then read someone else's
-     * screenshot with total confidence.
-     */
-    const stem = `${task.slug}-${ctx.clock.now()}`;
-    const written =
-      input.images === undefined || input.images.length === 0
-        ? { brief: input.prompt, files: [] }
-        : writePastedImages(`${promptDir}/${stem}`, { brief: input.prompt, images: input.images });
-    if (written.files.length > 0) {
-      ctx.log.info(`task ${task.id}: ${written.files.length} pasted image(s) at ${promptDir}/${stem}`);
-    }
-
-    const plan = planLaunch({
-      promptFile: `${promptDir}/${stem}.txt`,
-      prompt: written.brief,
-    });
-    // Before the split: the renderer types the command as soon as the pane's
-    // session exists, and a `cat` that loses the race reads an empty prompt.
-    writeFileSync(plan.promptFile, written.brief, 'utf8');
-
+  ): Promise<string> {
     const root = taskRootId(task.id);
-    /**
-     * The name a column of identical shell titles is otherwise missing — what a
-     * task with three agents looks like without it.
-     */
-    const title =
-      input.role === 'orchestrator' ? task.title : `${task.title} · ${input.repo ?? 'workstream'}`;
+    const { cwd, command, title } = input;
 
     const opened = await commands.invoke<{ root: string; pane: string | null; created: boolean }>(
       'layout.openRoot',
-      { root, cwd, initialCommand: plan.command, title },
+      { root, cwd, initialCommand: command, title },
     );
     if (!opened.ok) {
-      rmSync(plan.promptFile, { force: true });
+      input.onFailure();
       throw new Error(`could not open the task's root: ${opened.error.code}: ${opened.error.message}`);
     }
 
@@ -580,7 +552,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       // there is deliberately no rename on this path: a second invoke would set
       // the title the layout has already set.
       if (typeof opened.value.pane !== 'string') {
-        rmSync(plan.promptFile, { force: true });
+        input.onFailure();
         throw new Error(`the task's root was created with no pane to run the agent in`);
       }
       pane = opened.value.pane;
@@ -594,10 +566,10 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         axis: 'row',
         root,
         cwd,
-        initialCommand: plan.command,
+        initialCommand: command,
       });
       if (!split.ok) {
-        rmSync(plan.promptFile, { force: true });
+        input.onFailure();
         throw new Error(`could not open a pane for the agent: ${split.error.code}: ${split.error.message}`);
       }
       pane = split.value;
@@ -640,17 +612,113 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       );
     }
 
+    return pane;
+  }
+
+  async function startSession(
+    task: TaskRecord,
+    input: {
+      readonly repo?: string;
+      readonly prompt: string;
+      readonly role: TaskSession['role'];
+      readonly images?: readonly PastedImage[];
+    },
+  ): Promise<TaskSession> {
+    const cwd = input.repo === undefined ? rootOf(task) : `${rootOf(task)}/${input.repo}`;
+
+    // Under the extension's data dir but OUTSIDE any task root: the root is an
+    // agent's cwd, and a prompt file sitting in it is junk in the workspace the
+    // agent is about to describe.
+    const promptDir = `${ctx.dataDir}/.prompts`;
+    mkdirSync(promptDir, { recursive: true });
+
+    /**
+     * Pasted images land beside the prompt, and their tokens become paths.
+     *
+     * A directory per launch, not per extension: the files are `image-1.png`
+     * and so on, so two tasks sharing a directory would have the second
+     * overwrite the first's — and an agent would then read someone else's
+     * screenshot with total confidence.
+     */
+    const stem = `${task.slug}-${ctx.clock.now()}`;
+    const written =
+      input.images === undefined || input.images.length === 0
+        ? { brief: input.prompt, files: [] }
+        : writePastedImages(`${promptDir}/${stem}`, { brief: input.prompt, images: input.images });
+    if (written.files.length > 0) {
+      ctx.log.info(`task ${task.id}: ${written.files.length} pasted image(s) at ${promptDir}/${stem}`);
+    }
+
+    const plan = planLaunch({
+      promptFile: `${promptDir}/${stem}.txt`,
+      prompt: written.brief,
+    });
+    // Before the split: the renderer types the command as soon as the pane's
+    // session exists, and a `cat` that loses the race reads an empty prompt.
+    writeFileSync(plan.promptFile, written.brief, 'utf8');
+
+    const pane = await openAgentPane(task, {
+      cwd,
+      command: plan.command,
+      title:
+        input.role === 'orchestrator' ? task.title : `${task.title} · ${input.repo ?? 'workstream'}`,
+      // The prompt file is consumed by the line that runs; if no line ever
+      // runs, nothing else will ever delete it.
+      onFailure: () => rmSync(plan.promptFile, { force: true }),
+    });
+
     const session: TaskSession = {
       id: `pending-${ctx.clock.now()}`,
       ...(input.repo === undefined ? {} : { repo: input.repo }),
       role: input.role,
       pane,
     };
-    ctx.log.info(`task ${task.id}: opened pane ${pane} in ${cwd} (root ${root}) for a ${input.role}`);
+    ctx.log.info(`task ${task.id}: opened pane ${pane} in ${cwd} for a ${input.role}`);
     void correlate(task.id, session).catch((error: unknown) => {
       ctx.log.error(`task ${task.id}: correlating ${session.pane ?? '?'} threw — ${String(error)}`);
     });
     return session;
+  }
+
+  /**
+   * Put a recorded session back — reattached, not restarted.
+   *
+   * The counterpart to the capture in `tasks.archive`: the target came from the
+   * kind that owns the agent and goes back unread (D11), and the line that runs
+   * carries no prompt because the transcript already holds one. Starting a fresh
+   * agent on the original brief instead is the behaviour this replaces — the
+   * same words with none of the work, which reads as the agent having forgotten
+   * everything it did.
+   *
+   * The record's session id is left ALONE and `correlate` re-points it at the
+   * new pty. A resumed Claude session keeps its own id (that is what `--resume`
+   * means), but the kernel session is a new one, and the record's `id` is the
+   * kernel's.
+   */
+  async function resumeSession(task: TaskRecord, session: TaskSession): Promise<void> {
+    const target = session.resumeTarget;
+    if (target === undefined) return;
+    const cwd = session.repo === undefined ? rootOf(task) : `${rootOf(task)}/${session.repo}`;
+    const pane = await openAgentPane(task, {
+      cwd,
+      command: planResume(target),
+      title: session.role === 'orchestrator' ? task.title : `${task.title} · ${session.repo ?? 'workstream'}`,
+      // Nothing was staged on disk for a resume — there is no prompt file.
+      onFailure: () => undefined,
+    });
+
+    const now = store.get(task.id);
+    if (now !== undefined) {
+      store.put({
+        ...now,
+        sessions: now.sessions.map((entry) => (entry.id === session.id ? { ...entry, pane } : entry)),
+      });
+      changed();
+    }
+    ctx.log.info(`task ${task.id}: resumed ${session.role} in pane ${pane}`);
+    void correlate(task.id, { ...session, pane }).catch((error: unknown) => {
+      ctx.log.error(`task ${task.id}: correlating ${pane} threw — ${String(error)}`);
+    });
   }
 
   /**
@@ -1049,10 +1117,49 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     commands.register(TASK_COMMANDS.archive, {
       schema: s.object({ task: s.string() }),
       handler: async (args) => {
-        const task = store.get(args.task);
-        if (task === undefined) throw new Error(`no task ${args.task}`);
+        const found = store.get(args.task);
+        if (found === undefined) throw new Error(`no task ${args.task}`);
+        let task: TaskRecord = found;
         return whileBusy(task.id, 'archiving', async () => {
         const root = rootOf(task);
+
+        /**
+         * Capture what would reattach to each agent, BEFORE its pty is gone.
+         *
+         * Without this, restoring a task started a fresh agent on the original
+         * brief — the same words, none of the transcript — because the record
+         * held nothing that could reattach and `provision` treats a task with no
+         * sessions as one that has never run. The value is the kind's and stays
+         * opaque here (D11): asked for through `agents.resumeTarget`, stored,
+         * and handed back unread.
+         *
+         * The PANE is dropped in the same write. It closed with the root, and a
+         * record naming a pane that does not exist is what made the archive
+         * trigger unreliable in the first place.
+         */
+        const sessions = await Promise.all(
+          task.sessions.map(async (session) => {
+            // `ok` says the call succeeded, not that the value has a shape —
+            // it crossed a port and came from an extension this one has never
+            // seen. Read defensively or an agent extension that answers
+            // `undefined` takes the whole archive down with a TypeError.
+            const answer = await commands.invoke<unknown>(AGENTS_RESUME_TARGET, { sessionId: session.id });
+            const value = answer.ok && typeof answer.value === 'object' && answer.value !== null
+              ? (answer.value as { resumeTarget?: unknown }).resumeTarget
+              : undefined;
+            const target = typeof value === 'string' && value !== '' ? value : null;
+            if (target === null) {
+              // Not a failure: a session that never adopted an agent, or one
+              // whose agent cannot reattach. It stays in the record so the task
+              // still knows it ran, and restore leaves it alone.
+              ctx.log.info(`task ${task.id}: session ${session.id} has nothing to resume`);
+            }
+            const { pane: _closed, ...rest } = session;
+            return { ...rest, ...(target === null ? {} : { resumeTarget: target }) };
+          }),
+        );
+        task = { ...task, sessions };
+        store.put(task);
         const warnings: string[] = [];
         const archives: RepoArchive[] = [];
         for (const repo of task.repos) {
@@ -1128,6 +1235,31 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           // work with the old snapshot.
           const now = store.get(task.id);
           if (now !== undefined) store.put({ ...now, archives: [] });
+
+          /**
+           * And put the AGENTS back — reattached, not restarted.
+           *
+           * This is what the archive's captured targets were for. Restoring used
+           * to leave a task with its worktrees and no agent, and clicking it
+           * then started a fresh one on the original brief: the same words with
+           * none of the transcript, which reads as the agent having forgotten
+           * everything it did. `claude --resume` picks the session up where it
+           * stopped.
+           *
+           * A session with no target is skipped rather than started fresh, for
+           * the same reason: an agent that cannot be reattached to is one there
+           * is nothing to restore, and re-prompting it is the behaviour being
+           * fixed. `tasks.spawn` is right there when you do want a new one.
+           */
+          const restored = store.get(task.id);
+          for (const session of restored?.sessions ?? []) {
+            if (session.resumeTarget === undefined) continue;
+            try {
+              await resumeSession(store.get(task.id) as TaskRecord, session);
+            } catch (error: unknown) {
+              ctx.log.warn(`task ${task.id}: session ${session.id} not resumed — ${String(error)}`);
+            }
+          }
         }).catch((error: unknown) => {
           ctx.log.error(`task ${task.id}: restore threw — ${String(error)}`);
         });
