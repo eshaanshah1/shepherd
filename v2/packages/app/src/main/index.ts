@@ -538,6 +538,13 @@ void app.whenReady().then(async () => {
     active: HOME_ROOT,
     // Presence follows the active root, wired here rather than at each switch
     // site so no future caller can move the window without moving the predicate.
+    //
+    // Deliberately NOT announced on the bus. The switch is already published to
+    // the renderer as part of the layout snapshot, which is what draws the
+    // stage — so the sidebar highlights from that same value (`TreeItem.root`)
+    // rather than from an extension mirroring a second copy of it. A bus event
+    // is for something an extension must ACT on, which is why `rootClosed` is
+    // one (a task archives itself) and this is not (it is a projection).
     onActiveChanged: () => syncPresence(),
   });
   publishLayout = layoutIpc.publish;

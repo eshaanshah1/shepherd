@@ -39,6 +39,7 @@ import {
 } from '@shepherd/sdk';
 import { activate } from './index.ts';
 import { TASK_SCHEMA_VERSION, type TaskRecord, type TaskSession } from './store.ts';
+import { taskRootId } from './model/root-id.ts';
 
 /**
  * `tasks.delete`, through `activate` — the handler, not the pieces under it.
@@ -1050,6 +1051,94 @@ describe('a long operation', () => {
     finish();
     await archiving;
     expect((await rowOf(h, 't1'))?.busy).toBeUndefined();
+  });
+
+  it('says so while a NEW task is being provisioned, which is the longest of them', async () => {
+    // The one a user actually waits on: `tasks.create` answers immediately and
+    // the worktrees land behind it (D12), so between the row appearing and the
+    // agent opening there are git-shaped seconds. It read as an idle draft —
+    // the row was drawn, nothing said it was mid-anything, and the app looked
+    // like it had done nothing.
+    let finish = (): void => undefined;
+    const held = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const h = (live = harness({
+      // `fetch` is the first call `provisionRepo` makes, held open so the row
+      // can be asked what it looks like while the worktree is being built.
+      git: (call) => (call.args[0] === 'fetch' ? held.then(() => OK) : OK),
+    }));
+
+    await h.run('tasks.create', { title: 'Ship it', repos: [{ path: '/src/app', name: 'app' }] });
+    const during = (await h.tree().children(undefined))[0];
+    expect(during?.busy).toBe(true);
+
+    finish();
+    await until(async () => (await rowOf(h, String(during?.id)))?.busy === undefined);
+  });
+
+  it('keeps saying "restoring" after the re-provision inside it finishes', async () => {
+    // Restoring wraps a provision, so the two spans nest. An inner `finally`
+    // that DELETED the word would drop the row back to idle at the halfway
+    // mark — and the half it drops during is the archive replay, which is the
+    // part that puts the user's uncommitted work back.
+    let finish = (): void => undefined;
+    const held = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const h = (live = harness({
+      tasks: [
+        task({
+          lifecycle: 'archived',
+          archives: [
+            { repo: 'api', branch: 'fix', headSha: 'abc123', commit: 'def456', stagedTree: 'aaa111' },
+          ],
+        }),
+      ],
+      // `read-tree` belongs to the archive replay and to nothing else, so it
+      // can only run once the provision inside the restore has come and gone —
+      // which is exactly where the inner span ended. (`symbolic-ref` looks like
+      // the earlier marker and is not: `provisionRepo` probes the default base
+      // with one, so holding it stops the provision instead.)
+      git: (call) => (call.args[0] === 'read-tree' ? held.then(() => OK) : OK),
+    }));
+
+    await h.run('tasks.restore', { task: 't1' });
+    await until(async () => h.git.some((call) => call.args[0] === 'read-tree'));
+
+    const during = await rowOf(h, 't1');
+    expect(during?.busy).toBe(true);
+    expect(during?.description).toBe('restoring…');
+
+    finish();
+    await until(async () => (await rowOf(h, 't1'))?.busy === undefined);
+  });
+});
+
+describe('a task row', () => {
+  it('names the layout root it stands for, so the shell can tell it is the one on screen', async () => {
+    // The row says WHICH root it is, and stops there. Whether that root is the
+    // one on screen is the layout's fact and the shell reads it from the same
+    // snapshot it draws the stage from — so the highlight and the visible pane
+    // cannot disagree, which is the whole defect.
+    //
+    // Mirroring the active root in here instead would be a second copy of a
+    // kernel fact living in another process: the same disease as the click-
+    // written selection this replaces, one process along.
+    const h = (live = harness({ tasks: [task({ id: 't1' }), task({ id: 't2', slug: 'other' })] }));
+
+    expect((await rowOf(h, 't1'))?.root).toBe(taskRootId('t1'));
+    expect((await rowOf(h, 't2'))?.root).toBe(taskRootId('t2'));
+  });
+
+  it('names it even while archived, because reopening it is what a click does', async () => {
+    // An archived task has no live root, but clicking it restores one AT THE
+    // SAME ID (`tasks.reveal`), so the row identifies the same root throughout.
+    // Withholding it while archived would blank the highlight for the first
+    // moments after a restore — exactly when the window has just moved there.
+    const h = (live = harness({ tasks: [task({ id: 't1', lifecycle: 'archived' })] }));
+
+    expect((await rowOf(h, 't1'))?.root).toBe(taskRootId('t1'));
   });
 });
 
