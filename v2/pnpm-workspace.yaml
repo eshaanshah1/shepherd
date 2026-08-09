@@ -42,6 +42,18 @@ catalog:
   '@xterm/xterm': 6.0.0
   '@xterm/addon-fit': 0.11.0
   '@xterm/addon-webgl': 0.19.0
+
+  # The host-side terminal authority (R0). NOT the renderer's xterm: `headless`
+  # is the same VT state machine with the renderer removed — no DOM anywhere in
+  # its import graph — which is what makes it legal inside core at all. The
+  # boundary rule that permits it, and only it, is in tooling/eslint/boundaries.js.
+  #
+  # Both are CommonJS with no ESM named exports, and every package here is
+  # `"type": "module"` — so they are default-imported and destructured. Left as a
+  # named import it typechecks and then fails at runtime, in the main process, at
+  # session creation. Measured in docs/superpowers/probes/2026-08-09-r0.
+  '@xterm/headless': 6.0.0
+  '@xterm/addon-serialize': 0.14.0
   react: 19.2.8
   react-dom: 19.2.8
   '@types/react': 19.2.18

@@ -25,6 +25,14 @@ import tseslint from 'typescript-eslint';
 const ELECTRON = ['electron', 'electron/*', '@electron/*'];
 const REACT = ['react', 'react-dom', 'react/*', 'react-dom/*'];
 const XTERM = ['@xterm/*'];
+/**
+ * The DRAWING half of xterm — the part that measures cells and builds elements.
+ *
+ * Split out from `XTERM` in R0, when core acquired a legitimate need for the
+ * OTHER half. `@xterm/headless` is deliberately absent from this list; see the
+ * comment on `boundary/core` for why that is a narrowing rather than a hole.
+ */
+const XTERM_VIEW = ['@xterm/xterm', '@xterm/xterm/*', '@xterm/addon-fit', '@xterm/addon-webgl'];
 const NODE_PTY = ['node-pty', 'node-pty/*'];
 
 // "OS API" = the node builtins through which a process reaches the machine
@@ -124,12 +132,39 @@ const noDom = {
 
 export const boundaries = [
   {
+    // Why core may import `@xterm/headless` (R0, 2026-08-09), when for three
+    // milestones the rule here read "xterm is a renderer concern; core owns
+    // bytes, not views."
+    //
+    // That sentence rested on a claim about the DOM, and it is still true of
+    // `@xterm/xterm`, which measures cells and builds elements — so that half
+    // stays denied, as `XTERM_VIEW`. `@xterm/headless` is the same VT state
+    // machine with the renderer removed and no DOM anywhere in its import graph.
+    // It is a PARSER, which is exactly the kind of thing a kernel that owns ptys
+    // should own.
+    //
+    // It is load-bearing rather than convenient. Without a host-side screen an
+    // attach can only replay a byte ring, so a viewer has to have watched from
+    // the beginning to be correct — which is why v1's phone needed a bespoke
+    // integration, and why v1's remote design lists a cold-reconnect redraw as an
+    // accepted limitation rather than a bug. A serialized screen deletes it.
+    // Measured in docs/superpowers/probes/2026-08-09-r0.
+    //
+    // Two things keep this narrow. The view addons are named explicitly rather
+    // than left to a `@xterm/*` wildcard, so a future addon is denied by default
+    // and appears here as a decision. And the mirror lives in `session/`, next to
+    // the fanout it feeds — a `@xterm/headless` import anywhere else in core is
+    // still wrong, but it is wrong in a way review catches rather than lint.
     name: 'boundary/core',
     files: ['packages/core/**/*.ts'],
     rules: restrict(
       deny(ELECTRON, 'core is process-agnostic: no electron. Put shell wiring in packages/app.'),
       deny(REACT, 'core is headless: no react. Views live in packages/app/src/renderer.'),
-      deny(XTERM, 'xterm is a renderer concern; core owns bytes, not views.'),
+      deny(
+        XTERM_VIEW,
+        'the renderer draws: @xterm/xterm and its view addons are a renderer concern. ' +
+          'core may import @xterm/headless + @xterm/addon-serialize (the VT state machine, no DOM) — see the comment above.',
+      ),
       deny(OS_APIS, 'OS APIs live in packages/platform/darwin only (node-pty is the one exception).'),
       deny(
         [...WORKSPACE.app, ...WORKSPACE.platform, ...WORKSPACE.tokens, ...WORKSPACE.ui],
@@ -154,7 +189,11 @@ export const boundaries = [
     rules: restrict(
       deny(ELECTRON, 'core is process-agnostic: no electron, not even in a test.'),
       deny(REACT, 'core is headless: no react, not even in a test.'),
-      deny(XTERM, 'xterm is a renderer concern.'),
+      // Same split as `boundary/core`: a mirror test may build a second
+      // `@xterm/headless` to repaint a snapshot into and compare screens, which
+      // is the only honest way to assert round-trip fidelity. The drawing half
+      // stays denied — there is no DOM in a core test either.
+      deny(XTERM_VIEW, 'the renderer draws; a core test may use @xterm/headless to check a screen.'),
       deny(
         [...WORKSPACE.app, ...WORKSPACE.platform, ...WORKSPACE.tokens, ...WORKSPACE.ui],
         'core may only import @shepherd/sdk.',
