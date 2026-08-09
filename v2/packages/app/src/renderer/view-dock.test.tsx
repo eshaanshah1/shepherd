@@ -373,3 +373,54 @@ describe('a contributed row-s actions', () => {
     view.unmount();
   });
 });
+
+/**
+ * The foot: the group a contribution puts LAST, and where the dock puts it.
+ *
+ * Two rules, and both were reported from the running app rather than reasoned
+ * about here. A heading that is the first row used to be dropped as "a label
+ * for nothing", which made the sidebar change shape the moment the last live
+ * task ended — DONE vanished and the finished tasks jumped to the top. And the
+ * foot is capped, so finished work cannot push live work off the screen.
+ */
+describe('the dock-s foot group', () => {
+  const TREE: ViewContributionDTO[] = [
+    { extension: 'shepherd.tasks', type: 'tasks.tree', kind: 'tree' },
+  ];
+
+  const done = (n: number): readonly TreeItem[] => [
+    { id: 'group:done', label: 'DONE', section: true },
+    ...Array.from({ length: n }, (_, i) => ({ id: `t${String(i)}`, label: `Task ${String(i)}` })),
+  ];
+
+  it('draws a heading that is the first row, rather than dropping it', async () => {
+    const view = mount(<ViewDock views={bridge(TREE, [], done(2))} />);
+    await settle();
+    expect(all(view.container, 'view-group').map((el) => el.textContent)).toEqual(['DONE']);
+    view.unmount();
+  });
+
+  it('keeps a first-row heading pinned to the foot, not floated to the top', async () => {
+    // The two halves of the same report: with nothing above it there was no
+    // last section to split on, so every row landed in the top list.
+    const view = mount(<ViewDock views={bridge(TREE, [], done(2))} />);
+    await settle();
+    const foot = view.container.querySelector('.sh-rows-foot');
+    expect(foot).not.toBeNull();
+    expect(foot?.contains(one(view.container, 'view-group'))).toBe(true);
+    expect(all(view.container, 'view-row').every((row) => foot?.contains(row) === true)).toBe(true);
+    view.unmount();
+  });
+
+  it('scrolls the finished rows and leaves the heading outside the scroller', async () => {
+    // A DONE that scrolls away leaves a list of finished tasks with nothing
+    // saying what they are — so the cap is on the rows, not on the group.
+    const view = mount(<ViewDock views={bridge(TREE, [], done(9))} />);
+    await settle();
+    const scroller = view.container.querySelector('.sh-rows-foot-scroll');
+    expect(scroller).not.toBeNull();
+    expect(scroller?.contains(one(view.container, 'view-group'))).toBe(false);
+    expect(scroller?.querySelectorAll('[data-testid="view-row"]')).toHaveLength(9);
+    view.unmount();
+  });
+});

@@ -239,6 +239,8 @@ const apiCallSchema = s.union(
     surface: s.optional(s.enumOf(['dock', 'overlay'] as const)),
     key: s.optional(s.string()),
     title: s.optional(s.string()),
+    /** The glyph on the control that raises an overlay. A NAME, resolved in the renderer. */
+    icon: s.optional(s.string()),
   }),
   s.object({ kind: s.literal('view.unregister'), type: s.string() }),
   s.object({ kind: s.literal('view.changed'), type: s.string() }),
