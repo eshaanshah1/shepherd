@@ -321,4 +321,97 @@ describe('a paired device, over TLS, driving a real pty', () => {
     // And its session keeps running — a revoked VIEWER is not a killed agent.
     expect(h.sessionHost.list().length).toBeGreaterThanOrEqual(0);
   });
+
+  /**
+   * CO-PRESENCE: one pty, two clients, on two different transports, in sync in
+   * both directions.
+   *
+   * Start a sentence on the Mac, watch it appear on the phone, press Enter from
+   * the phone. v1 could not do this and said so — "single active viewer… we will
+   * not stream a concurrently-mirrored grid", with co-presence filed as the
+   * someday-bet behind a mosh-style rewrite (Approach 3).
+   *
+   * Here it is not a feature at all; it is what the architecture already is. One
+   * pty has one `PtyFanout`, so every attached sink gets every byte — including
+   * the tty's own ECHO of a half-typed line, which is why partial input shows up
+   * without anybody streaming keystrokes. And input is just `write` on the same
+   * session, so it does not matter which client sent it.
+   *
+   * The Mac connects to `SessionServer` directly (as main does over the daemon's
+   * unix socket) and the phone through the TLS gate, so this also asserts the
+   * two transports meet at the same server rather than at two copies of one.
+   */
+  it('streams one pty to a laptop AND a phone, and takes input from either', async () => {
+    const h = await host();
+    h.server.showCode();
+
+    // --- the laptop: a direct client of the very same SessionServer.
+    const laptopFrames: Frame[] = [];
+    const laptopDecoder = new FrameDecoder();
+    h.sessions.accept({
+      id: 9001,
+      write: (bytes) => laptopFrames.push(...laptopDecoder.feed(bytes).frames),
+      close: () => undefined,
+    });
+    const laptopSend = (bytes: Uint8Array) => h.sessions.feed(9001, bytes);
+    const laptopOutput = () =>
+      laptopFrames
+        .filter((f) => f.kind === RESPONSE.data)
+        .map((f) => new TextDecoder().decode(f.bytes))
+        .join('');
+
+    laptopSend(encodeJsonFrame(REQUEST.hello, { seq: 1, version: PROTOCOL_VERSION }));
+    laptopSend(
+      encodeJsonFrame(REQUEST.create, { seq: 2, spec: { cwd: '/tmp', command: '/bin/sh', args: [] } }),
+    );
+    await waitFor(
+      () => laptopFrames.some((f) => (f.json as { seq?: number } | undefined)?.seq === 2),
+      'the laptop’s session',
+    );
+    const id = (
+      laptopFrames.find((f) => (f.json as { seq?: number } | undefined)?.seq === 2)?.json as {
+        value: { id: string };
+      }
+    ).value.id;
+    laptopSend(encodeJsonFrame(REQUEST.attach, { seq: 3, sessionId: id }));
+
+    // --- the phone: paired, over TLS, attached to the SAME session id.
+    const phone = device(h.port, h.identity.pin);
+    await phone.ready;
+    phone.send(hello({ pairingCode: '424242' }));
+    await waitFor(() => phone.of(REMOTE.accepted).length > 0, 'the phone to pair');
+    phone.send(encodeJsonFrame(REQUEST.hello, { seq: 1, version: PROTOCOL_VERSION }));
+    phone.send(encodeJsonFrame(REQUEST.attach, { seq: 2, sessionId: id }));
+    await waitFor(() => phone.output().length > 0, 'the phone’s replay');
+
+    /**
+     * Half a sentence, typed on the LAPTOP and never submitted.
+     *
+     * Two markers, and the split is what makes each assertion mean something.
+     * `TYPED-ON-LAPTOP` is in the text itself, so seeing it proves the phone is
+     * watching the tty's ECHO of a line that has not run. `RAN` appears only in
+     * the output, so seeing it proves the command actually executed rather than
+     * the echo being matched twice — which is the inverse of the trick the other
+     * smokes use, for the inverse reason.
+     */
+    laptopSend(
+      encodeByteFrame(REQUEST.write, id, new TextEncoder().encode("printf 'TYPED-ON-LAPTOP %s\\n' 'RAN'")),
+    );
+
+    await waitFor(() => phone.output().includes('TYPED-ON-LAPTOP'), 'the phone to see the laptop typing');
+    await waitFor(() => laptopOutput().includes('TYPED-ON-LAPTOP'), 'the laptop’s own echo');
+    // Not submitted yet: nothing has run on either screen.
+    expect(phone.output()).not.toContain('TYPED-ON-LAPTOP RAN');
+
+    // --- and ENTER is pressed on the PHONE.
+    phone.send(encodeByteFrame(REQUEST.write, id, new TextEncoder().encode('\r')));
+
+    // The command the LAPTOP typed runs because the PHONE submitted it, and both
+    // see the result.
+    await waitFor(() => phone.output().includes('TYPED-ON-LAPTOP RAN'), 'the phone to see the output');
+    await waitFor(() => laptopOutput().includes('TYPED-ON-LAPTOP RAN'), 'the laptop to see the output');
+
+    // One pty, not two. This is the assertion the whole test is for.
+    expect(h.sessionHost.list()).toHaveLength(1);
+  });
 });
