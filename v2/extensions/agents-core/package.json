@@ -53,6 +53,10 @@
         {
           "id": "agents.resumeTarget",
           "title": "Agents: Resume Target"
+        },
+        {
+          "id": "agents.resumeCommand",
+          "title": "Agents: Resume Command"
         }
       ]
     }

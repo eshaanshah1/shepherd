@@ -19,9 +19,10 @@ import { taskRootId } from './model/root-id.ts';
  * would be a task that knows which agent it hired (D11).
  */
 const AGENTS_RESUME_TARGET = 'agents.resumeTarget';
+const AGENTS_RESUME_COMMAND = 'agents.resumeCommand';
 import { displayState } from './model/lifecycle.ts';
 import { synthTaskRoot } from './model/root-synth.ts';
-import { planLaunch, planResume } from './model/launch.ts';
+import { planLaunch } from './model/launch.ts';
 import { writePastedImages, type PastedImage } from './images.ts';
 import { ARCHIVE_TTL_MS, expired } from './model/expiry.ts';
 import {
@@ -698,10 +699,32 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
   async function resumeSession(task: TaskRecord, session: TaskSession): Promise<void> {
     const target = session.resumeTarget;
     if (target === undefined) return;
+
+    /**
+     * The command comes from the agent kind, not from here (ADR 0035 §3).
+     *
+     * This file used to spell `claude --resume` through `planResume`, with a
+     * comment saying it should not: "this is the seam where an agent kind should
+     * eventually say it … hardcoded until a second kind exists". R1 supplied the
+     * second CONSUMER, which is the same argument one word along, so the
+     * hardcode is gone. `tasks` now stores an opaque token and asks for a
+     * command — it never learns the binary or the flag.
+     */
+    const answer = await commands.invoke<unknown>(AGENTS_RESUME_COMMAND, { target });
+    const command =
+      answer.ok && typeof answer.value === 'object' && answer.value !== null
+        ? (answer.value as { command?: unknown }).command
+        : undefined;
+    if (typeof command !== 'string' || command === '') {
+      // Not a failure: a kind that cannot build a resume line, or none
+      // registered yet. The task keeps the record and simply does not reattach.
+      ctx.log.info(`task ${task.id}: session ${session.id} has no resume command`);
+      return;
+    }
     const cwd = session.repo === undefined ? rootOf(task) : `${rootOf(task)}/${session.repo}`;
     const pane = await openAgentPane(task, {
       cwd,
-      command: planResume(target),
+      command,
       title: session.role === 'orchestrator' ? task.title : `${task.title} · ${session.repo ?? 'workstream'}`,
       // Nothing was staged on disk for a resume — there is no prompt file.
       onFailure: () => undefined,

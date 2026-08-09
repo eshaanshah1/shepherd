@@ -17,6 +17,20 @@ export const AGENTS_COMMANDS = {
    * vendor by name would be a task that knows which vendor it hired.
    */
   resumeTarget: 'agents.resumeTarget',
+  /**
+   * A stored resume target -> the command line that reattaches to it.
+   *
+   * Separate from `resumeTarget` because the two are asked at different times:
+   * the target is captured while the session is LIVE (it comes out of the kind's
+   * slot), and the command is needed later, when that session is long gone —
+   * restoring an archived task, or a pane whose pty did not survive. So this one
+   * takes the token back rather than a session id.
+   *
+   * It is what keeps `claude --resume` inside `claude-code` (ADR 0035 §3). A
+   * consumer stores an opaque string and asks for a command; it never learns the
+   * binary or the flag.
+   */
+  resumeCommand: 'agents.resumeCommand',
 } as const;
 
 /** Kernel commands this extension invokes. Public vocabulary, like a CLI verb. */
@@ -57,6 +71,7 @@ export const agentsCoreManifest: Manifest = {
     commands: [
       { id: AGENTS_COMMANDS.list, title: 'Agents: List Tracked Sessions' },
       { id: AGENTS_COMMANDS.resumeTarget, title: 'Agents: Resume Target' },
+      { id: AGENTS_COMMANDS.resumeCommand, title: 'Agents: Resume Command' },
     ],
   },
 };
