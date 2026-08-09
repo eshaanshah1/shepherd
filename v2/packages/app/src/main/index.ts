@@ -39,6 +39,7 @@ import {
 } from './bootstrap.ts';
 import { windowOptions } from './window-options.ts';
 import { SessionBridge, type SessionHostLike } from './session-bridge.ts';
+import { registerViewCommands } from './view-commands.ts';
 import { SessionClient } from './session-client.ts';
 import { daemonConnector } from './daemon-launcher.ts';
 import { registerSessionIpc } from './ipc.ts';
@@ -629,6 +630,15 @@ void app.whenReady().then(async () => {
   activeRoot = layoutIpc.getActive;
 
   registerAttentionCommands({ store: attention, registry });
+
+  /**
+   * Contributed views, in the one verb table (§4.3).
+   *
+   * The renderer already reaches them over IPC; this is what lets the CLI, MCP
+   * and a paired DEVICE reach the same rows without a second implementation
+   * each — which is the thing v1 got wrong three times over.
+   */
+  registerViewCommands({ views, registry });
 
   // Before the extensions activate, so the first transition an agent publishes
   // has somewhere to land rather than being emitted at nobody.
