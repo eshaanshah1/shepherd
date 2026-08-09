@@ -144,6 +144,8 @@ export interface ViewContributionDTO {
   readonly surface?: 'dock' | 'overlay';
   readonly key?: string;
   readonly title?: string;
+  /** The glyph on the control that raises an overlay. Defaults to `plus`. */
+  readonly icon?: string;
 }
 
 export interface ViewsApi {

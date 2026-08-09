@@ -501,6 +501,7 @@ function createViews(services: ExtHostServices, providers: Map<string, ViewProvi
             ...(provider.surface === undefined ? {} : { surface: provider.surface }),
             ...(provider.key === undefined ? {} : { key: provider.key }),
             ...(provider.title === undefined ? {} : { title: provider.title }),
+            ...(provider.icon === undefined ? {} : { icon: provider.icon }),
           },
           `view.register ${type}`,
         );
