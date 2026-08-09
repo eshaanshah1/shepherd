@@ -46,6 +46,8 @@ export interface Contribution {
   readonly key?: string;
   /** The heading the shell draws. Falls back to the view type. */
   readonly title?: string;
+  /** The glyph on the control that raises an overlay. Defaults to `plus`. */
+  readonly icon?: string;
 }
 
 /** Everything a contribution declares beyond its kind. */
@@ -53,6 +55,7 @@ export interface ViewDeclaration {
   readonly surface?: 'dock' | 'overlay';
   readonly key?: string;
   readonly title?: string;
+  readonly icon?: string;
 }
 
 const MODIFIERS = new Set(['command','cmd','control','ctrl','commandorcontrol','cmdorctrl','alt','option','altgr','shift','super','meta']);
@@ -105,6 +108,10 @@ export class ViewRegistry {
       ...(declaration.surface === undefined ? {} : { surface: declaration.surface }),
       ...(declaration.key === undefined || !hasModifier(declaration.key) ? {} : { key: declaration.key }),
       ...(declaration.title === undefined ? {} : { title: declaration.title }),
+      // An unknown name is passed through and the renderer falls back to `plus`
+      // — the same rule a row's action glyph gets: a typo must not be louder
+      // than the label beside it.
+      ...(declaration.icon === undefined ? {} : { icon: declaration.icon }),
     });
     this.#options.publish(type);
   }

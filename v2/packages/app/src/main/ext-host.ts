@@ -804,6 +804,7 @@ export class ExtensionHost {
           ...(call.surface === undefined ? {} : { surface: call.surface }),
           ...(call.key === undefined ? {} : { key: call.key }),
           ...(call.title === undefined ? {} : { title: call.title }),
+          ...(call.icon === undefined ? {} : { icon: call.icon }),
         });
         this.#log.info(`${record.id} contributed the ${call.viewKind} view "${call.type}"`);
         return wireOk();

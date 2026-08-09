@@ -137,6 +137,10 @@ export const activate: ActivateFn = (ctx, api) => {
       surface: 'overlay',
       key: WORKTREE_HOOK_KEY,
       title: 'Worktree hooks',
+      // A gear, not the default `+`. This form CHANGES a setting; drawn as a
+      // plus beside the new-task button it read as a second way to create
+      // something, and the two controls were indistinguishable.
+      icon: 'settings',
     }),
   );
 
