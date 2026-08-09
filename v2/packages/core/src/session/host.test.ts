@@ -234,6 +234,15 @@ describe('SessionHost lifecycle', () => {
 });
 
 describe('SessionHost attach ordering', () => {
+  /**
+   * The contract is PtyBroker's and unchanged — replay, then live, with no gap
+   * and no duplicate. What R0 changed is both halves of "replay":
+   *
+   *   - it is a SCREEN, not the last 256 KB of stream, so it is asserted through
+   *     `host.screen()` rather than by comparing byte-for-byte against a ring;
+   *   - it arrives ASYNCHRONOUSLY, because the mirror captures at a point in its
+   *     own write queue (see `mirror.ts`). `attach` still returns synchronously.
+   */
   it('replays first, then continues live, with no duplication and no gap', async () => {
     const host = makeHost();
     const created = host.create({ cwd: '/tmp', command: '/bin/sh', args: [] });
@@ -245,19 +254,17 @@ describe('SessionHost attach ordering', () => {
     // a real duplication check rather than an accident of terminal echo.
     host.write(id, "printf 'mark%s\\n' 'er-one'\n");
     await waitFor(
-      () => decoder.decode(host.snapshot(id) ?? new Uint8Array()).includes('marker-one'),
-      'marker-one to land in the ring',
+      () => (host.screen(id)?.text ?? '').includes('marker-one'),
+      'marker-one to reach the screen',
     );
 
-    const before = decoder.decode(host.snapshot(id) ?? new Uint8Array());
     const out = collector();
     const attached = host.attach(id, out.sink);
     expect(isOk(attached)).toBe(true);
 
-    // The FIRST bytes the sink sees are the replay, delivered synchronously
-    // inside attach() — not on some later turn of the event loop.
-    expect(out.chunks).toHaveLength(1);
-    expect(decoder.decode(out.chunks[0]!)).toBe(before);
+    // The FIRST thing the sink sees is the replay — one chunk, carrying the
+    // screen as it stood when attach was called.
+    await waitFor(() => out.chunks.length > 0, 'the replay to arrive');
     expect(decoder.decode(out.chunks[0]!)).toContain('marker-one');
 
     host.write(id, "printf 'mark%s\\n' 'er-two'\n");
@@ -268,16 +275,11 @@ describe('SessionHost attach ordering', () => {
     expect(countOf(seen, 'marker-two')).toBe(1);
     expect(seen.indexOf('marker-one')).toBeLessThan(seen.indexOf('marker-two'));
 
-    // …and nothing between the two markers was dropped: the ring, which has
-    // been recording throughout, ends with exactly what the sink received.
-    const ring = decoder.decode(host.snapshot(id) ?? new Uint8Array());
-    expect(ring.endsWith(seen.slice(before.length))).toBe(true);
-
     if (isOk(attached)) attached.value.dispose();
     host.write(id, "printf 'mark%s\\n' 'er-three'\n");
     await waitFor(
-      () => decoder.decode(host.snapshot(id) ?? new Uint8Array()).includes('marker-three'),
-      'marker-three to land in the ring after detach',
+      () => (host.screen(id)?.text ?? '').includes('marker-three'),
+      'marker-three to reach the screen after detach',
     );
     expect(out.text()).not.toContain('marker-three');
   });
@@ -295,12 +297,51 @@ describe('SessionHost attach ordering', () => {
 
     const second = collector();
     host.attach(id, second.sink);
-    expect(second.text()).toContain('alpha-1');
+    await waitFor(() => second.text().includes('alpha-1'), "alpha-1 on the second viewer's replay");
 
     host.write(id, "printf 'bet%s\\n' 'a-2'\n");
     await waitFor(() => second.text().includes('beta-2'), 'beta-2 on the second viewer');
     await waitFor(() => first.text().includes('beta-2'), 'beta-2 on the first viewer');
     expect(countOf(second.text(), 'alpha-1')).toBe(1);
+  });
+
+  /** §4.1's third tier, which core-design defers to post-M4. It arrives free. */
+  it('answers with the screen of a live session, and nothing for a dead one', async () => {
+    const host = makeHost();
+    const created = host.create({ cwd: '/tmp', command: '/bin/sh', args: [] });
+    if (!isOk(created)) throw new Error('create failed');
+    const id = created.value.id;
+
+    host.write(id, "printf 'on-the-scr%s\\n' 'een'\n");
+    await waitFor(
+      () => (host.screen(id)?.text ?? '').includes('on-the-screen'),
+      'the screen to catch up',
+    );
+    expect(host.screen(id)?.altScreen).toBe(false);
+    expect(host.screen(sessionId('nope'))).toBeUndefined();
+  });
+
+  /** The one decision a remote viewer can force on a local pty. */
+  it('sizes the pty to the SMALLEST attached viewport, and forgets a withdrawn one', () => {
+    const host = makeHost();
+    const created = host.create({ cwd: '/tmp', command: '/bin/sh', args: [], cols: 80, rows: 24 });
+    if (!isOk(created)) throw new Error('create failed');
+    const id = created.value.id;
+
+    host.setViewport(id, 'mac', { cols: 200, rows: 50 });
+    expect(host.get(id)).toMatchObject({ cols: 200, rows: 50 });
+
+    // The phone is smaller, so it wins: letterboxing the Mac beats clipping it.
+    host.setViewport(id, 'phone', { cols: 60, rows: 20 });
+    expect(host.get(id)).toMatchObject({ cols: 60, rows: 20 });
+
+    // …and when it goes away the Mac stops being letterboxed.
+    host.setViewport(id, 'phone', undefined);
+    expect(host.get(id)).toMatchObject({ cols: 200, rows: 50 });
+
+    // A viewer with no opinion never influenced it in the first place.
+    host.setViewport(id, 'extension-tap', undefined);
+    expect(host.get(id)).toMatchObject({ cols: 200, rows: 50 });
   });
 });
 

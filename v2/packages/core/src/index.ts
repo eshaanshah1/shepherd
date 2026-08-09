@@ -2,7 +2,8 @@
 //
 // Two directories, both of which the design names:
 //   src/layout/   — the SplitTree port. Pure, immutable, platform-free.
-//   src/session/  — PtyRing + PtyFanout now; SessionHost (node-pty) in P2.
+//   src/session/  — TerminalMirror (the host's authoritative screen), PtyFanout
+//                   over it, the pure resize arbitration, and SessionHost.
 //
 // They are directories rather than packages on purpose: one tsconfig, one
 // vitest project, one boundary-lint rule. Splitting them into workspace
@@ -103,14 +104,18 @@ export {
 } from './layout/index.ts';
 
 export {
-  PtyRing,
+  TerminalMirror,
+  arbitrate,
   PtyFanout,
   SessionHost,
   resolveSpec,
   DEFAULT_COLS,
   DEFAULT_ROWS,
-  DEFAULT_RING_BYTES,
+  DEFAULT_SCROLLBACK,
   DEFAULT_TERM,
+  type ScreenState,
+  type TerminalMirrorOptions,
+  type Viewport,
   type PtySink,
   type ResolvedSpec,
   type SessionError,
