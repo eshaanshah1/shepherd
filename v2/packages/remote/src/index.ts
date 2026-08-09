@@ -41,3 +41,4 @@ export {
   type RemoteServerOptions,
   type SessionSink,
 } from './server.ts';
+export { CONTROL, ControlChannel, type ControlChannelOptions, type ControlHost } from './control.ts';
