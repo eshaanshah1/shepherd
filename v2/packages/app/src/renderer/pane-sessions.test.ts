@@ -63,6 +63,92 @@ function harness(): Harness {
 
 // -------------------------------------------------------------------- tests
 
+describe('PaneSessionRegistry suspend', () => {
+  /**
+   * The capability R0 bought, and the reason the mirror pays for itself.
+   *
+   * Before the host held a screen this was impossible: a pane that stopped
+   * listening could never catch up, so every mounted pane — including the ones
+   * in roots nobody is looking at — parsed and rendered forever. See the
+   * `suspend` comment in `pane-sessions.ts`.
+   */
+  it('drops the terminal and the stream, and kills nothing', async () => {
+    const h = harness();
+    h.registry.attach(h.pane, h.host());
+    await h.registry.settled();
+    const sessionId = h.registry.inspect(h.pane.id)?.sessionId;
+    expect(sessionId).toBe('s1');
+
+    h.registry.suspend(h.pane);
+    await h.registry.settled();
+
+    const after = h.registry.inspect(h.pane.id);
+    expect(after?.suspended).toBe(true);
+    expect(after?.streaming).toBe(false);
+    expect(after?.mounted).toBe(false);
+    // The session is KEPT — that is the whole point. Only the view went.
+    expect(after?.sessionId).toBe(sessionId);
+    expect(h.session.names).toContain('detach');
+    // The rule this whole file exists for, on the new path too.
+    expect(h.session.names).not.toContain('kill');
+  });
+
+  it('stops writing bytes into a suspended pane', async () => {
+    const h = harness();
+    h.registry.attach(h.pane, h.host());
+    await h.registry.settled();
+    const terminal = h.terminals[0];
+    const before = terminal?.written.length ?? 0;
+
+    h.registry.suspend(h.pane);
+    await h.registry.settled();
+    h.session.emitData('s1', new TextEncoder().encode('output nobody is watching'));
+
+    // The terminal is gone, so there is nothing to write into and nothing to
+    // render. A dropped byte here is not a gap: the next attach is handed the
+    // screen, which already contains it.
+    expect(terminal?.written.length ?? 0).toBe(before);
+  });
+
+  it('wakes on attach and ADOPTS its session rather than creating a second', async () => {
+    const h = harness();
+    h.registry.attach(h.pane, h.host());
+    await h.registry.settled();
+    const sessionId = h.registry.inspect(h.pane.id)?.sessionId;
+
+    h.registry.suspend(h.pane);
+    await h.registry.settled();
+    h.registry.attach(h.pane, h.host());
+    await h.registry.settled();
+
+    const woken = h.registry.inspect(h.pane.id);
+    expect(woken?.suspended).toBe(false);
+    expect(woken?.streaming).toBe(true);
+    expect(woken?.sessionId).toBe(sessionId);
+    // v1's remount lesson: waking must never spawn a second pty for a pane that
+    // already has one.
+    expect(h.session.names.filter((name) => name === 'create')).toHaveLength(1);
+    expect(h.session.names).not.toContain('kill');
+  });
+
+  it('is idempotent, and does nothing to a released pane', async () => {
+    const h = harness();
+    h.registry.attach(h.pane, h.host());
+    await h.registry.settled();
+
+    h.registry.suspend(h.pane);
+    h.registry.suspend(h.pane);
+    await h.registry.settled();
+    expect(h.session.names.filter((name) => name === 'detach')).toHaveLength(1);
+
+    h.registry.release(h.pane.id);
+    await h.registry.settled();
+    h.registry.suspend(h.pane);
+    await h.registry.settled();
+    expect(h.session.names).not.toContain('kill');
+  });
+});
+
 describe('PaneSessionRegistry lifetime', () => {
   it('creates exactly one session the first time a pane is mounted', async () => {
     const h = harness();

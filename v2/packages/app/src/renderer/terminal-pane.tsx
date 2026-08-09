@@ -38,6 +38,16 @@ export interface TerminalPaneProps {
    * follow the pane it belongs to. Absent = the app's own terminal background.
    */
   readonly background?: string;
+  /**
+   * Whether this pane's root is the one the window is showing.
+   *
+   * Every root stays MOUNTED (hidden ones with `display: none`), because a
+   * conditional mount tears the subtree down and a torn-down pane is v1's
+   * remount lesson. So "not visible" cannot be expressed by not rendering — it
+   * is expressed here, and it means the pane holds no terminal and receives no
+   * bytes until its root comes back.
+   */
+  readonly visible?: boolean;
 }
 
 export function TerminalPane({
@@ -47,6 +57,7 @@ export function TerminalPane({
   agentState,
   agentReason,
   sessionId,
+  visible = true,
   background = terminalBackground(),
 }: TerminalPaneProps): ReactNode {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -62,13 +73,23 @@ export function TerminalPane({
     // may already be the pane that replaced this one, and detaching that id
     // would leave the old pane streaming and silence the new one.
     const attached = paneRef.current;
+
+    // A pane in a root nobody is looking at holds no terminal. `suspend` is not
+    // `detach`: it drops the view and the stream and keeps the session, which is
+    // only safe because the host now holds the SCREEN — before R0 a pane that
+    // stopped listening could never catch up. See `pane-sessions.ts`.
+    if (!visible) {
+      terminals.suspend(attached, sessionRef.current);
+      return;
+    }
+
     // `sessionRef`, not `sessionId`: this effect must not re-run when the
     // binding arrives, or a pane would detach and re-attach the moment its
     // session is created. The value is only READ at mount, which is exactly
     // when adoption matters.
     terminals.attach(attached, host, sessionRef.current);
     return () => terminals.detach(attached.id);
-  }, [pane.id, terminals]);
+  }, [pane.id, terminals, visible]);
 
   useEffect(() => {
     if (focused) terminals.focus(pane.id);

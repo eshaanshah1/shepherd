@@ -290,7 +290,13 @@ export function App({
     return merged;
   }, [snapshots]);
 
-  const renderPane = useCallback(
+  /**
+   * A factory rather than one callback, because a pane's behaviour now depends
+   * on WHICH root it is in: every root is mounted, and only the active one's
+   * panes hold a terminal (see `TerminalPane.visible`).
+   */
+  const makeRenderPane = useCallback(
+    (visible: boolean) =>
     (pane: Pane, focused: boolean): ReactNode => {
       if (terminals === null) return null;
       // A pane shows a session; a session may have an agent. Both hops can be
@@ -302,6 +308,7 @@ export function App({
           pane={pane}
           terminals={terminals}
           focused={focused}
+          visible={visible}
           {...(sessionId === undefined ? {} : { sessionId })}
           {...(agent === undefined ? {} : { agentState: agent.state })}
           {...(agent?.reason === undefined ? {} : { agentReason: agent.reason })}
@@ -447,7 +454,9 @@ export function App({
                 onSetRatio={(path, ratio) =>
                   invoke(LAYOUT_COMMANDS.setRatio, { path: [...path], ratio, root: root.root })
                 }
-                {...(terminals === null ? {} : { renderPane })}
+                {...(terminals === null
+                  ? {}
+                  : { renderPane: makeRenderPane(root.root === snapshots?.active) })}
                 home=""
               />
               )}
