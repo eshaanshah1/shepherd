@@ -9,6 +9,7 @@ import {
   type Disposable,
   type PaneID,
   type RootID,
+  type Result,
   type SessionID,
 } from '@shepherd/sdk';
 import { LayoutStore } from '@shepherd/core/layout';
@@ -27,6 +28,37 @@ class FakeHost implements SessionHostLike {
   readonly live = new Map<SessionID, SessionInfo>();
   #exitListeners = new Set<(e: SessionExit) => void>();
   #seq = 0;
+
+  /**
+   * The half `SessionBridge` never calls.
+   *
+   * R1 widened `SessionHostLike` to the surface main actually uses, so the fake
+   * has to answer it — but these exist to satisfy the SHAPE, not to simulate a
+   * host. A fake that pretended to run them would be a second implementation
+   * with its own behaviour and nobody reading it.
+   */
+  has(id: SessionID): boolean {
+    return this.live.has(id);
+  }
+  onWillCreate() {
+    return { dispose: () => undefined };
+  }
+  screen() {
+    return undefined;
+  }
+  snapshot(): Result<void, SessionError> {
+    return { ok: true, value: undefined };
+  }
+  setViewport(): Result<void, SessionError> {
+    return { ok: true, value: undefined };
+  }
+  foreground() {
+    return { hasForegroundProcess: undefined };
+  }
+  dispose() {
+    this.sinks.clear();
+    this.live.clear();
+  }
 
   create(spec: SessionSpec) {
     const id = sessionId(`fake-${this.#seq++}`);

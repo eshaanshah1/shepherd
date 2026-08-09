@@ -1,6 +1,7 @@
 import { app } from 'electron';
 import type { BrowserWindow } from 'electron';
-import { TerminalMirror, type SessionHost } from '@shepherd/core';
+import { TerminalMirror } from '@shepherd/core';
+import type { SessionHostLike } from './session-bridge.ts';
 import { sessionId as toSessionId } from '@shepherd/sdk';
 import {
   check,
@@ -59,7 +60,7 @@ const ROWS = 30;
 /** Writes issued DURING the attach, so the capture window is never empty. */
 const BURST = 40;
 
-export async function runMirrorSmoke(win: BrowserWindow, host: SessionHost): Promise<void> {
+export async function runMirrorSmoke(win: BrowserWindow, host: SessionHostLike): Promise<void> {
   const deadline = setTimeout(() => die(`did not finish within ${TIMEOUT_MS}ms`), TIMEOUT_MS);
   const until = waiter(TIMEOUT_MS);
 
@@ -92,18 +93,18 @@ export async function runMirrorSmoke(win: BrowserWindow, host: SessionHost): Pro
   // Every command below ends in `\r`, never `\n`. A pty carries Enter as CR; an
   // LF reaches the shell as a literal linefeed it will not act on —
   // `SessionHost.paste` documents exactly this.
-  const screen = () => host.screen(id);
-  const screenText = () => screen()?.text ?? '';
+  // `await`ed: in process this resolves immediately, over the daemon socket it
+  // is a round trip. One signature, so a smoke does not have to know which.
+  const screen = () => Promise.resolve(host.screen(id));
+  const screenText = async () => (await screen())?.text ?? '';
 
   // --- 1. the host's screen follows a real pty.
   host.write(id, PRIMARY_CMD);
-  await until('the marker on the host screen', () => Promise.resolve(screenText()), (t) =>
-    t.includes(PRIMARY_MARKER),
-  );
-  check(screen()?.altScreen === false, 'the shell is on the primary screen');
+  await until('the marker on the host screen', screenText, (t) => t.includes(PRIMARY_MARKER));
+  check((await screen())?.altScreen === false, 'the shell is on the primary screen');
   check(
-    screen()?.cols === COLS && screen()?.rows === ROWS,
-    `the host screen is the size the pane measured (${screen()?.cols}x${screen()?.rows})`,
+    (await screen())?.cols === COLS && (await screen())?.rows === ROWS,
+    `the host screen is the size the pane measured (${COLS}x${ROWS})`,
   );
 
   // --- 2. into a full-screen program, and a COLD attach must get it.
@@ -114,14 +115,14 @@ export async function runMirrorSmoke(win: BrowserWindow, host: SessionHost): Pro
   host.write(id, ALT_CMD);
   await until(
     'the pty to enter the alt screen with its content drawn',
-    () => Promise.resolve({ alt: screen()?.altScreen === true, text: screenText() }),
+    async () => ({ alt: (await screen())?.altScreen === true, text: await screenText() }),
     (s) => s.alt && s.text.includes(ALT_MARKER),
   );
   check(true, 'the host screen followed the pty into the alt screen');
   // The primary buffer's content is behind it, which is what makes this the
   // alt screen rather than a cleared one.
   check(
-    !screenText().includes(PRIMARY_MARKER),
+    !(await screenText()).includes(PRIMARY_MARKER),
     'the alt screen shows the program, not the shell scrollback behind it',
   );
 
@@ -151,7 +152,7 @@ export async function runMirrorSmoke(win: BrowserWindow, host: SessionHost): Pro
    * between entering `less` and this point, so the screen is quiescent and the
    * two are the same instant.
    */
-  const hostScreen = screenText();
+  const hostScreen = await screenText();
   const repainted = await repaint(replay, COLS, ROWS);
   check(
     repainted.altScreen,
@@ -199,21 +200,19 @@ export async function runMirrorSmoke(win: BrowserWindow, host: SessionHost): Pro
   host.write(id, 'q');
   await until(
     'the pty to leave the alt screen',
-    () => Promise.resolve(screen()?.altScreen === true),
+    async () => (await screen())?.altScreen === true,
     (alt) => !alt,
   );
   check(true, 'quitting the full-screen program returned the screen to the primary buffer');
   check(
-    screenText().includes(PRIMARY_MARKER),
+    (await screenText()).includes(PRIMARY_MARKER),
     'the shell scrollback is back, which a cleared screen would not be',
   );
 
   // A detached viewer receives nothing more.
   const afterDetach = cold.length;
   host.write(id, AFTER_CMD);
-  await until('the host screen to move on', () => Promise.resolve(screenText()), (t) =>
-    t.includes(AFTER_MARKER),
-  );
+  await until('the host screen to move on', screenText, (t) => t.includes(AFTER_MARKER));
   check(cold.length === afterDetach, 'a disposed viewer received nothing after detaching');
 
   clearTimeout(deadline);

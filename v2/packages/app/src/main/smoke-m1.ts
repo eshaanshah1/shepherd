@@ -1,6 +1,7 @@
 import { request } from 'node:http';
 import { app, type BrowserWindow } from 'electron';
-import type { EventBus, SessionHost } from '@shepherd/core';
+import type { EventBus } from '@shepherd/core';
+import type { SessionHostLike } from './session-bridge.ts';
 import { LAYOUT_COMMANDS } from '@shepherd/core/layout';
 import type { Envelope } from '@shepherd/sdk';
 import { check, die, say, seedHomePane, snapshotOf, waiter, waitForLoad } from './smoke-support.ts';
@@ -36,7 +37,7 @@ export interface M1SmokeOptions {
 
 export async function runM1Smoke(
   win: BrowserWindow,
-  _host: SessionHost,
+  _host: SessionHostLike,
   options: M1SmokeOptions,
 ): Promise<void> {
   const { bus, controlSocket, hookSocket, attentionCount } = options;

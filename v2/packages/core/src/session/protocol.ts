@@ -52,6 +52,8 @@ export const REQUEST = {
   screen: 10,
   setViewport: 11,
   snapshot: 12,
+  /** The liveness sweep's only input; see `SessionHost.foreground`. */
+  foreground: 13,
 } as const;
 
 /** Daemon → client. */
@@ -61,6 +63,15 @@ export const RESPONSE = {
   /** Raw pty output. A BYTE frame — see the file comment. */
   data: 66,
   exit: 67,
+  /**
+   * A serialized screen, answering `snapshot`. A BYTE frame, and a kind of its
+   * own rather than a `data` frame, because the client has to tell it apart:
+   * ONE process may hold several viewers of one session, and a viewer attaching
+   * late needs the screen delivered to IT and not to the others, who already
+   * have it. Sharing `data` would mean guessing from arrival order, which live
+   * output can beat.
+   */
+  snapshot: 68,
 } as const;
 
 export type RequestKind = (typeof REQUEST)[keyof typeof REQUEST];
@@ -68,7 +79,7 @@ export type ResponseKind = (typeof RESPONSE)[keyof typeof RESPONSE];
 export type FrameKind = RequestKind | ResponseKind;
 
 /** The kinds whose payload is raw bytes rather than JSON. */
-const BYTE_KINDS = new Set<number>([REQUEST.write, RESPONSE.data]);
+const BYTE_KINDS = new Set<number>([REQUEST.write, RESPONSE.data, RESPONSE.snapshot]);
 
 export function isByteKind(kind: number): boolean {
   return BYTE_KINDS.has(kind);

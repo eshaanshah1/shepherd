@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn as spawnChild } from 'node:child_process';
 import { statSync } from 'node:fs';
 
 /**
@@ -277,4 +277,45 @@ function spawn(
       child.stdin?.end(opts.stdin);
     }
   });
+}
+
+/**
+ * Start a long-lived process that must OUTLIVE this one.
+ *
+ * Its own function rather than an option on `run`, because it is a different
+ * thing: `run` awaits an answer, this deliberately never gets one. `shepherdd`
+ * is the only caller, and everything about the call is load-bearing:
+ *
+ *   - **`detached: true` + `unref()`** — the child reparents to init and keeps
+ *     running when we exit. That IS the milestone; a child that died with its
+ *     parent would make the whole daemon an elaborate way to change nothing.
+ *   - **`stdio: 'ignore'`** — a pipe to a parent that has gone away is a write
+ *     that eventually blocks the daemon. It logs to its own stdout, which the
+ *     caller redirects if it wants the output.
+ *   - **`ELECTRON_RUN_AS_NODE=1`** — `execPath` under Electron is the app
+ *     binary, and this is what makes it behave as node. Measured: node-pty
+ *     loads there against the ABI it is already built for, so the daemon needs
+ *     no second native build.
+ *
+ * It lives HERE for the same reason `run` does — `boundaries.js` denies
+ * `child_process` everywhere else, and the first version of this was a
+ * `require()` inside main that satisfied lint by routing around it. A boundary
+ * that is bypassed by changing the import syntax is not a boundary.
+ */
+export function spawnDetached(options: {
+  readonly execPath: string;
+  readonly args: readonly string[];
+  readonly env?: Readonly<Record<string, string>>;
+}): void {
+  const child = spawnChild(options.execPath, [...options.args], {
+    detached: true,
+    // 'ignore' normally: a pipe to a parent that has gone away eventually blocks
+    // the daemon. But a detached child with no stdio has NOWHERE to say why it
+    // died, and that cost a debugging session — the app could only report "did
+    // not come up within 10000ms". `SHEPHERD_DAEMON_STDIO=inherit` buys the
+    // answer back when you need it.
+    stdio: process.env['SHEPHERD_DAEMON_STDIO'] === 'inherit' ? 'inherit' : 'ignore',
+    env: { ...process.env, ...options.env },
+  });
+  child.unref();
 }

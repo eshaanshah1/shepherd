@@ -62,6 +62,20 @@ export interface SessionSpec {
   readonly scrollback?: number;
   /** Correlation only. The host never looks a session up by pane. */
   readonly paneId?: PaneID;
+  /**
+   * A CLIENT-MINTED id, for a caller that must know it before a round trip
+   * completes.
+   *
+   * R1's `SessionClient` is the reason: over a socket, `create` cannot both
+   * answer synchronously and learn an id the daemon chose. Minting it on the
+   * client side is what keeps `SessionHostLike` synchronous, and so keeps
+   * `SessionBridge`, the renderer and every smoke unchanged by the move — the
+   * alternative was making nine call sites async to serve one transport.
+   *
+   * Absent (the in-process case) the host mints one, as it always has. Ids are
+   * random and namespaced, so a collision is not a thing that happens.
+   */
+  readonly id?: SessionID;
 }
 
 export interface ResolvedSpec {
@@ -217,7 +231,7 @@ export class SessionHost {
     const invalid = validate(spec);
     if (invalid) return err(invalid);
 
-    const id = this.#newId ? newSessionId(this.#newId) : newSessionId();
+    const id = spec.id ?? (this.#newId ? newSessionId(this.#newId) : newSessionId());
     const resolved = this.#applyHooks(id, resolveSpec(spec, this.#defaultScrollback));
 
     let pty: IPty;

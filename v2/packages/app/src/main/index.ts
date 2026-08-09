@@ -1,5 +1,7 @@
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, ipcMain, webContents } from 'electron';
 import { color } from '@shepherd/design-tokens';
 import {
@@ -36,7 +38,9 @@ import {
   EXIT_SECOND_INSTANCE,
 } from './bootstrap.ts';
 import { windowOptions } from './window-options.ts';
-import { SessionBridge } from './session-bridge.ts';
+import { SessionBridge, type SessionHostLike } from './session-bridge.ts';
+import { SessionClient } from './session-client.ts';
+import { daemonConnector } from './daemon-launcher.ts';
 import { registerSessionIpc } from './ipc.ts';
 import { registerWindowIpc } from './window-ipc.ts';
 import { registerLayoutIpc } from './layout-ipc.ts';
@@ -146,10 +150,71 @@ const logger = createLogger({
   sink: (line) => process.stdout.write(`[shepherd] ${line}\n`),
 });
 
-const host = new SessionHost({
-  onError: (error, context) =>
-    process.stderr.write(`[shepherd] session ${context}: ${String(error)}\n`),
-});
+/**
+ * Sessions live in `shepherdd`, not here (R1, ADR 0035).
+ *
+ * `SessionClient` satisfies `SessionHostLike`, so `SessionBridge`, the layout's
+ * `SessionSink`, the renderer and every smoke are untouched by the move. What
+ * changed is which process owns the ptys — and therefore whether quitting this
+ * one ends them.
+ *
+ * `SHEPHERD_SESSION_DAEMON=0` keeps the in-process host, and that is a CONTROL
+ * rather than a convenience: a smoke that fails under the daemon and passes
+ * in-process has localized the fault to the transport in one run. The
+ * alternative is bisecting a behaviour change against a process boundary.
+ */
+const USE_DAEMON = process.env['SHEPHERD_SESSION_DAEMON'] !== '0';
+
+/**
+ * Where the sockets live. Overridable per run — see `SUPPORT_FLAG`; a throwaway
+ * userData directory does not isolate a socket derived from `$HOME`.
+ *
+ * Declared HERE, above the host, because the daemon's socket is one of them. It
+ * was not, for one commit: the daemon bound `~/.shepherd/v2/session.sock`
+ * directly, so every smoke — and `pnpm dev` — would have driven the ptys of the
+ * daily app, which is the exact class of bug this flag exists to prevent.
+ */
+const support = resolveSupport(process.argv, resolveAppPaths(IS_DEV).support);
+
+/**
+ * The daemon's entry: the bundle that `build-daemon.mjs` puts beside this file.
+ *
+ * Relative to `import.meta.url` — i.e. to `out/main/index.js` — and NOT to
+ * `app.getAppPath()`, which returns `out/` rather than the package root and so
+ * pointed at two paths that never existed. It failed silently, because a
+ * detached child with `stdio: 'ignore'` has nowhere to report a
+ * MODULE_NOT_FOUND; the app could only say "the daemon did not come up".
+ * `SHEPHERD_DAEMON_STDIO=inherit` is what made it visible.
+ *
+ * The daemon is a BUNDLE and not the TypeScript source, because it is launched
+ * as `electron --as-node` and Node's type stripping refuses files under
+ * `node_modules` — which is how every workspace package resolves.
+ */
+function daemonEntry(): string {
+  const bundled = fileURLToPath(new URL('../daemon/main.js', import.meta.url));
+  if (!existsSync(bundled)) {
+    // Named rather than left to fail as a spawn that goes nowhere: the fix is
+    // running the build, and nothing else in the message would say so.
+    logger.child('session').error(
+      `no daemon bundle at ${bundled} — run \`pnpm --filter @shepherd/app build\``,
+    );
+  }
+  return bundled;
+}
+
+const host: SessionHostLike = USE_DAEMON
+  ? new SessionClient({
+      connect: daemonConnector({
+        socketPath: `${support}/session.sock`,
+        entry: daemonEntry(),
+        log: logger.child('session'),
+      }),
+      log: logger.child('session'),
+    })
+  : new SessionHost({
+      onError: (error, context) =>
+        process.stderr.write(`[shepherd] session ${context}: ${String(error)}\n`),
+    });
 
 /**
  * The one store. On disk under this build's own userData, so an extension's
@@ -234,11 +299,6 @@ const HOME_ROOT = rootId('window-1');
  */
 let activeRoot: () => RootID = () => HOME_ROOT;
 
-/**
- * Where the sockets live. Overridable per run — see `SUPPORT_FLAG`; a throwaway
- * userData directory does not isolate a socket derived from `$HOME`.
- */
-const support = resolveSupport(process.argv, resolveAppPaths(IS_DEV).support);
 const CONTROL_SOCKET = `${support}/control.sock`;
 const HOOK_SOCKET = `${support}/hooks.sock`;
 

@@ -1,5 +1,14 @@
 import type { Clock, Disposable, PaneID, Result, SessionID } from '@shepherd/sdk';
-import type { SessionError, SessionExit, SessionInfo, SessionSpec } from '@shepherd/core';
+import type {
+  ForegroundReading,
+  ScreenState,
+  SessionError,
+  SessionExit,
+  SessionInfo,
+  SessionSpec,
+  Viewport,
+  WillCreateHook,
+} from '@shepherd/core';
 import { OutputCoalescer } from '../shared/coalescer.ts';
 import { EMIT, type SessionDataMessage, type SessionExitMessage } from '../shared/channels.ts';
 
@@ -24,6 +33,31 @@ export interface SessionHostLike {
   resize(id: SessionID, cols: number, rows: number): Result<void, SessionError>;
   kill(id: SessionID, signal?: string): Result<void, SessionError>;
   onExit(listener: (exit: SessionExit) => void): Disposable;
+  has(id: SessionID): boolean;
+  /**
+   * The env-injection seam, and it runs in MAIN even when the ptys do not.
+   *
+   * What decides a child's environment is the extension host, which lives here —
+   * `claude-code` injects the session id and the hook socket path through this.
+   * `SessionClient` therefore applies the hooks to the spec BEFORE it crosses the
+   * socket, so `shepherdd` never has to know an extension exists. Putting the
+   * seam in the daemon instead would have made it load extensions.
+   */
+  onWillCreate(hook: WillCreateHook): Disposable;
+  /**
+   * `ScreenState` in process, a promise over a socket. Callers `await` it, which
+   * is a no-op for the former — one signature rather than two shapes of the same
+   * question.
+   */
+  screen(id: SessionID): ScreenState | undefined | Promise<ScreenState | undefined>;
+  snapshot(id: SessionID, sink: (bytes: Uint8Array) => void): Result<void, SessionError>;
+  setViewport(id: SessionID, viewerId: string, viewport: Viewport | undefined): Result<void, SessionError>;
+  /**
+   * The liveness sweep's only input. A field read in process, a round trip over
+   * the socket — `sessions.list` awaits it either way.
+   */
+  foreground(id: SessionID): ForegroundReading | Promise<ForegroundReading>;
+  dispose(): void;
 }
 
 /** One renderer that can be sent to. In production this wraps `WebContents`. */

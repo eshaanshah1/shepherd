@@ -1,5 +1,5 @@
 import type { BrowserWindow } from 'electron';
-import type { SessionHost } from '@shepherd/core';
+import type { SessionHostLike } from './session-bridge.ts';
 import { die, say } from './smoke-support.ts';
 import type { M1SmokeOptions } from './smoke-m1.ts';
 import type { M2SmokeOptions } from './smoke-m2.ts';
@@ -27,7 +27,7 @@ export type SmokeKernel = M1SmokeOptions &
 export async function runSmoke(
   name: string,
   win: BrowserWindow,
-  host: SessionHost,
+  host: SessionHostLike,
   /**
    * The kernel handles a smoke may need. Passed rather than imported so this
    * table stays the only thing that knows which smoke wants what — and so a

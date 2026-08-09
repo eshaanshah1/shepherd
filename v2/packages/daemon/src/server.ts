@@ -245,6 +245,13 @@ export class SessionServer {
         this.#reply(client, seq, result.ok, result.ok ? {} : result.error);
         return;
       }
+      case REQUEST.foreground: {
+        // Answered even for an unknown session: `foregroundReading` is explicit
+        // that a dead session is running nothing, which is knowledge rather than
+        // an absence of it.
+        this.#reply(client, seq, true, this.#host.foreground(toSessionId(String(body['sessionId']))));
+        return;
+      }
       case REQUEST.list: {
         this.#reply(client, seq, true, { sessions: this.#host.list() });
         return;
@@ -257,7 +264,7 @@ export class SessionServer {
       case REQUEST.snapshot: {
         const id = toSessionId(String(body['sessionId']));
         const asked = this.#host.snapshot(id, (bytes) => {
-          this.#send(client, encodeByteFrame(RESPONSE.data, id, bytes));
+          this.#send(client, encodeByteFrame(RESPONSE.snapshot, id, bytes));
           this.#reply(client, seq, true, { bytes: bytes.length });
         });
         if (!asked.ok) this.#reply(client, seq, false, asked.error);

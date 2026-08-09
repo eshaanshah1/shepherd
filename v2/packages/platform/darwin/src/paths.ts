@@ -21,6 +21,8 @@ export interface AppPaths {
   readonly controlSocket: string;
   /** The extension/agent hook ingress socket. */
   readonly hookSocket: string;
+  /** Where `shepherdd` listens. It outlives the app, so it lives in `support`. */
+  readonly sessionSocket: string;
   /** Debug log. Note /tmp, not support: it is disposable and grep-able. */
   readonly logFile: string;
 }
@@ -54,6 +56,12 @@ export function appPaths({ home, isDev }: PathOptions): AppPaths {
     support,
     controlSocket: `${support}/control.sock`,
     hookSocket: `${support}/hooks.sock`,
+    /**
+     * Where `shepherdd` listens (R1). Beside the other two rather than under
+     * userData: the daemon outlives the app, so its socket belongs with the
+     * state that outlives the app, not with the state a build owns.
+     */
+    sessionSocket: `${support}/session.sock`,
     logFile: isDev ? '/tmp/shepherd-v2-dev.log' : '/tmp/shepherd-v2.log',
   };
 }
