@@ -95,6 +95,12 @@ const STAGE = join(root, 'packages/app/.workspace-dist');
  * decision worth being explicit about — `@shepherd/ui` is in because an
  * extension's `ui/` half imports it, and a future package that only tests
  * something must not be swept in by a wildcard.
+ *
+ * A list is only as good as the check on it, and this one was wrong twice at
+ * once: `worktree-hook` and `remote` were both imported by the main bundle and
+ * both absent here, which the app reported as
+ * ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING at launch and nothing before
+ * launch reported at all. `assertEveryImportStaged` below closes that gap.
  */
 const PACKAGES = [
   'packages/sdk',
@@ -102,10 +108,12 @@ const PACKAGES = [
   'packages/design-tokens',
   'packages/platform/darwin',
   'packages/ui',
+  'packages/remote',
   'extensions/diagnostics',
   'extensions/agents-core',
   'extensions/claude-code',
   'extensions/tasks',
+  'extensions/worktree-hook',
 ];
 
 /** `./src/index.ts` → `./dist/index.js`, and the entry that produces it. */
@@ -283,6 +291,43 @@ function restoreLinksOnExit() {
 }
 
 /**
+ * Fail the pack if the built bundles import a workspace package this file did
+ * not stage.
+ *
+ * The list above is hand-written on purpose, so the thing that keeps it honest
+ * has to be a check rather than a convention. The bundles are the authority:
+ * electron-vite leaves every `@shepherd/*` specifier external, so whatever
+ * `out/main/*.js` imports is exactly what the app will ask `node_modules` for
+ * at launch — and anything not staged is still TypeScript when it gets there.
+ *
+ * Reading the emitted JS rather than the source tree, because it is the only
+ * place the real answer exists: an import that the bundler dropped does not
+ * need staging, and one that arrives through a re-export does.
+ */
+async function assertEveryImportStaged(outDir, stagedNames) {
+  if (!existsSync(outDir)) return;
+  const wanted = new Set();
+  for (const entry of await readdir(outDir, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith('.js')) continue;
+    const source = await readFile(join(outDir, entry.name), 'utf8');
+    for (const [, spec] of source.matchAll(/from\s*["'](@shepherd\/[^"']+)["']/g)) {
+      // `@shepherd/core/layout` is the `core` package; the subpath is its own
+      // concern and its exports map already names the staged `.js`.
+      const [scope, name] = spec.split('/');
+      wanted.add(`${scope}/${name}`);
+    }
+  }
+  const missing = [...wanted].filter((name) => !stagedNames.has(name));
+  if (missing.length > 0) {
+    throw new Error(
+      `before-pack: the app imports ${missing.join(', ')} but PACKAGES does not stage ` +
+        `${missing.length === 1 ? 'it' : 'them'} — the packaged app would die on launch with ` +
+        'ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING. Add the package directory to PACKAGES.',
+    );
+  }
+}
+
+/**
  * electron-builder's hook. It runs after the app is built and before the files
  * are copied, which is exactly the window in which app.asar's contents can
  * still be decided.
@@ -292,6 +337,43 @@ export default async function beforePack(context) {
   await rm(STAGE, { recursive: true, force: true });
   const staged = [];
   for (const dir of PACKAGES) staged.push(await stagePackage(dir));
+
+  /**
+   * The daemon bundle ships beside main, and nothing at runtime can do without
+   * it: no `out/daemon/main.js` means every session fails to start and the app
+   * shows a terminal pane that prints nothing at all. It is built by a separate
+   * script that `electron-vite build` (which empties `out/`) does not run, so
+   * the one thing standing between a working app and a silent one is the order
+   * of two commands in a package script. Check it here rather than trust it.
+   */
+  const daemon = join(root, 'packages/app/out/daemon/main.js');
+  if (!existsSync(daemon)) {
+    throw new Error(
+      `before-pack: no daemon bundle at ${relative(root, daemon)} — the packaged app would start ` +
+        'no sessions. Run tooling/scripts/build-daemon.mjs after `electron-vite build`.',
+    );
+  }
+
+  /**
+   * The icon, for the same reason: electron-builder does not fail on a missing
+   * one, it substitutes Electron's default and says so in a single line of an
+   * otherwise successful build. The app then ships looking like a generic
+   * Electron app, which is how this was noticed — by looking at the Dock.
+   */
+  const icon = join(root, 'packages/app/build/icon.icns');
+  if (!existsSync(icon)) {
+    throw new Error(
+      `before-pack: no app icon at ${relative(root, icon)} — the build would silently use ` +
+        "Electron's default. Regenerate with tooling/scripts/make-icons.sh.",
+    );
+  }
+
+  // Before the destructive swap below, so a missing package fails the pack with
+  // the workspace still intact.
+  await assertEveryImportStaged(
+    join(root, 'packages/app/out/main'),
+    new Set(staged.map(({ name }) => name)),
+  );
 
   /**
    * Swap the pnpm links for the compiled copies.

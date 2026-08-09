@@ -21,8 +21,9 @@
     "build": "electron-vite build && node ../../tooling/scripts/build-daemon.mjs",
     "preview": "electron-vite preview",
     "start": "env -u NODE_OPTIONS electron-vite preview",
-    "package": "env -u NODE_OPTIONS electron-vite build && electron-builder --config electron-builder.yml",
-    "package:dev": "env -u NODE_OPTIONS electron-vite build --mode development && electron-builder --config electron-builder.yml --config.productName='Shep Night' --config.appId=com.shepherd.shep.night --config.mac.icon=build/icon-dev.icns"
+    "//package": "The daemon build is NOT optional and belongs after `electron-vite build`, which empties `out/`. Without it the packaged app ships no out/daemon/main.js, every session fails to start, and the only symptom is a terminal pane that never prints anything — `pnpm dev` never notices because `dev` builds it.",
+    "package": "env -u NODE_OPTIONS electron-vite build && node ../../tooling/scripts/build-daemon.mjs && electron-builder --config electron-builder.yml",
+    "package:dev": "env -u NODE_OPTIONS electron-vite build --mode development && node ../../tooling/scripts/build-daemon.mjs && electron-builder --config electron-builder.yml --config.productName='Shep Night' --config.appId=com.shepherd.shep.night --config.mac.icon=build/icon-dev.icns"
   },
   "dependencies": {
     "@shepherd/core": "workspace:*",
