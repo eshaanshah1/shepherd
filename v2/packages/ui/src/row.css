@@ -12,7 +12,6 @@
   display: flex;
   align-items: center;
   gap: var(--sh-space-md);
-  width: 100%;
 
   /*
    * THE height. Every state below is a paint change and nothing else.
@@ -25,7 +24,34 @@
   height: var(--sh-row-height);
   flex: 0 0 auto;
 
-  padding: 0 var(--sh-space-lg) 0 var(--sh-space-xl);
+  /*
+   * The painted box is a CHIP, not a bar: inset from both edges and rounded, so
+   * a selected row reads as a token sitting in the list rather than a band
+   * spanning it. Rule 4 is unchanged — it is still a solid fill of `text` and
+   * still one glance from the hover wash; only the SHAPE of what gets filled
+   * moved. A full-bleed fill has nowhere to put a corner, and against the
+   * sidebar's own seam it also paints over the one chrome edge that is a real
+   * border.
+   *
+   * **The inset comes out of the padding, so nothing inside the row moves.**
+   * That is why these are subtractions rather than the two smaller tokens they
+   * happen to equal at the defaults: margin + padding sums to the `xl`/`lg` the
+   * label and the trailing area have always been at, and it keeps summing to it
+   * when the space scale moves. A list whose labels shift 6px because its
+   * selection grew corners is the layout-follows-paint mistake rule 9 bans
+   * vertically, one axis along.
+   *
+   * `width: auto` rather than `100%`: a percentage width plus a margin overflows
+   * its container by exactly the inset, which on the right edge is the pixel the
+   * sidebar seam lives in. Every container `Row` is used in — the dock's `<ul>`,
+   * the palette's list — lays it out block-level or stretched, so `auto` already
+   * fills what is left after the margins.
+   */
+  width: auto;
+  margin-inline: var(--sh-space-sm);
+  padding: 0 calc(var(--sh-space-lg) - var(--sh-space-sm)) 0
+    calc(var(--sh-space-xl) - var(--sh-space-sm));
+  border-radius: var(--sh-radius-md);
 
   font-family: var(--sh-font-sans);
   font-size: var(--sh-font-size-body);
