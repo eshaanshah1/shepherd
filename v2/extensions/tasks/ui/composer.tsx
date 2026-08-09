@@ -150,8 +150,19 @@ export function TaskComposer({
   const visible = suggestions.filter(
     (suggestion) => !repos.some((repo) => repo.path === suggestion.path),
   );
-  // ONE completion — the best-ranked row the extension answered with.
-  const current = listOpen ? visible[0] : undefined;
+  /**
+   * ONE completion — the best-ranked row the extension answered with, and only
+   * once there is something for it to complete.
+   *
+   * The empty query is answered with the picked history (see the mount effect),
+   * which was right when this was a LIST: "the repos you actually use, offered
+   * before you have typed anything". As ghost text it is not — a completion of
+   * nothing is an absolute path painted into an empty field, which reads as a
+   * field that came pre-filled with a repo you never chose, and sits directly on
+   * top of the `+ repo` placeholder the moment the field is not focused. The
+   * history still arrives and still ranks; it just waits for a character.
+   */
+  const current = listOpen && path !== "" ? visible[0] : undefined;
 
   /**
    * Esc dismisses the completion, and must not close the composer with it.
