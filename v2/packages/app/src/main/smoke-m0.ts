@@ -78,7 +78,7 @@ export async function runM0Smoke(win: BrowserWindow, host: SessionHost): Promise
 
   // --- 4. the bytes are in the ring.
   const ring = await until(
-    `'${NEEDLE}' to appear twice in the replay ring`,
+    `'${NEEDLE}' to appear twice on the session's screen`,
     () => Promise.resolve(ringText(host, session)),
     (text) => occurrences(text, NEEDLE) >= 2,
   );
@@ -87,11 +87,24 @@ export async function runM0Smoke(win: BrowserWindow, host: SessionHost): Promise
   // a dumb loopback that never started a shell.
   check(
     occurrences(ring, NEEDLE) >= 2,
-    `the ring carries '${NEEDLE}' ${occurrences(ring, NEEDLE)}× — the shell echoed it AND ran it`,
+    `the screen carries '${NEEDLE}' ${occurrences(ring, NEEDLE)}× — the shell echoed it AND ran it`,
+  );
+  // R0: the host holds a real VT emulator per session, so what a late viewer is
+  // handed is a repaintable SCREEN rather than the last 256 KB of stream. The
+  // snapshot is still bytes (xterm owns the decoder, both ends), which is what
+  // the callback shape below asserts — it is callback-shaped because the capture
+  // happens at a point in the mirror's write queue (see mirror.ts).
+  const captured = await new Promise<Uint8Array | undefined>((resolve) => {
+    const asked = host.snapshot(sessionId(session), resolve);
+    if (!asked.ok) resolve(undefined);
+  });
+  check(
+    captured instanceof Uint8Array && captured.length > 0,
+    'the snapshot is bytes, not a decoded string',
   );
   check(
-    ring.length > 0 && host.snapshot(sessionId(session)) instanceof Uint8Array,
-    'the ring is bytes, not a decoded string',
+    host.screen(sessionId(session))?.altScreen === false,
+    'the shell is on the primary screen, not the alt screen',
   );
 
   // --- 5. split, via the layout command (the real menu item).
@@ -128,9 +141,9 @@ export async function runM0Smoke(win: BrowserWindow, host: SessionHost): Promise
   app.quit();
 }
 
+/** The session's screen as text — R0's `screen()`, which is a read of the mirror. */
 function ringText(host: SessionHost, id: string): string {
-  const bytes = host.snapshot(sessionId(id));
-  return bytes === undefined ? '' : new TextDecoder().decode(bytes);
+  return host.screen(sessionId(id))?.text ?? '';
 }
 
 function occurrences(haystack: string, needle: string): number {

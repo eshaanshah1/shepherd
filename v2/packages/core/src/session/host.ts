@@ -11,7 +11,8 @@ import {
 } from '@shepherd/sdk';
 import { newSessionId, type RandomId } from '../identity.ts';
 import { PtyFanout, type PtySink } from './fanout.ts';
-import { PtyRing } from './ring.ts';
+import { DEFAULT_SCROLLBACK, TerminalMirror, type ScreenState } from './mirror.ts';
+import { arbitrate, type Viewport } from './viewport.ts';
 
 /**
  * The registry of live PTY sessions. One per terminal, keyed by `SessionID`.
@@ -31,7 +32,6 @@ import { PtyRing } from './ring.ts';
  * process down by naming a session that has already exited.
  */
 
-export const DEFAULT_RING_BYTES = 256 * 1024;
 export const DEFAULT_COLS = 80;
 export const DEFAULT_ROWS = 24;
 export const DEFAULT_TERM = 'xterm-256color';
@@ -52,7 +52,14 @@ export interface SessionSpec {
   readonly cols?: number;
   readonly rows?: number;
   readonly term?: string;
-  readonly ringBytes?: number;
+  /**
+   * Lines the host keeps behind the screen, per session.
+   *
+   * Scrollback DEPTH, not a byte budget — the `ringBytes` it replaces measured a
+   * recording, and the host now keeps a real VT emulator per session instead
+   * (see `mirror.ts`).
+   */
+  readonly scrollback?: number;
   /** Correlation only. The host never looks a session up by pane. */
   readonly paneId?: PaneID;
 }
@@ -65,7 +72,7 @@ export interface ResolvedSpec {
   readonly cols: number;
   readonly rows: number;
   readonly term: string;
-  readonly ringBytes: number;
+  readonly scrollback: number;
   readonly paneId?: PaneID;
 }
 
@@ -166,7 +173,7 @@ export type WillCreateHook = (event: WillCreateEvent) => WillCreatePatch | void;
 
 export interface SessionHostOptions {
   readonly newId?: RandomId;
-  readonly defaultRingBytes?: number;
+  readonly defaultScrollback?: number;
   /**
    * Where a swallowed failure goes. There is no logger in core, and "a hook
    * threw and its env silently did not apply" is exactly the branch v1's
@@ -179,6 +186,12 @@ interface SessionRecord {
   readonly info: SessionInfo;
   readonly pty: IPty;
   readonly fanout: PtyFanout;
+  /**
+   * viewerId -> the size that viewer can display. Absent from the map = no
+   * opinion, which is the state an extension tap or a read-only viewer stays in
+   * forever. See `viewport.ts` for why that distinction is the whole design.
+   */
+  readonly viewports: Map<string, Viewport>;
   cols: number;
   rows: number;
   exited: boolean;
@@ -189,12 +202,12 @@ export class SessionHost {
   readonly #willCreate: WillCreateHook[] = [];
   readonly #exitListeners = new Set<(exit: SessionExit) => void>();
   readonly #newId: RandomId | undefined;
-  readonly #defaultRingBytes: number;
+  readonly #defaultScrollback: number;
   readonly #onError: ((error: unknown, context: string) => void) | undefined;
 
   constructor(options: SessionHostOptions = {}) {
     this.#newId = options.newId;
-    this.#defaultRingBytes = options.defaultRingBytes ?? DEFAULT_RING_BYTES;
+    this.#defaultScrollback = options.defaultScrollback ?? DEFAULT_SCROLLBACK;
     this.#onError = options.onError;
   }
 
@@ -205,7 +218,7 @@ export class SessionHost {
     if (invalid) return err(invalid);
 
     const id = this.#newId ? newSessionId(this.#newId) : newSessionId();
-    const resolved = this.#applyHooks(id, resolveSpec(spec, this.#defaultRingBytes));
+    const resolved = this.#applyHooks(id, resolveSpec(spec, this.#defaultScrollback));
 
     let pty: IPty;
     try {
@@ -241,7 +254,14 @@ export class SessionHost {
     const record: SessionRecord = {
       info,
       pty,
-      fanout: new PtyFanout(new PtyRing(resolved.ringBytes)),
+      fanout: new PtyFanout(
+        new TerminalMirror({
+          cols: resolved.cols,
+          rows: resolved.rows,
+          scrollback: resolved.scrollback,
+        }),
+      ),
+      viewports: new Map(),
       cols: resolved.cols,
       rows: resolved.rows,
       exited: false,
@@ -303,9 +323,30 @@ export class SessionHost {
     return this.#sessions.has(id);
   }
 
-  /** The replay ring's contents, for a caller that wants them without attaching. */
-  snapshot(id: SessionID): Uint8Array | undefined {
-    return this.#sessions.get(id)?.fanout.snapshot();
+  /**
+   * The screen as bytes, for a caller that wants it without attaching.
+   *
+   * Callback-shaped rather than a return value, for the reason in `mirror.ts`:
+   * the mirror captures at a point in its write queue, and a synchronous getter
+   * would have to serialize a terminal that may still be parsing — which is
+   * exactly the bug probe p4 found.
+   */
+  snapshot(id: SessionID, sink: (bytes: Uint8Array) => void): Result<void, SessionError> {
+    const record = this.#sessions.get(id);
+    if (!record) return err(unknownSession(id));
+    record.fanout.snapshot(sink);
+    return ok(undefined);
+  }
+
+  /**
+   * What is on this session's display right now — core-design §4.1's third
+   * tier, which that document defers to "B-lite, post-M4, on-demand".
+   *
+   * It arrives early and for free: the host runs the emulator anyway, so this is
+   * a read rather than a feature. Undefined for an unknown or dead session.
+   */
+  screen(id: SessionID): ScreenState | undefined {
+    return this.#sessions.get(id)?.fanout.screen();
   }
 
   /**
@@ -452,7 +493,39 @@ export class SessionHost {
     record.cols = cols;
     record.rows = rows;
     record.pty.resize(cols, rows);
+    // The mirror is the authority on the screen, so it is resized WITH the pty
+    // rather than told afterwards: a program redrawing into its new size would
+    // otherwise be parsed against the old one, and every late viewer would be
+    // handed a screen that is wrong in a way nothing else reveals.
+    record.fanout.resize(cols, rows);
     return ok(undefined);
+  }
+
+  /**
+   * Declares what `viewerId` can display, and re-arbitrates the pty's size.
+   *
+   * `undefined` withdraws the opinion, which is what a detaching viewer does —
+   * so a phone that goes away stops constraining the Mac it was letterboxing.
+   * A viewer that never calls this never influences the size at all, which is
+   * v1's "viewer-not-resizer" rule expressed as the absence of an entry rather
+   * than as a flag somebody has to remember to set.
+   */
+  setViewport(
+    id: SessionID,
+    viewerId: string,
+    viewport: Viewport | undefined,
+  ): Result<void, SessionError> {
+    const record = this.#sessions.get(id);
+    if (!record) return err(unknownSession(id));
+
+    if (viewport === undefined) record.viewports.delete(viewerId);
+    else record.viewports.set(viewerId, viewport);
+
+    const decided = arbitrate([...record.viewports.values()]);
+    // Nobody has an opinion: leave the pty as it is rather than snapping it to a
+    // default, which would reflow a running program for no reason at all.
+    if (decided === undefined) return ok(undefined);
+    return this.resize(id, decided.cols, decided.rows);
   }
 
   // -------------------------------------------------------------------- events
@@ -510,14 +583,17 @@ export class SessionHost {
       }
     }
     // After the exit has been announced: a sink still attached would otherwise
-    // hold the ring (and the window's IPC channel) alive for a dead session.
+    // hold the mirror (and the window's IPC channel) alive for a dead session.
+    // `clear` disposes the emulator too — ~0.5 MB per session that would
+    // otherwise outlive its pty.
+    record.viewports.clear();
     record.fanout.clear();
   }
 }
 
 // ------------------------------------------------------------------ free helpers
 
-export function resolveSpec(spec: SessionSpec, defaultRingBytes = DEFAULT_RING_BYTES): ResolvedSpec {
+export function resolveSpec(spec: SessionSpec, defaultScrollback = DEFAULT_SCROLLBACK): ResolvedSpec {
   return {
     cwd: spec.cwd,
     command: spec.command,
@@ -526,7 +602,7 @@ export function resolveSpec(spec: SessionSpec, defaultRingBytes = DEFAULT_RING_B
     cols: spec.cols ?? DEFAULT_COLS,
     rows: spec.rows ?? DEFAULT_ROWS,
     term: spec.term ?? DEFAULT_TERM,
-    ringBytes: spec.ringBytes ?? defaultRingBytes,
+    scrollback: spec.scrollback ?? defaultScrollback,
     ...(spec.paneId === undefined ? {} : { paneId: spec.paneId }),
   };
 }
