@@ -239,6 +239,9 @@ importers:
       '@shepherd/ext-tasks':
         specifier: workspace:*
         version: link:../../extensions/tasks
+      '@shepherd/ext-worktree-hook':
+        specifier: workspace:*
+        version: link:../../extensions/worktree-hook
       '@shepherd/platform-darwin':
         specifier: workspace:*
         version: link:../platform/darwin
