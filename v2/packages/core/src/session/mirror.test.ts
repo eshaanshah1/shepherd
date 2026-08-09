@@ -35,6 +35,33 @@ describe('TerminalMirror', () => {
     mirror.dispose();
   });
 
+  /**
+   * A snapshot REPLACES a screen; it does not add to one.
+   *
+   * The serializer reconstructs a terminal from scratch and writes no reset of
+   * its own, so a repaint delivered to a viewer that already had content
+   * appended a second whole copy. On screen that read as the last command
+   * having run again — `❯ ❯ echo …`, two prompts on one line — rather than as
+   * one screen drawn twice, which is why it was hunted as an input bug.
+   */
+  it('repaints a viewer that already has content, instead of stacking on it', async () => {
+    const mirror = new TerminalMirror();
+    mirror.feed(encode('only line\r\n'));
+    const snapshot = await captured(mirror);
+
+    // A viewer mid-session: it has a screen already, and is handed a repaint.
+    const viewer = new TerminalMirror();
+    viewer.feed(encode('stale line\r\n'));
+    await captured(viewer);
+    viewer.feed(snapshot);
+    await captured(viewer);
+
+    expect(viewer.screen().text).toBe(mirror.screen().text);
+    expect(viewer.screen().text).not.toContain('stale line');
+    viewer.dispose();
+    mirror.dispose();
+  });
+
   it('round-trips a snapshot into an identical screen', async () => {
     const mirror = new TerminalMirror();
     mirror.feed(encode('\x1b[31;1mred bold\x1b[0m plain\r\nsecond line\r\n'));

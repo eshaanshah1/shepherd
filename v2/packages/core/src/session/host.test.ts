@@ -114,7 +114,13 @@ describe('SessionHost lifecycle', () => {
 
     await waitFor(() => done.length > 0, 'exit');
     const all = [...Buffer.concat(out.chunks.map((c) => Buffer.from(c)))];
-    expect(all).toEqual([0xff, 0xfe, 0x01]);
+    // `ESC c` leads, because attaching hands over a SNAPSHOT and a snapshot
+    // replaces a screen rather than adding to one (`TerminalMirror.capture`).
+    // Asserted rather than trimmed blindly: it is part of what a viewer is
+    // handed, and the point of this test is that everything AFTER it is the
+    // pty's bytes verbatim.
+    expect(all.slice(0, 2)).toEqual([0x1b, 0x63]);
+    expect(all.slice(2)).toEqual([0xff, 0xfe, 0x01]);
   });
 
   it('kill() fires onExit once and removes the id from list()', async () => {

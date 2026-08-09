@@ -4,6 +4,7 @@ import com.eshaan.shepherd.util.SLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -261,15 +262,46 @@ class HostLink(
     fun sendBytes(kind: Int, sessionId: String, payload: ByteArray) =
         send(Frames.bytes(kind, sessionId, payload))
 
-    @Synchronized
-    private fun send(frame: ByteArray) {
-        val stream = out ?: return
-        try {
-            stream.write(frame)
-            stream.flush()
-        } catch (e: Exception) {
-            SLog.w(SLog.CONN, "write failed: ${e.message}")
+    /**
+     * Frames out, on the IO thread, in order.
+     *
+     * **Android throws `NetworkOnMainThreadException` for a socket write from
+     * the UI thread**, and every write this client makes originates there: a
+     * keystroke, the compose row, a viewport when the screen mounts. Writing
+     * directly cost the terminal all of its input — the exception was caught,
+     * logged as `write failed: null` (most socket failures carry no message),
+     * and the terminal simply did nothing, which reads like a dead connection
+     * rather than a threading rule.
+     *
+     * A queue rather than a coroutine per frame, because ORDER is the whole
+     * contract on this path: keystrokes must arrive in the sequence they were
+     * typed, and `launch` per write hands that to the scheduler. One consumer,
+     * one socket, one order.
+     */
+    private val outbox = Channel<ByteArray>(capacity = Channel.UNLIMITED)
+
+    private val pump = scope.launch(Dispatchers.IO) {
+        for (frame in outbox) {
+            val stream = out
+            if (stream == null) {
+                // Said out loud rather than dropped in silence: a frame written
+                // before the socket exists is how an attach went missing once.
+                SLog.w(SLog.CONN, "dropped a frame for $host:$port — not connected")
+                continue
+            }
+            try {
+                stream.write(frame)
+                stream.flush()
+            } catch (e: Exception) {
+                // The CLASS, not just the message: `Exception.message` is null
+                // for most socket failures, so logging it alone names nothing.
+                SLog.w(SLog.CONN, "write to $host:$port failed: ${e.javaClass.simpleName}: ${e.message}")
+            }
         }
+    }
+
+    private fun send(frame: ByteArray) {
+        outbox.trySend(frame)
     }
 
     /**
@@ -281,6 +313,8 @@ class HostLink(
     }
 
     fun stop() {
+        pump.cancel()
+        outbox.close()
         loop?.cancel()
         loop = null
         closeSocket()

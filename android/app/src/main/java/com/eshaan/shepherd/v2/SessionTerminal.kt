@@ -93,8 +93,21 @@ class SessionTerminal(
         if (on && grid != null) sendViewport(grid.first, grid.second) else withdrawViewport()
     }
 
+    /**
+     * Not before the link is up.
+     *
+     * The screen mounts — and so takes control — while the data link is still
+     * shaking hands, and a frame written then goes to a socket that does not
+     * exist yet. It presented as `write failed: null` and a terminal stuck at
+     * the Mac's grid: the viewport was never delivered, and nothing reported a
+     * fault because the retry never happened. `attach` flushes it once Ready.
+     */
+    @Volatile
+    private var linkReady = false
+
     private fun sendViewport(cols: Int, rows: Int) {
         lastGrid = cols to rows
+        if (!linkReady) return
         link.sendJson(
             Frames.REQ_SET_VIEWPORT,
             buildJsonObject {
@@ -108,6 +121,7 @@ class SessionTerminal(
 
     /** No `viewport` field at all — the host reads that as "I have no opinion". */
     private fun withdrawViewport() {
+        if (!linkReady) return
         link.sendJson(
             Frames.REQ_SET_VIEWPORT,
             buildJsonObject {
@@ -172,6 +186,16 @@ class SessionTerminal(
              * failed.
              */
             link.state.first { it is HostLink.State.Ready }
+            linkReady = true
+            /**
+             * The viewport goes FIRST, before the attach.
+             *
+             * Attaching hands back a screen serialized at the pty's CURRENT
+             * size, so asking for it before declaring what we can display means
+             * the first thing painted was drawn for somebody else's grid — and
+             * the reshape that follows arrives too late to have prevented it.
+             */
+            lastGrid?.let { (cols, rows) -> if (controlling) sendViewport(cols, rows) }
             link.sendJson(
                 Frames.REQ_ATTACH,
                 buildJsonObject { put("seq", link.nextSeq()); put("sessionId", sessionId) },
@@ -195,7 +219,12 @@ class SessionTerminal(
         )
         // …and withdraw our opinion about size, so the Mac stops being
         // letterboxed to a phone that is no longer looking.
+        //
+        // BEFORE `linkReady` is cleared, because that flag gates the send:
+        // clearing it first swallowed the withdrawal and left the Mac shrunk to
+        // a phone that had walked away, with nothing to undo it.
         withdrawViewport()
+        linkReady = false
     }
 
     private companion object {
