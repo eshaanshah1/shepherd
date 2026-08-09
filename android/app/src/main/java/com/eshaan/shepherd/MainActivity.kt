@@ -40,6 +40,7 @@ import com.eshaan.shepherd.ui.FleetViewModel
 import com.eshaan.shepherd.ui.NavTarget
 import com.eshaan.shepherd.ui.PairingScreen
 import com.eshaan.shepherd.ui.PairingViewModel
+import com.eshaan.shepherd.v2.V2App
 import kotlinx.coroutines.flow.MutableStateFlow
 
 class MainActivity : ComponentActivity() {
@@ -60,103 +61,18 @@ class MainActivity : ComponentActivity() {
         setContent {
             ShepherdTheme {
                 Surface {
-                    val store = remember { EncryptedPairingStore(applicationContext) }
-                    var paired by remember { mutableStateOf(store.load() != null) }
-                    // Bumped when the selected Mac changes or one is forgotten. Everything below
-                    // is keyed on it, so the view model and its connection are rebuilt against the
-                    // newly selected pairing instead of quietly serving the old one.
-                    var hostGeneration by remember { mutableStateOf(0) }
-                    // Set when the user asks to add another Mac while already paired.
-                    var addingHost by remember { mutableStateOf(false) }
-                    if (!paired || addingHost) {
-                        val pvm = remember(hostGeneration, addingHost) {
-                            PairingViewModel(store, fcmToken = { fcmToken() })
-                        }
-                        PairingScreen(pvm) {
-                            paired = true; addingHost = false; hostGeneration++
-                        }
-                    } else {
-                        val fvm = remember(hostGeneration) {
-                            FleetViewModel(store, fcmToken = { fcmToken() },
-                                relocate = { pin ->
-                                    com.eshaan.shepherd.transport.LanRelocator(applicationContext)
-                                        .relocate(pin)
-                                },
-                                connectionFactory = { scope, hello ->
-                                    store.load()?.let { RemoteConnection(it.host, it.port, hello, scope,
-                                        connect = Pinning.connector(it.lanPin)) }
-                                })
-                        }
-                        // Reconnect whenever the app comes to the foreground: a backgrounded socket
-                        // often dies (Doze) and the backoff loop can be mid-delay, so without this you
-                        // open the app to a stale "offline" until a manual pull-to-refresh. addObserver
-                        // syncs the observer to the current state, so ON_START also fires on first
-                        // registration — this is the initial connect too.
-                        val lifecycleOwner = LocalLifecycleOwner.current
-                        DisposableEffect(lifecycleOwner, fvm) {
-                            val obs = LifecycleEventObserver { _, event ->
-                                if (event == Lifecycle.Event.ON_START) fvm.refresh()
-                            }
-                            lifecycleOwner.lifecycle.addObserver(obs)
-                            onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
-                        }
-                        val nav by fvm.navTarget.collectAsState()
-                        val fleet by fvm.fleet.collectAsState()
-                        val pending by deepLinkPane.collectAsState()
-                        // A notification tap → open that pane once the intent's paneID lands.
-                        androidx.compose.runtime.LaunchedEffect(pending) {
-                            pending?.let { fvm.openAgent(it); deepLinkPane.value = null }
-                        }
-                        // iOS-style push: opening a chat slides the Agent in from the right over the
-                        // Fleet, which parallax-drifts left + dims; back reverses it. Detail stays on
-                        // top (higher z) so it rides over the list both ways.
-                        AnimatedContent(
-                            targetState = nav,
-                            transitionSpec = {
-                                val opening = targetState is NavTarget.Agent
-                                val slide = tween<IntOffset>(300, easing = FastOutSlowInEasing)
-                                val fade = tween<Float>(300)
-                                val spec = if (opening) {
-                                    slideInHorizontally(slide) { it } togetherWith
-                                        (slideOutHorizontally(slide) { -it / 4 } + fadeOut(fade, 0.7f))
-                                } else {
-                                    (slideInHorizontally(slide) { -it / 4 } + fadeIn(fade, 0.7f)) togetherWith
-                                        slideOutHorizontally(slide) { it }
-                                }
-                                spec.apply { targetContentZIndex = if (opening) 1f else 0f }
-                            },
-                            label = "nav",
-                        ) { target ->
-                            when (target) {
-                                is NavTarget.Agent -> {
-                                    val conn = fvm.activeConnection
-                                    val host = fvm.host; val port = fvm.port
-                                    if (conn != null && host != null && port != null) {
-                                        val avm = remember(target.paneId) {
-                                            AgentViewModel(target.paneId, host, port, conn, fvm.lanPin)
-                                        }
-                                        val title = fleet.pane(target.paneId)?.title ?: ""
-                                        AgentScreen(avm, title) { fvm.consumeNavTarget() }
-                                    } else {
-                                        // No live connection yet — fall back to the Fleet list.
-                                        fvm.consumeNavTarget()
-                                        FleetScreen(fvm, pairings = store,
-                                                    onSwitchHost = {
-                                                        paired = store.load() != null
-                                                        hostGeneration++
-                                                    },
-                                                    onPairAnother = { addingHost = true })
-                                    }
-                                }
-                                null -> FleetScreen(fvm, pairings = store,
-                                                    onSwitchHost = {
-                                                        paired = store.load() != null
-                                                        hostGeneration++
-                                                    },
-                                                    onPairAnother = { addingHost = true })
-                            }
-                        }
-                    }
+                    /**
+                     * The v2 root.
+                     *
+                     * v1's Fleet/Agent/Pairing screens are still in the tree and
+                     * are no longer reached: they speak the old wire protocol (a
+                     * control connection plus a data connection per pane, each
+                     * with its own message set) and the Mac no longer answers it.
+                     * They are left in place rather than deleted in the same
+                     * commit that adds their replacement, so this change stays
+                     * reviewable — removing them is its own.
+                     */
+                    V2App(applicationContext, deviceName = android.os.Build.MODEL ?: "A phone")
                 }
             }
         }
