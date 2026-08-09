@@ -29,7 +29,15 @@
 
   font-family: var(--sh-font-sans);
   font-size: var(--sh-font-size-body);
-  line-height: 1;
+  /*
+   * NOT `1`. A line box exactly as tall as the type puts the descenders of
+   * `g p y j ,` outside the label's content box, and the label is the one part
+   * of the row that must clip (`overflow: hidden` is what the ellipsis needs) —
+   * so `line-height: 1` shears the bottom off every task title with a `g` in it.
+   * The row is 28px and this is 20px, still flex-centred and still one glyph
+   * box; the leading is the only thing that changed.
+   */
+  line-height: var(--sh-line-height);
   color: var(--sh-text);
   text-align: left;
   white-space: nowrap;
