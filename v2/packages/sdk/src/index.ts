@@ -62,6 +62,8 @@ export type {
   SplitAxis,
   StatusItem,
   TreeDataProvider,
+  PresentEffect,
+  Presents,
   TreeItem,
   TreeItemAction,
   TreeItemSeparator,

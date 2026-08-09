@@ -2,9 +2,11 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import {
   fuzzyMatch,
   s,
+  sessionId,
   toDisposable,
   type AttentionLevel,
   type ExtensionContext,
+  type PresentEffect,
   type Shepherd,
 } from '@shepherd/sdk';
 import { REPO_SUGGESTIONS_POINT, TASK_COMMANDS, TASK_VIEWS } from './manifest.ts';
@@ -1131,7 +1133,33 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         if (!switched.ok) {
           throw new Error(`could not switch to the task: ${switched.error.code}: ${switched.error.message}`);
         }
-        return { id: task.id, root, opened: opened.value.created };
+        /**
+         * …and what to SHOW, in terms no client is privileged about.
+         *
+         * Everything above this line is a desktop gesture — open a root, switch
+         * to it — and on a phone it means nothing. A phone that recovered the
+         * intent by matching this command's id would have hardcoded `tasks`,
+         * which is the special case ADR 0031 exists to prevent, smuggled in
+         * through the client instead of the shell.
+         *
+         * So the verb also NAMES what it wanted presented, and each renderer
+         * decides what that means on its own surface. The desktop already opened
+         * the pane and can ignore it; a phone pushes a terminal and attaches.
+         *
+         * The FIRST live session of the task, because that is what "show me this
+         * task" means to something with one screen. Absent when the task has no
+         * live agent — a phone then has nothing to attach to, which is the
+         * truth rather than an empty terminal pretending otherwise.
+         */
+        const live = task.sessions.find((session) => session.pane !== undefined);
+        return {
+          id: task.id,
+          root,
+          opened: opened.value.created,
+          ...(live === undefined
+            ? {}
+            : { present: { kind: 'session', sessionId: sessionId(live.id) } satisfies PresentEffect }),
+        };
       },
     }),
   );

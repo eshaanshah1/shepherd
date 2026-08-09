@@ -1014,6 +1014,34 @@ describe('restoring a task', () => {
    * The rule ADR 0035 §3 finishes: the target was already opaque here, and now
    * so are the binary and the flag around it.
    */
+  /**
+   * The effect channel (Fable's amendment, and the crux of the phone design).
+   *
+   * `reveal` is "the whole of what clicking a row means", and everything it does
+   * — open a root, switch to it — is a DESKTOP gesture. A phone recovering the
+   * intent by matching this command's id would have hardcoded `tasks`, which is
+   * the special case ADR 0031 exists to prevent, smuggled in through the client
+   * instead of the shell. So the verb names what it wanted PRESENTED, and each
+   * renderer decides what that means on its own surface.
+   */
+  it('says what to PRESENT, so a client need not know what a task is', async () => {
+    const h = (live = harness({
+      tasks: [task({ sessions: [{ id: 's1', role: 'orchestrator', pane: 'p1' }] })],
+    }));
+
+    const revealed = await h.run<{ present?: unknown }>('tasks.reveal', { task: 't1' });
+
+    // A session, named in terms core owns — not a task, not a root, not a pane.
+    expect(revealed.present).toEqual({ kind: 'session', sessionId: 's1' });
+  });
+
+  it('presents nothing when the task has no live agent, rather than an empty terminal', async () => {
+    const h = (live = harness({ tasks: [task({ sessions: [] })] }));
+    const revealed = await h.run<{ present?: unknown }>('tasks.reveal', { task: 't1' });
+    // The truth, rather than a terminal pretending there is something in it.
+    expect(revealed.present).toBeUndefined();
+  });
+
   it('never spells the agent binary itself when resuming', async () => {
     const h = (live = harness({ tasks: [withAgent] }));
     await h.run('tasks.restore', { task: 't1' });

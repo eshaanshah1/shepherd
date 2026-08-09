@@ -253,6 +253,44 @@ export interface TreeItem {
  * WHICH task it is about, rather than the handler guessing from whatever happens
  * to be selected when the menu closes.
  */
+/**
+ * What a verb asks its caller to SHOW, in terms no client is privileged about.
+ *
+ * The problem it solves is the one that has no other honest answer: a row's
+ * command runs HOST-SIDE, and `tasks.reveal` — "the whole of what clicking a row
+ * means" — opens a layout root and switches to it. That is a desktop gesture. On
+ * a phone it means nothing, and a phone that recovered the intent by matching
+ * command ids (`if (id === 'tasks.reveal') attachPty(...)`) would have hardcoded
+ * `tasks` after all, which is the exact special case ADR 0031 exists to prevent
+ * — smuggled in through the client instead of the shell.
+ *
+ * So a verb returns what it wants PRESENTED, and each renderer decides what that
+ * means for its own surface: the desktop opens a pane, a phone pushes a screen
+ * and attaches. The vocabulary is deliberately tiny — a session, or a view — and
+ * it earns its existence at birth rather than on promise, because it has TWO
+ * renderers the day it ships.
+ *
+ * Additive-only, and tolerated when unknown: this crosses a wire to a client
+ * that may be older than the host. A renderer that does not recognise a `kind`
+ * ignores it and shows what it already had, which is a worse experience than
+ * understanding it and a much better one than a refusal.
+ */
+export type PresentEffect =
+  /** Show this session's terminal. */
+  | { readonly kind: 'session'; readonly sessionId: SessionID }
+  /** Show this contributed view. */
+  | { readonly kind: 'view'; readonly viewType: string };
+
+/**
+ * The envelope a verb may return alongside whatever else it answers.
+ *
+ * Optional on purpose: most commands present nothing, and a verb that had to
+ * declare an effect would invent one.
+ */
+export interface Presents {
+  readonly present?: PresentEffect;
+}
+
 export interface TreeItemAction {
   /** A command id. Run as the contributing extension when chosen. */
   readonly id: string;
