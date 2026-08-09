@@ -146,6 +146,31 @@ describe('Row', () => {
     expect(style.background).not.toContain('color-mix');
   });
 
+  /**
+   * MUTATION TARGET #2. The fill is a chip, and its inset is paid for out of the
+   * padding — so rounding the selection cannot move the labels.
+   *
+   * Asserted on the declarations rather than through `getComputedStyle`, because
+   * the invariant is the ARITHMETIC (margin + padding = the inset the label has
+   * always been at) and jsdom resolves neither the `calc()` nor the custom
+   * properties inside it. Swapping the subtractions for the two smaller tokens
+   * they equal at today's scale would pass a computed-value test and silently
+   * decouple the two halves the next time the space scale moves.
+   */
+  it('the chip is inset out of its own padding, so the label does not move', () => {
+    const base = rulesMentioning('sh-ui-row').find((rule) => rule.selectorText === '.sh-ui-row');
+    expect(base?.style.getPropertyValue('border-radius')).toBe('var(--sh-radius-md)');
+    expect(base?.style.getPropertyValue('margin-inline')).toBe('var(--sh-space-sm)');
+
+    const padding = base?.style.getPropertyValue('padding') ?? '';
+    expect(padding).toContain('calc(var(--sh-space-xl) - var(--sh-space-sm))');
+    expect(padding).toContain('calc(var(--sh-space-lg) - var(--sh-space-sm))');
+
+    // A percentage width beside that margin overflows by exactly the inset, and
+    // on the right that is the pixel the sidebar's seam is drawn in.
+    expect(base?.style.getPropertyValue('width')).toBe('auto');
+  });
+
   it('hover is the fillHover wash, so a re-declared --sh-text carries it', () => {
     const hoverRule = rulesMentioning('sh-ui-row').find(
       (rule) => rule.selectorText === '.sh-ui-row:hover',

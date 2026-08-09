@@ -92,9 +92,16 @@
  *  - Its horizontal inset matches the card's rather than the sidebar's, so the
  *    labels line up with the query above them. `Row`'s own asymmetric padding is
  *    for a list with a status column on its left, which this is not.
+ *
+ * The second difference is why `margin-inline` is zeroed. `Row` splits its inset
+ * between a margin (which draws the chip's gap) and its padding; here the card
+ * already owns that gap, so keeping the margin would inset the chip twice and
+ * push every label off the query it is filtering. The padding above is the whole
+ * inset, exactly as it was before the chip existed.
  */
 .sh-ui-palette__list .sh-ui-palette__item {
   cursor: pointer;
+  margin-inline: 0;
   padding: 0 var(--sh-space-md);
   border-radius: var(--sh-radius-sm);
 }
