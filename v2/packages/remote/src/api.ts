@@ -1,5 +1,6 @@
 import type { Disposable } from '@shepherd/sdk';
 import type { Endpoint } from './endpoint.ts';
+import type { Identity } from './identity.ts';
 import type { PairedDevice } from './pairing.ts';
 
 /**
@@ -34,13 +35,29 @@ import type { PairedDevice } from './pairing.ts';
  */
 export interface RemoteAPI {
   /**
-   * Start serving on `endpoint`. Disposing stops that endpoint alone.
+   * Start serving. Disposing stops that endpoint alone.
+   *
+   * Takes a FACTORY rather than an endpoint, because an endpoint cannot exist
+   * before the identity does — it terminates TLS with it — and the identity is
+   * core's to load, mint and keep stable. A caller that had to obtain one first
+   * would be a caller that decides when this Mac's certificate is created.
    *
    * Several may run at once — loopback for a test, LAN at home, a tailnet
    * elsewhere — because a device pairs with the MAC rather than with a route,
    * and its secret works over whichever one it reaches.
+   *
+   * **Open question, deliberately recorded rather than guessed at:** the factory
+   * receives the identity, so a third-party transport would hold this Mac's
+   * PRIVATE KEY. That is acceptable today, when the only implementations are
+   * core's own — and it is the wrong shape the moment a third party ships one.
+   * The fix is for `Endpoint` to yield RAW connections and for core to wrap them
+   * in TLS itself, which is v1's `LANBridge` arrangement as a clean seam rather
+   * than a `socketpair`. It is not built now because there is no consumer to
+   * shape it against (ADR 0031), and it is written down here so the first
+   * third-party transport does not quietly become the moment we hand the key
+   * out.
    */
-  serve(endpoint: Endpoint): Promise<Disposable>;
+  serve(factory: (identity: Identity) => Endpoint): Promise<Disposable>;
 
   /**
    * Show a pairing code, and return its digits.
