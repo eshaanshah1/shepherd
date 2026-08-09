@@ -3,7 +3,28 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
-    id("com.google.gms.google-services")
+}
+
+/**
+ * Firebase is applied ONLY when its config file is present.
+ *
+ * `google-services.json` carries a project's own push credentials, so it is not
+ * in the repository — and with the plugin applied unconditionally its absence
+ * fails the build outright, before a single line of Kotlin is compiled. That
+ * makes push a hard dependency of *building the terminal*, which it is not: the
+ * app's FCM path is already written to be dark without a key (see `FcmWake`),
+ * and the host's is too.
+ *
+ * So a checkout without the file builds a working app with no push, and one with
+ * the file gets push. The alternative — a placeholder json checked in — is worse:
+ * it builds an app that believes it can register for push and fails somewhere
+ * far from here.
+ */
+val hasFirebaseConfig = file("google-services.json").exists()
+if (hasFirebaseConfig) {
+    apply(plugin = "com.google.gms.google-services")
+} else {
+    logger.lifecycle("shepherd: no google-services.json — building without push (FCM stays dark)")
 }
 
 android {
