@@ -68,7 +68,15 @@ describe('the worktree-hook manifest', () => {
       WORKTREE_HOOK_COMMANDS.set,
       WORKTREE_HOOK_COMMANDS.clear,
       WORKTREE_HOOK_COMMANDS.testRun,
-      WORKTREE_HOOK_COMMANDS.edit,
     ]);
+  });
+
+  it('contributes no command for opening the editor, because none could work', () => {
+    // An overlay is raised by its accelerator or by a gesture in the page; the
+    // SDK gives an extension's service half no way to raise its own view. A
+    // `worktreeHook.edit` entry would be a palette row that does nothing, which
+    // is worse than no row.
+    const ids = worktreeHookManifest.contributes?.commands?.map((command) => command.id) ?? [];
+    expect(ids.some((id) => id.endsWith('.edit'))).toBe(false);
   });
 });

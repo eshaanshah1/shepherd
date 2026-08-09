@@ -58,10 +58,6 @@
         {
           "id": "worktreeHook.testRun",
           "title": "Worktree Hook: Test Run"
-        },
-        {
-          "id": "worktreeHook.edit",
-          "title": "Worktree Hook: Edit"
         }
       ]
     }

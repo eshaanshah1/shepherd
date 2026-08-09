@@ -30,11 +30,21 @@ export const WORKTREE_HOOK_COMMANDS = {
    * are ones you want to find before a worktree exists rather than after.
    */
   testRun: 'worktreeHook.testRun',
-  edit: 'worktreeHook.edit',
 } as const;
 
-/** The editor's view type, resolved by the renderer's table (ADR 0033). */
+/**
+ * The editor's view type, resolved by the renderer's table (ADR 0033).
+ *
+ * There is deliberately no `worktreeHook.edit` COMMAND beside it. An overlay is
+ * raised by the accelerator it declares or by a gesture inside the page, and the
+ * SDK gives an extension's service half no way to raise its own view — so a
+ * command that claimed to open this one would be a palette entry that does
+ * nothing. The key below is how you get here.
+ */
 export const WORKTREE_HOOK_VIEW = 'worktree-hook.editor';
+
+/** What raises the editor. A modifier is required, or the key is deleted from every terminal. */
+export const WORKTREE_HOOK_KEY = 'CmdOrCtrl+Shift+H';
 
 export const worktreeHookManifest: Manifest = {
   id: WORKTREE_HOOK_ID,
@@ -68,7 +78,6 @@ export const worktreeHookManifest: Manifest = {
       { id: WORKTREE_HOOK_COMMANDS.set, title: 'Worktree Hook: Set' },
       { id: WORKTREE_HOOK_COMMANDS.clear, title: 'Worktree Hook: Clear' },
       { id: WORKTREE_HOOK_COMMANDS.testRun, title: 'Worktree Hook: Test Run' },
-      { id: WORKTREE_HOOK_COMMANDS.edit, title: 'Worktree Hook: Edit' },
     ],
   },
 };
