@@ -41,6 +41,10 @@ export async function runSmoke(
       const { runTerminalSmoke } = await import('./smoke-terminal.ts');
       return runTerminalSmoke(win, host);
     }
+    case 'mirror': {
+      const { runMirrorSmoke } = await import('./smoke-mirror.ts');
+      return runMirrorSmoke(win, host);
+    }
     case 'm0': {
       const { runM0Smoke } = await import('./smoke-m0.ts');
       return runM0Smoke(win, host);
