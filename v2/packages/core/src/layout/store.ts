@@ -63,7 +63,7 @@ import { deserializeNode, serializeNode, type PersistedNode } from './serialize.
 /**
  * What can end a session, and what can say whether one is still alive.
  *
- * `isLive` arrives with R1 (ADR 0035). Sessions now outlive the app, so a
+ * `isLive` arrives with R1 (ADR 0036). Sessions now outlive the app, so a
  * restored pane's persisted `sessionId` is a claim rather than a fact — and the
  * only thing that can settle it is the process that holds the ptys. Required
  * rather than optional, for the same reason `kill` is: a store built without it
@@ -782,7 +782,7 @@ export class LayoutStore {
         // skipped: a root dropped from the payload is a root that comes back
         // MINTED on the next launch, which would refill the empty state with a
         // shell the user closed on purpose.
-        // The session each pane was showing rides along (ADR 0035). It is a
+        // The session each pane was showing rides along (ADR 0036). It is a
         // CLAIM: `#restore` checks it against the daemon before believing it.
         tree:
           state.tree === null
@@ -838,7 +838,7 @@ export class LayoutStore {
       return undefined;
     }
 
-    // ADR 0035's three cases, and the orphan branch is the one worth naming: a
+    // ADR 0036's three cases, and the orphan branch is the one worth naming: a
     // session the daemon still holds that no restored pane claims would
     // otherwise keep running with nothing pointing at it — exactly the leak the
     // persisted binding exists to prevent, arriving through the other door.

@@ -303,7 +303,7 @@ export class RemoteServer {
      * end the process.
      *
      * This runs in the daemon too, where a throw kills every terminal the user
-     * has open (ADR 0035: the session outlives the app, so the daemon dying is
+     * has open (ADR 0036: the session outlives the app, so the daemon dying is
      * the one failure the design cannot absorb). `lastSeenAt` is a timestamp
      * nothing depends on; the device is already authenticated by the time we
      * are here.

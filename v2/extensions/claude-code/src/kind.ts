@@ -94,7 +94,7 @@ export function claudeKind(): AgentKind {
 
     /**
      * `claude --resume <target>` — and this package is the ONLY place that
-     * string may appear (ADR 0035 §3). It moved here from `tasks`, whose own
+     * string may appear (ADR 0036 §3). It moved here from `tasks`, whose own
      * comment had been asking for it: the binary and the flag are vendor facts,
      * and a consumer that spells them has learned which agent it hired.
      *

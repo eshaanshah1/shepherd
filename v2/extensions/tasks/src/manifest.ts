@@ -65,6 +65,43 @@ export const TASK_VIEWS = {
  */
 export const REPO_SUGGESTIONS_POINT = 'tasks.repoSuggestions';
 
+/**
+ * A worktree exists — is anything else needed before it can be worked in?
+ *
+ * The motivating provider copies what a fresh `worktree add` cannot carry: a
+ * `.env`, a vendored directory, a symlink into a shared cache. That is why this
+ * is **awaited** rather than announced on the bus. An agent opens in this
+ * checkout moments later, so a fire-and-forget event would race it — and would
+ * race it invisibly, since the files do land, just sometimes after the agent
+ * looked for them.
+ *
+ * It is the ONLY provisioning point, and it publishes a question rather than a
+ * step (the rule `REPO_SUGGESTIONS_POINT` states above). A provider is handed
+ * paths and nothing else, so it cannot reach this extension's internals, and it
+ * cannot fail a task — see the return type. If a later need wants a different
+ * moment, widen this fact; do not add `tasks.repoAboutToProvision` beside it.
+ */
+export const REPO_PROVISIONED_POINT = 'tasks.repoProvisioned';
+
+export interface RepoProvisionedFact {
+  /** The SOURCE repo, as the user picked it — the worktree's origin, not the worktree. */
+  readonly repo: { readonly path: string; readonly name: string };
+  /** The worktree that now exists, and the directory a provider should work in. */
+  readonly worktree: string;
+  readonly branch: string;
+  readonly task: { readonly slug: string; readonly root: string };
+}
+
+/**
+ * `ok: false` DEGRADES the repo; it does not fail the task. The worktree is
+ * kept, the root is still built and agents still spawn — a half-provisioned
+ * checkout you can look at beats a task that refused to open. `message` is what
+ * the repo's row and the log then say.
+ */
+export type RepoProvisioned = (
+  fact: RepoProvisionedFact,
+) => Promise<{ readonly ok: boolean; readonly message?: string }>;
+
 export const tasksManifest: Manifest = {
   id: TASKS_ID,
   name: 'Tasks',

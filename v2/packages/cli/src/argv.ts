@@ -39,10 +39,27 @@ const VERBS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
   },
   session: { list: 'sessions.list' },
   agent: { list: 'agents.list' },
+  'worktree-hook': {
+    get: 'worktreeHook.get',
+    set: 'worktreeHook.set',
+    clear: 'worktreeHook.clear',
+    'test-run': 'worktreeHook.testRun',
+  },
 };
 
 /** Flags that may repeat, and what they accumulate into. */
 const REPO_FLAG = 'repo';
+
+/**
+ * The one noun where `--repo` repeats.
+ *
+ * A task is 1..n repos, so `task new --repo a --repo b` accumulates. A hook
+ * belongs to exactly one repo, and accumulating there would send a one-element
+ * array to a schema expecting a string — rejected one process away, naming a
+ * field nobody typed. Decided by noun rather than by "did it appear twice",
+ * because the shape of an argument must not depend on how many were given.
+ */
+const REPO_REPEATS = 'task';
 
 export function parseArgv(argv: readonly string[], env: Record<string, string | undefined> = {}): Parsed {
   const [noun, verb, ...rest] = argv;
@@ -63,7 +80,7 @@ export function parseArgv(argv: readonly string[], env: Record<string, string | 
     return fail(`unknown verb "${verb ?? ''}" for "${noun}". Known: ${known}`);
   }
 
-  const parsedArgs = parseFlags(rest);
+  const parsedArgs = parseFlags(rest, noun === REPO_REPEATS);
   if (!parsedArgs.ok) return parsedArgs;
 
   return {
@@ -80,7 +97,10 @@ export function parseArgv(argv: readonly string[], env: Record<string, string | 
   };
 }
 
-function parseFlags(rest: readonly string[]): { ok: true; value: Record<string, unknown> } | { ok: false; error: string } {
+function parseFlags(
+  rest: readonly string[],
+  repoRepeats: boolean,
+): { ok: true; value: Record<string, unknown> } | { ok: false; error: string } {
   const args: Record<string, unknown> = {};
   const repos: { path: string; name: string }[] = [];
 
@@ -101,7 +121,7 @@ function parseFlags(rest: readonly string[]): { ok: true; value: Record<string, 
       value = token.slice(eq + 1);
     }
 
-    if (name === REPO_FLAG) {
+    if (name === REPO_FLAG && repoRepeats) {
       // The name is the basename, which is what the task root calls it and what
       // namespaces a skill collision.
       repos.push({ path: value, name: value.split('/').filter((p) => p !== '').pop() ?? value });

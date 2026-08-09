@@ -290,7 +290,7 @@ describe('persistence', () => {
   });
 
   /**
-   * ADR 0035's three cases. This is the milestone R1 exists for, seen from the
+   * ADR 0036's three cases. This is the milestone R1 exists for, seen from the
    * layout: a relaunch must REATTACH rather than orphan.
    */
   it('restores pane ids and REATTACHES a session the daemon still holds', () => {
@@ -333,7 +333,7 @@ describe('persistence', () => {
 
   /**
    * The negative control that matters: believing a binding without checking is
-   * the whole failure mode ADR 0035's verification exists to prevent. If
+   * the whole failure mode ADR 0036's verification exists to prevent. If
    * `isLive` were ignored, the test above would pass this one's setup too.
    */
   it('asks the daemon about every claim rather than trusting the file', () => {

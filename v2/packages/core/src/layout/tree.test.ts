@@ -242,7 +242,7 @@ describe('SplitTree (ported from SplitTreeTests.swift)', () => {
     const restored = panes(back).find((pane) => pane.userTitle === 'left');
     expect(restored?.cwd).toBe('/tmp'); // persisted fields survive
     expect(restored?.title).toBe(''); // live state dropped
-    // The id SURVIVES since R1 (ADR 0035). It used to be minted fresh, which was
+    // The id SURVIVES since R1 (ADR 0036). It used to be minted fresh, which was
     // right while sessions died with the app — with `shepherdd` holding the ptys
     // a fresh id means the restored pane cannot find the session it was showing,
     // so it creates a second one and orphans the first.

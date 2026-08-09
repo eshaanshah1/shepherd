@@ -109,7 +109,7 @@ export interface AgentKind {
    * R1 supplied the second consumer — not a second kind, a second CALLER.
    * Restoring a pane after a cold start needs a resume command with no task
    * involved at all: different extension, different question, same answer. One
-   * caller shaped the shortcut; two is when it stops being justified (ADR 0035
+   * caller shaped the shortcut; two is when it stops being justified (ADR 0036
    * §3).
    *
    * Returns a single line, because that is what `Pane.initialCommand` carries
