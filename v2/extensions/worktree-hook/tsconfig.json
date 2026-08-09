@@ -1,0 +1,22 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // `.` rather than `src`, because an extension is TWO halves: `src/` is the
+    // service, `ui/` is the in-proc React view the renderer mounts (ADR 0033).
+    // Both must be typechecked here.
+    "rootDir": ".",
+    "outDir": "out-tsc",
+    "tsBuildInfoFile": "out-tsc/tsconfig.tsbuildinfo",
+    "types": ["node"],
+    // DOM + jsx are for `ui/` alone. That `src/` also compiles with them is why
+    // "no react in the service half" is a LINT rule, not a type one.
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx"
+  },
+  "include": ["src/**/*.ts", "ui/**/*.tsx"],
+  "references": [
+    { "path": "../../packages/sdk" },
+    { "path": "../tasks" },
+    { "path": "../../packages/ui" }
+  ]
+}
