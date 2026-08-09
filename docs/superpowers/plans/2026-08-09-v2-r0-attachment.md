@@ -1235,3 +1235,61 @@ receive live bytes. Nothing in it is in-process — the snapshot is bytes and th
 stream is bytes. R1 moves `SessionHost` behind a unix socket and Electron becomes
 the first remote client of it; R2 gives the same contract a TLS transport and a
 pairing handshake, and the phone becomes the second.
+
+---
+
+## R0 — done, 2026-08-09
+
+All six tasks landed. **1537 tests** (was 1527), typecheck + lint clean, and
+**seven smokes green** including the new `smoke:mirror`.
+
+Two pre-existing failures on the branch this was cut from, neither caused by R0
+and both verified against `master`:
+
+- **`smoke:m3`** regressed on `r0-attachment-protocol` via the composer commit
+  `0f18024` — the repo picker no longer offers a suggestion for an empty query,
+  and the smoke still waits for one. It passes on `master` and fails with R0's
+  work stashed, so it belongs to that commit, not this milestone.
+- **`smoke:isolation`** fails on `master` too (the `Shep` / `Shep Night`
+  userData check). Environment drift, unrelated to anyone's code.
+
+### What changed from the plan
+
+- **Task 5's `suspend` takes a `Pane`, not a `PaneID`.** Written against an id
+  it early-returns for a pane with no entry — and a pane whose root has never
+  been visible has no entry — so a hidden root's panes would never get a session
+  at all. `tasks.spawn` opens an agent into a root that may not be the visible
+  one.
+- **`wantStream` had to split into `wantSession` + `wantStream`.** A suspended
+  pane wants a session and not its bytes. Collapsing them is what produced the
+  bug above.
+- **`ring.test.ts` was deleted rather than ported**, as planned — but note the
+  fanout tests it also held were rewritten into `fanout.test.ts`, where the
+  no-duplicate case is now a real assertion rather than a proxy for one.
+
+### What the live run taught (the streak continues)
+
+`smoke:mirror` failed three times before it passed, and every failure was a real
+thing rather than a flaky test:
+
+1. **`\n` is not Enter** — every command echoed twice and ran zero times.
+   `SessionHost.paste` documents this and it still had to be met in person.
+2. **The first marker assertion passed against nothing** — it matched the
+   shell's echo of a command that had not run. Markers are now assembled by the
+   shell, the same trick `host.test.ts` already uses.
+3. **The seeded pane runs `exec cat`**, which cannot enter a full-screen
+   program. The smoke creates its own `/bin/sh`.
+
+And one genuine distinction the byte-identical comparison found by failing:
+**`screen()` is "what has been parsed"; `capture()` is "everything queued so
+far"**, and the two differ whenever bytes are in flight. Anything comparing them
+must do it at a quiescent moment.
+
+### What R1 inherits
+
+`PtyFanout.attach` is now the whole client contract — register, receive a
+screen, receive live bytes — and nothing in it is in-process: the snapshot is
+bytes and the stream is bytes. `SessionHost.screen()` exists, which is
+core-design §4.1's third tier arriving two milestones early. `arbitrate` is
+already the multi-viewer answer, so the second viewer R2 adds needs no new
+decision.
