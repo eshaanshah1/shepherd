@@ -33,3 +33,11 @@ export {
   type LoopbackOptions,
   type RemoteConnection,
 } from './endpoint.ts';
+export {
+  REMOTE,
+  RemoteServer,
+  type Approval,
+  type DeviceStore,
+  type RemoteServerOptions,
+  type SessionSink,
+} from './server.ts';

@@ -268,7 +268,9 @@ export const boundaries = [
       deny(NODE_PTY, 'remote reaches sessions through core.'),
       deny(
         [...WORKSPACE.app, ...WORKSPACE.tokens, ...WORKSPACE.ui, '@shepherd/ext-*'],
-        'remote may import @shepherd/core and @shepherd/sdk.',
+        'remote may import @shepherd/core and @shepherd/sdk. Its TEST may also import ' +
+          '@shepherd/daemon: R2\'s whole claim is that an admitted device is handed to the ' +
+          'SAME SessionServer the renderer uses, and that proof cannot be written without the real one.',
       ),
     ),
   },
