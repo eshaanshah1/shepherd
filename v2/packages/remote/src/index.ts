@@ -28,6 +28,8 @@ export {
 } from './identity.ts';
 export {
   loopbackEndpoint,
+  wifiEndpoint,
+  localAddress,
   type Endpoint,
   type Listening,
   type LoopbackOptions,
@@ -49,3 +51,10 @@ export type {
   RemoteAPI,
 } from './api.ts';
 export { kvDeviceStore } from './devices.ts';
+
+export {
+  registerTransport,
+  resolveTransport,
+  transportNames,
+  type EndpointFactory,
+} from './transports.ts';

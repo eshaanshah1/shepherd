@@ -77,6 +77,10 @@ dependencies {
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     implementation(platform("com.google.firebase:firebase-bom:33.3.0"))
     implementation("com.google.firebase:firebase-messaging")
+    // The REAL org.json, because android.jar's is a stub that returns defaults
+    // under `isReturnDefaultValues` — so a round-trip test would silently
+    // assert nothing at all rather than fail.
+    testImplementation("org.json:json:20240303")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
 }

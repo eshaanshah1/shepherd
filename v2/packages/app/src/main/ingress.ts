@@ -29,6 +29,27 @@ export function resolveSupport(argv: readonly string[], fallback: string): strin
 }
 
 /**
+ * Which remote transport to serve over, BY NAME — `loopback` (the default),
+ * `wifi`, or whatever else is registered.
+ *
+ * A name rather than a `--wifi` boolean, because the point of `Endpoint` is that
+ * a transport is registered rather than branched on; a flag per transport puts
+ * the `if` back one layer up. See `transports.ts`.
+ *
+ * Loopback stays the default and that is the security posture rather than
+ * caution: anything else puts a TLS listener on a network shared with other
+ * people's machines, and that must be somebody's decision. Loopback plus
+ * `adb reverse` over USB needs no such decision.
+ */
+export const TRANSPORT_FLAG = '--shepherd-remote';
+
+export const DEFAULT_TRANSPORT = 'loopback';
+
+export function resolveTransportName(argv: readonly string[]): string {
+  return flagValue(argv, TRANSPORT_FLAG) ?? DEFAULT_TRANSPORT;
+}
+
+/**
  * Where `ctx.homeDir` points, and for the third time the same reason: a
  * throwaway run must not reach the real user's files.
  *

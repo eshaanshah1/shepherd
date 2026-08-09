@@ -13,6 +13,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -28,7 +30,9 @@ import com.eshaan.shepherd.ui.components.ShepherdTopBar
 import com.eshaan.shepherd.ui.theme.ShepherdPalette
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import com.eshaan.shepherd.util.SLog
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import java.util.UUID
 
 /**
@@ -39,84 +43,43 @@ import java.util.UUID
  * has no idea what a task is either.
  */
 
-/** What this phone remembers about a Mac. Small enough to keep in prefs. */
-data class Pairing(
-    val host: String,
-    val port: Int,
-    /**
-     * Where the ptys are — the DAEMON's port, not the app's.
-     *
-     * A device holds two connections on purpose: control to the app (where
-     * extensions, and therefore views, live) and data to the daemon (which owns
-     * the ptys). The split is what makes restarting Shepherd drop this phone's
-     * task list while the terminal it is watching keeps streaming.
-     */
-    val dataPort: Int,
-    val pin: String,
-    val deviceId: String,
-    val secret: String?,
-)
-
-class PairingPrefs(context: Context) {
-    private val prefs = context.getSharedPreferences("shepherd.v2", Context.MODE_PRIVATE)
-
-    fun load(): Pairing? {
-        val host = prefs.getString("host", null) ?: return null
-        return Pairing(
-            host = host,
-            port = prefs.getInt("port", 0),
-            dataPort = prefs.getInt("dataPort", 0),
-            pin = prefs.getString("pin", "") ?: "",
-            // Minted once and kept: the Mac knows this phone by it, so a new id
-            // each launch would mean pairing again every time.
-            deviceId = prefs.getString("deviceId", null) ?: UUID.randomUUID().toString().also {
-                prefs.edit().putString("deviceId", it).apply()
-            },
-            secret = prefs.getString("secret", null),
-        )
-    }
-
-    fun save(pairing: Pairing) {
-        prefs.edit()
-            .putString("host", pairing.host)
-            .putInt("port", pairing.port)
-            .putInt("dataPort", pairing.dataPort)
-            .putString("pin", pairing.pin)
-            .putString("deviceId", pairing.deviceId)
-            .apply()
-    }
-
-    /** Stored separately: it arrives AFTER the Mac approves, not when we connect. */
-    fun saveSecret(secret: String) {
-        prefs.edit().putString("secret", secret).apply()
-    }
-
-    fun deviceId(): String =
-        prefs.getString("deviceId", null) ?: UUID.randomUUID().toString().also {
-            prefs.edit().putString("deviceId", it).apply()
-        }
-
-    fun forget() = prefs.edit().clear().apply()
-}
-
 @Composable
 fun V2App(context: Context, deviceName: String) {
-    val prefs = remember { PairingPrefs(context) }
-    var pairing by remember { mutableStateOf(prefs.load()) }
+    val macs = remember { MacStore(context) }
+    var mac by remember { mutableStateOf(macs.all().firstOrNull()) }
     var session by remember { mutableStateOf<String?>(null) }
 
-    val known = pairing
+    val known = mac
     if (known == null) {
-        PairScreen { entered ->
-            prefs.save(entered)
-            pairing = entered
+        PairScreen { entered, code ->
+            pairingCodeOnce = code
+            macs.put(entered)
+            mac = entered
+        }
+        return
+    }
+
+    /**
+     * Which address we are currently trying.
+     *
+     * A Mac has several and they all point at the same machine — the pin says
+     * so. Walking to another network changes which one answers, and that must
+     * cost a retry rather than a re-pairing, which is what an address-keyed
+     * record made it cost.
+     */
+    var attempt by remember(known.pin) { mutableIntStateOf(0) }
+    val endpoint = known.candidates.getOrNull(attempt % known.candidates.size.coerceAtLeast(1))
+    if (endpoint == null) {
+        Message("No address for this Mac", "Pair again to give it one.") {
+            macs.forget(known.pin)
+            mac = null
         }
         return
     }
 
     val scope = remember { CoroutineScope(SupervisorJob() + Dispatchers.IO) }
-    val link = remember(known.host, known.port) {
-        HostLink(known.host, known.port, known.pin, scope)
+    val link = remember(known.pin, endpoint.host, endpoint.port) {
+        HostLink(endpoint.host, endpoint.port, known.pin, scope)
     }
     /**
      * The data link, to the daemon.
@@ -126,9 +89,9 @@ fun V2App(context: Context, deviceName: String) {
      * approved — which is exactly what makes serving ptys from a headless
      * process safe.
      */
-    val dataLink = remember(known.host, known.dataPort) {
-        if (known.dataPort > 0) {
-            HostLink(known.host, known.dataPort, known.pin, scope, speaksSessions = true)
+    val dataLink = remember(known.pin, endpoint.host, endpoint.dataPort) {
+        if (endpoint.dataPort > 0) {
+            HostLink(endpoint.host, endpoint.dataPort, known.pin, scope, speaksSessions = true)
         } else {
             null
         }
@@ -139,56 +102,74 @@ fun V2App(context: Context, deviceName: String) {
         link.start(known.deviceId, deviceName, pairingCodeOnce, known.secret)
         onDispose { link.stop() }
     }
-    // Started only once a secret exists: the data path cannot pair, it can only
-    // present. Before the app has approved this phone there is nothing to show.
+
+    /**
+     * The data link waits for a secret, and says so when it cannot start.
+     *
+     * It cannot pair — it can only present — so before the app has approved this
+     * phone there is nothing for it to do. Getting this wrong is invisible: the
+     * task list works, a row opens a terminal, and the terminal paints nothing
+     * because the second connection was never dialled.
+     */
     DisposableEffect(dataLink, known.secret) {
-        if (known.secret != null) dataLink?.start(known.deviceId, deviceName, null, known.secret)
+        val secret = known.secret
+        if (dataLink != null && secret != null) {
+            dataLink.start(known.deviceId, deviceName, null, secret)
+        } else {
+            SLog.i(
+                SLog.DATA,
+                "data link idle — ${if (dataLink == null) "no data port" else "no secret yet"}",
+            )
+        }
         onDispose { dataLink?.stop() }
     }
 
     /**
-     * The Mac issues a secret on every admit, so a phone that lost one is not
-     * stranded.
+     * Everything the Mac tells us about itself, folded back into the record.
      *
-     * It is stored AND folded back into the live pairing, and the second half is
-     * what was missing: the data link starts only once a secret exists, so
-     * writing it to prefs alone left `known.secret` null for the whole session.
-     * The control channel worked, the row opened a terminal, and the data link
-     * was never dialled — a terminal that paints nothing, with no error, because
-     * nothing had failed. It is the state that had not caught up.
+     * The secret and the data port both arrive on admit, and BOTH have to reach
+     * state rather than just storage: the data link starts only once a secret
+     * exists, so writing to prefs alone left it null for the whole session — a
+     * terminal that paints nothing, with no error, because nothing had failed.
+     * And a port is the host's to choose, so a cached one dials a daemon that
+     * moved.
      */
-    /**
-     * The data port the Mac just told us, which supersedes anything stored.
-     *
-     * A port is the host's to choose; a client that trusted its own copy dialled
-     * one the daemon had long since moved off, and showed a terminal that never
-     * painted with nothing reporting a fault.
-     */
-    (state as? HostLink.State.Ready)?.dataPort?.let { reported ->
-        DisposableEffect(reported) {
-            if (known.dataPort != reported) {
-                prefs.save(known.copy(dataPort = reported))
-                pairing = known.copy(dataPort = reported)
-            }
-            onDispose { }
+    LaunchedEffect(state, known.pin) {
+        val ready = state as? HostLink.State.Ready ?: return@LaunchedEffect
+        val reachedAt = endpoint.copy(dataPort = ready.dataPort ?: endpoint.dataPort)
+        val updated = known
+            .copy(secret = ready.deviceSecret ?: known.secret)
+            // Promoted to the front: the address that just worked is
+            // overwhelmingly the one that will work next time.
+            .reachableAt(reachedAt)
+        if (updated != known) {
+            macs.put(updated)
+            mac = updated
         }
     }
 
-    (state as? HostLink.State.Ready)?.deviceSecret?.let { issued ->
-        DisposableEffect(issued) {
-            if (known.secret != issued) {
-                prefs.saveSecret(issued)
-                pairing = known.copy(secret = issued)
-            }
-            onDispose { }
-        }
+    /**
+     * A non-terminal failure moves to the NEXT address rather than retrying this
+     * one forever.
+     *
+     * `HostLink` already retries a single address with backoff, which is right
+     * for a socket that dropped. It is wrong for a Mac that moved: the address
+     * is simply gone, and the one that answers is another entry on this record.
+     */
+    LaunchedEffect(state, attempt) {
+        val failed = state as? HostLink.State.Failed ?: return@LaunchedEffect
+        if (failed.terminal) return@LaunchedEffect
+        if (known.candidates.size <= 1) return@LaunchedEffect
+        delay(ADDRESS_RETRY_MS)
+        SLog.i(SLog.CONN, "no answer at ${endpoint.host}:${endpoint.port} — trying the next address")
+        attempt += 1
     }
 
     when (val current = state) {
         is HostLink.State.Failed -> Message(
             "Cannot reach this Mac",
             current.reason + if (current.terminal) "" else " — retrying",
-        ) { prefs.forget(); pairing = null }
+        ) { macs.forget(known.pin); mac = null }
         is HostLink.State.PendingApproval ->
             Message("Waiting for approval", "Approve this phone on the Mac.", null)
         is HostLink.State.Ready -> {
@@ -208,9 +189,12 @@ fun V2App(context: Context, deviceName: String) {
                 Message("No terminal path", "This Mac did not report a data port.") { session = null }
             }
         }
-        else -> Message("Connecting", known.host, null)
+        else -> Message("Connecting", endpoint.host, null)
     }
 }
+
+/** Long enough that a slow network is not mistaken for the wrong address. */
+private const val ADDRESS_RETRY_MS = 4_000L
 
 /**
  * First contact: the facts a Mac's pairing payload carries.
@@ -220,7 +204,7 @@ fun V2App(context: Context, deviceName: String) {
  * nicer way in rather than a different one.
  */
 @Composable
-private fun PairScreen(onPaired: (Pairing) -> Unit) {
+private fun PairScreen(onPaired: (KnownMac, String?) -> Unit) {
     var host by remember { mutableStateOf("127.0.0.1") }
     var port by remember { mutableStateOf("") }
     var dataPort by remember { mutableStateOf("") }
@@ -235,7 +219,7 @@ private fun PairScreen(onPaired: (Pairing) -> Unit) {
         Text(
             // Loopback is what the Mac serves today, so a USB reverse-forward is
             // the way in until a LAN transport extension exists.
-            "adb reverse tcp:PORT tcp:PORT, then use 127.0.0.1",
+            "The Mac's address on this network, or 127.0.0.1 over a USB forward",
             color = Color(ShepherdPalette.textDim),
             fontSize = 12.sp,
             modifier = Modifier.padding(top = 4.dp, bottom = 16.dp),
@@ -247,16 +231,20 @@ private fun PairScreen(onPaired: (Pairing) -> Unit) {
         Field("Pairing code", code, numeric = true) { code = it }
         Button(
             onClick = {
-                pairingCodeOnce = code.ifBlank { null }
                 onPaired(
-                    Pairing(
-                        host = host.trim(),
-                        port = port.toIntOrNull() ?: 0,
-                        dataPort = dataPort.toIntOrNull() ?: 0,
+                    KnownMac(
                         pin = pin.trim(),
+                        endpoints = listOf(
+                            Endpoint(
+                                host = host.trim(),
+                                port = port.toIntOrNull() ?: 0,
+                                dataPort = dataPort.toIntOrNull() ?: 0,
+                            ),
+                        ),
                         deviceId = UUID.randomUUID().toString(),
                         secret = null,
                     ),
+                    code.ifBlank { null },
                 )
             },
             enabled = host.isNotBlank() && port.toIntOrNull() != null && pin.length == 64,

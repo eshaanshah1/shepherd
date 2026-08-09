@@ -1,3 +1,4 @@
+import { networkInterfaces } from 'node:os';
 import { createServer, type Server, type TLSSocket } from 'node:tls';
 import { err, ok, type Disposable, type Result } from '@shepherd/sdk';
 import type { Identity } from './identity.ts';
@@ -60,8 +61,78 @@ export interface LoopbackOptions {
  * to run.
  */
 export function loopbackEndpoint(options: LoopbackOptions): Endpoint {
+  return tcpEndpoint({ ...options, kind: 'loopback', bindAddress: LOOPBACK });
+}
+
+/**
+ * TLS over this Mac's address on the local network — `remote-wifi`.
+ *
+ * The second implementation of the seam, and the reason the seam exists: the
+ * protocol, the pairing and the TLS termination are unchanged, and all this
+ * decides is which interface to bind. v1 could not express that — its LAN
+ * listener terminated TLS itself and bridged the raw fd into a server hard-wired
+ * to the tailnet, through a `socketpair`, because there was nothing to implement.
+ *
+ * **A named interface, never `0.0.0.0`.** v1's rule, kept: a wildcard bind is a
+ * server on every network this machine happens to be attached to, decided by
+ * nobody. If no local address can be found, this refuses to listen rather than
+ * falling back to one — a fallback here is the failure mode the rule exists to
+ * prevent.
+ */
+export function wifiEndpoint(options: WifiOptions): Endpoint {
+  const address = options.bindAddress ?? localAddress();
+  if (address === undefined) {
+    return {
+      kind: 'wifi',
+      listen: async () =>
+        err('no local network address — this Mac is not on a network it can serve over'),
+    };
+  }
+  return tcpEndpoint({ ...options, kind: 'wifi', bindAddress: address });
+}
+
+export interface WifiOptions {
+  readonly identity: Identity;
+  readonly port?: number;
+  /** Override the auto-detected interface. Still never a wildcard. */
+  readonly bindAddress?: string;
+}
+
+/**
+ * This machine's IPv4 on the local network.
+ *
+ * Non-internal and IPv4: a `169.254.x` link-local or a loopback entry is not an
+ * address a phone can reach, and handing one out produces a QR code that dials
+ * nothing. Ordered so a real interface wins over a virtual one — Docker and VPN
+ * bridges are up on plenty of machines and answer to nobody's phone.
+ */
+export function localAddress(interfaces = networkInterfaces()): string | undefined {
+  const candidates: string[] = [];
+  for (const [name, entries] of Object.entries(interfaces)) {
+    for (const entry of entries ?? []) {
+      if (entry.family !== 'IPv4' || entry.internal) continue;
+      if (entry.address.startsWith('169.254.')) continue;
+      // `en*` on macOS is the physical/wifi family; anything else is a bridge,
+      // a tunnel or a container network and goes to the back of the queue.
+      if (name.startsWith('en')) candidates.unshift(entry.address);
+      else candidates.push(entry.address);
+    }
+  }
+  return candidates[0];
+}
+
+const LOOPBACK = '127.0.0.1';
+
+interface TcpOptions {
+  readonly identity: Identity;
+  readonly port?: number;
+  readonly kind: string;
+  readonly bindAddress: string;
+}
+
+function tcpEndpoint(options: TcpOptions): Endpoint {
   return {
-    kind: 'loopback',
+    kind: options.kind,
     listen: (onConnection) =>
       new Promise<Result<Listening, string>>((resolve) => {
         let nextId = 1;
@@ -124,15 +195,17 @@ export function loopbackEndpoint(options: LoopbackOptions): Endpoint {
             },
           );
         } catch (error) {
-          resolve(err(`could not create the loopback endpoint: ${String(error)}`));
+          resolve(err(`could not create the ${options.kind} endpoint: ${String(error)}`));
           return;
         }
 
-        server.once('error', (error) => resolve(err(`loopback endpoint failed to bind: ${String(error)}`)));
-        server.listen(options.port ?? 0, '127.0.0.1', () => {
+        server.once('error', (error) =>
+          resolve(err(`${options.kind} endpoint failed to bind: ${String(error)}`)),
+        );
+        server.listen(options.port ?? 0, options.bindAddress, () => {
           const bound = server.address();
           if (bound === null || typeof bound === 'string') {
-            resolve(err('the loopback endpoint bound to something that is not a TCP address'));
+            resolve(err(`the ${options.kind} endpoint bound to something that is not a TCP address`));
             return;
           }
           resolve(

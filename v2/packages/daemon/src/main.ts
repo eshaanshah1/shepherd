@@ -2,7 +2,13 @@ import { createServer, type Socket } from 'node:net';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { SessionHost, SessionServer, SqliteStore, reclaimSocketPath } from '@shepherd/core';
-import { RemoteServer, kvDeviceStore, loadOrMintIdentity, loopbackEndpoint } from '@shepherd/remote';
+import {
+  RemoteServer,
+  kvDeviceStore,
+  loadOrMintIdentity,
+  resolveTransport,
+  type EndpointFactory,
+} from '@shepherd/remote';
 import { createLogger, systemClock, type LogLevel } from '@shepherd/sdk';
 
 /**
@@ -41,22 +47,33 @@ export interface Args {
    * phone goes briefly stale while the agent you were watching keeps streaming.
    */
   readonly support?: string;
+  /**
+   * Which remote transport to serve the ptys over, by name.
+   *
+   * Forwarded from the app rather than decided here: the two processes must
+   * agree, because a device holds a control connection to one and a data
+   * connection to the other, and a phone that can reach the task list but not
+   * the pty is the exact failure this milestone exists to prevent.
+   */
+  readonly transport: string;
 }
 
 export function parseArgs(argv: readonly string[]): Args {
   let socketPath = '';
   let level: LogLevel = 'info';
   let support: string | undefined;
+  let transport = 'loopback';
   for (const arg of argv) {
+    if (arg.startsWith('--transport=')) transport = arg.slice('--transport='.length);
     if (arg.startsWith('--socket=')) socketPath = arg.slice('--socket='.length);
     if (arg.startsWith('--log-level=')) level = arg.slice('--log-level='.length) as LogLevel;
     if (arg.startsWith('--support=')) support = arg.slice('--support='.length);
   }
-  return { socketPath, level, ...(support === undefined ? {} : { support }) };
+  return { socketPath, level, transport, ...(support === undefined ? {} : { support }) };
 }
 
 export async function main(argv: readonly string[]): Promise<number> {
-  const { socketPath, level, support } = parseArgs(argv);
+  const { socketPath, level, support, transport } = parseArgs(argv);
   const log = createLogger({
     clock: systemClock,
     level,
@@ -123,7 +140,13 @@ export async function main(argv: readonly string[]): Promise<number> {
    * because that is the whole design.
    */
   let remotePort: number | undefined;
-  if (support !== undefined) {
+  const resolved = resolveTransport(transport);
+  if (!resolved.ok) daemon.error(resolved.error);
+  // Refuses rather than falling back: serving the ptys a different way than the
+  // app serves control is how a phone gets a task list it can reach and a
+  // terminal it cannot.
+  const endpointFor: EndpointFactory | undefined = resolved.ok ? resolved.value : undefined;
+  if (support !== undefined && endpointFor !== undefined) {
     const identity = await loadOrMintIdentity({
       dir: `${support}/remote-identity`,
       // The app normally mints it first; the daemon minting is the crash-recovery
@@ -142,7 +165,11 @@ export async function main(argv: readonly string[]): Promise<number> {
        */
       const remembered = await readPort(`${support}/remote-data-port`);
       const remote = new RemoteServer({
-        endpoint: loopbackEndpoint({
+        // The DATA path follows the control path onto the network, because a
+        // device holds both and half a pairing is no pairing: reachable views
+        // and an unreachable terminal is the shape this whole milestone exists
+        // to avoid.
+        endpoint: endpointFor({
           identity: identity.value,
           ...(remembered === undefined ? {} : { port: remembered }),
         }),
@@ -170,7 +197,7 @@ export async function main(argv: readonly string[]): Promise<number> {
         // and better than being silently absent.
         daemon.warn(`data port ${remembered} is taken — serving on a fresh one`);
         listening = await new RemoteServer({
-          endpoint: loopbackEndpoint({ identity: identity.value }),
+          endpoint: endpointFor({ identity: identity.value }),
           identity: identity.value,
           devices: kvDeviceStore(
             new SqliteStore({ location: `${support}/remote.db`, logger: log }).namespace('devices'),

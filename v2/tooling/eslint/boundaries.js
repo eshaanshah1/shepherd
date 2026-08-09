@@ -237,8 +237,20 @@ export const boundaries = [
         deny(REACT, 'there is no page here; the pairing sheet is the app’s.'),
         deny(XTERM_VIEW, 'the renderer draws.'),
         deny(NODE_PTY, 'remote reaches sessions through core, never a pty of its own.'),
+        /*
+         * `node:os` was denied alongside these and has been split out
+         * deliberately (CLAUDE.md's rule: widen with the reason in the rule).
+         *
+         * The ban is about SPAWNING — minting an identity shells out to openssl
+         * through platform-darwin's ProcessAPI, never from here. Reading
+         * `networkInterfaces()` is not that: it is how the wifi transport learns
+         * which interface to bind, and v1's rule is that it must bind a named
+         * one rather than a wildcard. Routing that through the platform package
+         * would put a pure lookup behind a process seam that exists for
+         * subprocesses.
+         */
         deny(
-          ['os', 'node:os', 'child_process', 'node:child_process', 'worker_threads', 'node:worker_threads'],
+          ['child_process', 'node:child_process', 'worker_threads', 'node:worker_threads'],
           'minting an identity shells out to openssl through @shepherd/platform-darwin’s ProcessAPI, not from here.',
         ),
         deny(
