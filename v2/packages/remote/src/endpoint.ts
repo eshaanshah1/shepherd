@@ -93,7 +93,25 @@ export function loopbackEndpoint(options: LoopbackOptions): Endpoint {
                 write: (bytes) => {
                   socket.write(bytes);
                 },
-                close: () => socket.destroy(),
+                /**
+                 * `end`, not `destroy` — and this is a measured distinction.
+                 *
+                 * A refusal is WRITTEN and then the connection is closed, and
+                 * `destroy()` discards whatever is still buffered. The client
+                 * then sees a socket that simply vanished, which is
+                 * indistinguishable from a network fault and is exactly the
+                 * silent drop that cost v1 a session of tcpdump. `end()` sends
+                 * a FIN after the buffer flushes, so "wrong pairing code"
+                 * actually arrives.
+                 *
+                 * The timer is the backstop for a peer that never reads: an
+                 * unacked FIN must not hold the connection open forever.
+                 */
+                close: () => {
+                  socket.end();
+                  const forced = setTimeout(() => socket.destroy(), 1000);
+                  forced.unref?.();
+                },
                 onData: (fn) =>
                   socket.on('data', (chunk: Buffer) => {
                     fn(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));

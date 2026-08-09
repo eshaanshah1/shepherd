@@ -4,8 +4,22 @@
     "rootDir": "src",
     "outDir": "out-tsc",
     "tsBuildInfoFile": "out-tsc/tsconfig.tsbuildinfo",
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["src/**/*.ts"],
-  "references": [{ "path": "../sdk" }, { "path": "../core" }]
+  "include": [
+    "src/**/*.ts"
+  ],
+  "references": [
+    {
+      "path": "../sdk"
+    },
+    {
+      "path": "../core"
+    },
+    {
+      "path": "../daemon"
+    }
+  ]
 }

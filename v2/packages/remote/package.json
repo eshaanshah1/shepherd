@@ -6,8 +6,16 @@
   "description": "The remote library: pairing, TLS identity, and the transport-agnostic endpoint a paired device reaches this Mac through.",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
-  "exports": { ".": { "types": "./src/index.ts", "default": "./src/index.ts" } },
-  "scripts": { "typecheck": "tsc -b", "test": "vitest run" },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -b",
+    "test": "vitest run"
+  },
   "dependencies": {
     "@shepherd/core": "workspace:*",
     "@shepherd/sdk": "workspace:*"
@@ -15,6 +23,7 @@
   "devDependencies": {
     "@types/node": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "@shepherd/daemon": "workspace:*"
   }
 }

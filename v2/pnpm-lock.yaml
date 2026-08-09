@@ -378,6 +378,9 @@ importers:
         specifier: workspace:*
         version: link:../sdk
     devDependencies:
+      '@shepherd/daemon':
+        specifier: workspace:*
+        version: link:../daemon
       '@types/node':
         specifier: 'catalog:'
         version: 26.1.2
