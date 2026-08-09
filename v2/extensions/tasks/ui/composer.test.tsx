@@ -39,6 +39,9 @@ const ANSWERS: Record<string, readonly unknown[]> = {
     suggestion(`${HOME}/dev/shell-notes`, { isRepo: false }),
   ],
   [`${HOME}/dev/shell`]: [suggestion(`${HOME}/dev/shell-notes`, { isRepo: false })],
+  // Two rows for one query, which is what makes "a picked one stops being
+  // offered" observable: take the first and the second is what the ghost shows.
+  [`${HOME}/dev/s`]: [suggestion(`${HOME}/dev/shepherd`), suggestion(`${HOME}/dev/shepherd-ios`)],
 };
 
 /** Typed through a factory, so the mock keeps the prop's signature. */
@@ -127,8 +130,18 @@ describe('the repo picker', () => {
     ).toBeTruthy();
   });
 
-  it('offers the picked history before anything is typed', () => {
-    expect(rows().map((row) => row.dataset.path)).toEqual([`${HOME}/dev/api`]);
+  it('draws NOTHING before anything is typed, whatever the history answered', () => {
+    // The empty field asks for the history and gets it — that ask is the one
+    // below, and it is what makes the first typed character instant. What it
+    // must not do is DRAW it: a completion of nothing is an absolute path in an
+    // empty field, which reads as pre-filled with a repo nobody chose and lands
+    // on top of the `+ repo` placeholder the moment focus leaves.
+    expect(invoke).toHaveBeenCalledWith('tasks.suggestRepos', {
+      title: '',
+      brief: '',
+      query: '',
+    });
+    expect(rows()).toHaveLength(0);
   });
 
   it('shows ONE completion, as ghost text, never a list', async () => {
@@ -292,8 +305,20 @@ describe('⎋', () => {
 
 describe('a picked repo', () => {
   it('stops being offered — it is a chip now, and two of it reads as two repos', async () => {
+    await type(`${HOME}/dev/s`);
     await press('Enter');
-    expect(picked()).toEqual([`${HOME}/dev/api`]);
-    expect(rows().map((row) => row.dataset.path)).not.toContain(`${HOME}/dev/api`);
+    expect(picked()).toEqual([`${HOME}/dev/shepherd`]);
+    // Typed again, the same query answers the same two rows and the ghost shows
+    // the OTHER one: the chip is not offered a second time.
+    await type(`${HOME}/dev/s`);
+    expect(rows().map((row) => row.dataset.path)).toEqual([`${HOME}/dev/shepherd-ios`]);
+  });
+
+  it('is not picked by a ⏎ on an empty field — nothing is shown, so nothing is taken', async () => {
+    // ⏎ takes what the ghost is showing, and an empty field shows nothing. It
+    // used to take the top history row sight unseen, which is a repo on the task
+    // that the person creating it never saw, let alone chose.
+    await press('Enter');
+    expect(picked()).toEqual([]);
   });
 });
