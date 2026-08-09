@@ -1,5 +1,6 @@
 import { connect, type Socket } from 'node:net';
 import { spawnDetached } from '@shepherd/platform-darwin';
+import { resolveTransportName } from './ingress.ts';
 import type { CategoryLogger } from '@shepherd/sdk';
 import type { ClientSocket } from './session-client.ts';
 
@@ -90,10 +91,20 @@ function tryConnect(path: string): Promise<Socket | undefined> {
 function spawnDaemon(entry: string, socketPath: string, support: string): void {
   spawnDetached({
     execPath: process.execPath,
-    args: [entry, `--socket=${socketPath}`, `--support=${support}`],
+    args: [
+      entry,
+      `--socket=${socketPath}`,
+      `--support=${support}`,
+      // Forwarded, never re-decided: a device holds a control connection to the
+      // app and a data connection here, so the two must agree about which
+      // transport they serve. Disagreeing gives a phone a reachable task list
+      // and an unreachable terminal.
+      `--transport=${resolveTransportName(process.argv)}`,
+    ],
     env: { ELECTRON_RUN_AS_NODE: '1' },
   });
 }
+
 
 /** A `net.Socket`, as `SessionClient` wants to see it. */
 function wrap(socket: Socket): ClientSocket {

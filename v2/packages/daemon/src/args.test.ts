@@ -18,6 +18,7 @@ describe('parseArgs', () => {
       socketPath: '/tmp/s.sock',
       support: '/tmp/sup',
       level: 'debug',
+      transport: 'loopback',
     });
   });
 

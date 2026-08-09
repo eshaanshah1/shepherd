@@ -50,7 +50,7 @@ import { SessionBridge, type SessionHostLike } from './session-bridge.ts';
 import { registerViewCommands } from './view-commands.ts';
 import { createRemoteService, PAIRED_DEVICE_PERMISSIONS } from './remote-service.ts';
 import { registerRemoteCommands } from './remote-commands.ts';
-import { loopbackEndpoint, type Identity, type RemoteAPI } from '@shepherd/remote';
+import { resolveTransport, type Identity, type RemoteAPI } from '@shepherd/remote';
 import { SessionClient } from './session-client.ts';
 import { daemonConnector } from './daemon-launcher.ts';
 import { registerSessionIpc } from './ipc.ts';
@@ -62,6 +62,8 @@ import {
   LOCAL_DEVICE_PERMISSIONS,
   resolveHome,
   resolveSupport,
+  resolveTransportName,
+  TRANSPORT_FLAG,
   startIngress,
   type RunningIngress,
 } from './ingress.ts';
@@ -659,9 +661,27 @@ void app.whenReady().then(async () => {
       log: logger.child('session'),
     });
     registerRemoteCommands({ remote, registry, log: logger.child('session') });
-    await remote.serve((identity: Identity, port?: number) =>
-      loopbackEndpoint({ identity, ...(port === undefined ? {} : { port }) }),
-    );
+    /**
+     * Whichever transport was asked for, resolved by name.
+     *
+     * Every transport is the same server with the same pairing and the same
+     * TLS — all that differs is which interface gets bound, which is the whole
+     * reason `Endpoint` is an interface. v1 had no such seam, so its LAN
+     * listener had to terminate TLS itself and bridge the raw fd into a server
+     * hard-wired to the tailnet, through a `socketpair`.
+     *
+     * An unknown name refuses rather than falling back: serving a different way
+     * than asked means believing you are reachable when you are not.
+     */
+    const transportName = resolveTransportName(process.argv);
+    const transport = resolveTransport(transportName);
+    if (!transport.ok) {
+      logger.child('session').error(transport.error);
+    } else {
+      await remote.serve((identity: Identity, port?: number) =>
+        transport.value({ identity, ...(port === undefined ? {} : { port }) }),
+      );
+    }
   }
 
   /**
