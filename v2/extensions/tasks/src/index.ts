@@ -1120,7 +1120,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           ctx.log.info(`task ${task.id}: restored by being revealed`);
         }
 
-        const opened = await commands.invoke<{ created: boolean }>('layout.openRoot', {
+        const opened = await commands.invoke<{ created: boolean; pane: string | null }>('layout.openRoot', {
           root,
           cwd: rootOf(task),
           title: task.title,
@@ -1151,7 +1151,41 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
          * live agent — a phone then has nothing to attach to, which is the
          * truth rather than an empty terminal pretending otherwise.
          */
-        const live = task.sessions.find((session) => session.pane !== undefined);
+        /**
+         * The first session of this task that is STILL RUNNING.
+         *
+         * Checked against the kernel rather than believed off the record, which
+         * is ADR 0035's rule arriving at a second door: a stored session id is a
+         * CLAIM. A task's record outlives the ptys it names — the daemon can
+         * restart, a session can exit — and presenting a dead one told a phone
+         * to open a terminal that could never paint, with nothing reporting a
+         * fault because nothing had failed.
+         */
+        const alive = await commands.invoke<Array<{ id: string; paneId?: string }>>('sessions.list', {});
+        const sessions = alive.ok && Array.isArray(alive.value) ? alive.value : [];
+        const running = new Set(sessions.map((session) => session.id));
+
+        /**
+         * What to show, in order of how well it answers "this task".
+         *
+         * 1. A session the RECORD names and that is still running — a spawned
+         *    agent, which is the task actually working.
+         * 2. Failing that, whatever is on the pane this reveal just opened.
+         *    A task with no agent is a shell at its own directory, and that IS
+         *    the honest answer to "show me this task" on a device with one
+         *    screen — it is what the Mac shows too.
+         *
+         * Both are checked against the kernel rather than believed off the
+         * record, which is ADR 0035's rule at a second door: a stored session id
+         * is a CLAIM. A task's record outlives the ptys it names, and presenting
+         * a dead one told a phone to open a terminal that could never paint.
+         */
+        const recorded = task.sessions.find((session) => running.has(session.id));
+        const onThisRoot = sessions.find((session) => session.paneId === opened.value.pane);
+        const live = recorded ?? onThisRoot;
+        if (live === undefined) {
+          ctx.log.info(`task ${task.id}: nothing running to present yet`);
+        }
         return {
           id: task.id,
           root,

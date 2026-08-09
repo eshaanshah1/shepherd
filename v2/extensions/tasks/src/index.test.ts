@@ -215,6 +215,22 @@ function harness(
        * stands in for the last two — and it is why the assertion below can check
        * that `tasks` never spells `claude` itself.
        */
+      /**
+       * Which sessions are actually running.
+       *
+       * `tasks.reveal` checks a recorded session against this before presenting
+       * it, because a record outlives the ptys it names. The fake answers with
+       * whatever the tasks under test claim, which is the "still running" case;
+       * the "no longer running" case overrides it to `[]`.
+       */
+      if (id === 'sessions.list') {
+        return {
+          ok: true,
+          value: (opts.tasks ?? []).flatMap((t) =>
+            (t.sessions ?? []).map((session) => ({ id: session.id, paneId: session.pane })),
+          ) as never,
+        };
+      }
       if (id === 'agents.resumeCommand') {
         const target = String((args as { target?: unknown }).target);
         return { ok: true, value: { command: `claude --resume '${target}'` } as never };
@@ -1039,6 +1055,22 @@ describe('restoring a task', () => {
     const h = (live = harness({ tasks: [task({ sessions: [] })] }));
     const revealed = await h.run<{ present?: unknown }>('tasks.reveal', { task: 't1' });
     // The truth, rather than a terminal pretending there is something in it.
+    expect(revealed.present).toBeUndefined();
+  });
+
+  /**
+   * A record outlives the ptys it names — the daemon restarts, a session exits.
+   * Presenting a dead one told a phone to open a terminal that could never
+   * paint, with nothing reporting a fault because nothing had failed.
+   */
+  it('does NOT present a recorded session that has since stopped running', async () => {
+    const h = (live = harness({
+      tasks: [task({ sessions: [{ id: 's1', role: 'orchestrator', pane: 'p1' }] })],
+      // The kernel says nothing is running, whatever the record claims.
+      invoke: (id) => (id === 'sessions.list' ? { ok: true, value: [] as never } : undefined),
+    }));
+
+    const revealed = await h.run<{ present?: unknown }>('tasks.reveal', { task: 't1' });
     expect(revealed.present).toBeUndefined();
   });
 

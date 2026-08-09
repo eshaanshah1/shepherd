@@ -51,3 +51,4 @@ export {
   type RequestKind,
   type ResponseKind,
 } from './protocol.ts';
+export { SessionServer, type Connection, type SessionServerOptions } from './server.ts';

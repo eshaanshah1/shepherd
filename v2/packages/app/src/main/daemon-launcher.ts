@@ -21,13 +21,15 @@ import type { ClientSocket } from './session-client.ts';
 
 export interface LauncherOptions {
   readonly socketPath: string;
+  /** Passed through so the daemon can serve the DATA path to paired devices. */
+  readonly support: string;
   /** The daemon entry — `main.ts` in dev, the bundled `main.js` when packaged. */
   readonly entry: string;
   readonly log: CategoryLogger;
   /** How long to keep retrying a freshly spawned daemon before giving up. */
   readonly readyTimeoutMs?: number;
   /** Injected so a test need not spawn a real process. */
-  readonly spawn?: (entry: string, socketPath: string) => void;
+  readonly spawn?: (entry: string, socketPath: string, support: string) => void;
 }
 
 const READY_TIMEOUT_MS = 10_000;
@@ -42,7 +44,7 @@ export function daemonConnector(options: LauncherOptions): () => Promise<ClientS
     }
 
     options.log.info('no session daemon listening — starting one');
-    (options.spawn ?? spawnDaemon)(options.entry, options.socketPath);
+    (options.spawn ?? spawnDaemon)(options.entry, options.socketPath, options.support);
 
     const deadline = Date.now() + (options.readyTimeoutMs ?? READY_TIMEOUT_MS);
     for (;;) {
@@ -85,10 +87,10 @@ function tryConnect(path: string): Promise<Socket | undefined> {
  * `require()`, which is exactly the quiet route-around that file exists to
  * prevent.
  */
-function spawnDaemon(entry: string, socketPath: string): void {
+function spawnDaemon(entry: string, socketPath: string, support: string): void {
   spawnDetached({
     execPath: process.execPath,
-    args: [entry, `--socket=${socketPath}`],
+    args: [entry, `--socket=${socketPath}`, `--support=${support}`],
     env: { ELECTRON_RUN_AS_NODE: '1' },
   });
 }

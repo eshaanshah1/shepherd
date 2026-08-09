@@ -85,6 +85,14 @@ interface LiveAttachment {
   awaitingSnapshot: boolean;
 }
 
+/**
+ * How long to wait for the daemon before answering "it did not".
+ *
+ * Generous: this bounds a hang, it does not police latency. A local socket
+ * answers in microseconds, so anything approaching this is already a fault.
+ */
+const REQUEST_TIMEOUT_MS = 5_000;
+
 export class SessionClient {
   readonly #options: SessionClientOptions;
   readonly #log: CategoryLogger;
@@ -376,6 +384,26 @@ export class SessionClient {
     const seq = this.#seq();
     const answer = new Promise<Result<unknown, unknown>>((resolve) => {
       this.#pending.set(seq, resolve);
+      /**
+       * A DEADLINE, because an unanswered request must not hang forever.
+       *
+       * `#send` drops a frame when the socket is down, and a daemon can restart
+       * mid-flight — so without this the promise simply never settles. That is
+       * not a stall in one call: `sessions.list` awaits `foreground` for every
+       * session, so one dropped frame hangs the CLI, the palette and any
+       * extension that asks, with nothing anywhere reporting a fault. The
+       * symptom is a command that never returns, which reads as the app being
+       * wedged.
+       *
+       * Answering `err` rather than throwing keeps the caller's shape: every
+       * other failure here is a value.
+       */
+      const deadline = setTimeout(() => {
+        if (!this.#pending.delete(seq)) return;
+        this.#log.warn(`the daemon did not answer request ${seq} within ${REQUEST_TIMEOUT_MS}ms`);
+        resolve({ ok: false, error: { code: 'timeout', message: 'the session daemon did not answer' } });
+      }, REQUEST_TIMEOUT_MS);
+      deadline.unref?.();
     });
     this.#send(encodeJsonFrame(kind as never, { ...body, seq }));
     void this.#ensureConnected();

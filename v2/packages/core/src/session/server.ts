@@ -1,14 +1,5 @@
-import {
-  FrameDecoder,
-  PROTOCOL_VERSION,
-  REQUEST,
-  RESPONSE,
-  encodeByteFrame,
-  encodeJsonFrame,
-  type Frame,
-  type SessionHost,
-  type SessionSpec,
-} from '@shepherd/core';
+import { FrameDecoder, PROTOCOL_VERSION, REQUEST, RESPONSE, encodeByteFrame, encodeJsonFrame, type Frame } from './protocol.ts';
+import type { SessionHost, SessionSpec } from './host.ts';
 import {
   sessionId as toSessionId,
   type CategoryLogger,
@@ -24,7 +15,10 @@ import {
  * bytes by, so every claim below — a dropped connection detaches but does not
  * kill, a version mismatch is refused rather than misparsed, two clients see one
  * session — is testable without binding a port or racing an accept loop.
- * `main.ts` is the twenty lines that supply a real `net.Socket`.
+ * `packages/daemon`'s `main.ts` is the twenty lines that supply a real
+ * `net.Socket`, and `@shepherd/remote` supplies a TLS one — which is the reason
+ * this lives in CORE rather than in the daemon. It is the session protocol's
+ * server; the daemon is a process that hosts it, and it is not the only one.
  *
  * **The rule this whole process exists to enforce:** a connection going away
  * detaches its viewers and KILLS NOTHING. That is R0's "a session outlives its
@@ -32,10 +26,20 @@ import {
  * disconnect could end a pty, moving sessions out of Electron would buy nothing.
  */
 
-/** What the server needs from one client. A `net.Socket` satisfies it. */
+/**
+ * What the server needs from one client. A `net.Socket` satisfies it.
+ *
+ * **It carries no id, and that is the fix for a real defect.** Ids used to come
+ * from the transport, and this server has more than one — a unix socket for the
+ * app and a TLS endpoint for paired devices — each counting from 1. The phone's
+ * connection 1 therefore REPLACED the app's connection 1 in the client table,
+ * and every reply meant for the Mac went to the phone: the app's own panes went
+ * blank and its requests timed out, while the phone looked connected.
+ *
+ * So the id belongs to whoever owns the table. `accept` mints it and hands it
+ * back; a transport keys its own bookkeeping off that.
+ */
 export interface Connection {
-  /** Stable per connection; used for logging and viewer bookkeeping. */
-  readonly id: number;
   write(bytes: Uint8Array): void;
   close(): void;
 }
@@ -46,6 +50,8 @@ export interface SessionServerOptions {
 }
 
 interface ClientState {
+  /** Minted by `accept`; see `Connection`. */
+  readonly id: number;
   readonly connection: Connection;
   readonly decoder: FrameDecoder;
   /** sessionId -> the attachment this client holds. One per (client, session). */
@@ -67,6 +73,7 @@ export class SessionServer {
   readonly #log: CategoryLogger;
   readonly #clients = new Map<number, ClientState>();
   readonly #hostExit: Disposable;
+  #nextClientId = 1;
 
   constructor(options: SessionServerOptions) {
     this.#host = options.host;
@@ -87,15 +94,20 @@ export class SessionServer {
     return this.#clients.size;
   }
 
-  accept(connection: Connection): void {
-    this.#clients.set(connection.id, {
+  /** Registers a client and returns the id to use for `feed` and `disconnect`. */
+  accept(connection: Connection): number {
+    const id = this.#nextClientId;
+    this.#nextClientId += 1;
+    this.#clients.set(id, {
+      id,
       connection,
       decoder: new FrameDecoder(),
       attachments: new Map(),
       viewports: new Map(),
       greeted: false,
     });
-    this.#log.info(`client ${connection.id} connected (${this.#clients.size} total)`);
+    this.#log.info(`client ${id} connected (${this.#clients.size} total)`);
+    return id;
   }
 
   /**
@@ -158,7 +170,7 @@ export class SessionServer {
           message: `daemon speaks protocol ${PROTOCOL_VERSION}, client speaks ${String(theirs)}`,
         });
         client.connection.close();
-        this.disconnect(client.connection.id);
+        this.disconnect(client.id);
         return;
       }
       client.greeted = true;
@@ -233,7 +245,7 @@ export class SessionServer {
         const viewport = body['viewport'] as { cols: number; rows: number } | null;
         // Scoped to the CONNECTION, so a client that goes away stops
         // constraining the pty for everyone else — see `ClientState.viewports`.
-        const key = `conn-${client.connection.id}:${String(body['viewerId'] ?? 'default')}`;
+        const key = `conn-${client.id}:${String(body['viewerId'] ?? 'default')}`;
         const result = this.#host.setViewport(id, key, viewport ?? undefined);
         if (viewport === null) client.viewports.delete(id);
         else client.viewports.set(id, key);
@@ -289,7 +301,7 @@ export class SessionServer {
     } catch (error) {
       // A dead socket is the normal way this happens, and it must not take the
       // daemon — or anyone else's session — down with it.
-      this.#log.warn(`writing to client ${client.connection.id} threw: ${String(error)}`);
+      this.#log.warn(`writing to client ${client.id} threw: ${String(error)}`);
     }
   }
 }

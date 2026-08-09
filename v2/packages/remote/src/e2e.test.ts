@@ -20,11 +20,11 @@ import {
   REQUEST,
   RESPONSE,
   SessionHost,
+  SessionServer,
   encodeByteFrame,
   encodeJsonFrame,
   type Frame,
 } from '@shepherd/core';
-import { SessionServer } from '@shepherd/daemon';
 import { createLogger, systemClock } from '@shepherd/sdk';
 import { loadOrMintIdentity, peerMatchesPin, type Identity, type Minter } from './identity.ts';
 import { loopbackEndpoint } from './endpoint.ts';
@@ -349,12 +349,11 @@ describe('a paired device, over TLS, driving a real pty', () => {
     // --- the laptop: a direct client of the very same SessionServer.
     const laptopFrames: Frame[] = [];
     const laptopDecoder = new FrameDecoder();
-    h.sessions.accept({
-      id: 9001,
+    const laptopId = h.sessions.accept({
       write: (bytes) => laptopFrames.push(...laptopDecoder.feed(bytes).frames),
       close: () => undefined,
     });
-    const laptopSend = (bytes: Uint8Array) => h.sessions.feed(9001, bytes);
+    const laptopSend = (bytes: Uint8Array) => h.sessions.feed(laptopId, bytes);
     const laptopOutput = () =>
       laptopFrames
         .filter((f) => f.kind === RESPONSE.data)

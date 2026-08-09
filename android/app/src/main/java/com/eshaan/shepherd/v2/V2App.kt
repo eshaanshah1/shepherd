@@ -43,6 +43,15 @@ import java.util.UUID
 data class Pairing(
     val host: String,
     val port: Int,
+    /**
+     * Where the ptys are — the DAEMON's port, not the app's.
+     *
+     * A device holds two connections on purpose: control to the app (where
+     * extensions, and therefore views, live) and data to the daemon (which owns
+     * the ptys). The split is what makes restarting Shepherd drop this phone's
+     * task list while the terminal it is watching keeps streaming.
+     */
+    val dataPort: Int,
     val pin: String,
     val deviceId: String,
     val secret: String?,
@@ -56,6 +65,7 @@ class PairingPrefs(context: Context) {
         return Pairing(
             host = host,
             port = prefs.getInt("port", 0),
+            dataPort = prefs.getInt("dataPort", 0),
             pin = prefs.getString("pin", "") ?: "",
             // Minted once and kept: the Mac knows this phone by it, so a new id
             // each launch would mean pairing again every time.
@@ -70,6 +80,7 @@ class PairingPrefs(context: Context) {
         prefs.edit()
             .putString("host", pairing.host)
             .putInt("port", pairing.port)
+            .putInt("dataPort", pairing.dataPort)
             .putString("pin", pairing.pin)
             .putString("deviceId", pairing.deviceId)
             .apply()
@@ -107,18 +118,68 @@ fun V2App(context: Context, deviceName: String) {
     val link = remember(known.host, known.port) {
         HostLink(known.host, known.port, known.pin, scope)
     }
+    /**
+     * The data link, to the daemon.
+     *
+     * Same certificate, same secret, second connection. It never needs a code:
+     * the daemon shows none, so it can only admit a device the app already
+     * approved — which is exactly what makes serving ptys from a headless
+     * process safe.
+     */
+    val dataLink = remember(known.host, known.dataPort) {
+        if (known.dataPort > 0) {
+            HostLink(known.host, known.dataPort, known.pin, scope, speaksSessions = true)
+        } else {
+            null
+        }
+    }
     val state by link.state.collectAsState()
 
     DisposableEffect(link) {
         link.start(known.deviceId, deviceName, pairingCodeOnce, known.secret)
         onDispose { link.stop() }
     }
+    // Started only once a secret exists: the data path cannot pair, it can only
+    // present. Before the app has approved this phone there is nothing to show.
+    DisposableEffect(dataLink, known.secret) {
+        if (known.secret != null) dataLink?.start(known.deviceId, deviceName, null, known.secret)
+        onDispose { dataLink?.stop() }
+    }
 
-    // The Mac issues a secret on every admit, so a phone that lost one is not
-    // stranded — but it is only worth storing once it actually arrives.
+    /**
+     * The Mac issues a secret on every admit, so a phone that lost one is not
+     * stranded.
+     *
+     * It is stored AND folded back into the live pairing, and the second half is
+     * what was missing: the data link starts only once a secret exists, so
+     * writing it to prefs alone left `known.secret` null for the whole session.
+     * The control channel worked, the row opened a terminal, and the data link
+     * was never dialled — a terminal that paints nothing, with no error, because
+     * nothing had failed. It is the state that had not caught up.
+     */
+    /**
+     * The data port the Mac just told us, which supersedes anything stored.
+     *
+     * A port is the host's to choose; a client that trusted its own copy dialled
+     * one the daemon had long since moved off, and showed a terminal that never
+     * painted with nothing reporting a fault.
+     */
+    (state as? HostLink.State.Ready)?.dataPort?.let { reported ->
+        DisposableEffect(reported) {
+            if (known.dataPort != reported) {
+                prefs.save(known.copy(dataPort = reported))
+                pairing = known.copy(dataPort = reported)
+            }
+            onDispose { }
+        }
+    }
+
     (state as? HostLink.State.Ready)?.deviceSecret?.let { issued ->
         DisposableEffect(issued) {
-            prefs.saveSecret(issued)
+            if (known.secret != issued) {
+                prefs.saveSecret(issued)
+                pairing = known.copy(secret = issued)
+            }
             onDispose { }
         }
     }
@@ -138,8 +199,13 @@ fun V2App(context: Context, deviceName: String) {
                     ShepherdTopBar(title = "Shepherd", onBack = null)
                     BrowseScreen(model) { session = it }
                 }
+            } else if (dataLink != null) {
+                TerminalScreen(open, dataLink, scope) { session = null }
             } else {
-                TerminalScreen(open, link, scope) { session = null }
+                // Said plainly rather than shown as a terminal that never
+                // paints: without a data port this phone can browse but not
+                // open anything.
+                Message("No terminal path", "This Mac did not report a data port.") { session = null }
             }
         }
         else -> Message("Connecting", known.host, null)
@@ -157,6 +223,7 @@ fun V2App(context: Context, deviceName: String) {
 private fun PairScreen(onPaired: (Pairing) -> Unit) {
     var host by remember { mutableStateOf("127.0.0.1") }
     var port by remember { mutableStateOf("") }
+    var dataPort by remember { mutableStateOf("") }
     var pin by remember { mutableStateOf("") }
     var code by remember { mutableStateOf("") }
 
@@ -175,6 +242,7 @@ private fun PairScreen(onPaired: (Pairing) -> Unit) {
         )
         Field("Host", host) { host = it }
         Field("Port", port, numeric = true) { port = it }
+        Field("Data port", dataPort, numeric = true) { dataPort = it }
         Field("Certificate pin", pin) { pin = it.trim() }
         Field("Pairing code", code, numeric = true) { code = it }
         Button(
@@ -184,6 +252,7 @@ private fun PairScreen(onPaired: (Pairing) -> Unit) {
                     Pairing(
                         host = host.trim(),
                         port = port.toIntOrNull() ?: 0,
+                        dataPort = dataPort.toIntOrNull() ?: 0,
                         pin = pin.trim(),
                         deviceId = UUID.randomUUID().toString(),
                         secret = null,
@@ -218,7 +287,7 @@ private fun Field(label: String, value: String, numeric: Boolean = false, onChan
 }
 
 @Composable
-private fun Message(title: String, detail: String, onForget: (() -> Unit)?) {
+private fun Message(title: String, detail: String, onForget: (() -> Unit)? = null) {
     Box(
         Modifier.fillMaxSize().background(Color(ShepherdPalette.ground)),
         contentAlignment = Alignment.Center,

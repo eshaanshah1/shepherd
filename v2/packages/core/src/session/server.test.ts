@@ -6,7 +6,8 @@
 // stronger. `main.ts` is what turns a `net.Socket` into a `Connection`.
 
 import { afterEach, describe, expect, it } from 'vitest';
-import { SessionHost, FrameDecoder, PROTOCOL_VERSION, REQUEST, RESPONSE, encodeByteFrame, encodeJsonFrame, type Frame } from '@shepherd/core';
+import { SessionHost } from './host.ts';
+import { FrameDecoder, PROTOCOL_VERSION, REQUEST, RESPONSE, encodeByteFrame, encodeJsonFrame, type Frame } from './protocol.ts';
 import { createLogger, systemClock, type LogRecord } from '@shepherd/sdk';
 import { SessionServer, type Connection } from './server.ts';
 
@@ -23,12 +24,11 @@ afterEach(() => {
 });
 
 /** A connection that records everything written to it, already decoded. */
-function fakeConnection(id: number) {
+function fakeConnection() {
   const frames: Frame[] = [];
   const decode = new FrameDecoder();
   let closed = false;
   const connection: Connection = {
-    id,
     write: (bytes) => {
       frames.push(...decode.feed(bytes).frames);
     },
@@ -72,9 +72,11 @@ function harness() {
 const send = (server: SessionServer, id: number, kind: number, json: unknown) =>
   server.feed(id, encodeJsonFrame(kind as never, json));
 
-function greet(server: SessionServer, connection: Connection, seq = 0) {
-  server.accept(connection);
-  send(server, connection.id, REQUEST.hello, { seq, version: PROTOCOL_VERSION });
+/** Accepts, greets, and hands back the id the SERVER chose. */
+function greet(server: SessionServer, connection: Connection, seq = 0): number {
+  const id = server.accept(connection);
+  send(server, id, REQUEST.hello, { seq, version: PROTOCOL_VERSION });
+  return id;
 }
 
 async function waitFor(predicate: () => boolean, label: string, timeoutMs = 5000) {
@@ -90,7 +92,7 @@ const SHELL = { cwd: '/tmp', command: '/bin/sh', args: [] as string[] };
 describe('SessionServer handshake', () => {
   it('answers hello with its protocol version and pid', () => {
     const { server } = harness();
-    const client = fakeConnection(1);
+    const client = fakeConnection();
     greet(server, client.connection);
 
     const reply = client.replies()[0];
@@ -108,7 +110,7 @@ describe('SessionServer handshake', () => {
    */
   it('refuses a client speaking another protocol version, and says both', () => {
     const { server } = harness();
-    const client = fakeConnection(1);
+    const client = fakeConnection();
     server.accept(client.connection);
     send(server, 1, REQUEST.hello, { seq: 0, version: PROTOCOL_VERSION + 99 });
 
@@ -124,7 +126,7 @@ describe('SessionServer handshake', () => {
 
   it('refuses everything before hello', () => {
     const { server } = harness();
-    const client = fakeConnection(1);
+    const client = fakeConnection();
     server.accept(client.connection);
     send(server, 1, REQUEST.list, { seq: 1 });
 
@@ -137,7 +139,7 @@ describe('SessionServer handshake', () => {
 describe('SessionServer sessions', () => {
   it('creates a session and streams its output to an attached client', async () => {
     const { server, host } = harness();
-    const client = fakeConnection(1);
+    const client = fakeConnection();
     greet(server, client.connection);
 
     send(server, 1, REQUEST.create, { seq: 1, spec: SHELL });
@@ -160,7 +162,7 @@ describe('SessionServer sessions', () => {
    */
   it('a client disconnecting detaches its viewers and KILLS NOTHING', async () => {
     const { server, host } = harness();
-    const client = fakeConnection(1);
+    const client = fakeConnection();
     greet(server, client.connection);
     send(server, 1, REQUEST.create, { seq: 1, spec: SHELL });
     const id = (client.replies()[1]?.json as { value: { id: string } }).value.id;
@@ -177,7 +179,7 @@ describe('SessionServer sessions', () => {
 
     // And it is still usable by a client that arrives afterwards, which is the
     // relaunch case in miniature.
-    const second = fakeConnection(2);
+    const second = fakeConnection();
     greet(server, second.connection, 10);
     send(server, 2, REQUEST.attach, { seq: 11, sessionId: id });
     server.feed(2, encodeByteFrame(REQUEST.write, id, new TextEncoder().encode("printf 'af%s\\n' 'ter-reconnect'\r")));
@@ -186,8 +188,8 @@ describe('SessionServer sessions', () => {
 
   it('two clients watch one session, and each gets the screen once', async () => {
     const { server } = harness();
-    const a = fakeConnection(1);
-    const b = fakeConnection(2);
+    const a = fakeConnection();
+    const b = fakeConnection();
     greet(server, a.connection);
     send(server, 1, REQUEST.create, { seq: 1, spec: SHELL });
     const id = (a.replies()[1]?.json as { value: { id: string } }).value.id;
@@ -203,9 +205,41 @@ describe('SessionServer sessions', () => {
     expect(b.output().split('shared-marker')).toHaveLength(2);
   });
 
+  /**
+   * The defect this pins cost a whole live run, and it was invisible in every
+   * unit test because a test has one transport.
+   *
+   * This server is fed by TWO — the app's unix socket and the TLS endpoint a
+   * paired device connects to — and each numbered its own connections from 1.
+   * So the phone's connection 1 REPLACED the Mac's in the client table: the
+   * app's replies went out over the phone's socket, its requests timed out
+   * ("the daemon did not answer request 4"), and its own panes showed a cursor
+   * and nothing else. The phone looked fine, which is why it was hunted there.
+   *
+   * The fix is that `accept` mints the id, so a caller cannot supply a
+   * colliding one — and this test is the shape of the bug rather than the fix:
+   * two clients accepted independently must both still be addressable.
+   */
+  it('gives every connection its own id, so a second transport cannot evict the first', async () => {
+    const { server } = harness();
+    const app = fakeConnection();
+    const phone = fakeConnection();
+
+    const appId = greet(server, app.connection);
+    const phoneId = greet(server, phone.connection, 10);
+    expect(phoneId).not.toBe(appId);
+
+    // The app asks AFTER the phone arrived — the exact ordering that broke.
+    send(server, appId, REQUEST.create, { seq: 1, spec: SHELL });
+    await waitFor(() => app.replies().length >= 2, 'the app’s own answer');
+    expect(app.replies()[1]?.kind).toBe(RESPONSE.ok);
+    // …and it went to the app, not to whoever connected last.
+    expect(phone.replies()).toHaveLength(1);
+  });
+
   it('is idempotent per (client, session), so a re-attach cannot double bytes', async () => {
     const { server } = harness();
-    const client = fakeConnection(1);
+    const client = fakeConnection();
     greet(server, client.connection);
     send(server, 1, REQUEST.create, { seq: 1, spec: SHELL });
     const id = (client.replies()[1]?.json as { value: { id: string } }).value.id;
@@ -224,7 +258,7 @@ describe('SessionServer sessions', () => {
 
   it('tells every watcher when a session exits, and forgets it', async () => {
     const { server, host } = harness();
-    const client = fakeConnection(1);
+    const client = fakeConnection();
     greet(server, client.connection);
     send(server, 1, REQUEST.create, {
       seq: 1,
@@ -244,7 +278,7 @@ describe('SessionServer sessions', () => {
 
   it('reports a resize and a screen through the wire', async () => {
     const { server } = harness();
-    const client = fakeConnection(1);
+    const client = fakeConnection();
     greet(server, client.connection);
     send(server, 1, REQUEST.create, { seq: 1, spec: { ...SHELL, cols: 80, rows: 24 } });
     const id = (client.replies()[1]?.json as { value: { id: string } }).value.id;
@@ -261,8 +295,8 @@ describe('SessionServer sessions', () => {
   /** A viewer with no opinion never resizes the pty — scoped to the connection. */
   it('scopes a viewport to the connection, so a departing client stops constraining it', async () => {
     const { server, host } = harness();
-    const a = fakeConnection(1);
-    const b = fakeConnection(2);
+    const a = fakeConnection();
+    const b = fakeConnection();
     greet(server, a.connection);
     send(server, 1, REQUEST.create, { seq: 1, spec: { ...SHELL, cols: 80, rows: 24 } });
     const id = (a.replies()[1]?.json as { value: { id: string } }).value.id;
@@ -285,7 +319,7 @@ describe('SessionServer sessions', () => {
 describe('SessionServer refusals', () => {
   it('drops a connection that sends an unusable frame, and says why', () => {
     const { server, records } = harness();
-    const client = fakeConnection(1);
+    const client = fakeConnection();
     greet(server, client.connection);
 
     // A length beyond the cap: unrecoverable, because there is no framing marker
@@ -304,7 +338,7 @@ describe('SessionServer refusals', () => {
 
   it('answers an unknown session with a typed error rather than throwing', () => {
     const { server } = harness();
-    const client = fakeConnection(1);
+    const client = fakeConnection();
     greet(server, client.connection);
     send(server, 1, REQUEST.attach, { seq: 1, sessionId: 'nope' });
 
