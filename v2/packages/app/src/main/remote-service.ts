@@ -122,7 +122,14 @@ export function createRemoteService(options: RemoteServiceOptions): RemoteAPI & 
   let server: RemoteServer | undefined;
   const listeners: Disposable[] = [];
   let identityPin = '';
-  let boundPort: number | undefined;
+  /**
+   * Where we are actually reachable, as the ENDPOINT reported it.
+   *
+   * Not a constant. It was `127.0.0.1` for one commit, which is right for
+   * loopback and wrong the moment a LAN endpoint binds — and a payload naming
+   * the wrong address is a QR that cannot work, with nothing saying why.
+   */
+  let reachable: { host: string; port: number } | undefined;
 
   const api: RemoteAPI & Disposable = {
     async serve(factory: (identity: Identity) => Endpoint): Promise<Disposable> {
@@ -191,7 +198,7 @@ export function createRemoteService(options: RemoteServiceOptions): RemoteAPI & 
 
       const started = await server.start();
       if (!started.ok) return { dispose: () => undefined };
-      boundPort = started.value.port;
+      reachable = { host: started.value.address, port: started.value.port };
       listeners.push(started.value);
       return started.value;
     },
@@ -200,11 +207,11 @@ export function createRemoteService(options: RemoteServiceOptions): RemoteAPI & 
     activeCode: () => server?.activeCode,
 
     pairingPayload(): PairingPayload | undefined {
-      if (boundPort === undefined || identityPin === '') return undefined;
+      if (reachable === undefined || identityPin === '') return undefined;
       const code = server?.activeCode;
       return {
-        host: '127.0.0.1',
-        port: boundPort,
+        host: reachable.host,
+        port: reachable.port,
         pin: identityPin,
         ...(code === undefined ? {} : { code }),
         protocolVersion: PROTOCOL_VERSION,

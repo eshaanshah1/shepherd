@@ -41,6 +41,7 @@ import { windowOptions } from './window-options.ts';
 import { SessionBridge, type SessionHostLike } from './session-bridge.ts';
 import { registerViewCommands } from './view-commands.ts';
 import { createRemoteService } from './remote-service.ts';
+import { registerRemoteCommands } from './remote-commands.ts';
 import { loopbackEndpoint, type Identity, type RemoteAPI } from '@shepherd/remote';
 import { SessionClient } from './session-client.ts';
 import { daemonConnector } from './daemon-launcher.ts';
@@ -664,6 +665,7 @@ void app.whenReady().then(async () => {
       devices: store.namespace('remote'),
       log: logger.child('session'),
     });
+    registerRemoteCommands({ remote, registry, log: logger.child('session') });
     void remote.serve((identity: Identity) => loopbackEndpoint({ identity })).catch((error: unknown) => {
       logger.child('session').error(`remote did not start: ${String(error)}`);
     });
