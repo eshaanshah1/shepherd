@@ -332,6 +332,27 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
     return true;
   })()`);
 
+  /**
+   * Type ONE character first, because the completion waits for one.
+   *
+   * An empty repo field deliberately offers nothing: ⏎ takes what the ghost
+   * text is showing, and with nothing typed it used to take the top of the
+   * picked history sight unseen — a repo on the task that whoever created it
+   * never saw. This smoke encoded that older behaviour and so asked for a
+   * suggestion before anything had been typed.
+   *
+   * The first character of the repo's own path, so the completion has something
+   * to match and the assertion still proves the chain rather than the field.
+   */
+  await win.webContents.executeJavaScript(`(() => {
+    const field = document.querySelector('[data-testid="composer-repo-path"]');
+    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    field.focus();
+    set.call(field, ${JSON.stringify(repo.slice(0, 1))});
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  })()`);
+
   // The suggestion comes from `tasks.repoSuggestions` (D5) — the point, its
   // default provider, and a command answering the page. TAKING the offered one
   // rather than typing a path is what makes this assert the chain instead of
