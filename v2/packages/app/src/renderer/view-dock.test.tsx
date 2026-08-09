@@ -303,6 +303,63 @@ describe('a contributed row-s actions', () => {
     view.unmount();
   });
 
+  it('highlights the row whose ROOT the window is on, from the same value the stage draws from', async () => {
+    // The dock keeps no selection of its own. A row names the layout root it
+    // stands for and the shell compares that against the active root — the very
+    // value `app.tsx` uses to decide which root to show. One value, so the
+    // highlight and the visible pane cannot disagree.
+    const rows: readonly TreeItem[] = [
+      { id: 'task-1', label: 'One', root: 'task:task-1' },
+      { id: 'task-2', label: 'Two', root: 'task:task-2' },
+    ];
+    const view = mount(<ViewDock views={bridge(TREE, [], rows)} activeRoot="task:task-2" />);
+    await settle();
+    expect(all(view.container, 'view-row').map((row) => row.dataset.selected)).toEqual([
+      undefined,
+      'true',
+    ]);
+
+    // The window moves and the highlight moves with it — no click involved,
+    // which is the case a click-written selection got wrong.
+    view.rerender(<ViewDock views={bridge(TREE, [], rows)} activeRoot="task:task-1" />);
+    await settle();
+    expect(all(view.container, 'view-row').map((row) => row.dataset.selected)).toEqual([
+      'true',
+      undefined,
+    ]);
+
+    // A click runs the row's command and nothing else: the highlight follows
+    // the window, and the window has not moved yet.
+    act(() => all(view.container, 'view-row')[1]?.click());
+    await settle();
+    expect(all(view.container, 'view-row').map((row) => row.dataset.selected)).toEqual([
+      'true',
+      undefined,
+    ]);
+    view.unmount();
+  });
+
+  it('highlights nothing when the window is on a root no row names', async () => {
+    // The home root, and the moments after a task is archived. A row left lit
+    // for a task no longer on screen is the stale highlight this replaces.
+    const rows: readonly TreeItem[] = [{ id: 'task-1', label: 'One', root: 'task:task-1' }];
+    const view = mount(<ViewDock views={bridge(TREE, [], rows)} activeRoot="window-1" />);
+    await settle();
+    expect(one(view.container, 'view-row').dataset.selected).toBeUndefined();
+    view.unmount();
+  });
+
+  it('highlights no row that names no root, even when the window is on none either', async () => {
+    // A row with no root is a row the highlight is not about. Comparing two
+    // absent values would light every such row the moment the shell could not
+    // name its active root.
+    const rows: readonly TreeItem[] = [{ id: 'plain', label: 'Plain' }];
+    const view = mount(<ViewDock views={bridge(TREE, [], rows)} activeRoot={null} />);
+    await settle();
+    expect(one(view.container, 'view-row').dataset.selected).toBeUndefined();
+    view.unmount();
+  });
+
   it('leaves a plain click doing what it always did', async () => {
     // Adding a menu must not change what the row itself means.
     const calls: Call[] = [];

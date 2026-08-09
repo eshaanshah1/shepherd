@@ -413,6 +413,44 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
   check(landed.visible === 1, `exactly one root is on screen: ${JSON.stringify(landed)}`);
   say('ok — creating a task took the window to it');
 
+  /**
+   * And the SIDEBAR agrees about which task that is.
+   *
+   * This is the whole reason the assertion is here rather than in a unit test.
+   * The highlight spans three parties: the `tasks` extension names the root each
+   * row stands for (`TreeItem.root`), the layout snapshot carries the active
+   * root, and the dock compares them. A unit test can only ever supply both
+   * sides of that comparison itself — the both-halves-of-a-correlation trap this
+   * file exists for — and what it cannot check is that the root id the extension
+   * writes is the same string the kernel puts in the snapshot. That is exactly
+   * where the shipped defect lived: the window moved and the highlight did not.
+   *
+   * A switch NOBODY CLICKED, which is the case a click-driven highlight got
+   * wrong. Nothing in this run has touched a sidebar row — the task was created
+   * through the composer's command and the window followed the spawn.
+   *
+   * Read off `data-selected`, the attribute the row primitive sets, and matched
+   * against the row's own id rather than a count: "exactly one row is selected"
+   * would pass with the wrong one lit.
+   */
+  const highlighted = await until(
+    'the sidebar to highlight the task the window is on',
+    () =>
+      win.webContents.executeJavaScript(`(() => {
+        const rows = Array.from(document.querySelectorAll('[data-testid="view-row"]'));
+        return {
+          selected: rows.filter((el) => el.dataset.selected === 'true').map((el) => el.dataset.rowId),
+          rows: rows.length,
+        };
+      })()`) as Promise<{ selected: readonly string[]; rows: number }>,
+    (state) => state.selected.length === 1 && state.selected[0] === composed.id,
+  );
+  check(
+    highlighted.selected.length === 1 && highlighted.selected[0] === composed.id,
+    `the sidebar highlights the task on screen and only it: ${JSON.stringify(highlighted)}`,
+  );
+  say('ok — the sidebar followed the window nobody clicked');
+
   // --- 9. and closing its panes FINISHES it.
   //
   // The one step whose absence shipped a bug: the archive-on-close was wired to

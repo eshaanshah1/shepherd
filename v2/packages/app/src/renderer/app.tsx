@@ -371,6 +371,9 @@ export function App({
       <div className="sh-body">
         <ViewDock
           views={viewsApi}
+          // The same value the stage below draws from, so a row's highlight and
+          // the pane group on screen cannot get out of step.
+          activeRoot={snapshots?.active ?? null}
           actions={
             <>
               <span className="sh-side-title">Tasks</span>

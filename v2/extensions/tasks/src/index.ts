@@ -93,6 +93,9 @@ interface TreeItemOut {
   description?: string;
   section?: boolean;
   tint?: string;
+  busy?: boolean;
+  /** The layout root this row stands for — the shell highlights from it. */
+  root?: string;
   collapsed?: boolean;
   command?: { id: string; args?: unknown };
   /**
@@ -187,10 +190,23 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * snapshot commit report no progress, and a bar over them would be an
    * animation pretending to measure something.
    */
-  const busy = new Map<string, 'archiving' | 'restoring'>();
+  const busy = new Map<string, 'archiving' | 'restoring' | 'provisioning'>();
 
-  /** Run a long operation with the row saying so, whatever the outcome. */
-  async function whileBusy<T>(taskId: string, what: 'archiving' | 'restoring', run: () => Promise<T>): Promise<T> {
+  /**
+   * Run a long operation with the row saying so, whatever the outcome.
+   *
+   * **Nestable, and that is load-bearing.** `provision` wraps itself, and
+   * `tasks.restore` calls it from inside its own `restoring` wrap — so the
+   * inner `finally` restores what it displaced rather than deleting the key.
+   * Deleting it dropped the spinner back to idle for the rest of a restore,
+   * which is the second half of the operation and the slower one.
+   */
+  async function whileBusy<T>(
+    taskId: string,
+    what: 'archiving' | 'restoring' | 'provisioning',
+    run: () => Promise<T>,
+  ): Promise<T> {
+    const displaced = busy.get(taskId);
     busy.set(taskId, what);
     changed();
     try {
@@ -199,7 +215,8 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       // `finally`, so a refusal — the conflicted-worktree case the archive verb
       // exists to have — leaves a row that is idle and wrong-looking rather than
       // one that spins forever.
-      busy.delete(taskId);
+      if (displaced === undefined) busy.delete(taskId);
+      else busy.set(taskId, displaced);
       changed();
     }
   }
@@ -224,6 +241,18 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * mattering.
    */
   const attention = new Map<string, AttentionLevel>();
+
+  /*
+   * There is deliberately NO mirror of the active root here.
+   *
+   * Which task you are looking at is the layout's fact, and this extension
+   * keeping a copy of it would be the bug it is meant to fix, one process
+   * along: a copy needs seeding when the host starts, lags the stage by the
+   * round trip that fills it, and desynchronises if a nudge is dropped. The
+   * row names its own root instead (`rowFor`), and the shell — which already
+   * holds the active root, because it draws the stage from it — does the
+   * comparison. See `TreeItem.root`.
+   */
 
   /**
    * D4, made real: `needs-you` is READ from the panes, never written anywhere.
@@ -810,7 +839,25 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * Nothing is stored: the bytes are written to disk in `startSession` and the
    * record keeps only the task.
    */
+  /**
+   * The row says so for the WHOLE of it — which is the wait a user actually has.
+   *
+   * Wrapped here rather than at the two call sites, because this function is
+   * the slow thing: creating a task calls it and so does restoring one, and a
+   * `whileBusy` per caller is the arrangement that left `tasks.create` — the
+   * longest wait in the app and the only one you sit through — drawing an idle
+   * row while Probe 2's ~2.5s-per-repo of network went by.
+   *
+   * The whole function, not the repo loop inside it. `provisioning` already
+   * tracks each `worktree add`, but the root synthesis, the trust seeding and
+   * the orchestrator's own launch come after the last repo lands, and they are
+   * seconds of the wait that no per-repo state can speak for.
+   */
   async function provision(task: TaskRecord, images?: readonly PastedImage[]): Promise<void> {
+    return whileBusy(task.id, 'provisioning', () => runProvision(task, images));
+  }
+
+  async function runProvision(task: TaskRecord, images?: readonly PastedImage[]): Promise<void> {
     const root = rootOf(task);
     const landed: { name: string; path: string; worktree: string }[] = [];
     for (const repo of task.repos) {
@@ -1474,6 +1521,15 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
               label: task.title,
               description: state,
               tint: state,
+              /*
+               * WHICH root this row is — an identity, written unconditionally.
+               *
+               * Including while archived: the task has no live root then, but
+               * clicking it restores one at this same id (`tasks.reveal`), so
+               * withholding it would blank the highlight for exactly the moments
+               * after the window has just moved there.
+               */
+              root: taskRootId(task.id),
               collapsed: true,
               // Something is happening to it right now — a snapshot being taken,
               // worktrees being rebuilt. The row says so where its status mark
