@@ -2,6 +2,7 @@
 // if a package can import something, it is because a line here says so.
 //
 //   core            -> stdlib + node-pty + sdk        (no electron, no react, no OS APIs)
+//   daemon          -> stdlib + node:net + core + sdk  (shepherdd: owns the ptys; NO electron)
 //   sdk             -> stdlib only                    (types + pure helpers; imports nobody)
 //   design-tokens   -> nothing                        (data + generators)
 //   ui              -> react + sdk + design-tokens    (the primitive set; a page and nothing else)
@@ -171,6 +172,47 @@ export const boundaries = [
         'core may only import @shepherd/sdk.',
       ),
     ),
+  },
+  {
+    /**
+     * `shepherdd` — the process that owns the ptys (R1, ADR 0035).
+     *
+     * It runs as the Electron BINARY with `ELECTRON_RUN_AS_NODE=1`, which is not
+     * the same as running Electron: there is no `app`, no `BrowserWindow`, and
+     * importing `electron` there resolves to a module whose surface is absent at
+     * runtime. So the ban is not stylistic — it is the difference between a
+     * daemon that starts and one that throws on its first line, in a detached
+     * process whose stdout somebody has to go looking for.
+     *
+     * It may import `@shepherd/core`, because it IS the kernel's session half
+     * hosted in its own process. It may reach `node:net` — like core's ingress,
+     * that is its front door rather than a reach into the machine — and
+     * `node:process` for the pid and signals it must handle to shut down
+     * cleanly, which is exactly the kind of thing this process exists to do.
+     *
+     * No react and no `@shepherd/ui`: there is no page here, ever.
+     */
+    name: 'boundary/daemon',
+    files: ['packages/daemon/**/*.ts'],
+    rules: {
+      ...restrict(
+        deny(
+          ELECTRON,
+          'the daemon runs as node (ELECTRON_RUN_AS_NODE): there is no electron module at runtime, only a type declaration that lies.',
+        ),
+        deny(REACT, 'there is no page in the daemon.'),
+        deny(XTERM_VIEW, 'the renderer draws; the daemon owns ptys and the mirror behind them.'),
+        deny(
+          ['os', 'node:os', 'child_process', 'node:child_process', 'worker_threads', 'node:worker_threads', 'node:v8', 'node:vm'],
+          'OS APIs live in packages/platform/darwin only. The daemon spawns ptys through core, not through child_process.',
+        ),
+        deny(
+          [...WORKSPACE.app, ...WORKSPACE.platform, ...WORKSPACE.tokens, ...WORKSPACE.ui, '@shepherd/ext-*'],
+          'the daemon may import @shepherd/core and @shepherd/sdk. It sits BELOW the app: the app is one of its clients.',
+        ),
+      ),
+      ...noDom,
+    },
   },
   {
     // Core's TESTS may reach the machine; core itself may not.

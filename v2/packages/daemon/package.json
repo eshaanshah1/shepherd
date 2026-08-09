@@ -1,0 +1,28 @@
+{
+  "name": "@shepherd/daemon",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "shepherdd: the process that owns the ptys. Runs as node (ELECTRON_RUN_AS_NODE), speaks the framed session protocol over a unix socket.",
+  "main": "./src/main.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -b",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@shepherd/core": "workspace:*",
+    "@shepherd/sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
