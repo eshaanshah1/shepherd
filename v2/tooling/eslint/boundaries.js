@@ -250,6 +250,29 @@ export const boundaries = [
     },
   },
   {
+    /**
+     * The remote library's TESTS may reach the machine; the library may not.
+     *
+     * Same carve-out as `boundary/core-tests`, for a sharper reason: a faked
+     * `openssl` would prove the plumbing and nothing about the thing that
+     * matters — that the certificate Node serves and the pin a phone computes
+     * are the same certificate. That claim cannot be made without minting one.
+     *
+     * Ordered AFTER boundary/remote so it wins for the files it names.
+     */
+    name: 'boundary/remote-tests',
+    files: ['packages/remote/**/*.test.ts'],
+    rules: restrict(
+      deny(ELECTRON, 'the remote library is loaded by the daemon too, not even in a test.'),
+      deny(REACT, 'there is no page here.'),
+      deny(NODE_PTY, 'remote reaches sessions through core.'),
+      deny(
+        [...WORKSPACE.app, ...WORKSPACE.tokens, ...WORKSPACE.ui, '@shepherd/ext-*'],
+        'remote may import @shepherd/core and @shepherd/sdk.',
+      ),
+    ),
+  },
+  {
     // Core's TESTS may reach the machine; core itself may not.
     //
     // The rule above exists so the shipped kernel stays process-agnostic. A test

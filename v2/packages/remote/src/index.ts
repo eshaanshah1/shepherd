@@ -17,3 +17,19 @@ export {
   type PairingDecision,
   type PairingInput,
 } from './pairing.ts';
+export {
+  loadOrMintIdentity,
+  resetIdentity,
+  peerMatchesPin,
+  pinOf,
+  type Identity,
+  type IdentityOptions,
+  type Minter,
+} from './identity.ts';
+export {
+  loopbackEndpoint,
+  type Endpoint,
+  type Listening,
+  type LoopbackOptions,
+  type RemoteConnection,
+} from './endpoint.ts';
