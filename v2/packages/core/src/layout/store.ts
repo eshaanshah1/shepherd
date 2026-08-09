@@ -60,9 +60,19 @@ import { deserializeNode, serializeNode, type PersistedNode } from './serialize.
  * up the focus", and they disagreed.
  */
 
-/** What can end a session. Required, so the wiring cannot be omitted. */
+/**
+ * What can end a session, and what can say whether one is still alive.
+ *
+ * `isLive` arrives with R1 (ADR 0035). Sessions now outlive the app, so a
+ * restored pane's persisted `sessionId` is a claim rather than a fact — and the
+ * only thing that can settle it is the process that holds the ptys. Required
+ * rather than optional, for the same reason `kill` is: a store built without it
+ * would silently adopt bindings nobody checked, which is the failure mode the
+ * whole verification exists to prevent.
+ */
 export interface SessionSink {
   kill(id: SessionID): void;
+  isLive(id: SessionID): boolean;
 }
 
 export interface LayoutStoreOptions {
@@ -451,6 +461,49 @@ export class LayoutStore {
     return this.#paneBySession.get(session);
   }
 
+  /**
+   * Reattach each restored pane to the session it was showing — if that session
+   * is still there.
+   *
+   *   - live  → the pane adopts it, and the renderer is handed the id in the
+   *             snapshot, where `PaneSessionRegistry` adopts rather than creates;
+   *   - gone  → the binding is dropped and the pane creates one, as before R1;
+   *   - live but unclaimed → an ORPHAN. Logged rather than leaked; adopting or
+   *             reaping it needs a surface, and inventing one ahead of a caller
+   *             is what ADR 0031 declines to do.
+   */
+  #adoptPersistedSessions(persisted: PersistedNode | null, restored: SplitNode): void {
+    if (persisted === null) return;
+    let adopted = 0;
+    let dropped = 0;
+
+    const walk = (node: PersistedNode, live: SplitNode): void => {
+      if (node.kind === 'leaf' && live.kind === 'leaf') {
+        const claimed = node.pane.sessionId;
+        if (claimed === undefined || claimed === '') return;
+        const session = claimed as SessionID;
+        if (this.#sessions.isLive(session)) {
+          this.bindSession(live.pane.id, session);
+          adopted += 1;
+        } else {
+          dropped += 1;
+        }
+        return;
+      }
+      if (node.kind === 'split' && live.kind === 'split') {
+        walk(node.first, live.first);
+        walk(node.second, live.second);
+      }
+    };
+    walk(persisted, restored);
+
+    if (adopted > 0 || dropped > 0) {
+      this.#log.info(
+        `restore: reattached ${adopted} session(s), dropped ${dropped} that had ended`,
+      );
+    }
+  }
+
   // ------------------------------------------------------------------ mutations
 
   setViewport(root: RootID, rect: Rect): void {
@@ -729,7 +782,12 @@ export class LayoutStore {
         // skipped: a root dropped from the payload is a root that comes back
         // MINTED on the next launch, which would refill the empty state with a
         // shell the user closed on purpose.
-        tree: state.tree === null ? null : serializeNode(state.tree),
+        // The session each pane was showing rides along (ADR 0035). It is a
+        // CLAIM: `#restore` checks it against the daemon before believing it.
+        tree:
+          state.tree === null
+            ? null
+            : serializeNode(state.tree, (pane) => this.#sessionByPane.get(pane.id)),
         focusedPaneId: state.focusedPaneId,
       })),
     };
@@ -779,6 +837,12 @@ export class LayoutStore {
       this.#log.warn(`could not restore the layout for ${id}, starting fresh: ${messageOf(error)}`);
       return undefined;
     }
+
+    // ADR 0035's three cases, and the orphan branch is the one worth naming: a
+    // session the daemon still holds that no restored pane claims would
+    // otherwise keep running with nothing pointing at it — exactly the leak the
+    // persisted binding exists to prevent, arriving through the other door.
+    if (tree !== null) this.#adoptPersistedSessions(saved.tree, tree);
 
     const state: RootState = {
       id,

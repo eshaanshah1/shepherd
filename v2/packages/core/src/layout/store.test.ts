@@ -39,6 +39,7 @@ let records: LogRecord[];
 let logger: Logger;
 let clock: ManualClock;
 let killed: SessionID[];
+let live: Set<SessionID>;
 let sessions: SessionSink;
 let ids: number;
 
@@ -47,7 +48,10 @@ beforeEach(() => {
   clock = manualClock(0);
   logger = createLogger({ clock, level: 'debug', sink: (_l, r) => records.push(r) });
   killed = [];
-  sessions = { kill: (id) => killed.push(id) };
+  live = new Set();
+  // R1: the restore path asks whether a persisted binding is still alive, and
+  // the daemon is what answers. Tests drive it through this set.
+  sessions = { kill: (id) => killed.push(id), isLive: (id) => live.has(id) };
   ids = 0;
 });
 
@@ -285,9 +289,11 @@ describe('persistence', () => {
     expect(kv.raw.size).toBe(0);
   });
 
-  it('restores the tree shape with FRESH pane ids and no sessions', () => {
-    // Live state never survives a restart, and reusing an id would let a stale
-    // binding from the previous run resolve to a new pane.
+  /**
+   * ADR 0035's three cases. This is the milestone R1 exists for, seen from the
+   * layout: a relaunch must REATTACH rather than orphan.
+   */
+  it('restores pane ids and REATTACHES a session the daemon still holds', () => {
     const kv = fakeKV();
     const first = build(kv);
     const root = first.open();
@@ -296,11 +302,56 @@ describe('persistence', () => {
     first.flush();
 
     ids = 100; // the second store mints from a different sequence
+    live = new Set([sessionId('s-1')]); // the daemon still has it
     const second = build(kv);
     const restored = second.open();
+
     expect(second.panes(restored)).toHaveLength(2);
-    expect(second.panes(restored)).not.toContain('p1');
-    expect(second.sessionFor(second.panes(restored)[0]!)).toBeUndefined();
+    // The id survives, which is what lets the binding below mean anything.
+    expect(second.panes(restored)).toContain('p1');
+    expect(second.sessionFor(paneId('p1'))).toBe('s-1');
+  });
+
+  it('drops a binding whose session has ENDED, so the pane creates one', () => {
+    const kv = fakeKV();
+    const first = build(kv);
+    const root = first.open();
+    first.split(root, 'row');
+    first.bindSession(paneId('p1'), sessionId('s-1'));
+    first.flush();
+
+    ids = 100;
+    live = new Set(); // the daemon has nothing — a cold start, or it crashed
+    const second = build(kv);
+    const restored = second.open();
+
+    expect(second.panes(restored)).toContain('p1');
+    // Unbound, so the renderer creates — which is exactly the pre-R1 behaviour,
+    // and the reason a stale binding is a claim rather than a fact.
+    expect(second.sessionFor(paneId('p1'))).toBeUndefined();
+  });
+
+  /**
+   * The negative control that matters: believing a binding without checking is
+   * the whole failure mode ADR 0035's verification exists to prevent. If
+   * `isLive` were ignored, the test above would pass this one's setup too.
+   */
+  it('asks the daemon about every claim rather than trusting the file', () => {
+    const kv = fakeKV();
+    const first = build(kv);
+    const root = first.open();
+    first.split(root, 'row');
+    first.bindSession(paneId('p1'), sessionId('s-1'));
+    first.bindSession(paneId('p2'), sessionId('s-2'));
+    first.flush();
+
+    ids = 100;
+    live = new Set([sessionId('s-2')]); // only one of the two survived
+    const second = build(kv);
+    second.open();
+
+    expect(second.sessionFor(paneId('p1'))).toBeUndefined();
+    expect(second.sessionFor(paneId('p2'))).toBe('s-2');
   });
 
   it('restores cwd and userTitle, but not the live title', () => {
