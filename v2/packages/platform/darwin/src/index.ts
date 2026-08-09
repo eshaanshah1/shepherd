@@ -22,3 +22,4 @@ export {
   clearResolvedPrograms,
 } from './exec.ts';
 export type { RunOptions, RunResult } from './exec.ts';
+export { spawnDetached } from './exec.ts';

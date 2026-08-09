@@ -1,5 +1,5 @@
 import { app, type BrowserWindow } from 'electron';
-import type { SessionHost } from '@shepherd/core';
+import type { SessionHostLike } from './session-bridge.ts';
 import { sessionId } from '@shepherd/sdk';
 import { COMMANDS } from '../shared/index.ts';
 import {
@@ -46,7 +46,7 @@ import {
 const TIMEOUT_MS = 40_000;
 const NEEDLE = 'm0-ring-ok';
 
-export async function runM0Smoke(win: BrowserWindow, host: SessionHost): Promise<void> {
+export async function runM0Smoke(win: BrowserWindow, host: SessionHostLike): Promise<void> {
   const deadline = setTimeout(() => die(`did not finish within ${TIMEOUT_MS}ms`), TIMEOUT_MS);
   const until = waiter(TIMEOUT_MS);
   const snapshot = (): Promise<Snapshot> => snapshotOf(win);
@@ -79,7 +79,7 @@ export async function runM0Smoke(win: BrowserWindow, host: SessionHost): Promise
   // --- 4. the bytes are in the ring.
   const ring = await until(
     `'${NEEDLE}' to appear twice on the session's screen`,
-    () => Promise.resolve(ringText(host, session)),
+    () => ringText(host, session),
     (text) => occurrences(text, NEEDLE) >= 2,
   );
   // Twice, not once: the first is the shell echoing what was typed, the second
@@ -103,7 +103,7 @@ export async function runM0Smoke(win: BrowserWindow, host: SessionHost): Promise
     'the snapshot is bytes, not a decoded string',
   );
   check(
-    host.screen(sessionId(session))?.altScreen === false,
+    (await Promise.resolve(host.screen(sessionId(session))))?.altScreen === false,
     'the shell is on the primary screen, not the alt screen',
   );
 
@@ -142,8 +142,8 @@ export async function runM0Smoke(win: BrowserWindow, host: SessionHost): Promise
 }
 
 /** The session's screen as text — R0's `screen()`, which is a read of the mirror. */
-function ringText(host: SessionHost, id: string): string {
-  return host.screen(sessionId(id))?.text ?? '';
+async function ringText(host: SessionHostLike, id: string): Promise<string> {
+  return (await Promise.resolve(host.screen(sessionId(id))))?.text ?? '';
 }
 
 function occurrences(haystack: string, needle: string): number {

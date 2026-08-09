@@ -202,6 +202,9 @@ importers:
       '@shepherd/core':
         specifier: workspace:*
         version: link:../core
+      '@shepherd/daemon':
+        specifier: workspace:*
+        version: link:../daemon
       '@shepherd/design-tokens':
         specifier: workspace:*
         version: link:../design-tokens
@@ -263,6 +266,9 @@ importers:
       electron-vite:
         specifier: 'catalog:'
         version: 5.0.0(vite@7.3.6(@types/node@26.1.2)(jiti@2.7.0)(lightningcss@1.33.0)(yaml@2.9.0))
+      esbuild:
+        specifier: ^0.28.1
+        version: 0.28.1
       jsdom:
         specifier: 'catalog:'
         version: 30.0.1(@noble/hashes@2.3.0)

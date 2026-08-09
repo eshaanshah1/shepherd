@@ -1,6 +1,6 @@
 import { request as httpRequest } from 'node:http';
 import { app, type BrowserWindow } from 'electron';
-import type { SessionHost } from '@shepherd/core';
+import type { SessionHostLike } from './session-bridge.ts';
 import type { LayoutStore } from '@shepherd/core/layout';
 import type { RootID } from '@shepherd/sdk';
 import { check, die, say, snapshotOf, waiter } from './smoke-support.ts';
@@ -40,7 +40,7 @@ const CLAUDE_SESSION = 'claude-smoke-1';
 
 export async function runM2Smoke(
   win: BrowserWindow,
-  host: SessionHost,
+  host: SessionHostLike,
   options: M2SmokeOptions,
 ): Promise<void> {
   const { hookSocket, layout, agentStates, alerts, attentionCount } = options;

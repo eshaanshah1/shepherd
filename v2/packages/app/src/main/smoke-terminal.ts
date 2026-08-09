@@ -1,6 +1,6 @@
 import { app } from 'electron';
 import type { BrowserWindow } from 'electron';
-import type { SessionHost } from '@shepherd/core';
+import type { SessionHostLike } from './session-bridge.ts';
 import { BRIDGE_SURFACE, COMMANDS, FORBIDDEN_GLOBALS } from '../shared/index.ts';
 import {
   captureIfAsked,
@@ -45,7 +45,7 @@ const TIMEOUT_MS = 30_000;
 const NEEDLE = 'hello-from-pty';
 const TYPED = 'a';
 
-export async function runTerminalSmoke(win: BrowserWindow, host: SessionHost): Promise<void> {
+export async function runTerminalSmoke(win: BrowserWindow, host: SessionHostLike): Promise<void> {
   const deadline = setTimeout(() => die(`did not finish within ${TIMEOUT_MS}ms`), TIMEOUT_MS);
 
   const until = waiter(TIMEOUT_MS);

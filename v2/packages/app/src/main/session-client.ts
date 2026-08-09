@@ -1,0 +1,541 @@
+import {
+  FrameDecoder,
+  PROTOCOL_VERSION,
+  REQUEST,
+  RESPONSE,
+  encodeByteFrame,
+  encodeJsonFrame,
+  newSessionId,
+  type Frame,
+  type SessionError,
+  type SessionExit,
+  type ForegroundReading,
+  type ScreenState,
+  type SessionInfo,
+  type SessionSpec,
+  type Viewport,
+  type WillCreateHook,
+} from '@shepherd/core';
+import {
+  ok,
+  err,
+  toDisposable,
+  sessionId as toSessionId,
+  type CategoryLogger,
+  type Disposable,
+  type Result,
+  type SessionID,
+} from '@shepherd/sdk';
+
+/**
+ * Main's half of the session protocol — the daemon, wearing `SessionHost`'s face.
+ *
+ * It satisfies `SessionHostLike` exactly, which is what makes R1 a transport
+ * change rather than a rewrite: `SessionBridge`, the renderer, `LayoutStore`'s
+ * `SessionSink` and every smoke are untouched by sessions moving out of process.
+ *
+ * **Synchronous, over a socket, deliberately.** Three things make that honest
+ * rather than a lie:
+ *
+ *   1. **The id is minted here.** `create` cannot both answer in the same tick
+ *      and learn an id the daemon chose, so the client chooses it and tells the
+ *      daemon (`SessionSpec.id`). The alternative was making nine call sites
+ *      async to serve one transport.
+ *   2. **`get`/`list` read a local mirror**, kept current by the daemon's own
+ *      replies and exit frames. A pane asking "what is my session" must not wait
+ *      on a round trip during a React render.
+ *   3. **Input is fire-and-forget.** `write` acks nothing — a round trip in
+ *      front of every keystroke is the one place latency is felt. Failures
+ *      surface through the log and through `onExit`, not through a return value
+ *      nobody was waiting on.
+ *
+ * What it does NOT do is hide a disconnect. A dropped socket is reported and
+ * retried, and every live viewer is re-attached on reconnect — where R0's
+ * snapshot hands each one a correct screen, however long the gap was.
+ */
+
+/** The parts of a real socket this needs. `net.Socket` satisfies it. */
+export interface ClientSocket {
+  write(bytes: Uint8Array): void;
+  destroy(): void;
+  onData(fn: (bytes: Uint8Array) => void): void;
+  onClose(fn: () => void): void;
+  onError(fn: (error: unknown) => void): void;
+}
+
+export interface SessionClientOptions {
+  /** Opens a connection to the daemon, spawning it if nothing is listening. */
+  readonly connect: () => Promise<ClientSocket>;
+  readonly log: CategoryLogger;
+  /** Backoff between reconnect attempts. Exposed so a test need not sleep. */
+  readonly retryMs?: number;
+}
+
+interface LiveAttachment {
+  readonly sessionId: SessionID;
+  readonly sink: (bytes: Uint8Array) => void;
+  /**
+   * True until this viewer has been handed a screen of its own.
+   *
+   * ONE process may hold several viewers of one session — two panes, or a pane
+   * and a diagnostic tap — and the daemon deduplicates `attach` per client, so
+   * only the FIRST gets a replay. A later one asks for a `snapshot` instead, and
+   * this flag is what routes that snapshot to it alone.
+   */
+  awaitingSnapshot: boolean;
+}
+
+export class SessionClient {
+  readonly #options: SessionClientOptions;
+  readonly #log: CategoryLogger;
+  readonly #decoder = new FrameDecoder();
+  /** The local mirror of the daemon's inventory. */
+  readonly #sessions = new Map<SessionID, SessionInfo>();
+  readonly #attachments = new Map<number, LiveAttachment>();
+  readonly #exitListeners = new Set<(exit: SessionExit) => void>();
+  #socket: ClientSocket | undefined;
+  #connecting: Promise<void> | undefined;
+  #nextAttachment = 1;
+  #nextSeq = 1;
+  #disposed = false;
+  /** Frames issued before the socket came up. See `#send`. */
+  readonly #outbox: Uint8Array[] = [];
+  #everConnected = false;
+  readonly #willCreate: WillCreateHook[] = [];
+
+  constructor(options: SessionClientOptions) {
+    this.#options = options;
+    this.#log = options.log;
+  }
+
+  get connected(): boolean {
+    return this.#socket !== undefined;
+  }
+
+  /**
+   * Connects, greets, and adopts whatever the daemon is already running.
+   *
+   * The adoption is the point: on a relaunch the daemon holds the sessions the
+   * previous run left behind, and this is where main learns their ids again —
+   * ADR 0035's "the daemon is the authority on what is alive".
+   */
+  async start(): Promise<Result<readonly SessionInfo[], string>> {
+    await this.#ensureConnected();
+    if (this.#socket === undefined) return err('could not reach the session daemon');
+    const listed = await this.#request(REQUEST.list, {});
+    if (!listed.ok) return err(String(listed.error));
+    const sessions = (listed.value as { sessions?: SessionInfo[] }).sessions ?? [];
+    this.#sessions.clear();
+    for (const info of sessions) this.#sessions.set(info.id, info);
+    this.#log.info(`adopted ${sessions.length} session(s) already running in the daemon`);
+    return ok(sessions);
+  }
+
+  // ------------------------------------------------------- SessionHostLike
+
+  /**
+   * The env-injection seam, applied HERE rather than in the daemon.
+   *
+   * `claude-code` injects the session id and the hook socket path through it, and
+   * the extension host lives in this process — so the hooks run before the spec
+   * crosses the socket and `shepherdd` never has to know an extension exists.
+   * The alternative was a daemon that loads extensions, which is a much larger
+   * thing than a daemon that owns ptys.
+   */
+  onWillCreate(hook: WillCreateHook): Disposable {
+    this.#willCreate.push(hook);
+    return toDisposable(() => {
+      const at = this.#willCreate.indexOf(hook);
+      if (at >= 0) this.#willCreate.splice(at, 1);
+    });
+  }
+
+  create(spec: SessionSpec): Result<SessionInfo, SessionError> {
+    // Minted here — see the class comment. The daemon is told which id to use.
+    const id = spec.id ?? newSessionId();
+    const withEnv = this.#applyWillCreate(id, spec);
+    const optimistic: SessionInfo = {
+      id,
+      // Filled in when the daemon answers. Nothing in main may assume a pid
+      // before then, and nothing does: it is diagnostics and smoke-only.
+      pid: 0,
+      cwd: withEnv.cwd,
+      command: withEnv.command,
+      args: withEnv.args ? [...withEnv.args] : [],
+      cols: withEnv.cols ?? 80,
+      rows: withEnv.rows ?? 24,
+      ...(withEnv.paneId === undefined ? {} : { paneId: withEnv.paneId }),
+    };
+    this.#sessions.set(id, optimistic);
+
+    void this.#request(REQUEST.create, { spec: { ...withEnv, id } }).then((answer) => {
+      if (!answer.ok) {
+        // The pane will show an empty terminal and no bytes will ever arrive, so
+        // the branch that ends in "and then nothing happens" says why.
+        this.#log.error(`daemon refused to create ${id}: ${JSON.stringify(answer.error)}`);
+        this.#sessions.delete(id);
+        this.#announceExit({ sessionId: id, exitCode: -1 });
+        return;
+      }
+      this.#sessions.set(id, answer.value as SessionInfo);
+    });
+
+    return ok(optimistic);
+  }
+
+  get(id: SessionID): SessionInfo | undefined {
+    return this.#sessions.get(id);
+  }
+
+  list(): SessionInfo[] {
+    return [...this.#sessions.values()];
+  }
+
+  has(id: SessionID): boolean {
+    return this.#sessions.has(id);
+  }
+
+  attach(id: SessionID, sink: (bytes: Uint8Array) => void): Result<Disposable, SessionError> {
+    if (!this.#sessions.has(id)) {
+      return err({ code: 'unknown-session', message: `no live session ${id}`, sessionId: id });
+    }
+    // Already watching from this process? Then the daemon will not replay for
+    // this viewer, so ask for a screen just for it.
+    const alreadyWatching = [...this.#attachments.values()].some((a) => a.sessionId === id);
+
+    const key = this.#nextAttachment;
+    this.#nextAttachment += 1;
+    this.#attachments.set(key, { sessionId: id, sink, awaitingSnapshot: alreadyWatching });
+
+    if (alreadyWatching) {
+      this.#send(encodeJsonFrame(REQUEST.snapshot, { seq: this.#seq(), sessionId: id }));
+    } else {
+      this.#send(encodeJsonFrame(REQUEST.attach, { seq: this.#seq(), sessionId: id }));
+    }
+
+    return ok(
+      toDisposable(() => {
+        this.#attachments.delete(key);
+        // Only tell the daemon once NOTHING here is watching: two panes showing
+        // one session share a single daemon-side attachment, and detaching on
+        // the first close would silence the second.
+        if (![...this.#attachments.values()].some((a) => a.sessionId === id)) {
+          this.#send(encodeJsonFrame(REQUEST.detach, { seq: this.#seq(), sessionId: id }));
+        }
+      }),
+    );
+  }
+
+  write(id: SessionID, data: string | Uint8Array): Result<void, SessionError> {
+    const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data;
+    this.#send(encodeByteFrame(REQUEST.write, id, bytes));
+    return ok(undefined);
+  }
+
+  paste(id: SessionID, text: string): Result<void, SessionError> {
+    this.#send(encodeJsonFrame(REQUEST.paste, { seq: this.#seq(), sessionId: id, text }));
+    return ok(undefined);
+  }
+
+  resize(id: SessionID, cols: number, rows: number): Result<void, SessionError> {
+    const known = this.#sessions.get(id);
+    if (known) this.#sessions.set(id, { ...known, cols, rows });
+    this.#send(encodeJsonFrame(REQUEST.resize, { seq: this.#seq(), sessionId: id, cols, rows }));
+    return ok(undefined);
+  }
+
+  kill(id: SessionID): Result<void, SessionError> {
+    this.#send(encodeJsonFrame(REQUEST.kill, { seq: this.#seq(), sessionId: id }));
+    return ok(undefined);
+  }
+
+  /** A round trip. `SessionHostLike` allows either shape; see its comment. */
+  async screen(id: SessionID): Promise<ScreenState | undefined> {
+    const answer = await this.#request(REQUEST.screen, { sessionId: id });
+    return answer.ok ? (answer.value as ScreenState) : undefined;
+  }
+
+  snapshot(id: SessionID, sink: (bytes: Uint8Array) => void): Result<void, SessionError> {
+    if (!this.#sessions.has(id)) {
+      return err({ code: 'unknown-session', message: `no live session ${id}`, sessionId: id });
+    }
+    // The daemon answers with a DATA frame carrying the screen, so the sink is
+    // registered exactly as an attachment's is — for one frame.
+    const key = this.#nextAttachment;
+    this.#nextAttachment += 1;
+    this.#attachments.set(key, {
+      sessionId: id,
+      awaitingSnapshot: true,
+      sink: (bytes) => {
+        this.#attachments.delete(key);
+        sink(bytes);
+      },
+    });
+    this.#send(encodeJsonFrame(REQUEST.snapshot, { seq: this.#seq(), sessionId: id }));
+    return ok(undefined);
+  }
+
+  setViewport(
+    id: SessionID,
+    viewerId: string,
+    viewport: Viewport | undefined,
+  ): Result<void, SessionError> {
+    this.#send(
+      encodeJsonFrame(REQUEST.setViewport, {
+        seq: this.#seq(),
+        sessionId: id,
+        viewerId,
+        viewport: viewport ?? null,
+      }),
+    );
+    return ok(undefined);
+  }
+
+  /**
+   * The pty's foreground process, over the wire.
+   *
+   * The failure answer is `{ hasForegroundProcess: undefined }` — **never
+   * `false`**, and that is the whole care taken here. `host.ts` is explicit that
+   * "I could not look" must not be reported as "nothing is there": the
+   * reconciliation sweep reads `false` as its demote signal, and a daemon that
+   * was merely slow to answer would demote a live agent with nothing anywhere
+   * saying why. An unreachable daemon is exactly the unreadable-tty case, one
+   * process along.
+   */
+  async foreground(id: SessionID): Promise<ForegroundReading> {
+    const answer = await this.#request(REQUEST.foreground, { sessionId: id });
+    if (!answer.ok) return { hasForegroundProcess: undefined };
+    return answer.value as ForegroundReading;
+  }
+
+  onExit(listener: (exit: SessionExit) => void): Disposable {
+    this.#exitListeners.add(listener);
+    return toDisposable(() => this.#exitListeners.delete(listener));
+  }
+
+  dispose(): void {
+    this.#disposed = true;
+    this.#attachments.clear();
+    this.#exitListeners.clear();
+    // Destroying the socket ends nothing in the daemon. That asymmetry IS the
+    // milestone: main going away is a viewer leaving, not a session ending.
+    this.#socket?.destroy();
+    this.#socket = undefined;
+  }
+
+  // ------------------------------------------------------------- internals
+
+  /** The hooks, merged into the spec's env exactly as `SessionHost` does. */
+  #applyWillCreate(id: SessionID, spec: SessionSpec): SessionSpec {
+    let current = spec;
+    for (const hook of this.#willCreate) {
+      try {
+        const patch = hook({
+          sessionId: id,
+          spec: {
+            cwd: current.cwd,
+            command: current.command,
+            args: current.args ? [...current.args] : [],
+            env: current.env ?? {},
+            cols: current.cols ?? 80,
+            rows: current.rows ?? 24,
+            term: current.term ?? 'xterm-256color',
+            scrollback: current.scrollback ?? 1000,
+            ...(current.paneId === undefined ? {} : { paneId: current.paneId }),
+          },
+        });
+        if (patch?.env) current = { ...current, env: { ...current.env, ...patch.env } };
+      } catch (error) {
+        // One bad hook must not stop a terminal opening — and must not be silent
+        // either. Same rule as `SessionHost.#applyHooks`.
+        this.#log.warn(`an onWillCreate hook for ${id} threw: ${String(error)}`);
+      }
+    }
+    return current;
+  }
+
+  #seq(): number {
+    const seq = this.#nextSeq;
+    this.#nextSeq += 1;
+    return seq;
+  }
+
+  readonly #pending = new Map<number, (result: Result<unknown, unknown>) => void>();
+
+  /**
+   * Sends immediately and resolves when the daemon answers.
+   *
+   * **It does NOT await the connection before sending, and that is the fix for a
+   * real bug.** The first version did, which put the frame on a later microtask
+   * — so a synchronous `write` issued right after `create` OVERTOOK it, and the
+   * daemon dropped input for a session it had not made yet. The smoke found it
+   * as "the marker never appears", which is exactly the shape a lost keystroke
+   * takes. Ordering on this path is call order, and nothing may reorder it.
+   */
+  #request(kind: number, body: Record<string, unknown>): Promise<Result<unknown, unknown>> {
+    const seq = this.#seq();
+    const answer = new Promise<Result<unknown, unknown>>((resolve) => {
+      this.#pending.set(seq, resolve);
+    });
+    this.#send(encodeJsonFrame(kind as never, { ...body, seq }));
+    void this.#ensureConnected();
+    return answer;
+  }
+
+  /**
+   * Queued before the FIRST connection; dropped after a disconnect.
+   *
+   * The asymmetry is deliberate and both halves are load-bearing:
+   *
+   *   - **Before the first connect** the app is starting up and every frame is
+   *     setup — the pane that opened on launch created its session before the
+   *     socket finished coming up. Dropping those would leave a pane wired to a
+   *     session the daemon never heard of.
+   *   - **After a disconnect** a queued frame is stale input: a keystroke typed
+   *     into a terminal nobody was showing, which on reconnect would be
+   *     delivered into whatever is there now. Those are dropped, loudly.
+   */
+  #send(frame: Uint8Array): void {
+    if (this.#socket !== undefined) {
+      this.#socket.write(frame);
+      return;
+    }
+    if (this.#everConnected) {
+      this.#log.warn('dropped a frame: the session daemon connection is down');
+      return;
+    }
+    this.#outbox.push(frame);
+    void this.#ensureConnected();
+  }
+
+  async #ensureConnected(): Promise<void> {
+    if (this.#socket !== undefined || this.#disposed) return;
+    this.#connecting ??= this.#connect().finally(() => {
+      this.#connecting = undefined;
+    });
+    return this.#connecting;
+  }
+
+  async #connect(): Promise<void> {
+    try {
+      const socket = await this.#options.connect();
+      socket.onData((bytes) => this.#onData(bytes));
+      socket.onError((error) => this.#log.warn(`session socket error: ${String(error)}`));
+      socket.onClose(() => this.#onClose());
+      this.#socket = socket;
+
+      const hello = new Promise<void>((resolve) => {
+        const seq = this.#seq();
+        this.#pending.set(seq, () => resolve());
+        socket.write(encodeJsonFrame(REQUEST.hello, { seq, version: PROTOCOL_VERSION }));
+      });
+      await hello;
+      this.#everConnected = true;
+      // Setup issued before the socket came up, in the order it was issued.
+      // Flushed AFTER hello, because the daemon refuses everything before it.
+      const queued = this.#outbox.splice(0);
+      for (const frame of queued) socket.write(frame);
+      if (queued.length > 0) this.#log.info(`flushed ${queued.length} queued frame(s)`);
+      this.#reattachAll();
+    } catch (error) {
+      this.#log.error(`could not reach the session daemon: ${String(error)}`);
+    }
+  }
+
+  /**
+   * Every live viewer re-attaches after a reconnect.
+   *
+   * Safe precisely because of R0: an attach is handed a serialized screen, so a
+   * viewer that missed a minute of output is not merely resynchronized — it is
+   * CORRECT, alt screen and all. Against a byte ring this would have been a
+   * partial redraw and a known limitation.
+   */
+  #reattachAll(): void {
+    const ids = new Set([...this.#attachments.values()].map((a) => a.sessionId));
+    for (const id of ids) {
+      this.#send(encodeJsonFrame(REQUEST.attach, { seq: this.#seq(), sessionId: id }));
+    }
+    if (ids.size > 0) this.#log.info(`re-attached ${ids.size} viewer(s) after reconnecting`);
+  }
+
+  #onClose(): void {
+    this.#socket = undefined;
+    if (this.#disposed) return;
+    this.#log.warn('session daemon connection closed — retrying');
+    setTimeout(() => void this.#ensureConnected(), this.#options.retryMs ?? 250);
+  }
+
+  #onData(bytes: Uint8Array): void {
+    const { frames, error } = this.#decoder.feed(bytes);
+    for (const frame of frames) this.#onFrame(frame);
+    if (error) {
+      this.#log.error(`unusable frame from the daemon (${error.code}): ${error.message}`);
+      this.#socket?.destroy();
+    }
+  }
+
+  #onFrame(frame: Frame): void {
+    if (frame.kind === RESPONSE.snapshot) {
+      // To the viewers that asked, and to nobody else: the others are already
+      // showing this screen, and handing it to them again would repaint it into
+      // the middle of their output.
+      const id = frame.sessionId as SessionID;
+      const payload = frame.bytes;
+      if (payload === undefined) return;
+      for (const [key, attachment] of [...this.#attachments]) {
+        if (attachment.sessionId !== id || !attachment.awaitingSnapshot) continue;
+        this.#attachments.set(key, { ...attachment, awaitingSnapshot: false });
+        try {
+          attachment.sink(payload);
+        } catch {
+          // A sink that throws must not cost the others theirs.
+        }
+      }
+      return;
+    }
+
+    if (frame.kind === RESPONSE.data) {
+      const id = frame.sessionId as SessionID;
+      const payload = frame.bytes;
+      if (payload === undefined) return;
+      for (const attachment of [...this.#attachments.values()]) {
+        if (attachment.sessionId !== id) continue;
+        try {
+          attachment.sink(payload);
+        } catch {
+          // A sink that throws must not cost the others their bytes — the same
+          // rule `PtyFanout.deliver` keeps, one process along.
+        }
+      }
+      return;
+    }
+
+    if (frame.kind === RESPONSE.exit) {
+      const exit = frame.json as SessionExit;
+      this.#sessions.delete(exit.sessionId);
+      this.#announceExit(exit);
+      return;
+    }
+
+    const body = frame.json as { seq?: number; value?: unknown } | undefined;
+    if (body?.seq === undefined) return;
+    const pending = this.#pending.get(body.seq);
+    if (pending === undefined) return;
+    this.#pending.delete(body.seq);
+    pending(
+      frame.kind === RESPONSE.ok
+        ? { ok: true, value: body.value }
+        : { ok: false, error: body.value },
+    );
+  }
+
+  #announceExit(exit: SessionExit): void {
+    for (const listener of [...this.#exitListeners]) {
+      try {
+        listener(exit);
+      } catch (error) {
+        this.#log.warn(`an onExit listener threw: ${String(error)}`);
+      }
+    }
+  }
+}
