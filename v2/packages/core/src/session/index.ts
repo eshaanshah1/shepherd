@@ -35,3 +35,19 @@ export {
   type SessionCommandsOptions,
   type ViewingLookup,
 } from './commands.ts';
+export {
+  FrameDecoder,
+  PROTOCOL_VERSION,
+  MAX_FRAME_BYTES,
+  REQUEST,
+  RESPONSE,
+  encodeByteFrame,
+  encodeJsonFrame,
+  isByteKind,
+  type Frame,
+  type FrameKind,
+  type ProtocolError,
+  type ProtocolErrorCode,
+  type RequestKind,
+  type ResponseKind,
+} from './protocol.ts';
