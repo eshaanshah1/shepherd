@@ -90,6 +90,35 @@ finishes — the pane opens in a provisioning state and the printed handles are 
 valid. A `git worktree add` or hook failure therefore surfaces in the app (the tab is
 removed / an alert is shown), not in the CLI's exit status.
 
+### The worktree hook in v2 — per REPO, not per workspace
+| Command | Description |
+|---|---|
+| `shepherd worktree-hook get [--repo <path>]` | The script for that repo, or the global one, plus every repo that has a hook. |
+| `shepherd worktree-hook set [--repo <path>] --script <sh>` | Set it. An empty script clears. |
+| `shepherd worktree-hook clear [--repo <path>]` | Clear it. |
+| `shepherd worktree-hook test-run --script <sh> --at <dir>` | Run a script against a directory you nominate, without saving it. |
+
+A v2 task worktrees several repos at once, so the v1 unit does not survive the move:
+what a hook does — copy *this* repo's `.env`, symlink *this* repo's vendored
+directory — belongs to a repo rather than to the window it is opened in. So a hook is
+keyed by the **source repo path**, with one global hook beside it that runs first in
+every worktree. Omitting `--repo` means the global one.
+
+The environment is v1's, unchanged (`WORKTREE_DIR`, `WORKTREE_SRC`, `WORKTREE_BRANCH`,
+`WORKTREE_NAME`, `REPO_NAME`), plus `TASK_SLUG` and `TASK_ROOT`; cwd is the new
+worktree and the shell is still `/bin/bash -lc`. So `scripts/worktree-hook.sh` runs
+under either build. A non-zero exit keeps the worktree and still spawns the agents —
+the repo's row reads `ready — hook failed` and carries the last 20 lines of output.
+
+**v1 hooks do not migrate.** They were per-workspace and there is no sound mapping to
+a repo, so an existing `workspace hook` has to be entered once as a repo hook:
+
+```sh
+shepherd worktree-hook set --repo ~/Home/dev/shepherd --script "$(cat scripts/worktree-hook.sh)"
+```
+
+Full documentation: `v2/extensions/worktree-hook/README.md`.
+
 ### Talking to panes
 | Command | Description |
 |---|---|

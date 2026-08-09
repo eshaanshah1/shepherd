@@ -1,0 +1,82 @@
+{
+  "name": "@shepherd/ext-worktree-hook",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "shepherd.worktree-hook — a script you choose, run inside every worktree a task creates for a repo.",
+  "//exports": "The split every extension makes: main imports ./manifest to register, the utility process imports the root (which pulls in `activate`), ./model is the pure layer, and ./ui is the half the renderer mounts.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./manifest": {
+      "types": "./src/manifest.ts",
+      "default": "./src/manifest.ts"
+    },
+    "./model": {
+      "types": "./src/model/index.ts",
+      "default": "./src/model/index.ts"
+    },
+    "./ui": {
+      "types": "./ui/editor.tsx",
+      "default": "./ui/editor.tsx"
+    }
+  },
+  "//dependencies": "@shepherd/ext-tasks is a TYPE-ONLY dependency — `import type` and nothing else. The runtime relationship is the point id plus the manifest's `dependencies` entry, which is the gate the host can review; a value import would route around it. See extensions/README.md.",
+  "//shepherd": "The manifest, as an extension declares it. `src/manifest.ts` is the typed copy the host loads, and `manifest.test.ts` asserts the two are identical.",
+  "shepherd": {
+    "id": "shepherd.worktree-hook",
+    "name": "Worktree Hook",
+    "version": "0.1.0",
+    "api": "^1.0.0",
+    "activation": [
+      "onStartup"
+    ],
+    "permissions": [
+      "storage",
+      "process.exec",
+      "views"
+    ],
+    "dependencies": [
+      "shepherd.tasks"
+    ],
+    "contributes": {
+      "commands": [
+        {
+          "id": "worktreeHook.get",
+          "title": "Worktree Hook: Show"
+        },
+        {
+          "id": "worktreeHook.set",
+          "title": "Worktree Hook: Set"
+        },
+        {
+          "id": "worktreeHook.clear",
+          "title": "Worktree Hook: Clear"
+        },
+        {
+          "id": "worktreeHook.testRun",
+          "title": "Worktree Hook: Test Run"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -b",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@shepherd/ext-tasks": "workspace:*",
+    "@shepherd/sdk": "workspace:*",
+    "@shepherd/ui": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "react": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "//ui": "The UI half, imported ONLY by the renderer (boundaries.js). A separate subpath because it is a separate PROCESS: `.` is the service half and runs in a utility process with no DOM."
+}
