@@ -1,7 +1,14 @@
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { FrameDecoder, type CommandRegistry } from '@shepherd/core';
 import { runExec } from '@shepherd/platform-darwin';
-import { s as schema, type CategoryLogger, type Disposable, type KV } from '@shepherd/sdk';
+import {
+  PERMISSIONS,
+  type CategoryLogger,
+  type Disposable,
+  type KV,
+  type Permission,
+} from '@shepherd/sdk';
 import {
   ControlChannel,
   RemoteServer,
@@ -9,11 +16,13 @@ import {
   pinOf,
   type Endpoint,
   type Identity,
+  kvDeviceStore,
   type PairedDevice,
   type PairingPayload,
   type PairingRequest,
   type PairingRequestHandler,
   type RemoteAPI,
+  type RemoteServerOptions,
 } from '@shepherd/remote';
 
 /**
@@ -30,34 +39,37 @@ import {
  * the UI loads" is the shape that ships as a hole nobody notices.
  */
 
+/**
+ * What a paired device may ask the kernel to do.
+ *
+ * The same set the local CLI holds, and the reasoning is `ingress.ts`'s one step
+ * along: reaching the local socket IS the authorization there, and being
+ * APPROVED BY A HUMAN AT THIS MAC is the authorization here. A device did not
+ * arrive by accident — somebody read its name and pressed Allow.
+ *
+ * The finer gate is not this list, it is the control channel: a device may
+ * invoke only the verbs declared on rows it was actually sent. So this answers
+ * "may this principal use the kernel at all", and the row boundary answers
+ * "which verbs" — two questions, two places, neither pretending to be the other.
+ *
+ * Per-device entitlements (this phone may read, that Mac may also close panes)
+ * are the obvious next step and are deliberately not invented here: there is one
+ * device kind today, and a permission model shaped around it would be shaped
+ * around one caller.
+ */
+export const PAIRED_DEVICE_PERMISSIONS: readonly Permission[] = PERMISSIONS;
+
 export interface RemoteServiceOptions {
   readonly support: string;
   readonly registry: CommandRegistry;
-  /** Where paired devices live. Shared with the daemon — see `store` below. */
+  /**
+   * Where paired devices live — a namespace of THE store, opened at a path the
+   * daemon can open too. One record, two readers (ADR 0021).
+   */
   readonly devices: KV;
   readonly log: CategoryLogger;
 }
 
-const DEVICES_KEY = 'paired';
-
-/**
- * The persisted shape of a paired device.
- *
- * Declared rather than cast: this comes off disk, an older build may have
- * written it, and `KV.get` takes a schema for exactly that reason. A cast would
- * turn a half-written record into a device that pairs and then fails somewhere
- * far from here.
- */
-const DEVICE_SCHEMA = schema.array(
-  schema.object({
-    id: schema.string(),
-    name: schema.string(),
-    secret: schema.string(),
-    pin: schema.string(),
-    pairedAt: schema.number(),
-    lastSeenAt: schema.number(),
-  }),
-);
 const PROTOCOL_VERSION = 3;
 
 export function createRemoteService(options: RemoteServiceOptions): RemoteAPI & Disposable {
@@ -73,21 +85,7 @@ export function createRemoteService(options: RemoteServiceOptions): RemoteAPI & 
    * there by the pairing model as it already stands. A headless process cannot
    * admit a stranger, which is a property rather than a limitation.
    */
-  const store = {
-    all: (): readonly PairedDevice[] => devices.get(DEVICES_KEY, DEVICE_SCHEMA) ?? [],
-    put: (device: PairedDevice): void => {
-      devices.set(DEVICES_KEY, [
-        ...store.all().filter((candidate) => candidate.id !== device.id),
-        device,
-      ]);
-    },
-    remove: (id: string): void => {
-      devices.set(
-        DEVICES_KEY,
-        store.all().filter((candidate) => candidate.id !== id),
-      );
-    },
-  };
+  const store = kvDeviceStore(devices);
 
   const control = new ControlChannel({
     host: {
@@ -117,7 +115,10 @@ export function createRemoteService(options: RemoteServiceOptions): RemoteAPI & 
    * in the daemon and this one here.
    */
   const wires = new Map<number, { decoder: FrameDecoder; write: (bytes: Uint8Array) => void }>();
+  let nextWireId = 1;
 
+  /** connectionId -> the device it turned out to be. */
+  const admitted = new Map<number, string>();
   let approve: PairingRequestHandler | undefined;
   let server: RemoteServer | undefined;
   const listeners: Disposable[] = [];
@@ -132,7 +133,7 @@ export function createRemoteService(options: RemoteServiceOptions): RemoteAPI & 
   let reachable: { host: string; port: number } | undefined;
 
   const api: RemoteAPI & Disposable = {
-    async serve(factory: (identity: Identity) => Endpoint): Promise<Disposable> {
+    async serve(factory: (identity: Identity, port?: number) => Endpoint): Promise<Disposable> {
       const identity = await loadOrMintIdentity({
         dir: join(support, 'remote-identity'),
         // Through the platform's ProcessAPI, never `child_process` from here —
@@ -158,22 +159,46 @@ export function createRemoteService(options: RemoteServiceOptions): RemoteAPI & 
       }
       identityPin = pinOf(identity.value.certPem).pin;
 
-      server ??= new RemoteServer({
-        endpoint: factory(identity.value),
+      /**
+       * The port this Mac served on last time, re-used.
+       *
+       * A device stores the port it paired with, so an OS-chosen one moves on
+       * every launch and leaves a paired phone dialling an address that now
+       * belongs to nobody — it says "connecting" forever, which is exactly what
+       * the first device run did. The daemon does not have this problem because
+       * it outlives the app; the control port has to be given the property
+       * deliberately.
+       *
+       * A remembered port that is taken falls back to a fresh one rather than
+       * refusing to serve: being reachable at a new address beats not serving.
+       */
+      const remembered = readPort(join(support, 'remote-control-port'));
+
+      const serverOptions: Omit<RemoteServerOptions, 'endpoint'> = {
         identity: identity.value,
         devices: store,
         sessions: {
           accept: (connection) => {
-            wires.set(connection.id, { decoder: new FrameDecoder(), write: connection.write });
-            // The device id is settled by the handshake; the channel only needs
-            // it for attribution, and `RemoteServer` has already checked it.
-            control.open(connection.id, `device-${connection.id}`);
+            // Ours to mint — a caller's id belongs to a different table. See
+            // `SessionSink.accept`, where sharing one cost the app every reply.
+            const id = nextWireId;
+            nextWireId += 1;
+            wires.set(id, { decoder: new FrameDecoder(), write: connection.write });
+            // Opened with the REAL device id in `onAdmitted` below, which fires
+            // immediately after with this same id. A placeholder here would be
+            // a caller the grant set can never match.
+            return id;
           },
           feed: (id, bytes) => void pump(id, bytes),
           disconnect: (id) => {
             wires.delete(id);
+            admitted.delete(id);
             control.close(id);
           },
+        },
+        onAdmitted: (connectionId, device) => {
+          admitted.set(connectionId, device.id);
+          control.open(connectionId, device.id);
         },
         approve: async (request) => {
           const handler = approve;
@@ -194,11 +219,25 @@ export function createRemoteService(options: RemoteServiceOptions): RemoteAPI & 
         // Zero-padded: a "code" with five digits is a code somebody mistypes.
         newCode: () => String(Math.floor(Math.random() * 1_000_000)).padStart(6, '0'),
         now: () => Date.now(),
-      });
+        // Read per connection, not captured: the daemon may have restarted onto
+        // a different port since this Mac started.
+        dataPort: () => readPort(join(support, 'remote-data-port')),
+      };
 
-      const started = await server.start();
+      server ??= new RemoteServer({ ...serverOptions, endpoint: factory(identity.value, remembered) });
+      let started = await server.start();
+      if (!started.ok && remembered !== undefined) {
+        log.warn(`port ${remembered} is taken — serving on a fresh one; paired devices must re-pair`);
+        server = new RemoteServer({ ...serverOptions, endpoint: factory(identity.value) });
+        started = await server.start();
+      }
       if (!started.ok) return { dispose: () => undefined };
       reachable = { host: started.value.address, port: started.value.port };
+      try {
+        writeFileSync(join(support, 'remote-control-port'), String(started.value.port), 'utf8');
+      } catch (error) {
+        log.warn(`could not remember the control port: ${String(error)}`);
+      }
       listeners.push(started.value);
       return started.value;
     },
@@ -209,9 +248,19 @@ export function createRemoteService(options: RemoteServiceOptions): RemoteAPI & 
     pairingPayload(): PairingPayload | undefined {
       if (reachable === undefined || identityPin === '') return undefined;
       const code = server?.activeCode;
+      // Chosen by the OS in another process, so the file the daemon wrote is the
+      // only honest source for it.
+      let dataPort: number | undefined;
+      try {
+        const raw = readFileSync(join(support, 'remote-data-port'), 'utf8').trim();
+        dataPort = Number.parseInt(raw, 10) || undefined;
+      } catch {
+        dataPort = undefined;
+      }
       return {
         host: reachable.host,
         port: reachable.port,
+        ...(dataPort === undefined ? {} : { dataPort }),
         pin: identityPin,
         ...(code === undefined ? {} : { code }),
         protocolVersion: PROTOCOL_VERSION,
@@ -256,4 +305,14 @@ export function createRemoteService(options: RemoteServiceOptions): RemoteAPI & 
   }
 
   return api;
+}
+
+/** A remembered port, or undefined when there is none to remember. */
+function readPort(path: string): number | undefined {
+  try {
+    const value = Number.parseInt(readFileSync(path, 'utf8').trim(), 10);
+    return Number.isInteger(value) && value > 0 ? value : undefined;
+  } catch {
+    return undefined;
+  }
 }

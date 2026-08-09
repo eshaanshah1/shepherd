@@ -53,9 +53,17 @@ export interface DeviceStore {
   remove(deviceId: string): void;
 }
 
-/** What the remote server hands an accepted connection to. `SessionServer` fits. */
+/**
+ * What the remote server hands an accepted connection to. `SessionServer` fits.
+ *
+ * `accept` RETURNS the id, and that is load-bearing: this server's connection
+ * ids are its own, and the session server has another transport (the app's unix
+ * socket) numbering from 1 as well. Reusing our id there made the phone's
+ * connection 1 evict the Mac's, so the app's replies went to the phone and its
+ * own panes went blank. Whoever owns the table owns the id.
+ */
 export interface SessionSink {
-  accept(connection: { id: number; write(b: Uint8Array): void; close(): void }): void;
+  accept(connection: { write(b: Uint8Array): void; close(): void }): number;
   feed(id: number, bytes: Uint8Array): void;
   disconnect(id: number): void;
 }
@@ -66,11 +74,35 @@ export interface RemoteServerOptions {
   readonly devices: DeviceStore;
   readonly sessions: SessionSink;
   readonly approve: Approval;
+  /**
+   * Which DEVICE a connection turned out to be.
+   *
+   * The sink is handed a connection id and nothing else, which is right for the
+   * session protocol and wrong for the control channel: a command invoked by a
+   * device is authorized against THAT device's grants, so an invented id
+   * (`device-3`) is a caller the grant set can never match. It presented as
+   * "device:device-1 is unknown (not registered as a live principal)" on a phone
+   * that had just paired successfully.
+   */
+  readonly onAdmitted?: (connectionId: number, device: PairedDevice) => void;
   readonly log: CategoryLogger;
   /** Injected: randomness stays out of the model (see `pairing.ts`). */
   readonly newSecret: () => string;
   readonly newCode: () => string;
   readonly now: () => number;
+  /**
+   * Where the DATA path is, told to every admitted client.
+   *
+   * The client must NOT cache this. A port is the host's to choose — it moves
+   * when the daemon restarts on a taken port, or when a transport changes — and
+   * a phone holding a stale one dials an address that belongs to nobody and
+   * shows a terminal that never paints. Measured: the phone kept dialling the
+   * port it paired with long after the daemon had moved.
+   *
+   * So it rides the ACCEPT, where it is refreshed on every connection, rather
+   * than the pairing payload, which is written down once.
+   */
+  readonly dataPort?: () => number | undefined;
 }
 
 interface ClientState {
@@ -78,6 +110,14 @@ interface ClientState {
   readonly decoder: FrameDecoder;
   /** True once the handshake succeeded and the session server owns the frames. */
   admitted: boolean;
+  /**
+   * What the SESSION server calls this connection — set once admitted.
+   *
+   * Not our `connection.id`: see `SessionSink.accept`. It doubles as the
+   * "the sink knows about this one" flag, so there is one fact rather than two
+   * that can disagree.
+   */
+  sessionClientId?: number;
   deviceId?: string;
 }
 
@@ -168,7 +208,7 @@ export class RemoteServer {
     if (client === undefined) return;
     // The session server hears about it only if it was ever told about it —
     // and when it does, R1's rule applies: viewers go, sessions do not.
-    if (client.admitted) this.#options.sessions.disconnect(id);
+    if (client.sessionClientId !== undefined) this.#options.sessions.disconnect(client.sessionClientId);
     this.#clients.delete(id);
   }
 
@@ -179,8 +219,8 @@ export class RemoteServer {
     // Admitted: the session protocol owns every byte from here. Fed straight
     // through rather than re-decoded, so there is exactly one decoder per
     // connection and no chance of the two disagreeing about a frame boundary.
-    if (client.admitted) {
-      this.#options.sessions.feed(id, bytes);
+    if (client.sessionClientId !== undefined) {
+      this.#options.sessions.feed(client.sessionClientId, bytes);
       return;
     }
 
@@ -258,20 +298,43 @@ export class RemoteServer {
   #admit(client: ClientState, device: PairedDevice): void {
     client.admitted = true;
     client.deviceId = device.id;
-    this.#options.devices.put({ ...device, lastSeenAt: this.#options.now() });
+    /**
+     * Bookkeeping, and it must not be able to refuse a device — still less to
+     * end the process.
+     *
+     * This runs in the daemon too, where a throw kills every terminal the user
+     * has open (ADR 0035: the session outlives the app, so the daemon dying is
+     * the one failure the design cannot absorb). `lastSeenAt` is a timestamp
+     * nothing depends on; the device is already authenticated by the time we
+     * are here.
+     */
+    try {
+      this.#options.devices.put({ ...device, lastSeenAt: this.#options.now() });
+    } catch (error) {
+      this.#log.warn(`could not record last-seen for ${device.id}: ${String(error)}`);
+    }
 
     // The secret goes back on EVERY admit, not only the first: it is what the
     // device presents next time, and a client that lost it would otherwise have
     // to be re-paired by hand.
-    this.#send(client, REMOTE.accepted, { secret: device.secret, deviceId: device.id });
+    this.#send(client, REMOTE.accepted, {
+      secret: device.secret,
+      deviceId: device.id,
+      ...(this.#options.dataPort?.() === undefined ? {} : { dataPort: this.#options.dataPort() }),
+    });
 
     // From here the connection IS a session connection. No translation layer,
     // no second protocol — that is the whole design.
-    this.#options.sessions.accept({
-      id: client.connection.id,
+    client.sessionClientId = this.#options.sessions.accept({
       write: (bytes) => client.connection.write(bytes),
       close: () => client.connection.close(),
     });
+
+    // Announced with the id the SINK chose, and only once it has one, so a
+    // consumer that keys per-connection state off this hears the same number
+    // `feed` and `disconnect` will use. Nothing can arrive in between — this
+    // whole path is synchronous — so ordering costs the sink nothing.
+    this.#options.onAdmitted?.(client.sessionClientId, device);
     this.#log.info(`remote ${client.connection.id} admitted as ${device.name} (${device.id})`);
   }
 

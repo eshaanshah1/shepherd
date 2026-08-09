@@ -30,6 +30,16 @@ object Frames {
     private const val HEADER = 5
 
     // The session protocol. Client -> host.
+    /**
+     * The SESSION protocol's version, which is not the remote protocol's.
+     *
+     * Two handshakes ride one socket and they version independently: the remote
+     * one decides whether this device may talk at all, the session one decides
+     * whether both ends agree about frames. Conflating them would tie a pairing
+     * change to a pty-protocol change.
+     */
+    const val SESSION_PROTOCOL_VERSION = 1
+
     const val REQ_HELLO = 1
     const val REQ_CREATE = 2
     const val REQ_ATTACH = 3

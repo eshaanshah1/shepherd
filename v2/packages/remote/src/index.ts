@@ -48,3 +48,4 @@ export type {
   PairingRequestHandler,
   RemoteAPI,
 } from './api.ts';
+export { kvDeviceStore } from './devices.ts';

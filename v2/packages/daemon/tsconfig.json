@@ -7,5 +7,5 @@
     "types": ["node"]
   },
   "include": ["src/**/*.ts"],
-  "references": [{ "path": "../sdk" }, { "path": "../core" }]
+  "references": [{ "path": "../sdk" }, { "path": "../core" }, { "path": "../remote" }]
 }

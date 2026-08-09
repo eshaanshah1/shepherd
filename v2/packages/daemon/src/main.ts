@@ -1,9 +1,9 @@
 import { createServer, type Socket } from 'node:net';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { SessionHost, reclaimSocketPath } from '@shepherd/core';
+import { SessionHost, SessionServer, SqliteStore, reclaimSocketPath } from '@shepherd/core';
+import { RemoteServer, kvDeviceStore, loadOrMintIdentity, loopbackEndpoint } from '@shepherd/remote';
 import { createLogger, systemClock, type LogLevel } from '@shepherd/sdk';
-import { SessionServer } from './server.ts';
 
 /**
  * `shepherdd` — the process that owns the ptys.
@@ -29,23 +29,34 @@ import { SessionServer } from './server.ts';
 
 const IDLE_EXIT_MS = 30_000;
 
-interface Args {
+export interface Args {
   readonly socketPath: string;
   readonly level: LogLevel;
+  /**
+   * Where a paired DEVICE reaches the ptys, as `<support>` — absent means the
+   * daemon serves the local socket only.
+   *
+   * The data path is the daemon's on purpose (ADR-recorded as D4): the terminal
+   * then survives the app restarting. Update Shepherd and the sidebar on your
+   * phone goes briefly stale while the agent you were watching keeps streaming.
+   */
+  readonly support?: string;
 }
 
-function parseArgs(argv: readonly string[]): Args {
+export function parseArgs(argv: readonly string[]): Args {
   let socketPath = '';
   let level: LogLevel = 'info';
+  let support: string | undefined;
   for (const arg of argv) {
     if (arg.startsWith('--socket=')) socketPath = arg.slice('--socket='.length);
     if (arg.startsWith('--log-level=')) level = arg.slice('--log-level='.length) as LogLevel;
+    if (arg.startsWith('--support=')) support = arg.slice('--support='.length);
   }
-  return { socketPath, level };
+  return { socketPath, level, ...(support === undefined ? {} : { support }) };
 }
 
 export async function main(argv: readonly string[]): Promise<number> {
-  const { socketPath, level } = parseArgs(argv);
+  const { socketPath, level, support } = parseArgs(argv);
   const log = createLogger({
     clock: systemClock,
     level,
@@ -77,10 +88,17 @@ export async function main(argv: readonly string[]): Promise<number> {
   });
   const server = new SessionServer({ host, log });
 
-  let nextConnectionId = 1;
   const net = createServer((socket: Socket) => {
-    const id = nextConnectionId;
-    nextConnectionId += 1;
+    // The id is the SERVER's, not ours. This process feeds it from two
+    // transports — this socket and the TLS endpoint below — and when each
+    // numbered its own connections from 1 the second one to arrive replaced the
+    // first in the server's client table. See `Connection` in core.
+    const id = server.accept({
+      write: (bytes) => {
+        socket.write(bytes);
+      },
+      close: () => socket.destroy(),
+    });
     socket.on('error', (error) => daemon.warn(`client ${id} socket error: ${String(error)}`));
     socket.on('close', () => {
       server.disconnect(id);
@@ -89,15 +107,95 @@ export async function main(argv: readonly string[]): Promise<number> {
     socket.on('data', (chunk: Buffer) => {
       server.feed(id, new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
     });
-    server.accept({
-      id,
-      write: (bytes) => {
-        socket.write(bytes);
-      },
-      close: () => socket.destroy(),
-    });
     disarmIdleExit();
   });
+
+  /**
+   * The DATA path for paired devices (D4).
+   *
+   * A device pairs with the app — only the app can show an approval — and then
+   * presents the secret it was issued here. The daemon shows no code, so
+   * `pairingDecision` refuses every unknown device: a headless process cannot
+   * admit a stranger, which is what makes serving from here safe.
+   *
+   * An admitted connection is handed to the SAME `SessionServer` the Mac's own
+   * renderer talks to. There is no device-specific session code anywhere,
+   * because that is the whole design.
+   */
+  let remotePort: number | undefined;
+  if (support !== undefined) {
+    const identity = await loadOrMintIdentity({
+      dir: `${support}/remote-identity`,
+      // The app normally mints it first; the daemon minting is the crash-recovery
+      // case, and both land on the same file so a device's pin still matches.
+      mint: async () => ({ ok: false, error: 'the daemon does not mint identities' }),
+    });
+    if (identity.ok) {
+      /**
+       * The port this daemon served on last time, re-used.
+       *
+       * A device stores the data port it paired with, so an OS-chosen one moves
+       * whenever the daemon restarts and the phone dials an address that now
+       * belongs to nobody — its terminal simply never paints. The control port
+       * needed the same fix for the same reason; a port a client remembers has
+       * to be a port the host remembers too.
+       */
+      const remembered = await readPort(`${support}/remote-data-port`);
+      const remote = new RemoteServer({
+        endpoint: loopbackEndpoint({
+          identity: identity.value,
+          ...(remembered === undefined ? {} : { port: remembered }),
+        }),
+        identity: identity.value,
+        // THE store, opened read-mostly by this process too. The app writes a
+        // new pairing (only it can show an approval); the daemon reads, so a
+        // device that paired there is admitted here with no second approval.
+        devices: kvDeviceStore(
+          new SqliteStore({ location: `${support}/remote.db`, logger: log }).namespace('devices'),
+        ),
+        sessions: server,
+        // Never reached: with no code showing, an unknown device is refused
+        // before an approval is asked for. Present because the type requires it,
+        // and refusing is the only honest answer a process with no UI can give.
+        approve: async () => false,
+        log: daemon,
+        newSecret: () => crypto.randomUUID(),
+        newCode: () => '',
+        now: () => Date.now(),
+      });
+      let listening = await remote.start();
+      if (!listening.ok && remembered !== undefined) {
+        // Taken by something else: serve on a fresh one rather than not at all.
+        // Paired devices must then re-pair, which is worse than being reachable
+        // and better than being silently absent.
+        daemon.warn(`data port ${remembered} is taken — serving on a fresh one`);
+        listening = await new RemoteServer({
+          endpoint: loopbackEndpoint({ identity: identity.value }),
+          identity: identity.value,
+          devices: kvDeviceStore(
+            new SqliteStore({ location: `${support}/remote.db`, logger: log }).namespace('devices'),
+          ),
+          sessions: server,
+          approve: async () => false,
+          log: daemon,
+          newSecret: () => crypto.randomUUID(),
+          newCode: () => '',
+          now: () => Date.now(),
+        }).start();
+      }
+      if (listening.ok) {
+        remotePort = listening.value.port;
+        daemon.info(`remote data path on ${listening.value.address}:${remotePort}`);
+        // Written where the app can read it back for the pairing payload: the
+        // port is chosen by the OS, so this file is the only honest source.
+        await writeFile(`${support}/remote-data-port`, String(remotePort), 'utf8');
+      }
+    } else {
+      // Not fatal: the local socket still works, so the Mac is unaffected. Said
+      // out loud because "my phone cannot open a terminal" has to be traceable.
+      daemon.warn(`no remote data path: ${identity.error}`);
+    }
+  }
 
   let idleTimer: NodeJS.Timeout | undefined;
   function disarmIdleExit(): void {
@@ -163,4 +261,15 @@ if (process.argv[1]?.endsWith('main.ts') === true || process.argv[1]?.endsWith('
   void main(process.argv.slice(2)).then((code) => {
     if (code !== 0) process.exit(code);
   });
+}
+
+/** A remembered port, or undefined when there is none. */
+async function readPort(path: string): Promise<number | undefined> {
+  try {
+    const { readFile } = await import('node:fs/promises');
+    const value = Number.parseInt((await readFile(path, 'utf8')).trim(), 10);
+    return Number.isInteger(value) && value > 0 ? value : undefined;
+  } catch {
+    return undefined;
+  }
 }

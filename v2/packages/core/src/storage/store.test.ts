@@ -157,6 +157,39 @@ describe('on disk', () => {
     second.close();
   });
 
+  /**
+   * Two processes really do share this file — the daemon serves paired devices
+   * their ptys and reads the same pairings the app writes — and on SQLite's
+   * defaults that combination throws `database is locked` out of an ordinary
+   * SELECT. It killed the daemon, and with it every terminal the user had open,
+   * the first time a phone connected while the app was writing.
+   */
+  it('opens WAL with a busy timeout, because two processes share this file', () => {
+    const store = new SqliteStore({ location: path(), logger });
+    const mode = store.db.prepare('PRAGMA journal_mode').get() as { journal_mode: string };
+    expect(mode.journal_mode).toBe('wal');
+    const busy = store.db.prepare('PRAGMA busy_timeout').get() as { timeout: number };
+    expect(busy.timeout).toBeGreaterThan(0);
+    store.close();
+  });
+
+  it('lets a second connection read while the first holds the file', () => {
+    const writer = new SqliteStore({ location: path(), logger });
+    writer.namespace('devices').set('paired', 'one');
+
+    // The daemon's connection: opened second, against a live file, and it must
+    // be able to read without waiting on the app to be idle.
+    const reader = new SqliteStore({ location: path(), logger });
+    writer.namespace('devices').set('paired', 'two');
+    expect(reader.namespace('devices').get('paired', s.string())).toBe('two');
+    // …and write back, which is what recording `lastSeenAt` does.
+    expect(() => reader.namespace('devices').set('paired', 'three')).not.toThrow();
+    expect(writer.namespace('devices').get('paired', s.string())).toBe('three');
+
+    reader.close();
+    writer.close();
+  });
+
   it('reopening does not re-run migrations', () => {
     // The version is in `PRAGMA user_version`, a header field, so it moves with
     // the transaction that earned it. A `meta` row could be deleted by a data

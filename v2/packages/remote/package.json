@@ -23,7 +23,6 @@
   "devDependencies": {
     "@types/node": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:",
-    "@shepherd/daemon": "workspace:*"
+    "vitest": "catalog:"
   }
 }

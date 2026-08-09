@@ -57,7 +57,7 @@ export interface RemoteAPI {
    * third-party transport does not quietly become the moment we hand the key
    * out.
    */
-  serve(factory: (identity: Identity) => Endpoint): Promise<Disposable>;
+  serve(factory: (identity: Identity, port?: number) => Endpoint): Promise<Disposable>;
 
   /**
    * Show a pairing code, and return its digits.
@@ -109,6 +109,15 @@ export interface PairingPayload {
   readonly port: number;
   /** Lowercase hex SHA-256 of the certificate DER. */
   readonly pin: string;
+  /**
+   * Where the DATA path listens — the daemon's port, not this one.
+   *
+   * A device holds two connections: control here, data there. Absent means the
+   * daemon is not serving devices yet, and a client that gets a payload without
+   * it can pair and browse but cannot open a terminal — which is worth saying
+   * rather than letting it look like a dead socket.
+   */
+  readonly dataPort?: number;
   /** Absent when no code is showing — a payload without one cannot pair. */
   readonly code?: string;
   readonly protocolVersion: number;

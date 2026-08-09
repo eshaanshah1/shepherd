@@ -18,7 +18,8 @@
   },
   "dependencies": {
     "@shepherd/core": "workspace:*",
-    "@shepherd/sdk": "workspace:*"
+    "@shepherd/sdk": "workspace:*",
+    "@shepherd/remote": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "catalog:",

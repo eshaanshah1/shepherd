@@ -37,6 +37,26 @@ export class SqliteStore {
     // Foreign keys are off by default in SQLite and are per-connection, so this
     // has to be said here rather than in a migration.
     this.#db.exec('PRAGMA foreign_keys = ON');
+
+    /**
+     * Two processes open this file, so the defaults are wrong for us.
+     *
+     * The daemon outlives the app and both read the same store (a device pairs
+     * once and connects twice — control to the app, data to the daemon), which
+     * SQLite supports fine but not on its defaults: the rollback journal takes
+     * an exclusive lock for the whole of a write, and `busy_timeout` is **0**,
+     * so a concurrent reader gets `SQLITE_BUSY` on the first attempt instead of
+     * waiting. That is not theoretical — it threw `database is locked` out of a
+     * plain `SELECT` inside the daemon's admit path and **killed the daemon**,
+     * taking every live terminal with it, the moment a phone connected while
+     * the app was writing.
+     *
+     * WAL lets readers run through a write, and the timeout covers the
+     * writer-vs-writer case that remains. Journal mode is a property of the
+     * FILE and survives; the timeout is per connection and must be set here.
+     */
+    this.#db.exec('PRAGMA journal_mode = WAL');
+    this.#db.exec('PRAGMA busy_timeout = 5000');
     this.#migrate(options.migrations ?? MIGRATIONS);
   }
 

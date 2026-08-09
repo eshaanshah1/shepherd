@@ -27,7 +27,15 @@ import { diagnosticsManifest } from '@shepherd/ext-diagnostics/manifest';
 import { agentsCoreManifest } from '@shepherd/ext-agents-core/manifest';
 import { claudeCodeManifest } from '@shepherd/ext-claude-code/manifest';
 import { tasksManifest } from '@shepherd/ext-tasks/manifest';
-import { KERNEL, createLogger, extensionId, rootId, systemClock, type RootID } from '@shepherd/sdk';
+import {
+  KERNEL,
+  createLogger,
+  extensionId,
+  rootId,
+  systemClock,
+  type Permission,
+  type RootID,
+} from '@shepherd/sdk';
 import { ExtensionHost } from './ext-host.ts';
 import { forkExtensionHost } from './ext-host-process.ts';
 import { IS_DEV } from './build-flags.ts';
@@ -40,7 +48,7 @@ import {
 import { windowOptions } from './window-options.ts';
 import { SessionBridge, type SessionHostLike } from './session-bridge.ts';
 import { registerViewCommands } from './view-commands.ts';
-import { createRemoteService } from './remote-service.ts';
+import { createRemoteService, PAIRED_DEVICE_PERMISSIONS } from './remote-service.ts';
 import { registerRemoteCommands } from './remote-commands.ts';
 import { loopbackEndpoint, type Identity, type RemoteAPI } from '@shepherd/remote';
 import { SessionClient } from './session-client.ts';
@@ -169,6 +177,7 @@ const logger = createLogger({
  */
 const USE_DAEMON = process.env['SHEPHERD_SESSION_DAEMON'] !== '0';
 
+
 /** Assigned in `whenReady`; disposed with the app. */
 let remote: (RemoteAPI & { dispose(): void }) | undefined;
 
@@ -182,6 +191,13 @@ let remote: (RemoteAPI & { dispose(): void }) | undefined;
  * daily app, which is the exact class of bug this flag exists to prevent.
  */
 const support = resolveSupport(process.argv, resolveAppPaths(IS_DEV).support);
+
+/**
+ * The store paired devices live in — beside the sockets rather than under
+ * userData, because the DAEMON opens the same file and has no userData of its
+ * own. One persistence mechanism, two processes (ADR 0021).
+ */
+const remoteStore = new SqliteStore({ location: `${support}/remote.db`, logger });
 
 /**
  * The daemon's entry: the bundle that `build-daemon.mjs` puts beside this file.
@@ -213,6 +229,7 @@ const host: SessionHostLike = USE_DAEMON
   ? new SessionClient({
       connect: daemonConnector({
         socketPath: `${support}/session.sock`,
+        support,
         entry: daemonEntry(),
         log: logger.child('session'),
       }),
@@ -254,7 +271,23 @@ const registry = new CommandRegistry({
     //
     // See `ingress.ts` for why reaching the local socket is itself the
     // authorization, and for what this deliberately does not extend to.
-    devices: new Map([[LOCAL_DEVICE_ID, LOCAL_DEVICE_PERMISSIONS]]),
+    // The local CLI, plus every device a human APPROVED at this Mac.
+    //
+    // Derived from the paired list per invocation, exactly as `agents` is
+    // derived from the pty host's inventory, and for the same stated reason:
+    // there is no second registry to keep in step and no revoke path to forget
+    // — revoking removes the record and the grant goes with it.
+    //
+    // Nothing populated this for one run, and a phone that had just paired
+    // successfully was told `device:… is unknown (not registered as a live
+    // principal)`. That is the agent-principals defect of M3 repeating for a new
+    // caller kind: adding a `Caller` variant is not the same as making one work.
+    devices: new Map<string, readonly Permission[]>([
+      [LOCAL_DEVICE_ID, LOCAL_DEVICE_PERMISSIONS],
+      ...(remote?.devices() ?? []).map(
+        (device) => [device.id, PAIRED_DEVICE_PERMISSIONS] as const,
+      ),
+    ]),
     // Every live session is a principal (D9b). Derived from the pty host's own
     // inventory rather than a second registry, so there is no revoke path to
     // forget and nothing that can drift; `grants` is read per invocation, which
@@ -603,7 +636,36 @@ function captureIfAsked(win: BrowserWindow): void {
 
 void app.whenReady().then(async () => {
   /**
-   * Reach the daemon and adopt what it is already running — BEFORE any window
+   * Remote FIRST, and the order is load-bearing.
+   *
+   * `serve` mints this Mac's TLS identity, and the daemon serves the data path
+   * with the SAME certificate — a device pins one cert and presents one secret,
+   * so two would mean the phone refusing the terminal it was just told to open.
+   * The daemon cannot mint (it has no `openssl` grant, deliberately), so it must
+   * find the identity already there.
+   *
+   * It did not, for one run: the daemon is spawned by the first session call,
+   * which used to happen before this, so it started, found no identity and
+   * served no data path — and the phone could list tasks and then open a
+   * terminal that never painted. Nothing failed; the feature was simply absent.
+   */
+  if (SMOKE === undefined) {
+    remote = createRemoteService({
+      support,
+      registry,
+      // In `support`, not userData: the DAEMON opens this same file, and it has
+      // no userData. One store, two processes (ADR 0021).
+      devices: remoteStore.namespace('devices'),
+      log: logger.child('session'),
+    });
+    registerRemoteCommands({ remote, registry, log: logger.child('session') });
+    await remote.serve((identity: Identity, port?: number) =>
+      loopbackEndpoint({ identity, ...(port === undefined ? {} : { port }) }),
+    );
+  }
+
+  /**
+   * Reach the daemon and adopt what it is already running — before any window
    * opens, because that is when the layout restores and asks `isLive` whether
    * each persisted binding still means something (ADR 0035).
    *
@@ -645,31 +707,6 @@ void app.whenReady().then(async () => {
    * each — which is the thing v1 got wrong three times over.
    */
   registerViewCommands({ views, registry });
-
-  /**
-   * Remote, serving loopback.
-   *
-   * Loopback ONLY, deliberately: it is what the E2E runs on and what a device
-   * reaches through a port forward, and it means shipping this cannot expose a
-   * machine to its network by accident. `remote-lan` and `remote-tailscale` are
-   * extensions that supply their own endpoint — which is the whole reason
-   * `RemoteAPI.serve` takes one.
-   *
-   * Not started under a smoke: a smoke drives the real app and would otherwise
-   * mint a certificate and bind a port for a run that never pairs anything.
-   */
-  if (SMOKE === undefined) {
-    remote = createRemoteService({
-      support,
-      registry,
-      devices: store.namespace('remote'),
-      log: logger.child('session'),
-    });
-    registerRemoteCommands({ remote, registry, log: logger.child('session') });
-    void remote.serve((identity: Identity) => loopbackEndpoint({ identity })).catch((error: unknown) => {
-      logger.child('session').error(`remote did not start: ${String(error)}`);
-    });
-  }
 
   // Before the extensions activate, so the first transition an agent publishes
   // has somewhere to land rather than being emitted at nobody.

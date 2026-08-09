@@ -3,6 +3,7 @@ package com.eshaan.shepherd.v2
 import com.eshaan.shepherd.terminal.RemoteTerminalSession
 import com.eshaan.shepherd.util.SLog
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -84,11 +85,24 @@ class SessionTerminal(
                 }
             }
         }
-        link.sendJson(
-            Frames.REQ_ATTACH,
-            buildJsonObject { put("seq", link.nextSeq()); put("sessionId", sessionId) },
-        )
-        SLog.i(SLog.DATA, "attached to ${sessionId.take(8)}")
+        scope.launch {
+            /**
+             * Wait for READY before asking for anything.
+             *
+             * The screen mounts the moment a row is tapped, which can be while
+             * the data link is still shaking hands — and a frame written then is
+             * dropped by a socket that does not exist yet. It presented as
+             * `write failed: null` and a terminal that never painted: the attach
+             * was never sent, and nothing reported a fault because nothing had
+             * failed.
+             */
+            link.state.first { it is HostLink.State.Ready }
+            link.sendJson(
+                Frames.REQ_ATTACH,
+                buildJsonObject { put("seq", link.nextSeq()); put("sessionId", sessionId) },
+            )
+            SLog.i(SLog.DATA, "attached to ${sessionId.take(8)}")
+        }
     }
 
     /**

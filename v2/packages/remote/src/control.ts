@@ -200,11 +200,14 @@ export function controlSink(
   control: ControlChannel,
   log: CategoryLogger,
 ): {
-  accept(connection: { id: number; write(b: Uint8Array): void; close(): void }): void;
+  accept(connection: { write(b: Uint8Array): void; close(): void }): number;
   feed(id: number, bytes: Uint8Array): void;
   disconnect(id: number): void;
 } {
   const wires = new Map<number, { decoder: FrameDecoder; write: (bytes: Uint8Array) => void }>();
+  // Ours to mint, like every other sink's — a caller's id would collide the
+  // moment a second transport used one. See `SessionSink.accept`.
+  let nextId = 1;
 
   async function pump(id: number, bytes: Uint8Array): Promise<void> {
     const wire = wires.get(id);
@@ -219,8 +222,11 @@ export function controlSink(
 
   return {
     accept: (connection) => {
-      wires.set(connection.id, { decoder: new FrameDecoder(), write: connection.write });
-      control.open(connection.id, `device-${connection.id}`);
+      const id = nextId;
+      nextId += 1;
+      wires.set(id, { decoder: new FrameDecoder(), write: connection.write });
+      control.open(id, `device-${id}`);
+      return id;
     },
     feed: (id, bytes) => void pump(id, bytes),
     disconnect: (id) => {
