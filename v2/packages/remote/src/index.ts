@@ -42,3 +42,9 @@ export {
   type SessionSink,
 } from './server.ts';
 export { CONTROL, ControlChannel, type ControlChannelOptions, type ControlHost } from './control.ts';
+export type {
+  PairingPayload,
+  PairingRequest,
+  PairingRequestHandler,
+  RemoteAPI,
+} from './api.ts';
