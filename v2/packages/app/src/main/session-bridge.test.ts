@@ -13,8 +13,20 @@ import {
   type SessionID,
 } from '@shepherd/sdk';
 import { LayoutStore } from '@shepherd/core/layout';
-import type { SessionError, SessionExit, SessionInfo, SessionSpec } from '@shepherd/core';
-import { COALESCE, EMIT, type SessionDataMessage, type SessionExitMessage } from '../shared/index.ts';
+import type {
+  SessionError,
+  SessionExit,
+  SessionInfo,
+  SessionResize,
+  SessionSpec,
+} from '@shepherd/core';
+import {
+  COALESCE,
+  EMIT,
+  type SessionDataMessage,
+  type SessionExitMessage,
+  type SessionResizeMessage,
+} from '../shared/index.ts';
 import { SessionBridge, type RendererTarget, type SessionHostLike } from './session-bridge.ts';
 
 /**
@@ -117,6 +129,16 @@ class FakeHost implements SessionHostLike {
       this.#exitListeners.delete(listener);
     });
   }
+  #resizeListeners = new Set<(r: SessionResize) => void>();
+  onResize(listener: (r: SessionResize) => void) {
+    this.#resizeListeners.add(listener);
+    return toDisposable(() => {
+      this.#resizeListeners.delete(listener);
+    });
+  }
+  emitResize(r: SessionResize) {
+    for (const listener of this.#resizeListeners) listener(r);
+  }
 
   // -- test drivers
   feed(id: SessionID, bytes: Uint8Array): void {
@@ -134,7 +156,10 @@ function unknown(id: SessionID): SessionError {
 }
 
 class FakeTarget implements RendererTarget {
-  readonly sent: { channel: string; payload: SessionDataMessage | SessionExitMessage }[] = [];
+  readonly sent: {
+    channel: string;
+    payload: SessionDataMessage | SessionExitMessage | SessionResizeMessage;
+  }[] = [];
   readonly id: number;
   #destroyed = false;
   // Not a parameter property: `erasableSyntaxOnly` forbids them, because Node's
@@ -145,7 +170,10 @@ class FakeTarget implements RendererTarget {
   isDestroyed(): boolean {
     return this.#destroyed;
   }
-  send(channel: string, payload: SessionDataMessage | SessionExitMessage): void {
+  send(
+    channel: string,
+    payload: SessionDataMessage | SessionExitMessage | SessionResizeMessage,
+  ): void {
     this.sent.push({ channel, payload });
   }
   destroy(): void {

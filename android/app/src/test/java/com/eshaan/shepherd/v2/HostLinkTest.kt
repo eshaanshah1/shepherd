@@ -121,6 +121,35 @@ class HostLinkTest {
         }
     }
 
+    /**
+     * A phone's socket dies constantly and almost none of it is a fault — a
+     * lock, a wifi-to-cellular hop, Android reclaiming a background socket.
+     * Before this the link ran ONCE and then sat in a state whose UI says
+     * "retrying" while doing nothing, so the way back was force-quitting.
+     */
+    @Test
+    fun `a dropped link dials again by itself`() {
+        val received = mutableListOf<Frames.Frame>()
+        val server = startHost(received)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val link = HostLink("127.0.0.1", server.localPort, pin(), scope)
+        try {
+            link.start("device-1", "phone", pairingCode = null, secret = "s")
+            await("the first handshake") {
+                synchronized(received) { received.count { it.kind == Frames.REMOTE_HELLO } >= 1 }
+            }
+            // Kill it the way a screen lock does — from underneath, with no
+            // protocol-level goodbye.
+            link.dropForTest()
+            await("a second handshake, unaided") {
+                synchronized(received) { received.count { it.kind == Frames.REMOTE_HELLO } >= 2 }
+            }
+        } finally {
+            link.stop()
+            server.close()
+        }
+    }
+
     @Test
     fun `a control link does not, because that socket carries no sessions`() {
         val received = mutableListOf<Frames.Frame>()

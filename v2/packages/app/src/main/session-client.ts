@@ -9,6 +9,7 @@ import {
   type Frame,
   type SessionError,
   type SessionExit,
+  type SessionResize,
   type ForegroundReading,
   type ScreenState,
   type SessionInfo,
@@ -101,6 +102,7 @@ export class SessionClient {
   readonly #sessions = new Map<SessionID, SessionInfo>();
   readonly #attachments = new Map<number, LiveAttachment>();
   readonly #exitListeners = new Set<(exit: SessionExit) => void>();
+  readonly #resizeListeners = new Set<(resize: SessionResize) => void>();
   #socket: ClientSocket | undefined;
   #connecting: Promise<void> | undefined;
   #nextAttachment = 1;
@@ -316,6 +318,14 @@ export class SessionClient {
     return answer.value as ForegroundReading;
   }
 
+  /** The pty's size changed — a viewer must reshape its emulator to match. */
+  onResize(listener: (resize: SessionResize) => void): Disposable {
+    this.#resizeListeners.add(listener);
+    return toDisposable(() => {
+      this.#resizeListeners.delete(listener);
+    });
+  }
+
   onExit(listener: (exit: SessionExit) => void): Disposable {
     this.#exitListeners.add(listener);
     return toDisposable(() => this.#exitListeners.delete(listener));
@@ -503,6 +513,31 @@ export class SessionClient {
   }
 
   #onFrame(frame: Frame): void {
+    /**
+     * The pty changed size — arm every viewer of it for the repaint that
+     * follows.
+     *
+     * The daemon sends `resized` and then one snapshot per CONNECTION, but this
+     * process may hold several viewers of one session. Marking them all as
+     * awaiting is what fans that single screen out to each of them, through the
+     * routing a late attach already uses.
+     */
+    if (frame.kind === RESPONSE.resized) {
+      const resize = frame.json as SessionResize;
+      for (const [key, attachment] of [...this.#attachments]) {
+        if (attachment.sessionId !== resize.sessionId) continue;
+        this.#attachments.set(key, { ...attachment, awaitingSnapshot: true });
+      }
+      for (const listener of [...this.#resizeListeners]) {
+        try {
+          listener(resize);
+        } catch (error) {
+          this.#log.warn(`an onResize listener threw: ${String(error)}`);
+        }
+      }
+      return;
+    }
+
     if (frame.kind === RESPONSE.snapshot) {
       // To the viewers that asked, and to nobody else: the others are already
       // showing this screen, and handing it to them again would repaint it into

@@ -5,6 +5,7 @@ import {
   type LayoutSnapshots,
   type SessionDataMessage,
   type SessionExitMessage,
+  type SessionResizeMessage,
   type ShepherdBridge,
 } from '../shared/index.ts';
 
@@ -49,6 +50,7 @@ export function createBridge(ipc: IpcLike): ShepherdBridge {
       kill: (id) => invoke(INVOKE.sessionKill, id),
       onData: (listener) => subscribe<SessionDataMessage>(EMIT.sessionData, listener),
       onExit: (listener) => subscribe<SessionExitMessage>(EMIT.sessionExit, listener),
+      onResize: (listener) => subscribe<SessionResizeMessage>(EMIT.sessionReshaped, listener),
     },
     commands: {
       // `args` defaults to `{}` rather than travelling as `undefined`: every

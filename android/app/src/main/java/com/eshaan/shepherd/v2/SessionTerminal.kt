@@ -5,7 +5,10 @@ import com.eshaan.shepherd.util.SLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 /**
@@ -45,27 +48,90 @@ class SessionTerminal(
         channelInput = { bytes -> link.sendBytes(Frames.REQ_WRITE, sessionId, bytes) },
         resizeSink = { c, r ->
             /**
-             * A viewport, not a resize.
+             * A viewport, not a resize — and only while this phone holds control.
              *
-             * One pty has one size and several clients may be watching, so the
-             * phone declares what it can display and the HOST arbitrates —
-             * smallest wins. A client that resized directly would reshape the
-             * pty under whoever else is looking at it.
+             * One pty has one size and several clients may be watching, so a
+             * client declares what it can display and the HOST arbitrates,
+             * smallest wins. Declaring one therefore SHRINKS the Mac, which is
+             * why it is not the default: a phone glancing at a session must not
+             * cost the person at the desk eighty columns. See [takeControl].
              */
-            link.sendJson(
-                Frames.REQ_SET_VIEWPORT,
-                buildJsonObject {
-                    put("seq", link.nextSeq())
-                    put("sessionId", sessionId)
-                    put("viewerId", "phone")
-                    put("viewport", buildJsonObject { put("cols", c); put("rows", r) })
-                },
-            )
+            if (controlling) sendViewport(c, r)
         },
         scope = scope,
     )
 
     private var attached = false
+
+    /**
+     * Whether this phone is driving the size, as opposed to watching.
+     *
+     * The two modes exist because only ONE of them can ever be correct at a
+     * time, and which one depends on a human rather than on anything the code
+     * can see. Passive: keep the host's grid, scale the font, leave the Mac
+     * alone. Controlling: declare a viewport, the pty is reshaped, `SIGWINCH`
+     * makes the program **re-do its own layout** at the phone's size — which is
+     * the only mechanism that ever yields a genuinely correct small screen,
+     * because only the application knows what to drop.
+     */
+    var controlling: Boolean = false
+        private set
+
+    private var lastGrid: Pair<Int, Int>? = null
+
+    /**
+     * Take or hand back the size.
+     *
+     * Handing it back WITHDRAWS the viewport rather than restoring a remembered
+     * number: the host re-arbitrates from whoever is left, so the Mac returns to
+     * its own size without this phone having to know what that was.
+     */
+    fun takeControl(on: Boolean) {
+        if (controlling == on) return
+        controlling = on
+        val grid = lastGrid
+        if (on && grid != null) sendViewport(grid.first, grid.second) else withdrawViewport()
+    }
+
+    private fun sendViewport(cols: Int, rows: Int) {
+        lastGrid = cols to rows
+        link.sendJson(
+            Frames.REQ_SET_VIEWPORT,
+            buildJsonObject {
+                put("seq", link.nextSeq())
+                put("sessionId", sessionId)
+                put("viewerId", VIEWER_ID)
+                put("viewport", buildJsonObject { put("cols", cols); put("rows", rows) })
+            },
+        )
+    }
+
+    /** No `viewport` field at all — the host reads that as "I have no opinion". */
+    private fun withdrawViewport() {
+        link.sendJson(
+            Frames.REQ_SET_VIEWPORT,
+            buildJsonObject {
+                put("seq", link.nextSeq())
+                put("sessionId", sessionId)
+                put("viewerId", VIEWER_ID)
+            },
+        )
+    }
+
+    /** What the local view can display, whether or not we act on it. */
+    fun reportGrid(cols: Int, rows: Int) {
+        lastGrid = cols to rows
+        if (controlling) sendViewport(cols, rows)
+    }
+
+    /** The host's grid changed; follow it. Never sends anything back. */
+    private fun adoptHostSize(cols: Int, rows: Int) {
+        session.adoptHostSize(cols, rows)
+        onHostGrid?.invoke(cols, rows)
+    }
+
+    /** Set by the view so it can rescale its font to the host's columns. */
+    var onHostGrid: ((Int, Int) -> Unit)? = null
 
     fun attach() {
         if (attached) return
@@ -81,6 +147,15 @@ class SessionTerminal(
                     // late viewer's screen to it alone, not so a client has to
                     // treat them differently.
                     Frames.RES_DATA, Frames.RES_SNAPSHOT -> frame.payload?.let { session.onOutput(it) }
+                    // Ahead of the snapshot the host sends right behind it, so
+                    // the screen is parsed into a grid that is already the right
+                    // shape rather than reflowed after the fact.
+                    Frames.RES_RESIZED -> frame.text?.let { body ->
+                        val json = Json.parseToJsonElement(body).jsonObject
+                        val cols = json["cols"]?.jsonPrimitive?.content?.toIntOrNull()
+                        val rows = json["rows"]?.jsonPrimitive?.content?.toIntOrNull()
+                        if (cols != null && rows != null) adoptHostSize(cols, rows)
+                    }
                     Frames.RES_EXIT -> SLog.i(SLog.DATA, "session ${sessionId.take(8)} exited")
                 }
             }
@@ -113,19 +188,18 @@ class SessionTerminal(
     fun detach() {
         if (!attached) return
         attached = false
+        controlling = false
         link.sendJson(
             Frames.REQ_DETACH,
             buildJsonObject { put("seq", link.nextSeq()); put("sessionId", sessionId) },
         )
         // …and withdraw our opinion about size, so the Mac stops being
         // letterboxed to a phone that is no longer looking.
-        link.sendJson(
-            Frames.REQ_SET_VIEWPORT,
-            buildJsonObject {
-                put("seq", link.nextSeq())
-                put("sessionId", sessionId)
-                put("viewerId", "phone")
-            },
-        )
+        withdrawViewport()
+    }
+
+    private companion object {
+        /** Stable per phone: the host keys its viewport table by this. */
+        const val VIEWER_ID = "phone"
     }
 }

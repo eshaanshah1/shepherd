@@ -147,6 +147,13 @@ export interface SessionInfo {
   readonly paneId?: PaneID;
 }
 
+/** The pty's new size, after whatever decided it. */
+export interface SessionResize {
+  readonly sessionId: SessionID;
+  readonly cols: number;
+  readonly rows: number;
+}
+
 export interface SessionExit {
   readonly sessionId: SessionID;
   readonly exitCode: number;
@@ -215,6 +222,7 @@ export class SessionHost {
   readonly #sessions = new Map<SessionID, SessionRecord>();
   readonly #willCreate: WillCreateHook[] = [];
   readonly #exitListeners = new Set<(exit: SessionExit) => void>();
+  readonly #resizeListeners = new Set<(resize: SessionResize) => void>();
   readonly #newId: RandomId | undefined;
   readonly #defaultScrollback: number;
   readonly #onError: ((error: unknown, context: string) => void) | undefined;
@@ -512,6 +520,15 @@ export class SessionHost {
     // otherwise be parsed against the old one, and every late viewer would be
     // handed a screen that is wrong in a way nothing else reveals.
     record.fanout.resize(cols, rows);
+    // Announced, because a viewer that is not told keeps painting into the old
+    // grid. Nothing else can discover this: the bytes are valid either way.
+    for (const listener of [...this.#resizeListeners]) {
+      try {
+        listener({ sessionId: id, cols, rows });
+      } catch (error) {
+        this.#onError?.(error, `onResize listener for ${id}`);
+      }
+    }
     return ok(undefined);
   }
 
@@ -543,6 +560,17 @@ export class SessionHost {
   }
 
   // -------------------------------------------------------------------- events
+
+  /**
+   * The pty's size changed — because somebody resized it, or because viewport
+   * arbitration decided a new one when a viewer arrived or left.
+   */
+  onResize(listener: (resize: SessionResize) => void): Disposable {
+    this.#resizeListeners.add(listener);
+    return toDisposable(() => {
+      this.#resizeListeners.delete(listener);
+    });
+  }
 
   onExit(listener: (exit: SessionExit) => void): Disposable {
     this.#exitListeners.add(listener);

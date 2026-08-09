@@ -63,6 +63,9 @@ export function createXtermTerminal(mode: ThemeMode = DEFAULT_THEME_MODE): Termi
     },
     open: (host) => terminal.open(host),
     write: (data) => terminal.write(data),
+    // The host's decision, not ours: this reshapes the grid without telling
+    // the host, which would otherwise bounce back as a viewport change.
+    resize: (cols, rows) => terminal.resize(cols, rows),
     onData: (listener) => terminal.onData(listener),
     onResize: (listener) => terminal.onResize(listener),
     focus: () => terminal.focus(),

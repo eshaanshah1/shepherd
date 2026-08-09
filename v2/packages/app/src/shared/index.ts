@@ -15,6 +15,7 @@ export {
   type SessionDataMessage,
   type SessionDescriptor,
   type SessionExitMessage,
+  type SessionResizeMessage,
   type ViewportRect,
 } from './channels.ts';
 

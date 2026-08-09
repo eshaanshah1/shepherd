@@ -20,6 +20,7 @@ export {
   type SessionError,
   type SessionErrorCode,
   type SessionExit,
+  type SessionResize,
   type SessionHostOptions,
   type SessionInfo,
   type SessionSpec,
