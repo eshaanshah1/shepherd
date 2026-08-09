@@ -8,6 +8,7 @@ import {
   loadOrMintIdentity,
   pinOf,
   type Endpoint,
+  type Identity,
   type PairedDevice,
   type PairingPayload,
   type PairingRequest,
@@ -124,7 +125,7 @@ export function createRemoteService(options: RemoteServiceOptions): RemoteAPI & 
   let boundPort: number | undefined;
 
   const api: RemoteAPI & Disposable = {
-    async serve(endpoint: Endpoint): Promise<Disposable> {
+    async serve(factory: (identity: Identity) => Endpoint): Promise<Disposable> {
       const identity = await loadOrMintIdentity({
         dir: join(support, 'remote-identity'),
         // Through the platform's ProcessAPI, never `child_process` from here —
@@ -151,7 +152,7 @@ export function createRemoteService(options: RemoteServiceOptions): RemoteAPI & 
       identityPin = pinOf(identity.value.certPem).pin;
 
       server ??= new RemoteServer({
-        endpoint,
+        endpoint: factory(identity.value),
         identity: identity.value,
         devices: store,
         sessions: {

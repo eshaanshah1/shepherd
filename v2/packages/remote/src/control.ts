@@ -1,4 +1,4 @@
-import { encodeJsonFrame, type Frame } from '@shepherd/core';
+import { FrameDecoder, encodeJsonFrame, type Frame } from '@shepherd/core';
 import type { CategoryLogger } from '@shepherd/sdk';
 
 /**
@@ -185,4 +185,47 @@ export class ControlChannel {
     };
     visit(value, 0);
   }
+}
+
+/**
+ * The glue between `RemoteServer` and a `ControlChannel`: a `SessionSink` that
+ * decodes each admitted connection's frames and writes the answers back.
+ *
+ * It lives HERE rather than in the app so that the loopback E2E exercises the
+ * real thing. A copy in the test would prove the copy — and the two would agree
+ * right up until one of them was changed, which is the failure mode this whole
+ * package is arranged to avoid.
+ */
+export function controlSink(
+  control: ControlChannel,
+  log: CategoryLogger,
+): {
+  accept(connection: { id: number; write(b: Uint8Array): void; close(): void }): void;
+  feed(id: number, bytes: Uint8Array): void;
+  disconnect(id: number): void;
+} {
+  const wires = new Map<number, { decoder: FrameDecoder; write: (bytes: Uint8Array) => void }>();
+
+  async function pump(id: number, bytes: Uint8Array): Promise<void> {
+    const wire = wires.get(id);
+    if (wire === undefined) return;
+    const { frames, error } = wire.decoder.feed(bytes);
+    for (const frame of frames) {
+      const reply = await control.handle(id, frame);
+      if (reply !== undefined) wire.write(reply);
+    }
+    if (error) log.error(`remote ${id} sent an unusable frame: ${error.message}`);
+  }
+
+  return {
+    accept: (connection) => {
+      wires.set(connection.id, { decoder: new FrameDecoder(), write: connection.write });
+      control.open(connection.id, `device-${connection.id}`);
+    },
+    feed: (id, bytes) => void pump(id, bytes),
+    disconnect: (id) => {
+      wires.delete(id);
+      control.close(id);
+    },
+  };
 }

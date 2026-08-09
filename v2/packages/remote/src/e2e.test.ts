@@ -29,6 +29,7 @@ import { createLogger, systemClock } from '@shepherd/sdk';
 import { loadOrMintIdentity, peerMatchesPin, type Identity, type Minter } from './identity.ts';
 import { loopbackEndpoint } from './endpoint.ts';
 import { REMOTE, RemoteServer, type DeviceStore } from './server.ts';
+import { CONTROL, ControlChannel, controlSink } from './control.ts';
 import { REMOTE_PROTOCOL_VERSION, type PairedDevice } from './pairing.ts';
 
 const run = promisify(execFile);
@@ -413,5 +414,120 @@ describe('a paired device, over TLS, driving a real pty', () => {
 
     // One pty, not two. This is the assertion the whole test is for.
     expect(h.sessionHost.list()).toHaveLength(1);
+  });
+
+  /**
+   * The CONTROL half: a device lists what the Mac contributes, reads a view's
+   * rows, taps one, and is told what to present.
+   *
+   * Nothing in this test names a task, and that is the assertion. The rows below
+   * are whatever an extension returned; the device renders them and invokes
+   * their declared verb, and the only thing it understands about the answer is
+   * the `present` effect. Swap `tasks` for a `projects` extension and this test
+   * — and the phone — would be unchanged.
+   */
+  it('lists contributed views, reads rows, and learns what a tap should show', async () => {
+    const dir = join(await mkdtemp(join(tmpdir(), 'shepherd-control-')), 'remote-identity');
+    const minted = await loadOrMintIdentity({ dir, mint: openssl });
+    if (!minted.ok) throw new Error(minted.error);
+    const identity = minted.value;
+
+    const log = createLogger({ clock: systemClock, level: 'error', sink: () => undefined });
+    const invoked: Array<{ device: string; command: string }> = [];
+
+    // Stands in for the command registry. The rows are an extension's; this test
+    // is deliberately incurious about what they mean.
+    const control = new ControlChannel({
+      host: {
+        invoke: async (device, command) => {
+          invoked.push({ device, command });
+          if (command === 'views.list') {
+            return {
+              views: [
+                { type: 'tasks.tree', title: 'Tasks', kind: 'tree' },
+                { type: 'tasks.composer', title: 'New', kind: 'component' },
+              ],
+            };
+          }
+          if (command === 'views.children') {
+            return [
+              { id: 'sec', label: 'ACTIVE', section: true },
+              {
+                id: 't1',
+                label: 'Ship remote',
+                description: '2 repos',
+                tint: 'accent',
+                command: { id: 'tasks.reveal', args: { task: 't1' } },
+                actions: [{ id: 'tasks.archive', label: 'Archive' }],
+              },
+            ];
+          }
+          if (command === 'tasks.reveal') {
+            return { id: 't1', present: { kind: 'session', sessionId: 'sess-42' } };
+          }
+          throw new Error(`unexpected ${command}`);
+        },
+      },
+      log: log.child('session'),
+    });
+
+    const devices = memoryDevices();
+    const server = new RemoteServer({
+      endpoint: loopbackEndpoint({ identity }),
+      identity,
+      devices,
+      sessions: controlSink(control, log.child('session')),
+      approve: async () => true,
+      log: log.child('session'),
+      newSecret: () => 'secret-for-tests',
+      newCode: () => '424242',
+      now: () => Date.now(),
+    });
+    const started = await server.start();
+    if (!started.ok) throw new Error(started.error);
+    cleanups.push(() => server.stop());
+    server.showCode();
+
+    const phone = device(started.value.port, identity.pin);
+    await phone.ready;
+    phone.send(hello({ pairingCode: '424242' }));
+    await waitFor(() => phone.of(REMOTE.accepted).length > 0, 'the accept');
+
+    const ask = (seq: number, command: string, args?: unknown) =>
+      phone.send(encodeJsonFrame(CONTROL.invoke as never, { seq, command, args }));
+    const answer = (seq: number) =>
+      phone.frames.find(
+        (f) => (f.kind as number) === CONTROL.result && (f.json as { seq?: number }).seq === seq,
+      )?.json as { ok: boolean; value?: unknown } | undefined;
+
+    ask(1, 'views.list');
+    await waitFor(() => answer(1) !== undefined, 'the view list');
+    const views = (answer(1)?.value as { views: Array<{ type: string; kind: string }> }).views;
+    // Both are REPORTED; the client decides it can only draw the tree.
+    expect(views.map((v) => v.kind)).toEqual(['tree', 'component']);
+
+    ask(2, 'views.children', { type: 'tasks.tree' });
+    await waitFor(() => answer(2) !== undefined, 'the rows');
+    const rows = answer(2)?.value as Array<{ id: string; section?: boolean; label: string }>;
+    expect(rows.map((r) => r.id)).toEqual(['sec', 't1']);
+    expect(rows[0]?.section).toBe(true);
+
+    // A tap: the row's OWN verb, which this device learned by being sent the row.
+    ask(3, 'tasks.reveal', { task: 't1' });
+    await waitFor(() => answer(3) !== undefined, 'the tap');
+    expect((answer(3)?.value as { present: unknown }).present).toEqual({
+      kind: 'session',
+      sessionId: 'sess-42',
+    });
+
+    // …and a verb it was never shown is refused before it reaches the registry.
+    ask(4, 'tasks.delete', { task: 't1' });
+    await waitFor(() => answer(4) !== undefined, 'the refusal');
+    expect(answer(4)?.ok).toBe(false);
+    expect(invoked.map((i) => i.command)).toEqual([
+      'views.list',
+      'views.children',
+      'tasks.reveal',
+    ]);
   });
 });

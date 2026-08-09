@@ -40,6 +40,8 @@ import {
 import { windowOptions } from './window-options.ts';
 import { SessionBridge, type SessionHostLike } from './session-bridge.ts';
 import { registerViewCommands } from './view-commands.ts';
+import { createRemoteService } from './remote-service.ts';
+import { loopbackEndpoint, type Identity, type RemoteAPI } from '@shepherd/remote';
 import { SessionClient } from './session-client.ts';
 import { daemonConnector } from './daemon-launcher.ts';
 import { registerSessionIpc } from './ipc.ts';
@@ -165,6 +167,9 @@ const logger = createLogger({
  * alternative is bisecting a behaviour change against a process boundary.
  */
 const USE_DAEMON = process.env['SHEPHERD_SESSION_DAEMON'] !== '0';
+
+/** Assigned in `whenReady`; disposed with the app. */
+let remote: (RemoteAPI & { dispose(): void }) | undefined;
 
 /**
  * Where the sockets live. Overridable per run — see `SUPPORT_FLAG`; a throwaway
@@ -639,6 +644,30 @@ void app.whenReady().then(async () => {
    * each — which is the thing v1 got wrong three times over.
    */
   registerViewCommands({ views, registry });
+
+  /**
+   * Remote, serving loopback.
+   *
+   * Loopback ONLY, deliberately: it is what the E2E runs on and what a device
+   * reaches through a port forward, and it means shipping this cannot expose a
+   * machine to its network by accident. `remote-lan` and `remote-tailscale` are
+   * extensions that supply their own endpoint — which is the whole reason
+   * `RemoteAPI.serve` takes one.
+   *
+   * Not started under a smoke: a smoke drives the real app and would otherwise
+   * mint a certificate and bind a port for a run that never pairs anything.
+   */
+  if (SMOKE === undefined) {
+    remote = createRemoteService({
+      support,
+      registry,
+      devices: store.namespace('remote'),
+      log: logger.child('session'),
+    });
+    void remote.serve((identity: Identity) => loopbackEndpoint({ identity })).catch((error: unknown) => {
+      logger.child('session').error(`remote did not start: ${String(error)}`);
+    });
+  }
 
   // Before the extensions activate, so the first transition an agent publishes
   // has somewhere to land rather than being emitted at nobody.
