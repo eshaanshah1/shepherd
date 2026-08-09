@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "The kernel: session host, layout, commands, events. Imports stdlib + node-pty + @shepherd/sdk only.",
+  "description": "The kernel: session host, terminal mirror, layout, commands, events. Imports stdlib + node-pty + @xterm/headless + @shepherd/sdk only.",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {
@@ -22,6 +22,8 @@
   },
   "dependencies": {
     "@shepherd/sdk": "workspace:*",
+    "@xterm/addon-serialize": "catalog:",
+    "@xterm/headless": "catalog:",
     "node-pty": "catalog:"
   },
   "devDependencies": {
