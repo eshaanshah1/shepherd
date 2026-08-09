@@ -559,7 +559,20 @@ body.sh-dragging {
  * the grower had its `flex-grow: 1` and 468px of room the entire time, which is
  * why three plausible rewrites of the SELECTOR changed nothing.
  */
-.sh-rows-foot { margin-top: auto; }
+.sh-rows-foot { margin-top: auto; display: flex; flex-direction: column; min-height: 0; }
+
+/*
+ * Seven finished tasks, then a scroller — the same shape (and the same
+ * `--sh-row-height` arithmetic) the command palette's list uses, for the same
+ * reason: a list that is allowed to grow without limit stops being a footer.
+ * `flex-shrink` lets it give the space back when the sidebar is short, so the
+ * cap is a ceiling rather than a reserved block.
+ */
+.sh-rows-foot-scroll {
+  max-height: calc(7 * var(--sh-row-height));
+  overflow-y: auto;
+  flex: 0 1 auto;
+}
 
 /*
  * The ONE thing a row still says that `Row` has no vocabulary for: a task that is

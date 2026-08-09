@@ -132,6 +132,16 @@ export type ViewProvider =
       readonly key?: string;
       /** Shown as the section/card heading. Falls back to the view type. */
       readonly title?: string;
+      /**
+       * The glyph on the control that raises an overlay, named from the shell's
+       * allow-list. Defaults to `plus`.
+       *
+       * Not decoration: every raisable overlay drew the same `+`, so a settings
+       * form and a composer were two identical buttons side by side and the only
+       * way to tell them apart was to press one. A name rather than a component,
+       * for the reason every other contributed glyph is (ADR 0033).
+       */
+      readonly icon?: string;
     }
   | { readonly kind: 'panel'; readonly url: string };
 

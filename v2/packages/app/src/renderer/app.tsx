@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { IconPlus } from '@tabler/icons-react';
 import { paneId, type PaneID } from '@shepherd/sdk';
 import { CommandPalette, IconButton, type PaletteCommand } from '@shepherd/ui';
 import {
@@ -24,7 +23,7 @@ import {
 } from '../shared/index.ts';
 import { MENU_INVOCATIONS } from '../shared/menu-commands.ts';
 import { EmptyState } from './empty-state.tsx';
-import { ViewDock } from './view-dock.tsx';
+import { ViewDock, raiseIcon } from './view-dock.tsx';
 import { ViewOverlay } from './view-overlay.tsx';
 import { useContributions } from './contributions.ts';
 import { SplitView } from './split-view.tsx';
@@ -388,7 +387,7 @@ export function App({
               {raisable.map((view) => (
                 <IconButton
                   key={view.type}
-                  icon={IconPlus}
+                  icon={raiseIcon(view.icon)}
                   size="sm"
                   // Required by the type, which is the whole point of the
                   // primitive: this control shipped as a bare `+` with no

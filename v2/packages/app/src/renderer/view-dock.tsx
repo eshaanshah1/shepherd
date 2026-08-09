@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ComponentType } from 'react';
-import { IconArchive, IconEye, IconTrash } from '@tabler/icons-react';
+import { IconArchive, IconEye, IconPlus, IconSettings, IconTrash } from '@tabler/icons-react';
 import type { IconProps as TablerIconProps } from '@tabler/icons-react';
 import type { TreeItem, TreeItemAction, TreeItemSeparator } from '@shepherd/sdk';
 import { Menu, Row, SectionLabel, StatusDot, type MenuEntry, type StatusRole } from '@shepherd/ui';
@@ -137,17 +137,17 @@ function TreeView({
   activeRoot: string | null;
 }): React.JSX.Element {
   /*
-   * A heading earns its line when it separates something FROM something — and
-   * a heading that is not the first row does exactly that, whatever the count.
-   * "DONE" over the finished tasks divides them from the live ones above it.
+   * Every heading a contribution sends is drawn, including one that is the
+   * first row. "DONE" over an all-finished list still says what the list IS,
+   * and dropping it made the sidebar change shape the moment the last live
+   * task ended: the label vanished and the finished tasks jumped from the foot
+   * to the top, because with no heading left there was nothing to pin against.
    *
-   * The rule this replaces suppressed every heading when there was only one,
-   * which was right for the state-buckets it was written against ("WORKING · 1"
-   * over the whole list) and wrong the moment a single heading became a real
-   * division. What actually reads as a label for nothing is a heading with
-   * nothing above it, so that is what is dropped.
+   * The rule this replaces suppressed a heading with nothing above it, on the
+   * theory that it divided nothing. It divides the list from the sidebar's
+   * empty space, which is the only division left when the live work is gone.
    */
-  const shown = rows.filter((row, index) => row.section !== true || index > 0);
+  const shown = rows;
 
   /**
    * Everything after the LAST heading is pinned to the bottom of the sidebar.
@@ -285,7 +285,17 @@ function TreeView({
         the bottom" is what was asked for.
       */}
       {bottom.length === 0 ? null : (
-        <ul className="sh-rows sh-rows-foot">{bottom.map(renderRow)}</ul>
+        <div className="sh-rows-foot">
+          {/*
+            The heading is OUTSIDE the scroller, and that is the point of the
+            split: a "DONE" that scrolls away leaves a list of finished tasks
+            with nothing saying what they are. Everything under it scrolls once
+            there are more than seven — long enough to read as a list, short
+            enough that finished work never crowds out the live work above it.
+          */}
+          <ul className="sh-rows">{renderRow(bottom[0] as TreeItem)}</ul>
+          <ul className="sh-rows sh-rows-foot-scroll">{bottom.slice(1).map(renderRow)}</ul>
+        </div>
       )}
     </section>
   );
@@ -338,7 +348,22 @@ const ACTION_ICONS: Readonly<Record<string, ComponentType<TablerIconProps>>> = {
   eye: IconEye,
   archive: IconArchive,
   trash: IconTrash,
+  plus: IconPlus,
+  settings: IconSettings,
 };
+
+/**
+ * The glyph for the control that raises an overlay view.
+ *
+ * Same allow-list, resolved here rather than in `app.tsx` so a contributed glyph
+ * has ONE table however it reaches the screen. `plus` is the fallback because
+ * the first raisable overlay was a composer — but a `+` is a promise to CREATE
+ * something, and every overlay drawing one is how a settings form ended up
+ * indistinguishable from the new-task button beside it.
+ */
+export function raiseIcon(name: string | undefined): ComponentType<TablerIconProps> {
+  return (name === undefined ? undefined : ACTION_ICONS[name]) ?? IconPlus;
+}
 
 /**
  * A contribution's tint word → one of `StatusDot`'s five roles.
