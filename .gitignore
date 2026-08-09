@@ -24,4 +24,11 @@ spike/seam1/build/
 # Any nested derived-data dir: a -derivedDataPath given relative to the wrong cwd
 # creates spike/seam1/spike/seam1/build, which the line above does not cover.
 **/build/
+# …except v2's electron-builder `buildResources`, which is SOURCE, not output:
+# it holds the two app icons. The rule above swallowed it, so the icons were
+# never tracked and every fresh checkout packaged with Electron's default icon —
+# announced only as "default Electron icon is used" inside a successful build.
+# Regenerate them with v2/tooling/scripts/make-icons.sh.
+!v2/packages/app/build/
+!v2/packages/app/build/**
 .claude/worktrees/
