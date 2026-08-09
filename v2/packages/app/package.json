@@ -39,7 +39,8 @@
     "@xterm/xterm": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
-    "@shepherd/daemon": "workspace:*"
+    "@shepherd/daemon": "workspace:*",
+    "@shepherd/remote": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "catalog:",

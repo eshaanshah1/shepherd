@@ -223,6 +223,9 @@ importers:
       '@shepherd/platform-darwin':
         specifier: workspace:*
         version: link:../platform/darwin
+      '@shepherd/remote':
+        specifier: workspace:*
+        version: link:../remote
       '@shepherd/sdk':
         specifier: workspace:*
         version: link:../sdk

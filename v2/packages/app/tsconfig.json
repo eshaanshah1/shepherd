@@ -19,7 +19,7 @@
   "include": ["src/**/*.ts", "src/**/*.tsx"],
   "references": [
     { "path": "../sdk" },
-    { "path": "../core" },
+    { "path": "../core" }, { "path": "../remote" },
     { "path": "../design-tokens" },
     { "path": "../ui" },
     { "path": "../platform/darwin" },
