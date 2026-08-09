@@ -7,7 +7,7 @@
 //
 // Not a `.test.ts`, so vitest does not collect it — same as `test-dom.ts`.
 
-import type { SessionApi, SessionCreateRequest, SessionDataMessage, SessionDescriptor, SessionExitMessage, IpcResult } from '../shared/index.ts';
+import type { SessionApi, SessionCreateRequest, SessionDataMessage, SessionDescriptor, SessionExitMessage, SessionResizeMessage, IpcResult } from '../shared/index.ts';
 import type { TerminalDisposable, TerminalLike } from './pane-sessions.ts';
 
 export interface Call {
@@ -100,6 +100,14 @@ export class SpySession implements SessionApi {
     };
   }
 
+  resizeListeners: Array<(m: SessionResizeMessage) => void> = [];
+  onResize(listener: (message: SessionResizeMessage) => void): () => void {
+    this.resizeListeners.push(listener);
+    return () => {
+      this.resizeListeners = this.resizeListeners.filter((l) => l !== listener);
+    };
+  }
+
   emitData(sessionId: string, bytes: Uint8Array): void {
     for (const listener of [...this.dataListeners]) listener({ sessionId, bytes });
   }
@@ -110,6 +118,9 @@ export class SpySession implements SessionApi {
 }
 
 export interface FakeTerminal extends TerminalLike {
+  /** Mutable here so a test can observe a host-driven reshape. */
+  cols: number;
+  rows: number;
   readonly written: Array<Uint8Array | string>;
   disposed: boolean;
   opened: HTMLElement | null;
@@ -155,6 +166,10 @@ export function fakeTerminal(): FakeTerminal {
     },
     typed: (text) => dataListener?.(text),
     resizedTo: (cols, rows) => resizeListener?.({ cols, rows }),
+    resize: (cols: number, rows: number) => {
+      terminal.cols = cols;
+      terminal.rows = rows;
+    },
   };
   return terminal;
 }

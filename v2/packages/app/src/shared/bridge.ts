@@ -12,6 +12,7 @@ import type {
   SessionDataMessage,
   SessionDescriptor,
   SessionExitMessage,
+  SessionResizeMessage,
   ViewportRect,
   AgentIndicatorDTO,
 } from './channels.ts';
@@ -36,6 +37,8 @@ export interface SessionApi {
   /** Returns an unsubscribe function — a pane that unmounts stops listening. */
   onData(listener: (message: SessionDataMessage) => void): () => void;
   onExit(listener: (message: SessionExitMessage) => void): () => void;
+  /** The host reshaped the pty — resize this emulator, a repaint follows. */
+  onResize(listener: (message: SessionResizeMessage) => void): () => void;
 }
 
 /**
@@ -186,6 +189,7 @@ export const BRIDGE_SURFACE = {
     'kill',
     'onData',
     'onExit',
+    'onResize',
   ],
   commands: ['invoke', 'list'],
   layout: ['get', 'onChanged', 'setViewport'],

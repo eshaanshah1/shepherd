@@ -293,6 +293,40 @@ describe('SessionServer sessions', () => {
   });
 
   /** A viewer with no opinion never resizes the pty — scoped to the connection. */
+  /**
+   * A viewer must be TOLD when the grid moves under it.
+   *
+   * The size is arbitrated between everyone watching, so a phone attaching
+   * reshapes the pty and the Mac — which asked for nothing — is suddenly
+   * rendering 50-column output into a 132-column emulator. It loses lines, and
+   * nothing anywhere reports a fault, because the bytes are valid either way.
+   */
+  it('tells every attached viewer when the pty is reshaped, and repaints it', async () => {
+    const { server } = harness();
+    const client = fakeConnection();
+    const id0 = greet(server, client.connection);
+    send(server, id0, REQUEST.create, { seq: 1, spec: { ...SHELL, cols: 80, rows: 24 } });
+    const id = (client.replies()[1]?.json as { value: { id: string } }).value.id;
+    send(server, id0, REQUEST.attach, { seq: 2, sessionId: id });
+
+    const before = client.frames.length;
+    send(server, id0, REQUEST.setViewport, {
+      seq: 3,
+      sessionId: id,
+      viewerId: 'phone',
+      viewport: { cols: 50, rows: 20 },
+    });
+
+    const resized = client.frames.slice(before).find((f) => f.kind === RESPONSE.resized);
+    expect(resized?.json).toMatchObject({ sessionId: id, cols: 50, rows: 20 });
+    // …and the screen behind it, because reshaping an emulator reflows the grid
+    // and redraws nothing: size without repaint is a correctly-shaped stale view.
+    await waitFor(
+      () => client.frames.slice(before).some((f) => f.kind === RESPONSE.snapshot),
+      'the repaint that follows a reshape',
+    );
+  });
+
   it('scopes a viewport to the connection, so a departing client stops constraining it', async () => {
     const { server, host } = harness();
     const a = fakeConnection();

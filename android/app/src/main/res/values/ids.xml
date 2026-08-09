@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Where the terminal view remembers the text size it was last given.
+
+      `TerminalRenderer.mTextSize` is package-private in the vendored Termux
+      view, so the size cannot be read back off the renderer; a view tag is the
+      ordinary Android way to hang one field on a view we do not own.
+    -->
+    <item name="shepherd_text_size" type="id" />
+</resources>

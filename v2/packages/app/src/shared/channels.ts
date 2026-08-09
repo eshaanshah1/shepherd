@@ -56,6 +56,12 @@ export const INVOKE = {
 export const EMIT = {
   sessionData: 'session:data',
   sessionExit: 'session:exit',
+  /**
+   * The pty was reshaped. Named `reshaped`, not `resize`, because
+   * `INVOKE.sessionResize` already owns `session:resize` — this is the ANSWER
+   * coming back after arbitration, not a request going out.
+   */
+  sessionReshaped: 'session:reshaped',
   layoutChanged: 'layout:changed',
   /** Agent state per session — the indicator's only source. */
   agentsChanged: 'agents:changed',
@@ -94,6 +100,16 @@ export const COALESCE = {
 export interface SessionDataMessage {
   readonly sessionId: string;
   readonly bytes: Uint8Array;
+}
+
+/**
+ * The pty's new grid. A viewer must reshape to it — the size is arbitrated
+ * between everyone watching, so it changes without this renderer asking.
+ */
+export interface SessionResizeMessage {
+  readonly sessionId: string;
+  readonly cols: number;
+  readonly rows: number;
 }
 
 export interface SessionExitMessage {

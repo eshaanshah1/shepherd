@@ -73,6 +73,7 @@ export class SessionServer {
   readonly #log: CategoryLogger;
   readonly #clients = new Map<number, ClientState>();
   readonly #hostExit: Disposable;
+  readonly #hostResize: Disposable;
   #nextClientId = 1;
 
   constructor(options: SessionServerOptions) {
@@ -86,6 +87,28 @@ export class SessionServer {
         client.attachments.get(exit.sessionId)?.dispose();
         client.attachments.delete(exit.sessionId);
         this.#send(client, encodeJsonFrame(RESPONSE.exit, { ...exit }));
+      }
+    });
+
+    /**
+     * …and every client watching learns it changed SIZE, for the same reason.
+     *
+     * The size is arbitrated between viewers, so it changes underneath a client
+     * that did nothing — a phone attaching letterboxes the Mac. Without this the
+     * Mac kept a wide grid and painted narrow output into it, losing lines with
+     * nothing to indicate a fault.
+     *
+     * The fresh snapshot is not optional: resizing an emulator reflows the grid
+     * but redraws no content, so a viewer told only the size is correctly shaped
+     * and showing the old screen.
+     */
+    this.#hostResize = this.#host.onResize((resize) => {
+      for (const client of this.#clients.values()) {
+        if (!client.attachments.has(resize.sessionId)) continue;
+        this.#send(client, encodeJsonFrame(RESPONSE.resized, { ...resize }));
+        this.#host.snapshot(resize.sessionId, (bytes) => {
+          this.#send(client, encodeByteFrame(RESPONSE.snapshot, resize.sessionId, bytes));
+        });
       }
     });
   }
@@ -150,6 +173,7 @@ export class SessionServer {
 
   dispose(): void {
     this.#hostExit.dispose();
+    this.#hostResize.dispose();
     for (const id of [...this.#clients.keys()]) this.disconnect(id);
   }
 

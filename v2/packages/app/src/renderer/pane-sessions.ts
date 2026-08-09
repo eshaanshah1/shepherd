@@ -5,6 +5,7 @@ import type {
   SessionCreateRequest,
   SessionDataMessage,
   SessionExitMessage,
+  SessionResizeMessage,
 } from '../shared/index.ts';
 
 /**
@@ -55,6 +56,8 @@ export interface TerminalLike {
   write(data: Uint8Array | string): void;
   onData(listener: (data: string) => void): TerminalDisposable;
   onResize(listener: (size: { cols: number; rows: number }) => void): TerminalDisposable;
+  /** Reshape the grid to the host's. See `#onHostResize`. */
+  resize(cols: number, rows: number): void;
   focus(): void;
   /** Re-measure against the host element. Null when it cannot be measured yet. */
   fit(): { cols: number; rows: number } | null;
@@ -179,6 +182,7 @@ export class PaneSessionRegistry implements PaneTerminals {
     // main (8ms / 32KB), so this is the only listener on the hot path.
     this.#unsubscribe.push(this.#session.onData((message) => this.#onData(message)));
     this.#unsubscribe.push(this.#session.onExit((message) => this.#onExit(message)));
+    this.#unsubscribe.push(this.#session.onResize((message) => this.#onHostResize(message)));
   }
 
   attach(pane: Pane, host: HTMLElement, existing?: string): void {
@@ -468,6 +472,22 @@ export class PaneSessionRegistry implements PaneTerminals {
     // one is still the pane's screen, and dropping bytes here would leave a
     // gap that nothing later fills in.
     this.#bySession.get(message.sessionId)?.terminal?.write(message.bytes);
+  }
+
+  /**
+   * The host reshaped the pty; this emulator follows.
+   *
+   * It is NOT this pane's own resize — that goes the other way, as a viewport
+   * the host arbitrates. This is the answer coming back, and it can differ from
+   * what this pane asked for because somebody else is watching too. A viewer
+   * that ignored it would keep a wide grid and paint narrow output into it,
+   * losing lines silently. The repaint arrives right behind it as a snapshot.
+   */
+  #onHostResize(message: SessionResizeMessage): void {
+    const terminal = this.#bySession.get(message.sessionId)?.terminal;
+    if (!terminal) return;
+    if (terminal.cols === message.cols && terminal.rows === message.rows) return;
+    terminal.resize(message.cols, message.rows);
   }
 
   #onExit(message: SessionExitMessage): void {

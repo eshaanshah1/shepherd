@@ -72,6 +72,21 @@ export const RESPONSE = {
    * output can beat.
    */
   snapshot: 68,
+  /**
+   * The pty changed size. A JSON frame: `{ sessionId, cols, rows }`.
+   *
+   * It exists because **one pty has one size and several viewers**, and the size
+   * is arbitrated (smallest wins) rather than owned by whoever is looking. A
+   * viewer that is not told renders bytes laid out for somebody else's grid:
+   * with a phone attached the Mac silently dropped lines, and a phone attaching
+   * to a wide session painted a mangled screen. Neither reported anything,
+   * because from each end's point of view nothing had failed.
+   *
+   * A fresh snapshot follows it, always — resizing an emulator reflows the grid
+   * but nothing redraws the CONTENT, so the size and the screen have to arrive
+   * together or the viewer is correct-sized and stale.
+   */
+  resized: 69,
 } as const;
 
 export type RequestKind = (typeof REQUEST)[keyof typeof REQUEST];

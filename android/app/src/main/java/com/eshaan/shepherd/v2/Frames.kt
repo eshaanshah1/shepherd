@@ -57,6 +57,14 @@ object Frames {
     const val RES_EXIT = 67
     const val RES_SNAPSHOT = 68
 
+    /**
+     * The pty was reshaped — `{sessionId, cols, rows}`, with a snapshot behind it.
+     *
+     * The size is arbitrated between everyone watching, so it moves without this
+     * client asking: another viewer attached, or somebody took control.
+     */
+    const val RES_RESIZED = 69
+
     // The remote handshake, deliberately disjoint from the session range so ONE
     // decoder reads both and a frame arriving in the wrong phase is a typed
     // refusal rather than a misparse.

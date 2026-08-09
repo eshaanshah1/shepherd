@@ -84,6 +84,25 @@ class RemoteTerminalSession(
         }
     }
 
+    /**
+     * Adopt the size the HOST decided, without offering an opinion back.
+     *
+     * One pty has one `winsize` and the program draws for that one grid — wrap
+     * points, `CUP row;col`, scroll regions — so a viewer rendering at any other
+     * size is replaying somebody else's layout. This is how a passive viewer
+     * stays correct: it takes the host's grid as given and scales its FONT to
+     * fit, rather than reshaping a terminal somebody else is typing into.
+     *
+     * Deliberately not [onSizeChanged]: that one declares a viewport, which is
+     * exactly what a passive viewer must not do.
+     */
+    fun adoptHostSize(cols: Int, rows: Int) {
+        if (cols == currentCols && rows == currentRows) return
+        emulator.resize(cols, rows)
+        currentCols = cols; currentRows = rows
+        onScreenUpdated?.invoke()
+    }
+
     /** Test seam: the current screen transcript. */
     fun screenText(): String = emulator.screen.transcriptText
 

@@ -4,13 +4,19 @@ import type {
   ScreenState,
   SessionError,
   SessionExit,
+  SessionResize,
   SessionInfo,
   SessionSpec,
   Viewport,
   WillCreateHook,
 } from '@shepherd/core';
 import { OutputCoalescer } from '../shared/coalescer.ts';
-import { EMIT, type SessionDataMessage, type SessionExitMessage } from '../shared/channels.ts';
+import {
+  EMIT,
+  type SessionDataMessage,
+  type SessionExitMessage,
+  type SessionResizeMessage,
+} from '../shared/channels.ts';
 
 /**
  * The main-process half of the session IPC, with the electron API removed.
@@ -33,6 +39,7 @@ export interface SessionHostLike {
   resize(id: SessionID, cols: number, rows: number): Result<void, SessionError>;
   kill(id: SessionID, signal?: string): Result<void, SessionError>;
   onExit(listener: (exit: SessionExit) => void): Disposable;
+  onResize(listener: (resize: SessionResize) => void): Disposable;
   has(id: SessionID): boolean;
   /**
    * The env-injection seam, and it runs in MAIN even when the ptys do not.
@@ -65,7 +72,7 @@ export interface RendererTarget {
   /** Stable per window; the bridge keys its attachments by it. */
   readonly id: number;
   isDestroyed(): boolean;
-  send(channel: string, payload: SessionDataMessage | SessionExitMessage): void;
+  send(channel: string, payload: SessionDataMessage | SessionExitMessage | SessionResizeMessage): void;
 }
 
 /**
@@ -107,11 +114,13 @@ export class SessionBridge {
   /** targetId -> sessionId -> attachment. Two windows may watch one session. */
   readonly #attachments = new Map<number, Map<SessionID, Attachment>>();
   readonly #hostExit: Disposable;
+  readonly #hostResize: Disposable;
 
   constructor(host: SessionHostLike, options: SessionBridgeOptions) {
     this.#host = host;
     this.#options = options;
     this.#hostExit = this.#host.onExit((exit) => this.#onSessionExit(exit));
+    this.#hostResize = this.#host.onResize((resize) => this.#onSessionResize(resize));
   }
 
   create(spec: SessionSpec): Result<SessionInfo, SessionError> {
@@ -213,6 +222,26 @@ export class SessionBridge {
   dispose(): void {
     for (const targetId of [...this.#attachments.keys()]) this.detachAll(targetId);
     this.#hostExit.dispose();
+    this.#hostResize.dispose();
+  }
+
+  /**
+   * Tell every viewer of this session its new grid.
+   *
+   * No flush and no teardown, unlike an exit: the session is alive, and the
+   * snapshot that repaints it is already on its way through `onData`.
+   */
+  #onSessionResize(resize: SessionResize): void {
+    const message: SessionResizeMessage = {
+      sessionId: resize.sessionId,
+      cols: resize.cols,
+      rows: resize.rows,
+    };
+    for (const byTarget of [...this.#attachments.values()]) {
+      const attachment = byTarget.get(resize.sessionId);
+      if (!attachment || attachment.target.isDestroyed()) continue;
+      attachment.target.send(EMIT.sessionReshaped, message);
+    }
   }
 
   #onSessionExit(exit: SessionExit): void {
