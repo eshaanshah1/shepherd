@@ -11,6 +11,9 @@
       "path": "packages/daemon"
     },
     {
+      "path": "packages/remote"
+    },
+    {
       "path": "packages/design-tokens"
     },
     {

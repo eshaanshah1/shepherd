@@ -3,6 +3,7 @@
 //
 //   core            -> stdlib + node-pty + sdk        (no electron, no react, no OS APIs)
 //   daemon          -> stdlib + node:net + core + sdk  (shepherdd: owns the ptys; NO electron)
+//   remote          -> stdlib + node:net/tls + core + sdk  (pairing, identity, endpoints)
 //   sdk             -> stdlib only                    (types + pure helpers; imports nobody)
 //   design-tokens   -> nothing                        (data + generators)
 //   ui              -> react + sdk + design-tokens    (the primitive set; a page and nothing else)
@@ -209,6 +210,40 @@ export const boundaries = [
         deny(
           [...WORKSPACE.app, ...WORKSPACE.platform, ...WORKSPACE.tokens, ...WORKSPACE.ui, '@shepherd/ext-*'],
           'the daemon may import @shepherd/core and @shepherd/sdk. It sits BELOW the app: the app is one of its clients.',
+        ),
+      ),
+      ...noDom,
+    },
+  },
+  {
+    /**
+     * The remote library — pairing, TLS identity, and the endpoint seam.
+     *
+     * It may reach `node:tls` and `node:net`, which are its front door in the
+     * same sense core's ingress sockets are: this package exists to terminate a
+     * connection. It may NOT reach `child_process`, even though minting a
+     * certificate needs `openssl` — that goes through the platform's
+     * `ProcessAPI`, which is the rule every other caller keeps and the reason
+     * the runner is injectable at all.
+     *
+     * No electron: it is loaded by the app AND by the daemon, and the daemon has
+     * no electron module at runtime.
+     */
+    name: 'boundary/remote',
+    files: ['packages/remote/**/*.ts'],
+    rules: {
+      ...restrict(
+        deny(ELECTRON, 'the remote library is loaded by the daemon too, which has no electron at runtime.'),
+        deny(REACT, 'there is no page here; the pairing sheet is the app’s.'),
+        deny(XTERM_VIEW, 'the renderer draws.'),
+        deny(NODE_PTY, 'remote reaches sessions through core, never a pty of its own.'),
+        deny(
+          ['os', 'node:os', 'child_process', 'node:child_process', 'worker_threads', 'node:worker_threads'],
+          'minting an identity shells out to openssl through @shepherd/platform-darwin’s ProcessAPI, not from here.',
+        ),
+        deny(
+          [...WORKSPACE.app, ...WORKSPACE.tokens, ...WORKSPACE.ui, '@shepherd/ext-*'],
+          'remote may import @shepherd/core and @shepherd/sdk. The app is one of its consumers, not its dependency.',
         ),
       ),
       ...noDom,
