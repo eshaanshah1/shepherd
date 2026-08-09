@@ -273,11 +273,49 @@ export const activate: ActivateFn<AgentsAPI> = async (ctx: ExtensionContext, api
         const record = registry.get(args.sessionId);
         const kind = kinds.all().find((candidate) => candidate.id === record?.kindId);
         const slot = registry.slotOf(args.sessionId);
+        const resumeTarget = kind?.resumeTargetOf?.(slot) ?? null;
         return {
           sessionId: args.sessionId,
           kindId: record?.kindId ?? null,
-          resumeTarget: kind?.resumeTargetOf?.(slot) ?? null,
+          resumeTarget,
+          /**
+           * The whole command, so no consumer has to know the vendor's binary or
+           * its flag (ADR 0035 §3). `resumeTarget` stays alongside it because a
+           * caller may want to STORE the token and ask for the command later —
+           * which is exactly what `tasks` does across an archive.
+           */
+          resumeCommand:
+            resumeTarget === null ? null : (kind?.resumeCommandOf?.(resumeTarget) ?? null),
         };
+      },
+    }),
+    commands.register(AGENTS_COMMANDS.resumeCommand, {
+      title: 'Agents: Resume Command',
+      schema: s.object({ target: s.string(), kindId: s.optional(s.string()) }),
+      /**
+       * Asked with a token captured earlier, when the session it came from no
+       * longer exists — so it resolves the KIND by id rather than by session.
+       *
+       * With `kindId` absent it falls back to the only kind that declares
+       * `capabilities.resume`, and refuses if that is ambiguous rather than
+       * guessing: handing back the wrong vendor's command line would launch the
+       * wrong agent against somebody's transcript id.
+       */
+      handler: (args) => {
+        const resumable = kinds.all().filter((kind) => kind.capabilities?.resume === true);
+        const kind =
+          args.kindId === undefined
+            ? resumable.length === 1
+              ? resumable[0]
+              : undefined
+            : resumable.find((candidate) => candidate.id === args.kindId);
+        if (kind === undefined) {
+          ctx.log.warn(
+            `no resumable kind for ${args.kindId ?? '(unspecified)'} — ${resumable.length} candidate(s)`,
+          );
+          return { command: null };
+        }
+        return { command: kind.resumeCommandOf?.(args.target) ?? null };
       },
     }),
   );

@@ -207,6 +207,18 @@ function harness(
       // shared with `openRoot` above, so a pane id names one pane whichever verb
       // opened it.
       if (id === 'layout.split') return { ok: true, value: `p${(panes += 1)}` as never };
+      /**
+       * The AGENT extension answers this, not `tasks` (ADR 0035 §3).
+       *
+       * The seam is a three-way split: `tasks` decides WHETHER to resume, the
+       * agents layer decides WHICH kind, and the kind decides HOW. This fake
+       * stands in for the last two — and it is why the assertion below can check
+       * that `tasks` never spells `claude` itself.
+       */
+      if (id === 'agents.resumeCommand') {
+        const target = String((args as { target?: unknown }).target);
+        return { ok: true, value: { command: `claude --resume '${target}'` } as never };
+      }
       // Everything else the extension does not own answers OK and nothing else,
       // which is what `layout.close` and `layout.rename` on a live pane do. The
       // failing cases are their own tests, so a blanket failure here would hide
@@ -992,6 +1004,26 @@ describe('restoring a task', () => {
     expect((opened?.args as { initialCommand?: string }).initialCommand).toBe(
       "claude --resume 'claude-abc'",
     );
+    // …and it came from the AGENT layer rather than from here. `tasks` used to
+    // build this string itself; R1 moved it to the kind, so the command in the
+    // assertion above is the fake agent's, not this extension's.
+    expect(h.invoked.some((call) => call.id === 'agents.resumeCommand')).toBe(true);
+  });
+
+  /**
+   * The rule ADR 0035 §3 finishes: the target was already opaque here, and now
+   * so are the binary and the flag around it.
+   */
+  it('never spells the agent binary itself when resuming', async () => {
+    const h = (live = harness({ tasks: [withAgent] }));
+    await h.run('tasks.restore', { task: 't1' });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    const asked = h.invoked.find((call) => call.id === 'agents.resumeCommand');
+    // What leaves this extension is a TOKEN. Everything about how to run it
+    // comes back from the kind.
+    expect(asked?.args).toEqual({ target: 'claude-abc' });
+    expect(h.invoked.some((call) => call.id.startsWith('claudeCode.'))).toBe(false);
   });
 
   it('asks the AGENT extension for the target, never a vendor by name', async () => {

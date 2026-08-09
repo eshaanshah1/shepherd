@@ -95,6 +95,27 @@ export interface AgentKind {
    * a kind whose agent cannot reattach implements neither.
    */
   resumeTargetOf?(slot: unknown): string | null;
+
+  /**
+   * The command line that reattaches to `target` — the vendor's binary, its
+   * flag, and the target quoted for a shell.
+   *
+   * The target has always been opaque (D11); the BINARY AND FLAG around it were
+   * not. `tasks` spelled `claude --resume` itself, and said so: "this is the
+   * seam where an agent kind should eventually say it … hardcoded until a second
+   * kind exists, because inventing the registry with one consumer would shape it
+   * around this caller."
+   *
+   * R1 supplied the second consumer — not a second kind, a second CALLER.
+   * Restoring a pane after a cold start needs a resume command with no task
+   * involved at all: different extension, different question, same answer. One
+   * caller shaped the shortcut; two is when it stops being justified (ADR 0035
+   * §3).
+   *
+   * Returns a single line, because that is what `Pane.initialCommand` carries
+   * and a typed newline is an Enter press (ADR 0034).
+   */
+  resumeCommandOf?(target: string): string | null;
 }
 
 /** The id of the extension point vendors register through. */

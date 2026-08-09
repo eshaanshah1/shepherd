@@ -170,3 +170,31 @@ describe('the kind itself', () => {
     expect(transition(reduce(input('Stop', {}, { current: 'working', viewing: false }))).state).toBe('needsCheck');
   });
 });
+
+describe('resumeCommandOf', () => {
+  /**
+   * The command moved here from `tasks` in R1 (ADR 0035 §3). These are that
+   * file's tests, following the behaviour they describe — a resume line is a
+   * vendor fact, and this package is the only one allowed to know it.
+   */
+  it('names the session and carries no prompt', () => {
+    // The transcript IS the context. Typing the original brief at a resumed
+    // session would restate what it already knows and read as a second
+    // instruction — which is exactly what restoring a task used to do.
+    expect(claudeKind().resumeCommandOf?.('abc-123')).toBe("claude --resume 'abc-123'");
+  });
+
+  it('quotes the target, which came from somewhere else entirely', () => {
+    // It is a token this code did not mint, arriving from a vendor's hook
+    // payload — so it is quoted rather than trusted.
+    expect(claudeKind().resumeCommandOf?.("it's")).toBe("claude --resume 'it'\\''s'");
+  });
+
+  it('is one line, because a typed newline is an Enter press (ADR 0034)', () => {
+    expect(claudeKind().resumeCommandOf?.('x')).not.toContain('\n');
+  });
+
+  it('declares the capability it implements', () => {
+    expect(claudeKind().capabilities?.resume).toBe(true);
+  });
+});

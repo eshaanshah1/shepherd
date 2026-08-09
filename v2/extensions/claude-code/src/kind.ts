@@ -60,6 +60,16 @@ function stringField(hook: unknown, field: string): string {
   return typeof value === 'string' ? value : '';
 }
 
+/**
+ * Single-quoted for a shell, with embedded quotes escaped.
+ *
+ * A resume target is a vendor token we did not mint, so it is quoted rather than
+ * trusted — the same care `tasks` took when this lived there.
+ */
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
 export function claudeKind(): AgentKind {
   return {
     id: CLAUDE_KIND_ID,
@@ -81,6 +91,18 @@ export function claudeKind(): AgentKind {
      * transcript instead of starting a fresh agent on the brief.
      */
     resumeTargetOf: (slot) => (slot as ClaudeSlot | undefined)?.resumeSessionID ?? null,
+
+    /**
+     * `claude --resume <target>` — and this package is the ONLY place that
+     * string may appear (ADR 0035 §3). It moved here from `tasks`, whose own
+     * comment had been asking for it: the binary and the flag are vendor facts,
+     * and a consumer that spells them has learned which agent it hired.
+     *
+     * No prompt and no prompt file: the transcript IS the context, and typing
+     * the original brief at a resumed session would restate what it already
+     * knows and read as a second instruction.
+     */
+    resumeCommandOf: (target) => `claude --resume ${shellQuote(target)}`,
   };
 }
 

@@ -32,29 +32,16 @@ export function shellQuote(value: string): string {
 }
 
 /**
- * `claude` by name, and this is the seam where an agent kind should eventually
- * say it (§7c: kinds already declare `capabilities`, and a launch command
- * belongs beside them). Hardcoded until a second kind exists, because inventing
- * the registry with one consumer would shape it around this caller — ADR 0031's
- * rule, applied to a smaller thing.
+ * The agent's binary, for LAUNCHING a new session.
+ *
+ * `planResume` used to live beside this and is gone: a resume command now comes
+ * from the agent kind through `agents.resumeCommand` (ADR 0035 §3), because R1
+ * gave that seam its second consumer. This one stays for now, and for the same
+ * reason it always did — a LAUNCH carries a prompt file and a shell line built
+ * around it, which is a bigger shape than a kind declares today. It is the next
+ * thing to move, not a decision to keep it here.
  */
 export const AGENT_BINARY = 'claude';
-
-/**
- * Reattach to an agent that already exists, by the token its kind gave us.
- *
- * No prompt and no prompt file: the transcript IS the context, and typing the
- * original brief at a resumed session would restate what it already knows and
- * read as a second instruction.
- *
- * `--resume` is spelled here for the same reason `AGENT_BINARY` is: one kind
- * exists, and inventing a launch-command registry with one consumer would shape
- * it around this caller. The TARGET is opaque and travels from the kind that
- * captured it (D11); only the flag around it is assumed.
- */
-export function planResume(target: string): string {
-  return `${AGENT_BINARY} --resume ${shellQuote(target)}`;
-}
 
 export function planLaunch(input: { readonly promptFile: string; readonly prompt: string }): LaunchPlan {
   const file = shellQuote(input.promptFile);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { planLaunch, shellQuote, planResume } from './launch.ts';
+import { planLaunch, shellQuote } from './launch.ts';
 
 describe('planLaunch', () => {
   it('types ONE line, and the prompt is not on it', () => {
@@ -26,20 +26,5 @@ describe('planLaunch', () => {
     expect(shellQuote("/tmp/it's/p.txt")).toBe(`'/tmp/it'\\''s/p.txt'`);
     const plan = planLaunch({ promptFile: "/tmp/it's/p.txt", prompt: 'hi' });
     expect(plan.command.startsWith(`p=$(cat '/tmp/it'\\''s/p.txt')`)).toBe(true);
-  });
-});
-
-describe('planResume', () => {
-  it('names the session and carries no prompt', () => {
-    // The transcript IS the context. Typing the original brief at a resumed
-    // session would restate what it already knows and read as a second
-    // instruction — which is exactly what restoring a task used to do.
-    expect(planResume('abc-123')).toBe("claude --resume 'abc-123'");
-  });
-
-  it('quotes the target, which came from somewhere else entirely', () => {
-    // It is a vendor's token travelling opaquely (D11), so nothing here knows
-    // what characters it can contain — and it lands on a shell line.
-    expect(planResume("it's")).toBe(`claude --resume ${shellQuote("it's")}`);
   });
 });
