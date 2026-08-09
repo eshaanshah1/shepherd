@@ -494,15 +494,20 @@ describe('roots the window switches between', () => {
     view.unmount();
   });
 
-  it('does NOT release a hidden root’s terminals when the active root changes', async () => {
+  it('suspends a hidden root’s panes without ever creating a second session', async () => {
     /**
-     * THE multi-root trap.
+     * THE multi-root trap, and what R0 changed about it.
      *
-     * The release pass drops the terminal of any pane absent from the snapshot.
-     * "Absent" has to mean absent from the UNION of every root: read off the
-     * active root alone, switching releases the hidden root's panes, and
-     * switching back creates a SECOND pty for each while the first keeps running
-     * with nothing pointing at it — unkillable from the UI.
+     * The invariant is unchanged and is the whole point: switching roots must
+     * never create a second pty for a pane that already has one, leaving the
+     * first running with nothing pointing at it — unkillable from the UI.
+     *
+     * What changed is the mechanism. The hidden root's panes used to keep a live
+     * terminal and keep parsing forever, because a pane that stopped listening
+     * could never catch up from a 256 KB ring. The host now holds the SCREEN, so
+     * a hidden pane holds no terminal at all and is handed a correct repaint when
+     * it comes back. So a terminal IS rebuilt on wake — and the session behind it
+     * is adopted, not recreated, which is the claim that matters.
      */
     const home = makePane({ userTitle: 'home' });
     const task = makePane({ userTitle: 'task' });
@@ -511,7 +516,11 @@ describe('roots the window switches between', () => {
 
     const { view, layout, built, session, registry } = render({ snapshot: both('window-1') });
     await registry.settled();
-    expect(built).toHaveLength(2);
+
+    // Only the visible root built a terminal. The hidden one costs a session id.
+    expect(built).toHaveLength(1);
+    expect(registry.inspect(task.id)?.suspended).toBe(true);
+    expect(registry.inspect(task.id)?.streaming).toBe(false);
     session.calls.length = 0;
 
     layout.push(both('task-1'));
@@ -519,11 +528,12 @@ describe('roots the window switches between', () => {
     layout.push(both('window-1'));
     await registry.settled();
 
-    // No terminal was thrown away…
-    expect(built).toHaveLength(2);
-    expect(built.map((terminal) => terminal.disposed)).toEqual([false, false]);
-    // …so nothing had to be rebuilt, and no second session was created.
+    // Each pane woke into a fresh terminal…
+    expect(registry.inspect(home.id)?.suspended).toBe(false);
+    expect(registry.inspect(task.id)?.suspended).toBe(true);
+    // …and NOT a fresh session. This is the assertion the whole test is for.
     expect(session.names).not.toContain('create');
+    expect(session.names).not.toContain('kill');
     expect(registry.inspect(home.id)?.sessionId).toBe('s1');
     expect(registry.inspect(task.id)?.sessionId).toBe('s2');
     view.unmount();
@@ -534,17 +544,20 @@ describe('roots the window switches between', () => {
     // widen it to everything, or a closed pane's terminal leaks forever.
     const home = makePane({ userTitle: 'home' });
     const gone = makePane({ userTitle: 'gone' });
-    const { view, layout, built, registry } = render({
+    const { view, layout, registry } = render({
       snapshot: snapshotsOf('window-1', rootOf(leaf(home)), rootOf(leaf(gone), gone, 'task-1')),
     });
     await registry.settled();
-    expect(built).toHaveLength(2);
+    // Suspended, not released — it is hidden, but it is still in a root.
+    expect(registry.inspect(gone.id)?.suspended).toBe(true);
 
     layout.push(snapshotsOf('window-1', rootOf(leaf(home))));
     await registry.settled();
 
+    // Now it has left every root, and `release` drops it from the registry
+    // entirely. Suspension must never be mistaken for removal: a suspended pane
+    // still answers `inspect`, and this one no longer does.
     expect(registry.inspect(gone.id)).toBeUndefined();
-    expect(built[1]?.disposed).toBe(true);
     view.unmount();
   });
 

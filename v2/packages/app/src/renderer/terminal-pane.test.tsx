@@ -31,6 +31,7 @@ function spyTerminals(): SpyTerminals {
     },
     detach: (paneId) => calls.push({ name: 'detach', paneId }),
     release: (paneId) => calls.push({ name: 'release', paneId }),
+    suspend: (pane) => calls.push({ name: 'suspend', paneId: pane.id }),
     focus: (paneId) => calls.push({ name: 'focus', paneId }),
     fit: (paneId) => calls.push({ name: 'fit', paneId }),
     inspect: (): PaneDiagnostics | undefined => undefined,

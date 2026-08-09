@@ -88,6 +88,18 @@ export interface PaneTerminals {
    * and kills nothing, because core already did. See the class comment.
    */
   release(paneId: PaneID): void;
+  /**
+   * The pane is mounted but NOT VISIBLE — it lives in a root the window is not
+   * showing. Drops its terminal and stops its stream; keeps its session, its id,
+   * and its place in the registry. `attach` wakes it.
+   *
+   * Takes the `Pane` and not just an id, for the same reason `attach` does: a
+   * pane whose root has never been on screen has no entry yet, and its session
+   * must still be CREATED. `tasks.spawn` opens an agent into a root that may not
+   * be the visible one, and an agent that waits to be looked at before it starts
+   * is not an agent.
+   */
+  suspend(pane: Pane, existing?: string): void;
   focus(paneId: PaneID): void;
   fit(paneId: PaneID): void;
   /** Every branch that ends in "and then nothing happens" must be readable. */
@@ -101,6 +113,8 @@ export interface PaneDiagnostics {
   readonly streaming: boolean;
   /** The terminal's element is currently parented into a live view. */
   readonly mounted: boolean;
+  /** Holding no terminal because nobody can see it. Wakes on the next `attach`. */
+  readonly suspended: boolean;
   readonly exited: boolean;
   readonly cols: number;
   readonly rows: number;
@@ -123,8 +137,20 @@ interface Entry {
   wrapper: HTMLElement | null;
   host: HTMLElement | null;
   viewDisposables: TerminalDisposable[];
+  /**
+   * Whether this pane should HAVE a session at all. True from the first mount —
+   * visible or not — and false only once the pane is closed or the registry is
+   * disposed.
+   *
+   * Separate from `wantStream` because a suspended pane wants the first and not
+   * the second: its agent must be running even though nobody is watching it.
+   * Collapsing the two is what made a hidden root's panes never spawn.
+   */
+  wantSession: boolean;
   /** Whether the session's bytes should be flowing here. False after close/dispose. */
   wantStream: boolean;
+  /** Parked: no terminal, no stream, but still this pane's session. */
+  suspended: boolean;
   streaming: boolean;
   exited: boolean;
   closed: boolean;
@@ -170,10 +196,16 @@ export class PaneSessionRegistry implements PaneTerminals {
       this.#bySession.set(existing, entry);
     }
 
+    // Waking a suspended pane. `sessionId` is deliberately left alone: the
+    // session outlived the view, and `#sync` re-attaches — where the host hands
+    // it the screen it missed rather than a replay it has outgrown.
+    entry.suspended = false;
+
     if (entry.terminal === null) this.#buildTerminal(entry, host);
     const wrapper = entry.wrapper;
     if (wrapper !== null && wrapper.parentNode !== host) host.append(wrapper);
     entry.host = host;
+    entry.wantSession = true;
     entry.wantStream = true;
     entry.terminal?.fit();
 
@@ -198,6 +230,7 @@ export class PaneSessionRegistry implements PaneTerminals {
     // while its very first `create` is still queued must not go on to spawn a
     // shell for a pane that no longer exists — `#sync` reads this flag first.
     entry.closed = true;
+    entry.wantSession = false;
     entry.wantStream = false;
     this.#entries.delete(paneId);
     this.#enqueue(entry, 'release', async () => {
@@ -211,6 +244,45 @@ export class PaneSessionRegistry implements PaneTerminals {
         entry.streaming = false;
       }
     });
+  }
+
+  /**
+   * The pane is mounted but nobody can see it — it is in a root the window is
+   * not showing. Drop the terminal, stop the stream, keep the session.
+   *
+   * This is NOT `detach`. `detach` is React reparenting a pane you can still
+   * see (splitting, closing a sibling), and it must stay a bare unparent — see
+   * the class comment. This is the case that was previously IMPOSSIBLE: before
+   * the host held a screen, a pane that stopped listening could never catch up,
+   * so the comment above says a design that disposed the terminal would "rely on
+   * main's 256 KB replay ring to redraw it: fine for a short session, and for a
+   * long one it silently loses everything older than the ring". The ring is gone;
+   * an attach is now handed a correct screen however long it was away.
+   *
+   * Measured at 20 panes with one visible: renderer memory 40.7 -> 2.0 MB and
+   * IPC 4 -> 0.2 MB/s, with CPU a wash — and 19 panes stop RENDERING, which is
+   * the largest term and the one the probe could not measure
+   * (docs/superpowers/probes/2026-08-09-r0, p6).
+   */
+  suspend(pane: Pane, existing?: string): void {
+    const entry = this.#ensure(pane);
+    entry.pane = pane;
+    if (entry.closed) return;
+
+    // Adopt exactly as `attach` does. A reloaded page whose hidden root already
+    // has sessions in main must not create a second set the moment it is shown.
+    if (entry.sessionId === null && existing !== undefined && existing !== '') {
+      entry.sessionId = existing;
+      this.#bySession.set(existing, entry);
+    }
+
+    if (entry.suspended) return;
+    entry.suspended = true;
+    // The session is still wanted; only its bytes are not.
+    entry.wantSession = true;
+    entry.wantStream = false;
+    this.#teardownView(entry);
+    this.#sync(entry, 'suspend');
   }
 
   focus(paneId: PaneID): void {
@@ -229,6 +301,7 @@ export class PaneSessionRegistry implements PaneTerminals {
       sessionId: entry.sessionId,
       streaming: entry.streaming,
       mounted: entry.host !== null,
+      suspended: entry.suspended,
       exited: entry.exited,
       cols: entry.terminal?.cols ?? 0,
       rows: entry.terminal?.rows ?? 0,
@@ -253,6 +326,7 @@ export class PaneSessionRegistry implements PaneTerminals {
     for (const off of this.#unsubscribe.splice(0)) off();
     for (const entry of this.#entries.values()) {
       this.#teardownView(entry);
+      entry.wantSession = false;
       entry.wantStream = false;
       this.#sync(entry, 'dispose');
     }
@@ -271,7 +345,9 @@ export class PaneSessionRegistry implements PaneTerminals {
       wrapper: null,
       host: null,
       viewDisposables: [],
+      wantSession: false,
       wantStream: false,
+      suspended: false,
       streaming: false,
       exited: false,
       closed: false,
@@ -330,7 +406,7 @@ export class PaneSessionRegistry implements PaneTerminals {
     this.#enqueue(entry, context, async () => {
       if (entry.closed) return;
 
-      if (entry.sessionId === null && entry.wantStream && !entry.exited) {
+      if (entry.sessionId === null && entry.wantSession && !entry.exited) {
         const created = await this.#session.create(this.#spec(entry.pane));
         if (!created.ok) {
           this.#onError(created.error, `create ${entry.paneId}`);
