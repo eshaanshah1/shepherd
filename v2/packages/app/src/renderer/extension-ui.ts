@@ -2,6 +2,7 @@ import type { ComponentType } from 'react';
 import type { ExtensionViewProps } from '@shepherd/sdk';
 import { TaskComposer } from '@shepherd/ext-tasks/ui';
 import { DiagnosticsCard } from '@shepherd/ext-diagnostics/ui';
+import { WorktreeHookEditor } from '@shepherd/ext-worktree-hook/ui';
 
 /**
  * The in-proc React seam (§7b, ADR 0033): the one place a contributed view's
@@ -29,6 +30,7 @@ import { DiagnosticsCard } from '@shepherd/ext-diagnostics/ui';
 export const EXTENSION_UI: Readonly<Record<string, ComponentType<ExtensionViewProps>>> = {
   'tasks.composer': TaskComposer,
   'diagnostics.card': DiagnosticsCard,
+  'worktree-hook.editor': WorktreeHookEditor,
 };
 
 export function resolveExtensionUi(component: string | undefined): ComponentType<ExtensionViewProps> | undefined {
