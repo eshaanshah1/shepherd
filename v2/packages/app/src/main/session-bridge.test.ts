@@ -322,7 +322,7 @@ describe('SessionBridge → layout binding', () => {
     const store = new LayoutStore({
       logger: nullLogger,
       clock: systemClock,
-      sessions: { kill: (id) => void killed.push(id) },
+      sessions: { kill: (id) => void killed.push(id), isLive: () => true },
     });
     const root = rootId('window-1');
     store.open(root);

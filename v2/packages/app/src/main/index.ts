@@ -281,7 +281,13 @@ const layout = new LayoutStore({
   logger,
   clock: systemClock,
   storage: store.namespace('layout'),
-  sessions: { kill: (id) => void host.kill(id) },
+  sessions: {
+    kill: (id) => void host.kill(id),
+    // R1 (ADR 0035): a restored pane's persisted `sessionId` is a claim, and
+    // the daemon's inventory is what settles it. `has` reads the mirror
+    // `SessionClient.start()` filled from the daemon's own `list`.
+    isLive: (id) => host.has(id),
+  },
 });
 
 /**
@@ -589,6 +595,25 @@ function captureIfAsked(win: BrowserWindow): void {
 }
 
 void app.whenReady().then(async () => {
+  /**
+   * Reach the daemon and adopt what it is already running — BEFORE any window
+   * opens, because that is when the layout restores and asks `isLive` whether
+   * each persisted binding still means something (ADR 0035).
+   *
+   * Awaited rather than fired-and-forgotten: a restore that raced this would see
+   * an empty inventory, drop every binding, and create a second pty for every
+   * pane while the daemon's originals kept running — the exact orphaning the
+   * persisted binding exists to prevent. Failing to reach the daemon is reported
+   * and the app continues; every pane then simply creates, which is the pre-R1
+   * behaviour and a much better outcome than refusing to start.
+   */
+  if (host instanceof SessionClient) {
+    const adopted = await host.start();
+    if (!adopted.ok) {
+      logger.child('session').error(`starting without the daemon's inventory: ${adopted.error}`);
+    }
+  }
+
   registerSessionIpc(bridge, { defaults: shellDefaults() });
   registerWindowIpc();
 

@@ -34,7 +34,7 @@ function harness(appActive = true): Harness {
   const layout = new LayoutStore({
     logger: nullLogger,
     clock: systemClock,
-    sessions: { kill: () => undefined },
+    sessions: { kill: () => undefined, isLive: () => true },
   });
   layout.open(ROOT);
   const viewing = new ViewingResolver(

@@ -230,7 +230,7 @@ describe('SplitTree (ported from SplitTreeTests.swift)', () => {
     expect(high.ratio).toBe(0.9);
   });
 
-  it('testCodableRoundTripKeepsStructureDropsLiveState', () => {
+  it('testCodableRoundTripKeepsStructureAndIdDropsLiveState', () => {
     const { tree } = updatePane(
       split('row', 0.3, leaf(p('a')), leaf(p('b'))),
       paneId('a'),
@@ -242,7 +242,11 @@ describe('SplitTree (ported from SplitTreeTests.swift)', () => {
     const restored = panes(back).find((pane) => pane.userTitle === 'left');
     expect(restored?.cwd).toBe('/tmp'); // persisted fields survive
     expect(restored?.title).toBe(''); // live state dropped
-    expect(restored?.id).not.toBe('a'); // fresh id
+    // The id SURVIVES since R1 (ADR 0035). It used to be minted fresh, which was
+    // right while sessions died with the app — with `shepherdd` holding the ptys
+    // a fresh id means the restored pane cannot find the session it was showing,
+    // so it creates a second one and orphans the first.
+    expect(restored?.id).toBe('a');
     if (back.kind !== 'split') throw new Error('expected split');
     expect(back.ratio).toBe(0.3);
   });

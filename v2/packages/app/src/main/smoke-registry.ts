@@ -41,6 +41,11 @@ export async function runSmoke(
       const { runTerminalSmoke } = await import('./smoke-terminal.ts');
       return runTerminalSmoke(win, host);
     }
+    case 'daemon-1':
+    case 'daemon-2': {
+      const { runDaemonSmoke } = await import('./smoke-daemon.ts');
+      return runDaemonSmoke(win, host, name === 'daemon-1' ? 1 : 2);
+    }
     case 'mirror': {
       const { runMirrorSmoke } = await import('./smoke-mirror.ts');
       return runMirrorSmoke(win, host);

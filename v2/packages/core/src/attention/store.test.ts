@@ -38,7 +38,10 @@ beforeEach(() => {
   records = [];
   clock = manualClock(0);
   logger = createLogger({ clock, level: 'debug', sink: (_l, r) => records.push(r) });
-  sessions = { kill: () => {} };
+  // R1: a `SessionSink` must also answer whether a session is still alive.
+  // Always true here; the restore path that consumes it has its own cases in
+  // `layout/store.test.ts`.
+  sessions = { kill: () => {}, isLive: () => true };
   ids = 0;
 });
 
