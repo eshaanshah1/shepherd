@@ -115,6 +115,7 @@ fun TerminalScreen(
      * back — see `detach`.
      */
     var controlling by remember(terminal) { mutableStateOf(true) }
+    var viewRef by remember(terminal) { mutableStateOf<TerminalView?>(null) }
     DisposableEffect(terminal) {
         terminal.takeControl(true)
         onDispose { }
@@ -127,6 +128,7 @@ fun TerminalScreen(
                 modifier = Modifier.fillMaxSize().padding(8.dp),
                 factory = { context ->
                     TerminalView(context, null).apply {
+                        viewRef = this
                         // Termux's renderer skips painting default-background
                         // cells and relies on the view's own background, which is
                         // what makes the terminal read black.
@@ -138,11 +140,9 @@ fun TerminalScreen(
                         // The host's grid changed — refit the FONT to it. A
                         // passive viewer never reshapes the terminal; it makes
                         // the type small enough to show the whole real screen.
-                        terminal.onHostGrid = { cols, _ -> post { fitFontTo(this, cols) } }
+                        terminal.onHostGrid = { cols, _ -> post { applySizing(this, terminal, cols) } }
                         addOnLayoutChangeListener { view, _, _, _, _, _, _, _, _ ->
-                            val self = view as TerminalView
-                            fitFontTo(self, terminal.session.currentCols)
-                            reportGrid(self, terminal)
+                            applySizing(view as TerminalView, terminal, terminal.session.currentCols)
                         }
                     }
                 },
@@ -158,6 +158,7 @@ fun TerminalScreen(
                 KeyBar(terminal, controlling) {
                     controlling = !controlling
                     terminal.takeControl(controlling)
+                    viewRef?.let { applySizing(it, terminal, terminal.session.currentCols) }
                 }
             }
             ComposeRow(terminal)
@@ -256,6 +257,29 @@ private fun ComposeRow(terminal: SessionTerminal) {
         ) {
             TablerIcon(Tabler.send, Color(0xFF0F0F11), size = 20.dp)
         }
+    }
+}
+
+/**
+ * The two modes are two different answers to one question, and they must not
+ * both run — which they did, and they cancelled each other out.
+ *
+ * `fitFontTo` shrank the type so the Mac's 78 columns fit; `reportGrid` then
+ * measured that tiny type and declared "78 columns is what I can display", so
+ * taking control asked for exactly the grid it already had. The terminal never
+ * got smaller and the font never got bigger.
+ *
+ * Controlling: keep a READABLE font and report however few columns that yields —
+ * the pty reshapes to it and the program lays itself out. Passive: keep the
+ * host's grid untouched and shrink the type instead.
+ */
+private fun applySizing(view: TerminalView, terminal: SessionTerminal, hostCols: Int) {
+    if (terminal.controlling) {
+        view.setTextSize(TERM_TEXT_SIZE_PX)
+        view.setTag(R.id.shepherd_text_size, TERM_TEXT_SIZE_PX)
+        reportGrid(view, terminal)
+    } else {
+        fitFontTo(view, hostCols)
     }
 }
 

@@ -129,7 +129,23 @@ export class TerminalMirror {
       // Disposed while the barrier was in flight — a mirror torn down mid-capture
       // must not serialize a disposed terminal.
       if (this.#disposed) return;
-      sink(this.#encoder.encode(this.#serializer.serialize({ scrollback })));
+      /**
+       * `RIS` first, because a snapshot REPLACES a screen — it does not add to
+       * one.
+       *
+       * The serializer emits a stream that reconstructs this terminal *from
+       * scratch*: it assumes a fresh emulator and so writes no reset of its own.
+       * Written on top of a screen that already has content it appends a whole
+       * second copy — which is what a viewer saw when a reshape sent it a
+       * repaint. Every resize stacked another screen, and on the display that
+       * read as the last command having run again and again (`❯ ❯ echo …`, two
+       * prompts on one line) rather than as one screen drawn twice, which is
+       * why it was hunted as an input bug.
+       *
+       * Prefixed HERE rather than in each client, because there is one right
+       * answer and three consumers — the renderer, the phone, and the smoke.
+       */
+      sink(this.#encoder.encode(`\u001bc${this.#serializer.serialize({ scrollback })}`));
     });
   }
 
