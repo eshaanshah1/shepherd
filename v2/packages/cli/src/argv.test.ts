@@ -90,6 +90,36 @@ describe('parseArgv', () => {
     expect(parseArgv(['task', 'new', '--title']).ok).toBe(false);
   });
 
+  it('maps the worktree-hook verbs to their command ids', () => {
+    expect(parseArgv(['worktree-hook', 'get'])).toMatchObject({ ok: true, command: 'worktreeHook.get' });
+    expect(parseArgv(['worktree-hook', 'clear'])).toMatchObject({ ok: true, command: 'worktreeHook.clear' });
+    expect(parseArgv(['worktree-hook', 'test-run'])).toMatchObject({ ok: true, command: 'worktreeHook.testRun' });
+  });
+
+  it('passes --repo through as a plain string for a hook, not as a repos array', () => {
+    // `--repo` REPEATS for `task new`, because a task is 1..n repos. A hook
+    // belongs to exactly one, and a one-element array here would be rejected by
+    // the schema one process away, naming a field nobody typed.
+    expect(parseArgv(['worktree-hook', 'set', '--repo', '~/dev/alpha', '--script', 'echo hi'])).toMatchObject({
+      ok: true,
+      command: 'worktreeHook.set',
+      args: { repo: '~/dev/alpha', script: 'echo hi' },
+    });
+  });
+
+  it('still accumulates repeated --repo for task new', () => {
+    expect(parseArgv(['task', 'new', '--title', 'x', '--repo', '/a', '--repo', '/b'])).toMatchObject({
+      ok: true,
+      args: { repos: [{ path: '/a', name: 'a' }, { path: '/b', name: 'b' }] },
+    });
+  });
+
+  it('names the verbs it knows when given a bad one', () => {
+    const parsed = parseArgv(['worktree-hook', 'nope']);
+    expect(parsed.ok).toBe(false);
+    expect(parsed.ok === false && parsed.error).toContain('get, set, clear, test-run');
+  });
+
   it('passes a bare command id straight through, so a new verb needs no CLI release', () => {
     // The registry is the verb table; this is a transport. An agent that knows a
     // command id must not have to wait for this file to learn it.
