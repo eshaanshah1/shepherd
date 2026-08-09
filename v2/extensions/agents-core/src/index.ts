@@ -280,7 +280,7 @@ export const activate: ActivateFn<AgentsAPI> = async (ctx: ExtensionContext, api
           resumeTarget,
           /**
            * The whole command, so no consumer has to know the vendor's binary or
-           * its flag (ADR 0035 §3). `resumeTarget` stays alongside it because a
+           * its flag (ADR 0036 §3). `resumeTarget` stays alongside it because a
            * caller may want to STORE the token and ask for the command later —
            * which is exactly what `tasks` does across an archive.
            */

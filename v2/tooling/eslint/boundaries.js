@@ -176,7 +176,7 @@ export const boundaries = [
   },
   {
     /**
-     * `shepherdd` — the process that owns the ptys (R1, ADR 0035).
+     * `shepherdd` — the process that owns the ptys (R1, ADR 0036).
      *
      * It runs as the Electron BINARY with `ELECTRON_RUN_AS_NODE=1`, which is not
      * the same as running Electron: there is no `app`, no `BrowserWindow`, and

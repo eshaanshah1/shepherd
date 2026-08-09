@@ -86,6 +86,10 @@ check(
   output.includes('ok — the generated directories are pre-trusted'),
   'a spawned agent will not open on Claude Code’s trust dialog',
 );
+check(
+  output.includes('ok — the repo’s worktree hook ran before the task root was built'),
+  'the repo’s worktree hook ran in its worktree, under a real shell',
+);
 check(output.includes('ok — the round trip is byte-identical'), 'archive/restore kept the work');
 check(output.includes('ok — creating a task alerted nobody'), 'the silence held');
 finish('m3');

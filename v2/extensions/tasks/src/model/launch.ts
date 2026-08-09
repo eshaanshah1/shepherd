@@ -35,7 +35,7 @@ export function shellQuote(value: string): string {
  * The agent's binary, for LAUNCHING a new session.
  *
  * `planResume` used to live beside this and is gone: a resume command now comes
- * from the agent kind through `agents.resumeCommand` (ADR 0035 §3), because R1
+ * from the agent kind through `agents.resumeCommand` (ADR 0036 §3), because R1
  * gave that seam its second consumer. This one stays for now, and for the same
  * reason it always did — a LAUNCH carries a prompt file and a shell line built
  * around it, which is a bigger shape than a kind declares today. It is the next

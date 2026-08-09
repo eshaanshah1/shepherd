@@ -200,6 +200,34 @@ export interface TreeItem {
    * progress bar that invents one is a bar that sticks at 90%.
    */
   readonly busy?: boolean;
+  /**
+   * The layout root this row stands for. The shell draws the row as SELECTED
+   * while the window is on that root.
+   *
+   * **An identity, not a state** — which is the whole point. The row says which
+   * root it is and stops; whether that root is the one on screen is the
+   * layout's fact, and the shell reads it from the same snapshot it draws the
+   * stage from. So the highlight and the visible pane are two readings of one
+   * value and cannot disagree.
+   *
+   * Both of the obvious alternatives are a second copy of that fact, and both
+   * shipped as bugs. A sidebar that remembered which row was CLICKED goes stale
+   * the moment anything else moves the window — a command, the CLI, a closing
+   * pane group falling back to home. An extension that MIRRORS the active root
+   * off the bus and reports "I am selected" is the same copy one process along:
+   * it has to be seeded when it starts, it lags the stage by the round trip,
+   * and a dropped nudge desynchronises it.
+   *
+   * A root id is kernel vocabulary — the shell already routes and draws by it —
+   * so naming one here tells the shell nothing about what the row MEANS. That
+   * stays the extension's, in `command` and `actions`.
+   *
+   * Absent means "this row is not about a root", and such a row is never drawn
+   * selected. A tree whose rows are files or PRs wants a selection this field
+   * cannot express; add one when there is such a tree, rather than a second
+   * mechanism with no consumer.
+   */
+  readonly root?: string;
   readonly icon?: string;
   readonly collapsed?: boolean;
   /**

@@ -173,7 +173,7 @@ describe('the kind itself', () => {
 
 describe('resumeCommandOf', () => {
   /**
-   * The command moved here from `tasks` in R1 (ADR 0035 §3). These are that
+   * The command moved here from `tasks` in R1 (ADR 0036 §3). These are that
    * file's tests, following the behaviour they describe — a resume line is a
    * vendor fact, and this package is the only one allowed to know it.
    */

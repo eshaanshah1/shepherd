@@ -27,6 +27,7 @@ import { diagnosticsManifest } from '@shepherd/ext-diagnostics/manifest';
 import { agentsCoreManifest } from '@shepherd/ext-agents-core/manifest';
 import { claudeCodeManifest } from '@shepherd/ext-claude-code/manifest';
 import { tasksManifest } from '@shepherd/ext-tasks/manifest';
+import { worktreeHookManifest } from '@shepherd/ext-worktree-hook/manifest';
 import {
   KERNEL,
   createLogger,
@@ -165,7 +166,7 @@ const logger = createLogger({
 });
 
 /**
- * Sessions live in `shepherdd`, not here (R1, ADR 0035).
+ * Sessions live in `shepherdd`, not here (R1, ADR 0036).
  *
  * `SessionClient` satisfies `SessionHostLike`, so `SessionBridge`, the layout's
  * `SessionSink`, the renderer and every smoke are untouched by the move. What
@@ -325,7 +326,7 @@ const layout = new LayoutStore({
   storage: store.namespace('layout'),
   sessions: {
     kill: (id) => void host.kill(id),
-    // R1 (ADR 0035): a restored pane's persisted `sessionId` is a claim, and
+    // R1 (ADR 0036): a restored pane's persisted `sessionId` is a claim, and
     // the daemon's inventory is what settles it. `has` reads the mirror
     // `SessionClient.start()` filled from the daemon's own `list`.
     isLive: (id) => host.has(id),
@@ -687,7 +688,7 @@ void app.whenReady().then(async () => {
   /**
    * Reach the daemon and adopt what it is already running — before any window
    * opens, because that is when the layout restores and asks `isLive` whether
-   * each persisted binding still means something (ADR 0035).
+   * each persisted binding still means something (ADR 0036).
    *
    * Awaited rather than fired-and-forgotten: a restore that raced this would see
    * an empty inventory, drop every binding, and create a second pty for every
@@ -712,6 +713,13 @@ void app.whenReady().then(async () => {
     active: HOME_ROOT,
     // Presence follows the active root, wired here rather than at each switch
     // site so no future caller can move the window without moving the predicate.
+    //
+    // Deliberately NOT announced on the bus. The switch is already published to
+    // the renderer as part of the layout snapshot, which is what draws the
+    // stage — so the sidebar highlights from that same value (`TreeItem.root`)
+    // rather than from an extension mirroring a second copy of it. A bus event
+    // is for something an extension must ACT on, which is why `rootClosed` is
+    // one (a task archives itself) and this is not (it is a projection).
     onActiveChanged: () => syncPresence(),
   });
   publishLayout = layoutIpc.publish;
@@ -890,7 +898,15 @@ void app.whenReady().then(async () => {
   // a CLI client cannot arrive before `diagnostics.ping` is registered, and so a
   // built-in's own `commands.register` cannot race the kernel's.
   extensionHost.registerCommands();
-  for (const manifest of [diagnosticsManifest, agentsCoreManifest, claudeCodeManifest, tasksManifest]) {
+  for (const manifest of [
+    diagnosticsManifest,
+    agentsCoreManifest,
+    claudeCodeManifest,
+    tasksManifest,
+    // After `tasks`: it declares that dependency, and the point it registers
+    // into has to exist before it activates.
+    worktreeHookManifest,
+  ]) {
     const added = extensions.add(manifest, 'builtin');
     if (added.ok) continue;
     for (const problem of added.error) {
@@ -905,7 +921,15 @@ void app.whenReady().then(async () => {
   // trigger, because `claude-code` will declare it as a dependency and the
   // registry activates dependencies first: doing it here keeps one ordering
   // rather than two that must agree.
-  for (const manifest of [diagnosticsManifest, agentsCoreManifest, claudeCodeManifest, tasksManifest]) {
+  for (const manifest of [
+    diagnosticsManifest,
+    agentsCoreManifest,
+    claudeCodeManifest,
+    tasksManifest,
+    // After `tasks`: it declares that dependency, and the point it registers
+    // into has to exist before it activates.
+    worktreeHookManifest,
+  ]) {
     if (extensions.state(extensionId(manifest.id)) === undefined) continue;
     await extensions.activate(extensionId(manifest.id));
   }

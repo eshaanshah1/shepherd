@@ -26,6 +26,7 @@
     { "path": "../../extensions/diagnostics" },
     { "path": "../../extensions/agents-core" },
     { "path": "../../extensions/claude-code" },
-    { "path": "../../extensions/tasks" }
+    { "path": "../../extensions/tasks" },
+    { "path": "../../extensions/worktree-hook" }
   ]
 }

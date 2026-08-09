@@ -1,4 +1,4 @@
-// The half of D11 that R1 finished (ADR 0035 §3).
+// The half of D11 that R1 finished (ADR 0036 §3).
 //
 // The resume TARGET was always opaque here; the binary and the flag around it
 // were not — `planResume` built `claude --resume` in this package, with a

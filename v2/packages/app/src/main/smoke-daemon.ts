@@ -15,7 +15,7 @@ import { check, die, say, seedHomePane, snapshotOf, waiter, waitForLoad } from '
  *
  *   **Pass 2** must find the SAME session on the SAME pane — adopted, not
  *   recreated — with the marker still on its screen. If pane ids or bindings did
- *   not survive (ADR 0035), pass 2 creates a second pty and the daemon's
+ *   not survive (ADR 0036), pass 2 creates a second pty and the daemon's
  *   original keeps running with nothing pointing at it. That is the failure this
  *   exists to catch, and a smoke that only checked "a pane exists" would pass
  *   straight through it.

@@ -1,4 +1,4 @@
-# 0035. (v2) A session outlives the app, so a pane must be able to find it again
+# 0036. (v2) A session outlives the app, so a pane must be able to find it again
 
 Status: Accepted
 Date: 2026-08-09

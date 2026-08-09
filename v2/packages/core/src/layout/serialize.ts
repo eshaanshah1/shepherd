@@ -15,7 +15,7 @@ import { clampRatio, leaf, split, type SplitAxis, type SplitNode } from './tree.
  * field that must never round-trip (it re-runs a command on every relaunch),
  * and `title` is live output from a program that is no longer running.
  *
- * **The pane id IS persisted, since R1** (ADR 0035), reversing the rule that
+ * **The pane id IS persisted, since R1** (ADR 0036), reversing the rule that
  * stood here for three milestones: "a restored pane is a new pane showing an old
  * directory; reusing the id would let a stale session id, a stale attention entry
  * or a stale extension record survive a relaunch and address it."
@@ -84,7 +84,7 @@ export class LayoutDecodeError extends Error {
 }
 
 /**
- * Rebuild a tree from disk, KEEPING each leaf's persisted id (ADR 0035).
+ * Rebuild a tree from disk, KEEPING each leaf's persisted id (ADR 0036).
  *
  * A record written before R1 carries no id, so one is minted — which is the old
  * behaviour, and correct: there is no session to find again either.

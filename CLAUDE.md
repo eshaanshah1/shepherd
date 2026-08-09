@@ -45,7 +45,7 @@ fight it.
    — the API and the M0–M4 milestones.
 4. [`docs/superpowers/specs/2026-08-06-architecture-review.md`](docs/superpowers/specs/2026-08-06-architecture-review.md)
    — what v1 got wrong; **its Rebuild checklist is normative for v2**.
-5. ADRs [0021](.claude/adr/0021-v2-store-is-node-sqlite.md)–[0034](.claude/adr/0034-v2-a-spawned-agent-is-a-pane-and-its-prompt-is-a-file.md).
+5. ADRs [0021](.claude/adr/0021-v2-store-is-node-sqlite.md)–[0035](.claude/adr/0035-v2-a-row-names-its-root-and-the-shell-derives-the-highlight.md).
    **0029–0032 are M3's**, and each records something measured rather than
    reasoned: what Claude Code actually reads at a generated task root, why the
    transport deadline is the caller's, how a contributed view declares itself
@@ -57,6 +57,11 @@ fight it.
    them, and the renderer may import `@shepherd/ext-*/ui` and nothing else.
    **0034** is why a spawned agent is a pane rather than a headless session, and
    why its prompt travels as a file — a typed newline is an Enter press.
+   **0035** is the rule for any contributed row that stands for a root: the row
+   names the root, the shell derives the highlight from the same snapshot value
+   it draws the stage from, and nobody keeps a second copy of "what is on
+   screen". Read it before adding state that answers that question — the first
+   two attempts both did, one in the renderer and one in the extension host.
 
 ### Working in `v2/` — the loop
 

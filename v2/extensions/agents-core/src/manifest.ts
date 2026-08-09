@@ -26,7 +26,7 @@ export const AGENTS_COMMANDS = {
    * restoring an archived task, or a pane whose pty did not survive. So this one
    * takes the token back rather than a session id.
    *
-   * It is what keeps `claude --resume` inside `claude-code` (ADR 0035 §3). A
+   * It is what keeps `claude --resume` inside `claude-code` (ADR 0036 §3). A
    * consumer stores an opaque string and asks for a command; it never learns the
    * binary or the flag.
    */

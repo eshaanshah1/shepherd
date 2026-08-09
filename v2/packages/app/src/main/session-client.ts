@@ -127,7 +127,7 @@ export class SessionClient {
    *
    * The adoption is the point: on a relaunch the daemon holds the sessions the
    * previous run left behind, and this is where main learns their ids again —
-   * ADR 0035's "the daemon is the authority on what is alive".
+   * ADR 0036's "the daemon is the authority on what is alive".
    */
   async start(): Promise<Result<readonly SessionInfo[], string>> {
     await this.#ensureConnected();

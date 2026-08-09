@@ -33,8 +33,18 @@ import { resolveExtensionUi } from './extension-ui.ts';
 export function ViewDock({
   views: bridge,
   actions,
+  activeRoot = null,
 }: {
   views: ViewsApi | null;
+  /**
+   * The root the window is showing — the SAME value the stage draws from.
+   *
+   * A row that names that root (`TreeItem.root`) is drawn selected. Reading it
+   * from the layout snapshot rather than keeping a selection here is what stops
+   * the highlight and the visible pane from being two facts: they are one value
+   * read twice, so a switch nobody clicked moves both or neither.
+   */
+  activeRoot?: string | null;
   /**
    * Buttons in the sidebar's header — the shell's, not an extension's.
    *
@@ -46,7 +56,17 @@ export function ViewDock({
 }): React.JSX.Element | null {
   const [views, setViews] = useState<readonly ViewContributionDTO[]>([]);
   const [rows, setRows] = useState<Readonly<Record<string, readonly TreeItem[]>>>({});
-  const [selected, setSelected] = useState<string | null>(null);
+
+  /*
+   * There is deliberately no selection state here.
+   *
+   * It used to be a `useState` set by the row's own click, which is a second
+   * copy of "what is the user on" — a fact the dock does not own — and it
+   * disagreed with the first the moment anything but a click changed it: a task
+   * created through the composer switches the window to its own root, and the
+   * highlight stayed on whatever was clicked last while a different task's
+   * panes filled the screen. `activeRoot` above is the one answer.
+   */
 
   // Handed in, never read off the global: `main.tsx` is the ONE file that knows
   // the bridge is a global, and every other component takes what it needs as a
@@ -95,8 +115,7 @@ export function ViewDock({
               view={view}
               rows={rows[view.type] ?? []}
               bridge={bridge}
-              selected={selected}
-              onSelect={setSelected}
+              activeRoot={activeRoot}
             />
           ),
         )}
@@ -110,14 +129,12 @@ function TreeView({
   view,
   rows,
   bridge,
-  selected,
-  onSelect,
+  activeRoot,
 }: {
   view: ViewContributionDTO;
   rows: readonly TreeItem[];
   bridge: ViewsApi | null;
-  selected: string | null;
-  onSelect: (id: string) => void;
+  activeRoot: string | null;
 }): React.JSX.Element {
   /*
    * A heading earns its line when it separates something FROM something — and
@@ -160,8 +177,9 @@ function TreeView({
             );
           }
 
+          // No local "and now this row is selected": the command below is what
+          // moves the user, and the contribution reports where they ended up.
           const activate = (): void => {
-            onSelect(row.id);
             if (row.command !== undefined) void bridge?.activate(view.type, row.command);
           };
 
@@ -195,7 +213,9 @@ function TreeView({
             <Row
                 role="button"
                 tabIndex={0}
-                selected={selected === row.id}
+                // `row.root !== undefined` first, so a row that is about no
+                // root is never lit by the shell also not knowing its own.
+                selected={row.root !== undefined && row.root === activeRoot}
                 data-testid="view-row"
                 data-row-id={row.id}
                 // A token name, resolved here. An extension never sends a raw
