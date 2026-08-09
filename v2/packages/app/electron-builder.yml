@@ -18,6 +18,13 @@ copyright: MIT
 # bundler setting.
 beforePack: ../../tooling/scripts/before-pack.mjs
 
+# Ad-hoc signs the finished bundle. NOT optional cosmetics: `mac.identity: null`
+# below means "do not sign", which leaves Electron's linker-signed stub with an
+# unbound Info.plist — and macOS then has no identity to register as a
+# notification client, so Shep never appears in System Settings → Notifications
+# and every banner is dropped. See the script.
+afterPack: ../../tooling/scripts/after-pack-sign.mjs
+
 directories:
   output: release
   buildResources: build
@@ -41,9 +48,11 @@ mac:
   target:
     - target: dir
       arch: [arm64]
-  # Ad-hoc signing: enough for the app to run locally, and honest about what it
-  # is — a signed-for-distribution build needs a Developer ID and notarisation,
-  # which is a release concern rather than an install-it-here one.
+  # `null` = electron-builder does not sign at all. The ad-hoc signature the app
+  # ships with is applied by the `afterPack` hook instead, because this key has
+  # no "sign ad-hoc" value and leaving it unsigned costs the app its bundle
+  # identity — and with it, notifications. A signed-for-distribution build needs
+  # a Developer ID and notarisation, which stays a release concern.
   identity: null
   # The app spawns ptys and reads the user's projects; hardened runtime without
   # the matching entitlements would break both, and it buys nothing unsigned.
