@@ -38,6 +38,7 @@ import {
   type ViewProvider,
 } from '@shepherd/sdk';
 import { activate } from './index.ts';
+import { REPO_PROVISIONED_POINT, type RepoProvisioned, type RepoProvisionedFact } from './manifest.ts';
 import { TASK_SCHEMA_VERSION, type TaskRecord, type TaskSession } from './store.ts';
 import { taskRootId } from './model/root-id.ts';
 
@@ -97,6 +98,12 @@ interface Harness {
    * as `unknown-command`, in a log, with the menu already closed.
    */
   registeredCommands(): ReadonlySet<string>;
+  /**
+   * A point this extension DEFINED, so a test can register into it the way
+   * another extension would. Throws rather than answering `undefined`: a seam
+   * that was renamed should fail by name here, not by a silent no-op later.
+   */
+  point<T>(id: string): ExtensionPoint<T>;
   readonly dataDir: string;
   /** A throwaway home — where the Claude Code trust store is read and written. */
   readonly homeDir: string;
@@ -252,10 +259,14 @@ function harness(
     return Promise.resolve(answer(call));
   }
 
+  // Kept, rather than made and forgotten, so a test can play the OTHER extension
+  // and register into a point this one defines — which is the only way to assert
+  // that a seam is reached at all.
+  const defined = new Map<string, ExtensionPoint<unknown>>();
   const points: PointsAPI = {
     define: <T>(id: string): ExtensionPoint<T> => {
       const providers: T[] = [];
-      return {
+      const point: ExtensionPoint<T> = {
         id,
         register: (provider) => {
           providers.push(provider);
@@ -268,6 +279,8 @@ function harness(
         first: () => providers[0],
         dispose: () => void (providers.length = 0),
       };
+      defined.set(id, point as ExtensionPoint<unknown>);
+      return point;
     },
     get: () => undefined,
   };
@@ -334,6 +347,11 @@ function harness(
       return provider.data;
     },
     registeredCommands: () => new Set(registered.keys()),
+    point: <T>(id: string): ExtensionPoint<T> => {
+      const found = defined.get(id);
+      if (found === undefined) throw new Error(`no point ${id} was defined`);
+      return found as ExtensionPoint<T>;
+    },
     dataDir,
     homeDir,
     dispose: () => {
@@ -1413,6 +1431,217 @@ describe('finished work', () => {
     const h = (live = harness({ tasks: [task({ id: 'now' })] }));
     await h.run('tasks.reveal', { task: 'now' });
     expect(h.invoked.some((call) => call.id === 'tasks.restore')).toBe(false);
+  });
+});
+
+/**
+ * `tasks.repoProvisioned` — the one seam another extension gets into
+ * provisioning.
+ *
+ * It is AWAITED rather than announced on the bus, and that is the whole claim
+ * worth testing: the motivating provider copies gitignored files a fresh
+ * `worktree add` cannot carry, and an agent opens in that checkout moments
+ * later. A fire-and-forget event would race it, and the race would be invisible
+ * — the files land, just sometimes after the agent looked.
+ *
+ * The other half is that a provider CANNOT take a task down. It is somebody
+ * else's code running in the middle of provisioning, so a failure and a throw
+ * both have to degrade the repo and leave the worktree, the root and the spawn
+ * alone.
+ */
+describe('tasks.repoProvisioned', () => {
+  const REPO = { name: 'api', path: '/src/api' };
+
+  it('hands a provider the worktree, the source repo, the branch and the task', async () => {
+    const h = (live = harness());
+    const seen: RepoProvisionedFact[] = [];
+    h.point<RepoProvisioned>(REPO_PROVISIONED_POINT).register(async (fact) => {
+      seen.push(fact);
+      return { ok: true };
+    });
+
+    await h.run('tasks.create', { title: 'Fix login', repos: [REPO] });
+    await until(() => seen.length > 0);
+
+    expect(seen).toEqual([
+      {
+        repo: { path: '/src/api', name: 'api' },
+        worktree: join(h.dataDir, 'fix-login', 'api'),
+        branch: 'fix-login',
+        task: { slug: 'fix-login', root: join(h.dataDir, 'fix-login') },
+      },
+    ]);
+  });
+
+  it('runs BEFORE the task root is written and before any pane opens', async () => {
+    // The ordering IS the feature. A provider that finishes the checkout after
+    // the orchestrator has started is a provider that did nothing.
+    const h = (live = harness());
+    let rootAtCallTime: boolean | undefined;
+    let panesAtCallTime = 0;
+    h.point<RepoProvisioned>(REPO_PROVISIONED_POINT).register(async () => {
+      rootAtCallTime = existsSync(join(h.dataDir, 'fix-login', 'CLAUDE.md'));
+      panesAtCallTime = h.invoked.filter((call) => call.id === 'layout.openRoot').length;
+      return { ok: true };
+    });
+
+    await h.run('tasks.create', { title: 'Fix login', repos: [REPO] });
+    await until(() => rootAtCallTime !== undefined);
+
+    expect(rootAtCallTime).toBe(false);
+    expect(panesAtCallTime).toBe(0);
+  });
+
+  it('waits for a slow provider rather than racing it', async () => {
+    const h = (live = harness());
+    let finished = false;
+    h.point<RepoProvisioned>(REPO_PROVISIONED_POINT).register(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      finished = true;
+      return { ok: true };
+    });
+
+    await h.run('tasks.create', { title: 'Fix login', repos: [REPO] });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    expect(finished).toBe(true);
+  });
+
+  it('runs every provider, in registration order', async () => {
+    const h = (live = harness());
+    const order: string[] = [];
+    const point = h.point<RepoProvisioned>(REPO_PROVISIONED_POINT);
+    point.register(async () => {
+      order.push('first');
+      return { ok: true };
+    });
+    point.register(async () => {
+      order.push('second');
+      return { ok: true };
+    });
+
+    await h.run('tasks.create', { title: 'Fix login', repos: [REPO] });
+    await until(() => order.length === 2);
+
+    expect(order).toEqual(['first', 'second']);
+  });
+
+  it('runs once per repo, in its own worktree', async () => {
+    const h = (live = harness());
+    const worktrees: string[] = [];
+    h.point<RepoProvisioned>(REPO_PROVISIONED_POINT).register(async (fact) => {
+      worktrees.push(fact.worktree);
+      return { ok: true };
+    });
+
+    await h.run('tasks.create', {
+      title: 'Fix login',
+      repos: [REPO, { name: 'web', path: '/src/web' }],
+    });
+    await until(() => worktrees.length === 2);
+
+    expect(worktrees).toEqual([join(h.dataDir, 'fix-login', 'api'), join(h.dataDir, 'fix-login', 'web')]);
+  });
+
+  it('is not consulted for a repo whose worktree never appeared', async () => {
+    const h = (live = harness({
+      git: (call) =>
+        call.args[0] === 'worktree' && call.args[1] === 'add'
+          ? { ok: false, code: 128, stdout: '', stderr: 'fatal: nope\n' }
+          : OK,
+    }));
+    let called = false;
+    h.point<RepoProvisioned>(REPO_PROVISIONED_POINT).register(async () => {
+      called = true;
+      return { ok: true };
+    });
+
+    await h.run('tasks.create', { title: 'Fix login', repos: [REPO] });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    expect(called).toBe(false);
+  });
+
+  it('keeps the worktree and still spawns when a provider reports a failure', async () => {
+    // v1's choice, and for v1's reason: a half-provisioned checkout you can look
+    // at beats a task that refused to open.
+    const warnings: string[] = [];
+    const h = (live = harness({ onWarn: (line) => warnings.push(line) }));
+    h.point<RepoProvisioned>(REPO_PROVISIONED_POINT).register(async () => ({
+      ok: false,
+      message: 'the repo hook failed — exited 3\ncp: no such file',
+    }));
+
+    await h.run('tasks.create', { title: 'Fix login', repos: [REPO] });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    const listed = await h.run<{ repos: { provisioning: string; hookIssue?: string }[] }[]>('tasks.list');
+    expect(listed[0]?.repos[0]?.provisioning).toBe('ready');
+    expect(listed[0]?.repos[0]?.hookIssue).toBe('the repo hook failed — exited 3\ncp: no such file');
+    expect(warnings.some((line) => line.includes('cp: no such file'))).toBe(true);
+  });
+
+  it('says so on the repo row, without claiming the repo is unprovisioned', async () => {
+    const h = (live = harness());
+    h.point<RepoProvisioned>(REPO_PROVISIONED_POINT).register(async () => ({ ok: false, message: 'exited 1' }));
+
+    const created = await h.run<{ id: string }>('tasks.create', { title: 'Fix login', repos: [REPO] });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    const rows = await h.tree().children(created.id);
+    expect(rows[0]?.description).toBe('ready — hook failed');
+  });
+
+  it('survives a provider that throws, and reports what it threw', async () => {
+    const h = (live = harness());
+    h.point<RepoProvisioned>(REPO_PROVISIONED_POINT).register(async () => {
+      throw new Error('boom');
+    });
+
+    await h.run('tasks.create', { title: 'Fix login', repos: [REPO] });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    const listed = await h.run<{ repos: { hookIssue?: string }[] }[]>('tasks.list');
+    expect(listed[0]?.repos[0]?.hookIssue).toContain('boom');
+  });
+
+  it('lets a later provider run after an earlier one failed', async () => {
+    // They are independent side effects on a directory, not a chain. One
+    // provider's failure is not a reason to skip somebody else's.
+    const h = (live = harness());
+    let secondRan = false;
+    const point = h.point<RepoProvisioned>(REPO_PROVISIONED_POINT);
+    point.register(async () => ({ ok: false, message: 'first failed' }));
+    point.register(async () => {
+      secondRan = true;
+      return { ok: false, message: 'second failed' };
+    });
+
+    await h.run('tasks.create', { title: 'Fix login', repos: [REPO] });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    expect(secondRan).toBe(true);
+    const listed = await h.run<{ repos: { hookIssue?: string }[] }[]>('tasks.list');
+    expect(listed[0]?.repos[0]?.hookIssue).toBe('first failed\nsecond failed');
+  });
+
+  it('runs on restore too — a restored worktree needs its gitignored files as much', async () => {
+    const h = (live = harness({
+      tasks: [task({ id: 't1', lifecycle: 'archived', archivedAt: 5, repos: [REPO] })],
+      git: archivable,
+    }));
+    const seen: string[] = [];
+    h.point<RepoProvisioned>(REPO_PROVISIONED_POINT).register(async (fact) => {
+      seen.push(fact.worktree);
+      return { ok: true };
+    });
+
+    // Restoring re-provisions optimistically too (`void whileBusy(...)`), so the
+    // handler answers before the worktrees are back.
+    await h.run('tasks.restore', { task: 't1' });
+    await until(() => seen.length > 0);
+
+    expect(seen).toEqual([join(h.dataDir, 'fix-login', 'api')]);
   });
 });
 

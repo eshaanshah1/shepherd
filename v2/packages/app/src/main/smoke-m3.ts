@@ -58,6 +58,17 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
 
   const until = waiter(60_000);
 
+  /**
+   * --- 0. a worktree hook for this repo, set through the same transport.
+   *
+   * The unit tests own everything about how a hook is chosen and how its
+   * failure is reported. What no unit test can say is that a real `/bin/bash`
+   * ran in a real worktree — every one of them fakes `ProcessAPI`, which is the
+   * seam this asserts is actually wired. The script writes a file `git worktree
+   * add` could not have produced, so the check below cannot pass by accident.
+   */
+  await invoke('worktreeHook.set', { repo, script: 'echo hooked > HOOKED.txt' });
+
   // --- 1. create a task with a real repo, through the real transport.
   const created = (await invoke('tasks.create', {
     title: 'Smoke task',
@@ -84,6 +95,20 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
     'the CLAUDE.md carries the repo map — the only one loaded at session start',
   );
   say('ok — the worktree and the task root are on disk');
+
+  /**
+   * The hook ran, in the right directory, before anything else touched it.
+   *
+   * `until` rather than a bare `existsSync`, for the reason the worktree gate
+   * above uses one: provisioning is optimistic. The gate there already waits for
+   * the task ROOT, and the root is materialized AFTER the hook by construction —
+   * so if this ever needed to wait, the ordering it is meant to prove would
+   * already be broken.
+   */
+  const hooked = join(worktree, 'HOOKED.txt');
+  check(existsSync(hooked), 'the worktree hook ran in the new worktree');
+  check(readFileSync(hooked, 'utf8').trim() === 'hooked', 'the hook ran under a real shell, not a fake');
+  say('ok — the repo’s worktree hook ran before the task root was built');
 
   /**
    * --- 2b. the generated directories are pre-trusted, so an agent can start.

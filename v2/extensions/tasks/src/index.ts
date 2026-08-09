@@ -7,7 +7,13 @@ import {
   type ExtensionContext,
   type Shepherd,
 } from '@shepherd/sdk';
-import { REPO_SUGGESTIONS_POINT, TASK_COMMANDS, TASK_VIEWS } from './manifest.ts';
+import {
+  REPO_PROVISIONED_POINT,
+  REPO_SUGGESTIONS_POINT,
+  TASK_COMMANDS,
+  TASK_VIEWS,
+  type RepoProvisioned,
+} from './manifest.ts';
 import { TaskStore, type RepoArchive, type RepoRef, type TaskRecord, type TaskSession } from './store.ts';
 import { slugify, uniqueSlug } from './model/slug.ts';
 import { expandHome } from './model/repo-path.ts';
@@ -175,6 +181,16 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
   const store = new TaskStore(ctx.storage);
   /** Per-repo provisioning state. In memory, deliberately — see `provision`. */
   const provisioning = new Map<string, 'working' | 'ready' | 'failed'>();
+  /**
+   * A repo that provisioned, and whose `repoProvisioned` providers complained.
+   *
+   * Separate from `provisioning` rather than a fourth value in it, because the
+   * repo IS ready: the worktree is there and an agent is about to open in it.
+   * Collapsing the two would either hide the complaint or lie about the state,
+   * and the second is worse — a row reading `failed` beside a worktree that
+   * exists sends you looking for a git problem that is not there.
+   */
+  const hookIssue = new Map<string, string>();
 
   /**
    * Which tasks are mid-operation, and what the operation is called.
@@ -301,6 +317,16 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     order: 'priority',
   });
   ctx.subscriptions.push(suggestions);
+
+  /**
+   * Registration order, not priority: these are side effects on a directory, so
+   * "which one wins" is not a question anybody is asking. Every provider runs,
+   * and the order they were registered in is the only order that means anything.
+   */
+  const repoProvisioned = points.define<RepoProvisioned>(REPO_PROVISIONED_POINT, {
+    order: 'registration',
+  });
+  ctx.subscriptions.push(repoProvisioned);
 
   /**
    * The dogfood rule one level deeper: the built-in ranking registers through the
@@ -861,14 +887,47 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     const root = rootOf(task);
     const landed: { name: string; path: string; worktree: string }[] = [];
     for (const repo of task.repos) {
-      provisioning.set(`${task.id}:${repo.name}`, 'working');
+      const key = `${task.id}:${repo.name}`;
+      provisioning.set(key, 'working');
+      hookIssue.delete(key);
       const outcome = await provisionRepo(api.proposed.process, repo, task.slug, `${root}/${repo.name}`);
       if (outcome.ok) {
-        provisioning.set(`${task.id}:${repo.name}`, 'ready');
+        provisioning.set(key, 'ready');
         changed();
         landed.push({ name: repo.name, path: repo.path, worktree: outcome.worktree });
+
+        /**
+         * The seam, here and nowhere else: after the worktree exists, before the
+         * root is written and long before a session opens in it. A provider's
+         * whole job is to finish a checkout somebody is about to work in, so
+         * this is awaited — and its failure is collected rather than raised,
+         * because somebody else's extension must not be able to take a task
+         * down.
+         */
+        const complaints: string[] = [];
+        for (const provider of repoProvisioned.all()) {
+          try {
+            const done = await provider({
+              repo: { path: repo.path, name: repo.name },
+              worktree: outcome.worktree,
+              branch: task.slug,
+              task: { slug: task.slug, root },
+            });
+            if (!done.ok) complaints.push(done.message ?? 'reported a failure with no message');
+          } catch (error) {
+            // A throwing provider is a bug in the provider. It is not a reason
+            // to lose a worktree that already exists.
+            complaints.push(error instanceof Error ? error.message : String(error));
+          }
+        }
+        if (complaints.length > 0) {
+          const message = complaints.join('\n');
+          hookIssue.set(key, message);
+          ctx.log.warn(`task ${task.id}: ${repo.name} provisioned, but — ${message}`);
+          changed();
+        }
       } else {
-        provisioning.set(`${task.id}:${repo.name}`, 'failed');
+        provisioning.set(key, 'failed');
         changed();
         ctx.log.warn(`task ${task.id}: ${repo.name} did not provision — ${outcome.reason}`);
       }
@@ -1036,6 +1095,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           repos: task.repos.map((repo) => ({
             ...repo,
             provisioning: provisioning.get(`${task.id}:${repo.name}`) ?? 'ready',
+            hookIssue: hookIssue.get(`${task.id}:${repo.name}`),
           })),
         }));
       },
@@ -1485,11 +1545,18 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           if (parent !== undefined) {
             const task = store.get(parent);
             return Promise.resolve(
-              (task?.repos ?? []).map((repo) => ({
-                id: `${parent}:${repo.name}`,
-                label: repo.name,
-                description: provisioning.get(`${parent}:${repo.name}`) ?? 'ready',
-              })),
+              (task?.repos ?? []).map((repo) => {
+                const key = `${parent}:${repo.name}`;
+                // A hook that failed is said on the row rather than in a log
+                // nobody has open — but it does not overwrite the state, because
+                // the repo really is ready and an agent really is running in it.
+                const issue = hookIssue.get(key);
+                return {
+                  id: key,
+                  label: repo.name,
+                  description: issue === undefined ? (provisioning.get(key) ?? 'ready') : 'ready — hook failed',
+                };
+              }),
             );
           }
 
