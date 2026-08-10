@@ -765,7 +765,7 @@ Then add `'process.exec'` to `permissions`, with the reason in place:
 ```ts
   /**
    * `process.exec` is here for the headless seam, and it is the heaviest grant
-   * in the vocabulary (ADR 0037). The alternative — every kind spawning for
+   * in the vocabulary (ADR 0038). The alternative — every kind spawning for
    * itself — is the failure §7c invoked to justify the seam. Confined by three
    * rules: the spawn lives in `complete.ts` alone, its argv comes only from a
    * registered kind, and a caller's influence stops at the prompt text.
@@ -2375,14 +2375,14 @@ git commit -m "test(v2): the smoke proves a model's name reaches the branch, off
 
 ---
 
-## Task 12: the record — ADR 0037 and the docs that carry traps
+## Task 12: the record — ADR 0038 and the docs that carry traps
 
 **Files:**
-- Create: `.claude/adr/0037-v2-agents-core-spawns-so-a-kind-does-not.md`
+- Create: `.claude/adr/0038-v2-agents-core-spawns-so-a-kind-does-not.md`
 - Modify: `docs/control-cli.md`
 - Modify: `CLAUDE.md` (the v2 section)
 
-- [ ] **Step 1: Write ADR 0037**
+- [ ] **Step 1: Write ADR 0038**
 
 Follow the shape of `.claude/adr/0036-*.md`. It must record: that `agents-core`
 holds `process.exec`; that the alternative was each kind spawning for itself; that
@@ -2409,7 +2409,7 @@ In the v2 section's list of rules that will bite, add — kept short, because th
 file is read at the start of every session:
 
 ```markdown
-- **`agents-core` holds `process.exec`** (ADR 0037), and the spawn is
+- **`agents-core` holds `process.exec`** (ADR 0038), and the spawn is
   `complete.ts` alone. `ProcessAPI.exec` **replaces** the child's environment
   rather than merging it, so a model call is handed exactly `{ HOME, USER }` —
   and **without `USER` the vendor CLI answers "Not logged in · Please run
@@ -2426,7 +2426,7 @@ file is read at the start of every session:
 - [ ] **Step 4: Commit**
 
 ```bash
-git add .claude/adr/0037-v2-agents-core-spawns-so-a-kind-does-not.md docs/control-cli.md CLAUDE.md
+git add .claude/adr/0038-v2-agents-core-spawns-so-a-kind-does-not.md docs/control-cli.md CLAUDE.md
 git commit -m "docs(v2): record why agents-core spawns, and the env that OAuth needs"
 ```
 

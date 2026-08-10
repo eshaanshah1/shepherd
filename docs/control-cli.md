@@ -112,7 +112,7 @@ bill.
 
 **It is ~6 seconds, and that is the floor** (`--safe-mode` already strips every
 customization; the rest is the network). Nothing user-facing may wait on one — see
-ADR 0037.
+ADR 0038.
 
 ### The worktree hook in v2 — per REPO, not per workspace
 | Command | Description |

@@ -91,7 +91,7 @@ export const agentsCoreManifest: Manifest = {
    * seed the viewing mirror starts from.
    *
    * `process.exec` is the headless seam's, and it is the heaviest grant in the
-   * vocabulary (ADR 0037). The alternative — every kind spawning for itself — is
+   * vocabulary (ADR 0038). The alternative — every kind spawning for itself — is
    * the failure §7c invoked to justify having a seam: they would each do the
    * deadline, the output cap and the child environment badly and differently.
    * Confined by three rules: the spawn lives in `complete.ts` alone, its argv
