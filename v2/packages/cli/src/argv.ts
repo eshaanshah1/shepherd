@@ -38,7 +38,7 @@ const VERBS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
     delete: 'tasks.delete',
   },
   session: { list: 'sessions.list' },
-  agent: { list: 'agents.list' },
+  agent: { list: 'agents.list', 'quick-model': 'agents.quickModel' },
   'worktree-hook': {
     get: 'worktreeHook.get',
     set: 'worktreeHook.set',
