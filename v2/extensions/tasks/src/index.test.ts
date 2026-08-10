@@ -9,7 +9,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   extensionId,
   manualClock,
@@ -329,6 +329,7 @@ function harness(
     storage,
     dataDir,
     homeDir,
+    userName: 'ada',
     secrets: {
       get: () => Promise.resolve(undefined),
       set: () => Promise.resolve(),
@@ -1750,5 +1751,236 @@ describe('what archiving leaves on disk', () => {
     await h.run('tasks.archive', { task: 't1' });
 
     expect(existsSync(root)).toBe(false);
+  });
+});
+
+/**
+ * The composer's speculative ask, and the cache that makes it provisioning's ask
+ * too (D21).
+ *
+ * Without the cache, the exact case speculation exists for — Create pressed a
+ * second before the answer lands — pays for the model twice and waits ~6s from
+ * scratch.
+ */
+describe('tasks.suggestName', () => {
+  const LONG = 'a brief that is long enough to be worth naming';
+
+  /** A quick model that answers, and a count of how often it was asked. */
+  const answering = (text: string) => (id: string) =>
+    id === 'agents.complete' ? ({ ok: true as const, value: { ok: true, text } }) : undefined;
+
+  const asks = (h: Harness): number => h.invoked.filter((call) => call.id === 'agents.complete').length;
+
+  it('asks the quick model and sanitizes what comes back', async () => {
+    const h = harness({ invoke: answering('`Add a cheap model seam`') });
+    expect(await h.run('tasks.suggestName', { brief: LONG })).toEqual({ name: 'Add a cheap model seam' });
+    h.dispose();
+  });
+
+  it('carries the brief in the prompt, not just the title', async () => {
+    const h = harness({ invoke: answering('A name') });
+    await h.run('tasks.suggestName', { brief: LONG });
+    const ask = h.invoked.find((call) => call.id === 'agents.complete');
+    expect(JSON.stringify(ask?.args)).toContain('long enough to be worth naming');
+    h.dispose();
+  });
+
+  it('asks once per brief, however many callers want it', async () => {
+    const h = harness({ invoke: answering('A name') });
+    await Promise.all([h.run('tasks.suggestName', { brief: LONG }), h.run('tasks.suggestName', { brief: LONG })]);
+    expect(asks(h)).toBe(1);
+    h.dispose();
+  });
+
+  it('asks again once the brief has really changed', async () => {
+    const h = harness({ invoke: answering('A name') });
+    await h.run('tasks.suggestName', { brief: LONG });
+    await h.run('tasks.suggestName', { brief: `${LONG} and now it says something else entirely` });
+    expect(asks(h)).toBe(2);
+    h.dispose();
+  });
+
+  it('does not ask about a brief too short to name', async () => {
+    const h = harness({ invoke: answering('whatever') });
+    expect(await h.run('tasks.suggestName', { brief: 'fix it' })).toEqual({ name: null });
+    expect(asks(h)).toBe(0);
+    h.dispose();
+  });
+
+  it('answers null when the model cannot, and does not warn about it', async () => {
+    // An unavailable model is not a fault of whoever asked, and this extension's
+    // warn channel is for things a user can act on.
+    const warnings: string[] = [];
+    const h = harness({
+      onWarn: (line) => warnings.push(line),
+      invoke: (id) =>
+        id === 'agents.complete'
+          ? { ok: true as const, value: { ok: false, reason: 'failed', message: 'no binary' } }
+          : undefined,
+    });
+    expect(await h.run('tasks.suggestName', { brief: LONG })).toEqual({ name: null });
+    expect(warnings).toEqual([]);
+    h.dispose();
+  });
+
+  it('answers null when the command itself was refused', async () => {
+    const h = harness({
+      invoke: (id) =>
+        id === 'agents.complete'
+          ? { ok: false as const, error: { code: 'denied' as const, message: 'lacks permission "agents"', commandId: id } }
+          : undefined,
+    });
+    expect(await h.run('tasks.suggestName', { brief: LONG })).toEqual({ name: null });
+    h.dispose();
+  });
+
+  it('answers null when the answer has a shape nobody expected', async () => {
+    // A command's answer is `unknown` and came from an extension this code has
+    // never seen. A cast is not a check.
+    for (const value of [42, null, 'a string', {}, { ok: true }, { ok: true, text: 7 }]) {
+      const h = harness({ invoke: (id) => (id === 'agents.complete' ? { ok: true as const, value } : undefined) });
+      expect(await h.run('tasks.suggestName', { brief: LONG })).toEqual({ name: null });
+      h.dispose();
+    }
+  });
+
+  it('answers null rather than throwing when the ask itself blows up', async () => {
+    const h = harness({
+      invoke: (id) => {
+        if (id !== 'agents.complete') return undefined;
+        throw new Error('the port died');
+      },
+    });
+    expect(await h.run('tasks.suggestName', { brief: LONG })).toEqual({ name: null });
+    h.dispose();
+  });
+});
+
+/**
+ * The race, and the invariant that keeps it from ever becoming a rename:
+ *
+ *   the slug may change exactly once, before the first git write, and never after.
+ *
+ * That single sentence is what keeps `git branch -m`, `git worktree move`, a task
+ * root that moves under a booting agent, and re-seeding trust out of this codebase
+ * entirely.
+ */
+describe('naming a task at create', () => {
+  const REPO = { path: '/src/api', name: 'api' };
+  const BRIEF = 'I wanna add a cheap model for naming things without blocking a worktree';
+
+  /** Every task as it is actually STORED, not as a handler answered. */
+  const stored = async (h: Harness): Promise<readonly TaskRecord[]> =>
+    await h.run<readonly TaskRecord[]>('tasks.list');
+
+  /** Provisioning is deliberately not awaited (D12), so give it its ticks. */
+  const drain = async (): Promise<void> => {
+    for (let tick = 0; tick < 40; tick += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+  };
+
+  const named = (text: string) => (id: string) =>
+    id === 'agents.complete' ? { ok: true as const, value: { ok: true, text } } : undefined;
+
+  const worktreeAdds = (h: Harness): GitCall[] =>
+    h.git.filter((call) => call.args[0] === 'worktree' && call.args[1] === 'add');
+
+  it('uses a name the caller already has, and never asks again', async () => {
+    const h = harness({ invoke: named('Ignored — should not be asked') });
+    const created = await h.run<TaskRecord>('tasks.create', {
+      title: BRIEF,
+      brief: BRIEF,
+      name: 'Add a cheap model seam',
+      repos: [REPO],
+    });
+    expect(created.slug).toBe('add-a-cheap-model-seam');
+    // One call answers both the branch and the row label (D18).
+    expect(created.title).toBe('Add a cheap model seam');
+    expect(h.invoked.filter((call) => call.id === 'agents.complete')).toEqual([]);
+    h.dispose();
+  });
+
+  it('falls back to the heuristic, not to the whole first line', async () => {
+    const h = harness({ invoke: () => undefined });
+    const created = await h.run<TaskRecord>('tasks.create', {
+      title: "#shepherd I wanna add a new feature / extension. It's something like a dumb model",
+      brief: "#shepherd I wanna add a new feature / extension. It's something like a dumb model",
+      repos: [],
+    });
+    // The bug being fixed produced
+    // `shepherd-i-wanna-add-a-new-feature-extension-it-s-something`.
+    expect(created.slug).toBe('add-a-new-feature-extension');
+    h.dispose();
+  });
+
+  it('adopts a name that lands before the first git write, and renames nothing', async () => {
+    const h = harness({ invoke: named('Add a cheap model seam') });
+    const created = await h.run<TaskRecord>('tasks.create', { title: BRIEF, brief: BRIEF, repos: [REPO] });
+    await drain();
+
+    expect((await stored(h)).find((t) => t.id === created.id)?.slug).toBe('add-a-cheap-model-seam');
+    // ONE worktree add, under the settled name — one name for the lifetime of the
+    // task, and no rename behind it.
+    expect(worktreeAdds(h)).toHaveLength(1);
+    expect(worktreeAdds(h)[0]?.args.join(' ')).toContain('add-a-cheap-model-seam');
+    expect(h.git.some((call) => call.args.join(' ').includes('branch -m'))).toBe(false);
+    expect(h.git.some((call) => call.args.join(' ').includes('worktree move'))).toBe(false);
+    h.dispose();
+  });
+
+  it('never writes git under the provisional name', async () => {
+    // The whole point of awaiting the name BEFORE the first write rather than
+    // renaming after it: no git command may ever mention the heuristic slug.
+    //
+    // Asserted against the WHOLE provisional slug, not a prefix of it: the
+    // heuristic (`add-a-cheap-model-for-naming`) and the settled name
+    // (`add-a-cheap-model-seam`) share their first four words, so a substring
+    // check would fail on the correct behaviour.
+    const h = harness({ invoke: named('Add a cheap model seam') });
+    await h.run<TaskRecord>('tasks.create', { title: BRIEF, brief: BRIEF, repos: [REPO] });
+    await drain();
+    expect(h.git.some((call) => call.args.join(' ').includes('add-a-cheap-model-for-naming'))).toBe(false);
+    h.dispose();
+  });
+
+  it('keeps the heuristic when the answer misses provisioning’s deadline', async () => {
+    // Fake timers, because the deadline is 4s and neither a real wait nor a
+    // production test hook is an acceptable way to reach it.
+    vi.useFakeTimers();
+    try {
+      const h = harness({
+        invoke: (id) =>
+          id === 'agents.complete'
+            ? (new Promise((resolve) => {
+                setTimeout(() => resolve({ ok: true, value: { ok: true, text: 'Too Late Entirely' } }), 30_000);
+              }) as never)
+            : undefined,
+      });
+      const created = await h.run<TaskRecord>('tasks.create', { title: BRIEF, brief: BRIEF, repos: [REPO] });
+      // Past the deadline, and past the ask, so the late answer has certainly
+      // arrived by the time this asserts.
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      const slug = (await stored(h)).find((t) => t.id === created.id)?.slug;
+      expect(slug).not.toBe('too-late-entirely');
+      expect(slug).toBe('add-a-cheap-model-for-naming');
+      expect(worktreeAdds(h)[0]?.args.join(' ')).toContain('add-a-cheap-model-for-naming');
+      h.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not rename a task that is being restored', async () => {
+    // Restore provisions too, and a task with a history must never have its
+    // directory renamed under it — the window in which a slug may change closed
+    // the first time git ran for it.
+    const h = harness({
+      tasks: [task({ id: 't1', slug: 'old-name', title: 'Old name', brief: BRIEF, lifecycle: 'archived', sessions: [] })],
+      invoke: named('A Brand New Name'),
+    });
+    await h.run('tasks.restore', { task: 't1' });
+    await drain();
+    expect((await stored(h)).find((t) => t.id === 't1')?.slug).toBe('old-name');
+    h.dispose();
   });
 });

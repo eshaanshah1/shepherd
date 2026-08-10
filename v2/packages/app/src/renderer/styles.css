@@ -1020,6 +1020,19 @@ body.sh-dragging {
 /* Only ever holds a failure; empty it must not spend a row's gap. */
 .sh-composer .sh-ext-answer:empty { display: none; }
 
+/* What the task will be called — a consequence the composer used to hide.
+   `--sh-text-faint` and not the `--sh-wool-*` its neighbour above uses: `wool` is
+   a palette hue and a component paints in ROLE tokens. The height is reserved so
+   an answer landing does not shift the Create button out from under the cursor. */
+.sh-composer-name {
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-micro);
+  color: var(--sh-text-faint);
+  min-height: 1.2em;
+  word-break: break-word;
+}
+.sh-composer .sh-composer-name:empty { display: none; }
+
 /* -------------------------------------------------------------- scrollbars */
 /*
  * A thumb of `line` and nothing else: no track, no arrows, no rounded chrome.

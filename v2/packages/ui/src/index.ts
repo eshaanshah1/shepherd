@@ -110,5 +110,5 @@ export { StatusDot, statusWords, type StatusDotProps, type StatusRole } from './
  * app has two ways of looking busy. The hook stays private: it is React state and
  * an interval, and a consumer that wants it has a Button.
  */
-export { BRAILLE_FRAMES, SPINNER_TICK_MS } from './spinner.ts';
+export { BRAILLE_FRAMES, SPINNER_TICK_MS, useBrailleFrame } from './spinner.ts';
 export { PromptField, readValue, type PromptFieldHandle, type PromptFieldProps } from './prompt-field.tsx';

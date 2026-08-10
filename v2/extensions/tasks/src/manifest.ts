@@ -24,6 +24,15 @@ export const TASK_COMMANDS = {
    */
   suggestRepos: 'tasks.suggestRepos',
   /**
+   * What should this task be called? — asked while the brief is still being
+   * typed, so that a ~6s answer costs nothing.
+   *
+   * A command for the same reason `suggestRepos` is one: the composer is a page,
+   * it cannot reach another extension's verb table, and it must not learn how
+   * (D5). So it asks its own extension, which asks the model.
+   */
+  suggestName: 'tasks.suggestName',
+  /**
    * Gone for good — the verb the model was missing.
    *
    * Without it a task created to try something out is permanent: `archive`
@@ -123,6 +132,12 @@ export const tasksManifest: Manifest = {
    * of agent attention (ADR 0026) — enforced by being the only extension in the
    * repo that declares it. `tasks` asking for it would break that by manifest.
    *
+   * `agents` is what lets this extension ask a model to name a task. Its own
+   * grant rather than a corollary of `process.exec`, because it spends the user's
+   * model budget — which is not a consequence "can run arbitrary programs"
+   * prepares anybody for. It buys one verb, `agents.complete`, and the dispatcher
+   * is what checks it.
+   *
    * And `tasks` DOES read it — it subscribes to the `attention.changed` topic to
    * mirror what each pane is asking for. That is not a hole in the rule above,
    * because the permission and the subscription gate different things:
@@ -132,7 +147,7 @@ export const tasksManifest: Manifest = {
    * single-writer rule stays exactly as strong as it was: declaring the
    * permission would add a second writer, and listening adds a reader.
    */
-  permissions: ['storage', 'process.exec', 'sessions', 'views', 'layout'],
+  permissions: ['storage', 'process.exec', 'sessions', 'views', 'layout', 'agents'],
   contributes: {
     commands: [
       { id: TASK_COMMANDS.create, title: 'Tasks: New Task' },
@@ -141,6 +156,7 @@ export const tasksManifest: Manifest = {
       { id: TASK_COMMANDS.archive, title: 'Tasks: Archive' },
       { id: TASK_COMMANDS.restore, title: 'Tasks: Restore' },
       { id: TASK_COMMANDS.suggestRepos, title: 'Tasks: Suggest Repos' },
+      { id: TASK_COMMANDS.suggestName, title: 'Tasks: Suggest a Name' },
       { id: TASK_COMMANDS.delete, title: 'Tasks: Delete' },
       { id: TASK_COMMANDS.reveal, title: 'Tasks: Reveal' },
     ],

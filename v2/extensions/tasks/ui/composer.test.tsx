@@ -77,9 +77,16 @@ const ANSWERS: Record<string, readonly unknown[]> = {
   '~/dev/sh': [suggestion(`${HOME}/dev/shepherd`, '~/dev/sh')],
 };
 
-/** Typed through a factory, so the mock keeps the prop's signature. */
+/**
+ * Typed through a factory, so the mock keeps the prop's signature.
+ *
+ * The answer is `unknown`, which is what a command's answer actually is — it
+ * crossed a port from an extension the page has never seen. Declared rather than
+ * inferred so a test may answer a DIFFERENT verb's shape (a name, a slug, a row
+ * list) without the inferred union of these two branches rejecting it.
+ */
 const makeInvoke = () =>
-  vi.fn(async (command: string, args?: unknown) => {
+  vi.fn(async (command: string, args?: unknown): Promise<{ ok: true; value: unknown }> => {
     if (command === 'tasks.suggestRepos') {
       const query = (args as { query?: string }).query ?? '';
       return { ok: true as const, value: ANSWERS[query] ?? [] };
@@ -605,5 +612,123 @@ describe('the #repo button', () => {
     });
     expect(brief().textContent).toBe('#');
     expect(picker()).not.toBeNull();
+  });
+});
+
+/**
+ * The name preview.
+ *
+ * It exists because the composer currently turns your paragraph into a directory
+ * name and tells you afterwards — this branch is called
+ * `shepherd-i-wanna-add-a-new-feature-extension-it-s-something`. Putting a model
+ * in the middle of that makes it less predictable, not more, unless the name is on
+ * screen.
+ */
+describe('the name preview', () => {
+  // Fake timers, because the ask is on a 2s idle pause and a real wait would put
+  // two seconds into every one of these.
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  const brief = (): HTMLElement => container.querySelector<HTMLElement>('[data-testid="composer-brief"]')!;
+  const name = (): string => container.querySelector('[data-testid="composer-name"]')?.textContent ?? '';
+
+  const write = async (text: string): Promise<void> => {
+    await act(async () => {
+      brief().textContent = text;
+      brief().dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  };
+
+  /**
+   * The idle pause, which is the only trigger there is.
+   *
+   * The composer has no blur hook to hang this on — the repo field it used to have
+   * is gone, and picking a repo is a `#` mention inside the brief now. So the ask
+   * fires when the typing stops, and a test has to let the timer run.
+   */
+  const idle = async (): Promise<void> => {
+    await act(async () => {
+      vi.advanceTimersByTime(2_100);
+    });
+    await act(async () => {});
+  };
+
+  it('shows the heuristic immediately, so the line is never a spinner nobody can read', async () => {
+    await write('I wanna add a cheap model for naming tasks');
+    // The name it WOULD get, derived through the same pipeline the extension uses,
+    // so the line cannot promise something `tasks.create` would not produce.
+    expect(name()).toContain('add a cheap model for naming');
+  });
+
+  it('swaps in the model’s name when one lands', async () => {
+    invoke.mockImplementation(async (command: string) =>
+      command === 'tasks.suggestName'
+        ? { ok: true as const, value: { name: 'Add a cheap model seam' } }
+        : { ok: true as const, value: [] },
+    );
+    await write('I wanna add a cheap model for naming tasks');
+    await idle();
+    await act(async () => {});
+    expect(name()).toContain('Add a cheap model seam');
+  });
+
+  it('asks once the typing stops, carrying the brief', async () => {
+    await write('I wanna add a cheap model for naming tasks');
+    await idle();
+    expect(invoke).toHaveBeenCalledWith('tasks.suggestName', {
+      brief: 'I wanna add a cheap model for naming tasks',
+    });
+  });
+
+  it('does not ask about a brief too short to name', async () => {
+    await write('fix it');
+    await idle();
+    expect(invoke).not.toHaveBeenCalledWith('tasks.suggestName', expect.anything());
+  });
+
+  it('sends the name it has to create', async () => {
+    invoke.mockImplementation(async (command: string) =>
+      command === 'tasks.suggestName'
+        ? { ok: true as const, value: { name: 'Add a cheap model seam' } }
+        : { ok: true as const, value: { slug: 'add-a-cheap-model-seam' } },
+    );
+    await write('I wanna add a cheap model for naming tasks');
+    await idle();
+    await act(async () => {});
+    await press('Enter', brief());
+    expect(invoke).toHaveBeenCalledWith(
+      'tasks.create',
+      expect.objectContaining({ name: 'Add a cheap model seam' }),
+    );
+  });
+
+  it('creates without a name when none has landed, rather than waiting for one', async () => {
+    // THE case the whole design exists for: Create pressed before a ~6s answer.
+    // The extension then names it from the brief, and nothing has been delayed.
+    invoke.mockImplementation(async (command: string) =>
+      command === 'tasks.suggestName'
+        ? new Promise(() => {
+            /* never answers */
+          })
+        : { ok: true as const, value: { slug: 'a-task' } },
+    );
+    await write('I wanna add a cheap model for naming tasks');
+    await idle();
+    await press('Enter', brief());
+    const create = invoke.mock.calls.find((call) => call[0] === 'tasks.create');
+    expect(create).toBeDefined();
+    expect((create?.[1] as { name?: unknown }).name).toBeUndefined();
+  });
+
+  it('ignores an answer whose shape nobody expected', async () => {
+    invoke.mockImplementation(async (command: string) =>
+      command === 'tasks.suggestName' ? { ok: true as const, value: { name: 42 } } : { ok: true as const, value: [] },
+    );
+    await write('I wanna add a cheap model for naming tasks');
+    await idle();
+    await act(async () => {});
+    // Falls back to the heuristic rather than rendering `42`.
+    expect(name()).toContain('add a cheap model for naming');
   });
 });

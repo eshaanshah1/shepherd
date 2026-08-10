@@ -18,6 +18,7 @@ import {
 } from './manifest.ts';
 import { TaskStore, type RepoArchive, type RepoRef, type TaskRecord, type TaskSession } from './store.ts';
 import { slugify, uniqueSlug } from './model/slug.ts';
+import { heuristicName, namingPrompt, readName } from './model/naming.ts';
 import { expandHome, collapseHome } from './model/repo-path.ts';
 import { displayMatch, segmentsOf, type DisplaySegment } from './model/match-display.ts';
 import { orderSuggestions, rankScored } from './model/pick-order.ts';
@@ -38,7 +39,8 @@ import { ARCHIVE_TTL_MS, expired } from './model/expiry.ts';
 import {
   archiveWorktree,
   materializeTaskRoot,
-  provisionRepo,
+  addWorktree,
+  readRepoRefs,
   readContribution,
   removeWorktree,
   restoreWorktree,
@@ -390,6 +392,79 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * repo and is exactly the row you need in order to reach the ones inside it —
    * and the mark is what stops a non-repo being picked by accident.
    */
+  /**
+   * Below this there is nothing to name yet, and asking spends budget for nothing.
+   */
+  const MIN_BRIEF_CHARS = 24;
+  /**
+   * How much a brief must have moved before the same question is worth re-asking.
+   *
+   * On CONTENT rather than on a timer alone: a pause after twenty more characters
+   * is a different brief, a pause after two is the same one. §7c named budget as
+   * the reason `agents` is its own permission, and a per-keystroke ask would spend
+   * it several times per task.
+   */
+  const BRIEF_DRIFT_CHARS = 20;
+  /**
+   * How long the ASK may take. Provisioning's patience is a different clock (D20),
+   * and much shorter.
+   *
+   * Measured: a real naming call — this prompt, the whole brief — is ~10.5s, so
+   * this is headroom over that rather than a round number.
+   */
+  const NAME_ASK_TIMEOUT_MS = 30_000;
+
+  /**
+   * The last naming ask, and the brief it was about.
+   *
+   * ONE entry, not a map: the composer asks about a brief that is growing, and
+   * every earlier answer is about text nobody has on screen any more. Keeping this
+   * is what makes the composer's ask and provisioning's ask the same ask (D21) —
+   * Create pressed while one is in flight awaits it instead of starting a second
+   * and paying for the model twice.
+   */
+  let pending: { brief: string; answer: Promise<string | undefined> } | undefined;
+
+  const askForName = async (brief: string): Promise<string | undefined> => {
+    const answer = await commands.invoke('agents.complete', {
+      prompt: namingPrompt(brief),
+      timeoutMs: NAME_ASK_TIMEOUT_MS,
+    });
+    if (!answer.ok) return undefined;
+    /**
+     * Read defensively. `ok` says the call succeeded, not that the value has a
+     * shape — it crossed a port from an extension this code has never seen, and a
+     * cast is not a check.
+     */
+    const value = answer.value as { ok?: unknown; text?: unknown } | null;
+    if (typeof value !== 'object' || value === null || value.ok !== true) return undefined;
+    if (typeof value.text !== 'string') return undefined;
+    return readName(value.text);
+  };
+
+  /**
+   * The name for this brief — the in-flight ask if there is one for it, otherwise
+   * a new one. Never rejects: a naming failure is not a failure of whatever asked.
+   */
+  const pendingName = (brief: string): Promise<string | undefined> => {
+    const trimmed = brief.trim();
+    if (trimmed.length < MIN_BRIEF_CHARS) return Promise.resolve(undefined);
+    if (pending !== undefined && Math.abs(pending.brief.length - trimmed.length) < BRIEF_DRIFT_CHARS) {
+      return pending.answer;
+    }
+    const answer = askForName(trimmed).catch(() => undefined);
+    pending = { brief: trimmed, answer };
+    return answer;
+  };
+
+  ctx.subscriptions.push(
+    commands.register(TASK_COMMANDS.suggestName, {
+      title: 'Tasks: Suggest a Name',
+      schema: s.object({ brief: s.string() }),
+      handler: async (args) => ({ name: (await pendingName(args.brief)) ?? null }),
+    }),
+  );
+
   ctx.subscriptions.push(
     commands.register(TASK_COMMANDS.suggestRepos, {
       title: 'Tasks: Suggest Repos',
@@ -967,18 +1042,87 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * the orchestrator's own launch come after the last repo lands, and they are
    * seconds of the wait that no per-repo state can speak for.
    */
-  async function provision(task: TaskRecord, images?: readonly PastedImage[]): Promise<void> {
-    return whileBusy(task.id, 'provisioning', () => runProvision(task, images));
+  /** How long provisioning will wait for a name. NOT the ask's own timeout (D20). */
+  const NAME_DEADLINE_MS = 4_000;
+
+  /**
+   * The slug's one permitted change — before the first git write, and never after
+   * (D19).
+   *
+   * At this moment the record has no sessions, no archives, nothing on disk is
+   * named after it and no pane has a cwd inside it. After the first
+   * `worktree add`, changing it would mean `git branch -m`, `git worktree move`,
+   * moving the task root and re-synthesizing its CLAUDE.md and symlinks, and
+   * re-seeding Claude Code's per-path trust — all while an orchestrator is booting
+   * with a cwd inside the directory being moved. So: once, here, or never.
+   *
+   * Two clocks, deliberately (D20). The ASK may take 15s because it may outlive
+   * the composer that started it; this waits 4s, because that is a wait somebody
+   * is sitting through. A late answer is not wasted — it still improves the
+   * title, which is display only.
+   *
+   * `takenSlugs` is re-checked because a concurrent create may have taken the
+   * name in the meantime.
+   */
+  async function settleName(draft: TaskRecord): Promise<TaskRecord> {
+    const named = await Promise.race([
+      pendingName(draft.brief),
+      new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), NAME_DEADLINE_MS)),
+    ]);
+    if (named === undefined) return draft;
+
+    const slug = uniqueSlug(slugify(named), store.takenSlugs());
+    // The title is worth taking even when the slug is unchanged: one call answers
+    // both, and the row label is the half nothing on disk depends on.
+    const settled: TaskRecord = { ...draft, slug, title: named };
+    store.put(settled);
+    changed();
+    if (slug !== draft.slug) ctx.log.info(`task ${draft.id}: named ${slug} before its first worktree`);
+    return settled;
   }
 
-  async function runProvision(task: TaskRecord, images?: readonly PastedImage[]): Promise<void> {
+  async function provision(
+    task: TaskRecord,
+    images?: readonly PastedImage[],
+    naming?: { settle: (task: TaskRecord) => Promise<TaskRecord> },
+  ): Promise<void> {
+    return whileBusy(task.id, 'provisioning', () => runProvision(task, images, naming));
+  }
+
+  async function runProvision(
+    draft: TaskRecord,
+    images?: readonly PastedImage[],
+    naming?: { settle: (task: TaskRecord) => Promise<TaskRecord> },
+  ): Promise<void> {
+    /**
+     * The refs read starts BEFORE the name is awaited, which is the whole reason
+     * `provisionRepo` was split in two.
+     *
+     * Probe 2's numbers are what make it worth having: one fetch is ~2.5s of
+     * network per repo and a `worktree add` is 0.16s, so the model thinks *during*
+     * the network rather than after it. Only the FIRST repo is prefetched — by the
+     * time the loop reaches a second, the name settled long ago.
+     */
+    const first = draft.repos[0];
+    const prefetched = first === undefined ? undefined : readRepoRefs(api.proposed.process, first);
+
+    /**
+     * Everything below works with the SETTLED record, and the shadowing is the
+     * point: a task's name may change once, here, and no line after this may see
+     * the provisional one — least of all a `worktree add`.
+     */
+    const task = naming === undefined ? draft : await naming.settle(draft);
     const root = rootOf(task);
     const landed: { name: string; path: string; worktree: string }[] = [];
-    for (const repo of task.repos) {
+    for (const [index, repo] of task.repos.entries()) {
       const key = `${task.id}:${repo.name}`;
       provisioning.set(key, 'working');
       hookIssue.delete(key);
-      const outcome = await provisionRepo(api.proposed.process, repo, task.slug, `${root}/${repo.name}`);
+      const refs =
+        index === 0 && prefetched !== undefined
+          ? await prefetched
+          : await readRepoRefs(api.proposed.process, repo);
+      const outcome = await addWorktree(api.proposed.process, repo, task.slug, `${root}/${repo.name}`, refs);
       if (outcome.ok) {
         provisioning.set(key, 'ready');
         changed();
@@ -1104,6 +1248,12 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       schema: s.object({
         title: s.string(),
         brief: s.optional(s.string()),
+        /**
+         * A name the caller already has — the composer's speculative ask, landed
+         * before Create was pressed. Absent is perfectly normal: the heuristic
+         * then names the task and the race in `settleName` may improve it.
+         */
+        name: s.optional(s.string()),
         repos: s.optional(s.array(repoArg)),
         /**
          * Images pasted into the brief, base64, in the order their `[Image #N]`
@@ -1116,12 +1266,21 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         // The slug is resolved ONCE against what is taken and then stored (D8).
         // Re-deriving it later would let two tasks titled the same resolve to one
         // folder and quietly share a worktree.
-        const slug = uniqueSlug(slugify(args.title), store.takenSlugs());
+        // Derived ONCE and then stored (D8). What it is derived FROM is, in order:
+        // a name the caller already has, a filler-stripped heuristic, and finally
+        // the raw title — which is the paragraph that produced
+        // `shepherd-i-wanna-add-a-new-feature-extension-it-s-something`.
+        const named = args.name === undefined ? undefined : readName(args.name);
+        const slug = uniqueSlug(
+          slugify(named ?? heuristicName(args.brief ?? '') ?? args.title),
+          store.takenSlugs(),
+        );
         const task: TaskRecord = {
           schemaVersion: 1,
           id: nextId(),
           slug,
-          title: args.title,
+          // One call answers both the branch and the row label (D18).
+          title: named ?? args.title,
           brief: args.brief ?? '',
           lifecycle: 'draft',
           // Expanded HERE rather than in the composer, so the CLI's `--repo`
@@ -1155,7 +1314,11 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         // 0.16s but one network round-trip is 2.51s, paid ONCE PER REPO, so a
         // three-repo task is ~7.5s of nothing before a file is written. The
         // caller gets the task; provisioning reports itself through the record.
-        void provision(task, args.images).catch((error: unknown) => {
+        // The naming hook is passed HERE and nowhere else. `restore` provisions
+        // too, and a task with a history must never have its directory renamed
+        // under it — the window in which a slug may change closed the first time
+        // git ran for it.
+        void provision(task, args.images, named === undefined ? { settle: settleName } : undefined).catch((error: unknown) => {
           ctx.log.error(`task ${task.id}: provisioning threw — ${String(error)}`);
         });
         return task;

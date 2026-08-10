@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "shepherd.diagnostics — the built-in you invoke to find out whether the extension host is alive.",
+  "description": "shepherd.diagnostics \u2014 the built-in you invoke to find out whether the extension host is alive.",
   "//exports": "Two subpaths on purpose: main imports ./manifest to register the extension, and only the utility process imports the root (which pulls in `activate`). One entry would drag the extension's code into the main bundle to read six fields of metadata.",
   "exports": {
     ".": {
@@ -19,7 +19,7 @@
       "default": "./ui/card.tsx"
     }
   },
-  "//shepherd": "The manifest, as an extension declares it. `src/manifest.ts` is the typed copy the host actually loads, and `manifest.test.ts` asserts the two are identical — a built-in is held to the same validation as anybody else, so it must not be able to drift from its own package.json.",
+  "//shepherd": "The manifest, as an extension declares it. `src/manifest.ts` is the typed copy the host actually loads, and `manifest.test.ts` asserts the two are identical \u2014 a built-in is held to the same validation as anybody else, so it must not be able to drift from its own package.json.",
   "shepherd": {
     "id": "shepherd.diagnostics",
     "name": "Diagnostics",
@@ -47,14 +47,18 @@
           "title": "Diagnostics: Bump the Tree"
         }
       ]
-    }
+    },
+    "dependencies": [
+      "shepherd.agents-core"
+    ]
   },
   "scripts": {
     "typecheck": "tsc -b",
     "test": "vitest run"
   },
   "dependencies": {
-    "@shepherd/sdk": "workspace:*"
+    "@shepherd/sdk": "workspace:*",
+    "@shepherd/ext-agents-core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "catalog:",
