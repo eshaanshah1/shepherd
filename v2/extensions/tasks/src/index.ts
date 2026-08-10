@@ -19,6 +19,7 @@ import {
 import { TaskStore, type RepoArchive, type RepoRef, type TaskRecord, type TaskSession } from './store.ts';
 import { slugify, uniqueSlug } from './model/slug.ts';
 import { expandHome } from './model/repo-path.ts';
+import { displayMatch, type DisplaySegment } from './model/match-display.ts';
 import { repoName } from './model/repo-name.ts';
 import { completeDirectories, exactRepoPath, looksLikeRepo } from './suggest.ts';
 import { taskRootId } from './model/root-id.ts';
@@ -76,6 +77,10 @@ export interface RepoSuggestionProvider {
 export interface RepoSuggestion extends RepoRef {
   readonly isRepo: boolean;
   readonly source: 'history' | 'filesystem';
+  /** The path as a person writes it — home collapsed. What the field draws. */
+  readonly display: string;
+  /** `display`, already cut into matched and unmatched runs. */
+  readonly segments: readonly DisplaySegment[];
 }
 
 /** See the `suggestRepos` handler: a list you arrow through, not one you scroll. */
@@ -409,26 +414,47 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           }
         }
 
+        // A row crosses the port ready to DRAW: the text as a person writes it
+        // (home collapsed) and the positions already shifted into that text. The
+        // view has neither a home directory nor a matcher, deliberately.
+        const drawn = (
+          row: Omit<RepoSuggestion, 'display' | 'segments'>,
+          positions: readonly number[],
+        ): RepoSuggestion => {
+          const shown = displayMatch(row.path, positions, ctx.homeDir);
+          return { ...row, display: shown.text, segments: shown.segments };
+        };
+
         const out: RepoSuggestion[] = [];
         for (const repo of fromPoint.values()) {
           const hit = fuzzyMatch(query, repo.path);
           if (hit === null) continue;
-          out.push({
-            path: repo.path,
-            name: repo.name,
-            isRepo: looksLikeRepo(repo.path),
-            source: 'history',
-          });
+          out.push(
+            drawn(
+              {
+                path: repo.path,
+                name: repo.name,
+                isRepo: looksLikeRepo(repo.path),
+                source: 'history',
+              },
+              hit.positions,
+            ),
+          );
         }
 
         for (const candidate of completeDirectories(query, ctx.homeDir)) {
           if (fromPoint.has(candidate.path)) continue;
-          out.push({
-            path: candidate.path,
-            name: repoName(candidate.path),
-            isRepo: candidate.isRepo,
-            source: 'filesystem',
-          });
+          out.push(
+            drawn(
+              {
+                path: candidate.path,
+                name: repoName(candidate.path),
+                isRepo: candidate.isRepo,
+                source: 'filesystem',
+              },
+              candidate.positions,
+            ),
+          );
         }
 
         // The exact repo leads, wherever it came from. The composer's ghost text
@@ -437,12 +463,12 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         const exact = exactRepoPath(query);
         if (exact === null) return out.slice(0, SUGGESTION_LIMIT);
         const already = out.find((row) => row.path === exact);
-        const lead: RepoSuggestion = already ?? {
-          path: exact,
-          name: repoName(exact),
-          isRepo: true,
-          source: 'filesystem',
-        };
+        const lead: RepoSuggestion =
+          already ??
+          drawn(
+            { path: exact, name: repoName(exact), isRepo: true, source: 'filesystem' },
+            fuzzyMatch(query, exact)?.positions ?? [],
+          );
         return [lead, ...out.filter((row) => row.path !== exact)].slice(0, SUGGESTION_LIMIT);
       },
     }),

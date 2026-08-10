@@ -17,3 +17,20 @@ export function expandHome(path: string, home: string): string {
   if (!path.startsWith('~/')) return path;
   return `${home}${path.slice(1)}`;
 }
+
+/**
+ * The inverse, for DISPLAY only — never for anything git is handed.
+ *
+ * `/Users/eshaannileshshah` is a third of the width of the repo field and the
+ * same on every row, so it is noise that pushes the part you are reading off the
+ * end. A path shown to a person is written the way a person writes it.
+ *
+ * Exact-prefix, and only at a segment boundary: `/Users/me-old/x` must not
+ * collapse under a home of `/Users/me`.
+ */
+export function collapseHome(path: string, home: string): string {
+  const base = home.replace(/\/+$/, '');
+  if (base === '') return path;
+  if (path === base) return '~';
+  return path.startsWith(`${base}/`) ? `~${path.slice(base.length)}` : path;
+}

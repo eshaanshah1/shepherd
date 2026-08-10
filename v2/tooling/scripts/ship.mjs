@@ -81,17 +81,46 @@ run('pnpm', ['install', '--silent']);
  * `ditto` rather than `cp -R`: it preserves the bundle's symlinks and resource
  * forks, and it is what the installed app has to be for macOS to accept it.
  */
+const log = join(tmpdir(), 'shep-ship.log');
 const script = join(mkdtempSync(join(tmpdir(), 'shep-ship-')), 'swap.sh');
 writeFileSync(
   script,
   [
     '#!/bin/bash',
     'set -e',
-    `while pgrep -x ${JSON.stringify(name)} >/dev/null; do sleep 0.2; done`,
+    // Everything below is invisible — the parent is detached with stdio ignored,
+    // and it usually outlives the pane that started it. A branch that ends in
+    // "and then nothing happened" has to say why somewhere.
+    `exec >>${JSON.stringify(log)} 2>&1`,
+    `echo "--- $(date '+%F %T') swap ${name}"`,
+    /*
+     * The quit lives HERE, and repeats.
+     *
+     * It used to be one `osascript` from the parent beside a `pgrep` loop that
+     * only watched, and that pair loses twice. A quit that is refused (no
+     * Automation permission) is silent, so the loop waits for an app nobody
+     * asked to leave; and a `pgrep` poll cannot tell "gone" from "gone and
+     * relaunched between two polls" — which is exactly what a user reopening
+     * from the Dock does, and it left the swapper waiting forever on an app that
+     * had already restarted from the OLD bundle. `ship` had printed success half
+     * an hour earlier. Asking again every cycle covers both: a relaunch is asked
+     * to leave too, and the wait is bounded so a refusal is reported instead of
+     * being waited out.
+     */
+    'deadline=$((SECONDS + 120))',
+    `while pgrep -x ${JSON.stringify(name)} >/dev/null; do`,
+    '  if (( SECONDS > deadline )); then',
+    `    echo "gave up: ${name} still running after 120s — quit it and re-run pnpm ship"`,
+    '    exit 1',
+    '  fi',
+    `  osascript -e 'quit app ${JSON.stringify(name)}' >/dev/null 2>&1 || true`,
+    '  sleep 2',
+    'done',
     `rm -rf ${JSON.stringify(installed)}`,
     `ditto ${JSON.stringify(built)} ${JSON.stringify(installed)}`,
     `xattr -cr ${JSON.stringify(installed)} || true`,
     `open ${JSON.stringify(installed)}`,
+    `echo "swapped and reopened ${installed}"`,
   ].join('\n'),
   { mode: 0o755 },
 );
@@ -120,12 +149,8 @@ const RELAUNCH_ENV = Object.fromEntries(
 say(`swapping ${installed} and relaunching once ${name} exits`);
 spawn('/bin/bash', [script], { detached: true, stdio: 'ignore', env: RELAUNCH_ENV }).unref();
 
-/**
- * And ask it to quit — AFTER the swapper is watching, or the app can exit in the
- * gap and the loop never sees it running.
- *
- * `osascript` rather than `pkill`, so the app tears down its sessions the way a
- * ⌘Q does. If it is not running this is a no-op and the swap happens at once.
- */
-spawnSync('osascript', ['-e', `quit app ${JSON.stringify(name)}`], { stdio: 'ignore' });
+// The swapper asks it to quit, repeatedly, and says so in the log — see the
+// script. Nothing is done here, so there is no window in which the app can exit
+// before anything is watching for it.
 say(`${name} is on its way back — this pane's own agent went with it`);
+say(`if it does not come back, the swapper says why: ${log}`);

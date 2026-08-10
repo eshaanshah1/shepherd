@@ -113,6 +113,23 @@ describe('looksLikeRepo', () => {
   });
 });
 
+describe('match positions', () => {
+  it('shifts the hit into the FULL path, since that is what the field draws', () => {
+    // The match runs against the entry NAME (`shepherd`), and the picker draws
+    // `<parent>/shepherd`. An unshifted position would highlight characters that
+    // many places to the left — and still render, so nothing would report it.
+    const [first] = completeDirectories(join(home, 'dev/shp'), home);
+    const shown = first!.path;
+    expect(shown).toBe(join(home, 'dev/shepherd'));
+    expect(first!.positions.map((at) => shown[at])).toEqual(['s', 'h', 'p']);
+  });
+
+  it('answers an empty query with no positions rather than every position', () => {
+    const [first] = completeDirectories(join(home, 'dev'), home);
+    expect(first!.positions).toEqual([]);
+  });
+});
+
 describe('exactRepoPath', () => {
   it('names the repo you typed the whole path of', () => {
     // The shipped defect: completion answers a directory with its CHILDREN, so

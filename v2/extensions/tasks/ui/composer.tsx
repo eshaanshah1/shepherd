@@ -30,12 +30,46 @@ import { readPastedImage } from "./paste-image.ts";
  *     borrowing the user's unconditional trust (D14).
  */
 
-interface RepoSuggestion {
+interface DisplaySegment {
+  readonly text: string;
+  readonly matched: boolean;
+}
+
+interface PickedRepo {
   readonly path: string;
   readonly name: string;
+}
+
+interface RepoSuggestion extends PickedRepo {
   readonly isRepo: boolean;
   /** Where it came from. Only a filesystem row is a Tab target — see `complete`. */
   readonly source: "history" | "filesystem";
+  /** The path as a person writes it — home collapsed. What the field draws. */
+  readonly display: string;
+  /** `display`, already cut into matched and unmatched runs by the ranker. */
+  readonly segments: readonly DisplaySegment[];
+}
+
+/**
+ * The runs, read defensively — they crossed the port from a provider this file
+ * has never seen (D5), so a row that carries none is drawn as plain text rather
+ * than trusted to have cut itself up correctly.
+ *
+ * A row whose runs do not reassemble into its own `display` is discarded for the
+ * same reason: the only thing worse than no highlight is a highlight that
+ * silently renames the path it is drawn over.
+ */
+function readSegments(value: unknown, display: string): readonly DisplaySegment[] {
+  if (!Array.isArray(value)) return [{ text: display, matched: false }];
+  const runs: DisplaySegment[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "object" || entry === null) return [{ text: display, matched: false }];
+    const { text, matched } = entry as { text?: unknown; matched?: unknown };
+    if (typeof text !== "string") return [{ text: display, matched: false }];
+    runs.push({ text, matched: matched === true });
+  }
+  const rebuilt = runs.map((run) => run.text).join("");
+  return rebuilt === display ? runs : [{ text: display, matched: false }];
 }
 
 /**
@@ -64,19 +98,26 @@ function readSuggestions(value: unknown): readonly RepoSuggestion[] {
   const seen = new Set<string>();
   return value.flatMap((entry: unknown) => {
     if (typeof entry !== "object" || entry === null) return [];
-    const { path, isRepo, source } = entry as {
+    const { path, isRepo, source, display, segments } = entry as {
       path?: unknown;
       isRepo?: unknown;
       source?: unknown;
+      display?: unknown;
+      segments?: unknown;
     };
     if (typeof path !== "string" || path === "" || seen.has(path)) return [];
     seen.add(path);
+    // A provider that carries no display text is drawn by its path, which is
+    // always true and never wrong — only longer than it needs to be.
+    const shown = typeof display === "string" && display !== "" ? display : path;
     return [
       {
         path,
         name: repoName(path),
         isRepo: isRepo !== false,
         source: source === "filesystem" ? "filesystem" : "history",
+        display: shown,
+        segments: readSegments(segments, shown),
       },
     ];
   });
@@ -98,7 +139,10 @@ export function TaskComposer({
   done,
 }: ExtensionViewProps): React.JSX.Element {
   const [brief, setBrief] = useState("");
-  const [repos, setRepos] = useState<readonly RepoSuggestion[]>([]);
+  // A PICKED repo is a path and a name — never a suggestion. Its match runs
+  // describe a query that is over: the field has been cleared, and a chip that
+  // carried them would still be painted for a search nobody is running.
+  const [repos, setRepos] = useState<readonly PickedRepo[]>([]);
   const [path, setPath] = useState("");
   const [suggestions, setSuggestions] = useState<readonly RepoSuggestion[]>([]);
   const [listOpen, setListOpen] = useState(true);
@@ -196,7 +240,7 @@ export function TaskComposer({
     if (!repos.some((repo) => repo.path === trimmed)) {
       setRepos([
         ...repos,
-        { path: trimmed, name: repoName(trimmed), isRepo: true, source: "history" },
+        { path: trimmed, name: repoName(trimmed) },
       ]);
     }
     setPath("");
@@ -214,11 +258,14 @@ export function TaskComposer({
   /**
    * Take the completion that is on screen.
    *
-   * It is whatever the ghost text is showing, and that is the whole rule: with
-   * ONE suggestion visible there is nothing else it could honestly mean. The
+   * It is whatever the field is showing, and that is the whole rule: with ONE
+   * suggestion visible there is nothing else it could honestly mean. The
    * previous version completed to the common prefix of every filesystem match —
    * shell behaviour, correct when a list was on screen — and once the list went
    * away it promised `shepherd` in ghost text and gave you `she`.
+   *
+   * It retypes the DISPLAY text, `~` and all, so the query and what is on screen
+   * agree afterwards; `expandHome` is what reads it back.
    *
    * Only a FILESYSTEM row is a Tab target. Those share a parent by construction
    * (one level, one `readdir`), so completing to one is navigation; a history
@@ -233,8 +280,8 @@ export function TaskComposer({
    */
   const complete = (): boolean => {
     if (current === undefined || current.source !== "filesystem") return false;
-    if (current.path.length <= path.length) return false;
-    retype(current.path);
+    if (current.display === path.trim()) return false;
+    retype(current.display);
     return true;
   };
 
@@ -354,16 +401,30 @@ export function TaskComposer({
             completion into the input would mean the user's next keystroke edits
             text they did not type.
           */}
-          {current === undefined ? null : (
-            <div className="sh-composer-repo-ghost" aria-hidden="true">
-              <span className="sh-composer-repo-typed">{path}</span>
-              <span
-                className="sh-composer-repo-rest"
-                data-testid="composer-suggestion"
-                data-path={current.path}
-              >
-                {current.path.slice(path.length)}
-              </span>
+          {path === "" ? null : current === undefined ? (
+            // Nothing matched. The raw query is the only honest thing left to
+            // draw — going blank here would leave you typing at a field that
+            // shows nothing back, with no way to see the typo you just made.
+            <div className="sh-composer-repo-shown" data-testid="composer-nomatch" aria-hidden="true">
+              <span className="sh-composer-repo-miss">{path}</span>
+            </div>
+          ) : (
+            <div
+              className="sh-composer-repo-shown"
+              data-testid="composer-suggestion"
+              data-path={current.path}
+              aria-hidden="true"
+            >
+              {current.segments.map((run, at) => (
+                <span
+                  // Index, because the runs ARE positional: two runs of the same
+                  // text in one path are two different places in it.
+                  key={at}
+                  className={run.matched ? "sh-composer-repo-hit" : undefined}
+                >
+                  {run.text}
+                </span>
+              ))}
               {current.isRepo ? null : <span className="sh-composer-repo-note">not a repo</span>}
             </div>
           )}

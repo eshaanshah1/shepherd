@@ -775,46 +775,77 @@ body.sh-dragging {
   gap: var(--sh-space-sm) var(--sh-space-md);
 }
 
+/*
+ * The field shows the MATCH, not the keystrokes (fzf's contract).
+ *
+ * So the two layers swap roles from what a ghost-text field does: the SHOWN
+ * text is in flow and sizes the box, and the input lies on top of it with its
+ * own text transparent. The box therefore grows to the path being offered
+ * rather than to a guessed `22ch`, and shrinks back to the placeholder when the
+ * field empties — which is the pill in the sketch.
+ *
+ * `inline-grid` with both children in one cell, rather than `position:
+ * absolute`: an absolutely-positioned shown-text contributes no width, which is
+ * the whole thing this layout needs it to do.
+ */
 .sh-composer-repo {
-  position: relative;
+  display: inline-grid;
+  grid-template-columns: minmax(7ch, auto);
+  align-items: center;
   flex: 0 1 auto;
   min-width: 0;
-  display: flex;
-  align-items: center;
 }
+
+.sh-composer-repo > * { grid-area: 1 / 1; }
 
 .sh-composer-repo input {
   font-size: var(--sh-font-size-small);
-  color: var(--sh-text-dim);
   padding: 0;
-  width: 22ch;
+  width: 100%;
+  min-width: 0;
+  /*
+   * Transparent, not hidden: it still takes the keystrokes, still owns the
+   * selection, and still shows a caret — which is the only thing on screen that
+   * tracks the query rather than the match, and so the only cue that the two are
+   * different lengths.
+   */
+  color: transparent;
+  caret-color: var(--sh-accent);
 }
 
 .sh-composer-repo input::placeholder { color: var(--sh-text-faint); }
 .sh-composer-repo input:focus::placeholder { color: transparent; }
 
 /*
- * The completion, as ghost text under the caret.
- *
- * Same box, same type, same padding as the input above it, or the suggestion
- * does not line up with what you typed character for character — which is the
- * one thing this has to get right to be readable rather than confusing.
+ * The match, under the caret. Same type and padding as the input over it, or the
+ * caret lands somewhere the text is not.
  */
-.sh-composer-repo-ghost {
-  position: absolute;
-  inset: 0;
+.sh-composer-repo-shown {
+  pointer-events: none;
   display: flex;
   align-items: center;
   gap: var(--sh-space-sm);
-  pointer-events: none;
   font-size: var(--sh-font-size-small);
+  color: var(--sh-text-dim);
   white-space: pre;
   overflow: hidden;
 }
 
-/* Invisible, and present: it is what pushes the completion to the caret. */
-.sh-composer-repo-typed { color: transparent; }
-.sh-composer-repo-rest { color: var(--sh-text-faint); }
+/*
+ * The characters the query hit.
+ *
+ * `accent` — the role for the thing you are acting on — and NOT `success`,
+ * whose job is done/passed (rule 3: an accent has one job). A fuzzy hit is not
+ * an outcome.
+ */
+.sh-composer-repo-hit { color: var(--sh-accent); }
+
+/* Nothing matched: what you typed, marked as not standing for anything yet. */
+.sh-composer-repo-miss {
+  color: var(--sh-text-faint);
+  text-decoration: underline dotted currentColor;
+  text-underline-offset: 3px;
+}
 
 .sh-composer-repo-note {
   color: var(--sh-text-faint);
