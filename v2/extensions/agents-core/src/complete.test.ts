@@ -108,7 +108,7 @@ describe('runComplete', () => {
     expect(seen.cmd).toEqual(['fake-agent', '-p', 'name this', '--model', 'model-q']);
     expect(seen.opts?.cwd).toBe(dataDir);
     expect(seen.opts?.env).toEqual({ HOME: '/Users/ada', USER: 'ada' });
-    expect(seen.opts?.timeoutMs).toBe(15_000);
+    expect(seen.opts?.timeoutMs).toBe(30_000);
   });
 
   it('creates its own dataDir, which the host does not create for it', async () => {
@@ -151,7 +151,7 @@ describe('runComplete', () => {
     // worth telling apart: one means "the model is slow", the other "the binary
     // is broken".
     const slow = await runComplete(
-      { ...deps(fakeProcess({ ok: false, code: -1, stdout: '', stderr: '' }, seenNow())), clock: clockAt([0, 15_000]) },
+      { ...deps(fakeProcess({ ok: false, code: -1, stdout: '', stderr: '' }, seenNow())), clock: clockAt([0, 30_000]) },
       target(),
       { prompt: 'p' },
     );
