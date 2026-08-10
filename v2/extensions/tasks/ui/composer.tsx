@@ -1,7 +1,8 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { ExtensionViewProps } from "@shepherd/sdk";
-import { Button, Composer, PromptField, type PromptFieldHandle } from "@shepherd/ui";
+import { Button, Composer, PromptField, useBrailleFrame, type PromptFieldHandle } from "@shepherd/ui";
 import { repoName } from "../src/model/repo-name.ts";
+import { heuristicName } from "../src/model/naming.ts";
 import type { PastedImage } from "../src/images.ts";
 import { readPastedImage } from "./paste-image.ts";
 import { findTrigger, isUnwritten, scopeLine, type DisplaySegment } from "./mention.ts";
@@ -173,6 +174,15 @@ export function TaskComposer({
   const [spot, setSpot] = useState({ x: EDGE, y: 0 });
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
+  /**
+   * The name the model suggested, and whether an ask is out for one.
+   *
+   * The heuristic shows immediately and this only ever replaces it — a preview
+   * that appeared *only* once a model answered would be a spinner most of the
+   * time and would teach nobody what the name is going to be.
+   */
+  const [suggested, setSuggested] = useState<string | null>(null);
+  const [naming, setNaming] = useState(false);
   const listId = useId();
   const card = useRef<HTMLDivElement | null>(null);
   const promptRef = useRef<PromptFieldHandle | null>(null);
@@ -197,6 +207,10 @@ export function TaskComposer({
    * completions for text nobody has on screen any more.
    */
   const asked = useRef(0);
+  /** Which NAME ask is the newest — the same problem `asked` solves, one ask along. */
+  const namingAsk = useRef(0);
+  /** The brief the last name ask was about, so a pause with no new words asks nothing. */
+  const namedFor = useRef("");
 
   const askForSuggestions = async (
     forTitle: string,
@@ -219,9 +233,52 @@ export function TaskComposer({
   // Everything after that is a keystroke's; there is no debounce because there
   // is no timer here to get wrong, and the ask is one directory listing
   // (measured at ~10ms, cheaper than the keystroke that asked for it).
+  /**
+   * Ask what this task should be called.
+   *
+   * On an idle pause rather than per keystroke, and thresholded on CONTENT as well
+   * as time: a pause after twenty more characters is a different brief, a pause
+   * after two is the same one. §7c named the user's model budget as the reason
+   * `agents` is its own permission, and a per-keystroke ask would spend it several
+   * times per task.
+   */
+  const askForName = async (forBrief: string): Promise<void> => {
+    const trimmed = forBrief.trim();
+    if (trimmed.length < 24) return;
+    if (namedFor.current !== "" && Math.abs(trimmed.length - namedFor.current.length) < 20) return;
+    namedFor.current = trimmed;
+    namingAsk.current += 1;
+    const mine = namingAsk.current;
+    setNaming(true);
+    const answer = await invoke("tasks.suggestName", { brief: forBrief });
+    // A newer ask has started, so this answer is about text nobody has on screen
+    // any more. Dropped without touching the spinner, which belongs to that one.
+    if (mine !== namingAsk.current) return;
+    setNaming(false);
+    if (!answer.ok) return;
+    const value = answer.value as { name?: unknown } | null;
+    if (typeof value === "object" && value !== null && typeof value.name === "string") {
+      setSuggested(value.name);
+    }
+  };
+
   useEffect(() => {
     void askForSuggestions("", "", "");
   }, []);
+
+  /**
+   * The idle pause, and the only trigger there is.
+   *
+   * Cleared on every change, so it fires once the typing STOPS rather than once
+   * per keystroke. Keyed on the BRIEF alone, deliberately: `askForName` is a new
+   * closure every render, so depending on it would clear and restart this timer on
+   * each keystroke — which is the one thing an idle pause must not do.
+   */
+  useEffect(() => {
+    if (brief.trim() === "") return undefined;
+    const timer = setTimeout(() => void askForName(brief), 2_000);
+    return () => clearTimeout(timer);
+  }, [brief]);
 
   /**
    * A repo already in the sentence stops being offered.
@@ -456,6 +513,10 @@ export function TaskComposer({
     const result = await invoke("tasks.create", {
       title: titleOf(brief),
       brief,
+      // Whatever landed while this was being written. Absent is the ordinary case
+      // for a brief typed and submitted in one go, and the extension names it from
+      // the brief instead — nothing here waits for a model.
+      ...(suggested === null ? {} : { name: suggested }),
       ...(pasted.current.length === 0 ? {} : { images: pasted.current }),
       repos: scope.map((repo) => ({ path: repo.path, name: repo.name })),
     });
@@ -474,6 +535,8 @@ export function TaskComposer({
     // Cleared only on success. A failed create keeps everything typed — the
     // form is the only copy of it.
     setBrief("");
+    setSuggested(null);
+    namedFor.current = "";
     promptRef.current?.setValue("");
     pasted.current = [];
     // The pills went with the text, so the scope empties by being re-read rather
@@ -483,6 +546,18 @@ export function TaskComposer({
     // closes, a docked copy stays and is now empty).
     done();
   };
+  const frame = useBrailleFrame(naming);
+  /**
+   * What this will be called — the model's answer if one landed, otherwise the
+   * same fallback `tasks.create` would use.
+   *
+   * Derived through the extension's own model so the line cannot promise a name
+   * the extension would not produce. The NAME rather than the slug: `slugify` is
+   * the extension's to apply, and half-slugifying here would be a second copy of
+   * it.
+   */
+  const previewName = suggested ?? heuristicName(brief) ?? titleOf(brief);
+
   return (
     /*
       The `<form>` is OUTSIDE the `Composer`, and it is a bare block element that
@@ -626,6 +701,15 @@ export function TaskComposer({
           */}
           <span className="sh-composer-scope" data-testid="composer-scope">
             {scopeLine(scope.map((repo) => repo.name))}
+          </span>
+          {/*
+            What this task will be CALLED — the branch, the folder and the row.
+            Read-only: it shows a consequence the composer used to hide, and it is
+            not a second title field. Beside the scope line because they are the
+            same kind of thing: what the sentence implies, in words.
+          */}
+          <span className="sh-composer-name" data-testid="composer-name">
+            {previewName === "" ? "" : `${naming && suggested === null ? `${frame} ` : "→ "}${previewName}`}
           </span>
           <span className="sh-composer-spacer" />
           {/*

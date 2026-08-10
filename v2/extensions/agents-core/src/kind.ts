@@ -28,6 +28,33 @@ export interface AgentCapabilities {
 }
 
 /**
+ * What one non-interactive call to this vendor looks like — §7c's headless half.
+ *
+ * `argv` and `parse` are the whole vendor surface, and that is the point: the
+ * deadline, the output cap, the concurrency limit and the child's environment all
+ * belong to `complete.ts`, because a kind that owned them would be a kind that
+ * reimplements them. §7c's own argument for the seam is that if every extension
+ * hand-rolls this, they each do it badly and differently.
+ */
+export interface HeadlessInput {
+  readonly prompt: string;
+  readonly model: string;
+  readonly system?: string;
+}
+
+export interface HeadlessHalf {
+  /**
+   * This vendor's cheap tier, and the ONLY place a model id may appear. A
+   * consumer asks for the quick tier and never learns what served it — the rule
+   * `resumeTargetOf` already follows (D11).
+   */
+  readonly quickModel: string;
+  argv(input: HeadlessInput): readonly string[];
+  /** stdout → the answer, or `undefined` if this output carries none. */
+  parse(stdout: string): string | undefined;
+}
+
+/**
  * A kind's own per-session state, created when it first adopts a session and
  * dropped when that session exits.
  *
@@ -72,6 +99,14 @@ export interface AgentKind {
   /** The ingress topics this kind understands, e.g. `['claude.hook']`. */
   readonly topics: readonly string[];
   readonly capabilities?: AgentCapabilities;
+  /**
+   * Present iff this vendor can answer a one-shot prompt.
+   *
+   * A kind without it is invisible to `agents.complete`, which is what makes
+   * `no-kind` an honest answer rather than a hang on a pipe that will never
+   * produce the format the caller is parsing for.
+   */
+  readonly headless?: HeadlessHalf;
   /**
    * Fold one event into a transition, or refuse it with a reason.
    *

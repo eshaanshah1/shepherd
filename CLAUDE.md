@@ -140,6 +140,25 @@ env -u NODE_OPTIONS pnpm ship --dev   # → /Applications/Shep Night.app, daily 
   port as a *name* (ADR 0033) and why a row's verbs are declared by the extension
   rather than known by the shell (ADR 0031).
 
+**Asking a model something (the quick tier, ADR 0038):**
+- **`agents-core` holds `process.exec`** and the spawn is `complete.ts` alone. An
+  extension asks by invoking `agents.complete` — a command, not a method, because
+  only the dispatcher can enforce the `agents` permission. `shepherd agent
+  quick-model` configures which kind and model serve it; a model id lives only in
+  the vendor's extension.
+- **`ProcessAPI.exec` REPLACES the child's environment** rather than merging it
+  (only `gitWrite` merges), so a model call is handed exactly `{ HOME, USER }` —
+  and **without `USER` the vendor CLI answers "Not logged in · Please run /login"
+  in two seconds**, which looks exactly like a machine nobody signed in on.
+  Measured; do not trim that allow-list. `USER` reaches an extension as
+  `ctx.userName`, for the reason `homeDir` does.
+- **A quick-model call is ~6s and that is the floor** — `--safe-mode` already
+  strips every customization, and ~5.5s of it is network. Nothing user-facing may
+  wait on one. Task naming overlaps it with the per-repo `git fetch` and gives up
+  after 4s, and **a task's slug may change exactly once, before its first git
+  write, and never after** — that invariant is what keeps `git branch -m`, `git
+  worktree move` and a task root moving under a booting agent out of the codebase.
+
 The rest of this file is v1. The two share a repo, a decision log and two months
 of recorded gotchas (which are v2's test plan) — and nothing else. `v2/` touches
 no file under `spike/`.

@@ -13,6 +13,21 @@ import type { Manifest } from '@shepherd/sdk';
  */
 export const DIAGNOSTICS_ID = 'shepherd.diagnostics';
 
+/**
+ * Declared locally rather than imported, which is the convention `claude-code`
+ * follows: values do not cross between extensions (`boundaries.js`), so a
+ * dependency's id is re-stated here and only its TYPES are imported.
+ */
+export const AGENTS_CORE_ID = 'shepherd.agents-core';
+
+/**
+ * The offline quick model this extension registers in a dev build.
+ *
+ * Named here so the smoke can select it by id through `agents.quickModel`, rather
+ * than a test hook existing inside production code.
+ */
+export const STUB_AGENT_KIND_ID = 'diagnostics.stub-agent';
+
 /** Registered host-side; `diagnostics.ping` reads the host's facts through it. */
 export const EXTENSIONS_LIST_COMMAND = 'extensions.list';
 
@@ -45,6 +60,12 @@ export const diagnosticsManifest: Manifest = {
    * asserted in a comment.
    */
   permissions: ['storage', 'views'],
+  /**
+   * `agents-core`, for the stub quick model this registers in a dev build (see
+   * `index.ts`). Declared because `extensions.get` resolves only ids a manifest
+   * names — reaching another extension is declared, not discovered (§7c).
+   */
+  dependencies: [AGENTS_CORE_ID],
   contributes: {
     commands: [
       { id: DIAGNOSTICS_COMMANDS.ping, title: 'Diagnostics: Ping the Extension Host' },

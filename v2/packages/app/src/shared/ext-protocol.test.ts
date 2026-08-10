@@ -125,6 +125,7 @@ describe('readFrames', () => {
         storage: { pings: 4 },
         dataDir: '/tmp/shepherd-test/ext',
         homeDir: '/tmp/shepherd-test/home',
+        userName: 'ada',
       },
     };
     expect(readFrames(ask, hostFrameSchema).frames).toEqual([ask]);
