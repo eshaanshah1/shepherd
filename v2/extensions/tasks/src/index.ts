@@ -18,8 +18,9 @@ import {
 } from './manifest.ts';
 import { TaskStore, type RepoArchive, type RepoRef, type TaskRecord, type TaskSession } from './store.ts';
 import { slugify, uniqueSlug } from './model/slug.ts';
-import { expandHome } from './model/repo-path.ts';
-import { displayMatch, type DisplaySegment } from './model/match-display.ts';
+import { expandHome, collapseHome } from './model/repo-path.ts';
+import { displayMatch, segmentsOf, type DisplaySegment } from './model/match-display.ts';
+import { orderSuggestions, rankScored } from './model/pick-order.ts';
 import { repoName } from './model/repo-name.ts';
 import { completeDirectories, exactRepoPath, looksLikeRepo } from './suggest.ts';
 import { taskRootId } from './model/root-id.ts';
@@ -425,26 +426,42 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           return { ...row, display: shown.text, segments: shown.segments };
         };
 
-        const out: RepoSuggestion[] = [];
+        /*
+         * History matches the text on SCREEN, never the absolute path.
+         *
+         * `/Users/eshaannileshshah` supplies an `s`, an `h` and an `e` before any
+         * repo name gets a look in, so `shep` matched inside the home prefix and
+         * the highlight came back as a lone `p` two thirds of the way along a
+         * path — a match the field asserted and could not justify. Matching what
+         * is drawn is also what makes the ranking mean anything: a hit you can
+         * see is a hit that explains why the row won.
+         */
+        const shownQuery = collapseHome(query, ctx.homeDir);
+        // The score ranks and is then thrown away — it is this handler's working
+        // note, not something a view should be able to read and re-sort by.
+        const ranked: { readonly row: RepoSuggestion; readonly score: number }[] = [];
         for (const repo of fromPoint.values()) {
-          const hit = fuzzyMatch(query, repo.path);
+          const shown = collapseHome(repo.path, ctx.homeDir);
+          const hit = fuzzyMatch(shownQuery, shown);
           if (hit === null) continue;
-          out.push(
-            drawn(
-              {
-                path: repo.path,
-                name: repo.name,
-                isRepo: looksLikeRepo(repo.path),
-                source: 'history',
-              },
-              hit.positions,
-            ),
-          );
+          ranked.push({
+            score: hit.score,
+            row: {
+              path: repo.path,
+              name: repo.name,
+              isRepo: looksLikeRepo(repo.path),
+              source: 'history',
+              display: shown,
+              segments: segmentsOf(shown, hit.positions),
+            },
+          });
         }
+        const history = rankScored(ranked);
 
+        const filesystem: RepoSuggestion[] = [];
         for (const candidate of completeDirectories(query, ctx.homeDir)) {
           if (fromPoint.has(candidate.path)) continue;
-          out.push(
+          filesystem.push(
             drawn(
               {
                 path: candidate.path,
@@ -457,19 +474,20 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           );
         }
 
-        // The exact repo leads, wherever it came from. The composer's ghost text
-        // is the first row and ⏎ takes it, so this is what makes typing a repo's
-        // whole path mean that repo rather than its alphabetically-first child.
+        // The path you typed the whole of, if it is a repo, is a row of its own —
+        // completion answers such a path with its CHILDREN, so it appears nowhere
+        // in either list above.
         const exact = exactRepoPath(query);
-        if (exact === null) return out.slice(0, SUGGESTION_LIMIT);
-        const already = out.find((row) => row.path === exact);
-        const lead: RepoSuggestion =
-          already ??
-          drawn(
-            { path: exact, name: repoName(exact), isRepo: true, source: 'filesystem' },
-            fuzzyMatch(query, exact)?.positions ?? [],
+        if (exact !== null && ![...filesystem, ...history].some((row) => row.path === exact)) {
+          filesystem.unshift(
+            drawn(
+              { path: exact, name: repoName(exact), isRepo: true, source: 'filesystem' },
+              fuzzyMatch(query, exact)?.positions ?? [],
+            ),
           );
-        return [lead, ...out.filter((row) => row.path !== exact)].slice(0, SUGGESTION_LIMIT);
+        }
+
+        return orderSuggestions(filesystem, history, exact, SUGGESTION_LIMIT);
       },
     }),
   );

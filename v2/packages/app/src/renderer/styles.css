@@ -768,11 +768,21 @@ body.sh-dragging {
  * Above the brief, because that is the order the decision happens in — what you
  * are working on, then what to do to it.
  */
+/*
+ * A header row, ruled off from the brief: the field on the left, the repos it
+ * has collected on the right.
+ *
+ * The rule is what makes it a header rather than a first line of the brief —
+ * without it the field and the prose it scopes read as one column of text, and
+ * the chips look like something the brief said.
+ */
 .sh-composer-repos {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: var(--sh-space-sm) var(--sh-space-md);
+  flex-wrap: nowrap;
+  gap: var(--sh-space-md);
+  padding-bottom: var(--sh-space-sm);
+  border-bottom: var(--sh-hairline) solid var(--sh-line);
 }
 
 /*
@@ -789,10 +799,10 @@ body.sh-dragging {
  * the whole thing this layout needs it to do.
  */
 .sh-composer-repo {
-  display: inline-grid;
-  grid-template-columns: minmax(7ch, auto);
+  display: grid;
+  grid-template-columns: minmax(7ch, 1fr);
   align-items: center;
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -822,14 +832,22 @@ body.sh-dragging {
  */
 .sh-composer-repo-shown {
   pointer-events: none;
-  display: flex;
-  align-items: center;
-  gap: var(--sh-space-sm);
   font-size: var(--sh-font-size-small);
   color: var(--sh-text-dim);
   white-space: pre;
   overflow: hidden;
 }
+
+/*
+ * The runs are INLINE, with nothing between them.
+ *
+ * This was a flex row with a `gap`, inherited from when its two children were a
+ * ghost and a note. Cut into match runs, that gap opens a space at every
+ * boundary: `~ /Home/dev/tools/she p herd` — four visual words for one path, and
+ * the shown text then runs wider than the input's own, so the caret sits
+ * somewhere the character it is next to is not.
+ */
+.sh-composer-repo-shown > span { white-space: pre; }
 
 /*
  * The characters the query hit.
@@ -856,6 +874,7 @@ body.sh-dragging {
 
 .sh-composer-spacer { flex: 1 1 auto; }
 
+/* Right of the row, and never squeezing the field: they are the row's answer. */
 .sh-composer-picked {
   list-style: none;
   margin: 0;
@@ -863,7 +882,10 @@ body.sh-dragging {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--sh-space-sm);
+  flex: 0 0 auto;
+  margin-left: auto;
 }
 
 /* Empty, it is still a flex item and would spend the row's gap on nothing. */
