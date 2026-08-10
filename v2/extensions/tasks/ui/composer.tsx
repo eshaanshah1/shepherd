@@ -1,9 +1,18 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { ExtensionViewProps } from "@shepherd/sdk";
-import { Button, Composer, Field, PromptField, type PromptFieldHandle } from "@shepherd/ui";
+import { Button, Composer, PromptField, type PromptFieldHandle } from "@shepherd/ui";
 import { repoName } from "../src/model/repo-name.ts";
 import type { PastedImage } from "../src/images.ts";
 import { readPastedImage } from "./paste-image.ts";
+import { findTrigger, scopeLine, type DisplaySegment } from "./mention.ts";
+import {
+  EDGE,
+  PICKER_WIDTH,
+  RepoPicker,
+  placePicker,
+  rowId,
+  type PickerRow,
+} from "./repo-picker.tsx";
 
 /**
  * The composer — a task, created from inside the app (sketch §4).
@@ -30,21 +39,23 @@ import { readPastedImage } from "./paste-image.ts";
  *     borrowing the user's unconditional trust (D14).
  */
 
-interface DisplaySegment {
-  readonly text: string;
-  readonly matched: boolean;
-}
-
 interface PickedRepo {
   readonly path: string;
   readonly name: string;
 }
 
+/**
+ * A row, as this view needs it.
+ *
+ * `source` — which the port also carries — is deliberately NOT read. It existed
+ * to tell ↹ whether a row shared a parent directory with what you had typed, and
+ * ↹ stopped asking; nothing draws it, and a field read into a shape nobody
+ * renders is a field the next person has to work out is dead. The ranker has
+ * already used it to order the rows, which is where it belongs.
+ */
 interface RepoSuggestion extends PickedRepo {
   readonly isRepo: boolean;
-  /** Where it came from. Only a filesystem row is a Tab target — see `complete`. */
-  readonly source: "history" | "filesystem";
-  /** The path as a person writes it — home collapsed. What the field draws. */
+  /** The path as a person writes it — home collapsed. What the row draws. */
   readonly display: string;
   /** `display`, already cut into matched and unmatched runs by the ranker. */
   readonly segments: readonly DisplaySegment[];
@@ -88,20 +99,17 @@ function readSegments(value: unknown, display: string): readonly DisplaySegment[
  * choice follow the repo into every later task — a chip reading `api` for a repo
  * about to be provisioned as `shepherd`. One derivation, `repoName`, everywhere.
  *
- * `isRepo` and `source` default to the SAFE reading of a provider that omits
- * them: a candidate is treated as a repo (so none is falsely accused) and as
- * history (so it can never drive Tab into a path it does not share a parent
- * with).
+ * `isRepo` defaults to the SAFE reading of a provider that omits it: a candidate
+ * is treated as a repo, so none is falsely accused of not being one.
  */
 function readSuggestions(value: unknown): readonly RepoSuggestion[] {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
   return value.flatMap((entry: unknown) => {
     if (typeof entry !== "object" || entry === null) return [];
-    const { path, isRepo, source, display, segments } = entry as {
+    const { path, isRepo, display, segments } = entry as {
       path?: unknown;
       isRepo?: unknown;
-      source?: unknown;
       display?: unknown;
       segments?: unknown;
     };
@@ -115,7 +123,6 @@ function readSuggestions(value: unknown): readonly RepoSuggestion[] {
         path,
         name: repoName(path),
         isRepo: isRepo !== false,
-        source: source === "filesystem" ? "filesystem" : "history",
         display: shown,
         segments: readSegments(segments, shown),
       },
@@ -134,23 +141,49 @@ function titleOf(brief: string): string {
   return first.length <= 72 ? first : `${first.slice(0, 71).trimEnd()}…`;
 }
 
+/**
+ * The panel's own height, used only to decide whether it fits below the caret.
+ *
+ * A constant rather than a measurement, because the decision has to be made
+ * BEFORE the panel exists — measuring it would mean rendering it somewhere first,
+ * and a popover that appears and then jumps is worse than one placed from an
+ * upper bound. It is the list's `max-height` plus the header and the padding, so
+ * it is the tallest the panel ever gets and never under-reserves.
+ */
+const PICKER_HEIGHT = 238 + 38 + 12;
+
 export function TaskComposer({
   invoke,
   done,
 }: ExtensionViewProps): React.JSX.Element {
   const [brief, setBrief] = useState("");
-  // A PICKED repo is a path and a name — never a suggestion. Its match runs
-  // describe a query that is over: the field has been cleared, and a chip that
-  // carried them would still be painted for a search nobody is running.
-  const [repos, setRepos] = useState<readonly PickedRepo[]>([]);
-  const [path, setPath] = useState("");
+  /**
+   * The scope, DERIVED from the pills in the editor and never set directly.
+   *
+   * The text is the source of truth. A separate selection array is the second
+   * copy of "what is on screen" that ADR 0035 is about, and here it would be
+   * wrong in a way nobody could see: Backspace over a pill removes the repo from
+   * the sentence, and an array would keep scoping the task to it.
+   */
+  const [scope, setScope] = useState<readonly PickedRepo[]>([]);
   const [suggestions, setSuggestions] = useState<readonly RepoSuggestion[]>([]);
-  const [listOpen, setListOpen] = useState(true);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [active, setActive] = useState(0);
+  const [spot, setSpot] = useState({ x: EDGE, y: 0 });
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
-  const inputId = useId();
-  const inputRef = useRef<HTMLInputElement | null>(null);
+  const listId = useId();
+  const card = useRef<HTMLDivElement | null>(null);
   const promptRef = useRef<PromptFieldHandle | null>(null);
+  /**
+   * How much text the pill replaces: the `#` plus whatever has been typed after
+   * it. Read at insertion time from the trigger that opened the picker rather
+   * than recomputed there — by then a `mousedown` has been and gone, and a
+   * recomputed query is a chance to disagree with the one the rows were filtered
+   * for.
+   */
+  const replaceBack = useRef(0);
   /**
    * The pasted images, in a ref rather than state: they are not rendered from
    * here — the pills in the contenteditable are — and putting them in state
@@ -182,105 +215,215 @@ export function TaskComposer({
 
   // On mount the query is empty, which the extension answers with the picked
   // history alone — the repos you actually use, offered before you have typed
-  // anything. Everything after that is a keystroke's; there is no debounce
-  // because there is no timer here to get wrong, and the ask is one directory
-  // listing (measured at ~10ms, cheaper than the keystroke that asked for it).
+  // anything, so the first `#` has rows under it with no second keystroke.
+  // Everything after that is a keystroke's; there is no debounce because there
+  // is no timer here to get wrong, and the ask is one directory listing
+  // (measured at ~10ms, cheaper than the keystroke that asked for it).
   useEffect(() => {
     void askForSuggestions("", "", "");
   }, []);
 
-  // A suggestion already picked stops being offered — it is in the chips below,
-  // and showing it in both places reads as two different repos with one name.
-  const visible = suggestions.filter(
-    (suggestion) => !repos.some((repo) => repo.path === suggestion.path),
+  /**
+   * A repo already in the sentence stops being offered.
+   *
+   * This IS the "same repo twice" guard the handoff asks for, and it is a filter
+   * rather than a check at insertion time on purpose: a row you cannot see is a
+   * row you cannot pick, so there is no second rule to keep in step with this
+   * one.
+   */
+  const rows: readonly PickerRow[] = suggestions.filter(
+    (suggestion) => !scope.some((repo) => repo.path === suggestion.path),
   );
   /**
-   * ONE completion — the best-ranked row the extension answered with, and only
-   * once there is something for it to complete.
-   *
-   * The empty query is answered with the picked history (see the mount effect),
-   * which was right when this was a LIST: "the repos you actually use, offered
-   * before you have typed anything". As ghost text it is not — a completion of
-   * nothing is an absolute path painted into an empty field, which reads as a
-   * field that came pre-filled with a repo you never chose, and sits directly on
-   * top of the `+ repo` placeholder the moment the field is not focused. The
-   * history still arrives and still ranks; it just waits for a character.
+   * CLAMPED, not trusted. The rows are re-ranked by the extension on every
+   * keystroke, so an index held over a narrowing list can point past its end,
+   * and ⏎ would then insert nothing at all.
    */
-  const current = listOpen && path !== "" ? visible[0] : undefined;
+  const index = rows.length === 0 ? 0 : Math.min(active, rows.length - 1);
+
+  const close = (): void => {
+    setOpen(false);
+    setQuery("");
+    setActive(0);
+  };
 
   /**
-   * Esc dismisses the completion, and must not close the composer with it.
+   * Esc closes the picker, and must not close the composer with it.
    *
    * Radix's dismissable layer listens for Escape on the document in the CAPTURE
-   * phase, so a React handler on the input cannot stop it — capture at the
-   * document runs before anything below. A capture listener on `window` runs
-   * before the document's, which is the one seam available, and Radix honours
+   * phase, so a React handler cannot stop it — capture at the document runs
+   * before anything below. A capture listener on `window` runs before the
+   * document's, which is the one seam available, and Radix honours
    * `defaultPrevented` (it checks it before dismissing). Measured against
    * `@radix-ui/react-dismissable-layer`, not assumed.
    *
-   * Only while the list is open and only for a keypress in this field: Esc in
-   * the brief still closes the composer, which is what Esc means everywhere else
-   * in the app.
+   * Only while the picker is open: Esc with it closed still closes the composer,
+   * which is what Esc means everywhere else in the app.
    */
   useEffect(() => {
-    if (!listOpen || visible.length === 0) return;
+    if (!open) return;
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key !== "Escape" || event.target !== inputRef.current) return;
+      if (event.key !== "Escape") return;
       event.preventDefault();
-      setListOpen(false);
+      close();
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [listOpen, visible.length]);
+  }, [open]);
 
-  const add = (candidate: string): void => {
-    const trimmed = candidate.trim();
-    if (trimmed === "") return;
-    // Same repo twice is one worktree and one branch, so it is one entry.
-    if (!repos.some((repo) => repo.path === trimmed)) {
-      setRepos([
-        ...repos,
-        { path: trimmed, name: repoName(trimmed) },
-      ]);
-    }
-    setPath("");
-    setListOpen(true);
-    // Back to the history, which is what an empty field asks for.
-    void askForSuggestions(titleOf(brief), brief, "");
-  };
+  /**
+   * A mousedown outside the card closes the picker.
+   *
+   * `mousedown` rather than `click`, to match the rows: the pointer going down
+   * is the moment the editor's selection is at risk, and a picker that waited for
+   * the release would still be open over the thing you clicked.
+   */
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (event: MouseEvent): void => {
+      const target = event.target as HTMLElement | null;
+      if (target === null) return;
+      if (card.current?.contains(target) === true) return;
+      // The panel is PORTALLED to the body, so it is not inside the card — and
+      // without this a mousedown on a row would be "outside" and close the picker
+      // out from under the very click that was picking a repo.
+      if (target.closest('[data-testid="composer-picker"]') !== null) return;
+      close();
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
 
-  const retype = (next: string): void => {
-    setPath(next);
-    setListOpen(true);
-    void askForSuggestions(titleOf(brief), brief, next);
+  /**
+   * Read the scope back out of the sentence.
+   *
+   * Document order, because the order the repos are named in is the order they
+   * were meant in — and it is the order `tasks.create` provisions them in.
+   */
+  const syncScope = (): void => {
+    const host = card.current;
+    if (host === null) return;
+    const found = [...host.querySelectorAll<HTMLElement>("[data-repo-path]")].flatMap(
+      (pill) => {
+        const path = pill.dataset["repoPath"];
+        return path === undefined || path === ""
+          ? []
+          : [{ path, name: repoName(path) }];
+      },
+    );
+    // Compared before setting: this runs on every keystroke, and a fresh array
+    // each time would re-render the card for every character typed.
+    setScope((was) =>
+      was.length === found.length && was.every((repo, at) => repo.path === found[at]?.path)
+        ? was
+        : found,
+    );
   };
 
   /**
-   * Take the completion that is on screen.
+   * Is a `#` live at the caret, and if so which one?
    *
-   * It is whatever the field is showing, and that is the whole rule: with ONE
-   * suggestion visible there is nothing else it could honestly mean. The
-   * previous version completed to the common prefix of every filesystem match —
-   * shell behaviour, correct when a list was on screen — and once the list went
-   * away it promised `shepherd` in ghost text and gave you `she`.
-   *
-   * It retypes the DISPLAY text, `~` and all, so the query and what is on screen
-   * agree afterwards; `expandHome` is what reads it back.
-   *
-   * ↹ COMPLETES, whatever the row's source. It used to take a filesystem row and
-   * otherwise hand focus to the brief, on the reasoning that only a filesystem
-   * row shares a parent with what you typed — but the field draws one answer and
-   * that answer is takeable whatever list it came from, and a ↹ that sometimes
-   * completes and sometimes leaves the field is a key you have to think about.
-   *
-   * It re-asks with the completed text, so the next level appears with no
-   * second keystroke.
+   * The picker's whole state comes from the caret's own text node, read fresh.
+   * Nothing here remembers where the `#` was, because the editor is the only
+   * thing that knows what happened to the text and the caret in between.
    */
-  const complete = (): boolean => {
-    if (current === undefined) return false;
-    if (current.display === path.trim()) return false;
-    retype(current.display);
-    return true;
+  const syncTrigger = (value: string): void => {
+    const caret = promptRef.current?.caretContext() ?? null;
+    const found = caret === null ? null : findTrigger(caret.text, caret.offset);
+    if (caret === null || found === null) {
+      if (open) close();
+      return;
+    }
+
+    replaceBack.current = found.query.length + 1;
+    /*
+     * VIEWPORT coordinates, because the panel is portalled to the body — see
+     * `RepoPicker`: the `Modal` around this composer clips and transforms, so an
+     * in-tree popover cannot hang past the card the way the design has it.
+     * `placePicker` owns every rule about where it lands.
+     */
+    const rect = caret.rectOf(found.at);
+    const box = card.current?.getBoundingClientRect();
+    if (rect !== null && box !== undefined) {
+      setSpot(placePicker(rect, box, window.innerHeight, PICKER_HEIGHT));
+    }
+
+    /*
+     * Ask when the picker OPENS or the query changes, and not merely because the
+     * caret moved: a re-ask per caret move would be a directory listing for a
+     * question nobody asked again. Opening always asks, because `suggestions`
+     * still holds the rows for whatever was typed last time — reopening on `#`
+     * without asking would draw a filtered list for a query that is gone.
+     *
+     * And the active row resets to the top, which is the one place this picker
+     * deliberately does the opposite of `CommandPalette`. The palette filters a
+     * FIXED list, so row 3 is the same command after another character and
+     * holding the index is a kindness. Here the extension re-ranks on every
+     * keystroke and rows arrive and leave, so row 3 is a different repo — an
+     * index held across that points at something nobody aimed at.
+     */
+    if (!open || found.query !== query) {
+      setActive(0);
+      setQuery(found.query);
+      void askForSuggestions(titleOf(value), value, found.query);
+    }
+    setOpen(true);
+  };
+
+  const onEdit = (value: string): void => {
+    setBrief(value);
+    syncScope();
+    syncTrigger(value);
+  };
+
+  /**
+   * A caret MOVE is as much a change to the trigger as an edit is.
+   *
+   * ←/→ and a click inside the editor deliberately pass through to normal text
+   * editing while the picker is open, so without this the caret can leave the
+   * mention while the popover stays up holding the query it had on arrival — and
+   * ⏎ would then delete that many characters wherever the caret now is, eating
+   * text somewhere else in the sentence. Re-reading the caret is the same code
+   * path an edit takes, so there is one answer to "what is the trigger" rather
+   * than two that can disagree.
+   */
+  useEffect(() => {
+    if (!open) return;
+    const onSelect = (): void => syncTrigger(brief);
+    document.addEventListener('selectionchange', onSelect);
+    return () => document.removeEventListener('selectionchange', onSelect);
+  }, [open, brief, query]);
+
+  /**
+   * The repo pill, built as a DOM node for the same reason the image pill is:
+   * React does not own the editor's subtree.
+   *
+   * `data-token` is what `readValue` returns in its place, so the brief submits
+   * as `fix the retry loop in #shepherd` — the sentence somebody wrote, with the
+   * repo still in it. `data-repo-path` is what `syncScope` reads, and it carries
+   * the PATH because a name does not identify a repo: two `api` directories in
+   * different trees are the case this picker exists to survive.
+   */
+  const repoPill = (path: string, name: string): HTMLElement => {
+    const pill = document.createElement("span");
+    pill.className = "sh-ui-pill sh-composer-repo-pill";
+    pill.contentEditable = "false";
+    pill.dataset["token"] = `#${name}`;
+    pill.dataset["repoPath"] = path;
+    pill.title = path;
+    pill.append(`#${name}`);
+    return pill;
+  };
+
+  const pick = (row: PickerRow): void => {
+    promptRef.current?.insert(repoPill(row.path, row.name), {
+      replaceBack: replaceBack.current,
+      // A non-breaking space, so the caret lands in text rather than against the
+      // pill — and so the next character is not read as part of the mention.
+      trailing: "\u00A0",
+    });
+    close();
+    syncScope();
   };
 
   /**
@@ -311,7 +454,7 @@ export function TaskComposer({
       title: titleOf(brief),
       brief,
       ...(pasted.current.length === 0 ? {} : { images: pasted.current }),
-      repos: repos.map((repo) => ({ path: repo.path, name: repo.name })),
+      repos: scope.map((repo) => ({ path: repo.path, name: repo.name })),
     });
     setBusy(false);
     if (!result.ok) {
@@ -330,12 +473,13 @@ export function TaskComposer({
     setBrief("");
     promptRef.current?.setValue("");
     pasted.current = [];
-    setRepos([]);
+    // The pills went with the text, so the scope empties by being re-read rather
+    // than by being cleared — same one path, even here.
+    syncScope();
     // The composer's job is over; the shell decides what that means (an overlay
     // closes, a docked copy stays and is now empty).
     done();
   };
-
   return (
     /*
       The `<form>` is OUTSIDE the `Composer`, and it is a bare block element that
@@ -355,155 +499,39 @@ export function TaskComposer({
         void create();
       }}
     >
-      <Composer className="sh-composer">
+      {/*
+        The card is the popover's positioning context, which is why it holds the
+        ref: the picker is anchored to a CHARACTER inside the editor, and every
+        offset it uses is measured against this box so the clamp has an edge to
+        clamp to.
+      */}
+      <Composer className="sh-composer" ref={card}>
         {/*
-          ONE field. A separate title box asked the same question twice — nobody
-          writes a title that is not the first sentence of the brief, and the
-          empty second box was the thing that made this read as a form.
-          The convention is git's: first line names it, the rest is the body.
+          ONE field, and now it is the only one.
 
-          `bare` needs no prop of its own — the `Composer` around it re-declared
-          `--sh-line` and `--sh-surface-sunken` to transparent for its whole
-          subtree, so a default `bordered` field would already be borderless. It
-          is passed anyway because the variant is also what removes the horizontal
-          padding, and because a field that is bare BY CONTEXT reads as an
-          accident when this component is mounted anywhere else.
+          A separate title box asked the same question twice, and a separate repo
+          field asked a question that belongs inside the sentence — scoping a task
+          is part of writing it. Both corrections land here: the brief is the
+          card, `#` names a repo where you are already typing, and the pill that
+          replaces it is part of the text it scopes.
         */}
-        {/*
-          Repos first, because that is the order the decision happens in: you
-          pick what you are working on, THEN say what to do to it. It read
-          backwards while it sat under the brief — and a field below the thing
-          it scopes is a field found after the brief has already been written.
-
-          ONE completion, inline, no dropdown: the single best match as ghost
-          text behind what you typed. ↹ takes it while there is something to
-          take and moves to the brief once there is not, ⏎ adds it and stays
-          here, so several repos are several ⏎s and no mouse.
-        */}
-        <div className="sh-composer-repos">
-          {/*
-          The repo field: ONE completion, inline, and no dropdown.
-          
-          It was a labelled, bordered input over a listbox of rows, and in a card
-          whose whole purpose is the brief it read louder than the brief — the
-          overcorrection from "too hidden". So: no label (the placeholder says
-          it), no border of its own, and the single best match rendered as ghost
-          text behind what you typed. ↹ takes it, ⏎ adds it, and there is nothing
-          on screen the rest of the time.
-        */}
-        <div className="sh-composer-repo">
-          {/*
-            The ghost sits UNDER the input, in the same box with the same type,
-            so the completion lines up with the cursor character for character.
-            A second element rather than a value the field holds: writing the
-            completion into the input would mean the user's next keystroke edits
-            text they did not type.
-          */}
-          {path === "" ? null : current === undefined ? (
-            // Nothing matched. The raw query is the only honest thing left to
-            // draw — going blank here would leave you typing at a field that
-            // shows nothing back, with no way to see the typo you just made.
-            <div className="sh-composer-repo-shown" data-testid="composer-nomatch" aria-hidden="true">
-              <span className="sh-composer-repo-miss">{path}</span>
-            </div>
-          ) : (
-            <div
-              className="sh-composer-repo-shown"
-              data-testid="composer-suggestion"
-              data-path={current.path}
-              aria-hidden="true"
-            >
-              {current.segments.map((run, at) => (
-                <span
-                  // Index, because the runs ARE positional: two runs of the same
-                  // text in one path are two different places in it.
-                  key={at}
-                  className={run.matched ? "sh-composer-repo-hit" : undefined}
-                >
-                  {run.text}
-                </span>
-              ))}
-              {current.isRepo ? null : <span className="sh-composer-repo-note">not a repo</span>}
-            </div>
-          )}
-          <Field
-            id={inputId}
-            ref={inputRef}
-            size="sm"
-            variant="bare"
-            data-testid="composer-repo-path"
-            placeholder="+ repo"
-            autoComplete="off"
-            spellCheck={false}
-            aria-label="repo path"
-            value={path}
-            onChange={(event) => retype(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Tab" && !event.shiftKey) {
-                // ↹ completes the path, and does nothing else. It used to hand
-                // focus to the brief when there was nothing to complete, which
-                // made one key mean two things depending on state you cannot see
-                // — and the state it fires in most often is "half a path typed".
-                // With nothing to take it falls through to the browser, so focus
-                // still moves rather than being trapped.
-                if (!complete()) return;
-                event.preventDefault();
-                return;
-              }
-              if (event.key === "ArrowRight" && current !== undefined) {
-                // At the end of the line, → takes the completion — the shell
-                // gesture, and the one people try before they try Tab. Anywhere
-                // else it is an ordinary cursor move.
-                const target = event.currentTarget;
-                if (target.selectionStart === path.length && target.selectionEnd === path.length) {
-                  event.preventDefault();
-                  complete();
-                }
-                return;
-              }
-              if (event.key === "Enter") {
-                // Enter adds the repo rather than submitting the form: a task
-                // with the repo field half-typed is a task with the wrong repos.
-                event.preventDefault();
-                add(current?.path ?? path);
-              }
-            }}
-          />
-        </div>
-
-        <ul className="sh-composer-picked" data-testid="composer-picked">
-            {repos.map((repo) => (
-              <li
-                key={repo.path}
-                data-testid="composer-picked-repo"
-                data-path={repo.path}
-                title={repo.path}
-              >
-                {repo.name}
-                <button
-                  type="button"
-                  aria-label={`remove ${repo.name}`}
-                  title={`remove ${repo.name}`}
-                  onClick={() =>
-                    setRepos(repos.filter((r) => r.path !== repo.path))
-                  }
-                >
-                  ×
-                </button>
-              </li>
-            ))}
-        </ul>
-
-        </div>
-
         <PromptField
           ref={promptRef}
           className="sh-composer-brief"
           data-testid="composer-brief"
           aria-label="what needs doing"
           placeholder="what needs doing?"
-          onChange={setBrief}
-          onBlur={() => void askForSuggestions(titleOf(brief), brief, path)}
+          /*
+            The combobox is the EDITOR, not a box beside it. `aria-expanded` and
+            `aria-activedescendant` therefore live here, on the thing that has
+            focus the whole time — which is the same reason `CommandPalette` names
+            its active row instead of focusing it.
+          */
+          role="combobox"
+          aria-expanded={open}
+          aria-controls={open ? listId : undefined}
+          aria-activedescendant={open && rows.length > 0 ? rowId(listId, index) : undefined}
+          onChange={onEdit}
           /*
             A pasted image becomes a Pill in the text, right where it was
             pasted, and its bytes ride along to `tasks.create`. The token in the
@@ -526,10 +554,39 @@ export function TaskComposer({
             return true;
           }}
           onKeyDown={(event) => {
-            // ⏎ submits and ⇧⏎ newlines — the chat convention, and the one the
-            // repo field above hands you: ⏎ there adds a repo and stays, ↹
-            // brings you here, ⏎ here is done. ⌘⏎ still works because it is
-            // what the previous build bound and fingers remember it.
+            /*
+              While the picker is open it owns these five keys and nothing else
+              sees them. Closed, every key here falls through to ordinary text
+              editing — which is the rule that keeps ⌘A, ⌥←, ⌘⌫ and undo working,
+              because `PromptField` inherits them from the OS and a handler that
+              calls `preventDefault` on a key it did not need is what breaks them.
+            */
+            if (open) {
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                // Clamped, no wrap: a list that jumps from the last row back to
+                // the first is a list you can arrow past without noticing.
+                setActive(Math.min(index + 1, rows.length - 1));
+                return;
+              }
+              if (event.key === "ArrowUp") {
+                event.preventDefault();
+                setActive(Math.max(index - 1, 0));
+                return;
+              }
+              if (event.key === "Enter" || event.key === "Tab") {
+                event.preventDefault();
+                const row = rows[index];
+                // No rows is Enter doing NOTHING rather than submitting: the
+                // picker is on screen, so ⏎ visibly belongs to it, and a submit
+                // here would create a task from a half-typed mention.
+                if (row !== undefined) pick(row);
+                return;
+              }
+              // Escape is handled by the window-capture listener above, because
+              // Radix would otherwise close the whole composer first.
+            }
+            // ⏎ submits and ⇧⏎ newlines — the chat convention.
             if (event.key !== "Enter" || event.shiftKey) return;
             event.preventDefault();
             if (titleOf(brief) !== "") void create();
@@ -537,25 +594,43 @@ export function TaskComposer({
         />
 
         {/*
-          The repo picker: a labelled input with its completions under it.
-
-          It used to be a borderless `+ repo path` sharing a row with the create
-          button, and it was too hidden to be found — which is the whole reason
-          this exists. So it is a `bordered` Field with a label of its own, and
-          the wrapper re-declares `--sh-line` and `--sh-surface-sunken` back on,
-          which is exactly the escape hatch `composer.css` documents for "a
-          control that genuinely needs an edge in here".
+          The action row: the `#repo` affordance and what it has collected on the
+          left, one filled action hard right.
         */}
-        {/*
-          The ONE loud thing on the card (rule 3: two primary buttons means
-          neither is). `busy` is the primitive's, and it is a real improvement
-          over the shipped disabled-while-creating: the label is replaced by a
-          braille spinner with the width pinned, so the control does not narrow
-          mid-click and take the row with it.
-        */}
-        {/* The action row: one filled action, hard right, and nothing else. */}
         <div className="sh-composer-controls">
+          {/*
+            The button exists because `#` is invisible until somebody has been
+            told about it, and this is the telling — it appends a `#` at the end
+            of the brief, focuses the editor and opens the picker, so the gesture
+            it teaches is the gesture it performs. Same rule as the CLI's
+            discoverability: an affordance nobody can find is not an affordance.
+          */}
+          <button
+            type="button"
+            className="sh-composer-hash"
+            data-testid="composer-hash"
+            onClick={() => promptRef.current?.appendText("#")}
+          >
+            <span className="sh-composer-hash-glyph" aria-hidden="true">
+              #
+            </span>
+            repo
+          </button>
+          {/*
+            What the sentence currently scopes, in words. It reads the derived
+            scope, so it cannot disagree with the pills — and its zero case says
+            where an unscoped task LANDS rather than reporting a missing field.
+          */}
+          <span className="sh-composer-scope" data-testid="composer-scope">
+            {scopeLine(scope.map((repo) => repo.name))}
+          </span>
           <span className="sh-composer-spacer" />
+          {/*
+            The ONE loud thing on the card (rule 3: two primary buttons means
+            neither is). `busy` is the primitive's: the label is replaced by a
+            braille spinner with the width pinned, so the control does not narrow
+            mid-click and take the row with it.
+          */}
           <Button
             variant="primary"
             type="submit"
@@ -570,6 +645,24 @@ export function TaskComposer({
         <output className="sh-ext-answer" data-testid="composer-status">
           {status}
         </output>
+
+        {/*
+          Last child, and inside the card: it is positioned against the card's box
+          and must paint over the footer, and with no shadow to lift it (rule 2)
+          the only thing separating it from what it covers is the stacking order.
+        */}
+        {open ? (
+          <RepoPicker
+            rows={rows}
+            query={query}
+            activeIndex={index}
+            x={spot.x}
+            y={spot.y}
+            listId={listId}
+            onHover={setActive}
+            onPick={pick}
+          />
+        ) : null}
       </Composer>
     </form>
   );
