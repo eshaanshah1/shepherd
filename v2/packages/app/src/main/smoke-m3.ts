@@ -423,6 +423,22 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
     composed.repos[0]?.name === repo.split('/').filter((s) => s !== '').pop(),
     `the picked path became the repo's name: ${JSON.stringify(composed.repos)}`,
   );
+  /*
+   * Waited for, not asserted on the spot.
+   *
+   * The gate above is `<root>/<repo>/.git`, and `runProvision` writes this file
+   * strictly LATER — after every repo's worktree lands and after the awaited
+   * `repoProvisioned` hook, which runs a real shell. So the moment the worktree
+   * appears, the root synthesis is still seconds of somebody else's work away,
+   * and a bare `existsSync` here was a race that happened to be winnable. It
+   * stopped being winnable when the renderer bundle grew, which is the wrong
+   * reason for a milestone gate to go red.
+   */
+  await until(
+    'the composed task root to be synthesized',
+    () => Promise.resolve(existsSync(join(composed.root, 'CLAUDE.md'))),
+    (written) => written,
+  );
   check(existsSync(join(composed.root, 'CLAUDE.md')), 'the composed task root was synthesized too');
   say('ok — a task was created from inside the app, worktree and task root included');
 

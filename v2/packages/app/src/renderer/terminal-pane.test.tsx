@@ -34,6 +34,7 @@ function spyTerminals(): SpyTerminals {
     suspend: (pane) => calls.push({ name: 'suspend', paneId: pane.id }),
     focus: (paneId) => calls.push({ name: 'focus', paneId }),
     fit: (paneId) => calls.push({ name: 'fit', paneId }),
+    search: () => undefined,
     inspect: (): PaneDiagnostics | undefined => undefined,
   };
 }
