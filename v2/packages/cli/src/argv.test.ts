@@ -15,6 +15,21 @@ describe('parseArgv', () => {
     expect(parseArgv(['task', 'list'])).toMatchObject({ ok: true, command: 'tasks.list' });
   });
 
+  it('maps a hyphenated verb, which is how the quick model is configured', () => {
+    // Read and set are one verb because from a terminal they are one question:
+    // bare shows which model runs, the same line with a flag changes it.
+    expect(parseArgv(['agent', 'quick-model'])).toMatchObject({
+      ok: true,
+      command: 'agents.quickModel',
+      args: {},
+    });
+    expect(parseArgv(['agent', 'quick-model', '--model', 'model-cheap'])).toMatchObject({
+      ok: true,
+      command: 'agents.quickModel',
+      args: { model: 'model-cheap' },
+    });
+  });
+
   it('collects --flags into arguments', () => {
     expect(parseArgv(['task', 'new', '--title', 'Fix login', '--brief', 'Do it'])).toMatchObject({
       ok: true,

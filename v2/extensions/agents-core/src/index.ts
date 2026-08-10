@@ -8,11 +8,14 @@ import {
   type Shepherd,
 } from '@shepherd/sdk';
 import { AGENT_KINDS_POINT, type AgentKind } from './kind.ts';
+import { limiter, runComplete, MAX_CONCURRENT, type CompleteAnswer } from './complete.ts';
+import { applyOverride, describeQuick, resolveQuick, type QuickOverride } from './quick-model.ts';
 import { AgentRegistry, type AgentChange, type AgentRecord } from './registry.ts';
 import { attentionFor } from './attention-map.ts';
 import {
   AGENT_STATE_TOPIC,
   AGENTS_COMMANDS,
+  QUICK_MODEL_KEY,
   SESSION_EXIT_TOPIC,
   SESSIONS_LIST_COMMAND,
   VIEWING_TOPIC,
@@ -99,6 +102,15 @@ export const activate: ActivateFn<AgentsAPI> = async (ctx: ExtensionContext, api
   const registry = new AgentRegistry();
   const kinds = points.define<AgentKind>(AGENT_KINDS_POINT, { order: 'priority' });
   ctx.subscriptions.push(kinds);
+
+  const overrideSchema = s.stored({ kind: s.optional(s.string()), model: s.optional(s.string()) });
+  /**
+   * An unreadable override reads as "no override" rather than as a failure: it is
+   * a preference, and refusing to ask a model because a preference blob is
+   * malformed would be worse than having forgotten which model was chosen.
+   */
+  const readOverride = (): QuickOverride | undefined => ctx.storage.get(QUICK_MODEL_KEY, overrideSchema);
+  const quickLimit = limiter(MAX_CONCURRENT);
 
   /**
    * Edges that arrive before the seed lands.
@@ -316,6 +328,76 @@ export const activate: ActivateFn<AgentsAPI> = async (ctx: ExtensionContext, api
           return { command: null };
         }
         return { command: kind.resumeCommandOf?.(args.target) ?? null };
+      },
+    }),
+    commands.register(AGENTS_COMMANDS.complete, {
+      title: 'Agents: Ask the Quick Model',
+      /**
+       * The one grant this seam needs, and the reason it is a command: the
+       * dispatcher checks this before the handler runs. As a method on the API
+       * this extension exports, it could not be checked at all.
+       */
+      permission: 'agents',
+      schema: s.object({
+        prompt: s.string(),
+        system: s.optional(s.string()),
+        timeoutMs: s.optional(s.int()),
+      }),
+      /**
+       * Never throws and never hangs: every failure is one of four reasons, and
+       * the deadline is the caller's. A model call is the most tempting place in
+       * the app to forget both.
+       */
+      handler: async (args): Promise<CompleteAnswer> => {
+        const override = readOverride();
+        const target = resolveQuick(kinds.all(), override);
+        if (target === undefined) {
+          // The two are different mistakes and read differently: nothing is
+          // installed, versus what you chose is not what is installed.
+          const message =
+            override?.kind === undefined
+              ? 'no registered agent kind offers a headless half'
+              : `the configured kind "${override.kind}" offers no headless half`;
+          ctx.log.info(`quick model: no-kind — ${message}`);
+          return { ok: false, reason: 'no-kind', message };
+        }
+        const answer = await quickLimit(() =>
+          runComplete(
+            {
+              process: api.proposed.process,
+              clock: ctx.clock,
+              dataDir: ctx.dataDir,
+              homeDir: ctx.homeDir,
+              userName: ctx.userName,
+            },
+            target,
+            args,
+          ),
+        );
+        // `info`, not `warn`: an unavailable model is not a fault of whoever
+        // asked, and this extension's warn channel is for things a user can act
+        // on.
+        if (!answer.ok) ctx.log.info(`quick model: ${answer.reason} — ${answer.message}`);
+        return answer;
+      },
+    }),
+    commands.register(AGENTS_COMMANDS.quickModel, {
+      title: 'Agents: Quick Model',
+      schema: s.object({
+        kind: s.optional(s.string()),
+        model: s.optional(s.string()),
+        clear: s.optional(s.boolean()),
+      }),
+      /**
+       * One verb for read, set and clear, because from a terminal they are one
+       * question: `shepherd agent quick-model` shows it, the same line with a
+       * flag changes it.
+       */
+      handler: (args) => {
+        const next = applyOverride(readOverride(), args);
+        if (next === undefined) ctx.storage.delete(QUICK_MODEL_KEY);
+        else ctx.storage.set(QUICK_MODEL_KEY, next);
+        return describeQuick(kinds.all(), next);
       },
     }),
   );

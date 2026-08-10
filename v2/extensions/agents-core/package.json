@@ -42,7 +42,8 @@
     "permissions": [
       "sessions",
       "storage",
-      "attention"
+      "attention",
+      "process.exec"
     ],
     "contributes": {
       "commands": [
@@ -57,6 +58,14 @@
         {
           "id": "agents.resumeCommand",
           "title": "Agents: Resume Command"
+        },
+        {
+          "id": "agents.complete",
+          "title": "Agents: Ask the Quick Model"
+        },
+        {
+          "id": "agents.quickModel",
+          "title": "Agents: Quick Model"
         }
       ]
     }
