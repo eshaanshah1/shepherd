@@ -1,7 +1,15 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { ExtensionViewProps } from "@shepherd/sdk";
-import { Button, Composer, Field, PromptField, type PromptFieldHandle } from "@shepherd/ui";
+import {
+  Button,
+  Composer,
+  Field,
+  PromptField,
+  useBrailleFrame,
+  type PromptFieldHandle,
+} from "@shepherd/ui";
 import { repoName } from "../src/model/repo-name.ts";
+import { heuristicName } from "../src/model/naming.ts";
 import type { PastedImage } from "../src/images.ts";
 import { readPastedImage } from "./paste-image.ts";
 
@@ -148,6 +156,15 @@ export function TaskComposer({
   const [listOpen, setListOpen] = useState(true);
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
+  /**
+   * The name the model suggested, and whether an ask is out for one.
+   *
+   * The heuristic shows immediately and this only ever replaces it — a preview
+   * that appeared *only* once a model answered would be a spinner most of the
+   * time and would teach nobody what the name is going to be.
+   */
+  const [suggested, setSuggested] = useState<string | null>(null);
+  const [naming, setNaming] = useState(false);
   const inputId = useId();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const promptRef = useRef<PromptFieldHandle | null>(null);
@@ -164,6 +181,10 @@ export function TaskComposer({
    * completions for text nobody has on screen any more.
    */
   const asked = useRef(0);
+  /** Which NAME ask is the newest — the same problem `asked` solves, one ask along. */
+  const namingAsk = useRef(0);
+  /** The brief the last name ask was about, so a pause with no new words asks nothing. */
+  const namedFor = useRef("");
 
   const askForSuggestions = async (
     forTitle: string,
@@ -180,11 +201,56 @@ export function TaskComposer({
     if (answer.ok && mine === asked.current) setSuggestions(readSuggestions(answer.value));
   };
 
+  /**
+   * Ask what this task should be called — on a pause and on blur, never per
+   * keystroke.
+   *
+   * The threshold is on CONTENT rather than on time alone: a pause after twenty
+   * more characters is a different brief, a pause after two is the same one. §7c
+   * named the user's model budget as the reason `agents` is its own permission,
+   * and a per-keystroke ask would spend it several times per task.
+   */
+  const askForName = async (forBrief: string): Promise<void> => {
+    const trimmed = forBrief.trim();
+    if (trimmed.length < 24) return;
+    if (namedFor.current !== "" && Math.abs(trimmed.length - namedFor.current.length) < 20) return;
+    namedFor.current = trimmed;
+    namingAsk.current += 1;
+    const mine = namingAsk.current;
+    setNaming(true);
+    const answer = await invoke("tasks.suggestName", { brief: forBrief });
+    // A newer ask has been started, so this answer is about text nobody has on
+    // screen any more. Dropped without touching the spinner, which belongs to it.
+    if (mine !== namingAsk.current) return;
+    setNaming(false);
+    if (!answer.ok) return;
+    const value = answer.value as { name?: unknown } | null;
+    if (typeof value === "object" && value !== null && typeof value.name === "string") {
+      setSuggested(value.name);
+    }
+  };
+
   // On mount the query is empty, which the extension answers with the picked
   // history alone — the repos you actually use, offered before you have typed
   // anything. Everything after that is a keystroke's; there is no debounce
   // because there is no timer here to get wrong, and the ask is one directory
   // listing (measured at ~10ms, cheaper than the keystroke that asked for it).
+  /**
+   * The idle pause.
+   *
+   * Cleared on every change, so it fires once the typing STOPS rather than once
+   * per keystroke — and `askForName`'s content threshold is what stops a pause
+   * after two more characters from asking the same question again.
+   */
+  useEffect(() => {
+    if (brief.trim() === "") return undefined;
+    const timer = setTimeout(() => void askForName(brief), 2_000);
+    return () => clearTimeout(timer);
+    // Keyed on the BRIEF alone, deliberately. `askForName` is a new closure every
+    // render, so depending on it would clear and restart this timer on each
+    // keystroke — which is the one thing an idle pause must not do.
+  }, [brief]);
+
   useEffect(() => {
     void askForSuggestions("", "", "");
   }, []);
@@ -310,6 +376,10 @@ export function TaskComposer({
     const result = await invoke("tasks.create", {
       title: titleOf(brief),
       brief,
+      // Whatever landed while this was being written. Absent is the ordinary
+      // case for a brief typed and submitted in one go, and the extension names
+      // it from the brief instead — nothing here waits for a model.
+      ...(suggested === null ? {} : { name: suggested }),
       ...(pasted.current.length === 0 ? {} : { images: pasted.current }),
       repos: repos.map((repo) => ({ path: repo.path, name: repo.name })),
     });
@@ -328,6 +398,8 @@ export function TaskComposer({
     // Cleared only on success. A failed create keeps everything typed — the
     // form is the only copy of it.
     setBrief("");
+    setSuggested(null);
+    namedFor.current = "";
     promptRef.current?.setValue("");
     pasted.current = [];
     setRepos([]);
@@ -335,6 +407,18 @@ export function TaskComposer({
     // closes, a docked copy stays and is now empty).
     done();
   };
+
+  const frame = useBrailleFrame(naming);
+  /**
+   * What this will be called — the model's answer if one landed, otherwise the
+   * same fallback `tasks.create` would use.
+   *
+   * Derived through the extension's own model so the line cannot promise a name
+   * the extension would not produce. Deliberately the NAME rather than the slug:
+   * `slugify` is the extension's to apply, and showing a half-slugified string
+   * would be a second implementation of it here.
+   */
+  const previewName = suggested ?? heuristicName(brief) ?? titleOf(brief);
 
   return (
     /*
@@ -503,7 +587,10 @@ export function TaskComposer({
           aria-label="what needs doing"
           placeholder="what needs doing?"
           onChange={setBrief}
-          onBlur={() => void askForSuggestions(titleOf(brief), brief, path)}
+          onBlur={() => {
+            void askForSuggestions(titleOf(brief), brief, path);
+            void askForName(brief);
+          }}
           /*
             A pasted image becomes a Pill in the text, right where it was
             pasted, and its bytes ride along to `tasks.create`. The token in the
@@ -535,6 +622,16 @@ export function TaskComposer({
             if (titleOf(brief) !== "") void create();
           }}
         />
+
+        {/*
+          What this task will be called.
+          Read-only: it shows a consequence the composer used to hide, and it is
+          NOT a second title field — the one field stays one field. The spinner is
+          only shown while there is nothing better to show than the fallback.
+        */}
+        <output className="sh-composer-name" data-testid="composer-name">
+          {previewName === "" ? "" : `${naming && suggested === null ? `${frame} ` : "→ "}${previewName}`}
+        </output>
 
         {/*
           The repo picker: a labelled input with its completions under it.
