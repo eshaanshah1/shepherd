@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, beforeEach } from 'vitest';
@@ -10,6 +10,7 @@ import {
   resolveProgram,
   runGit,
   searchDirs,
+  spawnDetached,
   truncate,
   MAX_OUTPUT_BYTES,
   STANDARD_BIN_DIRS,
@@ -201,5 +202,85 @@ describe('truncate', () => {
 
   it('keeps the beginning, not the end', () => {
     expect(truncate(`START${'x'.repeat(MAX_OUTPUT_BYTES * 2)}`).text.startsWith('START')).toBe(true);
+  });
+});
+
+/**
+ * The detached child's log, which is the whole of `shepherdd`'s ability to say
+ * why it died.
+ *
+ * Worth a real subprocess — the rest of this file is deliberately pure — because
+ * the thing that can be wrong here is fd plumbing, and fd plumbing that is wrong
+ * fails by writing nowhere, which is indistinguishable from the daemon having
+ * had nothing to say. That is precisely the state this replaced: a daemon that
+ * exited an hour into a run and left no trace but a pid that no longer existed.
+ */
+describe('spawnDetached’s log file', () => {
+  /** The child is detached, so its bytes land after we return. */
+  const settled = async (path: string): Promise<string> => {
+    for (let turn = 0; turn < 100; turn += 1) {
+      try {
+        const text = readFileSync(path, 'utf8');
+        if (text !== '') return text;
+      } catch {
+        /* not there yet */
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    return '';
+  };
+
+  it('carries the child’s stdout to the file, not to nowhere', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'shepherd-detached-'));
+    // A path one level deeper than anything that exists: the support directory
+    // is created by whoever gets there first, and the launcher may not be it.
+    const logFile = join(dir, 'nested', 'daemon.log');
+
+    spawnDetached({ execPath: '/bin/echo', args: ['listening on a socket'], logFile });
+
+    expect(await settled(logFile)).toContain('listening on a socket');
+  });
+
+  it('carries stderr too — a crash writes there, not to stdout', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'shepherd-detached-'));
+    const logFile = join(dir, 'daemon.log');
+
+    spawnDetached({
+      execPath: '/bin/sh',
+      args: ['-c', 'echo unhandledRejection 1>&2'],
+      logFile,
+    });
+
+    expect(await settled(logFile)).toContain('unhandledRejection');
+  });
+
+  it('rolls a log that has grown past its cap aside instead of growing forever', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'shepherd-detached-'));
+    const logFile = join(dir, 'daemon.log');
+    writeFileSync(logFile, 'x'.repeat(9 * 1024 * 1024));
+
+    spawnDetached({ execPath: '/bin/echo', args: ['a fresh run'], logFile });
+
+    const text = await settled(logFile);
+    expect(text).toContain('a fresh run');
+    // The new log is the new run's, and the old one is still readable beside it.
+    expect(text.length).toBeLessThan(1024);
+    expect(statSync(`${logFile}.1`).size).toBe(9 * 1024 * 1024);
+  });
+
+  it('still spawns when the log cannot be opened at all', async () => {
+    // Diagnostics must never be the reason a terminal does not open. `/dev/null`
+    // is a file, so a path UNDER it can never be created.
+    const marker = join(mkdtempSync(join(tmpdir(), 'shepherd-detached-')), 'ran');
+
+    expect(() =>
+      spawnDetached({
+        execPath: '/bin/sh',
+        args: ['-c', `echo ran > '${marker}'`],
+        logFile: '/dev/null/nope/daemon.log',
+      }),
+    ).not.toThrow();
+
+    expect(await settled(marker)).toContain('ran');
   });
 });
