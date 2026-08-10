@@ -47,6 +47,9 @@ const FILLER =
 const DANGLING =
   /^(?:a|an|the|and|or|but|so|to|of|in|on|at|by|for|from|with|into|onto|when|while|what|which|who|whom|whose|how|where|why|that|this|its|it's|is|are|was|were|be|been|as|if|than|then|too|also|about|over|under|via|per)$/i;
 
+/** What joins two changes, and so what a name must not end on. */
+const JOIN = /^(?:&|and|\+|,)$/i;
+
 /**
  * How a model declines.
  *
@@ -55,12 +58,34 @@ const DANGLING =
  */
 const REFUSAL = /^(?:i'?m\s+sorry|sorry|i\s+can(?:'?t|not)|i\s+am\s+unable|as\s+an\s+ai)/i;
 
+/**
+ * The prompt never mentions a branch, and the omission is the load-bearing part.
+ *
+ * `slugify` owns the branch: it lowercases, collapses everything outside
+ * `[a-z0-9]` and caps the result. A model told it is naming a branch spends its
+ * six words writing that same string by hand — punctuation-free, lowercase,
+ * keyword soup — and the sidebar row, which is the same string before slugging,
+ * is what pays for it. Asked for a name a person reads, the row reads and the
+ * branch is derived from it for free.
+ *
+ * The `&` rule carries an example because the rule alone does not land: a brief
+ * covering two changes is otherwise answered by concatenating them, and
+ * `remove live preview fix repo hash` is two tasks in a trench coat.
+ */
 export function namingPrompt(brief: string): string {
   const trimmed = brief.trim().slice(0, MAX_BRIEF_CHARS);
   return [
-    'Write a short title for this development task, for use as a git branch name.',
-    'Rules: at most 6 words, imperative mood, no quotes, no backticks, no trailing period.',
-    'Reply with the title alone and nothing else.',
+    'Name this development task, for a list of tasks a person scans.',
+    '',
+    'Rules:',
+    '- 3 to 6 words. Shorter is better.',
+    '- Sentence case: capitalize the first word and the names of things in the',
+    '  product ("Live Name preview", "Repo hash"). Nothing else.',
+    '- Two separate changes join with "&": "Remove Live Name preview & Repo hash".',
+    '- Name what changes. Drop detail that does not tell this task apart from another.',
+    '- No quotes, no backticks, no trailing period.',
+    '',
+    'Reply with the name alone.',
     '',
     'Task:',
     trimmed,
@@ -90,7 +115,12 @@ export function readName(answer: string): string | undefined {
 
   if (bare === '' || bare.length > MAX_NAME_CHARS) return undefined;
   if (REFUSAL.test(bare)) return undefined;
-  return bare.split(' ').slice(0, MAX_WORDS).join(' ');
+
+  const words = bare.split(' ').slice(0, MAX_WORDS);
+  // The word cap counts the join, so a cut can land on it. One word shorter beats
+  // a name that ends mid-conjunction.
+  while (words.length > 1 && JOIN.test(words.at(-1) ?? '')) words.pop();
+  return words.join(' ');
 }
 
 /**

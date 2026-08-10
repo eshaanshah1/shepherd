@@ -14,10 +14,25 @@ const REAL_BRIEF =
   "#shepherd I wanna add a new feature / extension. It's something like a \"dumb\" model, that I can use for simple tasks, like commit messages, titling threads, etc, etc.";
 
 describe('namingPrompt', () => {
-  it('carries the brief and asks for one short line', () => {
+  it('carries the brief and asks for a few words', () => {
     const prompt = namingPrompt('fix the login redirect loop');
     expect(prompt).toContain('fix the login redirect loop');
-    expect(prompt.toLowerCase()).toContain('title');
+    expect(prompt).toContain('3 to 6 words');
+  });
+
+  it('never mentions a branch, so the answer is a name and not a slug', () => {
+    // `slugify` owns the branch. Told it is naming one, the model writes that
+    // string by hand — lowercase, punctuation-free — and the sidebar row is the
+    // same string before slugging.
+    expect(namingPrompt('fix the login redirect loop').toLowerCase()).not.toContain('branch');
+  });
+
+  it('shows the two-change join rather than only describing it', () => {
+    // The rule alone does not land: a brief covering two changes comes back
+    // concatenated (`remove live preview fix repo hash`).
+    expect(namingPrompt('remove the preview and fix the hash')).toContain(
+      '"Remove Live Name preview & Repo hash"',
+    );
   });
 
   it('caps a very long brief, because a paragraph is not a better question', () => {
@@ -42,6 +57,19 @@ describe('readName', () => {
   it('caps at eight words, because the answer becomes a directory name', () => {
     expect(readName('one two three four five six seven eight nine ten')).toBe(
       'one two three four five six seven eight',
+    );
+  });
+
+  it('keeps a two-change name whole, join and all', () => {
+    expect(readName('Remove Live Name preview & Repo hash')).toBe('Remove Live Name preview & Repo hash');
+  });
+
+  it('does not end on the join the word cap cut it at', () => {
+    // The cap counts `&`, so a nine-token answer can be cut onto it. A name
+    // ending mid-conjunction reads as a truncation bug.
+    expect(readName('one two three four five six seven &  nine')).toBe('one two three four five six seven');
+    expect(readName('remove the preview and fix the hash and also the thing')).toBe(
+      'remove the preview and fix the hash',
     );
   });
 
