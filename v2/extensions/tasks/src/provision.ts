@@ -73,7 +73,8 @@ export type RepoOutcome =
   | { readonly ok: false; readonly name: string; readonly reason: string };
 
 /**
- * One repo's worktree, on the task's branch.
+ * One repo's worktree, on the task's branch — in two halves, and the seam between
+ * them is the point.
  *
  * Everything probe 2 measured is honoured by going through `resolveBranch`:
  * three-way resolution (v1's two-way silently forked an origin-only branch off
@@ -82,16 +83,23 @@ export type RepoOutcome =
  * the REPO name, so git would name the branch after it), and a refusal rather
  * than `--force` when a branch is checked out elsewhere.
  *
+ * **Why two functions rather than one.** Reading the refs needs only the repo's
+ * path, while adding the worktree needs the branch NAME — and the name now comes
+ * from a model that takes seconds to answer. Probe 2's numbers are what make the
+ * split worth having: one fetch is ~2.5s of network per repo and a `worktree add`
+ * is 0.16s, so a caller can start this half immediately and have the name arrive
+ * before the last fraction of a second instead of before the first call.
+ *
+ * Everything a repo's branches look like, and nothing decided yet.
+ *
  * The fetch is **opportunistic**: it improves the base ref when it works and is
  * ignored when it does not.
  */
-export async function provisionRepo(
+export async function readRepoRefs(
   process_: ProcessAPI,
   repo: ProvisionRepo,
-  branch: string,
-  dest: string,
   timeoutMs = 120_000,
-): Promise<RepoOutcome> {
+): Promise<RepoRefs> {
   const opts = { cwd: repo.path, timeoutMs };
   const lines = async (args: string[]): Promise<string[]> => {
     const out = await process_.gitRead(args, opts);
@@ -101,7 +109,7 @@ export async function provisionRepo(
   // Opportunistic, and its failure is not the task's failure.
   await process_.gitRead(['fetch', '--quiet', 'origin'], opts).catch(() => undefined);
 
-  const refs: RepoRefs = {
+  return {
     localBranches: await lines(['for-each-ref', '--format=%(refname:short)', 'refs/heads']),
     remoteBranches: await lines(['for-each-ref', '--format=%(refname:short)', 'refs/remotes']),
     // Every branch some worktree of this repo already holds. A branch belongs to
@@ -116,13 +124,41 @@ export async function provisionRepo(
     ),
     defaultBase: (await lines(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']))[0],
   };
+}
 
+/**
+ * The 0.16s that needs the branch name. Every decision it makes is
+ * `resolveBranch`'s; this runs it.
+ */
+export async function addWorktree(
+  process_: ProcessAPI,
+  repo: ProvisionRepo,
+  branch: string,
+  dest: string,
+  refs: RepoRefs,
+  timeoutMs = 120_000,
+): Promise<RepoOutcome> {
   const plan = resolveBranch(branch, dest, refs);
   if (!plan.ok) return { ok: false, name: repo.name, reason: plan.reason };
 
-  const added = await process_.gitWrite([...plan.args], opts);
+  const added = await process_.gitWrite([...plan.args], { cwd: repo.path, timeoutMs });
   if (!added.ok) return { ok: false, name: repo.name, reason: added.stderr.trim() || `git exited ${added.code}` };
   return { ok: true, name: repo.name, worktree: dest };
+}
+
+/**
+ * Both halves in order — what every caller wanted before the branch name became a
+ * question that takes seconds to answer.
+ */
+export async function provisionRepo(
+  process_: ProcessAPI,
+  repo: ProvisionRepo,
+  branch: string,
+  dest: string,
+  timeoutMs = 120_000,
+): Promise<RepoOutcome> {
+  const refs = await readRepoRefs(process_, repo, timeoutMs);
+  return addWorktree(process_, repo, branch, dest, refs, timeoutMs);
 }
 
 /**
