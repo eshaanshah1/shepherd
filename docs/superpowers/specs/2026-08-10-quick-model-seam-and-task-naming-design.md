@@ -85,8 +85,15 @@ two flags rather than four.
   override key in `agents-core`'s own KV and one CLI verb, and nothing else.
 - **Not a rename.** Nothing this design does ever moves a worktree, renames a
   branch, or moves a task root. See D19.
-- **Not a second title field.** The composer's one-field design stays; what it
-  gains is a read-only preview of a consequence it currently hides.
+- **Not a second title field.** The composer's one-field design stays.
+
+> **Superseded.** This design also put the derived name on the card as a
+> read-only line, on the reasoning that a model in the middle of naming is only
+> predictable if the name is on screen. Lived with, it read as the brief echoed
+> back under the brief, re-rendering per keystroke while you were still writing the
+> sentence it was quoting — a preview of something you are mid-way through saying
+> is not information. The line is gone; the ask below is unchanged and its answer
+> reaches `tasks.create` exactly as described.
 
 ## Architecture
 
@@ -429,7 +436,7 @@ build a context, beside `homeDir`.
 - `src/index.ts` — `tasks.suggestName`; `name` on `create`; the pending-name
   cache (D21); the deadline and the one permitted `store.put` (D19/§6)
 - `src/provision.ts` — split into `readRepoRefs` and `addWorktree`
-- `ui/composer.tsx` — the ask on blur and idle, the preview line
+- `ui/composer.tsx` — the ask on idle, which draws nothing
 
 **`v2/extensions/diagnostics`** — the stub kind, for smoke
 

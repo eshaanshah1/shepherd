@@ -1,8 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { ExtensionViewProps } from "@shepherd/sdk";
-import { Button, Composer, PromptField, useBrailleFrame, type PromptFieldHandle } from "@shepherd/ui";
+import { Button, Composer, PromptField, type PromptFieldHandle } from "@shepherd/ui";
 import { repoName } from "../src/model/repo-name.ts";
-import { heuristicName } from "../src/model/naming.ts";
 import type { PastedImage } from "../src/images.ts";
 import { readPastedImage } from "./paste-image.ts";
 import { findTrigger, isUnwritten, scopeLine, type DisplaySegment } from "./mention.ts";
@@ -175,14 +174,13 @@ export function TaskComposer({
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
   /**
-   * The name the model suggested, and whether an ask is out for one.
+   * The name the model suggested, if one landed before the task was created.
    *
-   * The heuristic shows immediately and this only ever replaces it — a preview
-   * that appeared *only* once a model answered would be a spinner most of the
-   * time and would teach nobody what the name is going to be.
+   * Nothing on the card draws it and nothing waits for it: the ask runs while the
+   * brief is being written and its answer rides `tasks.create`, or it does not
+   * arrive and the extension names the task from the brief instead.
    */
   const [suggested, setSuggested] = useState<string | null>(null);
-  const [naming, setNaming] = useState(false);
   const listId = useId();
   const card = useRef<HTMLDivElement | null>(null);
   const promptRef = useRef<PromptFieldHandle | null>(null);
@@ -249,12 +247,10 @@ export function TaskComposer({
     namedFor.current = trimmed;
     namingAsk.current += 1;
     const mine = namingAsk.current;
-    setNaming(true);
     const answer = await invoke("tasks.suggestName", { brief: forBrief });
     // A newer ask has started, so this answer is about text nobody has on screen
-    // any more. Dropped without touching the spinner, which belongs to that one.
+    // any more.
     if (mine !== namingAsk.current) return;
-    setNaming(false);
     if (!answer.ok) return;
     const value = answer.value as { name?: unknown } | null;
     if (typeof value === "object" && value !== null && typeof value.name === "string") {
@@ -459,16 +455,19 @@ export function TaskComposer({
    * React does not own the editor's subtree.
    *
    * `data-token` is what `readValue` returns in its place, so the brief submits
-   * as `fix the retry loop in #shepherd` — the sentence somebody wrote, with the
-   * repo still in it. `data-repo-path` is what `syncScope` reads, and it carries
-   * the PATH because a name does not identify a repo: two `api` directories in
-   * different trees are the case this picker exists to survive.
+   * as `fix the retry loop in shepherd` — the sentence somebody wrote, with the
+   * repo still in it. The `#` is the PICKER's, not the sentence's: it opens a
+   * popover here and means nothing to an agent reading the brief, which is why
+   * the label keeps it and the token does not. `data-repo-path` is what
+   * `syncScope` reads, and it carries the PATH because a name does not identify a
+   * repo: two `api` directories in different trees are the case this picker
+   * exists to survive.
    */
   const repoPill = (path: string, name: string): HTMLElement => {
     const pill = document.createElement("span");
     pill.className = "sh-ui-pill sh-composer-repo-pill";
     pill.contentEditable = "false";
-    pill.dataset["token"] = `#${name}`;
+    pill.dataset["token"] = name;
     pill.dataset["repoPath"] = path;
     pill.title = path;
     pill.append(`#${name}`);
@@ -546,17 +545,6 @@ export function TaskComposer({
     // closes, a docked copy stays and is now empty).
     done();
   };
-  const frame = useBrailleFrame(naming);
-  /**
-   * What this will be called — the model's answer if one landed, otherwise the
-   * same fallback `tasks.create` would use.
-   *
-   * Derived through the extension's own model so the line cannot promise a name
-   * the extension would not produce. The NAME rather than the slug: `slugify` is
-   * the extension's to apply, and half-slugifying here would be a second copy of
-   * it.
-   */
-  const previewName = suggested ?? heuristicName(brief) ?? titleOf(brief);
 
   return (
     /*
@@ -701,15 +689,6 @@ export function TaskComposer({
           */}
           <span className="sh-composer-scope" data-testid="composer-scope">
             {scopeLine(scope.map((repo) => repo.name))}
-          </span>
-          {/*
-            What this task will be CALLED — the branch, the folder and the row.
-            Read-only: it shows a consequence the composer used to hide, and it is
-            not a second title field. Beside the scope line because they are the
-            same kind of thing: what the sentence implies, in words.
-          */}
-          <span className="sh-composer-name" data-testid="composer-name">
-            {previewName === "" ? "" : `${naming && suggested === null ? `${frame} ` : "→ "}${previewName}`}
           </span>
           <span className="sh-composer-spacer" />
           {/*
