@@ -153,6 +153,13 @@ export interface ExtensionHostOptions {
    * It reaches an extension as `ctx.homeDir`.
    */
   readonly homeDir: string;
+  /**
+   * The account name the app runs as, resolved at the platform boundary for the
+   * same reason `homeDir` is. It reaches an extension as `ctx.userName`, and what
+   * needs it is `ProcessAPI.exec` replacing rather than merging a child's
+   * environment — see `ExtensionContext.userName`.
+   */
+  readonly userName: string;
   /** Where contributed views are recorded. Optional so a test can omit it. */
   readonly views?: {
     register(
@@ -383,6 +390,7 @@ export class ExtensionHost {
       isDev: this.#options.devSurfaces === true,
       dataDir: extensionDataDir(id, this.#options.extensions().list().map((record) => record.manifest.id), this.#options.support),
       homeDir: this.#options.homeDir,
+      userName: this.#options.userName,
     });
 
     if (!answer.ok) {

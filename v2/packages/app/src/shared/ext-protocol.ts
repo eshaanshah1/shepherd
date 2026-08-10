@@ -318,6 +318,15 @@ const hostAskSchema = s.union(
      */
     homeDir: s.string(),
     /**
+     * The account name — see `ExtensionContext.userName`.
+     *
+     * Required for the same reason `homeDir` is, and with less room for a
+     * default than it has: an extension that guessed this would build an
+     * environment in which a program reports itself logged out, which is a
+     * failure that reads like a user's problem rather than ours.
+     */
+    userName: s.string(),
+    /**
      * Whether developer surfaces are on (a dev build, or a smoke driving one).
      *
      * Optional on the wire, defaulting to false: a required field here breaks

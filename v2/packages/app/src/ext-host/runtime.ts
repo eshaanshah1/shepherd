@@ -305,6 +305,7 @@ export class ExtHostRuntime {
       source: ask.source,
       dataDir: ask.dataDir,
       homeDir: ask.homeDir,
+      userName: ask.userName,
       // The wire carries strings (mirroring `manifestSchema`'s looseness); this is
       // where they become the closed union, and an unknown one is dropped rather
       // than handed on as a `Permission` it is not.
