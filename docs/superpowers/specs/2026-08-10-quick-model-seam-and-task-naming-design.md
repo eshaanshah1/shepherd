@@ -241,14 +241,14 @@ written with the heuristic name and returned immediately, and provisioning fills
 in behind it. Inside `runProvision`, before the first git write:
 
 ```
-create ──▶ record + row visible (0ms)
+create ──▶ record + row visible (0ms), row says `naming…`
            │
            ├─ name ask ────────────────▶ ~6s ──┐
            └─ readRepoRefs(repo 0) ─▶ ~2.5s ───┤
                                                ▼
-                              addWorktree (0.16s) ── good branch
+                              addWorktree (0.16s) ── named branch
 
-deadline (4s) blown ─▶ keep the heuristic slug ── okay branch
+ask fails (~2s, signed out) ─▶ keep the heuristic slug ── okay branch
 ```
 
 `provisionRepo` splits into two functions, which is the only structural change
@@ -262,15 +262,20 @@ to a file whose comments are load-bearing:
   `gitWrite`. Needs the name.
 
 `runProvision` starts `readRepoRefs` for the first repo, then awaits the pending
-name with a 4s deadline, then proceeds. The loop stays sequential and per-repo
-("in order of landing") and per-repo state reporting is untouched; repos 1..n
-have their name already and read their own refs as they always did.
+name, then proceeds. The loop stays sequential and per-repo ("in order of
+landing") and per-repo state reporting is untouched; repos 1..n have their name
+already and read their own refs as they always did.
 
-**Two clocks, deliberately.** The ask's own timeout is ~15s — it may outlive the
-composer that started it. How long *provisioning* will wait for it is 4s. A
-consumer's patience and a call's lifetime are different facts, and collapsing
-them is how the 4s deadline would silently become the ask's timeout for every
-other consumer.
+**One clock: the ask's own (30s).** Provisioning kept a second and shorter
+patience (4s) at first, on the reasoning that a consumer's patience and a call's
+lifetime are different facts. They are — but the window in which a slug may change
+closes at the first git write (§6), so provisioning giving up does not mean
+"answer later", it means "answer never", and 4s gave up on every real ~10.5s call.
+So the first `worktree add` waits for the name. What bounds the wait is the ask:
+`pendingName` never rejects, a missing or signed-out model reports so in about two
+seconds, and Create usually joins an ask the composer started while the brief was
+still being typed (D21). The row says `naming…` for the duration, because a row
+that spins without naming what it waits on is a row you press again.
 
 ### 6. The slug's one permitted change
 
@@ -293,15 +298,17 @@ entirely.
 
 No schema change. `slug` stays required and stays a string.
 
-### 7. When the name arrives late
+### 7. There is no late name
 
-A name that misses the 4s deadline — or the CLI path, where nobody was typing and
-there was no speculation window — still updates `task.title`. That is display
-only: it reaches the sidebar row and the pane titles, and a pane is already
-renameable through `layout.rename` (the call `startSession` already makes). The
-slug and the branch keep the heuristic name.
+Waiting for the answer removes the case this section used to describe. The record
+and its row are still instant (D12) — what waits is the first `worktree add`, and
+it waits inside provisioning, which no caller awaits. `restore` is not given the
+naming hook at all, because its window closed the first time git ran for that
+task; a restored task keeps the name it has.
 
-So the slow path costs a branch name and never a row label.
+The title is therefore never written by anything but `settleName` and `create`, and
+a task whose ask failed keeps the heuristic name in both halves rather than
+carrying a model title over a heuristic branch.
 
 ### 8. The fallback you actually see
 
@@ -332,8 +339,15 @@ current job for the title.
 - **D19 — nothing is ever renamed.** The slug's one permitted change (§6) is the
   whole of the mutability, and it is bounded to a window in which nothing on disk
   or on screen refers to it.
-- **D20 — two clocks: the ask's timeout (~15s) and provisioning's patience
-  (4s).** An ask may outlive the composer that started it.
+- **D20 — one clock: the ask's own (30s), and the first `worktree add` waits for
+  it.** Provisioning used to keep a second and shorter patience (4s) so that
+  nothing sat waiting on a model — but the window in which a slug may change (D19)
+  closes at that first git write, so an answer that arrives after it is an answer
+  thrown away, and 4s lost every real ~10.5s call. The wait is bounded by the ask
+  rather than by a deadline of its own: `pendingName` never rejects, an absent or
+  signed-out model reports so in about two seconds, and Create usually joins an
+  ask the composer started while the brief was being typed (D21). The row says
+  `naming…` while it happens, because it is now a wait somebody sits through.
 - **D21 — the composer's ask is provisioning's ask.** `tasks` keeps a
   single-entry cache of `{ brief, promise }`, so a request still in flight when
   Create is pressed is awaited rather than duplicated. Without this, the exact
@@ -374,7 +388,8 @@ current job for the title.
 |---|---|
 | no kind registers a `headless` half | `no-kind`; heuristic name; one info line |
 | `claude` missing, or not authenticated | `failed`; heuristic name |
-| the model answers after 4s | heuristic branch, model title |
+| the model is slow (~10.5s, measured) | the first `worktree add` waits for it; the row says `naming…` |
+| the model never answers | the ask's own 30s timeout ends the wait; heuristic name |
 | the model answers junk (backticks, quotes, a refusal, a paragraph) | `readName` sanitizes; unusable → heuristic. **Observed in three of seven measured calls: the answer came back wrapped in backticks.** This is the most likely defect in the whole feature and it is the cheapest to table-test |
 | the model answers something that slugifies to nothing | `slugify`'s existing `FALLBACK` (`task`), then `uniqueSlug` |
 | the brief is empty | no ask (D22); Create is already disabled |
@@ -394,9 +409,10 @@ present.
 non-zero exit, no kind, a kind with no `headless` half, the output cap, the
 concurrency limit.
 
-**The race**: `runProvision` with an injected name promise that resolves before
-and after the deadline. Asserts the slug is committed once and never after the
-first git write.
+**The wait**: `runProvision` with an injected name promise that resolves late, and
+one whose ask fails. Asserts no git runs before the answer, that the slug is
+committed once and never after the first git write, and that a failed ask lands
+the heuristic without waiting out the ask's timeout.
 
 **Smoke — and this one is required, not optional.** `CLAUDE.md` is explicit: "a
 green unit suite is not a working app, and this repo has the scars… run `pnpm
@@ -454,9 +470,10 @@ fact that file exists to record.
 - A faster transport. **Not `--bare`** — the org pin forbids its auth mode and a
   key cannot satisfy it (§Measurements), so that door is closed for as long as
   this laptop is managed. The remaining route is a direct API call registered as
-  its own kind, at which point the 4s deadline stops being reachable and no
-  consumer changes. ~5.5s of the current ~6s is network, so a faster *transport*
-  is the only thing left that could matter; there is no flag left to find.
+  its own kind, at which point the wait before the first `worktree add` becomes
+  short enough not to be felt and no consumer changes. ~5.5s of the current ~6s is
+  network, so a faster *transport* is the only thing left that could matter; there
+  is no flag left to find.
 - Other consumers: commit messages, a pane's title. The seam is the same line;
   each is its own small piece of work.
 - `CLAUDE_CONFIG_DIR` in the allow-list. v1 has Claude profiles

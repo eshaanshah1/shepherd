@@ -1942,32 +1942,54 @@ describe('naming a task at create', () => {
     h.dispose();
   });
 
-  it('keeps the heuristic when the answer misses provisioning’s deadline', async () => {
-    // Fake timers, because the deadline is 4s and neither a real wait nor a
-    // production test hook is an acceptable way to reach it.
+  it('holds the first worktree add for a slow answer rather than dropping it', async () => {
+    // Fake timers, because the ask is the only clock now and a real ~10s wait is
+    // not something a suite can sit through.
     vi.useFakeTimers();
     try {
       const h = harness({
         invoke: (id) =>
           id === 'agents.complete'
             ? (new Promise((resolve) => {
-                setTimeout(() => resolve({ ok: true, value: { ok: true, text: 'Too Late Entirely' } }), 30_000);
+                setTimeout(() => resolve({ ok: true, value: { ok: true, text: 'Slow But Correct' } }), 10_500);
               }) as never)
             : undefined,
       });
       const created = await h.run<TaskRecord>('tasks.create', { title: BRIEF, brief: BRIEF, repos: [REPO] });
-      // Past the deadline, and past the ask, so the late answer has certainly
-      // arrived by the time this asserts.
+
+      // Past the 4s this used to give up at, and still nothing is written: a name
+      // that lands after the first worktree add is a name that cannot be used.
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(worktreeAdds(h)).toHaveLength(0);
+
       await vi.advanceTimersByTimeAsync(60_000);
 
-      const slug = (await stored(h)).find((t) => t.id === created.id)?.slug;
-      expect(slug).not.toBe('too-late-entirely');
-      expect(slug).toBe('add-a-cheap-model-for-naming');
-      expect(worktreeAdds(h)[0]?.args.join(' ')).toContain('add-a-cheap-model-for-naming');
+      expect((await stored(h)).find((t) => t.id === created.id)?.slug).toBe('slow-but-correct');
+      expect(worktreeAdds(h)).toHaveLength(1);
+      expect(worktreeAdds(h)[0]?.args.join(' ')).toContain('slow-but-correct');
+      expect(h.git.some((call) => call.args.join(' ').includes('add-a-cheap-model-for-naming'))).toBe(false);
       h.dispose();
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('falls back to the heuristic when the ask fails, and does not wait for its timeout', async () => {
+    // The bound on the wait is the ask, so the ask failing has to end it — a
+    // signed-out model answers `ok: false` in a couple of seconds, and a task that
+    // sat 30s for that would be indistinguishable from a hang.
+    const h = harness({
+      invoke: (id) =>
+        id === 'agents.complete'
+          ? { ok: true as const, value: { ok: false, reason: 'failed', message: 'Not logged in' } }
+          : undefined,
+    });
+    const created = await h.run<TaskRecord>('tasks.create', { title: BRIEF, brief: BRIEF, repos: [REPO] });
+    await drain();
+
+    expect((await stored(h)).find((t) => t.id === created.id)?.slug).toBe('add-a-cheap-model-for-naming');
+    expect(worktreeAdds(h)).toHaveLength(1);
+    h.dispose();
   });
 
   it('does not rename a task that is being restored', async () => {
