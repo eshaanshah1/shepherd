@@ -4,7 +4,7 @@ import { Button, Composer, PromptField, type PromptFieldHandle } from "@shepherd
 import { repoName } from "../src/model/repo-name.ts";
 import type { PastedImage } from "../src/images.ts";
 import { readPastedImage } from "./paste-image.ts";
-import { findTrigger, scopeLine, type DisplaySegment } from "./mention.ts";
+import { findTrigger, isUnwritten, scopeLine, type DisplaySegment } from "./mention.ts";
 import {
   EDGE,
   PICKER_WIDTH,
@@ -257,19 +257,22 @@ export function TaskComposer({
    * `defaultPrevented` (it checks it before dismissing). Measured against
    * `@radix-ui/react-dismissable-layer`, not assumed.
    *
-   * Only while the picker is open: Esc with it closed still closes the composer,
-   * which is what Esc means everywhere else in the app.
+   * Only while the picker is open, and only once something has been WRITTEN: Esc
+   * with the picker closed still closes the composer, which is what Esc means
+   * everywhere else in the app — and an empty field has nothing for the first
+   * press to protect, so it goes the same way rather than costing two.
    */
   useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent): void => {
       if (event.key !== "Escape") return;
-      event.preventDefault();
       close();
+      if (isUnwritten(brief)) return;
+      event.preventDefault();
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [open]);
+  }, [open, brief]);
 
   /**
    * A mousedown outside the card closes the picker.

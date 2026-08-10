@@ -214,6 +214,19 @@ describe('the handle', () => {
     cleanup();
   });
 
+  it('is a tabbable candidate, or a focus trap cannot find it', () => {
+    /*
+     * A `contenteditable` div reports `tabIndex === -1` in Chromium, so every
+     * walker that asks the DOM what is tabbable in a container skips it —
+     * including the one Radix's focus trap uses to pick what a modal focuses on
+     * open. That is how the ⌘T composer opened with its `#repo` button focused
+     * and the brief, the only field on the card, not.
+     */
+    const { node, cleanup } = mount();
+    expect(node.tabIndex).toBe(0);
+    cleanup();
+  });
+
   it('appends text at the end and reports it, so a button can stand for a keystroke', () => {
     const { handle, node, changes, cleanup } = mount();
     node.append(document.createTextNode('ship it'));

@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fuzzyMatch } from '@shepherd/sdk';
+import { Modal } from '@shepherd/ui';
 import { TaskComposer } from './composer.tsx';
 import { displayMatch } from '../src/model/match-display.ts';
 
@@ -444,6 +445,79 @@ describe('⎋', () => {
   it('is left alone with the picker closed, which is how you dismiss the composer', async () => {
     const event = await press('Escape');
     expect(event.defaultPrevented).toBe(false);
+  });
+
+  it('takes the picker AND the composer when nothing has been written', async () => {
+    /*
+     * The `#repo` button (and a typed `#`) opens the picker over an empty card,
+     * and there the two-step dismiss protects nothing: the `#` is the picker's own
+     * trigger, not a word anybody chose. So the picker closes and the event is
+     * left for the modal layer — one ⎋ out of a task you never started.
+     */
+    await type('#');
+    expect(picker()).not.toBeNull();
+
+    const event = await press('Escape');
+
+    expect(picker()).toBeNull();
+    expect(event.defaultPrevented).toBe(false);
+  });
+});
+
+describe('the card in its modal', () => {
+  it('opens with the brief focused, because writing is what it is for', () => {
+    /*
+     * Through the REAL `Modal`, because the defect this pins was Radix's focus
+     * trap and not the composer: a `contenteditable` reports `tabIndex === -1`, so
+     * the trap's tabbable walk skipped the only field on the card and focused the
+     * `#repo` button under it. Mounting the composer bare could not see that —
+     * nothing would have taken focus at all.
+     */
+    const host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    act(() =>
+      root.render(
+        <Modal open onOpenChange={() => undefined} title="New task" size="lg">
+          <TaskComposer invoke={makeInvoke()} done={makeDone()} />
+        </Modal>,
+      ),
+    );
+
+    // The card's OWN brief, not merely something with that name: another composer
+    // is mounted bare by `beforeEach`, and an assertion on the test id alone would
+    // pass for whichever one happened to hold focus.
+    const card = document.querySelector<HTMLElement>('.sh-ui-modal')!;
+    const focused = document.activeElement as HTMLElement | null;
+    expect(focused?.getAttribute('data-testid')).toBe('composer-brief');
+    expect(focused !== null && card.contains(focused)).toBe(true);
+
+    act(() => root.unmount());
+    host.remove();
+  });
+
+  it('closes on ⎋ with nothing typed, rather than swallowing it', () => {
+    const host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    const onOpenChange = vi.fn();
+    act(() =>
+      root.render(
+        <Modal open onOpenChange={onOpenChange} title="New task" size="lg">
+          <TaskComposer invoke={makeInvoke()} done={makeDone()} />
+        </Modal>,
+      ),
+    );
+
+    act(() => {
+      document.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+      );
+    });
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+
+    act(() => root.unmount());
+    host.remove();
   });
 });
 

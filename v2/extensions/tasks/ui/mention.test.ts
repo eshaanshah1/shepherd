@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { findTrigger, rowText, scopeLine, splitSegments } from './mention.ts';
+import { findTrigger, isUnwritten, rowText, scopeLine, splitSegments } from './mention.ts';
 import { CARET_GAP, EDGE, PICKER_WIDTH, placePicker } from './repo-picker.tsx';
 
 /**
@@ -158,6 +158,27 @@ describe('scopeLine', () => {
 
   it('counts the many, because names would run off the row', () => {
     expect(scopeLine(['shepherd', 'harbor-api'])).toBe('scoped to 2 repos');
+  });
+});
+
+describe('isUnwritten', () => {
+  it('counts an empty field, and one holding only the trigger it typed itself', () => {
+    // The `#` is what the button types and what opens the picker; nobody chose it
+    // as a word, so ⎋ has nothing to protect and closes the card with the picker.
+    expect(isUnwritten('')).toBe(true);
+    expect(isUnwritten('#')).toBe(true);
+    expect(isUnwritten('  #  ')).toBe(true);
+    // A non-breaking space is what `pick` inserts after a pill, and `\s` covers
+    // it — so a field this component whitespaced still reads as empty.
+    expect(isUnwritten(`#${NBSP}`)).toBe(true);
+  });
+
+  it('counts a query as written, because ⎋ then keeps what was typed', () => {
+    // The rule the picker already had: dismissing a popover must not take the
+    // characters away, so `#she` is a first ⎋ that closes only the picker.
+    expect(isUnwritten('#she')).toBe(false);
+    expect(isUnwritten('fix the retry loop')).toBe(false);
+    expect(isUnwritten('fix it in #')).toBe(false);
   });
 });
 

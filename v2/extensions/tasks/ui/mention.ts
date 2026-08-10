@@ -51,6 +51,19 @@ export function findTrigger(text: string, offset: number): Trigger | null {
 }
 
 /**
+ * Has nothing been written yet?
+ *
+ * A bare `#` counts as nothing: it is the picker's own trigger, typed or put
+ * there by the `#repo` button, not a word somebody chose. ⎋ uses this to decide
+ * whether its first press has anything to protect — with the field empty it
+ * takes the picker and the card together, so leaving a task you never started is
+ * one keystroke rather than two.
+ */
+export function isUnwritten(brief: string): boolean {
+  return /^\s*#?\s*$/.test(brief);
+}
+
+/**
  * Cut the port's match runs in two at `at`, so a row can highlight its name and
  * its parent path as separate columns.
  *

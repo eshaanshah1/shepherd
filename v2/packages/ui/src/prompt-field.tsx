@@ -137,7 +137,17 @@ export function readValue(root: HTMLElement): string {
 }
 
 export const PromptField = forwardRef<PromptFieldHandle, PromptFieldProps>(function PromptField(
-  { placeholder, onChange, onPasteFiles, className, ...rest },
+  /**
+   * `tabIndex` defaults to 0, and it is not decoration.
+   *
+   * Chromium reports `tabIndex === -1` for a `contenteditable` div — it is
+   * focusable, but not in the sequential order the DOM can be asked about. So
+   * every walker that looks for "the tabbable things in here" skips this field,
+   * including the one Radix's focus trap uses to decide what a modal focuses on
+   * open: the composer's brief was passed over and the `#repo` button below it
+   * took focus instead. Measured in Electron's Chromium, not assumed.
+   */
+  { placeholder, onChange, onPasteFiles, className, tabIndex = 0, ...rest },
   ref,
 ) {
   const host = useRef<HTMLDivElement>(null);
@@ -304,6 +314,7 @@ export const PromptField = forwardRef<PromptFieldHandle, PromptFieldProps>(funct
       {...rest}
       ref={host}
       className={cn('sh-ui-prompt', className)}
+      tabIndex={tabIndex}
       contentEditable
       suppressContentEditableWarning
       role="textbox"

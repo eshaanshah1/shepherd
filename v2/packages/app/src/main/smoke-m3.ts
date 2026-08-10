@@ -307,6 +307,51 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
   check(composerSeen, 'the composer is on screen');
 
   /**
+   * It opens READY TO TYPE, and this is asserted in Chromium because Chromium is
+   * where it was wrong.
+   *
+   * A `contenteditable` reports `tabIndex === -1` there — focusable, but absent
+   * from the tabbable order the DOM can be asked about — so the focus trap's walk
+   * skipped the only field on the card and focused the `#repo` button under it.
+   * ⌘T then opened a composer that swallowed the first thing anybody typed.
+   */
+  const focused = (await win.webContents.executeJavaScript(
+    `document.activeElement?.dataset?.testid ?? null`,
+  )) as string | null;
+  check(focused === 'composer-brief', `⌘T lands the caret in the brief: ${JSON.stringify(focused)}`);
+
+  /**
+   * And ⎋ on a card nobody has written in closes it.
+   *
+   * Asserted here rather than only in the component's own test because the layer
+   * that acts on the key is the shell's `Modal`, and the composer's picker holds a
+   * capture-phase listener that can take Escape before it: the two halves of that
+   * rule only meet in the running app. The composer is raised again below, so the
+   * step this belongs to continues from a card in the same state it would be in.
+   */
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+  const dismissedEmpty = await until(
+    'the composer to close on ⎋',
+    () =>
+      win.webContents.executeJavaScript(
+        `document.querySelector('[data-testid="task-composer"]') === null`,
+      ) as Promise<boolean>,
+    (gone) => gone,
+  );
+  check(dismissedEmpty, '⎋ closes a composer nobody has written in');
+
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 't', modifiers: ['meta'] });
+  const reopened = await until(
+    'the composer to come back',
+    () =>
+      win.webContents.executeJavaScript(
+        `document.querySelector('[data-testid="task-composer"]') !== null`,
+      ) as Promise<boolean>,
+    (found) => found,
+  );
+  check(reopened, 'the composer reopens after being dismissed');
+
+  /**
    * Typing into the brief, which is a CONTENTEDITABLE and not a textarea.
    *
    * It changed so a pasted image can render as a pill where it was pasted — an
