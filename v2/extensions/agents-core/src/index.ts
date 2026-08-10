@@ -32,7 +32,16 @@ import {
  * The IO shell around `AgentRegistry`, which is where every decision lives.
  */
 
-export type { AgentKind, AgentCapabilities, AgentDecision, AgentEventInput, AgentSlot } from './kind.ts';
+export type {
+  AgentKind,
+  AgentCapabilities,
+  AgentDecision,
+  AgentEventInput,
+  AgentSlot,
+  HeadlessHalf,
+  HeadlessInput,
+} from './kind.ts';
+export type { CompleteAnswer, CompleteInput } from './complete.ts';
 export type { AgentRecord, AgentChange } from './registry.ts';
 export { AGENT_KINDS_POINT } from './kind.ts';
 export * from './state.ts';

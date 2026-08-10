@@ -1,4 +1,10 @@
-import type { AgentDecision, AgentEventInput, AgentKind, AgentSlot } from '@shepherd/ext-agents-core';
+import type {
+  AgentDecision,
+  AgentEventInput,
+  AgentKind,
+  AgentSlot,
+  HeadlessInput,
+} from '@shepherd/ext-agents-core';
 import { applyEvent, backgroundTaskCount, sessionEventAccepted } from './stop-policy.ts';
 
 /**
@@ -12,6 +18,65 @@ import { applyEvent, backgroundTaskCount, sessionEventAccepted } from './stop-po
 
 export const CLAUDE_HOOK_TOPIC = 'claude.hook';
 export const CLAUDE_KIND_ID = 'claude-code';
+
+/**
+ * This vendor's cheap tier — the only model id in the workspace, and it may live
+ * only in this file. A consumer asks for the quick tier and never learns what
+ * served it (D11).
+ */
+export const QUICK_MODEL = 'claude-haiku-4-5';
+
+/**
+ * One non-interactive call, and why there are exactly two flags beyond the model.
+ * All measured 2026-08-10 against a subscription login; the spec carries the
+ * table.
+ *
+ * **`--safe-mode`** disables CLAUDE.md discovery, skills, plugins, hooks, MCP
+ * servers, custom agents, commands and workflows, while auth, model selection and
+ * admin policy settings keep working. It is worth ~2s against the plain call, and
+ * it closes two hazards outright rather than mitigating them: a repo's CLAUDE.md
+ * (~46k tokens in this one) being read on every call, and **our own hooks** firing
+ * for a nested call and reporting its lifecycle as some pane's.
+ *
+ * **`--tools ""`** is the documented way to disable every tool ("use `""` to
+ * disable all tools"). A call whose whole job is to return six words has no
+ * business holding a file handle. Preferred over a `--settings` deny-list, which
+ * would enumerate vendor tool names and rot as that set changes; `--max-turns`
+ * does not exist in the installed CLI.
+ *
+ * **`--bare` is deliberately absent and must stay absent.** It never reads OAuth
+ * or the keychain, so on a machine whose managed settings pin `forceLoginMethod`
+ * it cannot authenticate at all — it exits 1 in under a second, and no API key
+ * changes that, because a non-OAuth credential is exactly what such a pin rejects.
+ *
+ * The prompt travels as an argument rather than on stdin: `runExec` reaches
+ * `execFile` with an array, so there is no shell and nothing to quote wrongly.
+ */
+export function quickArgv(input: HeadlessInput): readonly string[] {
+  return ['claude', '-p', input.prompt, '--model', input.model, '--safe-mode', '--tools', ''];
+}
+
+/**
+ * The answer, unwrapped — or nothing.
+ *
+ * The **last** non-empty line, not the first: measured, a model asked for six
+ * words sometimes writes a sentence about the six words first, and the answer
+ * comes after it. Three of seven measured answers also arrived wrapped in
+ * backticks, so the decoration is stripped here.
+ *
+ * Whether the result is *usable* is the consumer's judgement; this only reports
+ * what the vendor said.
+ */
+export function parseQuick(stdout: string): string | undefined {
+  const lines = stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '');
+  const last = lines.at(-1);
+  if (last === undefined) return undefined;
+  const bare = last.replace(/^[`"'*\s]+/, '').replace(/[`"'*\s]+$/, '').trim();
+  return bare === '' ? undefined : bare;
+}
 
 /**
  * This kind's per-session state, kept in the slot `agents-core` hands it.
@@ -103,6 +168,14 @@ export function claudeKind(): AgentKind {
      * knows and read as a second instruction.
      */
     resumeCommandOf: (target) => `claude --resume ${shellQuote(target)}`,
+
+    /**
+     * The quick tier (§7c). `argv` and `parse` are the whole vendor surface —
+     * the deadline, the output cap and the child's environment belong to
+     * `agents-core`, which is what stops the second kind from reimplementing
+     * them differently.
+     */
+    headless: { quickModel: QUICK_MODEL, argv: quickArgv, parse: parseQuick },
   };
 }
 
