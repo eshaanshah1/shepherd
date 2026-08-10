@@ -30,7 +30,12 @@ export {
   type WashRole,
 } from './roles.ts';
 export { cssVarName, cssVariableBlock, cssVariables } from './css.ts';
-export { xtermTheme, type XtermTheme } from './xterm.ts';
+export {
+  xtermSearchDecorations,
+  xtermTheme,
+  type XtermSearchDecorations,
+  type XtermTheme,
+} from './xterm.ts';
 export {
   LIGHT_SURFACE_LUMINANCE,
   minimumContrastRatio,

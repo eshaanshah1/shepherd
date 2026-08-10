@@ -41,6 +41,7 @@ catalog:
   # renderer (wired in P3; pinned here so the xterm 6 + addon majors are chosen once)
   '@xterm/xterm': 6.0.0
   '@xterm/addon-fit': 0.11.0
+  '@xterm/addon-search': 0.16.0
   '@xterm/addon-webgl': 0.19.0
 
   # The host-side terminal authority (R0). NOT the renderer's xterm: `headless`

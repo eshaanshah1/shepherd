@@ -38,6 +38,7 @@
     "@shepherd/ui": "workspace:*",
     "@tabler/icons-react": "catalog:",
     "@xterm/addon-fit": "catalog:",
+    "@xterm/addon-search": "catalog:",
     "@xterm/xterm": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",

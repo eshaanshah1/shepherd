@@ -23,6 +23,7 @@ import {
 } from '../shared/index.ts';
 import { MENU_INVOCATIONS } from '../shared/menu-commands.ts';
 import { EmptyState } from './empty-state.tsx';
+import { FindBar } from './find-bar.tsx';
 import { ViewDock, raiseIcon } from './view-dock.tsx';
 import { ViewOverlay } from './view-overlay.tsx';
 import { useContributions } from './contributions.ts';
@@ -194,6 +195,33 @@ export function App({
     return () => window.removeEventListener('keydown', onKey, true);
   }, []);
 
+  /**
+   * ⌘F — find in the focused terminal.
+   *
+   * Bound the same way ⌘K is, and for the first of the same two reasons: xterm
+   * has focus and would eat it. NOT a menu accelerator — the file this bypasses
+   * says why in its own words (`menu-template.ts`): AppKit resolves a key
+   * equivalent before the page sees the keystroke, and a find that lived in the
+   * menu bar could never be closed by the bar it opened.
+   *
+   * It only ever OPENS. Esc and the close button are the way out, both on the
+   * bar itself, because ⌘F pressed while the bar is open is "find again" in
+   * every editor — and with the bar already holding focus, that gesture reaches
+   * its input rather than this handler.
+   */
+  const [findOpen, setFindOpen] = useState(false);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'f' || !(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) {
+        return;
+      }
+      event.preventDefault();
+      setFindOpen(true);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, []);
+
   /** A chrome gesture named the way the menu names it. One table, `menu-commands.ts`. */
   const runMenuCommand = useCallback(
     (id: CommandID) => {
@@ -341,6 +369,20 @@ export function App({
     pane: named === null ? '' : where,
   };
 
+  /**
+   * The find bar's target: whichever pane is focused right now, re-resolved on
+   * every render rather than captured when ⌘F was pressed. Clicking another
+   * terminal retargets the bar — the alternative is a bar that keeps counting
+   * matches in a pane you have stopped reading.
+   *
+   * `search` is a property of the terminal object, so its identity is stable for
+   * the life of that terminal and the effects in `FindBar` that depend on it
+   * only re-run when the pane really changes.
+   */
+  const focusedPaneId = active?.focusedPaneId ?? null;
+  const findTarget =
+    terminals === null || focusedPaneId === null ? null : (terminals.search(paneId(focusedPaneId)) ?? null);
+
   const contributions = useContributions(viewsApi);
   /** Every accelerator an overlay declared, for the footer's keycap strip. */
   const raisable = contributions.filter((view) => view.surface === 'overlay' && view.key !== undefined);
@@ -464,6 +506,25 @@ export function App({
               )}
             </div>
           ))}
+          {/*
+            Inside the stage, so it sits over the grid rather than over the
+            sidebar, and AFTER the roots so it paints above them without a
+            z-index of its own. Mounted only while open: the bar takes focus on
+            mount, and a permanently mounted one would have to be told not to.
+          */}
+          {findOpen && (
+            <FindBar
+              search={findTarget}
+              paneId={focusedPaneId === null ? null : paneId(focusedPaneId)}
+              onClose={() => {
+                setFindOpen(false);
+                // Hand the keyboard back to the pane the user was reading.
+                // Without this, focus stays on a field that has just been
+                // removed and the next keystroke goes nowhere.
+                if (focusedPaneId !== null) terminals?.focus(paneId(focusedPaneId));
+              }}
+            />
+          )}
         </main>
       </div>
 

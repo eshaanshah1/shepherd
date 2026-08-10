@@ -213,6 +213,63 @@ body.sh-dragging {
    * one `.sh-divider` between siblings. A border on the pane itself doubled
    * every one of them into a 2px trench.
    */
+
+  /* The containing block for the find bar, which is the only thing that floats
+     over the grid. Nothing else here is positioned. */
+  position: relative;
+}
+
+/* -------------------------------------------------------------- find (⌘F) */
+
+/*
+ * One luminance step and a hairline — the separation `Menu`, `Modal` and
+ * `Tooltip` all use, because rule 2 bans elevation theater and there is no
+ * shadow in this language to make a floating surface float.
+ *
+ * Top-RIGHT, which is where every editor puts it and, more usefully, the corner
+ * a terminal's cursor is furthest from: a bar over the top-left would cover the
+ * prompt of a pane that has just scrolled. It overlaps the grid rather than
+ * pushing it, deliberately — reflowing the pane would resize the pty, and
+ * finding text is not a reason to tell a program its window changed.
+ */
+.sh-find {
+  position: absolute;
+  top: var(--sh-space-md);
+  right: var(--sh-space-md);
+  z-index: 20;
+
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-xs);
+
+  background: var(--sh-surface-raised);
+  border: var(--sh-hairline) solid var(--sh-line);
+  border-radius: var(--sh-radius-md);
+  padding: var(--sh-space-xs);
+}
+
+.sh-find-input {
+  /* 20 × md (280px at the defaults) — composed from the space scale rather than
+     typed, so it moves with the base size. Wide enough for a path fragment,
+     which is what a terminal search usually is. */
+  width: calc(20 * var(--sh-space-md));
+}
+
+/*
+ * The count. Mono because it is a measurement — the rule at the top of this
+ * file — and `tabular-nums` so stepping through matches does not jitter the
+ * buttons beside it as the digits change width.
+ */
+.sh-find-count {
+  flex: 0 0 auto;
+  min-width: calc(4 * var(--sh-space-md));
+  padding: 0 var(--sh-space-xs);
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-small);
+  font-variant-numeric: tabular-nums;
+  color: var(--sh-text-faint);
+  text-align: center;
+  white-space: nowrap;
 }
 
 /*

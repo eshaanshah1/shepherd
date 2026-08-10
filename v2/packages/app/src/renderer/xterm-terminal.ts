@@ -1,14 +1,17 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { SearchAddon } from '@xterm/addon-search';
 import {
   fonts,
   metrics,
   minimumContrastRatio,
   paneTitleSurface,
+  xtermSearchDecorations,
   xtermTheme,
   type ThemeMode,
 } from '@shepherd/design-tokens';
 import type { TerminalLike } from './pane-sessions.ts';
+import { terminalKeyBytes } from './terminal-keys.ts';
 import { DEFAULT_THEME_MODE } from './theme.ts';
 import '@xterm/xterm/css/xterm.css';
 
@@ -53,6 +56,41 @@ export function createXtermTerminal(mode: ThemeMode = DEFAULT_THEME_MODE): Termi
 
   const fitAddon = new FitAddon();
   terminal.loadAddon(fitAddon);
+  const searchAddon = new SearchAddon();
+  terminal.loadAddon(searchAddon);
+
+  /*
+   * The two chords xterm's VT map answers wrongly for an agent. The rule is
+   * `terminal-keys.ts` and is unit tested there; this is the seam that applies
+   * it, and it is deliberately the only key handling in this file.
+   *
+   * `preventDefault` is not optional. Returning false short-circuits xterm
+   * (`CoreBrowserTerminal._keyDown`) but does NOT stop the browser, so the
+   * keystroke would still reach the helper textarea xterm reads input from — an
+   * Enter inserting a newline there, a Backspace editing it — and the pty would
+   * receive both our bytes and whatever that produced.
+   *
+   * `input()` rather than a write to the session: this file knows nothing about
+   * sessions, and `input` fires `onData`, which is the ONE path a keystroke
+   * takes to the pty. A second path would be a second thing to keep in step.
+   */
+  terminal.attachCustomKeyEventHandler((event) => {
+    if (event.type !== 'keydown') return true;
+    const bytes = terminalKeyBytes(event);
+    if (bytes === null) return true;
+    event.preventDefault();
+    terminal.input(bytes);
+    return false;
+  });
+
+  /**
+   * The search options, rebuilt per call.
+   *
+   * `decorations` carries colours, and a terminal outlives a theme change — a
+   * frozen object here would keep painting matches in the palette that was live
+   * when the pane opened.
+   */
+  const searchOptions = () => ({ decorations: xtermSearchDecorations(mode) });
 
   return {
     get cols() {
@@ -83,6 +121,13 @@ export function createXtermTerminal(mode: ThemeMode = DEFAULT_THEME_MODE): Termi
       }
     },
     text: () => readBuffer(terminal),
+    search: {
+      findNext: (term, incremental = false) =>
+        searchAddon.findNext(term, { ...searchOptions(), incremental }),
+      findPrevious: (term) => searchAddon.findPrevious(term, searchOptions()),
+      clear: () => searchAddon.clearDecorations(),
+      onResults: (listener) => searchAddon.onDidChangeResults(listener),
+    },
     dispose: () => terminal.dispose(),
   };
 }

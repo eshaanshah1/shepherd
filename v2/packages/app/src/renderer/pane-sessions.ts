@@ -44,6 +44,23 @@ export interface TerminalDisposable {
   dispose(): void;
 }
 
+/** What a match counter and a next/previous button need. See `find-bar.tsx`. */
+export interface TerminalSearch {
+  /**
+   * Selects the next match and scrolls it into view. False when there is none.
+   *
+   * `incremental` is what a keystroke passes: it keeps the current match while
+   * the term still matches it, so typing `fo` `foo` refines one hit instead of
+   * walking forward one match per character. An explicit next/previous must NOT
+   * pass it, or the button would land on the match it started from.
+   */
+  findNext(term: string, incremental?: boolean): boolean;
+  findPrevious(term: string): boolean;
+  /** Drops the highlights. What closing the find bar does. */
+  clear(): void;
+  onResults(listener: (results: { resultIndex: number; resultCount: number }) => void): TerminalDisposable;
+}
+
 /**
  * What the registry needs from a terminal. Structural, so `@xterm/xterm`'s
  * `Terminal` satisfies it without this file importing xterm — which is what
@@ -63,6 +80,12 @@ export interface TerminalLike {
   fit(): { cols: number; rows: number } | null;
   /** The visible buffer as text. Diagnostics — see `inspect`. */
   text(): string;
+  /**
+   * Find, when the terminal has one. Optional because this interface is what
+   * makes the lifecycle tests runnable in jsdom — a fake that has no addon is
+   * still a terminal, and the find bar simply has nothing to drive.
+   */
+  readonly search?: TerminalSearch;
   dispose(): void;
 }
 
@@ -105,6 +128,11 @@ export interface PaneTerminals {
   suspend(pane: Pane, existing?: string): void;
   focus(paneId: PaneID): void;
   fit(paneId: PaneID): void;
+  /**
+   * This pane's find, or undefined while it holds no terminal — which is a real
+   * state, not a guard against one: a suspended pane has no terminal at all.
+   */
+  search(paneId: PaneID): TerminalSearch | undefined;
   /** Every branch that ends in "and then nothing happens" must be readable. */
   inspect(paneId: PaneID): PaneDiagnostics | undefined;
 }
@@ -307,6 +335,10 @@ export class PaneSessionRegistry implements PaneTerminals {
 
   fit(paneId: PaneID): void {
     this.#entries.get(paneId)?.terminal?.fit();
+  }
+
+  search(paneId: PaneID): TerminalSearch | undefined {
+    return this.#entries.get(paneId)?.terminal?.search;
   }
 
   inspect(paneId: PaneID): PaneDiagnostics | undefined {
