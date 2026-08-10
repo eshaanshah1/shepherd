@@ -13,6 +13,8 @@ export { ARCHIVE_TTL_MS, expired } from './expiry.ts';
 export { repoName } from './repo-name.ts';
 export { expandHome, collapseHome } from './repo-path.ts';
 export { displayMatch, segmentsOf } from './match-display.ts';
+export { orderSuggestions, rankScored } from './pick-order.ts';
+export type { Orderable, Scored } from './pick-order.ts';
 export type { MatchDisplay, DisplaySegment } from './match-display.ts';
 export { LIFECYCLE_STATES, displayState, isLifecycle } from './lifecycle.ts';
 export type { TaskLifecycle, TaskDisplayState } from './lifecycle.ts';
