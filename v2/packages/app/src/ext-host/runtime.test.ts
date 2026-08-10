@@ -871,6 +871,33 @@ describe('the extension host runtime', () => {
       expect(settled).toBe(true);
     });
 
+    it('honours a deadline a command invocation states, because the host forwards it again', async () => {
+      // One extension asking another for slow work: `tasks` → `agents.complete`,
+      // which is a model call. The invocation crosses this port, then crosses back
+      // into the child that owns the command, so the outer leg has to outlast the
+      // inner one — hence two slacks rather than one.
+      let pending: Promise<unknown> | undefined;
+      const waiting = harness((_ctx, api) => {
+        pending = api.proposed.commands.invoke('agents.complete', { prompt: 'name this' }, { timeoutMs: 30_000 });
+      });
+      waiting.runtime.start();
+      await waiting.receive(helloOk);
+      await waiting.receive(activateAsk());
+
+      let settled = false;
+      void pending?.then(() => {
+        settled = true;
+      });
+
+      waiting.clock.advance(CHILD_CALL_TIMEOUT_MS + 1);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(settled).toBe(false);
+
+      waiting.clock.advance(30_000);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(settled).toBe(true);
+    });
+
     it('still times out a call that names NO deadline at the flat default', async () => {
       // The property the constant protects, kept: a wedged host produces a
       // timeout rather than a promise nobody settles.

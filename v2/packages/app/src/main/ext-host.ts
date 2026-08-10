@@ -92,6 +92,13 @@ import { extensionDataDir } from './ext-data-dir.ts';
 export const ASK_TIMEOUT_MS = 10_000;
 
 /**
+ * Added to a stated deadline, for the reason ADR 0030 gives in the other
+ * direction: equal deadlines make the transport give up at the instant the work
+ * is legitimately finishing, so a call that succeeded is reported as a timeout.
+ */
+export const ASK_DEADLINE_SLACK_MS = 5_000;
+
+/**
  * How many times a crashed host is restarted. **One.**
  *
  * A host that dies twice is dying because of something a third fork will not fix
@@ -684,7 +691,17 @@ export class ExtensionHost {
     return answer.ok ? answer.value : [];
   }
 
-  #ask(ask: HostAsk): Promise<WireResult> {
+  /**
+   * `deadlineMs` is the CALLER's, and defaulting it is what the constant is for.
+   *
+   * The flat 10s was the whole of it, and it is shorter than things the app
+   * legitimately runs through a command: `agents.complete` asks a model, which is
+   * 10–16s of network, so every naming call over 10s came back to its caller as
+   * `timeout` while the child was still working — and then the answer arrived and
+   * was dropped. ADR 0030 settled this for child→host calls; this is the same
+   * decision in the direction it was not applied to.
+   */
+  #ask(ask: HostAsk, deadlineMs: number = ASK_TIMEOUT_MS): Promise<WireResult> {
     if (this.#child === undefined) {
       return Promise.resolve(wireErr('unavailable', `there is no extension host to ask (${ask.kind})`));
     }
@@ -694,9 +711,9 @@ export class ExtensionHost {
         // The delete IS the double-settle guard: a late answer then finds no
         // entry, takes the "nothing is waiting for it" branch, and logs.
         if (!this.#pending.delete(id)) return;
-        this.#log.error(`the extension host did not answer ${ask.kind} within ${ASK_TIMEOUT_MS}ms`);
-        resolve(wireErr('timeout', `the extension host did not answer ${ask.kind} within ${ASK_TIMEOUT_MS}ms`));
-      }, ASK_TIMEOUT_MS);
+        this.#log.error(`the extension host did not answer ${ask.kind} within ${deadlineMs}ms`);
+        resolve(wireErr('timeout', `the extension host did not answer ${ask.kind} within ${deadlineMs}ms`));
+      }, deadlineMs);
       this.#pending.set(id, (result) => {
         timer.dispose();
         resolve(result);
@@ -746,7 +763,12 @@ export class ExtensionHost {
       case 'command.invoke': {
         // The one verb table, with the derived caller — so the dispatcher's
         // authorizer decides, exactly as it does for a keystroke or the CLI.
-        const result = await this.#options.registry.invoke(call.commandId, call.args, caller);
+        const result = await this.#options.registry.invoke(
+          call.commandId,
+          call.args,
+          caller,
+          call.timeoutMs === undefined ? undefined : { timeoutMs: call.timeoutMs },
+        );
         return result.ok ? wireOk(result.value) : wireErr(result.error.code, result.error.message);
       }
 
@@ -889,7 +911,11 @@ export class ExtensionHost {
         schema: s.unknown(),
         ...(call.title === undefined ? {} : { title: call.title }),
         ...(call.permission === undefined ? {} : { permission: call.permission }),
-        handler: (args, invoker) => this.#runInChild(record, call.commandId, args, invoker),
+        // The invocation's deadline is forwarded, because this handler has a
+        // transport under it and the caller is the only party that knows how long
+        // its own call may take.
+        handler: (args, invoker, invocation) =>
+          this.#runInChild(record, call.commandId, args, invoker, invocation?.timeoutMs),
       });
       record.commands.set(call.commandId, registration);
       return wireOk();
@@ -916,20 +942,24 @@ export class ExtensionHost {
     commandId: string,
     args: unknown,
     invoker: Caller,
+    timeoutMs?: number,
   ): Promise<unknown> {
     if (this.#child === undefined || this.#state !== 'ready') {
       throw new Error(`unavailable: the extension host is ${this.#state}, so "${commandId}" cannot run`);
     }
-    const answer = await this.#ask({
-      kind: 'command',
-      extension: record.id,
-      commandId,
-      args,
-      // The REAL caller, not this host's. `CommandSpec.handler(args, caller)`
-      // promises an extension the attributed principal; substituting our own
-      // would be the attribution lie `Caller` exists to end.
-      caller: invoker,
-    });
+    const answer = await this.#ask(
+      {
+        kind: 'command',
+        extension: record.id,
+        commandId,
+        args,
+        // The REAL caller, not this host's. `CommandSpec.handler(args, caller)`
+        // promises an extension the attributed principal; substituting our own
+        // would be the attribution lie `Caller` exists to end.
+        caller: invoker,
+      },
+      timeoutMs === undefined ? undefined : timeoutMs + ASK_DEADLINE_SLACK_MS,
+    );
     if (answer.ok) return answer.value;
     throw new Error(`${answer.error.code}: ${answer.error.message}`);
   }

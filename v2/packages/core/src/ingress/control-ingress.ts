@@ -33,11 +33,18 @@ interface InvokePost {
   command: string;
   args?: unknown;
   caller: Exclude<Caller, { kind: 'user' }>;
+  timeoutMs?: number;
 }
 
 const invokePostSchema: Schema<InvokePost> = s.object({
   command: s.string(),
   args: s.optional(s.unknown()),
+  /**
+   * How long this client will wait (ADR 0030). A command whose work is a model
+   * call outlives any default a transport could pick, and without this the client
+   * is told `timeout` while the work is still running.
+   */
+  timeoutMs: s.optional(s.int()),
   /**
    * The caller is *claimed* here and *checked* in the dispatcher. Note the type:
    * `externalCallerSchema` has no `user` variant, so a socket client cannot claim
@@ -73,8 +80,13 @@ export class ControlIngress {
           return { kind: 'json', status: 400, body: { ok: false, error: { code: 'invalid-request', message: detail } } };
         }
 
-        const { command, args, caller } = parsed.value;
-        const result = await options.commands.invoke(command, args, caller);
+        const { command, args, caller, timeoutMs } = parsed.value;
+        const result = await options.commands.invoke(
+          command,
+          args,
+          caller,
+          timeoutMs === undefined ? undefined : { timeoutMs },
+        );
 
         // The registry's own error codes travel out unchanged, and the HTTP status
         // is derived from them rather than invented — so `shepherd` can print the

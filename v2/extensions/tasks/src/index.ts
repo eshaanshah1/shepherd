@@ -431,10 +431,15 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
   let pending: { brief: string; answer: Promise<string | undefined> } | undefined;
 
   const askForName = async (brief: string): Promise<string | undefined> => {
-    const answer = await commands.invoke('agents.complete', {
-      prompt: namingPrompt(brief),
-      timeoutMs: NAME_ASK_TIMEOUT_MS,
-    });
+    const answer = await commands.invoke(
+      'agents.complete',
+      { prompt: namingPrompt(brief), timeoutMs: NAME_ASK_TIMEOUT_MS },
+      // The same number twice, and both are needed: the argument is how long the
+      // MODEL may take, and this is how long the two transport legs between here
+      // and it will wait. Stating only the first is how a 12s naming call came
+      // back as `timeout` at 10s while the answer was still on its way.
+      { timeoutMs: NAME_ASK_TIMEOUT_MS },
+    );
     if (!answer.ok) return undefined;
     /**
      * Read defensively. `ok` says the call succeeded, not that the value has a

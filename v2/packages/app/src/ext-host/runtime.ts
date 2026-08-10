@@ -77,14 +77,21 @@ const DEADLINE_SLACK_MS = 5_000;
 /**
  * How long this particular call may take.
  *
- * Only `process.*` declares one, because only it runs a program whose duration
- * is the caller's business rather than the transport's. Everything else keeps
- * the flat default — which is the property the constant exists for, and which a
- * test pins.
+ * `process.*` declares one because it runs a program whose duration is the
+ * caller's business rather than the transport's. `command.invoke` may declare one
+ * for the same reason, and gets **two** slacks: the host has to forward it into
+ * the child that owns the command, so there is a second transport leg inside this
+ * one, and its deadline must fire first — otherwise the failure is reported by the
+ * outer leg and reads as "the host is wedged" rather than as the callee's
+ * timeout. Everything else keeps the flat default, which is the property the
+ * constant exists for and which a test pins.
  */
 function deadlineFor(call: ApiCall): number {
   if (call.kind === 'process.exec' || call.kind === 'process.git') {
     return call.opts.timeoutMs + DEADLINE_SLACK_MS;
+  }
+  if (call.kind === 'command.invoke' && call.timeoutMs !== undefined) {
+    return call.timeoutMs + 2 * DEADLINE_SLACK_MS;
   }
   return CHILD_CALL_TIMEOUT_MS;
 }

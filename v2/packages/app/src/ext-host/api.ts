@@ -11,6 +11,7 @@ import {
   type CommandAPI,
   type CommandError,
   type CommandErrorCode,
+  type InvokeOptions,
   type Disposable,
   type Envelope,
   type EventAPI,
@@ -328,8 +329,15 @@ function createCommands(services: ExtHostServices): CommandAPI {
       });
     },
 
-    async invoke<R>(id: string, args?: unknown): Promise<Result<R, CommandError>> {
-      const answer = await services.call({ kind: 'command.invoke', commandId: id, args });
+    async invoke<R>(id: string, args?: unknown, opts?: InvokeOptions): Promise<Result<R, CommandError>> {
+      const answer = await services.call({
+        kind: 'command.invoke',
+        commandId: id,
+        args,
+        // Stated, not inferred: both legs of this call derive their deadline from
+        // it, and a log line on either side can name the same number.
+        ...(opts?.timeoutMs === undefined ? {} : { timeoutMs: opts.timeoutMs }),
+      });
       return answer.ok ? ok(answer.value as R) : err(commandErrorFor(id, answer.error));
     },
 
