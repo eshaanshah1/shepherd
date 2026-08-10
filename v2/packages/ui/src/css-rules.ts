@@ -13,6 +13,13 @@
  * It recurses into grouping rules (`@media`, `@supports`) deliberately: the
  * coarse-pointer hit target lives inside one, and an invariant that a media
  * query can quietly break is not an invariant.
+ *
+ * Reachable as `@shepherd/ui/css-rules` — a subpath of its own rather than a
+ * member of the barrel, because the barrel is the PUBLIC primitive set an
+ * extension imports and a test helper has no business in it. The second consumer
+ * is the shell's own stylesheet, which grew the same class of defect this file
+ * was written for: a rule inside `.sh-ui-composer` drawing a border from
+ * `--sh-line`, which that container re-declares to transparent.
  */
 
 /** Duck-typed rather than `instanceof CSSStyleRule` — one less global to exist. */

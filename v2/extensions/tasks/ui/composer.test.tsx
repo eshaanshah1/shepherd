@@ -8,15 +8,15 @@ import { TaskComposer } from './composer.tsx';
 import { displayMatch } from '../src/model/match-display.ts';
 
 /**
- * The picker's keyboard, which is the half a smoke cannot see.
+ * The `#repo` picker, which is the half a smoke test cannot see.
  *
  * Everything asserted here is a rule somebody has to be able to change without
- * finding out from a screenshot. The shape of it is: repos first, ⏎ adds one
- * and stays so several are several ⏎s, ↹ completes the path and does nothing
- * else, ⏎ in the brief is
- * done. And ⎋ dismisses the completion without closing the composer — the only
- * place this component reaches past React, because Radix's dismissable layer
- * listens for Escape on the document in the capture phase.
+ * finding out from a screenshot. The shape of it: `#` opens a picker at the
+ * caret, typing filters it, ⏎ swaps the typed `#query` for one atomic pill, and
+ * the task's SCOPE is read back out of the pills rather than kept beside them.
+ * And ⎋ closes the picker without closing the composer — the only place this
+ * component reaches past React, because Radix's dismissable layer listens for
+ * Escape on the document in the capture phase.
  */
 
 // React refuses to run `act` outside an act environment, and says so at the top
@@ -24,6 +24,8 @@ import { displayMatch } from '../src/model/match-display.ts';
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const HOME = '/Users/e';
+/** What `pick` inserts after a pill. Named, because it is invisible in a string. */
+const NBSP = ' ';
 
 /**
  * A row built the way the EXTENSION builds one, through the same model.
@@ -50,24 +52,28 @@ const suggestion = (path: string, query = '', over: Record<string, unknown> = {}
   };
 };
 
-/** What the extension would answer, for the three queries these tests type. */
+/**
+ * What the extension would answer, for the queries these tests type.
+ *
+ * The keys are what follows the `#`, which is the whole of the query now — a
+ * bare word for the history and a path for the disk, both of which
+ * `tasks.suggestRepos` already answers without knowing which it was given.
+ */
 const ANSWERS: Record<string, readonly unknown[]> = {
   '': [suggestion(`${HOME}/dev/api`, '', { source: 'history' })],
-  [`${HOME}/dev/sh`]: [
-    suggestion(`${HOME}/dev/shepherd`, `${HOME}/dev/sh`),
-    suggestion(`${HOME}/dev/shepherd-ios`, `${HOME}/dev/sh`),
-    suggestion(`${HOME}/dev/shell-notes`, `${HOME}/dev/sh`, { isRepo: false }),
+  s: [
+    suggestion(`${HOME}/dev/shepherd`, 's', { source: 'history' }),
+    suggestion(`${HOME}/dev/shepherd-ios`, 's', { source: 'history' }),
   ],
-  api: [suggestion(`${HOME}/dev/api`, 'api', { source: 'history' })],
-  [`${HOME}/dev/shell`]: [
-    suggestion(`${HOME}/dev/shell-notes`, `${HOME}/dev/shell`, { isRepo: false }),
+  she: [
+    suggestion(`${HOME}/dev/shepherd`, 'she', { source: 'history' }),
+    suggestion(`${HOME}/dev/shell-notes`, 'she', { source: 'history', isRepo: false }),
   ],
-  // Two rows for one query, which is what makes "a picked one stops being
-  // offered" observable: take the first and the second is what the field shows.
-  [`${HOME}/dev/s`]: [
-    suggestion(`${HOME}/dev/shepherd`, `${HOME}/dev/s`),
-    suggestion(`${HOME}/dev/shepherd-ios`, `${HOME}/dev/s`),
-  ],
+  zzz: [],
+  // A path query, which is the capability the mention picker had to keep: a repo
+  // you have never used is not in the history and can only be reached by naming
+  // where it lives.
+  '~/dev/sh': [suggestion(`${HOME}/dev/shepherd`, '~/dev/sh')],
 };
 
 /** Typed through a factory, so the mock keeps the prop's signature. */
@@ -97,18 +103,32 @@ function mount(node: ReactNode): void {
   };
 }
 
-const input = (): HTMLInputElement =>
-  container.querySelector<HTMLInputElement>('[data-testid="composer-repo-path"]')!;
+const brief = (): HTMLElement =>
+  container.querySelector<HTMLElement>('[data-testid="composer-brief"]')!;
+/*
+ * The panel is queried off the DOCUMENT, not the container: it is portalled to
+ * the body so it can hang past a card that `Modal` would otherwise clip. A helper
+ * scoped to `container` would have found nothing and every assertion about the
+ * picker would have read as "closed".
+ */
+const picker = (): HTMLElement | null =>
+  document.body.querySelector<HTMLElement>('[data-testid="composer-picker"]');
 const rows = (): HTMLElement[] => [
-  ...container.querySelectorAll<HTMLElement>('[data-testid="composer-suggestion"]'),
+  ...document.body.querySelectorAll<HTMLElement>('[data-testid="composer-picker-row"]'),
 ];
-const picked = (): string[] =>
-  [...container.querySelectorAll<HTMLElement>('[data-testid="composer-picked-repo"]')].map(
-    (row) => row.dataset.path ?? '',
+const paths = (): string[] => rows().map((row) => row.dataset.path ?? '');
+const activeRow = (): HTMLElement | undefined =>
+  rows().find((row) => row.dataset.selected === 'true');
+/** The scope, as the SENTENCE holds it — pills in document order. */
+const pills = (): string[] =>
+  [...brief().querySelectorAll<HTMLElement>('[data-repo-path]')].map(
+    (pill) => pill.dataset.repoPath ?? '',
   );
+const scopeLine = (): string =>
+  container.querySelector<HTMLElement>('[data-testid="composer-scope"]')!.textContent ?? '';
 
 /** A real event, because the capture-phase listener under test is a real one. */
-async function press(key: string, target: HTMLElement = input()): Promise<KeyboardEvent> {
+async function press(key: string, target: HTMLElement = brief()): Promise<KeyboardEvent> {
   const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
   await act(async () => {
     target.dispatchEvent(event);
@@ -116,11 +136,33 @@ async function press(key: string, target: HTMLElement = input()): Promise<Keyboa
   return event;
 }
 
+/**
+ * Type at the end of the editor, caret and all.
+ *
+ * The caret is the point. `caretContext` reads the selection's own text node, so
+ * a test that set `textContent` and fired `input` without placing a range would
+ * exercise none of the trigger logic — it would assert against a picker that can
+ * never open. This appends into the trailing text node when there is one, which
+ * is what typing after a pill actually does.
+ */
 async function type(text: string): Promise<void> {
-  const field = input();
+  const field = brief();
   await act(async () => {
-    // The native setter, or React's value tracker swallows the change.
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field, text);
+    const last = field.lastChild;
+    let node: Text;
+    if (last !== null && last.nodeType === Node.TEXT_NODE) {
+      node = last as Text;
+      node.textContent = `${node.textContent ?? ''}${text}`;
+    } else {
+      node = document.createTextNode(text);
+      field.append(node);
+    }
+    const range = document.createRange();
+    range.setStart(node, (node.textContent ?? '').length);
+    range.collapse(true);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
     field.dispatchEvent(new Event('input', { bubbles: true }));
   });
 }
@@ -138,183 +180,217 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('the repo picker', () => {
-  it('comes BEFORE the brief in the document, because that is the order', () => {
-    // What you are working on, then what to do to it. Under the brief it read
-    // backwards, and a field below the thing it scopes is a field you find
-    // after the brief is already written. Asserted as document order rather
-    // than as CSS, which is what the tab order and a screen reader follow.
-    const composer = container.querySelector('[data-testid="task-composer"]')!;
-    const order = composer.compareDocumentPosition(
-      container.querySelector('[data-testid="composer-brief"]')!,
-    );
-    const repo = container.querySelector('.sh-composer-repo')!;
-    expect(order & Node.DOCUMENT_POSITION_CONTAINED_BY).toBeTruthy();
-    expect(
-      repo.compareDocumentPosition(container.querySelector('[data-testid="composer-brief"]')!) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-  });
-
-  it('draws NOTHING before anything is typed, whatever the history answered', () => {
-    // The empty field asks for the history and gets it — that ask is the one
-    // below, and it is what makes the first typed character instant. What it
-    // must not do is DRAW it: a completion of nothing is an absolute path in an
-    // empty field, which reads as pre-filled with a repo nobody chose and lands
-    // on top of the `+ repo` placeholder the moment focus leaves.
+describe('the trigger', () => {
+  it('asks for the history on mount, and draws no picker for it', () => {
+    // The ask is what makes the first `#` instant. Drawing it would put a
+    // popover over an empty card nobody has typed into.
     expect(invoke).toHaveBeenCalledWith('tasks.suggestRepos', {
       title: '',
       brief: '',
       query: '',
     });
+    expect(picker()).toBeNull();
+  });
+
+  it('opens on `#` with the history under it, before a second keystroke', async () => {
+    await type('#');
+    expect(picker()).not.toBeNull();
+    expect(paths()).toEqual([`${HOME}/dev/api`]);
+  });
+
+  it('filters as you type, and asks the extension rather than filtering here', async () => {
+    await type('#she');
+    expect(invoke).toHaveBeenCalledWith('tasks.suggestRepos', {
+      title: '#she',
+      brief: '#she',
+      query: 'she',
+    });
+    expect(paths()).toEqual([`${HOME}/dev/shepherd`, `${HOME}/dev/shell-notes`]);
+  });
+
+  it('opens mid-sentence, which is the whole point of it', async () => {
+    await type('fix the retry loop in #she');
+    expect(picker()).not.toBeNull();
+    expect(
+      document.body.querySelector('[data-testid="composer-picker-query"]')?.textContent,
+    ).toBe('#she');
+  });
+
+  it('does NOT open on a `#` inside a word', async () => {
+    // `C#`, `utf#8`, `issue#42`. A picker that appears while somebody writes
+    // prose is worse than one that is slightly harder to reach.
+    await type('written in C#');
+    expect(picker()).toBeNull();
+  });
+
+  it('closes on whitespace, which is how you get out of one you did not mean', async () => {
+    await type('#she');
+    expect(picker()).not.toBeNull();
+    await type(' ');
+    expect(picker()).toBeNull();
+  });
+
+  it('closes when the caret LEAVES the mention, not only when the text changes', async () => {
+    /*
+     * ←/→ and a click inside the editor pass through while the picker is open, so
+     * the caret can leave the mention with no edit at all. Held open, the picker
+     * would still be carrying the query it arrived with — and ⏎ deletes that many
+     * characters wherever the caret now is, eating text elsewhere in the sentence.
+     * `selectionchange` is dispatched by hand because jsdom has no caret to move.
+     */
+    await type('fix it in #s');
+    expect(picker()).not.toBeNull();
+
+    await act(async () => {
+      const text = brief().firstChild!;
+      const range = document.createRange();
+      range.setStart(text, 3);
+      range.collapse(true);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document.dispatchEvent(new Event('selectionchange'));
+    });
+
+    expect(picker()).toBeNull();
+  });
+
+  it('says so when nothing matches, rather than closing', async () => {
+    // Closing would read as the picker being broken. The empty state is what
+    // tells you the typo is yours.
+    await type('#zzz');
+    expect(picker()).not.toBeNull();
     expect(rows()).toHaveLength(0);
+    expect(
+      document.body.querySelector('[data-testid="composer-picker-empty"]')?.textContent,
+    ).toBe('no repo matches that');
   });
 
-  it('shows ONE completion, as ghost text, never a list', async () => {
-    // A dropdown of rows in a card whose purpose is the brief is a second thing
-    // competing with it. One answer, inline, behind the caret.
-    await type(`${HOME}/dev/sh`);
-    expect(rows()).toHaveLength(1);
-    expect(rows()[0]?.dataset.path).toBe(`${HOME}/dev/shepherd`);
-    expect(container.querySelector('[role="listbox"]')).toBeNull();
-  });
-
-  it('draws the MATCH rather than the keystrokes, with the hit characters picked out', async () => {
-    // fzf's contract: you type `shpd` and the field reads the path it resolved
-    // to, with the characters you typed marked inside it. The highlight is what
-    // makes the match checkable — without it the field asserts a winner and
-    // gives you no way to see why it won.
-    await type(`${HOME}/dev/sh`);
-    expect(rows()[0]?.textContent).toBe('~/dev/shepherd');
-    const hits = [...rows()[0]!.querySelectorAll('.sh-composer-repo-hit')].map((n) => n.textContent);
-    expect(hits).toEqual(['sh']);
-    // And nothing on screen is the raw query — the input carries it, invisibly.
-    expect(input().value).toBe(`${HOME}/dev/sh`);
-    expect(container.querySelector('.sh-composer-repo-typed')).toBeNull();
-  });
-
-  it('rebuilds the path exactly, so a highlight can never rename what it is drawn over', async () => {
-    await type(`${HOME}/dev/sh`);
-    const runs = [...rows()[0]!.querySelectorAll('span')].map((node) => node.textContent ?? '');
-    expect(runs.join('')).toBe('~/dev/shepherd');
-  });
-
-  it('falls back to what you typed when nothing matches, rather than going blank', async () => {
-    // Going blank would leave you typing at a field that shows nothing back,
-    // with no way to see the typo you just made.
-    await type(`${HOME}/dev/zzz`);
-    expect(rows()).toHaveLength(0);
-    expect(container.querySelector('[data-testid="composer-nomatch"]')?.textContent).toBe(
-      `${HOME}/dev/zzz`,
-    );
-  });
-
-  it('shows nothing at all before a character is typed', async () => {
-    expect(container.querySelector('[data-testid="composer-nomatch"]')).toBeNull();
-    expect(rows()).toHaveLength(0);
-  });
-
-  it('marks a directory that is not a repo, and still offers it', async () => {
-    await type(`${HOME}/dev/shell`);
-    expect(container.querySelector('.sh-composer-repo-note')?.textContent).toBe('not a repo');
+  it('passes a PATH query straight through, so a repo you have never used is reachable', async () => {
+    // The capability the old field had and a name-only picker would have lost.
+    // `completionTarget` answers null for a bare word and completes anything with
+    // a separator in it, so one trigger covers both with no mode to switch.
+    await type('#~/dev/sh');
+    expect(invoke).toHaveBeenCalledWith('tasks.suggestRepos', {
+      title: '#~/dev/sh',
+      brief: '#~/dev/sh',
+      query: '~/dev/sh',
+    });
+    expect(paths()).toEqual([`${HOME}/dev/shepherd`]);
   });
 });
 
-describe('the picker keyboard', () => {
-  it('takes the completion with → at the end of the line', async () => {
-    // The gesture people try before they try Tab. Anywhere but the end of the
-    // line it stays an ordinary cursor move.
-    await type(`${HOME}/dev/sh`);
-    input().setSelectionRange(input().value.length, input().value.length);
-    await press('ArrowRight');
-    // The DISPLAY text, `~` and all — the query and what is on screen have to
-    // agree afterwards, and the field is showing `~/dev/shepherd`. Retyping the
-    // absolute path would silently replace what you are looking at with a longer
-    // string saying the same thing. `expandHome` reads it back.
-    expect(input().value).toBe('~/dev/shepherd');
+describe('the rows', () => {
+  it('draw the NAME, with the hit characters picked out', async () => {
+    // The highlight is what makes the match checkable — without it the list
+    // asserts an order and gives you no way to see why.
+    await type('#she');
+    const hits = [...rows()[0]!.querySelectorAll('.sh-composer-picker-hit')].map(
+      (node) => node.textContent,
+    );
+    expect(hits).toEqual(['she']);
   });
 
-  it('picks the completion with ⏎, and never submits the form', async () => {
-    await type(`${HOME}/dev/sh`);
+  it('draw the parent path as meta, because that is what tells two repos apart', async () => {
+    await type('#she');
+    const row = rows()[0]!;
+    expect(row.querySelector('.sh-ui-row__label')?.textContent).toBe('shepherd');
+    expect(row.querySelector('.sh-ui-row__meta')?.textContent).toBe('~/dev/');
+  });
+
+  it('reassemble into the path exactly, so a highlight can never rename it', async () => {
+    await type('#she');
+    const runs = [...rows()[0]!.querySelectorAll('span')].map((node) => node.textContent ?? '');
+    expect(runs.join('')).toContain('~/dev/');
+  });
+
+  it('mark a directory that is not a repo, and still offer it', async () => {
+    // `~/dev` is not a repo and is exactly the row you need to reach the ones
+    // inside it, so it is marked rather than dropped. The mark says the word too:
+    // a fact encoded only in colour cannot be read out or asserted on.
+    await type('#she');
+    const marks = rows().map(
+      (row) => row.querySelector<HTMLElement>('.sh-composer-picker-mark')?.dataset.repo,
+    );
+    expect(marks).toEqual(['true', 'false']);
+    expect(rows()[1]?.querySelector('.sh-ui-sr-only')?.textContent).toBe('not a repo');
+  });
+});
+
+describe('the keyboard', () => {
+  it('starts on the first row and moves with the arrows, clamped', async () => {
+    await type('#s');
+    expect(activeRow()?.dataset.path).toBe(`${HOME}/dev/shepherd`);
+
+    await press('ArrowDown');
+    expect(activeRow()?.dataset.path).toBe(`${HOME}/dev/shepherd-ios`);
+
+    // Clamped, no wrap: a list that jumps from the last row back to the first is
+    // a list you can arrow past without noticing.
+    await press('ArrowDown');
+    expect(activeRow()?.dataset.path).toBe(`${HOME}/dev/shepherd-ios`);
+
+    await press('ArrowUp');
+    await press('ArrowUp');
+    expect(activeRow()?.dataset.path).toBe(`${HOME}/dev/shepherd`);
+  });
+
+  it('names the active row rather than focusing it, so the query survives an arrow', async () => {
+    // The defect every hand-rolled picker has: focus moves to a row and the
+    // field it was filtering loses the text.
+    await type('#s');
+    const id = activeRow()!.id;
+    expect(brief().getAttribute('aria-activedescendant')).toBe(id);
+    expect(brief().getAttribute('aria-expanded')).toBe('true');
+    expect(document.activeElement).not.toBe(activeRow());
+  });
+
+  it('inserts the active row as ONE pill on ⏎, and never submits', async () => {
+    await type('fix it in #s');
     const enter = await press('Enter');
 
-    expect(picked()).toEqual([`${HOME}/dev/shepherd`]);
-    expect(input().value).toBe('');
-    // A task with the repo field half-typed is a task with the wrong repos.
+    expect(pills()).toEqual([`${HOME}/dev/shepherd`]);
     expect(enter.defaultPrevented).toBe(true);
     expect(invoke).not.toHaveBeenCalledWith('tasks.create', expect.anything());
   });
 
-  it('adds what you typed when the list has been dismissed', async () => {
-    await type(`${HOME}/dev/sh`);
-    await press('Escape');
+  it('swaps the typed `#query` for the pill, leaving the sentence around it', async () => {
+    await type('fix it in #s');
     await press('Enter');
-    expect(picked()).toEqual([`${HOME}/dev/sh`]);
+    // The `#s` is gone and the pill stands where it was — not appended after it.
+    expect(brief().textContent).toBe(`fix it in #shepherd${NBSP}`);
+    expect(picker()).toBeNull();
   });
 
-  it('completes with ↹ to what the ghost is showing, without submitting', async () => {
-    await type(`${HOME}/dev/sh`);
-    const tab = await press('Tab');
-
-    // Whatever is on screen — with one suggestion visible there is nothing else
-    // it could honestly mean, and now that the field draws the match rather than
-    // the keystrokes, "on screen" is literally what lands in the field. It used
-    // to complete to the common prefix of every match (`she`), which was right
-    // while a list was on screen and became a promise the ghost did not keep
-    // once the list went away.
-    expect(input().value).toBe('~/dev/shepherd');
-    expect(tab.defaultPrevented).toBe(true);
-    expect(picked()).toEqual([]);
-    // And it immediately asks again with the completed text, which is what makes
-    // it navigable rather than a single-shot guess.
-    expect(invoke).toHaveBeenCalledWith('tasks.suggestRepos', {
-      title: '',
-      brief: '',
-      query: '~/dev/shepherd',
-    });
-  });
-
-  it('leaves ↹ alone when there is nothing to complete, rather than trapping it', async () => {
-    // ↹ completes the path and does nothing else. It used to hand focus to the
-    // brief in this state, which made one key mean two things depending on state
-    // you cannot see — and the state it fires in most often is "half a path
-    // typed". Unhandled, so the browser still moves focus and nothing is stuck.
-    const tab = await press('Tab');
-    expect(tab.defaultPrevented).toBe(false);
-    expect(input().value).toBe('');
-  });
-
-  it('completes a history row too, not only one off the disk', async () => {
-    // The field draws ONE answer and that answer is takeable whatever list it
-    // came from. Restricting ↹ to filesystem rows made it silently do nothing on
-    // a row it was showing you.
-    await type('api');
+  it('takes ↹ as well, because a completion key is a completion key', async () => {
+    await type('#s');
     const tab = await press('Tab');
     expect(tab.defaultPrevented).toBe(true);
-    expect(input().value).toBe('~/dev/api');
+    expect(pills()).toEqual([`${HOME}/dev/shepherd`]);
   });
-});
 
-describe('the brief', () => {
-  const brief = (): HTMLElement =>
-    container.querySelector<HTMLElement>('[data-testid="composer-brief"]')!;
-
-  const write = async (text: string): Promise<void> => {
-    await act(async () => {
-      brief().textContent = text;
-      brief().dispatchEvent(new Event('input', { bubbles: true }));
-    });
-  };
-
-  it('submits on ⏎ — the chat convention the repo field hands you', async () => {
-    await write('ship it');
-    const enter = await press('Enter', brief());
+  it('does nothing on ⏎ with no rows, rather than submitting under the picker', async () => {
+    // The picker is on screen, so ⏎ visibly belongs to it. Submitting here would
+    // create a task out of a half-typed mention.
+    await type('ship it #zzz');
+    const enter = await press('Enter');
     expect(enter.defaultPrevented).toBe(true);
-    expect(invoke).toHaveBeenCalledWith('tasks.create', expect.objectContaining({ brief: 'ship it' }));
+    expect(invoke).not.toHaveBeenCalledWith('tasks.create', expect.anything());
+    expect(pills()).toEqual([]);
+  });
+
+  it('lets ⏎ submit once the picker is closed', async () => {
+    await type('ship it');
+    const enter = await press('Enter');
+    expect(enter.defaultPrevented).toBe(true);
+    expect(invoke).toHaveBeenCalledWith(
+      'tasks.create',
+      expect.objectContaining({ brief: 'ship it' }),
+    );
   });
 
   it('newlines on ⇧⏎, and creates nothing', async () => {
-    await write('ship it');
+    await type('ship it');
     const event = new KeyboardEvent('keydown', {
       key: 'Enter',
       shiftKey: true,
@@ -324,21 +400,24 @@ describe('the brief', () => {
     await act(async () => {
       brief().dispatchEvent(event);
     });
-    // Not swallowed: the newline is contenteditable's to insert, and taking
-    // the key to reimplement it is how the undo stack gets broken.
+    // Not swallowed: the newline is contenteditable's to insert, and taking the
+    // key to reimplement it is how the undo stack gets broken.
     expect(event.defaultPrevented).toBe(false);
     expect(invoke).not.toHaveBeenCalledWith('tasks.create', expect.anything());
   });
 });
 
 describe('⎋', () => {
-  it('closes the list and leaves the composer open', async () => {
-    await type(`${HOME}/dev/sh`);
-    expect(rows()).not.toHaveLength(0);
+  it('closes the picker, leaves the typed text, and keeps the composer open', async () => {
+    await type('#she');
+    expect(picker()).not.toBeNull();
 
     await press('Escape');
 
-    expect(rows()).toHaveLength(0);
+    expect(picker()).toBeNull();
+    // The text stays. Deleting what somebody typed because they dismissed a
+    // popover is a picker taking their words away.
+    expect(brief().textContent).toBe('#she');
     expect(container.querySelector('[data-testid="task-composer"]')).not.toBeNull();
     expect(done).not.toHaveBeenCalled();
   });
@@ -354,7 +433,7 @@ describe('⎋', () => {
     const layer = (event: Event): void => void seen.push(event.defaultPrevented);
     document.addEventListener('keydown', layer, true);
     try {
-      await type(`${HOME}/dev/sh`);
+      await type('#she');
       await press('Escape');
       expect(seen).toEqual([true]);
     } finally {
@@ -362,29 +441,95 @@ describe('⎋', () => {
     }
   });
 
-  it('does not swallow ⎋ from the brief, which is how you dismiss the composer', async () => {
-    const brief = container.querySelector<HTMLTextAreaElement>('[data-testid="composer-brief"]')!;
-    const event = await press('Escape', brief);
+  it('is left alone with the picker closed, which is how you dismiss the composer', async () => {
+    const event = await press('Escape');
     expect(event.defaultPrevented).toBe(false);
   });
 });
 
-describe('a picked repo', () => {
-  it('stops being offered — it is a chip now, and two of it reads as two repos', async () => {
-    await type(`${HOME}/dev/s`);
+describe('the scope', () => {
+  it('is read out of the sentence, so removing a pill un-scopes the task', async () => {
+    /*
+     * The pill IS the scope. jsdom implements no editing, so the Backspace itself
+     * cannot be simulated — what is asserted is the consequence that matters:
+     * the pill leaves the DOM and the scope follows, because nothing keeps a
+     * second copy of it. A composer holding a selection array would still be
+     * scoped to a repo that is no longer in the text, and no test of the array
+     * could show that.
+     */
+    await type('#s');
     await press('Enter');
-    expect(picked()).toEqual([`${HOME}/dev/shepherd`]);
-    // Typed again, the same query answers the same two rows and the ghost shows
-    // the OTHER one: the chip is not offered a second time.
-    await type(`${HOME}/dev/s`);
-    expect(rows().map((row) => row.dataset.path)).toEqual([`${HOME}/dev/shepherd-ios`]);
+    expect(scopeLine()).toBe('scoped to shepherd');
+
+    await act(async () => {
+      brief().querySelector('[data-repo-path]')!.remove();
+      brief().dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    expect(pills()).toEqual([]);
+    expect(scopeLine()).toBe('no repo scoped — lands in inbox');
   });
 
-  it('is not picked by a ⏎ on an empty field — nothing is shown, so nothing is taken', async () => {
-    // ⏎ takes what the ghost is showing, and an empty field shows nothing. It
-    // used to take the top history row sight unseen, which is a repo on the task
-    // that the person creating it never saw, let alone chose.
+  it('says where an unscoped task LANDS rather than reporting a missing field', () => {
+    // A task with no repo is a valid task. "no repo" alone would make a working
+    // state read as an unfinished form.
+    expect(scopeLine()).toBe('no repo scoped — lands in inbox');
+  });
+
+  it('counts once there are several, because names would run off the row', async () => {
+    await type('#s');
     await press('Enter');
-    expect(picked()).toEqual([]);
+    await type('#s');
+    await press('Enter');
+    expect(pills()).toEqual([`${HOME}/dev/shepherd`, `${HOME}/dev/shepherd-ios`]);
+    expect(scopeLine()).toBe('scoped to 2 repos');
+  });
+
+  it('stops offering a repo already in the sentence', async () => {
+    // Two of one repo is one worktree and one branch, so it is one entry — and a
+    // row you cannot see is a row you cannot pick, which is why this is a filter
+    // rather than a second guard at insertion time.
+    await type('#s');
+    await press('Enter');
+    await type('#s');
+    expect(paths()).toEqual([`${HOME}/dev/shepherd-ios`]);
+  });
+
+  it('rides to `tasks.create` in document order, with the brief that names it', async () => {
+    await type('fix the retry loop in #s');
+    await press('Enter');
+    await type('and #s');
+    await press('Enter');
+    await press('Escape');
+    await act(async () => {
+      container
+        .querySelector<HTMLElement>('[data-testid="composer-create"]')!
+        .closest('form')!
+        .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+
+    expect(invoke).toHaveBeenCalledWith('tasks.create', {
+      // The pill serialises back to `#name`, so the sentence the agent is given
+      // is the sentence somebody wrote — the repo still in it.
+      title: `fix the retry loop in #shepherd${NBSP}and #shepherd-ios`,
+      brief: `fix the retry loop in #shepherd${NBSP}and #shepherd-ios${NBSP}`,
+      repos: [
+        { path: `${HOME}/dev/shepherd`, name: 'shepherd' },
+        { path: `${HOME}/dev/shepherd-ios`, name: 'shepherd-ios' },
+      ],
+    });
+  });
+});
+
+describe('the #repo button', () => {
+  it('performs the gesture it teaches', async () => {
+    // `#` is invisible until somebody has been told about it, and this is the
+    // telling. It appends the character rather than opening a picker some other
+    // way, so there is one code path whether it was typed or clicked.
+    await act(async () => {
+      container.querySelector<HTMLElement>('[data-testid="composer-hash"]')!.click();
+    });
+    expect(brief().textContent).toBe('#');
+    expect(picker()).not.toBeNull();
   });
 });

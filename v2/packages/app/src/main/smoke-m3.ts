@@ -47,6 +47,15 @@ export function isM3Options(options: Partial<M3SmokeOptions>): options is M3Smok
 export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): Promise<void> {
   const repo = flagValue(process.argv, '--shepherd-m3-repo');
   if (repo === undefined) die('no --shepherd-m3-repo');
+  /**
+   * The repo's own name, which is what a `#` mention is matched against.
+   *
+   * The picker filters on the NAME rather than the path around it — a home
+   * directory alone supplies most letters of most words — so this is the query
+   * the composer step types. Same derivation `repoName` makes, and the
+   * provisioning assertion further down re-uses it.
+   */
+  const repoBase = repo.split('/').filter((part) => part !== '').pop() ?? '';
 
   const invoke = async (command: string, args: Record<string, unknown> = {}): Promise<unknown> => {
     const body = JSON.stringify({ command, args, caller: { kind: 'device', deviceId: 'local-cli' } });
@@ -308,82 +317,75 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
    * what breaks undo), so writing it directly is the supported path rather than
    * a way around one.
    *
-   * A repo INPUT is still an input, so the native-setter dance below stays for
-   * it — the two fields are genuinely different elements now.
+   * **And it places a CARET**, which is new and is the whole reason this step
+   * changed. There is no repo field any more: the repo is named inside the
+   * sentence with `#`, and the trigger reads the caret's own text node — so a
+   * write that set `textContent` and fired `input` without a selection would
+   * exercise none of it and assert against a picker that can never open.
    */
   await win.webContents.executeJavaScript(`(() => {
-    const type = (el, value) => {
-      if (el.isContentEditable) {
-        el.textContent = value;
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        return;
-      }
-      const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-      Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, value);
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-    };
-    // ONE field: the composer's first line names the task, git-commit style,
-    // and the rest is the brief.
-    type(
-      document.querySelector('[data-testid="composer-brief"]'),
-      ['Composed task', 'Created from inside the app.'].join(String.fromCharCode(10)),
-    );
-    document.querySelector('[data-testid="composer-brief"]').dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
-    return true;
-  })()`);
-
-  /**
-   * Type ONE character first, because the completion waits for one.
-   *
-   * An empty repo field deliberately offers nothing: ⏎ takes what the ghost
-   * text is showing, and with nothing typed it used to take the top of the
-   * picked history sight unseen — a repo on the task that whoever created it
-   * never saw. This smoke encoded that older behaviour and so asked for a
-   * suggestion before anything had been typed.
-   *
-   * The first character of the repo's own path, so the completion has something
-   * to match and the assertion still proves the chain rather than the field.
-   */
-  await win.webContents.executeJavaScript(`(() => {
-    const field = document.querySelector('[data-testid="composer-repo-path"]');
-    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-    field.focus();
-    set.call(field, ${JSON.stringify(repo.slice(0, 1))});
+    const field = document.querySelector('[data-testid="composer-brief"]');
+    // ONE field: the composer's first line names the task, git-commit style, and
+    // the rest is the brief — with the repo mentioned in it, where it belongs.
+    field.textContent = ${JSON.stringify(
+      ['Composed task', 'Created from inside the app. #'].join('\n'),
+    )} + ${JSON.stringify(repoBase)};
+    const text = field.firstChild;
+    const range = document.createRange();
+    range.setStart(text, text.textContent.length);
+    range.collapse(true);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
     field.dispatchEvent(new Event('input', { bubbles: true }));
     return true;
   })()`);
 
-  // The suggestion comes from `tasks.repoSuggestions` (D5) — the point, its
-  // default provider, and a command answering the page. TAKING the offered one
-  // rather than typing a path is what makes this assert the chain instead of
-  // the field.
+  /*
+   * The rows come from `tasks.suggestRepos` (D5) — the point, its default
+   * provider, and a command answering the page. TAKING an offered row rather
+   * than typing a path is what makes this assert the chain instead of the field,
+   * and the repo is findable by NAME because step 1 already used it, so it is in
+   * the frecency history this picker opens on.
+   */
   const suggested = await until(
     'the repo picker to offer the repo this smoke already used',
     () =>
       win.webContents.executeJavaScript(
-        `Array.from(document.querySelectorAll('[data-testid="composer-suggestion"]')).map((el) => el.dataset.path)`,
+        `Array.from(document.querySelectorAll('[data-testid="composer-picker-row"]')).map((el) => el.dataset.path)`,
       ) as Promise<string[]>,
     (paths) => paths.includes(repo),
   );
   check(suggested.includes(repo), `the picker consulted the point: ${JSON.stringify(suggested)}`);
 
-  // ⏎ in the repo field takes the completion on screen — the real gesture, and
-  // the only one there is: the suggestion is ghost text behind the caret rather
-  // than a row, so it has no click for a smoke to borrow.
+  /*
+   * ⏎ takes the active row and inserts it as a pill INTO the brief — the real
+   * gesture, and the one the keyboard model makes primary. The active row is the
+   * first, which is the one the ranker put there.
+   */
   await win.webContents.executeJavaScript(`(() => {
-    const field = document.querySelector('[data-testid="composer-repo-path"]');
-    field.focus();
+    const field = document.querySelector('[data-testid="composer-brief"]');
     field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
     return true;
   })()`);
-  await until(
-    'the picked repo to become a chip',
+
+  /*
+   * The pill IS the scope. There is no chip row to read any more — the sentence
+   * holds the repo, and `[data-repo-path]` is what the composer itself reads back
+   * to build the `repos` array. Asserting the same DOM the component derives from
+   * is what makes this catch a pill that renders but carries no path.
+   */
+  const scoped = await until(
+    'the picked repo to become a pill in the brief',
     () =>
       win.webContents.executeJavaScript(
-        `Array.from(document.querySelectorAll('[data-testid="composer-picked-repo"]')).map((el) => el.dataset.path)`,
+        `Array.from(document.querySelectorAll('[data-testid="composer-brief"] [data-repo-path]')).map((el) => el.dataset.repoPath)`,
       ) as Promise<string[]>,
     (paths) => paths.includes(repo),
   );
+  check(scoped.includes(repo), `the mention became a pill: ${JSON.stringify(scoped)}`);
+  say('ok — `#` named a repo inside the brief and the pill carries its path');
+
   await win.webContents.executeJavaScript(
     `document.querySelector('[data-testid="composer-create"]').click(), true`,
   );
@@ -414,13 +416,23 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
       ((await invoke('tasks.list')) as { id: string; title: string; root: string; repos: { name: string }[] }[]).find(
         (task) => task.title === 'Composed task',
       ),
+    /*
+     * BOTH the worktree and the synthesized root, for the reason step 2 records
+     * about the very same pair: "they land in that order — the worktree is `git
+     * worktree add` and the root is synthesized from what landed, a beat later.
+     * Waiting on the first and asserting the second is a race that passes on the
+     * timing of the day." This gate waited on `.git` and the `CLAUDE.md` check
+     * below was outside it, so it did exactly that, and it duly failed the day
+     * the composer got faster.
+     */
     (task) =>
       task !== undefined &&
       task.repos.length === 1 &&
-      existsSync(join(task.root, task.repos[0]?.name ?? '', '.git')),
+      existsSync(join(task.root, task.repos[0]?.name ?? '', '.git')) &&
+      existsSync(join(task.root, 'CLAUDE.md')),
   )) as { id: string; root: string; repos: { name: string }[] };
   check(
-    composed.repos[0]?.name === repo.split('/').filter((s) => s !== '').pop(),
+    composed.repos[0]?.name === repoBase,
     `the picked path became the repo's name: ${JSON.stringify(composed.repos)}`,
   );
   check(existsSync(join(composed.root, 'CLAUDE.md')), 'the composed task root was synthesized too');
