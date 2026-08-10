@@ -96,8 +96,29 @@ writeFileSync(
   { mode: 0o755 },
 );
 
+/**
+ * The relaunch gets an ALLOW-LIST, not this process's environment.
+ *
+ * `open` hands the app the environment of whoever called it, and this script is
+ * usually called from an agent's pane — so shipping from a sandboxed Claude Code
+ * session baked that sandbox's `HTTPS_PROXY` and its throwaway CA into the app,
+ * which then copied them into every pane it opened. The proxy dies with the
+ * session; the app keeps pointing at it, and every `claude` launched afterwards
+ * fails to verify its token. (`shell.ts` strips these at the pane seam too — this
+ * is the half that keeps them out of the app in the first place, so its own
+ * network is clean as well.)
+ *
+ * A deny-list would have to enumerate the vocabulary of every tool that might
+ * have launched us. Nothing below needs more than a PATH and an identity.
+ */
+const RELAUNCH_ENV = Object.fromEntries(
+  ['PATH', 'HOME', 'TMPDIR', 'USER', 'LOGNAME', 'SHELL', 'LANG']
+    .map((key) => [key, process.env[key]])
+    .filter(([, value]) => value !== undefined),
+);
+
 say(`swapping ${installed} and relaunching once ${name} exits`);
-spawn('/bin/bash', [script], { detached: true, stdio: 'ignore' }).unref();
+spawn('/bin/bash', [script], { detached: true, stdio: 'ignore', env: RELAUNCH_ENV }).unref();
 
 /**
  * And ask it to quit — AFTER the swapper is watching, or the app can exit in the
