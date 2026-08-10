@@ -111,6 +111,19 @@ describe('looksLikeRepo', () => {
   it('rejects a directory with no `.git` at all', () => {
     expect(looksLikeRepo(join(home, 'dev/scratch'))).toBe(false);
   });
+
+  it('answers false for a malformed path instead of throwing', () => {
+    // `throwIfNoEntry: false` suppresses ENOENT and nothing else — a NUL in the
+    // string throws EINVAL straight through it. The input here is a half-typed
+    // path, so this is reachable, and it took the whole handler down: the picker
+    // answered an error rather than rows, with `EINVAL … stat '/.resolve/.git'`
+    // the only trace.
+    for (const bad of ['\0', 'a\0b', `${home}/\0`]) {
+      expect(looksLikeRepo(bad), bad).toBe(false);
+      expect(exactRepoPath(bad), bad).toBeNull();
+      expect(completeDirectories(bad, home), bad).toEqual([]);
+    }
+  });
 });
 
 describe('match positions', () => {

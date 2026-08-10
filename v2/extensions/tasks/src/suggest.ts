@@ -27,10 +27,17 @@ export interface DirCandidate {
 
 /** `statSync` rather than `existsSync`, so a file named like a directory is not one. */
 function isDirectory(path: string): boolean {
-  // `throwIfNoEntry: false` is the whole reason this is stat and not lstat in a
-  // try/catch: a path that does not exist is the ORDINARY case while somebody is
-  // typing one, and it must not cost an exception per keystroke.
-  return statSync(path, { throwIfNoEntry: false })?.isDirectory() ?? false;
+  // `throwIfNoEntry: false` keeps the ORDINARY case — a path that does not exist
+  // yet because somebody is still typing it — from costing an exception per
+  // keystroke. It suppresses ENOENT and nothing else, though: a malformed path
+  // throws EINVAL straight through it, and this input is a half-typed string, so
+  // that is reachable rather than theoretical. It took the whole handler down
+  // and the picker answered an error instead of rows.
+  try {
+    return statSync(path, { throwIfNoEntry: false })?.isDirectory() ?? false;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -40,7 +47,13 @@ function isDirectory(path: string): boolean {
  * this asks whether the entry exists at all rather than what kind it is.
  */
 export function looksLikeRepo(path: string): boolean {
-  return statSync(`${path}/.git`, { throwIfNoEntry: false }) !== undefined;
+  // Total, for the reason `isDirectory` is: it is asked about a string the user
+  // is halfway through typing.
+  try {
+    return statSync(`${path}/.git`, { throwIfNoEntry: false }) !== undefined;
+  } catch {
+    return false;
+  }
 }
 
 /**

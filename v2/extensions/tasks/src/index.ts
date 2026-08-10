@@ -427,22 +427,28 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         };
 
         /*
-         * History matches the text on SCREEN, never the absolute path.
+         * History matches the repo's NAME, never the path around it.
          *
-         * `/Users/eshaannileshshah` supplies an `s`, an `h` and an `e` before any
-         * repo name gets a look in, so `shep` matched inside the home prefix and
-         * the highlight came back as a lone `p` two thirds of the way along a
-         * path — a match the field asserted and could not justify. Matching what
-         * is drawn is also what makes the ranking mean anything: a hit you can
-         * see is a hit that explains why the row won.
+         * A path is mostly other people's words — `/Users/eshaannileshshah`
+         * alone supplies an `s`, an `h` and an `e` before any repo name gets a
+         * look in, so `shep` matched inside the home prefix and came back as a
+         * lone `p` two thirds of the way along: a match the field asserted and
+         * could not justify. The name is the part you are actually thinking of,
+         * which is why `completeDirectories` has always matched against it and
+         * only history did not.
+         *
+         * The query is reduced the same way, to its last segment, so a typed
+         * path and a bare word ask the same question of the same string.
          */
         const shownQuery = collapseHome(query, ctx.homeDir);
+        const queryName = shownQuery.slice(shownQuery.lastIndexOf('/') + 1);
         // The score ranks and is then thrown away — it is this handler's working
         // note, not something a view should be able to read and re-sort by.
         const ranked: { readonly row: RepoSuggestion; readonly score: number }[] = [];
         for (const repo of fromPoint.values()) {
           const shown = collapseHome(repo.path, ctx.homeDir);
-          const hit = fuzzyMatch(shownQuery, shown);
+          const nameAt = shown.lastIndexOf('/') + 1;
+          const hit = fuzzyMatch(queryName, shown.slice(nameAt));
           if (hit === null) continue;
           ranked.push({
             score: hit.score,
@@ -452,7 +458,8 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
               isRepo: looksLikeRepo(repo.path),
               source: 'history',
               display: shown,
-              segments: segmentsOf(shown, hit.positions),
+              // Back into the whole string, which is what gets drawn.
+              segments: segmentsOf(shown, hit.positions.map((at) => at + nameAt)),
             },
           });
         }

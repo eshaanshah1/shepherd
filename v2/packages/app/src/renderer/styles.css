@@ -777,11 +777,26 @@ body.sh-dragging {
  * the chips look like something the brief said.
  */
 .sh-composer-repos {
+  /*
+   * `--sh-line` back ON, which is the escape hatch `composer.css` names in the
+   * same breath as the rule it escapes: "a control that genuinely needs an edge
+   * in here re-declares `--sh-line` back on itself". The block above this one
+   * has claimed for a while that it does; it did not, so the rule below resolved
+   * to the card's `transparent` and the header had no edge at all — an empty
+   * strip above the brief with an invisible field in it.
+   *
+   * A WASH of `text`, not a palette step: inside a `Composer` there is no role
+   * meaning "one step off the card", and a wash moves with a contributed theme.
+   */
+  --sh-line: color-mix(in oklab, var(--sh-text) 16%, transparent);
+
   display: flex;
   align-items: center;
   flex-wrap: nowrap;
   gap: var(--sh-space-md);
-  padding-bottom: var(--sh-space-sm);
+  min-height: 22px;
+  padding-bottom: var(--sh-space-md);
+  margin-bottom: var(--sh-space-md);
   border-bottom: var(--sh-hairline) solid var(--sh-line);
 }
 
@@ -823,8 +838,13 @@ body.sh-dragging {
   caret-color: var(--sh-accent);
 }
 
-.sh-composer-repo input::placeholder { color: var(--sh-text-faint); }
-.sh-composer-repo input:focus::placeholder { color: transparent; }
+/*
+ * Readable, not faint. This is the only thing in the header row when the field
+ * is empty, and at `--sh-text-faint` on the card it was invisible — the row read
+ * as a blank strip and the picker as missing.
+ */
+.sh-composer-repo input::placeholder { color: var(--sh-text-dim); }
+.sh-composer-repo input:focus::placeholder { color: var(--sh-text-faint); }
 
 /*
  * The match, under the caret. Same type and padding as the input over it, or the

@@ -12,8 +12,8 @@ import { displayMatch } from '../src/model/match-display.ts';
  *
  * Everything asserted here is a rule somebody has to be able to change without
  * finding out from a screenshot. The shape of it is: repos first, ⏎ adds one
- * and stays so several are several ⏎s, ↹ completes while there is something to
- * complete and hands over to the brief once there is not, ⏎ in the brief is
+ * and stays so several are several ⏎s, ↹ completes the path and does nothing
+ * else, ⏎ in the brief is
  * done. And ⎋ dismisses the completion without closing the composer — the only
  * place this component reaches past React, because Radix's dismissable layer
  * listens for Escape on the document in the capture phase.
@@ -58,6 +58,7 @@ const ANSWERS: Record<string, readonly unknown[]> = {
     suggestion(`${HOME}/dev/shepherd-ios`, `${HOME}/dev/sh`),
     suggestion(`${HOME}/dev/shell-notes`, `${HOME}/dev/sh`, { isRepo: false }),
   ],
+  api: [suggestion(`${HOME}/dev/api`, 'api', { source: 'history' })],
   [`${HOME}/dev/shell`]: [
     suggestion(`${HOME}/dev/shell-notes`, `${HOME}/dev/shell`, { isRepo: false }),
   ],
@@ -273,17 +274,24 @@ describe('the picker keyboard', () => {
     });
   });
 
-  it('hands ↹ to the brief once there is nothing left to complete', async () => {
-    // Which is exactly the state ⏎ leaves you in after it takes your last repo:
-    // an empty field, the history alone (never a Tab target — those rows can
-    // match from anywhere on disk, so their common prefix is not a real path).
-    // Focus moves explicitly because the next tab stop is a chip's × button.
+  it('leaves ↹ alone when there is nothing to complete, rather than trapping it', async () => {
+    // ↹ completes the path and does nothing else. It used to hand focus to the
+    // brief in this state, which made one key mean two things depending on state
+    // you cannot see — and the state it fires in most often is "half a path
+    // typed". Unhandled, so the browser still moves focus and nothing is stuck.
+    const tab = await press('Tab');
+    expect(tab.defaultPrevented).toBe(false);
+    expect(input().value).toBe('');
+  });
+
+  it('completes a history row too, not only one off the disk', async () => {
+    // The field draws ONE answer and that answer is takeable whatever list it
+    // came from. Restricting ↹ to filesystem rows made it silently do nothing on
+    // a row it was showing you.
+    await type('api');
     const tab = await press('Tab');
     expect(tab.defaultPrevented).toBe(true);
-    expect(input().value).toBe('');
-    expect(document.activeElement).toBe(
-      container.querySelector('[data-testid="composer-brief"]'),
-    );
+    expect(input().value).toBe('~/dev/api');
   });
 });
 
