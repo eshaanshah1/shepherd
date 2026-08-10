@@ -1,5 +1,11 @@
 import { s, toDisposable, type ActivateFn } from "@shepherd/sdk";
-import { DIAGNOSTICS_COMMANDS, EXTENSIONS_LIST_COMMAND } from "./manifest.ts";
+import type { AgentsAPI } from "@shepherd/ext-agents-core";
+import {
+  AGENTS_CORE_ID,
+  DIAGNOSTICS_COMMANDS,
+  EXTENSIONS_LIST_COMMAND,
+  STUB_AGENT_KIND_ID,
+} from "./manifest.ts";
 
 /**
  * `shepherd.diagnostics` — the built-in you invoke to find out whether the
@@ -30,8 +36,44 @@ interface HostFacts {
 }
 
 export const activate: ActivateFn = (ctx, api) => {
-  const { commands, events, views } = api.proposed;
+  const { commands, events, views, extensions } = api.proposed;
   const startedAt = ctx.clock.now();
+
+  /**
+   * An offline quick model, in a dev build only.
+   *
+   * The same job `diagnostics.probeDenied` does for the permission model, one seam
+   * along: it proves the **headless seam** is wired without spending the user's
+   * model budget, without an account, and without the ~6s a real vendor CLI costs.
+   * `echo` rather than a script — it exists everywhere and needs no file on disk.
+   *
+   * Dev-only, because a user's app must never be able to select a model that
+   * answers the same four words to every question. The smoke selects it with
+   * `agents.quickModel { kind }`, which is a real feature (§7c: "the user's
+   * configured default") rather than a hook that exists for the test.
+   */
+  if (ctx.isDev) {
+    const agents = extensions.get<AgentsAPI>(AGENTS_CORE_ID);
+    if (agents === undefined) {
+      ctx.log.warn(`${AGENTS_CORE_ID} exported no API — no stub quick model is available`);
+    } else {
+      ctx.subscriptions.push(
+        agents.registerKind({
+          id: STUB_AGENT_KIND_ID,
+          // It adopts no session and reports no state: it is a MODEL, not an agent
+          // anybody runs in a pane.
+          topics: [],
+          reduce: () => ({ kind: "ignore", why: "the stub quick model tracks no session" }),
+          headless: {
+            quickModel: "stub",
+            argv: () => ["echo", "Stub Named This"],
+            parse: (stdout: string) => stdout.trim(),
+          },
+        }),
+      );
+      ctx.log.info(`registered the ${STUB_AGENT_KIND_ID} quick model (dev only)`);
+    }
+  }
 
   ctx.subscriptions.push(
     commands.register(DIAGNOSTICS_COMMANDS.ping, {
