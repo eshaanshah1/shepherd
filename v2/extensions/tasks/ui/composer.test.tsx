@@ -3,7 +3,9 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { fuzzyMatch } from '@shepherd/sdk';
 import { TaskComposer } from './composer.tsx';
+import { displayMatch } from '../src/model/match-display.ts';
 
 /**
  * The picker's keyboard, which is the half a smoke cannot see.
@@ -22,26 +24,49 @@ import { TaskComposer } from './composer.tsx';
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const HOME = '/Users/e';
-const suggestion = (path: string, over: Record<string, unknown> = {}) => ({
-  path,
-  name: path.slice(path.lastIndexOf('/') + 1),
-  isRepo: true,
-  source: 'filesystem',
-  ...over,
-});
+
+/**
+ * A row built the way the EXTENSION builds one, through the same model.
+ *
+ * Hand-written `display`/`segments` would be a copy of the rule that can drift
+ * from it silently — and the drift would be invisible, because a wrong highlight
+ * still renders. So the fixture mirrors `suggest.ts` exactly: the trailing
+ * segment of the query is matched against the entry's NAME, the positions are
+ * shifted into the full path, and `displayMatch` does the rest.
+ */
+const suggestion = (path: string, query = '', over: Record<string, unknown> = {}) => {
+  const cut = path.lastIndexOf('/') + 1;
+  const partial = query.slice(query.lastIndexOf('/') + 1);
+  const hit = fuzzyMatch(partial, path.slice(cut))?.positions ?? [];
+  const shown = displayMatch(path, hit.map((at) => at + cut), HOME);
+  return {
+    path,
+    name: path.slice(cut),
+    isRepo: true,
+    source: 'filesystem',
+    display: shown.text,
+    segments: shown.segments,
+    ...over,
+  };
+};
 
 /** What the extension would answer, for the three queries these tests type. */
 const ANSWERS: Record<string, readonly unknown[]> = {
-  '': [suggestion(`${HOME}/dev/api`, { source: 'history' })],
+  '': [suggestion(`${HOME}/dev/api`, '', { source: 'history' })],
   [`${HOME}/dev/sh`]: [
-    suggestion(`${HOME}/dev/shepherd`),
-    suggestion(`${HOME}/dev/shepherd-ios`),
-    suggestion(`${HOME}/dev/shell-notes`, { isRepo: false }),
+    suggestion(`${HOME}/dev/shepherd`, `${HOME}/dev/sh`),
+    suggestion(`${HOME}/dev/shepherd-ios`, `${HOME}/dev/sh`),
+    suggestion(`${HOME}/dev/shell-notes`, `${HOME}/dev/sh`, { isRepo: false }),
   ],
-  [`${HOME}/dev/shell`]: [suggestion(`${HOME}/dev/shell-notes`, { isRepo: false })],
+  [`${HOME}/dev/shell`]: [
+    suggestion(`${HOME}/dev/shell-notes`, `${HOME}/dev/shell`, { isRepo: false }),
+  ],
   // Two rows for one query, which is what makes "a picked one stops being
-  // offered" observable: take the first and the second is what the ghost shows.
-  [`${HOME}/dev/s`]: [suggestion(`${HOME}/dev/shepherd`), suggestion(`${HOME}/dev/shepherd-ios`)],
+  // offered" observable: take the first and the second is what the field shows.
+  [`${HOME}/dev/s`]: [
+    suggestion(`${HOME}/dev/shepherd`, `${HOME}/dev/s`),
+    suggestion(`${HOME}/dev/shepherd-ios`, `${HOME}/dev/s`),
+  ],
 };
 
 /** Typed through a factory, so the mock keeps the prop's signature. */
@@ -153,12 +178,39 @@ describe('the repo picker', () => {
     expect(container.querySelector('[role="listbox"]')).toBeNull();
   });
 
-  it('draws only the part you have NOT typed, so it reads as a completion', async () => {
+  it('draws the MATCH rather than the keystrokes, with the hit characters picked out', async () => {
+    // fzf's contract: you type `shpd` and the field reads the path it resolved
+    // to, with the characters you typed marked inside it. The highlight is what
+    // makes the match checkable — without it the field asserts a winner and
+    // gives you no way to see why it won.
     await type(`${HOME}/dev/sh`);
-    // The typed half is transparent rather than absent: it is what pushes the
-    // rest to the caret, and dropping it would left-align the suggestion.
-    expect(container.querySelector('.sh-composer-repo-typed')?.textContent).toBe(`${HOME}/dev/sh`);
-    expect(rows()[0]?.textContent).toBe('epherd');
+    expect(rows()[0]?.textContent).toBe('~/dev/shepherd');
+    const hits = [...rows()[0]!.querySelectorAll('.sh-composer-repo-hit')].map((n) => n.textContent);
+    expect(hits).toEqual(['sh']);
+    // And nothing on screen is the raw query — the input carries it, invisibly.
+    expect(input().value).toBe(`${HOME}/dev/sh`);
+    expect(container.querySelector('.sh-composer-repo-typed')).toBeNull();
+  });
+
+  it('rebuilds the path exactly, so a highlight can never rename what it is drawn over', async () => {
+    await type(`${HOME}/dev/sh`);
+    const runs = [...rows()[0]!.querySelectorAll('span')].map((node) => node.textContent ?? '');
+    expect(runs.join('')).toBe('~/dev/shepherd');
+  });
+
+  it('falls back to what you typed when nothing matches, rather than going blank', async () => {
+    // Going blank would leave you typing at a field that shows nothing back,
+    // with no way to see the typo you just made.
+    await type(`${HOME}/dev/zzz`);
+    expect(rows()).toHaveLength(0);
+    expect(container.querySelector('[data-testid="composer-nomatch"]')?.textContent).toBe(
+      `${HOME}/dev/zzz`,
+    );
+  });
+
+  it('shows nothing at all before a character is typed', async () => {
+    expect(container.querySelector('[data-testid="composer-nomatch"]')).toBeNull();
+    expect(rows()).toHaveLength(0);
   });
 
   it('marks a directory that is not a repo, and still offers it', async () => {
@@ -174,7 +226,11 @@ describe('the picker keyboard', () => {
     await type(`${HOME}/dev/sh`);
     input().setSelectionRange(input().value.length, input().value.length);
     await press('ArrowRight');
-    expect(input().value).toBe(`${HOME}/dev/shepherd`);
+    // The DISPLAY text, `~` and all — the query and what is on screen have to
+    // agree afterwards, and the field is showing `~/dev/shepherd`. Retyping the
+    // absolute path would silently replace what you are looking at with a longer
+    // string saying the same thing. `expandHome` reads it back.
+    expect(input().value).toBe('~/dev/shepherd');
   });
 
   it('picks the completion with ⏎, and never submits the form', async () => {
@@ -200,10 +256,12 @@ describe('the picker keyboard', () => {
     const tab = await press('Tab');
 
     // Whatever is on screen — with one suggestion visible there is nothing else
-    // it could honestly mean. It used to complete to the common prefix of every
-    // match (`she`), which was right while a list was on screen and became a
-    // promise the ghost text did not keep once the list went away.
-    expect(input().value).toBe(`${HOME}/dev/shepherd`);
+    // it could honestly mean, and now that the field draws the match rather than
+    // the keystrokes, "on screen" is literally what lands in the field. It used
+    // to complete to the common prefix of every match (`she`), which was right
+    // while a list was on screen and became a promise the ghost did not keep
+    // once the list went away.
+    expect(input().value).toBe('~/dev/shepherd');
     expect(tab.defaultPrevented).toBe(true);
     expect(picked()).toEqual([]);
     // And it immediately asks again with the completed text, which is what makes
@@ -211,7 +269,7 @@ describe('the picker keyboard', () => {
     expect(invoke).toHaveBeenCalledWith('tasks.suggestRepos', {
       title: '',
       brief: '',
-      query: `${HOME}/dev/shepherd`,
+      query: '~/dev/shepherd',
     });
   });
 
