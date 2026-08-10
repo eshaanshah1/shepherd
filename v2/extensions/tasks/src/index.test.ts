@@ -329,6 +329,7 @@ function harness(
     storage,
     dataDir,
     homeDir,
+    userName: 'ada',
     secrets: {
       get: () => Promise.resolve(undefined),
       set: () => Promise.resolve(),
