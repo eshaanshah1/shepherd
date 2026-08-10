@@ -1,4 +1,4 @@
-# 0037. (v2) `agents-core` spawns the model, so a kind does not
+# 0038. (v2) `agents-core` spawns the model, so a kind does not
 
 Status: Accepted
 Date: 2026-08-10

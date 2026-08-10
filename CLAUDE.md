@@ -131,7 +131,7 @@ env -u NODE_OPTIONS pnpm ship --dev   # → /Applications/Shep Night.app, daily 
   port as a *name* (ADR 0033) and why a row's verbs are declared by the extension
   rather than known by the shell (ADR 0031).
 
-**Asking a model something (the quick tier, ADR 0037):**
+**Asking a model something (the quick tier, ADR 0038):**
 - **`agents-core` holds `process.exec`** and the spawn is `complete.ts` alone. An
   extension asks by invoking `agents.complete` — a command, not a method, because
   only the dispatcher can enforce the `agents` permission. `shepherd agent

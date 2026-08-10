@@ -3,7 +3,7 @@
 **Date:** 2026-08-10
 **Status:** approved, not yet implemented
 **Decisions:** continues the v2 D-series (D1–D15, owned by the M0–M3 plans) at **D16**.
-**Proposes:** ADR 0037 (`agents-core` gains `process.exec`).
+**Proposes:** ADR 0038 (`agents-core` gains `process.exec`).
 
 ## Goal
 
@@ -310,7 +310,7 @@ current job for the title.
   can enforce `agents`, and `CommandSpec.permission` is where that happens. As a
   bonus, a consumer needs no `dependencies` entry.
 - **D17 — `agents-core` owns the spawn, and therefore gains `process.exec`
-  (ADR 0037).** The alternative is each kind spawning for itself, which is the
+  (ADR 0038).** The alternative is each kind spawning for itself, which is the
   exact failure §7c invoked to justify the seam ("if every extension hand-rolls
   it, they each do it badly and differently") — the deadline, the output cap, the
   concurrency limit, the env stripping and the never-throws contract all want one
@@ -435,7 +435,7 @@ build a context, beside `homeDir`.
 
 **`v2/tests`** — the `smoke:m3` case
 
-**Docs** — ADR 0037; `docs/control-cli.md` for `agents quick-model`; `CLAUDE.md`'s
+**Docs** — ADR 0038; `docs/control-cli.md` for `agents quick-model`; `CLAUDE.md`'s
 v2 section, since `agents-core` holding `process.exec` is exactly the kind of
 fact that file exists to record.
 
