@@ -29,27 +29,49 @@ brief.
 
 Taken on this machine (2026-08-10, `claude` CLI, subscription OAuth):
 
-| What | Wall clock |
-|---|---|
-| `claude -p --model claude-haiku-4-5` with the user's normal config | 8.3s, 8.9s, 11.3s |
-| the same with MCP stripped (`--strict-mcp-config --mcp-config '{"mcpServers":{}}'`) | 6.6s, 6.9s, 8.3s |
-| `claude --bare -p …` | 0.86s — **and it fails** |
+| argv | Wall clock | User CPU |
+|---|---|---|
+| `claude -p --model claude-haiku-4-5`, the user's normal config | 8.3s, 8.9s, 11.3s | ~1.5s |
+| + MCP stripped (`--strict-mcp-config --mcp-config '{"mcpServers":{}}'`) | 6.6s, 6.9s, 8.3s | ~1.3s |
+| + a `--settings` deny-list instead of a tool flag | 7.5s | 1.25s |
+| `--strict-mcp-config --disable-slash-commands --setting-sources user --tools ""` | 8.3s, 7.0s | 1.2s |
+| **`--safe-mode --tools ""`** | **6.3s, 5.8s, 6.6s** | **0.72s** |
+| `claude --bare -p …` | 0.86s — **and it fails, permanently** | 0.32s |
 
-Three conclusions, each load-bearing:
+Four conclusions, each load-bearing:
 
-- **A quick-model call is a ~7 second call, not a ~500ms one.** ~1.5s of that is
-  user CPU; the rest is CLI startup, plugin/hook loading and the network. So
-  every consumer must be structurally non-blocking. A timeout is not a design.
-- **`--bare` is not available to us.** It reads "Anthropic auth is strictly
-  `ANTHROPIC_API_KEY` or `apiKeyHelper` via `--settings` (OAuth and keychain are
-  never read)", so under subscription auth it exits in 0.86s having done nothing.
-  It would have skipped hooks, plugin sync, keychain reads and CLAUDE.md
-  discovery — everything we want skipped — and we cannot have it. Revisit the day
-  a key is in `ctx.secrets`; the seam's shape does not change if so.
-- **MCP off is worth ~2–3s** and is free to pass.
+- **A quick-model call is a ~6 second call, and ~6s is the floor.** With
+  `--safe-mode` the CLI's own work is down to 0.72s of user CPU, so roughly 5.5s
+  of it is the network round-trip. No flag reaches under that. Every consumer
+  must therefore be structurally non-blocking; a timeout is not a design.
+- **`--safe-mode --tools ""` is the argv**, and it beats stripping things
+  individually. It disables CLAUDE.md, skills, plugins, hooks, MCP servers,
+  custom agents, commands and workflows in one flag, while *"Admin-managed
+  (policy) settings still apply. Auth, model selection, built-in tools, and
+  permissions work normally."* The hand-rolled combination above is slower
+  because each of its flags strips one thing — `--disable-slash-commands` is
+  skills only, `--setting-sources user` is settings files only — and the halved
+  user CPU is the evidence that `--safe-mode` strips more.
+- **`--bare` is not available, and no credential will change that.** Its auth is
+  *"strictly `ANTHROPIC_API_KEY` or `apiKeyHelper` via `--settings` (OAuth and
+  keychain are never read)"*, while this machine's org-managed
+  `/Library/Application Support/ClaudeCode/managed-settings.json` pins
+  `forceLoginMethod: "claudeai"` and a `forceLoginOrgUUID` allow-list. The two are
+  mutually exclusive by construction, and the CLI says so before doing any work:
+  *"This machine's managed settings require a first-party login, but an
+  Anthropic-issued credential … is configured. A non-OAuth Anthropic credential
+  cannot satisfy the org pin."* Exit 1 in 0.86s. Adding an API key produces that
+  same message — it *is* the rejected credential — so `--bare` returns only if
+  the org pin changes, which is not ours to change. `--safe-mode` is the flag that
+  gives us what we wanted from it anyway.
+- **Managed settings merge, they do not get replaced.** The same file injects a
+  `PreToolUse` gitleaks hook and an org deny-list, and `--safe-mode` keeps policy
+  settings in force. Everything below therefore only ever *narrows* what the call
+  may do.
 
-Because `--bare` is out, the naming call runs the **full** CLI, and three
-consequences follow that the argv has to handle (§Hardening).
+`--safe-mode` is what closes the three hazards the full CLI would have carried
+(§Hardening) — and it closes them at the vendor's end, which is why the argv is
+two flags rather than four.
 
 ## What this is not
 
@@ -112,30 +134,63 @@ answers `no-kind`.
 
 ### 2. Hardening the argv (`claude-code`'s half)
 
-Because the full CLI runs, `claude-code`'s `argv` and the spawn around it must
-neutralize what it loads. Each item below is a measured hazard, not a
-precaution:
+```
+claude -p <prompt> --model <quickModel> --safe-mode --tools ""
+```
 
-- **`--strict-mcp-config --mcp-config '{"mcpServers":{}}'`** — worth 2–3s.
-- **cwd is `agents-core`'s `dataDir`**, never a repo. The full CLI
-  auto-discovers `CLAUDE.md`; this repo's is ~46k tokens. Naming a task must not
-  cost a repo's context and latency. `dataDir` is not created for you
-  (`ExtensionContext`), so `complete.ts` creates it on first use.
-- **`SHEPHERD_TAB_ID`, `SHEPHERD_SOCK` and `SHEPHERD_CTL_SOCK` are stripped from
-  the child env.** The full CLI loads hooks, including Shepherd's own
-  `report.sh`, which reads exactly those variables and would report this nested
-  call's lifecycle as some pane's. `kind.ts` already anticipates the symptom —
-  its `ignore` decision exists partly for "a foreign nested `claude -p`" — but
-  the fix belongs at the spawn, where the correlation is severed rather than
-  filtered afterwards.
-- **`NODE_OPTIONS` is stripped**, for the reason the whole repo strips it.
-- **Tools are denied outright**, via
-  `--settings '{"permissions":{"deny":["Bash","Edit","Write","Read","Glob","Grep","WebFetch","WebSearch","Task"]}}'`.
-  A call whose entire job is to return six words has no business holding a file
-  handle. This exact form is measured working (7.5s, answer returned). Note
-  `--max-turns` does **not** exist in the installed CLI, and `--allowed-tools` is
-  variadic so it has no empty form — the deny list is the mechanism, and the list
-  is a `claude-code` fact that moves when the vendor's tool set does.
+Two flags, and each closes hazards that were separately measured:
+
+- **`--safe-mode`** disables CLAUDE.md discovery, skills, plugins, hooks, MCP
+  servers, custom agents, commands and workflows, while auth, model selection and
+  policy settings keep working. It is worth ~2s against the plain call, and it
+  closes two hazards that would otherwise need handling here:
+  - **CLAUDE.md discovery.** The full CLI reads it; this repo's is ~46k tokens.
+    Naming a task must not cost a repo's context or its latency.
+  - **Shepherd's own hooks.** The full CLI loads them, including `report.sh`,
+    which reads `SHEPHERD_TAB_ID`/`SHEPHERD_SOCK` and would report this nested
+    call's lifecycle as some pane's. `kind.ts` already anticipates the symptom —
+    its `ignore` decision exists partly for "a foreign nested `claude -p`".
+- **`--tools ""`** — the documented form ("Use `""` to disable all tools"). A call
+  whose entire job is to return six words has no business holding a file handle.
+  Preferred over a `--settings` deny-list, which would enumerate vendor tool names
+  and rot as that set changes. Note `--max-turns` does **not** exist in the
+  installed CLI.
+
+### 2b. The child's environment is an allow-list, and it has a trap in it
+
+`runExec` (`packages/platform/darwin/src/exec.ts:210`) **replaces** the
+environment rather than merging it — `{...opts.env, PATH: execPath(…)}`, with the
+comment "the caller's env is kept exactly as given except for PATH". Only
+`runGit` merges. So a naming call inherits *nothing* unless we pass it, which is
+better than stripping: `SHEPHERD_TAB_ID`, `SHEPHERD_SOCK`, `SHEPHERD_CTL_SOCK` and
+`NODE_OPTIONS` are absent because nothing is present, and the hook correlation is
+severed by construction rather than by remembering a deny-list.
+
+The trap is what the CLI needs in that empty environment, and it was measured
+rather than guessed:
+
+| env | Result |
+|---|---|
+| `HOME` + `PATH` | **"Not logged in · Please run /login"**, 2.09s |
+| `HOME` + `PATH` + `LOGNAME` | **"Not logged in · Please run /login"** |
+| `HOME` + `PATH` + `USER` | answers normally |
+
+So the allow-list is exactly **`{ HOME, USER }`** — `PATH` is `runExec`'s. `USER`
+is load-bearing for the keychain lookup that OAuth needs, and `LOGNAME` is not a
+substitute for it. Getting this wrong does not fail loudly: it produces a
+perfectly quick "please run /login" that reads exactly like a machine that was
+never authenticated.
+
+`HOME` is `ctx.homeDir`. `USER` has no counterpart on `ExtensionContext`, and an
+extension may not reach `node:os` (`boundaries.js` denies it, and `homeDir` exists
+for precisely that reason). Hence **D25**.
+
+Two more things the spawn does itself:
+
+- **cwd is `agents-core`'s `dataDir`**, never a repo — defence in depth behind
+  `--safe-mode`, and it keeps the call away from a repo's git state. `dataDir` is
+  not created for you (`ExtensionContext`), so `complete.ts` creates it on first
+  use.
 - **stdout is capped** (4 KiB) before `parse` sees it.
 
 ### 3. Configuring the model
@@ -181,7 +236,7 @@ in behind it. Inside `runProvision`, before the first git write:
 ```
 create ──▶ record + row visible (0ms)
            │
-           ├─ name ask ────────────────▶ ~7s ──┐
+           ├─ name ask ────────────────▶ ~6s ──┐
            └─ readRepoRefs(repo 0) ─▶ ~2.5s ───┤
                                                ▼
                               addWorktree (0.16s) ── good branch
@@ -276,16 +331,32 @@ current job for the title.
   single-entry cache of `{ brief, promise }`, so a request still in flight when
   Create is pressed is awaited rather than duplicated. Without this, the exact
   case the speculation exists for — Create pressed a second before the answer
-  lands — spends the budget twice and waits ~7s from scratch.
+  lands — spends the budget twice and waits ~6s from scratch.
 - **D22 — the ask is rate-limited by content, not by a timer alone.** Only asked
   when the brief is ≥24 characters, only re-asked when it has changed by ≥20
   characters since the last ask, single-flight per brief. §7c named budget as the
   reason `agents` is its own permission; a per-keystroke debounce on a paragraph
   would spend it several times per task.
-- **D23 — no cancellation, and that is stated rather than hidden.** `ExecOptions`
-  carries `timeoutMs` and no abort signal, so a call nobody wants any more runs
-  to its own timeout and its answer is dropped by the sequence counter. Adding
-  abort to `ProcessAPI` is a kernel change this feature does not need.
+- **D23 — an in-flight call cannot be cancelled, and that is stated rather than
+  hidden.** `ExecOptions` *does* carry a `signal`, but `createProcess`
+  (`packages/app/src/ext-host/api.ts:722`) honours it on this side only: "an
+  `AbortSignal` is not clonable, so it is honoured here: an already-aborted call
+  fails without sending anything. (Aborting a call already in flight is not yet
+  expressible — there is no cancel frame.)" So passing a signal buys a pre-flight
+  refusal and nothing more: a ~6s naming call whose composer has closed runs to
+  completion and has its answer dropped by the sequence counter. The signal is
+  passed anyway, because a queued call that nobody wants any more should not
+  start. Adding a cancel frame to `ProcessAPI` is a kernel change this feature
+  does not need.
+- **D25 — `ExtensionContext` gains `userName`.** `USER` is required for the CLI's
+  OAuth to find its credentials (§2b), the child environment is an allow-list, and
+  an extension cannot compute the value: `boundaries.js` denies `node:os`, which is
+  the same reason `homeDir` is on the context — "the host resolves it … an
+  extension may not reach `node:os` and so cannot compute a path". Reading the
+  `process` global instead would pass lint (only `document`/`window`/`navigator`
+  are restricted globals) and would still be the thing that rule exists to
+  prevent. One field, resolved host-side, next to the one whose comment already
+  argues for it.
 - **D24 — a failed model call logs at `info`, not `warn`.** An unavailable model
   is not a fault of the task, and provisioning's warn channel is for things a
   user should act on (a repo that failed, a hook that complained).
@@ -300,6 +371,7 @@ current job for the title.
 | the model answers junk (backticks, quotes, a refusal, a paragraph) | `readName` sanitizes; unusable → heuristic. **Observed in three of seven measured calls: the answer came back wrapped in backticks.** This is the most likely defect in the whole feature and it is the cheapest to table-test |
 | the model answers something that slugifies to nothing | `slugify`'s existing `FALLBACK` (`task`), then `uniqueSlug` |
 | the brief is empty | no ask (D22); Create is already disabled |
+| `USER` missing from the child env | "Not logged in · Please run /login" in ~2s — indistinguishable from an unauthenticated machine, which is why §2b's allow-list is asserted by a test rather than trusted |
 | two creates race for one name | `uniqueSlug` at both the write and the rewrite |
 
 ## Testing
@@ -335,7 +407,11 @@ hook inside production code.
 
 ## Files
 
-**`v2/packages/sdk`** — `AgentCapabilities` is already there; nothing to add.
+**`v2/packages/sdk`** — `ExtensionContext.userName` (D25). `AgentCapabilities` is
+already there.
+
+**`v2/packages/app`** — `ext-host`/`ext-host-process` fill `userName` when they
+build a context, beside `homeDir`.
 
 **`v2/extensions/agents-core`**
 - `src/manifest.ts` — `agents.complete`, `agents.quickModel`; `process.exec` added
@@ -368,8 +444,15 @@ fact that file exists to record.
 - `stream`, its normalized event union and `raw` — until a consumer renders a
   live agent (§7c's third tier).
 - A real settings system, with the quick model as one of its rows.
-- A faster transport. If a key ever lands in `ctx.secrets`, `--bare` becomes
-  available (0.86s startup) or a direct API call does; either registers as a kind
-  and no consumer changes. The 4s deadline simply stops being reachable.
+- A faster transport. **Not `--bare`** — the org pin forbids its auth mode and a
+  key cannot satisfy it (§Measurements), so that door is closed for as long as
+  this laptop is managed. The remaining route is a direct API call registered as
+  its own kind, at which point the 4s deadline stops being reachable and no
+  consumer changes. ~5.5s of the current ~6s is network, so a faster *transport*
+  is the only thing left that could matter; there is no flag left to find.
 - Other consumers: commit messages, a pane's title. The seam is the same line;
   each is its own small piece of work.
+- `CLAUDE_CONFIG_DIR` in the allow-list. v1 has Claude profiles
+  (`ClaudeProfiles.swift`) and v2 has no counterpart yet; when it gets one, the
+  naming call has to run under the selected profile's config dir, which is one
+  more entry in §2b's allow-list and a fact only `claude-code` may know.
