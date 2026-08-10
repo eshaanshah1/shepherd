@@ -69,13 +69,43 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
    */
   await invoke('worktreeHook.set', { repo, script: 'echo hooked > HOOKED.txt' });
 
+  /**
+   * --- 0c. the quick tier is an OFFLINE stub, so naming needs no network.
+   *
+   * `diagnostics` registers it in a dev build and this selects it by id — which is
+   * the real configuration verb (§7c: "the user's configured default"), not a hook
+   * that exists for the test. Without this the naming call would be a real ~6s
+   * vendor CLI invocation, and a smoke that needed an account is a smoke nobody
+   * can run.
+   */
+  const quick = (await invoke('agents.quickModel', {
+    kind: 'diagnostics.stub-agent',
+    model: 'stub',
+  })) as { kind?: string };
+  check(quick.kind === 'diagnostics.stub-agent', `the quick tier is the stub: ${quick.kind ?? 'none'}`);
+
   // --- 1. create a task with a real repo, through the real transport.
   const created = (await invoke('tasks.create', {
     title: 'Smoke task',
-    brief: 'Provisioned by the m3 smoke.',
+    brief: 'Provisioned by the m3 smoke, with a brief long enough to be worth naming.',
     repos: [{ path: repo, name: 'api' }],
   })) as { id: string; slug: string };
-  check(created.slug === 'smoke-task', `the slug is derived once: ${created.slug}`);
+  /**
+   * **`create`'s answer carries the PROVISIONAL name, and that is by design.**
+   *
+   * The verb returns synchronously so the row is answerable at once (D12), while
+   * the name settles inside provisioning — before the first git write and never
+   * after. So the slug here is the heuristic, and the settled one is read back
+   * below, from the store and from disk.
+   *
+   * Asserted rather than ignored, because it is a fact a caller could get wrong:
+   * anybody treating this answer's slug as final would be reading it one beat too
+   * early.
+   */
+  check(
+    created.slug === 'provisioned-by-the-m3-smoke',
+    `create answers with the heuristic name, before the model settles it: ${created.slug}`,
+  );
 
   // --- 2. provisioning is OPTIMISTIC, so the worktree lands after the answer.
   const listed = (await until(
@@ -95,6 +125,27 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
     'the CLAUDE.md carries the repo map — the only one loaded at session start',
   );
   say('ok — the worktree and the task root are on disk');
+
+  /**
+   * The name is on DISK, in both places that outlive this process, and nothing was
+   * renamed to put it there.
+   *
+   * A slug stored correctly and a branch named something else is exactly the
+   * both-halves-of-a-correlation failure this file exists for: a unit test that
+   * supplies the name AND reads it back cannot discover that the two disagree.
+   */
+  const settled = ((await invoke('tasks.list')) as { id: string; slug: string; title: string }[]).find(
+    (task) => task.id === created.id,
+  );
+  check(settled?.slug === 'stub-named-this', `the stored slug is the model's: ${settled?.slug ?? 'none'}`);
+  check(settled?.title === 'Stub Named This', `and so is the row label: ${settled?.title ?? 'none'}`);
+  const branch = await head(worktree);
+  check(branch === 'stub-named-this', `the branch carries the model's name: ${branch}`);
+  check(
+    listed.root.endsWith('stub-named-this'),
+    `the worktree directory carries it too: ${listed.root}`,
+  );
+  say('ok — the model’s name reached the branch and the directory');
 
   /**
    * The hook ran, in the right directory, before anything else touched it.
@@ -238,7 +289,11 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
       win.webContents.executeJavaScript(
         `Array.from(document.querySelectorAll('[data-view-type="tasks.tree"] [data-testid="view-row"]')).map((el) => el.textContent)`,
       ) as Promise<string[]>,
-    (found) => found.some((row) => row.includes('Smoke task')),
+    // The row is labelled with the task's TITLE, and the quick model now owns
+    // that string — the same answer that named the branch names the row (D18),
+    // which is the half of the fix that makes the sidebar readable. Matching
+    // `Smoke task` here would be matching the title nobody has any more.
+    (found) => found.some((row) => row.includes('Stub Named This')),
   );
   check(taskRows.length > 0, `the task tree rendered: ${JSON.stringify(taskRows)}`);
   say('ok — the task tree drew the task, through the same mechanism');
@@ -411,19 +466,36 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
   const composed = (await until(
     'the composed task to provision',
     async () =>
+      // Found by ELIMINATION rather than by title: the quick model owns every
+      // task's title now, so both tasks in this run are called the same thing and
+      // a title lookup would find whichever came first. The one this step made is
+      // the one that is not step 1's.
       ((await invoke('tasks.list')) as { id: string; title: string; root: string; repos: { name: string }[] }[]).find(
-        (task) => task.title === 'Composed task',
+        (task) => task.id !== created.id,
       ),
+    // BOTH, for the reason step 2's gate says so: the worktree is `worktree add`
+    // and the root is synthesized from what landed, a beat later. Waiting on the
+    // first and asserting the second is a gate that passes on the timing of the
+    // day — and it did exactly that here, failing once on the CLAUDE.md check
+    // below and passing on the next run with nothing changed.
     (task) =>
       task !== undefined &&
       task.repos.length === 1 &&
-      existsSync(join(task.root, task.repos[0]?.name ?? '', '.git')),
+      existsSync(join(task.root, task.repos[0]?.name ?? '', '.git')) &&
+      existsSync(join(task.root, 'CLAUDE.md')),
   )) as { id: string; root: string; repos: { name: string }[] };
   check(
     composed.repos[0]?.name === repo.split('/').filter((s) => s !== '').pop(),
     `the picked path became the repo's name: ${JSON.stringify(composed.repos)}`,
   );
   check(existsSync(join(composed.root, 'CLAUDE.md')), 'the composed task root was synthesized too');
+  // Both tasks were named the same thing, so the second one had to be given a
+  // distinct folder — `uniqueSlug` (D8) doing its job against a real collision
+  // rather than a contrived one.
+  check(
+    composed.root.endsWith('stub-named-this-2'),
+    `a second task with the same name got its own folder: ${composed.root}`,
+  );
   say('ok — a task was created from inside the app, worktree and task root included');
 
   // --- 8. and it LANDED you in the task — read from the real DOM.
@@ -532,6 +604,12 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
 
   say('smoke: OK m3');
   app.exit(0);
+}
+
+/** Which branch a worktree is on. `status`'s neighbour, same shape. */
+async function head(cwd: string): Promise<string> {
+  const out = await runGit('read', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd, timeoutMs: 30_000 });
+  return out.ok ? out.stdout.trim() : '';
 }
 
 async function status(cwd: string): Promise<string> {

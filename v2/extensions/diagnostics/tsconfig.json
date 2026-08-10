@@ -16,5 +16,5 @@
     "jsx": "react-jsx"
   },
   "include": ["src/**/*.ts", "ui/**/*.tsx"],
-  "references": [{ "path": "../../packages/sdk" }]
+  "references": [{ "path": "../../packages/sdk" }, { "path": "../agents-core" }]
 }
