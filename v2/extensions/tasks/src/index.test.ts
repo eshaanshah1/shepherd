@@ -1753,3 +1753,105 @@ describe('what archiving leaves on disk', () => {
     expect(existsSync(root)).toBe(false);
   });
 });
+
+/**
+ * The composer's speculative ask, and the cache that makes it provisioning's ask
+ * too (D21).
+ *
+ * Without the cache, the exact case speculation exists for — Create pressed a
+ * second before the answer lands — pays for the model twice and waits ~6s from
+ * scratch.
+ */
+describe('tasks.suggestName', () => {
+  const LONG = 'a brief that is long enough to be worth naming';
+
+  /** A quick model that answers, and a count of how often it was asked. */
+  const answering = (text: string) => (id: string) =>
+    id === 'agents.complete' ? ({ ok: true as const, value: { ok: true, text } }) : undefined;
+
+  const asks = (h: Harness): number => h.invoked.filter((call) => call.id === 'agents.complete').length;
+
+  it('asks the quick model and sanitizes what comes back', async () => {
+    const h = harness({ invoke: answering('`Add a cheap model seam`') });
+    expect(await h.run('tasks.suggestName', { brief: LONG })).toEqual({ name: 'Add a cheap model seam' });
+    h.dispose();
+  });
+
+  it('carries the brief in the prompt, not just the title', async () => {
+    const h = harness({ invoke: answering('A name') });
+    await h.run('tasks.suggestName', { brief: LONG });
+    const ask = h.invoked.find((call) => call.id === 'agents.complete');
+    expect(JSON.stringify(ask?.args)).toContain('long enough to be worth naming');
+    h.dispose();
+  });
+
+  it('asks once per brief, however many callers want it', async () => {
+    const h = harness({ invoke: answering('A name') });
+    await Promise.all([h.run('tasks.suggestName', { brief: LONG }), h.run('tasks.suggestName', { brief: LONG })]);
+    expect(asks(h)).toBe(1);
+    h.dispose();
+  });
+
+  it('asks again once the brief has really changed', async () => {
+    const h = harness({ invoke: answering('A name') });
+    await h.run('tasks.suggestName', { brief: LONG });
+    await h.run('tasks.suggestName', { brief: `${LONG} and now it says something else entirely` });
+    expect(asks(h)).toBe(2);
+    h.dispose();
+  });
+
+  it('does not ask about a brief too short to name', async () => {
+    const h = harness({ invoke: answering('whatever') });
+    expect(await h.run('tasks.suggestName', { brief: 'fix it' })).toEqual({ name: null });
+    expect(asks(h)).toBe(0);
+    h.dispose();
+  });
+
+  it('answers null when the model cannot, and does not warn about it', async () => {
+    // An unavailable model is not a fault of whoever asked, and this extension's
+    // warn channel is for things a user can act on.
+    const warnings: string[] = [];
+    const h = harness({
+      onWarn: (line) => warnings.push(line),
+      invoke: (id) =>
+        id === 'agents.complete'
+          ? { ok: true as const, value: { ok: false, reason: 'failed', message: 'no binary' } }
+          : undefined,
+    });
+    expect(await h.run('tasks.suggestName', { brief: LONG })).toEqual({ name: null });
+    expect(warnings).toEqual([]);
+    h.dispose();
+  });
+
+  it('answers null when the command itself was refused', async () => {
+    const h = harness({
+      invoke: (id) =>
+        id === 'agents.complete'
+          ? { ok: false as const, error: { code: 'denied' as const, message: 'lacks permission "agents"', commandId: id } }
+          : undefined,
+    });
+    expect(await h.run('tasks.suggestName', { brief: LONG })).toEqual({ name: null });
+    h.dispose();
+  });
+
+  it('answers null when the answer has a shape nobody expected', async () => {
+    // A command's answer is `unknown` and came from an extension this code has
+    // never seen. A cast is not a check.
+    for (const value of [42, null, 'a string', {}, { ok: true }, { ok: true, text: 7 }]) {
+      const h = harness({ invoke: (id) => (id === 'agents.complete' ? { ok: true as const, value } : undefined) });
+      expect(await h.run('tasks.suggestName', { brief: LONG })).toEqual({ name: null });
+      h.dispose();
+    }
+  });
+
+  it('answers null rather than throwing when the ask itself blows up', async () => {
+    const h = harness({
+      invoke: (id) => {
+        if (id !== 'agents.complete') return undefined;
+        throw new Error('the port died');
+      },
+    });
+    expect(await h.run('tasks.suggestName', { brief: LONG })).toEqual({ name: null });
+    h.dispose();
+  });
+});
