@@ -22,8 +22,9 @@
     "preview": "electron-vite preview",
     "start": "env -u NODE_OPTIONS electron-vite preview",
     "//package": "The daemon build is NOT optional and belongs after `electron-vite build`, which empties `out/`. Without it the packaged app ships no out/daemon/main.js, every session fails to start, and the only symptom is a terminal pane that never prints anything — `pnpm dev` never notices because `dev` builds it.",
-    "package": "env -u NODE_OPTIONS electron-vite build && node ../../tooling/scripts/build-daemon.mjs && electron-builder --config electron-builder.yml",
-    "package:dev": "env -u NODE_OPTIONS electron-vite build --mode development && node ../../tooling/scripts/build-daemon.mjs && electron-builder --config electron-builder.yml --config.productName='Shep Night' --config.appId=com.shepherd.shep.night --config.mac.icon=build/icon-dev.icns"
+    "//publish": "`--publish never` is load-bearing, not tidiness. electron-builder publishes IMPLICITLY when it detects CI, and `CI=true` is set in every agent's environment — so `pnpm ship` from a pane packaged the app and then went to the network to cut a GitHub release, which is not what installing your own build means. It failed there with a TLS error, which reads as a broken build rather than as an unwanted publish. Nothing here has ever wanted that publisher: releases are the v1 Swift path in .github/workflows/release.yml, which packages with xcodebuild and publishes with `gh release create`.",
+    "package": "env -u NODE_OPTIONS electron-vite build && node ../../tooling/scripts/build-daemon.mjs && electron-builder --config electron-builder.yml --publish never",
+    "package:dev": "env -u NODE_OPTIONS electron-vite build --mode development && node ../../tooling/scripts/build-daemon.mjs && electron-builder --config electron-builder.yml --publish never --config.productName='Shep Night' --config.appId=com.shepherd.shep.night --config.mac.icon=build/icon-dev.icns"
   },
   "dependencies": {
     "@shepherd/core": "workspace:*",
