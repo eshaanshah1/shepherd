@@ -1,5 +1,6 @@
 import { execFile, spawn as spawnChild } from 'node:child_process';
-import { statSync } from 'node:fs';
+import { mkdirSync, openSync, renameSync, statSync } from 'node:fs';
+import { dirname } from 'node:path';
 
 /**
  * The one runner — Rebuild checklist item 4, and the only place in the app that
@@ -289,9 +290,11 @@ function spawn(
  *   - **`detached: true` + `unref()`** — the child reparents to init and keeps
  *     running when we exit. That IS the milestone; a child that died with its
  *     parent would make the whole daemon an elaborate way to change nothing.
- *   - **`stdio: 'ignore'`** — a pipe to a parent that has gone away is a write
- *     that eventually blocks the daemon. It logs to its own stdout, which the
- *     caller redirects if it wants the output.
+ *   - **`stdio` is a FILE, never a pipe** — a pipe to a parent that has gone
+ *     away is a write that eventually blocks the daemon. A file has neither
+ *     problem and, unlike `'ignore'`, survives the process that wrote it: the
+ *     daemon owns every pty in the app, so "it exited and nobody knows why" is
+ *     the one failure it must not be able to have.
  *   - **`ELECTRON_RUN_AS_NODE=1`** — `execPath` under Electron is the app
  *     binary, and this is what makes it behave as node. Measured: node-pty
  *     loads there against the ABI it is already built for, so the daemon needs
@@ -306,16 +309,50 @@ export function spawnDetached(options: {
   readonly execPath: string;
   readonly args: readonly string[];
   readonly env?: Readonly<Record<string, string>>;
+  /**
+   * Where the child's stdout and stderr go, appended.
+   *
+   * Absent means `'ignore'`, which is what a detached child with nowhere to
+   * write had before — and it cost two debugging sessions. The first could only
+   * report "did not come up within 10000ms". The second was worse: the daemon
+   * had exited an hour into a run, taking every pty with it, and the only trace
+   * anywhere was a pid that no longer existed. `SHEPHERD_DAEMON_STDIO=inherit`
+   * still overrides this when you want the output in your own terminal.
+   */
+  readonly logFile?: string;
 }): void {
   const child = spawnChild(options.execPath, [...options.args], {
     detached: true,
-    // 'ignore' normally: a pipe to a parent that has gone away eventually blocks
-    // the daemon. But a detached child with no stdio has NOWHERE to say why it
-    // died, and that cost a debugging session — the app could only report "did
-    // not come up within 10000ms". `SHEPHERD_DAEMON_STDIO=inherit` buys the
-    // answer back when you need it.
-    stdio: process.env['SHEPHERD_DAEMON_STDIO'] === 'inherit' ? 'inherit' : 'ignore',
+    stdio: resolveDetachedStdio(options.logFile),
     env: { ...process.env, ...options.env },
   });
   child.unref();
+}
+
+/** How big the log may get before the previous one is rolled aside. */
+const DETACHED_LOG_MAX_BYTES = 8 * 1024 * 1024;
+
+/**
+ * stdio for a detached child: inherit if asked, a file if we have one, else drop.
+ *
+ * Rotation happens HERE rather than in the child, because the child appends to
+ * an fd it is handed and renaming a file out from under an open fd changes
+ * nothing about where the bytes land. Spawn time is the one moment the file is
+ * closed by everyone.
+ */
+function resolveDetachedStdio(logFile: string | undefined): 'inherit' | 'ignore' | (number | 'ignore')[] {
+  if (process.env['SHEPHERD_DAEMON_STDIO'] === 'inherit') return 'inherit';
+  if (logFile === undefined) return 'ignore';
+  try {
+    mkdirSync(dirname(logFile), { recursive: true });
+    if ((statSync(logFile, { throwIfNoEntry: false })?.size ?? 0) > DETACHED_LOG_MAX_BYTES) {
+      renameSync(logFile, `${logFile}.1`);
+    }
+    const fd = openSync(logFile, 'a');
+    return ['ignore', fd, fd];
+  } catch {
+    // A log we cannot open must not stop the daemon starting — the terminals
+    // matter more than the diagnostics about them.
+    return 'ignore';
+  }
 }

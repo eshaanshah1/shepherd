@@ -45,7 +45,7 @@ fight it.
    — the API and the M0–M4 milestones.
 4. [`docs/superpowers/specs/2026-08-06-architecture-review.md`](docs/superpowers/specs/2026-08-06-architecture-review.md)
    — what v1 got wrong; **its Rebuild checklist is normative for v2**.
-5. ADRs [0021](.claude/adr/0021-v2-store-is-node-sqlite.md)–[0035](.claude/adr/0035-v2-a-row-names-its-root-and-the-shell-derives-the-highlight.md).
+5. ADRs [0021](.claude/adr/0021-v2-store-is-node-sqlite.md)–[0037](.claude/adr/0037-v2-the-daemon-can-be-replaced-so-the-mirror-is-re-read-not-remembered.md).
    **0029–0032 are M3's**, and each records something measured rather than
    reasoned: what Claude Code actually reads at a generated task root, why the
    transport deadline is the caller's, how a contributed view declares itself
@@ -107,6 +107,15 @@ env -u NODE_OPTIONS pnpm ship --dev   # → /Applications/Shep Night.app, daily 
   ```
   A caller is required and **cannot be `user`** — that kind is minted in-process
   only. Inside a pane, `shepherd <verb>` does this for you.
+- **The daemon logs to `~/.shepherd/v2/daemon.log`** (`v2-dev` for Shep Night),
+  and it is the first file to read when terminals misbehave — it owns every pty,
+  so an app that is fine and panes that are not is its story to tell. It used to
+  log nowhere ([ADR 0037](.claude/adr/0037-v2-the-daemon-can-be-replaced-so-the-mirror-is-re-read-not-remembered.md)):
+  it can be **replaced** under a running app, and a mirror nobody re-read then
+  left those panes black for the life of the process. `SHEPHERD_DAEMON_STDIO=inherit`
+  still puts the output in your own terminal instead. Cross-check with
+  `ps -o pid,ppid,lstart -p <session pid>`: a session `sessions.list` names whose
+  pid does not exist, or whose parent is not the current daemon, is a ghost.
 - **`@shepherd/ui` is the design system; do not hand-roll a control.** Roles →
   derived metrics → primitives (`packages/ui/src`), and a component paints in
   ROLE tokens (`--sh-accent`), never a hue. Rule 7's working indicator is the

@@ -501,12 +501,16 @@ export class SessionClient {
         socket.write(encodeJsonFrame(REQUEST.hello, { seq, version: PROTOCOL_VERSION }));
       });
       await hello;
+      // Read BEFORE it is set: a first connection is `start`'s job and it lists
+      // for itself, a later one is a daemon we have to re-learn.
+      const reconnected = this.#everConnected;
       this.#everConnected = true;
       // Setup issued before the socket came up, in the order it was issued.
       // Flushed AFTER hello, because the daemon refuses everything before it.
       const queued = this.#outbox.splice(0);
       for (const frame of queued) socket.write(frame);
       if (queued.length > 0) this.#log.info(`flushed ${queued.length} queued frame(s)`);
+      if (reconnected) await this.#resync();
       this.#reattachAll();
     } catch (error) {
       this.#log.error(`could not reach the session daemon: ${String(error)}`);
@@ -525,19 +529,87 @@ export class SessionClient {
   }
 
   /**
+   * The mirror, re-learned from the daemon we just reached.
+   *
+   * A reconnect is not always the same daemon. It exits when it has nothing to
+   * guard, it is detached so it can die without taking the app with it, and a
+   * replacement is spawned by the very next `connect` — so the process on the
+   * other end of this socket may never have heard of the sessions we hold. Their
+   * ptys died with the process that owned them, and a mirror nobody re-reads
+   * turns them into sessions that look alive from every angle: `list` names
+   * them, and `SessionHost.foreground` answers `hasForegroundProcess: false` for
+   * an unknown id, which reads as an idle shell rather than an absence.
+   *
+   * **A failure buries nothing.** Same rule `foreground` keeps: "I could not
+   * look" must not be reported as "nothing is there". A daemon too slow to
+   * answer is not a daemon with no sessions, and guessing wrong here costs a
+   * user every agent they had running.
+   */
+  async #resync(): Promise<void> {
+    // Snapshotted before the request, so a session created while it is in flight
+    // is not judged by an inventory taken before it existed.
+    const known = new Set(this.#sessions.keys());
+    const listed = await this.#request(REQUEST.list, {});
+    if (!listed.ok) {
+      this.#log.warn(
+        `could not re-read the daemon's inventory (${JSON.stringify(listed.error)}) — keeping every session`,
+      );
+      return;
+    }
+    const sessions = (listed.value as { sessions?: SessionInfo[] }).sessions ?? [];
+    const live = new Set(sessions.map((info) => info.id));
+    for (const info of sessions) this.#sessions.set(info.id, info);
+    for (const id of known) {
+      if (live.has(id)) continue;
+      this.#bury(id, 'the daemon that owned it is gone');
+    }
+  }
+
+  /**
+   * A session this process still believes in that the daemon does not have.
+   *
+   * The exit is the point. Nothing downstream polls for a session's absence —
+   * `LayoutStore` and the panes learn it from `onExit` and nowhere else — so a
+   * pane whose session vanished silently shows a black rectangle until the app
+   * is restarted.
+   */
+  #bury(id: SessionID, why: string): void {
+    if (!this.#sessions.delete(id)) return;
+    this.#log.warn(`session ${id} is gone: ${why}`);
+    this.#announceExit({ sessionId: id, exitCode: -1 });
+  }
+
+  /**
    * Every live viewer re-attaches after a reconnect.
    *
    * Safe precisely because of R0: an attach is handed a serialized screen, so a
    * viewer that missed a minute of output is not merely resynchronized — it is
    * CORRECT, alt screen and all. Against a byte ring this would have been a
    * partial redraw and a known limitation.
+   *
+   * **The answer is read.** This used to send through `#send`, registering no
+   * pending handler — so the daemon's `unknown-session` refusal arrived, found
+   * nobody waiting on its seq, and was dropped by `#onFrame`. That is the same
+   * defect the hello handshake above already fixed once: the one message that
+   * explains the failure, received and discarded.
    */
   #reattachAll(): void {
-    const ids = new Set([...this.#attachments.values()].map((a) => a.sessionId));
+    const ids = [...new Set([...this.#attachments.values()].map((a) => a.sessionId))].filter((id) =>
+      // `#resync` has already buried the rest, and asking after a session we
+      // just announced the exit of would earn a refusal we would then have to
+      // ignore.
+      this.#sessions.has(id),
+    );
     for (const id of ids) {
-      this.#send(encodeJsonFrame(REQUEST.attach, { seq: this.#seq(), sessionId: id }));
+      void this.#request(REQUEST.attach, { sessionId: id }).then((answer) => {
+        if (answer.ok) return;
+        this.#log.error(`the daemon refused a re-attach to ${id}: ${JSON.stringify(answer.error)}`);
+        // Two sources disagreed about this session and only one of them was
+        // measured against a real pty. Trust the refusal.
+        this.#bury(id, 'the daemon refused a re-attach to it');
+      });
     }
-    if (ids.size > 0) this.#log.info(`re-attached ${ids.size} viewer(s) after reconnecting`);
+    if (ids.length > 0) this.#log.info(`re-attached ${ids.length} viewer(s) after reconnecting`);
   }
 
   #onClose(): void {
