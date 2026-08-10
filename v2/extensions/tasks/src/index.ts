@@ -18,6 +18,7 @@ import {
 } from './manifest.ts';
 import { TaskStore, type RepoArchive, type RepoRef, type TaskRecord, type TaskSession } from './store.ts';
 import { slugify, uniqueSlug } from './model/slug.ts';
+import { namingPrompt, readName } from './model/naming.ts';
 import { expandHome, collapseHome } from './model/repo-path.ts';
 import { displayMatch, segmentsOf, type DisplaySegment } from './model/match-display.ts';
 import { orderSuggestions, rankScored } from './model/pick-order.ts';
@@ -390,6 +391,73 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * repo and is exactly the row you need in order to reach the ones inside it —
    * and the mark is what stops a non-repo being picked by accident.
    */
+  /**
+   * Below this there is nothing to name yet, and asking spends budget for nothing.
+   */
+  const MIN_BRIEF_CHARS = 24;
+  /**
+   * How much a brief must have moved before the same question is worth re-asking.
+   *
+   * On CONTENT rather than on a timer alone: a pause after twenty more characters
+   * is a different brief, a pause after two is the same one. §7c named budget as
+   * the reason `agents` is its own permission, and a per-keystroke ask would spend
+   * it several times per task.
+   */
+  const BRIEF_DRIFT_CHARS = 20;
+  /** How long the ASK may take. Provisioning's patience is a different clock (D20). */
+  const NAME_ASK_TIMEOUT_MS = 15_000;
+
+  /**
+   * The last naming ask, and the brief it was about.
+   *
+   * ONE entry, not a map: the composer asks about a brief that is growing, and
+   * every earlier answer is about text nobody has on screen any more. Keeping this
+   * is what makes the composer's ask and provisioning's ask the same ask (D21) —
+   * Create pressed while one is in flight awaits it instead of starting a second
+   * and paying for the model twice.
+   */
+  let pending: { brief: string; answer: Promise<string | undefined> } | undefined;
+
+  const askForName = async (brief: string): Promise<string | undefined> => {
+    const answer = await commands.invoke('agents.complete', {
+      prompt: namingPrompt(brief),
+      timeoutMs: NAME_ASK_TIMEOUT_MS,
+    });
+    if (!answer.ok) return undefined;
+    /**
+     * Read defensively. `ok` says the call succeeded, not that the value has a
+     * shape — it crossed a port from an extension this code has never seen, and a
+     * cast is not a check.
+     */
+    const value = answer.value as { ok?: unknown; text?: unknown } | null;
+    if (typeof value !== 'object' || value === null || value.ok !== true) return undefined;
+    if (typeof value.text !== 'string') return undefined;
+    return readName(value.text);
+  };
+
+  /**
+   * The name for this brief — the in-flight ask if there is one for it, otherwise
+   * a new one. Never rejects: a naming failure is not a failure of whatever asked.
+   */
+  const pendingName = (brief: string): Promise<string | undefined> => {
+    const trimmed = brief.trim();
+    if (trimmed.length < MIN_BRIEF_CHARS) return Promise.resolve(undefined);
+    if (pending !== undefined && Math.abs(pending.brief.length - trimmed.length) < BRIEF_DRIFT_CHARS) {
+      return pending.answer;
+    }
+    const answer = askForName(trimmed).catch(() => undefined);
+    pending = { brief: trimmed, answer };
+    return answer;
+  };
+
+  ctx.subscriptions.push(
+    commands.register(TASK_COMMANDS.suggestName, {
+      title: 'Tasks: Suggest a Name',
+      schema: s.object({ brief: s.string() }),
+      handler: async (args) => ({ name: (await pendingName(args.brief)) ?? null }),
+    }),
+  );
+
   ctx.subscriptions.push(
     commands.register(TASK_COMMANDS.suggestRepos, {
       title: 'Tasks: Suggest Repos',
