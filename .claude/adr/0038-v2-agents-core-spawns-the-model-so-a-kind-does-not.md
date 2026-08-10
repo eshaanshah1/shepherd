@@ -103,13 +103,17 @@ mutually exclusive by construction, and the CLI says so before doing any work:
 produces that same message — it **is** the rejected credential. `--safe-mode` gives
 what we wanted from it anyway, and keeps auth working.
 
-**~6s is the floor, so no consumer may wait on this.** With `--safe-mode` the
-CLI's own work is 0.72s of user CPU; the rest is the network round-trip. That is
-why the first consumer (task naming) overlaps the call with the per-repo `git
-fetch` and gives up after 4s rather than blocking — and why **a task's slug may
-change exactly once, before its first git write, and never after**. That invariant
-is what keeps `git branch -m`, `git worktree move`, a task root moving under a
-booting agent, and re-seeding Claude Code's trust out of the codebase.
+**~6s is the floor, so a consumer that waits on this must overlap what it can.**
+With `--safe-mode` the CLI's own work is 0.72s of user CPU; the rest is the network
+round-trip. The first consumer (task naming) overlaps the call with the per-repo
+`git fetch` and then waits for it, because the thing it names is a branch and
+**a task's slug may change exactly once, before its first git write, and never
+after** — so an answer that arrives after that write is an answer thrown away. That
+invariant is what keeps `git branch -m`, `git worktree move`, a task root moving
+under a booting agent, and re-seeding Claude Code's trust out of the codebase. The
+wait is bounded by the call's own deadline and by an unavailable model failing in
+about two seconds, not by a shorter deadline of the consumer's own — one was tried
+(4s) and it discarded every real answer.
 
 **Not implemented: `stream`.** §7c specifies a normalized event union plus a `raw`
 passthrough for a consumer that renders a live agent. No such consumer exists, so

@@ -183,6 +183,12 @@ interface SessionExited {
  * at its cwd already carries the brief and the repo map (ADR 0029), so
  * restating them here would be the same text twice, drifting.
  */
+/**
+ * What a busy row says it is doing. The word is drawn as-is, so it is written in
+ * the tense a row can be read in the middle of.
+ */
+type BusyWhat = 'archiving' | 'restoring' | 'provisioning' | 'naming';
+
 function orchestratorPrompt(task: { title: string; brief: string }): string {
   return task.brief.trim() === '' ? `Start on the task "${task.title}".` : task.brief;
 }
@@ -217,7 +223,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * snapshot commit report no progress, and a bar over them would be an
    * animation pretending to measure something.
    */
-  const busy = new Map<string, 'archiving' | 'restoring' | 'provisioning'>();
+  const busy = new Map<string, BusyWhat>();
 
   /**
    * Run a long operation with the row saying so, whatever the outcome.
@@ -228,11 +234,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * Deleting it dropped the spinner back to idle for the rest of a restore,
    * which is the second half of the operation and the slower one.
    */
-  async function whileBusy<T>(
-    taskId: string,
-    what: 'archiving' | 'restoring' | 'provisioning',
-    run: () => Promise<T>,
-  ): Promise<T> {
+  async function whileBusy<T>(taskId: string, what: BusyWhat, run: () => Promise<T>): Promise<T> {
     const displaced = busy.get(taskId);
     busy.set(taskId, what);
     changed();
@@ -406,11 +408,14 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    */
   const BRIEF_DRIFT_CHARS = 20;
   /**
-   * How long the ASK may take. Provisioning's patience is a different clock (D20),
-   * and much shorter.
+   * How long the ASK may take, and so how long a task's first `worktree add` may
+   * be held for a name (D20) — this is the only clock.
    *
    * Measured: a real naming call — this prompt, the whole brief — is ~10.5s, so
-   * this is headroom over that rather than a round number.
+   * this is headroom over that rather than a round number. It is a ceiling and not
+   * an expectation: a model that is absent or signed out fails in about two
+   * seconds, and the composer's speculative ask (D21) means Create usually joins
+   * one already most of the way through.
    */
   const NAME_ASK_TIMEOUT_MS = 30_000;
 
@@ -1042,9 +1047,6 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * the orchestrator's own launch come after the last repo lands, and they are
    * seconds of the wait that no per-repo state can speak for.
    */
-  /** How long provisioning will wait for a name. NOT the ask's own timeout (D20). */
-  const NAME_DEADLINE_MS = 4_000;
-
   /**
    * The slug's one permitted change — before the first git write, and never after
    * (D19).
@@ -1056,19 +1058,19 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * re-seeding Claude Code's per-path trust — all while an orchestrator is booting
    * with a cwd inside the directory being moved. So: once, here, or never.
    *
-   * Two clocks, deliberately (D20). The ASK may take 15s because it may outlive
-   * the composer that started it; this waits 4s, because that is a wait somebody
-   * is sitting through. A late answer is not wasted — it still improves the
-   * title, which is display only.
+   * **The first `worktree add` waits for it** (D20). There is one clock, the ask's
+   * own, because a second and shorter one only produced names that could not be
+   * used: the window closes at the first git write, so an answer that arrives
+   * after it is an answer thrown away — and the 4s that used to bound this lost
+   * every real ~10.5s call. `pendingName` never rejects and an absent or
+   * signed-out model says so in about two seconds, so the wait a person actually
+   * sits through is the tail of an ask the composer already started (D21).
    *
    * `takenSlugs` is re-checked because a concurrent create may have taken the
    * name in the meantime.
    */
   async function settleName(draft: TaskRecord): Promise<TaskRecord> {
-    const named = await Promise.race([
-      pendingName(draft.brief),
-      new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), NAME_DEADLINE_MS)),
-    ]);
+    const named = await pendingName(draft.brief);
     if (named === undefined) return draft;
 
     const slug = uniqueSlug(slugify(named), store.takenSlugs());
@@ -1110,8 +1112,15 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
      * Everything below works with the SETTLED record, and the shadowing is the
      * point: a task's name may change once, here, and no line after this may see
      * the provisional one — least of all a `worktree add`.
+     *
+     * The row says `naming…` for it rather than `provisioning…`, because this is
+     * now a wait somebody sits through and a row that named the wrong thing would
+     * be a row you press again.
      */
-    const task = naming === undefined ? draft : await naming.settle(draft);
+    const task =
+      naming === undefined
+        ? draft
+        : await whileBusy(draft.id, 'naming', () => naming.settle(draft));
     const root = rootOf(task);
     const landed: { name: string; path: string; worktree: string }[] = [];
     for (const [index, repo] of task.repos.entries()) {
