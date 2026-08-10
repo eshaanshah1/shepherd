@@ -140,9 +140,14 @@ the rows, which is how the handoff's "the same repo twice should be prevented"
 gets implemented without a second guard.
 
 **Submit.** `readValue()` serialises each pill as its `data-token`, so the brief
-submits as `fix the retry loop in #shepherd` with the ordered `repos` array
+submits as `fix the retry loop in shepherd` with the ordered `repos` array
 alongside it. The title (`titleOf`) therefore reads naturally rather than losing
 the repo, which the previous shape did.
+
+The token is the repo's **name**, and the `#` the label draws is not in it. The
+`#` is this card's gesture — it opens a popover — and the agent reading the brief
+never saw the popover, so a hash in its prompt is a control character from a UI it
+has no idea exists. The name stays because the sentence was written around it.
 
 ## Tokens: where the handoff and our system disagree
 

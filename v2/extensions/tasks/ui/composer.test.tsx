@@ -590,10 +590,11 @@ describe('the scope', () => {
     });
 
     expect(invoke).toHaveBeenCalledWith('tasks.create', {
-      // The pill serialises back to `#name`, so the sentence the agent is given
-      // is the sentence somebody wrote — the repo still in it.
-      title: `fix the retry loop in #shepherd${NBSP}and #shepherd-ios`,
-      brief: `fix the retry loop in #shepherd${NBSP}and #shepherd-ios${NBSP}`,
+      // The pill serialises back to the repo's NAME and not to `#name`: the `#`
+      // opens a picker, which is a thing this card does and not a thing the
+      // sentence says, so it does not travel to an agent reading the brief.
+      title: `fix the retry loop in shepherd${NBSP}and shepherd-ios`,
+      brief: `fix the retry loop in shepherd${NBSP}and shepherd-ios${NBSP}`,
       repos: [
         { path: `${HOME}/dev/shepherd`, name: 'shepherd' },
         { path: `${HOME}/dev/shepherd-ios`, name: 'shepherd-ios' },
@@ -616,22 +617,20 @@ describe('the #repo button', () => {
 });
 
 /**
- * The name preview.
+ * The name ask, which happens behind the card and draws nothing.
  *
- * It exists because the composer currently turns your paragraph into a directory
- * name and tells you afterwards — this branch is called
- * `shepherd-i-wanna-add-a-new-feature-extension-it-s-something`. Putting a model
- * in the middle of that makes it less predictable, not more, unless the name is on
- * screen.
+ * The composer turns your paragraph into a directory name, and a line reporting
+ * that name re-rendered on every keystroke — the brief, echoed back a second time
+ * under the brief. The ask is worth keeping and the echo is not, so the answer
+ * rides `tasks.create` and never reaches the screen.
  */
-describe('the name preview', () => {
+describe('the name ask', () => {
   // Fake timers, because the ask is on a 2s idle pause and a real wait would put
   // two seconds into every one of these.
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
   const brief = (): HTMLElement => container.querySelector<HTMLElement>('[data-testid="composer-brief"]')!;
-  const name = (): string => container.querySelector('[data-testid="composer-name"]')?.textContent ?? '';
 
   const write = async (text: string): Promise<void> => {
     await act(async () => {
@@ -654,14 +653,7 @@ describe('the name preview', () => {
     await act(async () => {});
   };
 
-  it('shows the heuristic immediately, so the line is never a spinner nobody can read', async () => {
-    await write('I wanna add a cheap model for naming tasks');
-    // The name it WOULD get, derived through the same pipeline the extension uses,
-    // so the line cannot promise something `tasks.create` would not produce.
-    expect(name()).toContain('add a cheap model for naming');
-  });
-
-  it('swaps in the model’s name when one lands', async () => {
+  it('draws nothing, whatever it has been told', async () => {
     invoke.mockImplementation(async (command: string) =>
       command === 'tasks.suggestName'
         ? { ok: true as const, value: { name: 'Add a cheap model seam' } }
@@ -670,7 +662,10 @@ describe('the name preview', () => {
     await write('I wanna add a cheap model for naming tasks');
     await idle();
     await act(async () => {});
-    expect(name()).toContain('Add a cheap model seam');
+    expect(container.textContent).not.toContain('Add a cheap model seam');
+    // And no line reserving the space for one, which is what used to echo the
+    // brief back to somebody still writing it.
+    expect(container.querySelector('[data-testid="composer-name"]')).toBeNull();
   });
 
   it('asks once the typing stops, carrying the brief', async () => {
@@ -723,12 +718,16 @@ describe('the name preview', () => {
 
   it('ignores an answer whose shape nobody expected', async () => {
     invoke.mockImplementation(async (command: string) =>
-      command === 'tasks.suggestName' ? { ok: true as const, value: { name: 42 } } : { ok: true as const, value: [] },
+      command === 'tasks.suggestName'
+        ? { ok: true as const, value: { name: 42 } }
+        : { ok: true as const, value: { slug: 'a-task' } },
     );
     await write('I wanna add a cheap model for naming tasks');
     await idle();
     await act(async () => {});
-    // Falls back to the heuristic rather than rendering `42`.
-    expect(name()).toContain('add a cheap model for naming');
+    await press('Enter', brief());
+    // Creates unnamed rather than carrying `42` into a directory name.
+    const create = invoke.mock.calls.find((call) => call[0] === 'tasks.create');
+    expect((create?.[1] as { name?: unknown }).name).toBeUndefined();
   });
 });
