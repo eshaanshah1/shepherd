@@ -21,8 +21,18 @@ import type { QuickTarget } from './quick-model.ts';
  * there at all, rather than because somebody remembered a deny-list.
  */
 
-/** Long enough for a cold vendor CLI; short enough that nothing waits forever. */
-export const QUICK_TIMEOUT_MS = 15_000;
+/**
+ * Long enough for a cold vendor CLI; short enough that nothing waits forever.
+ *
+ * 30s rather than 15s, from a measurement rather than a feeling: a real naming
+ * prompt — the whole brief, not a one-line probe — took **10.5s** end to end
+ * against `claude-haiku-4-5`. 15s left 1.4x headroom over a call that is mostly
+ * network, which is the kind of margin that turns into an intermittent
+ * `timeout` on a bad connection. Nothing is waiting on this deadline (a
+ * consumer's own patience is separate and much shorter), so the cost of the
+ * larger number is only that a hung call holds its concurrency slot longer.
+ */
+export const QUICK_TIMEOUT_MS = 30_000;
 
 /** A quick answer is a handful of words. Anything more is a runaway. */
 export const MAX_STDOUT_BYTES = 4_096;

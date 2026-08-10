@@ -405,8 +405,14 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * it several times per task.
    */
   const BRIEF_DRIFT_CHARS = 20;
-  /** How long the ASK may take. Provisioning's patience is a different clock (D20). */
-  const NAME_ASK_TIMEOUT_MS = 15_000;
+  /**
+   * How long the ASK may take. Provisioning's patience is a different clock (D20),
+   * and much shorter.
+   *
+   * Measured: a real naming call — this prompt, the whole brief — is ~10.5s, so
+   * this is headroom over that rather than a round number.
+   */
+  const NAME_ASK_TIMEOUT_MS = 30_000;
 
   /**
    * The last naming ask, and the brief it was about.
