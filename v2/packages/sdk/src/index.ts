@@ -86,6 +86,8 @@ export type {
   ExecOptions,
   ExtensionPoint,
   ExtensionsAPI,
+  Invocation,
+  InvokeOptions,
   KV,
   PointsAPI,
   ProcessAPI,

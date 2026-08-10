@@ -28,7 +28,14 @@ import {
   type HostAsk,
   type HostFrame,
 } from '../shared/ext-protocol.ts';
-import { ASK_TIMEOUT_MS, EXTENSIONS_LIST_COMMAND, ExtensionHost, MAX_HOST_RESTARTS, storageNamespace } from './ext-host.ts';
+import {
+  ASK_DEADLINE_SLACK_MS,
+  ASK_TIMEOUT_MS,
+  EXTENSIONS_LIST_COMMAND,
+  ExtensionHost,
+  MAX_HOST_RESTARTS,
+  storageNamespace,
+} from './ext-host.ts';
 
 /**
  * The host's decisions, driven against the REAL kernel (a real
@@ -408,6 +415,105 @@ describe('the extension host', () => {
       h.child().send({ kind: 'answer', id: ask?.id ?? '', result: wireOk({ said: 'hi' }) });
       const result = await invoking;
       expect(result).toEqual({ ok: true, value: { said: 'hi' } });
+    });
+
+    /**
+     * The flat ask deadline is shorter than things a command legitimately does.
+     * `agents.complete` asks a model — 10 to 16s of network, measured — so under
+     * the constant alone every naming call over 10s was answered `timeout` while
+     * the child was still working, and the answer that arrived after it was
+     * dropped. ADR 0030 settled this for child→host calls; these two are the same
+     * decision in the direction it was not applied to.
+     */
+    it('honours a longer deadline the invocation states, instead of failing work that is fine', async () => {
+      await call({ kind: 'command.register', commandId: 'one.slow' });
+
+      const invoking = h.registry.invoke(
+        'one.slow',
+        {},
+        { kind: 'device', deviceId: 'local-cli' },
+        { timeoutMs: 30_000 },
+      );
+      await settle();
+      const ask = h.child().asks('command').at(-1);
+
+      // A settled FLAG, not `Promise.race` against a resolved sentinel — that
+      // race is won by the sentinel one microtask in whether or not the ask timed
+      // out, which is how the first test of ADR 0030's own change passed with the
+      // change reverted.
+      let settled = false;
+      void invoking.then(() => {
+        settled = true;
+      });
+
+      // Past the flat default, and this ask is still legitimately running.
+      h.clock.advance(ASK_TIMEOUT_MS + 1);
+      await settle();
+      expect(settled).toBe(false);
+
+      // The answer that used to arrive after the timeout now arrives to a caller
+      // that is still listening.
+      h.child().send({ kind: 'answer', id: ask?.id ?? '', result: wireOk('Fix Shepherd status dot') });
+      expect(await invoking).toEqual({ ok: true, value: 'Fix Shepherd status dot' });
+    });
+
+    it('times out a stated deadline at its own number, and says which number', async () => {
+      // Bounded, not unbounded: a wedged child must still produce a timeout, and
+      // the slack is what stops the two deadlines firing at the same instant.
+      await call({ kind: 'command.register', commandId: 'one.wedged' });
+      const invoking = h.registry.invoke(
+        'one.wedged',
+        {},
+        { kind: 'device', deviceId: 'local-cli' },
+        { timeoutMs: 30_000 },
+      );
+      await settle();
+
+      let settledEarly = false;
+      void invoking.then(() => {
+        settledEarly = true;
+      });
+      // One millisecond short of its own deadline — and so long past the flat one
+      // that firing there is what this asserts against.
+      h.clock.advance(30_000 + ASK_DEADLINE_SLACK_MS - 1);
+      await settle();
+      expect(settledEarly).toBe(false);
+
+      h.clock.advance(2);
+      const result = await invoking;
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.message).toContain(`within ${30_000 + ASK_DEADLINE_SLACK_MS}ms`);
+    });
+
+    it('still times out an invocation that states NO deadline at the flat default', async () => {
+      // The property the constant exists for, kept.
+      await call({ kind: 'command.register', commandId: 'one.quiet' });
+      const invoking = h.registry.invoke('one.quiet', {}, { kind: 'device', deviceId: 'local-cli' });
+      await settle();
+
+      h.clock.advance(ASK_TIMEOUT_MS + 1);
+      const result = await invoking;
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.message).toContain(`within ${ASK_TIMEOUT_MS}ms`);
+    });
+
+    it('carries a deadline a CHILD states, so one extension may ask another for slow work', async () => {
+      // The naming path exactly: `tasks` invokes `agents.complete`, both of them
+      // in this same child, and the invocation crosses the port twice.
+      await call({ kind: 'command.register', commandId: 'two.complete' });
+      await call({ kind: 'command.invoke', commandId: 'two.complete', args: { prompt: 'name this' }, timeoutMs: 30_000 });
+
+      const ask = h.child().asks('command').at(-1);
+      expect(ask?.ask).toMatchObject({ kind: 'command', commandId: 'two.complete' });
+
+      let answered = false;
+      const watching = h.child().sent.filter((frame) => frame.kind === 'result').length;
+      h.clock.advance(ASK_TIMEOUT_MS + 1);
+      await settle();
+      answered = h.child().sent.filter((frame) => frame.kind === 'result').length > watching;
+      expect(answered).toBe(false);
     });
 
     it('refuses a command id something else already owns, rather than throwing in main', async () => {

@@ -29,6 +29,30 @@ export interface CommandError {
   readonly issues?: readonly SchemaIssue[];
 }
 
+/**
+ * How long the caller will wait for this one invocation (ADR 0030, in the
+ * host→child direction this time).
+ *
+ * A command may legitimately take longer than any constant a transport could
+ * pick: asking a model is seconds of network, and the transport knows nothing
+ * about that. Absent means the flat default, which is the property that default
+ * exists for.
+ */
+export interface InvokeOptions {
+  readonly timeoutMs?: number;
+}
+
+/**
+ * What a handler is told about the call it is serving, beyond its arguments.
+ *
+ * Only the deadline so far, and only because a proxy handler — one that forwards
+ * the invocation somewhere with a transport of its own — has to know it. A
+ * handler that ignores this parameter is the normal case.
+ */
+export interface Invocation {
+  readonly timeoutMs?: number;
+}
+
 export interface CommandSpec<A, R> {
   readonly schema: Schema<A>;
   /**
@@ -38,7 +62,7 @@ export interface CommandSpec<A, R> {
   readonly permission?: Permission;
   /** Shown in the palette and in `shepherd help`. Absent = not user-facing. */
   readonly title?: string;
-  handler(args: A, caller: Caller): Promise<R> | R;
+  handler(args: A, caller: Caller, invocation?: Invocation): Promise<R> | R;
 }
 
 export interface CommandAPI {
@@ -48,7 +72,7 @@ export interface CommandAPI {
    * failure and a denial are all typed errors that get logged on the way out.
    * That sentence is the entire reason this registry exists (review §Bad-2).
    */
-  invoke<R = unknown>(id: string, args?: unknown): Promise<Result<R, CommandError>>;
+  invoke<R = unknown>(id: string, args?: unknown, opts?: InvokeOptions): Promise<Result<R, CommandError>>;
   list(): readonly { readonly id: string; readonly title?: string }[];
 }
 

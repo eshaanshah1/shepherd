@@ -147,6 +147,22 @@ describe('failures are values, and each one is logged', () => {
     if (!result.ok) expect(result.error.code).toBe('handler-failed');
   });
 
+  it('hands the handler the deadline the caller stated, and an empty invocation when it stated none', async () => {
+    // This registry has no transport of its own to time out; a PROXY handler —
+    // the extension host's, which forwards into a child — does, and the number it
+    // needs is the caller's rather than a constant of the transport's (ADR 0030).
+    const { registry } = build();
+    const seen: (number | undefined)[] = [];
+    registry.register('slow.cmd', {
+      schema: s.nothing(),
+      handler: (_args, _caller, invocation) => void seen.push(invocation?.timeoutMs),
+    });
+
+    await registry.invoke('slow.cmd', undefined, USER, { timeoutMs: 30_000 });
+    await registry.invoke('slow.cmd', undefined, USER);
+    expect(seen).toEqual([30_000, undefined]);
+  });
+
   it('logs every invocation with its attributed caller', async () => {
     const { registry, messages } = build();
     registry.register('ok.cmd', { schema: s.nothing(), handler: () => 0 });

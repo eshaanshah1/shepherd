@@ -39,6 +39,42 @@ Three details, each of which is the decision rather than a detail:
   minutes — a dead main process would mean a ten-minute hang. Its trigger already
   existed: `port.on('close')` was writing to stderr and telling nobody.
 
+## Amendment (2026-08-10): the same rule, host→child
+
+This decision was implemented for **child→host calls** only. The other direction
+— main asking the child, `ExtensionHost.#ask` — kept a flat `ASK_TIMEOUT_MS` of
+10s, and a command an extension owns is dispatched through exactly that ask. So
+the decision above was half-applied, and the half that was missing broke the
+first consumer that needed it.
+
+`agents.complete` asks a model: **10–16s of network, measured** (five briefs
+against `claude-haiku-4-5`). Every naming call over 10s was therefore answered
+`timeout` by main while the child was still working, and the real answer arrived
+to a caller that had stopped listening. The symptom was a task whose branch kept
+the heuristic name while an identical task 90 seconds later got a model one —
+a coin flip on which side of 10s that call landed. `NAME_ASK_TIMEOUT_MS = 30_000`
+and `QUICK_TIMEOUT_MS = 30_000` were both unreachable, so the commit that raised
+them ("the ask deadline is 30s, because a real naming call is 10.5s") changed
+nothing.
+
+The rule is now applied in both directions:
+
+- `commands.invoke(id, args, { timeoutMs })` — the caller states its patience.
+  `InvokeOptions` and `Invocation` are the SDK's two halves of it.
+- It rides the **`command.invoke` call variant**, not the frame. The frame is
+  right for a property of one transport; this one has to survive being forwarded
+  into a *second* leg, and `deadlineFor` reads it from the call the way it already
+  reads `process.exec`'s.
+- `CommandRegistry` hands it to the handler rather than acting on it: the registry
+  runs handlers in-process and has nothing to time out. A proxy handler does.
+- **Two slacks on the outer leg, one on the inner.** The inner ask must fire
+  first, or a callee's timeout is reported by the outer transport and reads as "the
+  host is wedged".
+
+Three of the four new tests fail with the change reverted (mutation-tested, for
+the reason the last section of this ADR gives). The fourth is the guard on the
+flat default, which must keep firing for anything that states nothing.
+
 ## Consequences
 `ProcessAPI` lands promise-shaped, exactly as core-design §4.6 declares it. No
 job protocol, no second way to run a program, and §7c's streaming half is

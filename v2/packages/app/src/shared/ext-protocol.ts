@@ -164,7 +164,18 @@ const apiCallSchema = s.union(
     permission: s.optional(s.string()),
   }),
   s.object({ kind: s.literal('command.unregister'), commandId: s.string() }),
-  s.object({ kind: s.literal('command.invoke'), commandId: s.string(), args: s.optional(s.unknown()) }),
+  /**
+   * `timeoutMs` is the caller's patience, and it has to travel because a command
+   * invocation has TWO transport legs — child→host, then host→child for a command
+   * an extension owns — and neither leg can read it out of `args`, which is
+   * `unknown` by design. Absent means both legs keep their flat defaults.
+   */
+  s.object({
+    kind: s.literal('command.invoke'),
+    commandId: s.string(),
+    args: s.optional(s.unknown()),
+    timeoutMs: s.optional(s.int()),
+  }),
 
   s.object({ kind: s.literal('event.emit'), topic: s.string(), payload: s.optional(s.unknown()) }),
   /** `subscription` is minted by the CHILD: it is the key its own callback table is under. */

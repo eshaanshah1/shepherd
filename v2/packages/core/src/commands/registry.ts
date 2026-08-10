@@ -8,6 +8,7 @@ import {
   type CommandError,
   type CommandSpec,
   type Disposable,
+  type InvokeOptions,
   type Logger,
   type Result,
 } from '@shepherd/sdk';
@@ -101,7 +102,20 @@ export class CommandRegistry {
     );
   }
 
-  async invoke<R = unknown>(id: string, args: unknown, caller: Caller): Promise<Result<R, CommandError>> {
+  /**
+   * `opts` carries the CALLER's patience and nothing else (ADR 0030). It is
+   * handed to the handler rather than acted on here: this registry runs the
+   * handler in-process and has no transport of its own to time out, while a proxy
+   * handler — the extension host's, which forwards into a child — does, and the
+   * number it needs is the one the caller stated. Absent means the transport's
+   * flat default, which is what the default exists for.
+   */
+  async invoke<R = unknown>(
+    id: string,
+    args: unknown,
+    caller: Caller,
+    opts?: InvokeOptions,
+  ): Promise<Result<R, CommandError>> {
     const who = callerLabel(caller);
     const entry = this.#commands.get(id);
     if (!entry) return this.#fail({ code: 'unknown-command', message: `no command "${id}"`, commandId: id }, who);
@@ -128,7 +142,7 @@ export class CommandRegistry {
     }
 
     try {
-      const value = await entry.spec.handler(parsed.value, caller);
+      const value = await entry.spec.handler(parsed.value, caller, opts ?? {});
       this.#log.debug(`${id} ok (${who})`);
       return ok(value as R);
     } catch (error) {
