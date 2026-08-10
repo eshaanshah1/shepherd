@@ -20,7 +20,7 @@ import { TaskStore, type RepoArchive, type RepoRef, type TaskRecord, type TaskSe
 import { slugify, uniqueSlug } from './model/slug.ts';
 import { expandHome } from './model/repo-path.ts';
 import { repoName } from './model/repo-name.ts';
-import { completeDirectories, looksLikeRepo } from './suggest.ts';
+import { completeDirectories, exactRepoPath, looksLikeRepo } from './suggest.ts';
 import { taskRootId } from './model/root-id.ts';
 /**
  * Asked of `agents-core`, never of a vendor: a task that named `claudeCode.*`
@@ -431,7 +431,19 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           });
         }
 
-        return out.slice(0, SUGGESTION_LIMIT);
+        // The exact repo leads, wherever it came from. The composer's ghost text
+        // is the first row and ⏎ takes it, so this is what makes typing a repo's
+        // whole path mean that repo rather than its alphabetically-first child.
+        const exact = exactRepoPath(query);
+        if (exact === null) return out.slice(0, SUGGESTION_LIMIT);
+        const already = out.find((row) => row.path === exact);
+        const lead: RepoSuggestion = already ?? {
+          path: exact,
+          name: repoName(exact),
+          isRepo: true,
+          source: 'filesystem',
+        };
+        return [lead, ...out.filter((row) => row.path !== exact)].slice(0, SUGGESTION_LIMIT);
       },
     }),
   );

@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { completeDirectories, looksLikeRepo } from './suggest.ts';
+import { completeDirectories, exactRepoPath, looksLikeRepo } from './suggest.ts';
 
 /**
  * The filesystem half, against a real tree — the only way to assert that a
@@ -110,5 +110,31 @@ describe('looksLikeRepo', () => {
 
   it('rejects a directory with no `.git` at all', () => {
     expect(looksLikeRepo(join(home, 'dev/scratch'))).toBe(false);
+  });
+});
+
+describe('exactRepoPath', () => {
+  it('names the repo you typed the whole path of', () => {
+    // The shipped defect: completion answers a directory with its CHILDREN, so
+    // typing a repo's full path put `.claude` — first alphabetically — in the
+    // ghost text, and ⏎ takes the ghost over the field. The task was then built
+    // on a directory with no `.git`, which is also why its worktree never came.
+    mkdirSync(join(home, 'dev/shepherd/.claude'), { recursive: true });
+    expect(paths(completeDirectories(join(home, 'dev/shepherd'), home))[0]).toBe(
+      join(home, 'dev/shepherd/.claude'),
+    );
+    expect(exactRepoPath(join(home, 'dev/shepherd'))).toBe(join(home, 'dev/shepherd'));
+  });
+
+  it('leaves a plain directory a waypoint, so typing a parent still descends', () => {
+    expect(exactRepoPath(join(home, 'dev'))).toBeNull();
+    expect(exactRepoPath(join(home, 'dev/scratch'))).toBeNull();
+  });
+
+  it('ignores a trailing slash, and answers nothing for what is not there', () => {
+    expect(exactRepoPath(`${join(home, 'dev/shepherd')}/`)).toBe(join(home, 'dev/shepherd'));
+    expect(exactRepoPath(join(home, 'dev/nope'))).toBeNull();
+    expect(exactRepoPath('  ')).toBeNull();
+    expect(exactRepoPath('/')).toBeNull();
   });
 });

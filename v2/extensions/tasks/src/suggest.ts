@@ -42,6 +42,26 @@ export function looksLikeRepo(path: string): boolean {
 }
 
 /**
+ * The path as typed, when what you typed is itself a repo.
+ *
+ * `completionTarget` answers a path that IS a directory with its children, which
+ * is right for a directory you are passing through and wrong for the one you
+ * meant. Typing a repo's full path offered `.claude` — first child alphabetically
+ * — and ⏎ takes the completion over the field, so the picker overrode the one
+ * input that could not have been ambiguous, and the task was built on a
+ * directory with no `.git`.
+ *
+ * A REPO rather than any directory, deliberately: a repo is a terminal choice
+ * and a plain directory is a waypoint, so `~/dev/tools` still lists what is
+ * under it and still completes with ↹.
+ */
+export function exactRepoPath(path: string): string | null {
+  const typed = path.trim().replace(/(?!^)\/+$/, '');
+  if (typed === '') return null;
+  return isDirectory(typed) && looksLikeRepo(typed) ? typed : null;
+}
+
+/**
  * Complete one typed path against the filesystem, one level deep.
  *
  * `path` is expected home-expanded — `~` is a shell's job and `expandHome` is
