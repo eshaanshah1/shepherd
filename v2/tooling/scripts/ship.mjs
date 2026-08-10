@@ -107,10 +107,32 @@ writeFileSync(
      * to leave too, and the wait is bounded so a refusal is reported instead of
      * being waited out.
      */
+    /*
+     * The wait watches the GUI app ONLY, and the daemon is excluded by its argv.
+     *
+     * MEASURED, and it made `ship` unable to finish at all: the daemon runs from
+     * the same bundle and so has the same executable name, so `pgrep -x` matched
+     * it — but `quit app` addresses a GUI application and cannot touch a
+     * background process, so the loop asked something that could never answer and
+     * duly hit its own deadline. The window had exited within seconds; the swap
+     * never happened, and the log reported "still running" about a process nobody
+     * meant. `/Applications` was left holding the OLD bundle with the app shut.
+     *
+     * The daemon is EXPECTED to outlive a swap — it is what keeps ptys alive
+     * across a restart (§7b) — so waiting on it is not a stricter version of the
+     * right check, it is the wrong check. Its argv carries the daemon entrypoint,
+     * which is the only thing separating two processes that share a name.
+     */
+    'gui_running() {',
+    `  for pid in $(pgrep -x ${JSON.stringify(name)} || true); do`,
+    "    ps -o command= -p \"$pid\" | grep -q 'out/daemon/main.js' || return 0",
+    '  done',
+    '  return 1',
+    '}',
     'deadline=$((SECONDS + 120))',
-    `while pgrep -x ${JSON.stringify(name)} >/dev/null; do`,
+    'while gui_running; do',
     '  if (( SECONDS > deadline )); then',
-    `    echo "gave up: ${name} still running after 120s — quit it and re-run pnpm ship"`,
+    `    echo "gave up: ${name}'s window is still running after 120s — quit it and re-run pnpm ship"`,
     '    exit 1',
     '  fi',
     `  osascript -e 'quit app ${JSON.stringify(name)}' >/dev/null 2>&1 || true`,
