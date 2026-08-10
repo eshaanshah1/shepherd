@@ -90,6 +90,30 @@ finishes — the pane opens in a provisioning state and the printed handles are 
 valid. A `git worktree add` or hook failure therefore surfaces in the app (the tab is
 removed / an alert is shown), not in the CLI's exit status.
 
+### The quick model — the cheap tier an extension can ask for
+| Command | Description |
+|---|---|
+| `shepherd agent quick-model` | Which kind and model serve the quick tier, the stored override, and every kind that could serve it. |
+| `shepherd agent quick-model --model <id>` | Use a different model of the same kind. |
+| `shepherd agent quick-model --kind <id>` | Use a different vendor. |
+| `shepherd agent quick-model --clear true` | Forget the override, back to whatever the kind declares. |
+
+The tier an extension reaches through `agents.complete` for work that is small and
+constant — naming a task, and later a commit message or a thread's title. It answers
+the **effective** resolution rather than the stored override, because the question
+somebody is asking at a terminal is which model will actually run.
+
+A model id is a vendor's fact and lives only in the vendor's extension, so the
+default comes from the kind (`claude-code` declares `claude-haiku-4-5`) and this
+verb only overrides it. Naming a configured kind that is absent — or present but
+interactive-only — resolves to **nothing** rather than to whichever other vendor is
+first: spending the model budget on a vendor nobody chose would show up only as a
+bill.
+
+**It is ~6 seconds, and that is the floor** (`--safe-mode` already strips every
+customization; the rest is the network). Nothing user-facing may wait on one — see
+ADR 0038.
+
 ### The worktree hook in v2 — per REPO, not per workspace
 | Command | Description |
 |---|---|

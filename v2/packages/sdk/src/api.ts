@@ -55,6 +55,18 @@ export interface ExtensionContext {
    * that program's layout, and it is the extension that knows the vendor.
    */
   readonly homeDir: string;
+  /**
+   * The account name the app runs as — `USER`, not a display name.
+   *
+   * Here for the same reason `homeDir` is (the child may not reach `node:os`),
+   * but for a sharper need. `ProcessAPI.exec` **replaces** the child's
+   * environment rather than merging it, so a program an extension runs gets
+   * exactly what the extension names — and a child handed only `HOME` cannot
+   * reach the credentials a keychain lookup needs. Measured: a vendor CLI given
+   * `HOME` and `PATH` alone reports itself as logged out, in two seconds, which
+   * is indistinguishable from a machine nobody ever signed in on.
+   */
+  readonly userName: string;
   readonly secrets: SecretStore;
   /** Category already bound to `extension`; the id rides the message. */
   readonly log: CategoryLogger;

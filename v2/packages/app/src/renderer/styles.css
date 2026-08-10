@@ -776,247 +776,297 @@ body.sh-dragging {
  * scoped re-declaration that makes a field inside it borderless without being
  * told it is inside a composer — is `composer.css`'s. The input treatment, the
  * placeholder, the missing resize grabber and the `create task` fill are
- * `field.css` / `textarea.css` / `button.css`'s. Two things could not go with
- * them, and both are findings rather than leftovers:
+ * `field.css` / `textarea.css` / `button.css`'s.
  *
- *   - **The chips.** There is no `Chip` in the fifteen, and a picked repo is a
- *     token in a sentence — a `Button` would gain a control treatment it cannot
- *     have, since it carries a nested × and would be a button inside a button.
- *     Kept whole, here, until a `Chip` arrives with a second consumer. (The
- *     OFFERED repo is no longer one of these: it became a `Row` in the
- *     completion list, because it is now a place you can navigate through rather
- *     than a token you either take or do not.)
- *   - **The brief's type step.** The derived ramp names `large` (15px) as "a
- *     composer's brief" and `TextArea`'s two sizes stop at `body`. One
- *     declaration, reading the metric that already exists — not a fork of the
- *     control, which keeps its padding, colour, focus and growth from the
- *     primitive.
+ * **The chips are gone, and so is the finding they carried.** They used to be
+ * here because there is no `Chip` in the fifteen and a picked repo was a token in
+ * a sentence that a `Button` could not become. It is now a token in the sentence
+ * LITERALLY — a `Pill` inside the brief — so the primitive that was missing turns
+ * out to be one that already existed, used in the place the thing actually
+ * belongs. The `Chip` finding is withdrawn rather than deferred.
+ *
+ * What is left is the brief's type step: the derived ramp names `large` (15px) as
+ * "a composer's brief" and the primitive's own sizes stop at `body`. One
+ * declaration, reading the metric that already exists.
  */
 
 .sh-composer-brief { font-size: var(--sh-font-size-large); }
 
 /*
- * The repo picker.
+ * The action row: what the sentence scopes, then the one accent.
  *
- * The wrapper RE-DECLARES `--sh-line` and `--sh-surface-sunken` back on, which
- * is the escape hatch `composer.css` documents in the same breath as the rule it
- * escapes: "a control that genuinely needs an edge in here re-declares
- * `--sh-line` back on itself". This one does. The field used to be a borderless
- * `+ repo path` sharing a row with the create button and it was too hidden to be
- * found, which is the entire reason this block exists.
+ * Ruled off from the brief, and that rule is the only hairline inside the card —
+ * `composer.css` re-declares `--sh-line` to transparent for the whole subtree, so
+ * this is the documented escape hatch used deliberately ("a control that
+ * genuinely needs an edge in here re-declares `--sh-line` back on itself"). It is
+ * what makes the row a footer rather than the last line of the brief.
  *
- * Both values are a WASH of `text` rather than a palette step, for the reason
- * the chips below already record: inside a `Composer` there is no role that
- * means "one step off the card", and a wash moves with a contributed theme's
+ * A WASH of `text`, not a palette step: inside a `Composer` there is no role
+ * meaning "one step off the card", and a wash moves with a contributed theme's
  * `--sh-text` the way a fixed `--sh-ink-*` never did.
  */
-/*
- * The repo control, on the action row rather than above the brief.
- *
- * T3 Code's composer is the reference: secondary facts (the checkout, the
- * branch, the model) are quiet text controls along the bottom of the box at ONE
- * weight, with a single filled action at the end. This was a labelled, bordered
- * field over a dropdown, which made the least important thing on the card the
- * loudest — the overcorrection from "too hidden".
- */
-/*
- * The repo row: the field, then the chips it fills.
- *
- * Above the brief, because that is the order the decision happens in — what you
- * are working on, then what to do to it.
- */
-/*
- * A header row, ruled off from the brief: the field on the left, the repos it
- * has collected on the right.
- *
- * The rule is what makes it a header rather than a first line of the brief —
- * without it the field and the prose it scopes read as one column of text, and
- * the chips look like something the brief said.
- */
-.sh-composer-repos {
-  /*
-   * `--sh-line` back ON, which is the escape hatch `composer.css` names in the
-   * same breath as the rule it escapes: "a control that genuinely needs an edge
-   * in here re-declares `--sh-line` back on itself". The block above this one
-   * has claimed for a while that it does; it did not, so the rule below resolved
-   * to the card's `transparent` and the header had no edge at all — an empty
-   * strip above the brief with an invisible field in it.
-   *
-   * A WASH of `text`, not a palette step: inside a `Composer` there is no role
-   * meaning "one step off the card", and a wash moves with a contributed theme.
-   */
+.sh-composer-controls {
   --sh-line: color-mix(in oklab, var(--sh-text) 16%, transparent);
 
   display: flex;
   align-items: center;
-  flex-wrap: nowrap;
-  gap: var(--sh-space-md);
-  min-height: 22px;
-  padding-bottom: var(--sh-space-md);
-  margin-bottom: var(--sh-space-md);
-  border-bottom: var(--sh-hairline) solid var(--sh-line);
+  gap: var(--sh-space-lg);
+  padding-top: var(--sh-space-lg);
+  border-top: var(--sh-hairline) solid var(--sh-line);
 }
 
 /*
- * The field shows the MATCH, not the keystrokes (fzf's contract).
+ * The `#repo` button — the only thing on screen that says the gesture exists.
  *
- * So the two layers swap roles from what a ghost-text field does: the SHOWN
- * text is in flow and sizes the box, and the input lies on top of it with its
- * own text transparent. The box therefore grows to the path being offered
- * rather than to a guessed `22ch`, and shrinks back to the placeholder when the
- * field empties — which is the pill in the sketch.
+ * A ghost control, not a `Button`: `Button`'s four variants are all louder than
+ * this needs to be, and rule 3 gives the card exactly one accent, which
+ * `create task` has. Bordered and quiet is what rule 5 calls a key.
  *
- * `inline-grid` with both children in one cell, rather than `position:
- * absolute`: an absolutely-positioned shown-text contributes no width, which is
- * the whole thing this layout needs it to do.
+ * The radius is `md`, not the prototype's capsule 20 — `pill.css` argues that one
+ * by name ("half the height was the first version and it read as an oval, which
+ * is not the reference"), and a capsule here would be the one rounded thing on a
+ * card of machined corners.
  */
-.sh-composer-repo {
-  display: grid;
-  grid-template-columns: minmax(7ch, 1fr);
+.sh-composer-hash {
+  display: inline-flex;
   align-items: center;
-  flex: 1 1 auto;
-  min-width: 0;
-}
+  gap: var(--sh-space-sm);
+  flex: 0 0 auto;
 
-.sh-composer-repo > * { grid-area: 1 / 1; }
+  background: none;
+  border: var(--sh-hairline) solid var(--sh-line);
+  border-radius: var(--sh-radius-md);
+  padding: var(--sh-space-xs) var(--sh-space-md);
 
-.sh-composer-repo input {
-  font-size: var(--sh-font-size-small);
-  padding: 0;
-  width: 100%;
-  min-width: 0;
-  /*
-   * Transparent, not hidden: it still takes the keystrokes, still owns the
-   * selection, and still shows a caret — which is the only thing on screen that
-   * tracks the query rather than the match, and so the only cue that the two are
-   * different lengths.
-   */
-  color: transparent;
-  caret-color: var(--sh-accent);
-}
-
-/*
- * Readable, not faint. This is the only thing in the header row when the field
- * is empty, and at `--sh-text-faint` on the card it was invisible — the row read
- * as a blank strip and the picker as missing.
- */
-.sh-composer-repo input::placeholder { color: var(--sh-text-dim); }
-.sh-composer-repo input:focus::placeholder { color: var(--sh-text-faint); }
-
-/*
- * The match, under the caret. Same type and padding as the input over it, or the
- * caret lands somewhere the text is not.
- */
-.sh-composer-repo-shown {
-  pointer-events: none;
-  font-size: var(--sh-font-size-small);
+  font: inherit;
+  font-size: var(--sh-font-size-medium);
   color: var(--sh-text-dim);
-  white-space: pre;
+  cursor: pointer;
+  transition: color var(--sh-motion) linear, border-color var(--sh-motion) linear;
+}
+
+.sh-composer-hash:hover {
+  color: var(--sh-text);
+  border-color: color-mix(in oklab, var(--sh-text) 34%, transparent);
+}
+
+/* The glyph is machine vocabulary — it is a character you type, so it is set in
+   the family the app uses when it means "type this". */
+.sh-composer-hash-glyph {
+  font-family: var(--sh-font-mono);
+  color: var(--sh-text-faint);
+}
+
+.sh-composer-hash:hover .sh-composer-hash-glyph { color: var(--sh-accent); }
+
+/*
+ * The scope line. Machine vocabulary again (it names repos), and the quietest
+ * text on the card: it is a confirmation of something already visible in the
+ * sentence above, so it must not compete with it.
+ */
+.sh-composer-scope {
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-medium);
+  color: var(--sh-text-faint);
+  min-width: 0;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /*
- * The runs are INLINE, with nothing between them.
+ * A repo pill in the brief.
  *
- * This was a flex row with a `gap`, inherited from when its two children were a
- * ghost and a note. Cut into match runs, that gap opens a space at every
- * boundary: `~ /Home/dev/tools/she p herd` — four visual words for one path, and
- * the shown text then runs wider than the input's own, so the caret sits
- * somewhere the character it is next to is not.
+ * `Pill` already carries the whole treatment — accent hairline, a 12% accent
+ * tint, `small` type, a height that cannot open the line box it sits in. This
+ * adds the one thing a repo pill needs that an image pill does not: the mono
+ * family, because the text is `#` plus a repo name and both are things you type.
  */
-.sh-composer-repo-shown > span { white-space: pre; }
+.sh-composer-repo-pill {
+  font-family: var(--sh-font-mono);
+}
+
+/*
+ * The picker, anchored to the `#` it belongs to.
+ *
+ * `position: absolute` against the card, which is why the card is the element
+ * holding the ref: the composer measures a Range over the `#` character and
+ * writes `left`/`top` as inline style, already clamped to this box. Nothing here
+ * knows where the caret is, and nothing here should.
+ */
+.sh-composer-picker {
+  --sh-composer-picker-width: 360px;
+
+  /*
+   * `--sh-line` back ON, and this one is not optional.
+   *
+   * `composer.css` sets `--sh-line: transparent` for the WHOLE `.sh-ui-composer`
+   * subtree — that is what "no inner hairlines" means as a rule rather than a
+   * wish — and it documents the way out in the same breath: "a control that
+   * genuinely needs an edge in here re-declares `--sh-line` back on itself". A
+   * popover is the clearest case there is, and without this its border and its
+   * header rule both resolved to transparent: the panel had no edge at all, and
+   * with the fill below also wrong it was invisible on the card. Its bottom
+   * corner painting over the `create task` button read as a bite taken out of it.
+   *
+   * A WASH of `text`, so a contributed theme's `--sh-text` carries it — the same
+   * mechanism `fillHover` uses, and stronger than the footer's 16% because this
+   * edge is the whole boundary of a floating layer rather than a seam under a row.
+   */
+  --sh-line: color-mix(in oklab, var(--sh-text) 22%, transparent);
+
+  /*
+   * `fixed`, and portalled to the body — see `repo-picker.tsx`.
+   *
+   * `.sh-ui-modal` carries `overflow: auto` AND `transform: translateX(-50%)`.
+   * The transform makes it the containing block for a fixed descendant and the
+   * overflow then clips it, so an in-tree panel is cut off as soon as the list is
+   * taller than the card. Its coordinates are viewport coordinates for that
+   * reason, and `z-index` clears the modal (21) and its scrim (20).
+   */
+  position: fixed;
+  z-index: 30;
+  width: var(--sh-composer-picker-width);
+
+  /*
+   * A LIFT off the card, not `surfaceRaised` — and this is a real gap in the role
+   * set, recorded rather than worked around quietly.
+   *
+   * The card is already `surfaceRaised`, and there is no role above it: the ladder
+   * is canvas → surface → surfaceRaised and stops. Painting a popover
+   * `surfaceRaised` over a `surfaceRaised` card is therefore painting it the same
+   * colour as the thing it floats over, which is exactly what shipped and exactly
+   * why it could not be seen. A wash of `text` over the card's own fill is the
+   * step the ladder does not have, and it moves with a theme the way a fourth
+   * hardcoded ink never would. FINDING: the roles need a `surfaceOverlay`.
+   */
+  background: color-mix(in oklab, var(--sh-text) 7%, var(--sh-surface-raised));
+  border: var(--sh-hairline) solid var(--sh-line);
+  border-radius: var(--sh-radius-soft);
+  overflow: hidden;
+
+  /*
+   * A shadow, and it IS a deliberate departure from rule 2 — with the reason,
+   * because the rule's premise does not hold here.
+   *
+   * Rule 2 bans elevation theater on the grounds that "the luminance step from
+   * `surface` to `surfaceRaised` IS the elevation, and there is no second one".
+   * That argument is about a card lifting off a panel, and it is right about that.
+   * A popover over an already-raised card has no step left to spend: the wash
+   * above is a step invented for it, and one wash of separation is not enough to
+   * say "this layer is in front of that one and temporary" — which is the whole
+   * message a picker anchored to a caret has to send.
+   *
+   * Black at an alpha rather than a palette colour, because a shadow is the
+   * absence of light and not a surface: `--sh-canvas` would invert to a pale glow
+   * in the light theme, which is the opposite of a shadow.
+   */
+  box-shadow: 0 24px 60px rgb(0 0 0 / 55%);
+
+  animation: sh-composer-picker-in 110ms ease-out;
+}
+
+/*
+ * The same shadow, far weaker.
+ *
+ * `applyThemeVariables` stamps `data-theme` on the root, which is the one hook a
+ * rule has for a value that cannot be expressed as a token. 55% black over a pale
+ * surface reads as soot rather than as depth — the light set's whole problem, and
+ * the same asymmetry `fillHover` records (6% dark / 4% light, "a wash on a bright
+ * surface reads heavier at the same alpha").
+ */
+:root[data-theme='light'] .sh-composer-picker {
+  box-shadow: 0 16px 40px rgb(0 0 0 / 16%);
+}
+
+/* Rising 4px as it fades is the popover saying which direction it came from —
+   the caret is above it. Motion-reduced users get the fade only. */
+@keyframes sh-composer-picker-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/*
+ * The header: the live query on the left, the keys that work on the right.
+ *
+ * The hint is the reason this strip exists. Every one of those three keys is
+ * invisible otherwise, and a picker whose keyboard you have to guess at is one
+ * people drive with the mouse.
+ */
+.sh-composer-picker-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-md);
+  padding: var(--sh-space-md) var(--sh-space-lg);
+  border-bottom: var(--sh-hairline) solid var(--sh-line);
+
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-medium);
+  color: var(--sh-text-faint);
+}
+
+.sh-composer-picker-hint { margin-left: auto; }
+
+.sh-composer-picker-list {
+  max-height: 238px;
+  overflow-y: auto;
+  padding: var(--sh-space-sm);
+}
+
+/* Nothing matched. Says so in words, at the size of the rows it replaces, rather
+   than collapsing to a 0px box that reads as the picker having closed. */
+.sh-composer-picker-empty {
+  padding: var(--sh-space-lg);
+  font-size: var(--sh-font-size-body);
+  color: var(--sh-text-faint);
+}
 
 /*
  * The characters the query hit.
  *
- * `accent` — the role for the thing you are acting on — and NOT `success`,
- * whose job is done/passed (rule 3: an accent has one job). A fuzzy hit is not
- * an outcome.
+ * `accent` — the role for the thing you are acting on — and NOT `success`, whose
+ * job is done/passed (rule 3: an accent has one job). A fuzzy hit is not an
+ * outcome. Inside a selected row the fill is a solid block of `text`, so the hit
+ * takes the row's own ink instead: accent-on-accent-block is unreadable, and the
+ * row being selected is already the stronger signal.
  */
-.sh-composer-repo-hit { color: var(--sh-accent); }
+.sh-composer-picker-hit { color: var(--sh-accent); }
+.sh-ui-row--selected .sh-composer-picker-hit { color: inherit; }
 
-/* Nothing matched: what you typed, marked as not standing for anything yet. */
-.sh-composer-repo-miss {
+/*
+ * Is this a repo, or a directory on the way to one?
+ *
+ * NOT a `StatusDot`: its five roles are the agent lifecycle and it always renders
+ * a status word as its accessible name, so a repo row would announce "Idle".
+ * The word here is `repo` / `not a repo`, in `sr-only` text beside the mark —
+ * same pairing `StatusDot` makes, for the same reason (a fact encoded only in
+ * colour is a fact that cannot be read out, searched, or asserted on).
+ *
+ * A filled dot and a hollow ring, both in `text`, because this is not a status
+ * and rule 3 bans a saturated colour with no job. The handoff's six per-repo
+ * identity hues are the deviation this replaces: cobalt, hay, pasture and ember
+ * already mean working, blocked, done and error, so a repo tinted pasture-green
+ * would read as something that had passed.
+ */
+.sh-composer-picker-mark {
+  /* A bare `<span>` is inline and would drop the size below entirely. */
+  display: block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: var(--sh-hairline) solid currentColor;
   color: var(--sh-text-faint);
-  text-decoration: underline dotted currentColor;
-  text-underline-offset: 3px;
 }
 
-.sh-composer-repo-note {
-  color: var(--sh-text-faint);
-  font-size: var(--sh-font-size-nano);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.sh-composer-spacer { flex: 1 1 auto; }
-
-/* Right of the row, and never squeezing the field: they are the row's answer. */
-.sh-composer-picked {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--sh-space-sm);
-  flex: 0 0 auto;
-  margin-left: auto;
-}
-
-/* Empty, it is still a flex item and would spend the row's gap on nothing. */
-.sh-composer-picked:empty { display: none; }
-
-/* A repo name is machine vocabulary. */
-.sh-composer-picked li {
-  font-family: var(--sh-font-mono);
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sh-space-sm);
-  font: inherit;
-  font-size: var(--sh-font-size-small);
-  letter-spacing: 0;
-  text-transform: none;
+.sh-composer-picker-mark[data-repo='true'] {
+  background: currentColor;
   color: var(--sh-text-dim);
-  /*
-   * A WASH of `text`, not a palette step — and this is the second half of the
-   * Chip finding. The chip needs to read as a discrete block one step off the
-   * card, and inside a `Composer` there is no role that means that: `surface` is
-   * re-declared to the card itself and `surfaceSunken` to transparent, which is
-   * the container saying (correctly) that its FIELDS have no well. A wash is the
-   * same mechanism `fillHover` uses, so a contributed theme's `--sh-text` moves
-   * it, which a fixed `--sh-ink` never did.
-   */
-  background: color-mix(in srgb, var(--sh-text) 8%, transparent);
-  border: 0;
-  border-radius: var(--sh-radius-md);
-  padding: 3px var(--sh-space-md);
-  white-space: nowrap;
-}
-
-.sh-composer-picked li { color: var(--sh-text); }
-
-/* The × IS the remove affordance: a bordered "remove" button beside the chip
-   was two controls for one job, and the wider of them said nothing. */
-.sh-composer-picked button {
-  background: none;
-  border: 0;
-  padding: 0;
-  color: var(--sh-text-faint);
-  font: inherit;
-  font-size: var(--sh-font-size-medium);
-  line-height: 1;
-  cursor: pointer;
-}
-
-.sh-composer-picked button:hover { color: var(--sh-text); }
-
-/* The single accent, hard right. The repo field left this row when it stopped
-   being an afterthought and got a label of its own. */
-.sh-composer-controls {
-  display: flex;
-  justify-content: flex-end;
 }
 
 /* `.sh-composer-create` was the third of the shipped shell's three button
@@ -1026,6 +1076,19 @@ body.sh-dragging {
 
 /* Only ever holds a failure; empty it must not spend a row's gap. */
 .sh-composer .sh-ext-answer:empty { display: none; }
+
+/* What the task will be called — a consequence the composer used to hide.
+   `--sh-text-faint` and not the `--sh-wool-*` its neighbour above uses: `wool` is
+   a palette hue and a component paints in ROLE tokens. The height is reserved so
+   an answer landing does not shift the Create button out from under the cursor. */
+.sh-composer-name {
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-micro);
+  color: var(--sh-text-faint);
+  min-height: 1.2em;
+  word-break: break-word;
+}
+.sh-composer .sh-composer-name:empty { display: none; }
 
 /* -------------------------------------------------------------- scrollbars */
 /*

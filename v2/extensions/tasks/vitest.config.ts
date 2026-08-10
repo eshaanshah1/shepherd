@@ -8,7 +8,12 @@ export default defineConfig({
     // it; the view opts into jsdom with a `// @vitest-environment jsdom`
     // docblock, which is the shape `packages/app` already uses — one project,
     // two environments, no glob table to drift.
-    include: ['src/**/*.test.ts', 'ui/**/*.test.tsx'],
+    //
+    // `ui/` matches BOTH extensions, because not everything in the view half
+    // draws: `mention.ts` is the `#` rule as pure string work, and a `.tsx` it
+    // never needed would have been the file extension lying to make a glob happy.
+    // Collected silently by nothing is how a whole test file passes by not running.
+    include: ['src/**/*.test.ts', 'ui/**/*.test.ts', 'ui/**/*.test.tsx'],
     environment: 'node',
   },
 });

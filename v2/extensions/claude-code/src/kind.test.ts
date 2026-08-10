@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentEventInput, AgentState } from '@shepherd/ext-agents-core';
-import { CLAUDE_HOOK_TOPIC, claudeKind, reduce, type ClaudeSlot } from './kind.ts';
+import {
+  CLAUDE_HOOK_TOPIC,
+  claudeKind,
+  parseQuick,
+  QUICK_MODEL,
+  quickArgv,
+  reduce,
+  type ClaudeSlot,
+} from './kind.ts';
 
 /**
  * The vendor half: reading Claude's payload, and the ownership lock that keeps a
@@ -196,5 +204,85 @@ describe('resumeCommandOf', () => {
 
   it('declares the capability it implements', () => {
     expect(claudeKind().capabilities?.resume).toBe(true);
+  });
+});
+
+/**
+ * The vendor's half of the quick tier: the flags, and the junk its answers arrive
+ * wrapped in.
+ *
+ * Every flag was measured on 2026-08-10 (the spec carries the table) and each is
+ * load-bearing. This is the record, so that a later "why so many flags?" has an
+ * answer that is not a guess.
+ */
+describe('quickArgv', () => {
+  const argv = quickArgv({ prompt: 'name this task', model: QUICK_MODEL });
+
+  it('runs the vendor binary in print mode with the prompt as an argument', () => {
+    // An argument rather than stdin: `runExec` reaches `execFile` with an array,
+    // so there is no shell and therefore nothing to quote wrongly.
+    expect(argv[0]).toBe('claude');
+    expect(argv).toContain('-p');
+    expect(argv).toContain('name this task');
+    expect(argv).toContain('--model');
+    expect(argv).toContain(QUICK_MODEL);
+  });
+
+  it('disables every customization, because the full CLI is slow and chatty', () => {
+    // `--safe-mode` turns off CLAUDE.md discovery (this repo's is ~46k tokens),
+    // skills, plugins, hooks — including Shepherd's own `report.sh`, which would
+    // otherwise report this nested call's lifecycle as some pane's — MCP servers,
+    // custom agents and workflows. Worth ~2s and two whole classes of bug, while
+    // auth, model selection and policy settings keep working.
+    expect(argv).toContain('--safe-mode');
+  });
+
+  it('disables every tool, because the job is to return six words', () => {
+    // `--tools ""` is the documented form. NOT a `--settings` deny-list, which
+    // would enumerate vendor tool names and rot as that set changes; and
+    // `--max-turns` does not exist in the installed CLI.
+    const at = argv.indexOf('--tools');
+    expect(at).toBeGreaterThan(-1);
+    expect(argv[at + 1]).toBe('');
+  });
+
+  it('never passes --bare, which cannot authenticate under a managed login pin', () => {
+    // `--bare` never reads OAuth or the keychain, and a machine whose managed
+    // settings pin `forceLoginMethod` rejects exactly the credential it insists
+    // on. It exits 1 in under a second, and no API key changes that.
+    expect(argv).not.toContain('--bare');
+  });
+
+  it('takes the model it is given rather than reaching for its own', () => {
+    // The override exists so a user can choose; a kind that ignored the argument
+    // would make `agents.quickModel --model` silently do nothing.
+    expect(quickArgv({ prompt: 'p', model: 'something-else' })).toContain('something-else');
+  });
+});
+
+describe('parseQuick', () => {
+  it('takes a plain answer', () => {
+    expect(parseQuick('add-a-cheap-model-seam\n')).toBe('add-a-cheap-model-seam');
+  });
+
+  it('unwraps backticks, which three of seven measured answers arrived in', () => {
+    expect(parseQuick('`cheap-model-task-naming`')).toBe('cheap-model-task-naming');
+  });
+
+  it('takes the answer, not a preamble line above it', () => {
+    // A model asked for six words sometimes writes a sentence about the six
+    // words first. The answer is last.
+    expect(parseQuick('Here is a name:\nadd-cheap-model-seam\n')).toBe('add-cheap-model-seam');
+  });
+
+  it('has no answer for empty output', () => {
+    expect(parseQuick('   \n\n')).toBeUndefined();
+    expect(parseQuick('``')).toBeUndefined();
+  });
+});
+
+describe('claudeKind', () => {
+  it('declares a headless half, so it can serve the quick tier', () => {
+    expect(claudeKind().headless?.quickModel).toBe(QUICK_MODEL);
   });
 });

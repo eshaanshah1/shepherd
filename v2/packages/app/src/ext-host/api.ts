@@ -246,6 +246,8 @@ export interface ContextOptions {
   readonly dataDir: string;
   /** Resolved by the host for the same reason. See `ExtensionContext.homeDir`. */
   readonly homeDir: string;
+  /** Likewise, and see `ExtensionContext.userName` for what needs it. */
+  readonly userName: string;
   readonly clock: Clock;
   readonly services: ExtHostServices;
   /** Whether developer surfaces are on. See `ExtensionContext.isDev`. */
@@ -267,6 +269,7 @@ export function createContext(options: ContextOptions): ExtensionContext {
     storage: createStorage(options.storage, services),
     dataDir: options.dataDir,
     homeDir: options.homeDir,
+    userName: options.userName,
     secrets: createSecrets(),
     log,
     clock: options.clock,

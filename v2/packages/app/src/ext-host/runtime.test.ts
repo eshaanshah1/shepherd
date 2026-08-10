@@ -125,6 +125,7 @@ const activateAsk = (overrides: Record<string, unknown> = {}): HostFrame => ({
     storage: {},
     dataDir: '/tmp/shepherd-test/ext',
     homeDir: '/tmp/shepherd-test/home',
+    userName: 'ada',
     ...overrides,
   } as never,
 });
@@ -208,6 +209,16 @@ describe('the extension host runtime', () => {
       expect(h.seen.ctx?.source).toBe('builtin');
       expect(h.seen.ctx?.permissions).toEqual(['storage']);
       expect(h.seen.api?.version).toBe('1.0.0');
+    });
+
+    it('hands over the home directory and the user name, neither of which the child can compute', async () => {
+      await h.receive(activateAsk());
+      expect(h.seen.ctx?.homeDir).toBe('/tmp/shepherd-test/home');
+      // `userName` is here for a sharper reason than `homeDir`: a program an
+      // extension runs gets the environment the extension BUILDS, because
+      // `ProcessAPI.exec` replaces rather than merges — and a child handed only
+      // `HOME` cannot reach the credentials a keychain lookup needs.
+      expect(h.seen.ctx?.userName).toBe('ada');
     });
 
     it('drops a permission this build does not know rather than passing it on', async () => {

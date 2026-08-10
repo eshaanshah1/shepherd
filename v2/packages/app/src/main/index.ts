@@ -11,6 +11,7 @@ import {
   runGit,
   shellDefaults,
   systemHome,
+  systemUserName,
 } from '@shepherd/platform-darwin';
 import {
   CommandRegistry,
@@ -483,6 +484,7 @@ const extensionHost = new ExtensionHost({
   // because an extension WRITES there — a smoke must not seed trust records
   // into the developer's own Claude Code config.
   homeDir: resolveHome(process.argv, systemHome()),
+  userName: systemUserName(),
   views,
   // The one runner, from the one directory allowed to spawn (Rebuild checklist
   // item 4). Injected rather than imported by the host so a test can prove a
