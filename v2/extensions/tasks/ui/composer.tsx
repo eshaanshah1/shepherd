@@ -267,19 +267,17 @@ export function TaskComposer({
    * It retypes the DISPLAY text, `~` and all, so the query and what is on screen
    * agree afterwards; `expandHome` is what reads it back.
    *
-   * Only a FILESYSTEM row is a Tab target. Those share a parent by construction
-   * (one level, one `readdir`), so completing to one is navigation; a history
-   * row can match the same query from anywhere on disk and is taken with ⏎.
-   * That is also what leaves ↹ free to move to the brief once the field is
-   * empty, which is the state ⏎ leaves you in.
+   * ↹ COMPLETES, whatever the row's source. It used to take a filesystem row and
+   * otherwise hand focus to the brief, on the reasoning that only a filesystem
+   * row shares a parent with what you typed — but the field draws one answer and
+   * that answer is takeable whatever list it came from, and a ↹ that sometimes
+   * completes and sometimes leaves the field is a key you have to think about.
    *
    * It re-asks with the completed text, so the next level appears with no
-   * second keystroke. The completion is the ABSOLUTE path, losing a typed `~`:
-   * `expandHome` still accepts one, and agreeing with what is on screen is the
-   * smaller surprise.
+   * second keystroke.
    */
   const complete = (): boolean => {
-    if (current === undefined || current.source !== "filesystem") return false;
+    if (current === undefined) return false;
     if (current.display === path.trim()) return false;
     retype(current.display);
     return true;
@@ -442,14 +440,14 @@ export function TaskComposer({
             onChange={(event) => retype(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Tab" && !event.shiftKey) {
-                // Tab does the two shell things in order: complete while there
-                // is something to complete, and once there is not — which is
-                // exactly the state you are in after ⏎ has taken your last repo
-                // — move on to the brief. Focusing it explicitly rather than
-                // letting the browser find the next tab stop, because the next
-                // one is a chip's × button.
+                // ↹ completes the path, and does nothing else. It used to hand
+                // focus to the brief when there was nothing to complete, which
+                // made one key mean two things depending on state you cannot see
+                // — and the state it fires in most often is "half a path typed".
+                // With nothing to take it falls through to the browser, so focus
+                // still moves rather than being trapped.
+                if (!complete()) return;
                 event.preventDefault();
-                if (!complete()) promptRef.current?.focus();
                 return;
               }
               if (event.key === "ArrowRight" && current !== undefined) {
