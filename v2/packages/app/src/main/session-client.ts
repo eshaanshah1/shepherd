@@ -462,9 +462,42 @@ export class SessionClient {
       socket.onClose(() => this.#onClose());
       this.#socket = socket;
 
-      const hello = new Promise<void>((resolve) => {
+      /**
+       * The handshake's ANSWER is read, not merely awaited.
+       *
+       * `SessionServer` refuses a client whose `PROTOCOL_VERSION` differs, and its
+       * own comment names how that happens: "a daemon left running from an older
+       * build is the normal way this happens" — which is every `pnpm ship`. The
+       * daemon is detached to outlive the app and `reclaimSocketPath` refuses to
+       * take over a live socket, so a new build talks to the OLD daemon for as
+       * long as that process lives.
+       *
+       * This used to resolve on ANY reply and ignore the `ok` flag, so the one
+       * message that explains the failure — `protocol-mismatch`, carrying both
+       * versions — was received and thrown away. The client then marked itself
+       * connected, flushed its outbox and re-attached into a socket the daemon had
+       * already closed, which reads as everything silently not working.
+       *
+       * Dormant today (`PROTOCOL_VERSION` has never moved off 1), and it would
+       * have bitten on the first bump — precisely when the diagnosis is worth
+       * most.
+       */
+      const hello = new Promise<void>((resolve, reject) => {
         const seq = this.#seq();
-        this.#pending.set(seq, () => resolve());
+        this.#pending.set(seq, (result) => {
+          if (result.ok) {
+            resolve();
+            return;
+          }
+          const refusal = result.error as { code?: unknown; message?: unknown } | undefined;
+          reject(
+            new Error(
+              typeof refusal?.message === 'string'
+                ? refusal.message
+                : 'the daemon refused the handshake and gave no reason',
+            ),
+          );
+        });
         socket.write(encodeJsonFrame(REQUEST.hello, { seq, version: PROTOCOL_VERSION }));
       });
       await hello;
@@ -477,6 +510,17 @@ export class SessionClient {
       this.#reattachAll();
     } catch (error) {
       this.#log.error(`could not reach the session daemon: ${String(error)}`);
+      /*
+       * Let go of the socket, because the handshake above can now FAIL with one
+       * already assigned. `#ensureConnected` returns early while `#socket` is
+       * set, so a refused hello would otherwise leave the client holding a
+       * connection it must not use and no retry would ever be scheduled — a
+       * quieter version of the defect this whole path just fixed. `destroy`
+       * triggers `onClose`, which is the one place that schedules the retry.
+       */
+      const dead = this.#socket;
+      this.#socket = undefined;
+      dead?.destroy();
     }
   }
 
