@@ -396,6 +396,49 @@ describe('PaneSessionRegistry streaming', () => {
     expect(h.session.calls).toEqual([{ name: 'resize', args: ['s1', 120, 40] }]);
   });
 
+  it('does NOT report the host’s own answer back to it — the resize storm', async () => {
+    /*
+     * The bug this exists for, measured in the running app: 29,825 resizes in
+     * ten seconds, cycling 28x39 → 24x39 → 56x45 → 64x45 and round again, with
+     * every pane on screen feeding it.
+     *
+     * The registry applies the host's answer with `terminal.resize()`; xterm
+     * emits `onResize` for that, and the listener reported it to the host as a
+     * fresh authoritative size. So every correction bounced straight back, and
+     * with more than one pane the corrections chased each other at frame rate.
+     * `xterm-terminal.ts` has claimed since it was written that `resize`
+     * "reshapes the grid without telling the host". This is what makes it true.
+     */
+    const h = harness();
+    h.registry.attach(h.pane, h.host());
+    await h.registry.settled();
+    h.session.calls.length = 0;
+
+    h.session.resizeListeners.forEach((listener) =>
+      listener({ sessionId: 's1', cols: 24, rows: 39 }),
+    );
+
+    expect(h.terminals[0]?.cols).toBe(24);
+    expect(h.terminals[0]?.rows).toBe(39);
+    expect(h.session.calls).toEqual([]);
+  });
+
+  it('still reports a re-measure of its own after applying the host’s', async () => {
+    // The control: suppression is scoped to the write, not latched. Without this
+    // the fix above could silence the pane permanently and both tests would pass.
+    const h = harness();
+    h.registry.attach(h.pane, h.host());
+    await h.registry.settled();
+    h.session.resizeListeners.forEach((listener) =>
+      listener({ sessionId: 's1', cols: 24, rows: 39 }),
+    );
+    h.session.calls.length = 0;
+
+    h.terminals[0]?.resizedTo(100, 50);
+
+    expect(h.session.calls).toEqual([{ name: 'resize', args: ['s1', 100, 50] }]);
+  });
+
   it('a second attach with no detach moves the one terminal rather than making two', async () => {
     const h = harness();
     const first = h.host();

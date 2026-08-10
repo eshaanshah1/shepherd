@@ -154,6 +154,18 @@ interface Entry {
   wantStream: boolean;
   /** Parked: no terminal, no stream, but still this pane's session. */
   suspended: boolean;
+  /**
+   * True only while the host's own size is being written into the grid.
+   *
+   * `terminal.resize()` emits xterm's `onResize`, and that listener reports the
+   * new size to the host as an authoritative one — so applying a correction sent
+   * it straight back, and with more than one pane on screen the corrections
+   * chased each other at frame rate. Measured: 29,825 resizes in ten seconds,
+   * cycling 28x39 → 24x39 → 56x45 → 64x45 and round again. `xterm-terminal.ts`
+   * has claimed since it was written that `resize` "reshapes the grid without
+   * telling the host"; this is the part that makes that true.
+   */
+  applyingHostSize: boolean;
   streaming: boolean;
   exited: boolean;
   closed: boolean;
@@ -352,6 +364,7 @@ export class PaneSessionRegistry implements PaneTerminals {
       wantSession: false,
       wantStream: false,
       suspended: false,
+      applyingHostSize: false,
       streaming: false,
       exited: false,
       closed: false,
@@ -382,6 +395,9 @@ export class PaneSessionRegistry implements PaneTerminals {
       }),
       terminal.onResize(({ cols, rows }) => {
         if (entry.sessionId === null || entry.exited) return;
+        // The host's own answer, coming back through xterm's event. Reporting it
+        // would be this pane telling the host what the host just said.
+        if (entry.applyingHostSize) return;
         void this.#session.resize(entry.sessionId, cols, rows);
       }),
     );
@@ -484,10 +500,16 @@ export class PaneSessionRegistry implements PaneTerminals {
    * losing lines silently. The repaint arrives right behind it as a snapshot.
    */
   #onHostResize(message: SessionResizeMessage): void {
-    const terminal = this.#bySession.get(message.sessionId)?.terminal;
-    if (!terminal) return;
+    const entry = this.#bySession.get(message.sessionId);
+    const terminal = entry?.terminal;
+    if (entry === undefined || !terminal) return;
     if (terminal.cols === message.cols && terminal.rows === message.rows) return;
-    terminal.resize(message.cols, message.rows);
+    entry.applyingHostSize = true;
+    try {
+      terminal.resize(message.cols, message.rows);
+    } finally {
+      entry.applyingHostSize = false;
+    }
   }
 
   #onExit(message: SessionExitMessage): void {

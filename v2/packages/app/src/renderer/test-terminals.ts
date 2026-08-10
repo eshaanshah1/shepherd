@@ -166,9 +166,19 @@ export function fakeTerminal(): FakeTerminal {
     },
     typed: (text) => dataListener?.(text),
     resizedTo: (cols, rows) => resizeListener?.({ cols, rows }),
+    /*
+     * Emits `onResize`, because xterm does.
+     *
+     * It used not to, and that is precisely why the resize storm was invisible
+     * here: the registry applies the host's answer with `resize()`, xterm reports
+     * it as a fresh measurement, and the registry sent it back — 29,825 round
+     * trips in ten seconds in the real app, with every unit test passing. A fake
+     * that cannot produce the real thing's events cannot discover its bugs.
+     */
     resize: (cols: number, rows: number) => {
       terminal.cols = cols;
       terminal.rows = rows;
+      resizeListener?.({ cols, rows });
     },
   };
   return terminal;
