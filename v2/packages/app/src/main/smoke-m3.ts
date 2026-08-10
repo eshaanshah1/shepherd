@@ -47,6 +47,15 @@ export function isM3Options(options: Partial<M3SmokeOptions>): options is M3Smok
 export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): Promise<void> {
   const repo = flagValue(process.argv, '--shepherd-m3-repo');
   if (repo === undefined) die('no --shepherd-m3-repo');
+  /**
+   * The repo's own name, which is what a `#` mention is matched against.
+   *
+   * The picker filters on the NAME rather than the path around it — a home
+   * directory alone supplies most letters of most words — so this is the query
+   * the composer step types. Same derivation `repoName` makes, and the
+   * provisioning assertion further down re-uses it.
+   */
+  const repoBase = repo.split('/').filter((part) => part !== '').pop() ?? '';
 
   const invoke = async (command: string, args: Record<string, unknown> = {}): Promise<unknown> => {
     const body = JSON.stringify({ command, args, caller: { kind: 'device', deviceId: 'local-cli' } });
@@ -69,13 +78,43 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
    */
   await invoke('worktreeHook.set', { repo, script: 'echo hooked > HOOKED.txt' });
 
+  /**
+   * --- 0c. the quick tier is an OFFLINE stub, so naming needs no network.
+   *
+   * `diagnostics` registers it in a dev build and this selects it by id — which is
+   * the real configuration verb (§7c: "the user's configured default"), not a hook
+   * that exists for the test. Without this the naming call would be a real ~6s
+   * vendor CLI invocation, and a smoke that needed an account is a smoke nobody
+   * can run.
+   */
+  const quick = (await invoke('agents.quickModel', {
+    kind: 'diagnostics.stub-agent',
+    model: 'stub',
+  })) as { kind?: string };
+  check(quick.kind === 'diagnostics.stub-agent', `the quick tier is the stub: ${quick.kind ?? 'none'}`);
+
   // --- 1. create a task with a real repo, through the real transport.
   const created = (await invoke('tasks.create', {
     title: 'Smoke task',
-    brief: 'Provisioned by the m3 smoke.',
+    brief: 'Provisioned by the m3 smoke, with a brief long enough to be worth naming.',
     repos: [{ path: repo, name: 'api' }],
   })) as { id: string; slug: string };
-  check(created.slug === 'smoke-task', `the slug is derived once: ${created.slug}`);
+  /**
+   * **`create`'s answer carries the PROVISIONAL name, and that is by design.**
+   *
+   * The verb returns synchronously so the row is answerable at once (D12), while
+   * the name settles inside provisioning — before the first git write and never
+   * after. So the slug here is the heuristic, and the settled one is read back
+   * below, from the store and from disk.
+   *
+   * Asserted rather than ignored, because it is a fact a caller could get wrong:
+   * anybody treating this answer's slug as final would be reading it one beat too
+   * early.
+   */
+  check(
+    created.slug === 'provisioned-by-the-m3-smoke',
+    `create answers with the heuristic name, before the model settles it: ${created.slug}`,
+  );
 
   // --- 2. provisioning is OPTIMISTIC, so the worktree lands after the answer.
   const listed = (await until(
@@ -95,6 +134,27 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
     'the CLAUDE.md carries the repo map — the only one loaded at session start',
   );
   say('ok — the worktree and the task root are on disk');
+
+  /**
+   * The name is on DISK, in both places that outlive this process, and nothing was
+   * renamed to put it there.
+   *
+   * A slug stored correctly and a branch named something else is exactly the
+   * both-halves-of-a-correlation failure this file exists for: a unit test that
+   * supplies the name AND reads it back cannot discover that the two disagree.
+   */
+  const settled = ((await invoke('tasks.list')) as { id: string; slug: string; title: string }[]).find(
+    (task) => task.id === created.id,
+  );
+  check(settled?.slug === 'stub-named-this', `the stored slug is the model's: ${settled?.slug ?? 'none'}`);
+  check(settled?.title === 'Stub Named This', `and so is the row label: ${settled?.title ?? 'none'}`);
+  const branch = await head(worktree);
+  check(branch === 'stub-named-this', `the branch carries the model's name: ${branch}`);
+  check(
+    listed.root.endsWith('stub-named-this'),
+    `the worktree directory carries it too: ${listed.root}`,
+  );
+  say('ok — the model’s name reached the branch and the directory');
 
   /**
    * The hook ran, in the right directory, before anything else touched it.
@@ -238,7 +298,11 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
       win.webContents.executeJavaScript(
         `Array.from(document.querySelectorAll('[data-view-type="tasks.tree"] [data-testid="view-row"]')).map((el) => el.textContent)`,
       ) as Promise<string[]>,
-    (found) => found.some((row) => row.includes('Smoke task')),
+    // The row is labelled with the task's TITLE, and the quick model now owns
+    // that string — the same answer that named the branch names the row (D18),
+    // which is the half of the fix that makes the sidebar readable. Matching
+    // `Smoke task` here would be matching the title nobody has any more.
+    (found) => found.some((row) => row.includes('Stub Named This')),
   );
   check(taskRows.length > 0, `the task tree rendered: ${JSON.stringify(taskRows)}`);
   say('ok — the task tree drew the task, through the same mechanism');
@@ -298,6 +362,51 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
   check(composerSeen, 'the composer is on screen');
 
   /**
+   * It opens READY TO TYPE, and this is asserted in Chromium because Chromium is
+   * where it was wrong.
+   *
+   * A `contenteditable` reports `tabIndex === -1` there — focusable, but absent
+   * from the tabbable order the DOM can be asked about — so the focus trap's walk
+   * skipped the only field on the card and focused the `#repo` button under it.
+   * ⌘T then opened a composer that swallowed the first thing anybody typed.
+   */
+  const focused = (await win.webContents.executeJavaScript(
+    `document.activeElement?.dataset?.testid ?? null`,
+  )) as string | null;
+  check(focused === 'composer-brief', `⌘T lands the caret in the brief: ${JSON.stringify(focused)}`);
+
+  /**
+   * And ⎋ on a card nobody has written in closes it.
+   *
+   * Asserted here rather than only in the component's own test because the layer
+   * that acts on the key is the shell's `Modal`, and the composer's picker holds a
+   * capture-phase listener that can take Escape before it: the two halves of that
+   * rule only meet in the running app. The composer is raised again below, so the
+   * step this belongs to continues from a card in the same state it would be in.
+   */
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+  const dismissedEmpty = await until(
+    'the composer to close on ⎋',
+    () =>
+      win.webContents.executeJavaScript(
+        `document.querySelector('[data-testid="task-composer"]') === null`,
+      ) as Promise<boolean>,
+    (gone) => gone,
+  );
+  check(dismissedEmpty, '⎋ closes a composer nobody has written in');
+
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 't', modifiers: ['meta'] });
+  const reopened = await until(
+    'the composer to come back',
+    () =>
+      win.webContents.executeJavaScript(
+        `document.querySelector('[data-testid="task-composer"]') !== null`,
+      ) as Promise<boolean>,
+    (found) => found,
+  );
+  check(reopened, 'the composer reopens after being dismissed');
+
+  /**
    * Typing into the brief, which is a CONTENTEDITABLE and not a textarea.
    *
    * It changed so a pasted image can render as a pill where it was pasted — an
@@ -308,82 +417,75 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
    * what breaks undo), so writing it directly is the supported path rather than
    * a way around one.
    *
-   * A repo INPUT is still an input, so the native-setter dance below stays for
-   * it — the two fields are genuinely different elements now.
+   * **And it places a CARET**, which is new and is the whole reason this step
+   * changed. There is no repo field any more: the repo is named inside the
+   * sentence with `#`, and the trigger reads the caret's own text node — so a
+   * write that set `textContent` and fired `input` without a selection would
+   * exercise none of it and assert against a picker that can never open.
    */
   await win.webContents.executeJavaScript(`(() => {
-    const type = (el, value) => {
-      if (el.isContentEditable) {
-        el.textContent = value;
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        return;
-      }
-      const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-      Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, value);
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-    };
-    // ONE field: the composer's first line names the task, git-commit style,
-    // and the rest is the brief.
-    type(
-      document.querySelector('[data-testid="composer-brief"]'),
-      ['Composed task', 'Created from inside the app.'].join(String.fromCharCode(10)),
-    );
-    document.querySelector('[data-testid="composer-brief"]').dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
-    return true;
-  })()`);
-
-  /**
-   * Type ONE character first, because the completion waits for one.
-   *
-   * An empty repo field deliberately offers nothing: ⏎ takes what the ghost
-   * text is showing, and with nothing typed it used to take the top of the
-   * picked history sight unseen — a repo on the task that whoever created it
-   * never saw. This smoke encoded that older behaviour and so asked for a
-   * suggestion before anything had been typed.
-   *
-   * The first character of the repo's own path, so the completion has something
-   * to match and the assertion still proves the chain rather than the field.
-   */
-  await win.webContents.executeJavaScript(`(() => {
-    const field = document.querySelector('[data-testid="composer-repo-path"]');
-    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-    field.focus();
-    set.call(field, ${JSON.stringify(repo.slice(0, 1))});
+    const field = document.querySelector('[data-testid="composer-brief"]');
+    // ONE field: the composer's first line names the task, git-commit style, and
+    // the rest is the brief — with the repo mentioned in it, where it belongs.
+    field.textContent = ${JSON.stringify(
+      ['Composed task', 'Created from inside the app. #'].join('\n'),
+    )} + ${JSON.stringify(repoBase)};
+    const text = field.firstChild;
+    const range = document.createRange();
+    range.setStart(text, text.textContent.length);
+    range.collapse(true);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
     field.dispatchEvent(new Event('input', { bubbles: true }));
     return true;
   })()`);
 
-  // The suggestion comes from `tasks.repoSuggestions` (D5) — the point, its
-  // default provider, and a command answering the page. TAKING the offered one
-  // rather than typing a path is what makes this assert the chain instead of
-  // the field.
+  /*
+   * The rows come from `tasks.suggestRepos` (D5) — the point, its default
+   * provider, and a command answering the page. TAKING an offered row rather
+   * than typing a path is what makes this assert the chain instead of the field,
+   * and the repo is findable by NAME because step 1 already used it, so it is in
+   * the frecency history this picker opens on.
+   */
   const suggested = await until(
     'the repo picker to offer the repo this smoke already used',
     () =>
       win.webContents.executeJavaScript(
-        `Array.from(document.querySelectorAll('[data-testid="composer-suggestion"]')).map((el) => el.dataset.path)`,
+        `Array.from(document.querySelectorAll('[data-testid="composer-picker-row"]')).map((el) => el.dataset.path)`,
       ) as Promise<string[]>,
     (paths) => paths.includes(repo),
   );
   check(suggested.includes(repo), `the picker consulted the point: ${JSON.stringify(suggested)}`);
 
-  // ⏎ in the repo field takes the completion on screen — the real gesture, and
-  // the only one there is: the suggestion is ghost text behind the caret rather
-  // than a row, so it has no click for a smoke to borrow.
+  /*
+   * ⏎ takes the active row and inserts it as a pill INTO the brief — the real
+   * gesture, and the one the keyboard model makes primary. The active row is the
+   * first, which is the one the ranker put there.
+   */
   await win.webContents.executeJavaScript(`(() => {
-    const field = document.querySelector('[data-testid="composer-repo-path"]');
-    field.focus();
+    const field = document.querySelector('[data-testid="composer-brief"]');
     field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
     return true;
   })()`);
-  await until(
-    'the picked repo to become a chip',
+
+  /*
+   * The pill IS the scope. There is no chip row to read any more — the sentence
+   * holds the repo, and `[data-repo-path]` is what the composer itself reads back
+   * to build the `repos` array. Asserting the same DOM the component derives from
+   * is what makes this catch a pill that renders but carries no path.
+   */
+  const scoped = await until(
+    'the picked repo to become a pill in the brief',
     () =>
       win.webContents.executeJavaScript(
-        `Array.from(document.querySelectorAll('[data-testid="composer-picked-repo"]')).map((el) => el.dataset.path)`,
+        `Array.from(document.querySelectorAll('[data-testid="composer-brief"] [data-repo-path]')).map((el) => el.dataset.repoPath)`,
       ) as Promise<string[]>,
     (paths) => paths.includes(repo),
   );
+  check(scoped.includes(repo), `the mention became a pill: ${JSON.stringify(scoped)}`);
+  say('ok — `#` named a repo inside the brief and the pill carries its path');
+
   await win.webContents.executeJavaScript(
     `document.querySelector('[data-testid="composer-create"]').click(), true`,
   );
@@ -411,16 +513,30 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
   const composed = (await until(
     'the composed task to provision',
     async () =>
+      // Found by ELIMINATION rather than by title: the quick model owns every
+      // task's title now, so both tasks in this run are called the same thing and
+      // a title lookup would find whichever came first. The one this step made is
+      // the one that is not step 1's.
       ((await invoke('tasks.list')) as { id: string; title: string; root: string; repos: { name: string }[] }[]).find(
-        (task) => task.title === 'Composed task',
+        (task) => task.id !== created.id,
       ),
+    /*
+     * BOTH the worktree and the synthesized root, for the reason step 2 records
+     * about the very same pair: "they land in that order — the worktree is `git
+     * worktree add` and the root is synthesized from what landed, a beat later.
+     * Waiting on the first and asserting the second is a race that passes on the
+     * timing of the day." This gate waited on `.git` and the `CLAUDE.md` check
+     * below was outside it, so it did exactly that, and it duly failed the day
+     * the composer got faster.
+     */
     (task) =>
       task !== undefined &&
       task.repos.length === 1 &&
-      existsSync(join(task.root, task.repos[0]?.name ?? '', '.git')),
+      existsSync(join(task.root, task.repos[0]?.name ?? '', '.git')) &&
+      existsSync(join(task.root, 'CLAUDE.md')),
   )) as { id: string; root: string; repos: { name: string }[] };
   check(
-    composed.repos[0]?.name === repo.split('/').filter((s) => s !== '').pop(),
+    composed.repos[0]?.name === repoBase,
     `the picked path became the repo's name: ${JSON.stringify(composed.repos)}`,
   );
   /*
@@ -440,6 +556,13 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
     (written) => written,
   );
   check(existsSync(join(composed.root, 'CLAUDE.md')), 'the composed task root was synthesized too');
+  // Both tasks were named the same thing, so the second one had to be given a
+  // distinct folder — `uniqueSlug` (D8) doing its job against a real collision
+  // rather than a contrived one.
+  check(
+    composed.root.endsWith('stub-named-this-2'),
+    `a second task with the same name got its own folder: ${composed.root}`,
+  );
   say('ok — a task was created from inside the app, worktree and task root included');
 
   // --- 8. and it LANDED you in the task — read from the real DOM.
@@ -548,6 +671,12 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
 
   say('smoke: OK m3');
   app.exit(0);
+}
+
+/** Which branch a worktree is on. `status`'s neighbour, same shape. */
+async function head(cwd: string): Promise<string> {
+  const out = await runGit('read', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd, timeoutMs: 30_000 });
+  return out.ok ? out.stdout.trim() : '';
 }
 
 async function status(cwd: string): Promise<string> {

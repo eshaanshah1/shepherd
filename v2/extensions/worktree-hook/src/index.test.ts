@@ -120,6 +120,7 @@ function harness(opts: { withPoint?: boolean } = {}): Harness {
     storage,
     dataDir: '/data',
     homeDir: HOME,
+    userName: 'ada',
     secrets: {
       get: () => Promise.resolve(undefined),
       set: () => Promise.resolve(),

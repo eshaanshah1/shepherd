@@ -146,6 +146,9 @@ importers:
 
   extensions/diagnostics:
     dependencies:
+      '@shepherd/ext-agents-core':
+        specifier: workspace:*
+        version: link:../agents-core
       '@shepherd/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk

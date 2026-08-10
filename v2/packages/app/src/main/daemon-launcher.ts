@@ -102,6 +102,9 @@ function spawnDaemon(entry: string, socketPath: string, support: string): void {
       `--transport=${resolveTransportName(process.argv)}`,
     ],
     env: { ELECTRON_RUN_AS_NODE: '1' },
+    // Beside the socket it serves, so whoever is asking "where did my terminals
+    // go" is already looking in the right directory.
+    logFile: `${support}/daemon.log`,
   });
 }
 

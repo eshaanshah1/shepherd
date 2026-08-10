@@ -31,7 +31,31 @@ export const AGENTS_COMMANDS = {
    * binary or the flag.
    */
   resumeCommand: 'agents.resumeCommand',
+  /**
+   * Ask the quick tier something — §7c's `complete`, and the whole of the
+   * headless seam this build ships.
+   *
+   * A COMMAND rather than a method on the API this extension exports, and that
+   * is about enforcement: `CommandSpec.permission` is checked by `authorize()`
+   * in the dispatcher before any handler runs, while an object handed over by
+   * `extensions.get` has nothing in between. As a method, the `agents`
+   * permission — declared in the vocabulary since M1 for exactly this — would be
+   * decorative, and this extension would have to re-implement the authorizer to
+   * find out who was calling.
+   */
+  complete: 'agents.complete',
+  /** Read, set or clear which kind and model serve the quick tier. */
+  quickModel: 'agents.quickModel',
 } as const;
+
+/**
+ * The user's quick-tier choice, in this extension's own KV.
+ *
+ * One key rather than a settings system, because v2 has none — there is no config
+ * API in core and no counterpart to v1's `SettingsView`. When one lands this
+ * becomes a row in it and no consumer changes.
+ */
+export const QUICK_MODEL_KEY = 'quick-model';
 
 /** Kernel commands this extension invokes. Public vocabulary, like a CLI verb. */
 export const SESSIONS_LIST_COMMAND = 'sessions.list';
@@ -65,13 +89,23 @@ export const agentsCoreManifest: Manifest = {
    *
    * `sessions` is for `sessions.list` — the inventory the sweep reads and the
    * seed the viewing mirror starts from.
+   *
+   * `process.exec` is the headless seam's, and it is the heaviest grant in the
+   * vocabulary (ADR 0038). The alternative — every kind spawning for itself — is
+   * the failure §7c invoked to justify having a seam: they would each do the
+   * deadline, the output cap and the child environment badly and differently.
+   * Confined by three rules: the spawn lives in `complete.ts` alone, its argv
+   * comes only from a registered kind, and a caller's influence stops at the
+   * prompt text.
    */
-  permissions: ['sessions', 'storage', 'attention'],
+  permissions: ['sessions', 'storage', 'attention', 'process.exec'],
   contributes: {
     commands: [
       { id: AGENTS_COMMANDS.list, title: 'Agents: List Tracked Sessions' },
       { id: AGENTS_COMMANDS.resumeTarget, title: 'Agents: Resume Target' },
       { id: AGENTS_COMMANDS.resumeCommand, title: 'Agents: Resume Command' },
+      { id: AGENTS_COMMANDS.complete, title: 'Agents: Ask the Quick Model' },
+      { id: AGENTS_COMMANDS.quickModel, title: 'Agents: Quick Model' },
     ],
   },
 };

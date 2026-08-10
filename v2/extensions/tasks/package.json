@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "shepherd.tasks — a task is intent plus 1..n repos plus the sessions working them; worktrees, never copies.",
-  "//exports": "The agents-core split: main imports ./manifest to register, the utility process imports the root. ./model is a THIRD subpath for the pure layer — the task vocabulary, the root synthesis and the git decisions — so a consumer reaching it does not pull in `activate`.",
+  "description": "shepherd.tasks \u2014 a task is intent plus 1..n repos plus the sessions working them; worktrees, never copies.",
+  "//exports": "The agents-core split: main imports ./manifest to register, the utility process imports the root. ./model is a THIRD subpath for the pure layer \u2014 the task vocabulary, the root synthesis and the git decisions \u2014 so a consumer reaching it does not pull in `activate`.",
   "exports": {
     ".": {
       "types": "./src/index.ts",
@@ -27,7 +27,7 @@
     "typecheck": "tsc -b",
     "test": "vitest run"
   },
-  "//dependencies": "`@shepherd/ui` is the primitive set, and it is a dependency of the UI half only — boundaries.js permits it from `extensions/*/ui/**` and nowhere else. It is what makes a contributed view look native and re-theme for free, which is the substrate claim made real rather than marketed.",
+  "//dependencies": "`@shepherd/ui` is the primitive set, and it is a dependency of the UI half only \u2014 boundaries.js permits it from `extensions/*/ui/**` and nowhere else. It is what makes a contributed view look native and re-theme for free, which is the substrate claim made real rather than marketed.",
   "dependencies": {
     "@shepherd/sdk": "workspace:*",
     "@shepherd/ui": "workspace:*"
@@ -55,7 +55,8 @@
       "process.exec",
       "sessions",
       "views",
-      "layout"
+      "layout",
+      "agents"
     ],
     "contributes": {
       "commands": [
@@ -82,6 +83,10 @@
         {
           "id": "tasks.suggestRepos",
           "title": "Tasks: Suggest Repos"
+        },
+        {
+          "id": "tasks.suggestName",
+          "title": "Tasks: Suggest a Name"
         },
         {
           "id": "tasks.delete",

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ExecErr, ExecOk, ExecOptions, ProcessAPI } from '@shepherd/sdk';
-import { materializeTaskRoot, removeWorktree } from './provision.ts';
+import { addWorktree, materializeTaskRoot, provisionRepo, readRepoRefs, removeWorktree } from './provision.ts';
 import { synthTaskRoot } from './model/root-synth.ts';
 
 /**
@@ -234,5 +234,98 @@ describe('removeWorktree', () => {
     const git = fakeGit({ read: { ok: true, stdout: 'fix-login\n', stderr: '' } });
     await removeWorktree(git, repoPath, worktree);
     expect(git.calls.some((call) => call.args.includes('branch'))).toBe(false);
+  });
+});
+
+/**
+ * The split, and the reason for it: reading a repo's refs needs only its path, so
+ * it can run while a slow question is being asked elsewhere. Probe 2 sized the
+ * win — one fetch is ~2.5s of network per repo and a `worktree add` is 0.16s, so
+ * a name has to arrive before the last fraction of a second rather than before
+ * the first call.
+ */
+describe('readRepoRefs', () => {
+  const repo = { name: 'api', path: '/src/api' };
+
+  it('needs only the repo path — no branch, no destination', async () => {
+    const git = fakeGit({ read: { ok: true, stdout: 'main\nfix-login\n', stderr: '' } });
+    const refs = await readRepoRefs(git, repo);
+    expect(refs.localBranches).toContain('fix-login');
+    // The fetch comes FIRST, which is what gives the model the network's time.
+    expect(git.calls[0]?.args).toEqual(['fetch', '--quiet', 'origin']);
+    expect(git.calls.every((call) => call.opts.cwd === '/src/api')).toBe(true);
+  });
+
+  it('never writes, so it is safe to start before anything is decided', async () => {
+    const git = fakeGit({});
+    await readRepoRefs(git, repo);
+    expect(git.calls.filter((call) => call.fn === 'gitWrite')).toEqual([]);
+  });
+
+  it('survives a repo with no remote, because the fetch is opportunistic', async () => {
+    // v1 aborted when the fetch failed, which makes a remoteless or offline repo
+    // unusable. The refs come back empty and `resolveBranch` falls back to HEAD.
+    const git = fakeGit({ read: { ok: false, code: 128, stdout: '', stderr: 'no such remote' } });
+    const refs = await readRepoRefs(git, repo);
+    expect(refs.localBranches).toEqual([]);
+    expect(refs.defaultBase).toBeUndefined();
+  });
+});
+
+describe('addWorktree', () => {
+  const repo = { name: 'api', path: '/src/api' };
+  const bare = {
+    localBranches: [] as string[],
+    remoteBranches: [] as string[],
+    checkedOutBranches: [] as string[],
+    defaultBase: undefined,
+  };
+
+  it('refuses a branch another worktree holds, without running git at all', async () => {
+    const git = fakeGit({});
+    const outcome = await addWorktree(git, repo, 'fix-login', '/d/fix-login/api', {
+      ...bare,
+      localBranches: ['fix-login'],
+      checkedOutBranches: ['fix-login'],
+    });
+    expect(outcome).toMatchObject({ ok: false });
+    expect(git.calls).toEqual([]);
+  });
+
+  it('checks out a branch that exists locally', async () => {
+    const git = fakeGit({});
+    const outcome = await addWorktree(git, repo, 'fix-login', '/d/fix-login/api', {
+      ...bare,
+      localBranches: ['fix-login'],
+    });
+    expect(outcome).toMatchObject({ ok: true, name: 'api', worktree: '/d/fix-login/api' });
+    expect(git.calls[0]?.args).toEqual(['worktree', 'add', '/d/fix-login/api', 'fix-login']);
+    expect(git.calls[0]?.opts.cwd).toBe('/src/api');
+  });
+
+  it('creates a branch off HEAD when it exists nowhere', async () => {
+    const git = fakeGit({});
+    await addWorktree(git, repo, 'brand-new', '/d/brand-new/api', bare);
+    expect(git.calls[0]?.args).toEqual(['worktree', 'add', '/d/brand-new/api', '-b', 'brand-new', 'HEAD']);
+  });
+
+  it('reports git’s own words when the add fails', async () => {
+    const git = fakeGit({ write: { ok: false, code: 128, stdout: '', stderr: 'fatal: already exists\n' } });
+    expect(await addWorktree(git, repo, 'brand-new', '/d/brand-new/api', bare)).toMatchObject({
+      ok: false,
+      reason: 'fatal: already exists',
+    });
+  });
+});
+
+describe('provisionRepo', () => {
+  it('is still the two halves in order, so no caller had to change', async () => {
+    // The refactor's own assertion: the composed verb reads refs and then adds,
+    // in one repo, with the same result it always had.
+    const git = fakeGit({ read: { ok: true, stdout: 'fix-login\n', stderr: '' } });
+    const outcome = await provisionRepo(git, { name: 'api', path: '/src/api' }, 'fix-login', '/d/x/api');
+    expect(outcome).toMatchObject({ ok: true, worktree: '/d/x/api' });
+    expect(git.calls[0]?.args).toEqual(['fetch', '--quiet', 'origin']);
+    expect(git.calls.at(-1)?.fn).toBe('gitWrite');
   });
 });

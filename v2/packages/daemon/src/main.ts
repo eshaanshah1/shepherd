@@ -268,6 +268,42 @@ export async function main(argv: readonly string[]): Promise<number> {
     });
   }
 
+  /**
+   * A stray error does NOT get to kill every terminal in the app.
+   *
+   * Node terminates on an unhandled rejection, and this process had no handler
+   * for one — so any unawaited failure anywhere in the remote path, the pairing
+   * store or the sqlite layer took every pty with it, silently, from a process
+   * whose stdio went to `'ignore'`. Measured once: four sessions, two of them
+   * already dead ptys of a daemon nobody could account for.
+   *
+   * Surviving a fault is the deliberate choice here, and it is not the usual
+   * one. The asymmetry is what settles it: exiting GUARANTEES the loss of every
+   * agent the user has running, while continuing merely risks a degraded
+   * process, and the faults this actually catches live in paths a Mac's own
+   * terminals never touch. That trade is only honest because it is loud —
+   * revisit it if this ever prints without a matching bug being findable.
+   */
+  process.on('uncaughtException', (error: Error) => {
+    daemon.error(`uncaughtException — staying up: ${error.stack ?? String(error)}`);
+  });
+  process.on('unhandledRejection', (reason: unknown) => {
+    const stack = reason instanceof Error ? (reason.stack ?? reason.message) : String(reason);
+    daemon.error(`unhandledRejection — staying up: ${stack}`);
+  });
+
+  /**
+   * Whatever the reason, the last line says the daemon went.
+   *
+   * Every named exit above already logs, which is exactly why this one is worth
+   * having: it can only ever fire for a route nobody thought of, and that is the
+   * route that costs a day. Sync writes only — the fd is a file, so
+   * `process.stdout.write` lands before the process does.
+   */
+  process.on('exit', (code) => {
+    daemon.info(`exiting with code ${code}, ${host.list().length} session(s) were live`);
+  });
+
   return new Promise<number>((resolve) => {
     net.on('error', (error) => {
       daemon.error(`listen failed: ${String(error)}`);
