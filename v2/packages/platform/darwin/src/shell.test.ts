@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { FALLBACK_SHELLS, INHERITED_SHEPHERD_VARS, shellDefaults, shellDefaultsFrom } from './shell.ts';
+import {
+  FALLBACK_SHELLS,
+  INHERITED_SHEPHERD_VARS,
+  isBuildScriptVar,
+  isEphemeralNetworkVar,
+  shellDefaults,
+  shellDefaultsFrom,
+} from './shell.ts';
 
 const home = '/Users/tester';
 
@@ -151,5 +158,82 @@ describe('isForeignAgentVar', () => {
       env: { SHELL: '/bin/zsh', CLAUDE_CONFIG_DIR: '/Users/u/.claude-work' },
     });
     expect(defaults.env['CLAUDE_CONFIG_DIR']).toBe('/Users/u/.claude-work');
+  });
+});
+
+describe('isEphemeralNetworkVar', () => {
+  // The environment measured inside a real pane of an app shipped from a
+  // sandboxed agent session. The proxy it names (127.0.0.1:63135) and the process
+  // that minted the CA were both already dead, so every pane the app opened had
+  // no route to anything — and `claude` reported it as an unverifiable token.
+  const SANDBOX_ENV = {
+    SHELL: '/bin/zsh',
+    PATH: '/usr/bin',
+    http_proxy: 'http://127.0.0.1:63135',
+    HTTP_PROXY: 'http://127.0.0.1:63135',
+    https_proxy: 'http://127.0.0.1:63135',
+    HTTPS_PROXY: 'http://127.0.0.1:63135',
+    no_proxy: 'localhost,127.0.0.1,::1',
+    NO_PROXY: 'localhost,127.0.0.1,::1',
+    PIP_PROXY: 'http://127.0.0.1:63135',
+    YARN_HTTP_PROXY: 'http://127.0.0.1:63135',
+    YARN_HTTPS_PROXY: 'http://127.0.0.1:63135',
+    NODE_USE_ENV_PROXY: '1',
+    NODE_EXTRA_CA_CERTS: '/var/folders/t9/T/pmg-ca-cert-59872.pem',
+    SSL_CERT_FILE: '/var/folders/t9/T/pmg-ca-cert-59872.pem',
+    REQUESTS_CA_BUNDLE: '/var/folders/t9/T/pmg-ca-cert-59872.pem',
+    YARN_HTTPS_CA_FILE_PATH: '/var/folders/t9/T/pmg-ca-cert-59872.pem',
+  } as const;
+
+  it('strips a dead session’s proxy and its throwaway CA', () => {
+    const defaults = shellDefaultsFrom({ home: '/Users/u', env: SANDBOX_ENV });
+    for (const key of Object.keys(SANDBOX_ENV)) {
+      if (key === 'SHELL' || key === 'PATH') continue;
+      expect(defaults.env, key).not.toHaveProperty(key);
+    }
+    expect(defaults.env['PATH']).toBe('/usr/bin');
+  });
+
+  it('matches the suffix in either case, since tools disagree about spelling', () => {
+    for (const key of ['HTTPS_PROXY', 'https_proxy', 'ALL_PROXY', 'all_proxy', 'PROXY', 'proxy']) {
+      expect(isEphemeralNetworkVar(key), key).toBe(true);
+    }
+  });
+
+  it('leaves a CA that is a machine’s configuration rather than a session’s', () => {
+    // NIX_SSL_CERT_FILE points into a nix profile that outlives every process
+    // here. Stripping it would break the machine to fix a pane.
+    expect(isEphemeralNetworkVar('NIX_SSL_CERT_FILE')).toBe(false);
+    const defaults = shellDefaultsFrom({
+      home: '/Users/u',
+      env: { NIX_SSL_CERT_FILE: '/nix/var/nix/profiles/default/etc/ssl/certs/ca-bundle.crt' },
+    });
+    expect(defaults.env['NIX_SSL_CERT_FILE']).toBe('/nix/var/nix/profiles/default/etc/ssl/certs/ca-bundle.crt');
+  });
+});
+
+describe('isBuildScriptVar', () => {
+  it('strips the npm/pnpm lifecycle env the shipping script left behind', () => {
+    const defaults = shellDefaultsFrom({
+      home: '/Users/u',
+      env: {
+        PATH: '/usr/bin',
+        CI: 'true',
+        INIT_CWD: '/Users/u/.shepherd/worktrees/shepherd/v2-refactor/v2',
+        NODE: '/opt/homebrew/Cellar/node/26.5.0/bin/node',
+        npm_lifecycle_event: 'ship',
+        npm_config_registry: 'https://registry.npmjs.org/',
+        pnpm_config_verify_deps_before_run: 'false',
+        PNPM_SCRIPT_SRC_DIR: '/Users/u/v2',
+      },
+    });
+    expect(Object.keys(defaults.env).sort()).toEqual(['HOME', 'PATH']);
+  });
+
+  it('does not strip a variable that merely starts the same way', () => {
+    // `NODE` is the lifecycle script's; NODE_ENV and PNPMHOME are not it.
+    for (const key of ['NODE_ENV', 'NODEJS_HOME', 'CID', 'INIT_CWD_OLD']) {
+      expect(isBuildScriptVar(key), key).toBe(false);
+    }
   });
 });

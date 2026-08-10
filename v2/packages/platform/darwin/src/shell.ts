@@ -99,6 +99,75 @@ export function isForeignAgentVar(key: string): boolean {
   return key.startsWith('CLAUDE_CODE_') || key.startsWith('CLAUDE_') || key === 'CLAUDECODE';
 }
 
+/**
+ * Certificate bundles that name a file minted for one process's lifetime.
+ *
+ * The uppercase form is the key; the lookup folds case, because the same
+ * variable is spelled both ways by different tools.
+ */
+const EPHEMERAL_CA_VARS = new Set([
+  'NODE_EXTRA_CA_CERTS',
+  'NODE_USE_ENV_PROXY',
+  'SSL_CERT_FILE',
+  'SSL_CERT_DIR',
+  'REQUESTS_CA_BUNDLE',
+  'CURL_CA_BUNDLE',
+  'PIP_CERT',
+  'YARN_HTTPS_CA_FILE_PATH',
+  'CARGO_HTTP_CAINFO',
+  'GIT_SSL_CAINFO',
+]);
+
+/**
+ * **A proxy, and its CA, belonging to a process that has already exited.**
+ *
+ * Measured, and it cost a session to find: `pnpm ship` run from a Claude Code
+ * pane relaunches the app through a detached `open`, and the sandbox that pane's
+ * Bash runs under exports `HTTPS_PROXY=http://127.0.0.1:<port>` plus a generated
+ * MITM CA in `$TMPDIR`. Both are scoped to that agent session. The app inherits
+ * them, copies them into every pane below, and then the session ends — so every
+ * pane opened afterwards dials a closed port for anything `no_proxy` does not
+ * exempt, for as long as that build of the app runs.
+ *
+ * The symptom is not "no network", which is why it reads as something else
+ * entirely: `claude` fails its org-verification call and reports `the token could
+ * not be validated`, i.e. a revoked login on a token that is fine.
+ *
+ * Safe to strip for the reason `NODE_OPTIONS` is: a pane's shell is a login
+ * shell, so a proxy the user configured in their profile comes back on its own,
+ * and one that was merely inherited does not. A proxy set machine-wide through
+ * launchd and nowhere else is the case this does not serve — take that trade
+ * knowingly, because the alternative is a pane whose network depends on which
+ * terminal the app happened to be started from.
+ *
+ * A suffix match rather than a list: this is other programs' vocabulary
+ * (`PIP_PROXY`, `YARN_HTTPS_PROXY`, …) and it grows without notice.
+ */
+export function isEphemeralNetworkVar(key: string): boolean {
+  const upper = key.toUpperCase();
+  return upper === 'PROXY' || upper.endsWith('_PROXY') || EPHEMERAL_CA_VARS.has(upper);
+}
+
+/**
+ * The environment of the npm/pnpm script that happened to launch the app.
+ *
+ * Same door as the proxy above — `pnpm ship` — and it arrives with it: `CI=true`,
+ * `INIT_CWD` pointing at whichever worktree shipped, `NODE`, and forty `npm_*`
+ * keys describing a lifecycle script that finished long ago. `CI` alone changes
+ * how pnpm, vitest and half the toolchain behave in every pane the user opens,
+ * and it does it silently.
+ */
+export function isBuildScriptVar(key: string): boolean {
+  return (
+    key.startsWith('npm_') ||
+    key.startsWith('pnpm_') ||
+    key.startsWith('PNPM_') ||
+    key === 'INIT_CWD' ||
+    key === 'NODE' ||
+    key === 'CI'
+  );
+}
+
 export function shellDefaultsFrom({ home, env }: ShellInputs): ShellDefaults {
   const shell = env['SHELL'];
   const command =
@@ -106,7 +175,8 @@ export function shellDefaultsFrom({ home, env }: ShellInputs): ShellDefaults {
 
   const inherited: Record<string, string> = {};
   for (const [key, value] of Object.entries(env)) {
-    if (value === undefined || STRIPPED.has(key) || isForeignAgentVar(key)) continue;
+    if (value === undefined || STRIPPED.has(key)) continue;
+    if (isForeignAgentVar(key) || isEphemeralNetworkVar(key) || isBuildScriptVar(key)) continue;
     inherited[key] = value;
   }
   inherited['HOME'] = home;
