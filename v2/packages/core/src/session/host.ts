@@ -353,10 +353,10 @@ export class SessionHost {
    * would have to serialize a terminal that may still be parsing — which is
    * exactly the bug probe p4 found.
    */
-  snapshot(id: SessionID, sink: (bytes: Uint8Array) => void): Result<void, SessionError> {
+  snapshot(id: SessionID, sink: (bytes: Uint8Array) => void, lines?: number): Result<void, SessionError> {
     const record = this.#sessions.get(id);
     if (!record) return err(unknownSession(id));
-    record.fanout.snapshot(sink);
+    record.fanout.snapshot(sink, lines);
     return ok(undefined);
   }
 

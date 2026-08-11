@@ -113,8 +113,12 @@ export class PtyFanout {
    * the capture happens at a point in the write queue, and a synchronous getter
    * would have to serialize a terminal that may still be parsing.
    */
-  snapshot(sink: (bytes: Uint8Array) => void): void {
-    this.#mirror.capture(sink);
+  snapshot(sink: (bytes: Uint8Array) => void, lines?: number): void {
+    // `lines` is optional and threaded rather than defaulted here: the mirror
+    // owns what "as much as we keep" means, and a second default would be a
+    // second answer that drifts from it.
+    if (lines === undefined) this.#mirror.capture(sink);
+    else this.#mirror.capture(sink, lines);
   }
 
   /** What is on the display right now. */

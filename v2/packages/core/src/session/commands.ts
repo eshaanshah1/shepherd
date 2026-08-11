@@ -1,4 +1,4 @@
-import { disposeAll, s, type Disposable, type PaneID } from '@shepherd/sdk';
+import { disposeAll, s, sessionId as toSessionId, type Disposable, type PaneID } from '@shepherd/sdk';
 import type { CommandRegistry } from '../commands/registry.ts';
 import type { ForegroundReading, SessionInfo } from './host.ts';
 
@@ -23,6 +23,18 @@ import type { ForegroundReading, SessionInfo } from './host.ts';
 export interface SessionInventory {
   list(): SessionInfo[];
   foreground(id: SessionInfo['id']): ForegroundReading | Promise<ForegroundReading>;
+  /**
+   * The screen as bytes, without attaching — what `sessions.capture` answers.
+   *
+   * Callback-shaped because the host's is: the mirror captures at a point in its
+   * write queue, and a synchronous getter would have to serialize a terminal
+   * that may still be parsing.
+   */
+  snapshot(
+    id: SessionInfo['id'],
+    sink: (bytes: Uint8Array) => void,
+    lines?: number,
+  ): { ok: true } | { ok: false; error: { message: string } };
 }
 
 export interface SessionCommandsOptions {
@@ -55,12 +67,70 @@ export type ViewingLookup = (pane: PaneID) => boolean;
 
 export const SESSION_COMMANDS = {
   list: 'sessions.list',
+  capture: 'sessions.capture',
 } as const;
+
+/**
+ * How much scrollback a capture takes when the caller does not say.
+ *
+ * A thousand lines is what an archived tab is worth: enough to scroll back
+ * through what an agent did, and bounded so a build log that printed a hundred
+ * thousand lines does not become a hundred-megabyte file nobody asked for.
+ */
+export const DEFAULT_CAPTURE_LINES = 1000;
 
 export function registerSessionCommands(options: SessionCommandsOptions): Disposable {
   const { host, registry, viewing } = options;
 
   const subscriptions: Disposable[] = [
+    registry.register(SESSION_COMMANDS.capture, {
+      // No title: not a palette verb — its whole effect is a return value, and
+      // that value is a screenful of bytes.
+      permission: 'sessions',
+      schema: s.object({ session: s.string(), lines: s.optional(s.int()) }),
+      /**
+       * This session's screen, scrollback included — without attaching to it.
+       *
+       * `SessionHost.snapshot` has done this since remote landed: it is how a
+       * viewer arriving mid-stream is shown what it missed. It had no verb, so
+       * the only thing that could ask was a viewer. Archiving a task is the
+       * second caller and wants exactly the same bytes for exactly the same
+       * reason — something will have to be shown this screen later, having never
+       * seen it live.
+       *
+       * **Base64**, because the answer crosses an IPC port inside a JSON
+       * envelope and these are a terminal's own bytes, not text.
+       *
+       * Refuses an unknown session rather than answering with an empty screen:
+       * "nothing was on it" and "there is no such session" are different facts,
+       * and a caller archiving a pane has to tell them apart.
+       */
+      handler: async (args) => {
+        /*
+         * AWAITED, and that is the whole reason `snapshot` is callback-shaped
+         * rather than a getter: the mirror captures at a point in its WRITE
+         * QUEUE, so the sink fires after this turn. A handler that read a local
+         * straight after calling it would answer an empty screen every time —
+         * and answer it successfully, which is the shape that gets archived as a
+         * blank tab and reports no fault.
+         */
+        const captured = await new Promise<Uint8Array<ArrayBufferLike>>((resolve, reject) => {
+          const taken = host.snapshot(
+            toSessionId(args.session),
+            (bytes) => resolve(bytes),
+            args.lines ?? DEFAULT_CAPTURE_LINES,
+          );
+          // The sink never fires for a session that is not there, so the refusal
+          // has to come from the call's own answer.
+          if (!taken.ok) reject(new Error(taken.error.message));
+        });
+        // A copy through a plain array rather than `Buffer.from(view)`: these
+        // bytes may sit on a `SharedArrayBuffer`, which `Buffer.from`'s type
+        // will not accept.
+        return { bytes: Buffer.from(Array.from(captured)).toString('base64') };
+      },
+    }),
+
     registry.register(SESSION_COMMANDS.list, {
       title: 'List Sessions',
       permission: 'sessions',
