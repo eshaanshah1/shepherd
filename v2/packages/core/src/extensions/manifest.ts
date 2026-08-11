@@ -11,6 +11,8 @@ import {
   type Manifest,
   type Permission,
   type Result,
+  type SettingsPage,
+  type SettingsPageWire,
 } from '@shepherd/sdk';
 
 /**
@@ -179,13 +181,35 @@ export function parseManifest(raw: unknown, source: ExtensionSource): Result<Man
   return ok(manifest);
 }
 
+/**
+ * The contributions, copied field by field — and every field has to be named here
+ * or it is DROPPED.
+ *
+ * That is the trap this comment exists for. It cost a debugging session: adding
+ * `contributes.settings` to the manifest type and to `manifestSchema` was not
+ * enough, because the parsed manifest this function returns is what the registry
+ * stores and what the extension host reads — so an unnamed contribution validated
+ * fine, survived the schema, and then silently did not exist. The symptom was an
+ * extension refusing to activate because a setting it had declared was not seeded.
+ *
+ * A spread of `raw` would fix that class of bug and open a worse one: `s.object`
+ * rejects unknown keys, so a field a NEWER build added would fail the child's own
+ * parse rather than being ignored. The explicit copy keeps that a typecheck error.
+ * If you add a contribution kind, add it here too.
+ */
 function contributionsOf(raw: {
   commands?: { id: string; title?: string; key?: string }[];
   views?: { id: string; type: string; title: string; region?: string }[];
-}): { commands?: readonly ContributedCommand[]; views?: readonly ContributedView[] } {
+  settings?: SettingsPageWire[];
+}): {
+  commands?: readonly ContributedCommand[];
+  views?: readonly ContributedView[];
+  settings?: readonly SettingsPage[];
+} {
   return {
     ...(raw.commands === undefined ? {} : { commands: raw.commands }),
     ...(raw.views === undefined ? {} : { views: raw.views }),
+    ...(raw.settings === undefined ? {} : { settings: raw.settings }),
   };
 }
 

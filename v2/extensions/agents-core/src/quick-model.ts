@@ -1,3 +1,6 @@
+import type { SettingChoice, SettingsAPI, KV, Schema } from '@shepherd/sdk';
+import { s } from '@shepherd/sdk';
+import { QUICK_KIND_SETTING, QUICK_MODEL_KEY, QUICK_MODEL_SETTING } from './manifest.ts';
 import type { AgentKind, HeadlessHalf } from './kind.ts';
 
 /**
@@ -96,4 +99,91 @@ export function describeQuick(
     override: override ?? null,
     available: kinds.filter((kind) => kind.headless !== undefined).map((kind) => kind.id),
   };
+}
+
+
+// ------------------------------------------------------------------- as settings
+
+/**
+ * The two settings keys → the override `resolveQuick` takes.
+ *
+ * `null` is DROPPED rather than passed through: a nullable spec's null means "the
+ * extension's own fallback", while `resolveQuick` reads a PRESENT `kind` as "this
+ * kind or nothing at all" — so a null arriving as a kind id would resolve to no
+ * agent, and a quick call would fail as though the user had chosen a vendor that
+ * is not installed.
+ */
+export function overrideFromSettings(values: Readonly<Record<string, unknown>>): QuickOverride | undefined {
+  const kind = values[QUICK_KIND_SETTING];
+  const model = values[QUICK_MODEL_SETTING];
+  const override: QuickOverride = {
+    ...(typeof kind === 'string' && kind !== '' ? { kind } : {}),
+    ...(typeof model === 'string' && model !== '' ? { model } : {}),
+  };
+  return override.kind === undefined && override.model === undefined ? undefined : override;
+}
+
+/**
+ * What the settings screen may offer for both quick-tier rows.
+ *
+ * One list, deliberately: a kind id and a model id are both strings the vendor
+ * chose, and the screen asks the same command for either row. Each entry carries
+ * the kind it came from as its description, which is what makes a bare model alias
+ * (`sonnet`) readable when two vendors are installed.
+ */
+export function quickChoices(kinds: readonly AgentKind[], key: string): readonly SettingChoice[] {
+  const capable = kinds.filter(
+    (kind): kind is AgentKind & { headless: HeadlessHalf } => kind.headless !== undefined,
+  );
+  if (key === QUICK_KIND_SETTING) {
+    return capable.map((kind) => ({ value: kind.id, label: kind.id }));
+  }
+  // Every model every capable kind advertises. A kind that advertises none serves
+  // exactly one, and `quickModel` is it.
+  return capable.flatMap((kind) =>
+    (kind.headless.quickModels ?? [kind.headless.quickModel]).map((model) => ({
+      value: model,
+      label: model,
+      description: kind.id,
+    })),
+  );
+}
+
+const storedOverrideSchema: Schema<{ kind?: string; model?: string }> = s.stored({
+  kind: s.optional(s.string()),
+  model: s.optional(s.string()),
+});
+
+/**
+ * The pre-settings KV key, moved once.
+ *
+ * Three rules, each with a failure behind it:
+ *
+ *   - It never overwrites a settings value the user has ALREADY chosen — a
+ *     migration that did would undo a deliberate choice with a stale one.
+ *   - It deletes the old key even when it wrote nothing, or the migration runs on
+ *     every launch forever.
+ *   - A malformed blob is dropped rather than thrown: this runs during activation,
+ *     and a preference that cannot be parsed must not stop the extension that
+ *     tracks every agent from starting.
+ */
+export async function migrateQuickOverride(
+  storage: KV,
+  settings: SettingsAPI,
+  current: Readonly<Record<string, unknown>>,
+): Promise<void> {
+  const stored = storage.get(QUICK_MODEL_KEY, storedOverrideSchema);
+  if (stored === undefined) return;
+
+  const writes: [string, string | undefined][] = [
+    [QUICK_KIND_SETTING, stored.kind],
+    [QUICK_MODEL_SETTING, stored.model],
+  ];
+  for (const [key, value] of writes) {
+    // `null` is this key's default and therefore its untouched state; anything
+    // else is the user's own choice and wins over the old blob.
+    if (value === undefined || (current[key] ?? null) !== null) continue;
+    await settings.set(key, value);
+  }
+  storage.delete(QUICK_MODEL_KEY);
 }

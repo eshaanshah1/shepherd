@@ -9,13 +9,22 @@ import {
 } from '@shepherd/sdk';
 import { AGENT_KINDS_POINT, type AgentKind } from './kind.ts';
 import { limiter, runComplete, MAX_CONCURRENT, type CompleteAnswer } from './complete.ts';
-import { applyOverride, describeQuick, resolveQuick, type QuickOverride } from './quick-model.ts';
+import {
+  applyOverride,
+  describeQuick,
+  migrateQuickOverride,
+  overrideFromSettings,
+  quickChoices,
+  resolveQuick,
+  type QuickOverride,
+} from './quick-model.ts';
 import { AgentRegistry, type AgentChange, type AgentRecord } from './registry.ts';
 import { attentionFor } from './attention-map.ts';
 import {
   AGENT_STATE_TOPIC,
   AGENTS_COMMANDS,
-  QUICK_MODEL_KEY,
+  QUICK_KIND_SETTING,
+  QUICK_MODEL_SETTING,
   SESSION_BOUND_TOPIC,
   SESSION_EXIT_TOPIC,
   SESSIONS_LIST_COMMAND,
@@ -112,18 +121,36 @@ function triState(value: unknown): boolean | null {
 }
 
 export const activate: ActivateFn<AgentsAPI> = async (ctx: ExtensionContext, api: Shepherd) => {
-  const { commands, events, points, attention } = api.proposed;
+  const { commands, events, points, attention, settings } = api.proposed;
   const registry = new AgentRegistry();
   const kinds = points.define<AgentKind>(AGENT_KINDS_POINT, { order: 'priority' });
   ctx.subscriptions.push(kinds);
 
-  const overrideSchema = s.stored({ kind: s.optional(s.string()), model: s.optional(s.string()) });
   /**
-   * An unreadable override reads as "no override" rather than as a failure: it is
-   * a preference, and refusing to ask a model because a preference blob is
-   * malformed would be worse than having forgotten which model was chosen.
+   * The quick-tier choice, read from SETTINGS rather than from this extension's own
+   * KV (spec 2026-08-11).
+   *
+   * One value, two front doors: `shepherd agent quick-model` and the settings
+   * screen now write the same keys, so the CLI cannot report one model while the
+   * screen shows another. A nullable setting reads as `null`, which
+   * `overrideFromSettings` drops — "unset" here is a meaning only this extension
+   * can resolve, not a missing value.
    */
-  const readOverride = (): QuickOverride | undefined => ctx.storage.get(QUICK_MODEL_KEY, overrideSchema);
+  const nullableString = s.union(s.string(), s.nullValue());
+  const readOverride = (): QuickOverride | undefined =>
+    overrideFromSettings({
+      [QUICK_KIND_SETTING]: settings.get(QUICK_KIND_SETTING, nullableString),
+      [QUICK_MODEL_SETTING]: settings.get(QUICK_MODEL_SETTING, nullableString),
+    });
+
+  /**
+   * The pre-settings key, moved once and then gone. Awaited during activation, so
+   * nothing reads the override before the move has happened.
+   */
+  await migrateQuickOverride(ctx.storage, settings, {
+    [QUICK_KIND_SETTING]: settings.get(QUICK_KIND_SETTING, nullableString),
+    [QUICK_MODEL_SETTING]: settings.get(QUICK_MODEL_SETTING, nullableString),
+  });
   const quickLimit = limiter(MAX_CONCURRENT);
 
   /**
@@ -442,6 +469,17 @@ export const activate: ActivateFn<AgentsAPI> = async (ctx: ExtensionContext, api
         return answer;
       },
     }),
+    /**
+     * What the settings screen may offer — asked when that page is opened.
+     *
+     * No permission: it is a read of what kinds advertise, and a caller that can
+     * see the settings page can already see the answer. The vendor names its own
+     * models; nothing here does.
+     */
+    commands.register(AGENTS_COMMANDS.quickChoices, {
+      schema: s.object({ key: s.optional(s.string()) }),
+      handler: (args) => quickChoices(kinds.all(), args.key ?? QUICK_MODEL_SETTING),
+    }),
     commands.register(AGENTS_COMMANDS.quickModel, {
       title: 'Agents: Quick Model',
       schema: s.object({
@@ -454,10 +492,24 @@ export const activate: ActivateFn<AgentsAPI> = async (ctx: ExtensionContext, api
        * question: `shepherd agent quick-model` shows it, the same line with a
        * flag changes it.
        */
-      handler: (args) => {
+      handler: async (args) => {
         const next = applyOverride(readOverride(), args);
-        if (next === undefined) ctx.storage.delete(QUICK_MODEL_KEY);
-        else ctx.storage.set(QUICK_MODEL_KEY, next);
+        /**
+         * Written as two independent keys, which is what preserves
+         * `applyOverride`'s merge semantics: setting the model must not move the
+         * user back to the default vendor. A `clear` writes `null` to both, which
+         * is each key's declared default — so the registry stores nothing and the
+         * setting is genuinely reset rather than pinned to today's default.
+         */
+        const failures = [
+          await settings.set(QUICK_KIND_SETTING, next?.kind ?? null),
+          await settings.set(QUICK_MODEL_SETTING, next?.model ?? null),
+        ].filter((result) => !result.ok);
+        if (failures.length > 0) {
+          // A verb that reported the new value while having stored nothing is the
+          // silent no-op this codebase refuses; the caller gets the reason.
+          throw new Error(failures.map((result) => (result.ok ? '' : result.error.message)).join('; '));
+        }
         return describeQuick(kinds.all(), next);
       },
     }),

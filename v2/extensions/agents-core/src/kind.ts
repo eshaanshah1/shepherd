@@ -49,6 +49,17 @@ export interface HeadlessHalf {
    * `resumeTargetOf` already follows (D11).
    */
   readonly quickModel: string;
+  /**
+   * Every model this vendor will accept for the quick tier, `quickModel` first.
+   *
+   * Optional, and absent means "just `quickModel`" — a kind that serves exactly
+   * one model says so by saying nothing. It exists because the SETTINGS screen has
+   * to offer a choice, and the only honest source for what a vendor can run is the
+   * vendor: `agents-core` reads this and never names a model, which is the same
+   * D11 rule `quickModel` itself follows. A free-text box was the alternative and
+   * it makes a typo indistinguishable from a retired model.
+   */
+  readonly quickModels?: readonly string[];
   argv(input: HeadlessInput): readonly string[];
   /** stdout → the answer, or `undefined` if this output carries none. */
   parse(stdout: string): string | undefined;
