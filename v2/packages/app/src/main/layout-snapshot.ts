@@ -36,6 +36,9 @@ export function layoutSnapshot(store: LayoutStore, root: RootID): LayoutSnapshot
 
   return {
     root,
+    // Its own id when nothing grouped it — the same default the store applies,
+    // restated here only because the wire type is not optional.
+    group: store.groupOf(root) ?? String(root),
     tree,
     focusedPaneId: store.focused(root),
     zoomedPaneId: store.zoomed(root),

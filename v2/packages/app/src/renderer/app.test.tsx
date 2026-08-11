@@ -100,9 +100,10 @@ function spyCommands() {
 }
 
 /** One root's projection. `snapshotOf` wraps it as the envelope the page reads. */
-function rootOf(tree: SplitNode, focused?: Pane, root = 'window-1'): LayoutSnapshot {
+function rootOf(tree: SplitNode, focused?: Pane, root = 'window-1', group = root): LayoutSnapshot {
   return {
     root,
+    group,
     tree,
     focusedPaneId: focused?.id ?? firstPaneId(tree),
     zoomedPaneId: null,
@@ -620,6 +621,7 @@ describe('roots the window switches between', () => {
 describe('the empty state', () => {
   const paneless = (root = 'window-1'): LayoutSnapshot => ({
     root,
+    group: root,
     tree: null,
     focusedPaneId: null,
     zoomedPaneId: null,
