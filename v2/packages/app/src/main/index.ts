@@ -584,6 +584,13 @@ const extensions: ExtensionRegistry = new ExtensionRegistry({
  */
 let publishLayout: () => void = () => undefined;
 
+/**
+ * Stops the `layout.rootsChanged` announcer at quit. Module scope for the same
+ * reason `publishLayout` is: it is created during bootstrap and torn down by the
+ * `will-quit` handler, which lives out here.
+ */
+let stopRootsAnnouncer: () => void = () => undefined;
+
 const bridge = new SessionBridge(host, {
   clock: systemClock,
   // A pane's session is bound where it is created (see `LayoutBinding`), so
@@ -790,6 +797,43 @@ void app.whenReady().then(async () => {
   });
   publishLayout = layoutIpc.publish;
   activeRoot = layoutIpc.getActive;
+
+  /**
+   * The layout changed — said on the bus, for extensions.
+   *
+   * The note above explains why the active-root SWITCH is not announced: it is a
+   * projection, and the sidebar reads it from the snapshot it already draws the
+   * stage from. This is the other kind. `tasks` contributes a row per tab,
+   * labelled by that tab's focused pane, and an extension cannot read the layout
+   * synchronously (`LayoutAPI`'s getters throw `ACROSS_A_PORT`) — so without an
+   * announcement it would draw the label a pane had when it was spawned and keep
+   * it forever, and a tab opened from the CLI would never appear at all.
+   *
+   * **Payload-free on purpose.** The consumer re-reads through
+   * `layout.listRoots`, which is one authority; a payload here would be a
+   * second, arriving by a route that can drop.
+   *
+   * **Debounced**, because `onDidChange` fires per structural change and an OSC
+   * title landing during a build is a burst of them. The trailing edge is the
+   * one that matters: what a consumer wants is "go and look again", and looking
+   * once after the burst is the same answer as looking forty times during it.
+   */
+  let announceRoots: ReturnType<typeof setTimeout> | undefined;
+  const rootsChanged = layout.onDidChange(() => {
+    if (announceRoots !== undefined) return;
+    announceRoots = setTimeout(() => {
+      announceRoots = undefined;
+      bus.emit('layout.rootsChanged', {}, KERNEL);
+    }, 100);
+  });
+  stopRootsAnnouncer = () => {
+    // The pending timer too: a timer that outlives the bus emits onto one
+    // nobody is left to read, which is the shape the viewing topic's own
+    // teardown comment warns about two lines down.
+    if (announceRoots !== undefined) clearTimeout(announceRoots);
+    announceRoots = undefined;
+    rootsChanged.dispose();
+  };
 
   registerAttentionCommands({ store: attention, registry });
 
@@ -1206,6 +1250,7 @@ app.on('will-quit', () => {
   // so the pending one has to be forced out here or the last change made before
   // quitting is the one that never lands.
   layout.flush();
+  stopRootsAnnouncer();
   layout.dispose();
   bridge.dispose();
   host.dispose();

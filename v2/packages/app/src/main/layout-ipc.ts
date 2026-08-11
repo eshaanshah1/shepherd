@@ -70,10 +70,41 @@ export function registerLayoutIpc(options: LayoutIpcOptions): LayoutIpc {
     }
   };
 
+  /**
+   * The tab each group was last showing.
+   *
+   * Transient, and here rather than in the store for the same reason `active`
+   * is: it is a property of the WINDOW. The store holds N pane groups and has no
+   * opinion about which one anybody is looking at, let alone which tab of it.
+   */
+  const lastInGroup = new Map<string, RootID>();
+
   const setActive = (root: RootID): void => {
-    if (root === active) return;
-    active = root;
-    onActiveChanged?.(root);
+    /*
+     * Asking for a group's ANCHOR is asking for the group.
+     *
+     * A root whose id is its own group is the thing a sidebar row names — and
+     * "show me this task" means the tab you left it on, which is how every
+     * tabbed application in existence reads it. Landing on tab 1 instead would
+     * lose your place every time you glanced at something else.
+     *
+     * Any other root is a specific tab and is honoured exactly.
+     *
+     * **And only from OUTSIDE the group.** Once you are already in it, naming
+     * the anchor is a tab click — the strip's first tab is the anchor, and a
+     * rule that redirected it could never move you off the remembered tab. The
+     * two gestures share a verb and are told apart by where you are standing,
+     * which is the only thing that distinguishes them.
+     */
+    const anchor = store.groupOf(root) === String(root);
+    const fromOutside = store.groupOf(active) !== String(root);
+    const remembered = anchor && fromOutside ? lastInGroup.get(String(root)) : undefined;
+    const target = remembered !== undefined && store.hasRoot(remembered) ? remembered : root;
+    if (target === active) return;
+    active = target;
+    const group = store.groupOf(target);
+    if (group !== undefined) lastInGroup.set(group, target);
+    onActiveChanged?.(target);
     publish();
   };
 
