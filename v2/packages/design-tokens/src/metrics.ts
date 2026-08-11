@@ -266,6 +266,19 @@ export const motion = {
   scrambleTickMs: 70,
   /** Rule 7: 120–180ms, near-linear, and nothing bounces. */
   transitionMs: 140,
+  /**
+   * A row ARRIVING in a list. Longer than a state transition, and still short.
+   *
+   * A state change (hover, selection) is feedback for something the reader just
+   * did, so it must not lag them — 140ms. An entrance is the list telling them
+   * something happened elsewhere, and at 140ms it is over before the eye lands on
+   * it, which is indistinguishable from the wholesale swap it replaces. 180ms is
+   * the top of rule 7's band and that is deliberately where this sits.
+   *
+   * Read by CSS as `--sh-motion-enter` and by the renderer as `rowEnterMs`, from
+   * this one number: two constants that must agree are one that will not.
+   */
+  enterMs: 180,
 } as const;
 
 /**

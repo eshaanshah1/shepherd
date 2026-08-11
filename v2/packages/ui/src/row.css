@@ -209,3 +209,48 @@
 .sh-ui-row:focus-within .sh-ui-row__meta:has(+ .sh-ui-row__actions:not(:empty)) {
   visibility: hidden;
 }
+
+/* ---------------------------------------------------------------- entrance */
+/*
+ * A row ARRIVING in a list that is re-read whole.
+ *
+ * Opacity and a 4px slide — **never height.** The first rule in this file is
+ * that exactly one declaration sets a row's height, and a named test walks every
+ * `sh-ui-row` rule to keep it that way; an entrance that animated height would
+ * also reflow every row below it for the length of the animation, which is the
+ * layout-follows-paint mistake rule 9 exists to ban.
+ *
+ * `transform`/`opacity` only, so it is composited and cannot cost layout at all.
+ * No pulse and no shimmer: those are banned, and a row that is merely new is not
+ * a row that is busy — `busy` is the braille spinner in the leading slot.
+ */
+@keyframes sh-ui-row-enter {
+  from {
+    opacity: 0;
+    transform: translateX(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.sh-ui-row--entering {
+  /*
+   * `both`, so the row is not painted at full opacity for the frame between
+   * mounting and the animation's first tick — a flash of the finished state is
+   * exactly what this is here to remove.
+   */
+  animation: sh-ui-row-enter var(--sh-motion-enter) ease-out both;
+}
+
+/*
+ * Reduced motion turns it OFF rather than shortening it. An entrance is
+ * decoration: there is no information in it to preserve, so the honest
+ * accommodation is that the row is simply there.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .sh-ui-row--entering {
+    animation: none;
+  }
+}

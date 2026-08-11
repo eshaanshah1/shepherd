@@ -29,6 +29,7 @@ export function cssVariables(mode: ThemeMode, scale: Metrics = metrics): Record<
   vars[cssVarName('font-mono')] = fonts.mono;
   vars[cssVarName('font-serif')] = fonts.serif;
   vars[cssVarName('motion')] = `${motion.transitionMs}ms`;
+  vars[cssVarName('motion-enter')] = `${motion.enterMs}ms`;
 
   /*
    * The derived scale, every member of it.

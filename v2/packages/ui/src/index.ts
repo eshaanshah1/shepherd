@@ -79,7 +79,7 @@ export {
 export { fuzzyFilter, fuzzyMatch, fuzzyScore, type FuzzyMatch } from '@shepherd/sdk';
 
 // Structure
-export { Row, rowClasses, type RowProps } from './row.tsx';
+export { Row, rowClasses, rowEnterMs, type RowProps } from './row.tsx';
 export { Empty, type EmptyProps } from './empty.tsx';
 export {
   Menu,

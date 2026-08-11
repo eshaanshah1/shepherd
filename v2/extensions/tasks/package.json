@@ -98,6 +98,9 @@
         },
         {
           "id": "tasks.presentation"
+        },
+        {
+          "id": "tasks.machines"
         }
       ]
     }

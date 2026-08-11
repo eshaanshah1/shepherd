@@ -610,3 +610,62 @@ describe('one list across members', () => {
     view.unmount();
   });
 });
+
+/**
+ * A list that grows, rather than one that is swapped.
+ *
+ * Every contributed tree is re-read whole — `views.children` answers rows and the
+ * dock never patches them — so without a mark on the new ones a task appearing is
+ * one paint with N rows and the next with N+1. React keeps the surviving rows'
+ * DOM because they are keyed; all that is missing is knowing which are new.
+ */
+describe('rows arriving', () => {
+  const LOCAL: ViewContributionDTO[] = [
+    { extension: 'shepherd.tasks', type: 'tasks.tree', kind: 'tree' },
+  ];
+
+  function growing(rows: { current: readonly TreeItem[] }): ViewsApi {
+    let notify: (type: string) => void = () => {};
+    return {
+      list: () => Promise.resolve({ ok: true, value: LOCAL }),
+      children: () => Promise.resolve({ ok: true, value: rows.current }),
+      activate: () => Promise.resolve({ ok: true, value: undefined }),
+      invoke: () => Promise.resolve({ ok: true, value: undefined }),
+      present: () => Promise.resolve({ ok: true, value: { shown: false } }),
+      onChanged: (listener) => {
+        notify = listener;
+        // The dock re-reads on a nudge; handing the trigger back is how the test
+        // makes the SECOND read happen the way the app does.
+        (globalThis as { __nudge?: () => void }).__nudge = () => notify('tasks.tree');
+        return () => {};
+      },
+    };
+  }
+
+  const entering = (container: HTMLElement): string[] =>
+    all(container, 'view-row')
+      .filter((el) => el.className.includes('sh-ui-row--entering'))
+      .map((el) => el.getAttribute('data-row-id') ?? '');
+
+  it('marks only the row that is new, and nothing on the first list', async () => {
+    const rows = { current: [{ id: 'a', label: 'One' }] as readonly TreeItem[] };
+    const view = mount(<ViewDock views={growing(rows)} />);
+    await settle();
+
+    // Nothing flies in on the first paint: everything is new then, and a sidebar
+    // that animates on every launch is a sidebar you wait for.
+    expect(entering(view.container)).toEqual([]);
+
+    rows.current = [
+      { id: 'a', label: 'One' },
+      { id: 'b', label: 'Two' },
+    ];
+    (globalThis as { __nudge?: () => void }).__nudge?.();
+    await settle();
+
+    // The new row only. A list that marked every row on every re-read would be
+    // the wholesale swap again, with an animation on top.
+    expect(entering(view.container)).toEqual(['b']);
+    view.unmount();
+  });
+});

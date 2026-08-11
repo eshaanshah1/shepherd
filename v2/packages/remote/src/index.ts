@@ -44,8 +44,10 @@ export {
   type Proof,
 } from './join.ts';
 export {
+  isLoopback,
   issueTombstone,
   mergeEntries,
+  selfAdvertisement,
   mergeTombstones,
   revokedIds,
   tombstoneBytes,

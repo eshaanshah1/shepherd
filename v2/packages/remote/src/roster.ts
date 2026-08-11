@@ -163,6 +163,39 @@ export function rosterAddress(
 ): readonly string[] {
   if (servingPort === undefined) return [];
   const host = remoteAddress.split(':')[0] ?? '';
-  if (host === '' || host === '127.0.0.1' || host === '::1') return [];
+  if (isLoopback(host)) return [];
   return [`${host}:${servingPort}`];
+}
+
+/** `127.0.0.1`, `::1`, `localhost`, or nothing at all. */
+export function isLoopback(host: string): boolean {
+  const bare = host.replace(/^\[|\]$/g, '');
+  return bare === '' || bare === '127.0.0.1' || bare === '::1' || bare === 'localhost';
+}
+
+/**
+ * What this device tells a member it serves on — **or nothing, when what it
+ * serves on is its own loopback.**
+ *
+ * The exact mirror of `rosterAddress`, and it closes a defect measured on two
+ * real Macs. The transport is chosen per launch and silently: a Mac started
+ * without `--shepherd-remote=wifi` serves control on `127.0.0.1` while still
+ * advertising the port it is listening on, so the other member wrote a roster
+ * entry that looked perfectly healthy — a name, a port, a recent timestamp — and
+ * could never be dialled. Every symptom pointed at the network.
+ *
+ * `rosterAddress` already refuses to record a loopback address it OBSERVED. This
+ * refuses to hand one out about ourselves. Both are the same rule read from
+ * opposite ends: an address that resolves, on somebody else's machine, to
+ * themselves is not an address.
+ *
+ * A device with no advertisement is not broken — it is a client, exactly as the
+ * phone is. It can still reach every member; nobody can reach it.
+ */
+export function selfAdvertisement(
+  serving: { readonly host: string; readonly port: number } | undefined,
+  dataPort?: number,
+): { readonly port: number; readonly dataPort?: number } | undefined {
+  if (serving === undefined || isLoopback(serving.host)) return undefined;
+  return { port: serving.port, ...(dataPort === undefined ? {} : { dataPort }) };
 }

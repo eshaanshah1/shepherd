@@ -196,6 +196,10 @@ describe('the trigger', () => {
       title: '',
       brief: '',
       query: '',
+      // Whose checkouts to offer. A repo path means something only on the machine
+      // that holds it, so the ask names the machine the task is for — `here`
+      // until somebody picks another.
+      member: 'here',
     });
     expect(picker()).toBeNull();
   });
@@ -212,6 +216,7 @@ describe('the trigger', () => {
       title: '#she',
       brief: '#she',
       query: 'she',
+      member: 'here',
     });
     expect(paths()).toEqual([`${HOME}/dev/shepherd`, `${HOME}/dev/shell-notes`]);
   });
@@ -283,6 +288,7 @@ describe('the trigger', () => {
       title: '#~/dev/sh',
       brief: '#~/dev/sh',
       query: '~/dev/sh',
+      member: 'here',
     });
     expect(paths()).toEqual([`${HOME}/dev/shepherd`]);
   });
@@ -601,6 +607,11 @@ describe('the scope', () => {
         { path: `${HOME}/dev/shepherd`, name: 'shepherd' },
         { path: `${HOME}/dev/shepherd-ios`, name: 'shepherd-ios' },
       ],
+      // WHERE the task is made. `here` unless a machine was picked — a task is one
+      // machine's (its repos are its disk's, its worktrees its directories, its
+      // agents its daemon's), so this rides the create rather than being applied
+      // to the record afterwards.
+      member: 'here',
     });
   });
 });
@@ -731,5 +742,106 @@ describe('the name ask', () => {
     // Creates unnamed rather than carrying `42` into a directory name.
     const create = invoke.mock.calls.find((call) => call[0] === 'tasks.create');
     expect((create?.[1] as { name?: unknown }).name).toBeUndefined();
+  });
+});
+
+/**
+ * WHICH machine a task starts on.
+ *
+ * A task is one machine's — its repos are checkouts on a disk, its worktrees are
+ * directories there, and its agents are ptys in that machine's daemon — so this is
+ * not a preference applied to a record afterwards. It decides where the whole
+ * thing is made, which is why the repo picker has to ask the same machine.
+ */
+describe('the machine picker', () => {
+  const machine = (): HTMLElement | null =>
+    container.querySelector<HTMLElement>('[data-testid="composer-machine"]');
+
+  function withMachines(machines: unknown): ReturnType<typeof makeInvoke> {
+    const spy = vi.fn(async (command: string, args?: unknown): Promise<{ ok: true; value: unknown }> => {
+      if (command === 'tasks.machines') return { ok: true as const, value: machines };
+      if (command === 'tasks.suggestRepos') {
+        const query = (args as { query?: string }).query ?? '';
+        return { ok: true as const, value: ANSWERS[query] ?? [] };
+      }
+      return { ok: true as const, value: { slug: 'a-task' } };
+    });
+    return spy as ReturnType<typeof makeInvoke>;
+  }
+
+  it('is absent when there is only one machine to choose', async () => {
+    // One machine is not a decision, and a control that always says "This Mac"
+    // teaches nothing while taking space in the one row that must stay readable.
+    const spy = withMachines({ machines: [{ id: 'here', name: 'This Mac', here: true }] });
+    mount(<TaskComposer invoke={spy} done={makeDone()} />);
+    await act(async () => undefined);
+
+    expect(spy).toHaveBeenCalledWith('tasks.machines', {});
+    expect(machine()).toBeNull();
+  });
+
+  it('appears with the net’s members, and starts on this Mac', async () => {
+    const spy = withMachines({
+      machines: [
+        { id: 'here', name: 'This Mac', here: true },
+        { id: 'mac-b', name: 'Work Mac', here: false },
+      ],
+    });
+    mount(<TaskComposer invoke={spy} done={makeDone()} />);
+    await act(async () => undefined);
+
+    // The default is never "wherever it was last": a composer that quietly opens
+    // on another machine creates work in a place nobody looked at.
+    expect(machine()?.dataset.machine).toBe('here');
+    expect(machine()?.textContent).toContain('This Mac');
+  });
+
+  it('asks the CHOSEN machine for its repos, and creates the task there', async () => {
+    const spy = withMachines({
+      machines: [
+        { id: 'here', name: 'This Mac', here: true },
+        { id: 'mac-b', name: 'Work Mac', here: false },
+      ],
+    });
+    mount(<TaskComposer invoke={spy} done={makeDone()} />);
+    await act(async () => undefined);
+
+    await act(async () => {
+      machine()?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const item = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (element) => element.textContent?.includes('Work Mac'),
+    );
+    if (item === undefined) throw new Error('the machine menu did not open');
+    /*
+     * `element.click()`, not a dispatched `MouseEvent('click')`: Radix's item
+     * reads properties the synthetic one leaves at zero and ignores it entirely,
+     * so the menu was demonstrably open and the choice never landed. `menu.test`
+     * in @shepherd/ui does the same thing for the same reason.
+     */
+    await act(async () => {
+      item.click();
+    });
+
+    expect(machine()?.dataset.machine).toBe('mac-b');
+
+    // The repos are re-asked OF THAT MACHINE. Not merely cleared: the zero-query
+    // answer is the history of repos actually used over there, which is exactly
+    // what somebody wants to see next — and a path from this Mac's disk would
+    // fail `git worktree add` over there after Create had been pressed.
+    const asks = spy.mock.calls.filter((call) => call[0] === 'tasks.suggestRepos');
+    expect((asks[asks.length - 1]?.[1] as { member?: string }).member).toBe('mac-b');
+
+    await act(async () => {
+      brief().textContent = 'do a thing';
+      brief().dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      container
+        .querySelector('form')
+        ?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    const created = spy.mock.calls.find((call) => call[0] === 'tasks.create');
+    expect((created?.[1] as { member?: string }).member).toBe('mac-b');
   });
 });
