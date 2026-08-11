@@ -277,7 +277,60 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
   await invoke('tasks.archive', { task: created.id });
   check(!existsSync(worktree), 'the worktree is gone after archiving');
 
+  /*
+   * Shelving a task that is still ON SCREEN keeps its tabs and their screens.
+   *
+   * Asserted here rather than on the close-every-pane path further down, and
+   * the difference is the feature's one real limit: closing panes by hand
+   * destroys each screen as it goes, so by the time the last one triggers the
+   * archive there is nothing left to capture. This is the path the sidebar's
+   * checkmark takes.
+   *
+   * That the capture BEAT the group's close is what makes `history` present at
+   * all — a mirror dies with its session, so the wrong order would archive an
+   * empty screen and report no fault.
+   */
+  const shelved = ((await invoke('tasks.list')) as {
+    id: string;
+    tabs?: { root: string; panes: { history?: string }[] }[];
+  }[]).find((task) => task.id === created.id);
+  const shelvedTabs = shelved?.tabs ?? [];
+  check(
+    shelvedTabs.length >= 1,
+    `shelving kept the task's tabs: ${JSON.stringify(shelvedTabs.map((tab) => tab.root))}`,
+  );
+  check(
+    shelvedTabs.some((tab) => tab.panes.some((pane) => pane.history !== undefined)),
+    `at least one archived pane kept its screen: ${JSON.stringify(shelvedTabs)}`,
+  );
+  say('ok — a task shelved from the sidebar keeps its tabs and what was on them');
+
   await invoke('tasks.restore', { task: created.id });
+
+  /*
+   * And restoring rebuilt the SCREEN without running anything.
+   *
+   * The staged resume line sits at the prompt, so every restored pane's
+   * foreground process is still its shell — an agent would have replaced it.
+   * This is the assertion the whole "no trailing newline" rule exists for, and
+   * it is only observable in a real pty.
+   */
+  const restoredRoots = (await until(
+    "the restored task's tabs",
+    async () => (await invoke('layout.listRoots', { group: `task:${created.id}` })) as { root: string }[],
+    (roots) => roots.length >= shelvedTabs.length,
+  )) as { root: string }[];
+  check(
+    restoredRoots.length === shelvedTabs.length,
+    `every tab came back: ${JSON.stringify(restoredRoots.map((root) => root.root))}`,
+  );
+  const running = ((await invoke('sessions.list')) as {
+    id: string;
+    foregroundProcess?: string;
+  }[]).filter((session) => (session.foregroundProcess ?? '').includes('claude'));
+  check(running.length === 0, `restoring ran no agent: ${JSON.stringify(running)}`);
+  say('ok — a restored task is rebuilt, not relaunched');
+
   const after = await until(
     'the work to be replayed',
     () => status(worktree),
@@ -667,27 +720,37 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
   const secondTab = String(tab.root);
 
   /*
-   * Wait for the new tab's pty FIRST. The pane is minted by the command and the
-   * session is created by the renderer when it mounts — so a count taken here
-   * without waiting measures the moment before the tab has a terminal, and the
-   * "switching kept every session" claim would pass by counting the arrival of
-   * the one it was supposed to be watching.
+   * THIS GROUP's sessions, not the app's session count.
+   *
+   * A global count is not the claim and cannot be: other tasks in this smoke are
+   * still opening panes of their own, so a count taken here races them and would
+   * fail (or pass) for reasons that have nothing to do with tabs. What has to
+   * survive a switch is the pty behind each of these two tabs.
+   *
+   * Waited for FIRST: the pane is minted by the command and its session is
+   * created by the renderer when it mounts, so reading straight after `newTab`
+   * measures the moment before the tab has a terminal at all.
    */
-  const bothLive = await until(
-    "the new tab's session to exist",
-    async () => (await invoke('sessions.list')) as { id: string }[],
-    (list) => list.length >= 2,
+  const groupSessions = async (): Promise<readonly (string | null)[]> =>
+    ((await invoke('layout.listRoots', { group: `task:${composed.id}` })) as {
+      root: string;
+      focusedSession: string | null;
+    }[])
+      .sort((a, b) => a.root.localeCompare(b.root))
+      .map((root) => root.focusedSession);
+
+  const beforeSwitch = await until(
+    "both tabs' sessions to exist",
+    groupSessions,
+    (sessions) => sessions.length === 2 && sessions.every((id) => id !== null),
   );
-  const beforeSwitch = (bothLive as { id: string }[]).map((session) => session.id).sort();
   await invoke('layout.switchRoot', { root: `task:${composed.id}` });
   await invoke('layout.switchRoot', { root: secondTab });
-  const afterSwitch = ((await invoke('sessions.list')) as { id: string }[])
-    .map((session) => session.id)
-    .sort();
+  const afterSwitch = await groupSessions();
   check(
-    afterSwitch.length === beforeSwitch.length &&
-      afterSwitch.every((id, index) => id === beforeSwitch[index]),
-    `switching tabs kept every session, the SAME ones (${beforeSwitch.length} -> ${afterSwitch.length})`,
+    afterSwitch.length === (beforeSwitch as readonly (string | null)[]).length &&
+      afterSwitch.every((id, index) => id === (beforeSwitch as readonly (string | null)[])[index]),
+    `switching tabs kept both tabs on the SAME ptys (${JSON.stringify(beforeSwitch)} -> ${JSON.stringify(afterSwitch)})`,
   );
   say('ok — a hidden tab keeps its ptys');
 
