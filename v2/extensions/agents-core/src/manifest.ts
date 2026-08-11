@@ -1,4 +1,4 @@
-import type { Manifest } from '@shepherd/sdk';
+import type { Manifest, SettingsPage } from '@shepherd/sdk';
 
 /**
  * The manifest, typed, so main can register this extension without importing its
@@ -46,16 +46,74 @@ export const AGENTS_COMMANDS = {
   complete: 'agents.complete',
   /** Read, set or clear which kind and model serve the quick tier. */
   quickModel: 'agents.quickModel',
+  /**
+   * What the settings screen may offer for the two quick-tier rows.
+   *
+   * A command rather than a static list, because the answer is whatever registered
+   * into the point and what each kind advertises — both of which change without a
+   * release of this extension. `SettingSpec.choicesFrom` names it, and the screen
+   * asks it when that page is opened, which is what keeps activation lazy.
+   */
+  quickChoices: 'agents.quickModelChoices',
 } as const;
 
 /**
- * The user's quick-tier choice, in this extension's own KV.
+ * The user's quick-tier choice as it was stored BEFORE settings existed — kept
+ * only so it can be migrated.
  *
- * One key rather than a settings system, because v2 has none — there is no config
- * API in core and no counterpart to v1's `SettingsView`. When one lands this
- * becomes a row in it and no consumer changes.
+ * The comment here used to promise that "when a settings system lands this becomes
+ * a row in it and no consumer changes". It landed (spec 2026-08-11), and this key
+ * is now read exactly once per install, by `migrateQuickOverride`.
  */
 export const QUICK_MODEL_KEY = 'quick-model';
+
+/** Which agent kind serves the quick tier. Null = the first capable one. */
+export const QUICK_KIND_SETTING = 'agents-core.quickKind';
+/** Which of that kind's models. Null = the kind's own advertised default. */
+export const QUICK_MODEL_SETTING = 'agents-core.quickModel';
+
+/**
+ * The quick tier, as settings.
+ *
+ * Both enums resolve their options through a COMMAND rather than a static list,
+ * and that is the rule rather than convenience: the kinds that can serve the quick
+ * tier are whatever registered into the point, and their model ids belong to the
+ * vendor. So the choices arrive as DATA from the vendor's own extension, and no
+ * vendor is named here — the same reason this extension asks `agents.resumeTarget`
+ * rather than `claudeCode.resumeTarget` (D11).
+ *
+ * Both are nullable, because "unset" is a meaning rather than a missing value:
+ * whichever capable kind is first, and whatever that kind advertises. Only this
+ * extension can compute either.
+ */
+export const AGENTS_MODELS_PAGE: SettingsPage = {
+  id: 'agents.models',
+  title: 'Models',
+  description: 'Which agent and model answer the short questions the app asks on your behalf.',
+  order: 100,
+  settings: [
+    {
+      key: QUICK_KIND_SETTING,
+      type: 'enum',
+      label: 'Quick-tier agent',
+      group: 'Quick tier',
+      description: 'Which agent answers short, non-interactive questions.',
+      default: null,
+      nullable: true,
+      choicesFrom: AGENTS_COMMANDS.quickChoices,
+    },
+    {
+      key: QUICK_MODEL_SETTING,
+      type: 'enum',
+      label: 'Quick-tier model',
+      group: 'Quick tier',
+      description: 'Left as Default, the chosen agent picks its own.',
+      default: null,
+      nullable: true,
+      choicesFrom: AGENTS_COMMANDS.quickChoices,
+    },
+  ],
+};
 
 /** Kernel commands this extension invokes. Public vocabulary, like a CLI verb. */
 export const SESSIONS_LIST_COMMAND = 'sessions.list';
@@ -101,7 +159,12 @@ export const agentsCoreManifest: Manifest = {
    * comes only from a registered kind, and a caller's influence stops at the
    * prompt text.
    */
-  permissions: ['sessions', 'storage', 'attention', 'process.exec'],
+  /**
+   * `settings` is the quick tier's: `shepherd agent quick-model` writes the user's
+   * choice, and a write is a command the one authorizer checks. Reading needs no
+   * grant — the values arrive in the activation seed.
+   */
+  permissions: ['sessions', 'storage', 'attention', 'process.exec', 'settings'],
   contributes: {
     commands: [
       { id: AGENTS_COMMANDS.list, title: 'Agents: List Tracked Sessions' },
@@ -109,6 +172,10 @@ export const agentsCoreManifest: Manifest = {
       { id: AGENTS_COMMANDS.resumeCommand, title: 'Agents: Resume Command' },
       { id: AGENTS_COMMANDS.complete, title: 'Agents: Ask the Quick Model' },
       { id: AGENTS_COMMANDS.quickModel, title: 'Agents: Quick Model' },
+      // No title: it is a verb to be ASKED, by the settings screen, and a palette
+      // entry for it would run a command whose entire effect is a return value.
+      { id: AGENTS_COMMANDS.quickChoices },
     ],
+    settings: [AGENTS_MODELS_PAGE],
   },
 };

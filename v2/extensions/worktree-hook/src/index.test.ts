@@ -30,6 +30,7 @@ import {
   TASK_PROVISIONED_POINT_ID,
   WORKTREE_HOOK_COMMANDS,
   WORKTREE_HOOK_VIEW,
+  worktreeHookManifest,
 } from './manifest.ts';
 
 /**
@@ -75,6 +76,8 @@ interface Harness {
   reply: (call: ExecCall) => ExecOk | ExecErr;
   readonly warnings: string[];
   viewTypes(): ReadonlyMap<string, ViewProvider>;
+  /** Every command this extension registered — what a missing point must not cost. */
+  commandIds(): readonly string[];
   dispose(): void;
 }
 
@@ -156,7 +159,7 @@ function harness(opts: { withPoint?: boolean } = {}): Harness {
     },
     log: { ...nullLogger.child('extension'), warn: (line: string) => void warnings.push(line) },
     clock: manualClock(1),
-    permissions: ['storage', 'process.exec', 'views'],
+    permissions: ['storage', 'process.exec'],
     isDev: false,
   };
 
@@ -184,6 +187,7 @@ function harness(opts: { withPoint?: boolean } = {}): Harness {
     },
     warnings,
     viewTypes: () => viewTypes,
+    commandIds: () => [...registered.keys()],
     dispose: () => {
       for (const sub of ctx.subscriptions) sub.dispose();
       registry.dispose();
@@ -263,7 +267,13 @@ describe('the provider it registers', () => {
     // scripts already set are neither lost nor hidden.
     const h = harness({ withPoint: false });
     expect(h.warnings.some((line) => line.includes(REPO_PROVISIONED_POINT_ID))).toBe(true);
-    expect(h.viewTypes().has(WORKTREE_HOOK_VIEW)).toBe(true);
+    // The editor used to be a view, and this asserted the view was still
+    // registered. It is a settings page in the manifest now, so what proves the
+    // same claim is that the VERBS behind it are still registered: the page is
+    // listed either way, and a page whose commands are missing is an editor that
+    // cannot show or change what is already stored.
+    expect(h.commandIds()).toContain(WORKTREE_HOOK_COMMANDS.get);
+    expect(h.commandIds()).toContain(WORKTREE_HOOK_COMMANDS.set);
     h.dispose();
   });
 });
@@ -353,17 +363,36 @@ describe('the commands', () => {
   });
 });
 
-describe('the editor view', () => {
-  it('is an overlay with an accelerator, since nothing else can raise it', () => {
+describe('the editor', () => {
+  it('is a settings page in the manifest, and registers no view at all', () => {
+    // It was an overlay with a ⌘⇧H of its own, and its own comment said that was
+    // only because v2 had no settings surface. There is one now (spec
+    // 2026-08-11), so the page is static data in the manifest and this extension
+    // does nothing at activation to put it there — which is what lets the screen
+    // list it while this extension is not running.
     const h = harness();
-    const provider = h.viewTypes().get(WORKTREE_HOOK_VIEW);
-    expect(provider).toMatchObject({
-      kind: 'component',
+    expect(h.viewTypes().size).toBe(0);
+    /**
+     * The fields that carry the CLAIM, not the whole object.
+     *
+     * A deep-equal here pinned the page's presentation as well as its identity, so
+     * adding the page's one serif sentence (a redesign of the screen, not of this
+     * extension) failed a test about where the editor lives. What matters is that
+     * it is one page, that it is a COMPONENT page, and that it names this
+     * extension's UI module.
+     */
+    expect(worktreeHookManifest.contributes?.settings).toHaveLength(1);
+    expect(worktreeHookManifest.contributes?.settings?.[0]).toMatchObject({
+      id: 'worktreeHook.editor',
+      title: 'Worktree hooks',
       component: WORKTREE_HOOK_VIEW,
-      surface: 'overlay',
-      key: 'CmdOrCtrl+Shift+H',
     });
     h.dispose();
+  });
+
+  it('no longer asks for the `views` grant it would not use', () => {
+    // An unused permission in a manifest is a grant nobody can justify at review.
+    expect(worktreeHookManifest.permissions).not.toContain('views');
   });
 });
 
@@ -550,7 +579,10 @@ describe('the set-hook provider it registers', () => {
   it('warns and stays up when nothing defines the task point', () => {
     const h = harness({ withPoint: false });
     expect(h.warnings.some((line) => line.includes(TASK_PROVISIONED_POINT_ID))).toBe(true);
-    expect(h.viewTypes().has(WORKTREE_HOOK_VIEW)).toBe(true);
+    // The verbs, not the view: the editor is a settings page now (see 'the
+    // editor'), so what has to survive a missing point is the ability to show and
+    // change hooks that are already stored.
+    expect(h.commandIds()).toContain(WORKTREE_HOOK_COMMANDS.get);
     h.dispose();
   });
 });

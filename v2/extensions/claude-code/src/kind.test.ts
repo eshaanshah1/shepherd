@@ -5,6 +5,7 @@ import {
   claudeKind,
   parseQuick,
   QUICK_MODEL,
+  QUICK_MODELS,
   quickArgv,
   reduce,
   type ClaudeSlot,
@@ -215,6 +216,26 @@ describe('resumeCommandOf', () => {
  * load-bearing. This is the record, so that a later "why so many flags?" has an
  * answer that is not a guess.
  */
+describe('the quick tier default', () => {
+  it('is Haiku, pinned rather than an alias', () => {
+    /**
+     * What an unconfigured install spends on the app's own short questions.
+     *
+     * Both `agents-core` settings default to `null`, which drops through
+     * `resolveQuick` to whatever the chosen kind advertises — this constant. Pinned
+     * to a dated id rather than the `haiku` alias, deliberately: a DEFAULT should
+     * not change under anybody without a release saying so. The aliases are offered
+     * as choices (`QUICK_MODELS`) precisely so a user can opt into the moving one.
+     */
+    expect(QUICK_MODEL).toBe('claude-haiku-4-5');
+    expect(QUICK_MODELS[0]).toBe(QUICK_MODEL);
+  });
+
+  it('offers the cheaper tiers first, so the list reads as a ramp', () => {
+    expect([...QUICK_MODELS]).toEqual(['claude-haiku-4-5', 'haiku', 'sonnet', 'opus']);
+  });
+});
+
 describe('quickArgv', () => {
   const argv = quickArgv({ prompt: 'name this task', model: QUICK_MODEL });
 

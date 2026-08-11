@@ -43,7 +43,8 @@
       "sessions",
       "storage",
       "attention",
-      "process.exec"
+      "process.exec",
+      "settings"
     ],
     "contributes": {
       "commands": [
@@ -66,6 +67,39 @@
         {
           "id": "agents.quickModel",
           "title": "Agents: Quick Model"
+        },
+        {
+          "id": "agents.quickModelChoices"
+        }
+      ],
+      "settings": [
+        {
+          "id": "agents.models",
+          "title": "Models",
+          "description": "Which agent and model answer the short questions the app asks on your behalf.",
+          "order": 100,
+          "settings": [
+            {
+              "key": "agents-core.quickKind",
+              "type": "enum",
+              "label": "Quick-tier agent",
+              "group": "Quick tier",
+              "description": "Which agent answers short, non-interactive questions.",
+              "default": null,
+              "nullable": true,
+              "choicesFrom": "agents.quickModelChoices"
+            },
+            {
+              "key": "agents-core.quickModel",
+              "type": "enum",
+              "label": "Quick-tier model",
+              "group": "Quick tier",
+              "description": "Left as Default, the chosen agent picks its own.",
+              "default": null,
+              "nullable": true,
+              "choicesFrom": "agents.quickModelChoices"
+            }
+          ]
         }
       ]
     }

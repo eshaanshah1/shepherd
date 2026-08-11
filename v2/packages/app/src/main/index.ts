@@ -19,6 +19,7 @@ import {
   ExtensionRegistry,
   PermissionStore,
   SessionHost,
+  SettingsRegistry,
   SqliteStore,
   registerSessionCommands,
 } from '@shepherd/core';
@@ -30,6 +31,7 @@ import { claudeCodeManifest } from '@shepherd/ext-claude-code/manifest';
 import { tasksManifest } from '@shepherd/ext-tasks/manifest';
 import { worktreeHookManifest } from '@shepherd/ext-worktree-hook/manifest';
 import {
+  CORE_NAMESPACE,
   KERNEL,
   createLogger,
   extensionId,
@@ -87,6 +89,11 @@ import { publishViewingEdges } from './viewing-topic.ts';
 import { publishSessionBound } from './session-bound.ts';
 import { registerCaptureCommand } from './capture-command.ts';
 import { registerReloadCommand } from './reload-command.ts';
+import { registerSettingsCommands } from './settings-commands.ts';
+import { GENERAL_PAGE } from './settings-general.ts';
+import { registerSettingsIpc } from './settings-ipc.ts';
+import { registerSettingsVisibility } from './settings-visibility.ts';
+import { presenceFor } from './presence-input.ts';
 
 /**
  * The Electron entry point (electron-vite builds this to `out/main`, and
@@ -296,6 +303,16 @@ const store = new SqliteStore({ location: join(boot.userData, 'store.db'), logge
  */
 const permissions = new PermissionStore(store.namespace('permissions'), logger);
 
+/**
+ * Settings — the registry, with the app's own page contributed into it FIRST, so
+ * `shepherd.theme` exists before any window or extension reads one.
+ *
+ * The kernel contributes through the same call an extension does, deliberately:
+ * see `settings-general.ts`.
+ */
+const settings = new SettingsRegistry({ store, logger });
+settings.contribute(CORE_NAMESPACE, [GENERAL_PAGE]);
+
 const registry = new CommandRegistry({
   logger,
   grants: () => ({
@@ -440,14 +457,21 @@ const attention = new AttentionStore({ layout, viewing, bus, logger });
  */
 let appActive = true;
 
+/**
+ * Whether the settings screen covers the grid.
+ *
+ * One writer: the `window.settings` command. It is read by `syncPresence` below,
+ * which is what makes ADR 0020's predicate account for a takeover — and it is the
+ * clause `api-layout.ts` has promised since M1 ("not covered by a full-takeover
+ * overlay") with nothing implementing it.
+ */
+let settingsOpen = false;
+
 function syncPresence(): void {
-  viewing.setPresence({
-    appActive,
-    // Not ours to be frontmost in: a switch driven from the CLI while the app is
-    // in the background must not resurrect a focused root.
-    focusedRoot: appActive ? activeRoot() : null,
-    overlay: false,
-  });
+  // The composition is `presenceFor`'s, so it is assertable without Electron —
+  // ADR 0020 allows one writer of "is the user looking at this", and the cost of
+  // that rule is that the one writer has to be provably right.
+  viewing.setPresence(presenceFor({ appActive, activeRoot: activeRoot(), settingsOpen }));
 }
 
 /**
@@ -529,6 +553,9 @@ const extensionHost = new ExtensionHost({
   permissions,
   bus,
   kv: (namespace) => store.namespace(namespace),
+  // Where a manifest's `contributes.settings` lands, and where each extension's
+  // seed is read from.
+  settings,
   support,
   // Resolved at the platform boundary, where `node:os` is allowed, and handed
   // down: an extension cannot compute it and some of what it has to cooperate
@@ -871,6 +898,17 @@ void app.whenReady().then(async () => {
       if (remote === undefined) throw new Error('remote is not running');
       return remote.invokeAt(memberId, command, args);
     },
+    /**
+     * The members answered, late — which is the only way they can answer, since
+     * the list they answer is drawn without waiting for them. The page is told
+     * the way it is always told: a nudge, and it re-reads. No one view type
+     * changed here, the SET did, so there is no type to name.
+     */
+    changed: () => {
+      for (const contents of webContents.getAllWebContents()) {
+        if (!contents.isDestroyed()) contents.send(EMIT.viewsChanged, '');
+      }
+    },
     log: logger.child('session'),
   });
 
@@ -923,7 +961,14 @@ void app.whenReady().then(async () => {
     // This Mac's own first: they are the ones that always answer, and a sidebar
     // whose order depends on which machine replied fastest is a sidebar that
     // moves under the cursor.
-    value: [...views.list(), ...(await fromMembers.list())],
+    //
+    // **Neither half is awaited over a wire.** This used to await
+    // `fromMembers.list()`, which asks every member — so a profile with two
+    // paired Macs that were switched off (packets dropped, not refused) never
+    // answered this call at all, and the renderer's sidebar stayed empty for the
+    // life of the process while the control socket, which asks nobody, answered
+    // in milliseconds. A member's views arrive on the nudge below instead.
+    value: [...views.list(), ...fromMembers.list()],
   }));
   ipcMain.handle(INVOKE.viewsChildren, async (_event, type: string, parent?: string) => ({
     ok: true,
@@ -1099,6 +1144,31 @@ void app.whenReady().then(async () => {
       if (target === undefined) return false;
       target.webContents.reload();
       return true;
+    },
+  });
+
+  /**
+   * The settings verbs, BEFORE the extensions below: a built-in's `activate` may
+   * write a setting (the quick-tier migration does), and a write into a verb
+   * table that has not been filled in yet is a refusal nobody asked for.
+   */
+  registerSettingsCommands({ registry, settings, bus });
+
+  /**
+   * The screen's own two halves: the channels the page reads it through, and the
+   * one command that moves it.
+   *
+   * Both effects of that command happen here, in one place — the page is told, and
+   * presence is recomputed — because a takeover the predicate did not hear about
+   * is a pane reported as seen while a settings screen covers it.
+   */
+  const settingsIpc = registerSettingsIpc({ registry, bus, settings });
+  registerSettingsVisibility({
+    registry,
+    onChange: (open) => {
+      settingsOpen = open;
+      settingsIpc.pushVisibility(open);
+      syncPresence();
     },
   });
 

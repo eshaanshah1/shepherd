@@ -1,4 +1,5 @@
 import type { PaneID } from '@shepherd/sdk';
+import type { ThemeMode } from '@shepherd/design-tokens';
 import type { Pane } from '@shepherd/core/layout';
 import type {
   SessionApi,
@@ -7,6 +8,7 @@ import type {
   SessionExitMessage,
   SessionResizeMessage,
 } from '../shared/index.ts';
+import { DEFAULT_THEME_MODE } from './theme.ts';
 
 /**
  * Pane id → terminal view → session, and the rule the v1 rewrite exists for:
@@ -81,6 +83,15 @@ export interface TerminalLike {
   /** The visible buffer as text. Diagnostics — see `inspect`. */
   text(): string;
   /**
+   * Repaint in another palette, in place.
+   *
+   * Optional because the lifecycle fakes are terminals too and have no palette;
+   * a fake without it is still a terminal, and the theme simply has nothing to
+   * move. Never a rebuild: a new terminal is a released pty and a lost
+   * scrollback, which is a high price for a colour.
+   */
+  setTheme?(mode: ThemeMode): void;
+  /**
    * Find, when the terminal has one. Optional because this interface is what
    * makes the lifecycle tests runnable in jsdom — a fake that has no addon is
    * still a terminal, and the find bar simply has nothing to drive.
@@ -128,6 +139,14 @@ export interface PaneTerminals {
   suspend(pane: Pane, existing?: string): void;
   focus(paneId: PaneID): void;
   fit(paneId: PaneID): void;
+  /**
+   * Repaint every live terminal in a new palette.
+   *
+   * The grid's half of `shepherd.theme`. The chrome's half is
+   * `applyThemeVariables`, and BOTH have to happen or the app runs on two
+   * palettes — the exact drift `theme.ts`'s one-token-map rule exists to prevent.
+   */
+  retheme(mode: ThemeMode): void;
   /**
    * This pane's find, or undefined while it holds no terminal — which is a real
    * state, not a guard against one: a suspended pane has no terminal at all.
@@ -204,6 +223,14 @@ interface Entry {
 export class PaneSessionRegistry implements PaneTerminals {
   readonly #session: SessionApi;
   readonly #createTerminal: TerminalFactory;
+  /**
+   * The palette every terminal is painted in — the registry's, not each
+   * terminal's, because a pane BORN after a theme change must open in the theme
+   * that is live rather than in the factory's default. That case is not exotic: a
+   * suspended root wakes on a switch, and `tasks.spawn` opens a pane into a root
+   * nobody is looking at.
+   */
+  #themeMode: ThemeMode = DEFAULT_THEME_MODE;
   readonly #spec: SessionSpecFactory;
   readonly #onError: (error: unknown, context: string) => void;
 
@@ -348,6 +375,14 @@ export class PaneSessionRegistry implements PaneTerminals {
     this.#entries.get(paneId)?.terminal?.fit();
   }
 
+  retheme(mode: ThemeMode): void {
+    this.#themeMode = mode;
+    // Every LIVE terminal. A suspended pane holds none, and picks the mode up
+    // from `#themeMode` when it is built — which is why the field is stored
+    // rather than only forwarded.
+    for (const entry of this.#entries.values()) entry.terminal?.setTheme?.(mode);
+  }
+
   search(paneId: PaneID): TerminalSearch | undefined {
     return this.#entries.get(paneId)?.terminal?.search;
   }
@@ -427,6 +462,8 @@ export class PaneSessionRegistry implements PaneTerminals {
     entry.wrapper = wrapper;
 
     const terminal = this.#createTerminal();
+    // The live palette, not the factory's default. See `#themeMode`.
+    terminal.setTheme?.(this.#themeMode);
     entry.terminal = terminal;
     host.append(wrapper);
     terminal.open(wrapper);

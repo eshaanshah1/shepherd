@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
+import type { KV, SettingsAPI } from '@shepherd/sdk';
 import type { AgentKind } from './kind.ts';
-import { applyOverride, describeQuick, resolveQuick } from './quick-model.ts';
+import {
+  applyOverride,
+  describeQuick,
+  migrateQuickOverride,
+  overrideFromSettings,
+  quickChoices,
+  resolveQuick,
+} from './quick-model.ts';
 
 /**
  * Which kind and which model serve the quick tier.
@@ -113,5 +121,146 @@ describe('describeQuick', () => {
       override: { kind: 'gone' },
       available: ['a'],
     });
+  });
+});
+
+
+// -------------------------------------------------------------- as settings
+
+describe('overrideFromSettings', () => {
+  it('reads kind and model from the two settings keys', () => {
+    expect(
+      overrideFromSettings({ 'agents-core.quickKind': 'claude-code', 'agents-core.quickModel': 'opus' }),
+    ).toEqual({ kind: 'claude-code', model: 'opus' });
+  });
+
+  it('reads null as ABSENT, so the extension own fallback still applies', () => {
+    // `null` is a nullable spec's "unset" — whichever capable kind is first,
+    // whatever that kind advertises. Passed through as a kind id it would resolve
+    // to no agent at all, and a quick call would fail as though the user had
+    // chosen a vendor that is not installed.
+    expect(overrideFromSettings({ 'agents-core.quickKind': null, 'agents-core.quickModel': null })).toBeUndefined();
+  });
+
+  it('keeps a model choice when only the kind is unset', () => {
+    expect(overrideFromSettings({ 'agents-core.quickKind': null, 'agents-core.quickModel': 'opus' })).toEqual({
+      model: 'opus',
+    });
+  });
+
+  it('ignores an empty string, which is not a choice', () => {
+    expect(overrideFromSettings({ 'agents-core.quickKind': '', 'agents-core.quickModel': '' })).toBeUndefined();
+  });
+});
+
+describe('quickChoices', () => {
+  const kind = (id: string, models?: readonly string[]) =>
+    ({
+      id,
+      topics: [],
+      reduce: () => ({ kind: 'ignore', why: 'test' }),
+      headless: {
+        quickModel: `${id}-default`,
+        ...(models === undefined ? {} : { quickModels: models }),
+        argv: () => [],
+        parse: () => undefined,
+      },
+    }) as unknown as AgentKind;
+
+  it('offers every capable kind for the kind row', () => {
+    const choices = quickChoices([kind('one'), kind('two')], 'agents-core.quickKind');
+    expect(choices.map((choice) => choice.value)).toEqual(['one', 'two']);
+  });
+
+  it('offers what each vendor ADVERTISES for the model row, named by its kind', () => {
+    const choices = quickChoices([kind('one', ['a', 'b'])], 'agents-core.quickModel');
+    expect(choices).toEqual([
+      { value: 'a', label: 'a', description: 'one' },
+      { value: 'b', label: 'b', description: 'one' },
+    ]);
+  });
+
+  it('falls back to the single model a kind advertising none must serve', () => {
+    expect(quickChoices([kind('one')], 'agents-core.quickModel')).toEqual([
+      { value: 'one-default', label: 'one-default', description: 'one' },
+    ]);
+  });
+
+  it('offers nothing from a kind that cannot answer a prompt at all', () => {
+    const interactive = { id: 'gui', topics: [], reduce: () => ({ kind: 'ignore', why: 'test' }) } as unknown as AgentKind;
+    expect(quickChoices([interactive], 'agents-core.quickModel')).toEqual([]);
+  });
+});
+
+describe('migrateQuickOverride', () => {
+  function fakeKv(seed: Record<string, unknown>) {
+    const map = new Map(Object.entries(seed));
+    const deleted: string[] = [];
+    return {
+      deleted,
+      kv: {
+        get: <T,>(key: string, schema: { parse(value: unknown): { ok: boolean; value?: T } }) => {
+          if (!map.has(key)) return undefined;
+          const parsed = schema.parse(map.get(key));
+          return parsed.ok ? (parsed.value as T) : undefined;
+        },
+        set: (key: string, value: unknown) => void map.set(key, value),
+        delete: (key: string) => {
+          deleted.push(key);
+          map.delete(key);
+        },
+        keys: () => [...map.keys()],
+      } as unknown as KV,
+    };
+  }
+
+  function fakeSettings() {
+    const writes: [string, unknown][] = [];
+    return {
+      writes,
+      api: {
+        get: () => null,
+        set: async (key: string, value: unknown) => {
+          writes.push([key, value]);
+          return { ok: true as const, value: undefined };
+        },
+        onDidChange: () => ({ dispose: () => {} }),
+      } as unknown as SettingsAPI,
+    };
+  }
+
+  it('moves a pre-settings override into settings and deletes the key', async () => {
+    const store = fakeKv({ 'quick-model': { kind: 'claude-code', model: 'opus' } });
+    const settings = fakeSettings();
+    await migrateQuickOverride(store.kv, settings.api, {});
+    expect(settings.writes).toEqual([
+      ['agents-core.quickKind', 'claude-code'],
+      ['agents-core.quickModel', 'opus'],
+    ]);
+    expect(store.deleted).toEqual(['quick-model']);
+  });
+
+  it('does nothing on a second run, because the key is gone', async () => {
+    const store = fakeKv({});
+    const settings = fakeSettings();
+    await migrateQuickOverride(store.kv, settings.api, {});
+    expect(settings.writes).toEqual([]);
+    expect(store.deleted).toEqual([]);
+  });
+
+  it('does not overwrite a value the user has already chosen', async () => {
+    const store = fakeKv({ 'quick-model': { model: 'opus' } });
+    const settings = fakeSettings();
+    await migrateQuickOverride(store.kv, settings.api, { 'agents-core.quickModel': 'haiku' });
+    expect(settings.writes).toEqual([]);
+    // The stale key goes anyway, or the migration runs on every launch forever.
+    expect(store.deleted).toEqual(['quick-model']);
+  });
+
+  it('drops a malformed blob rather than throwing during activation', async () => {
+    const store = fakeKv({ 'quick-model': 'not an object' });
+    const settings = fakeSettings();
+    await expect(migrateQuickOverride(store.kv, settings.api, {})).resolves.toBeUndefined();
+    expect(settings.writes).toEqual([]);
   });
 });

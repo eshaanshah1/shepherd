@@ -49,6 +49,14 @@ describe('the happy path', () => {
         contributes: {
           commands: [{ id: 'tasks.create', title: 'New Task', key: 'CmdOrCtrl+Shift+T' }],
           views: [{ id: 'tasks.sidebar', type: 'tree', title: 'Tasks', region: 'sidebar' }],
+          settings: [
+            {
+              id: 'tasks.general',
+              title: 'Tasks',
+              order: 5,
+              settings: [{ key: 'tasks.base', type: 'path', label: 'Worktree base', default: '~/tasks' }],
+            },
+          ],
         },
       }),
       'user',
@@ -58,6 +66,19 @@ describe('the happy path', () => {
     expect(result.value.dependencies).toEqual(['shepherd.worktrees']);
     expect(result.value.contributes?.commands?.[0]?.id).toBe('tasks.create');
     expect(result.value.activation).toEqual(['onCommand:tasks.create', 'onView:tasks.sidebar']);
+    /**
+     * The settings pages, whole — and this assertion is load-bearing rather than
+     * completist.
+     *
+     * `contributionsOf` copies field by field, so a contribution kind that is not
+     * named there is DROPPED: it passes the schema, reaches the registry as
+     * nothing, and the extension that declared it then fails to activate because a
+     * setting it owns was never seeded. That is exactly what happened when
+     * `contributes.settings` was added, and this is the test that would have said
+     * so in a second.
+     */
+    expect(result.value.contributes?.settings?.[0]?.settings?.[0]?.key).toBe('tasks.base');
+    expect(result.value.contributes?.settings?.[0]?.order).toBe(5);
   });
 
   it('omits absent optional fields rather than materializing them as undefined', () => {

@@ -20,9 +20,28 @@ export const COMMANDS = {
   focusRight: 'pane.focusRight',
   focusUp: 'pane.focusUp',
   focusDown: 'pane.focusDown',
+  /**
+   * ⌘, — the settings screen.
+   *
+   * In the MENU rather than bound in the page like ⌘K and ⌘F, and the difference
+   * is which key it is: AppKit resolving ⌘, before the page sees it costs nothing,
+   * whereas a find or a palette in the menu bar could never be closed by the key
+   * that opened it. It is also the macOS-standard place to look for Settings.
+   */
+  openSettings: 'app.openSettings',
 } as const;
 
 export type CommandID = (typeof COMMANDS)[keyof typeof COMMANDS];
+
+/**
+ * `window.settings` — the kernel verb the item above maps to.
+ *
+ * Declared HERE rather than beside its handler in `main/settings-visibility.ts`
+ * because `menu-commands.ts` needs it and shared may not import main. A command
+ * id is public vocabulary, like a CLI verb, so one definition in the file both
+ * processes already load beats the same string written twice.
+ */
+export const SETTINGS_VISIBILITY_COMMAND = 'window.settings';
 
 export const commandIds = Object.values(COMMANDS) as CommandID[];
 

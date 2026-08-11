@@ -27,6 +27,17 @@ export const CLAUDE_KIND_ID = 'claude-code';
 export const QUICK_MODEL = 'claude-haiku-4-5';
 
 /**
+ * What the quick tier may be set to, cheapest first — and, like `QUICK_MODEL`,
+ * these strings may live only in this file.
+ *
+ * Aliases rather than dated ids on purpose: `claude -p --model sonnet` resolves to
+ * whatever the current Sonnet is, so a user's choice does not go stale the day a
+ * point release lands. The default stays the pinned haiku id, because the DEFAULT
+ * should not change under anybody without a release saying so.
+ */
+export const QUICK_MODELS: readonly string[] = [QUICK_MODEL, 'haiku', 'sonnet', 'opus'];
+
+/**
  * One non-interactive call, and why there are exactly two flags beyond the model.
  * All measured 2026-08-10 against a subscription login; the spec carries the
  * table.
@@ -175,7 +186,7 @@ export function claudeKind(): AgentKind {
      * `agents-core`, which is what stops the second kind from reimplementing
      * them differently.
      */
-    headless: { quickModel: QUICK_MODEL, argv: quickArgv, parse: parseQuick },
+    headless: { quickModel: QUICK_MODEL, quickModels: QUICK_MODELS, argv: quickArgv, parse: parseQuick },
   };
 }
 

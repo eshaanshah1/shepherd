@@ -1,0 +1,77 @@
+/*
+ * Switch.
+ *
+ * A track with a knob inside it, and the only thing that moves is the knob's
+ * `transform` — rule 1's spirit applied to a control: nothing here changes size
+ * or position in the layout when the state flips, so a settings row cannot
+ * twitch as you toggle it.
+ *
+ * Every colour is a ROLE. The off track is the same sunken surface a field uses,
+ * so an unset switch and an empty input read as the same kind of "nothing here
+ * yet"; the on track is `accent`, which is the one colour in this app that means
+ * "you did this".
+ */
+
+.sh-ui-switch {
+  --sh-switch-travel: var(--sh-space-md);
+
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  /* Two knobs wide plus its own padding — written from the metrics rather than
+     as a pixel pair, so it tracks density with every other control. */
+  width: calc(var(--sh-control-sm) + var(--sh-space-md));
+  height: var(--sh-control-sm);
+  padding: var(--sh-space-xs);
+  border: var(--sh-hairline) solid var(--sh-line);
+  border-radius: var(--sh-control-sm);
+  background: var(--sh-surface-sunken);
+  cursor: pointer;
+  transition: background var(--sh-motion), border-color var(--sh-motion);
+}
+
+.sh-ui-switch:hover:not(:disabled) {
+  background: var(--sh-fill-hover);
+}
+
+.sh-ui-switch:focus-visible {
+  outline: none;
+  box-shadow: var(--sh-focus-ring);
+}
+
+.sh-ui-switch[aria-checked='true'] {
+  background: var(--sh-accent);
+  border-color: var(--sh-accent);
+}
+
+.sh-ui-switch:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.sh-ui-switch__knob {
+  display: block;
+  width: var(--sh-space-md);
+  height: var(--sh-space-md);
+  border-radius: 50%;
+  /* The knob is the ink of whatever surface it sits on: `text` on the sunken
+     track, `accentText` once the track is accent — so it stays legible in both
+     themes without either colour being named twice. */
+  background: var(--sh-text-dim);
+  transition: transform var(--sh-motion), background var(--sh-motion);
+}
+
+.sh-ui-switch[aria-checked='true'] .sh-ui-switch__knob {
+  background: var(--sh-accent-text);
+  transform: translateX(var(--sh-switch-travel));
+}
+
+/* An entrance is decoration; a state change is information. But a knob that
+   teleports reads as a repaint rather than as a toggle, so this is the one
+   transition that stays — and it is turned off with everything else. */
+@media (prefers-reduced-motion: reduce) {
+  .sh-ui-switch,
+  .sh-ui-switch__knob {
+    transition: none;
+  }
+}

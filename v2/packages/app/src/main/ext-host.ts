@@ -7,10 +7,13 @@ import {
   type ExtensionRegistry,
   type GrantSet,
   type PermissionStore,
+  type SettingsRegistry,
 } from '@shepherd/core';
 import {
+  CORE_NAMESPACE,
   extensionId,
   isPermission,
+  namespaceOf,
   type Permission,
   s,
   err,
@@ -148,6 +151,16 @@ export interface ExtensionHostOptions {
   /** `SqliteStore.namespace`. One namespace per extension, never re-derived. */
   readonly kv: (namespace: string) => KV;
   /**
+   * Where a manifest's `contributes.settings` lands, and where the seed comes
+   * from.
+   *
+   * Optional so a test can omit it — and its absence means an extension is seeded
+   * with an empty settings map, which is honest for a manifest that declares
+   * none. A manifest that DOES declare pages with no registry here is refused,
+   * rather than activated with settings that silently go nowhere.
+   */
+  readonly settings?: SettingsRegistry;
+  /**
    * The app's support directory — where each extension's own data dir hangs off
    * (D1b). Passed in rather than resolved here: `packages/app/src/main` may
    * import the platform package, but the path is a boot-time fact and this class
@@ -235,6 +248,14 @@ interface HostedExtension {
   readonly commands: Map<string, Disposable>;
   /** Bus subscriptions this extension asked for, keyed by its own subscription id. */
   readonly subscriptions: Map<string, Disposable>;
+  /**
+   * Its contributed settings pages, so a teardown takes them with it.
+   *
+   * Held here rather than left to the registry's own bookkeeping because the
+   * pages are contributed from the MANIFEST, before `activate` — so a rollback
+   * has to undo something the extension never did itself.
+   */
+  settings?: Disposable;
   active: boolean;
 }
 
@@ -376,6 +397,33 @@ export class ExtensionHost {
     this.#byHandle.set(handle, record);
     this.#byId.set(id, record);
 
+    /**
+     * Settings pages come off the MANIFEST, before `activate` runs — that is what
+     * makes the settings screen readable with nothing activated (`Manifest`'s own
+     * comment says why).
+     *
+     * A bad page refuses the activation and names the extension: half a page
+     * drawn is worse than a page refused, because the missing rows read as a
+     * missing feature rather than as the manifest error they are.
+     */
+    const pages = manifest.contributes?.settings ?? [];
+    if (pages.length > 0) {
+      const settings = this.#options.settings;
+      if (settings === undefined) {
+        this.#forget(record);
+        return err(
+          `${id} declares contributes.settings and this host has no settings registry, ` +
+            'so its pages would go nowhere. Refusing rather than activating an extension whose settings do not exist.',
+        );
+      }
+      try {
+        record.settings = settings.contribute(manifest.id, pages);
+      } catch (error) {
+        this.#forget(record);
+        return err(`${id} has an invalid settings contribution: ${messageOf(error)}`);
+      }
+    }
+
     const answer = await this.#ask({
       kind: 'activate',
       extension: id,
@@ -389,6 +437,7 @@ export class ExtensionHost {
       // extension's own `ctx.permissions` must describe the former.
       permissions: [...this.#options.permissions.granted(id)],
       storage: this.#snapshotStorage(id),
+      settings: this.#seedSettings(manifest.id),
       // Resolved here because the child cannot: it may not reach `node:os`
       // (D1b). Every hosted id is passed so the name can fall back to the full
       // id when two extensions want the same last segment.
@@ -422,6 +471,20 @@ export class ExtensionHost {
     // why) and the reader here is the extension, one process along.
     for (const key of kv.keys()) out[key] = kv.get(key, s.unknown());
     return out;
+  }
+
+  /**
+   * The settings an extension may see: its own namespace, plus the kernel's.
+   *
+   * Two calls rather than one merged read, because the second is a different
+   * fact — `shepherd.*` is readable by everybody and writable by nobody but the
+   * user, and an extension reading the theme is not an extension reading its
+   * neighbour's configuration (D11).
+   */
+  #seedSettings(manifestId: string): Record<string, unknown> {
+    const settings = this.#options.settings;
+    if (settings === undefined) return {};
+    return { ...settings.values(namespaceOf(manifestId)), ...settings.values(CORE_NAMESPACE) };
   }
 
   // ------------------------------------------------------------------ the process
@@ -597,6 +660,8 @@ export class ExtensionHost {
   /** Drops every trace of an extension from this host. Idempotent. */
   #forget(record: HostedExtension): void {
     this.#options.views?.forget(record.id);
+    record.settings?.dispose();
+    record.settings = undefined;
     for (const registration of record.commands.values()) registration.dispose();
     record.commands.clear();
     for (const subscription of record.subscriptions.values()) subscription.dispose();

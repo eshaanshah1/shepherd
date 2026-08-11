@@ -9,7 +9,6 @@ import {
   REPO_PROVISIONED_POINT_ID,
   TASK_PROVISIONED_POINT_ID,
   WORKTREE_HOOK_COMMANDS,
-  WORKTREE_HOOK_KEY,
   WORKTREE_HOOK_VIEW,
 } from './manifest.ts';
 import { matchSets, repoName } from './model/index.ts';
@@ -32,7 +31,7 @@ import { runHooks, runSetHooks } from './runner.ts';
  * opens, which is what `tasks.repoProvisioned` being awaited buys.
  */
 export const activate: ActivateFn = (ctx, api) => {
-  const { commands, points, process: process_, views } = api.proposed;
+  const { commands, points, process: process_ } = api.proposed;
   const store = createStore(ctx.storage, ctx.homeDir);
 
   const point = points.get<RepoProvisioned>(REPO_PROVISIONED_POINT_ID);
@@ -242,25 +241,15 @@ export const activate: ActivateFn = (ctx, api) => {
   );
 
   /**
-   * The editor — a view of its own ONLY because v2 has no settings surface yet.
-   * When there is one this belongs inside it; see this extension's README.
+   * The editor is a SETTINGS PAGE now, declared in the manifest
+   * (`WORKTREE_HOOK_PAGE`) rather than registered here.
    *
-   * An overlay rather than a dock section for the composer's reason: a form you
-   * open, change and dismiss should not sit in the sidebar taking space forever.
+   * Nothing to do at activation, which is the point: a page is static data, so it
+   * is listed with this extension not yet running, and opening it is what wakes us
+   * up. What went with the overlay: the `views` grant, ⌘⇧H, and the gear button
+   * that existed only because a settings form drawn as a `+` beside the composer's
+   * `+` was indistinguishable from it.
    */
-  ctx.subscriptions.push(
-    views.registerViewType(WORKTREE_HOOK_VIEW, {
-      kind: 'component',
-      component: WORKTREE_HOOK_VIEW,
-      surface: 'overlay',
-      key: WORKTREE_HOOK_KEY,
-      title: 'Worktree hooks',
-      // A gear, not the default `+`. This form CHANGES a setting; drawn as a
-      // plus beside the new-task button it read as a second way to create
-      // something, and the two controls were indistinguishable.
-      icon: 'settings',
-    }),
-  );
 
   ctx.log.info(
     `ready — ${store.listRepos().length} repo hook(s), ${store.listSets().length} set hook(s), ` +

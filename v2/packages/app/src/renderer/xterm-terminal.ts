@@ -27,7 +27,14 @@ import '@xterm/xterm/css/xterm.css';
  * a multiplier above 1 pads the cell without growing the glyph and every block
  * row gets a seam.
  */
-export function createXtermTerminal(mode: ThemeMode = DEFAULT_THEME_MODE): TerminalLike {
+export function createXtermTerminal(initialMode: ThemeMode = DEFAULT_THEME_MODE): TerminalLike {
+  /**
+   * Mutable, because a terminal OUTLIVES a theme change (`shepherd.theme`) and is
+   * re-themed in place rather than rebuilt: a rebuilt terminal is a released pty
+   * and a lost scrollback. Everything below that depends on the palette reads this
+   * variable at call time — see `searchOptions`, whose own comment predicted it.
+   */
+  let mode = initialMode;
   const theme = xtermTheme(mode);
   const terminal = new Terminal({
     fontFamily: fonts.mono,
@@ -98,6 +105,20 @@ export function createXtermTerminal(mode: ThemeMode = DEFAULT_THEME_MODE): Termi
     },
     get rows() {
       return terminal.rows;
+    },
+    /**
+     * Re-theme in place, both halves.
+     *
+     * `minimumContrastRatio` moves with the palette because its input is the
+     * background actually painted (`paneTitleSurface`), and a floor left at the
+     * dark reading over-brightens ANSI colours on a light grid — which is the same
+     * one-source rule the constructor above states.
+     */
+    setTheme: (next) => {
+      mode = next;
+      const themed = xtermTheme(next);
+      terminal.options.theme = themed;
+      terminal.options.minimumContrastRatio = minimumContrastRatio(paneTitleSurface(themed.background));
     },
     open: (host) => terminal.open(host),
     write: (data) => terminal.write(data),
