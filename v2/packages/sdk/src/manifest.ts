@@ -17,7 +17,18 @@ export type ActivationEvent =
 
 export interface ContributedCommand {
   readonly id: string;
-  readonly title: string;
+  /**
+   * What a person reads in the palette. **Absent = not user-facing**, which is
+   * the same meaning `title` has where a command is registered.
+   *
+   * Optional because some verbs exist to be ASKED rather than chosen: a row's
+   * `presents` verb answers what it stands for and performs nothing, so an entry
+   * for it in the palette would run a command whose entire effect is a return
+   * value. Declaring it is still worth doing — the manifest is where an
+   * extension's surface is enumerated — so the choice is between a title that
+   * lies and a title that is absent.
+   */
+  readonly title?: string;
   /** Accelerator in Electron's vocabulary, e.g. `CmdOrCtrl+Shift+D`. */
   readonly key?: string;
 }
@@ -75,7 +86,8 @@ export const manifestSchema: Schema<{
   permissions: string[];
   dependencies?: string[];
   contributes?: {
-    commands?: { id: string; title: string; key?: string }[];
+    /** `title` optional — absent means not user-facing. See `ContributedCommand`. */
+    commands?: { id: string; title?: string; key?: string }[];
     views?: { id: string; type: string; title: string; region?: string }[];
   };
 }> = s.object({
@@ -88,7 +100,15 @@ export const manifestSchema: Schema<{
   dependencies: s.optional(s.array(s.string())),
   contributes: s.optional(
     s.object({
-      commands: s.optional(s.array(s.object({ id: s.string(), title: s.string(), key: s.optional(s.string()) }))),
+      commands: s.optional(
+        s.array(
+          s.object({
+            id: s.string(),
+            title: s.optional(s.string()),
+            key: s.optional(s.string()),
+          }),
+        ),
+      ),
       views: s.optional(
         s.array(
           s.object({

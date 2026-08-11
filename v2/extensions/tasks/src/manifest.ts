@@ -50,6 +50,21 @@ export const TASK_COMMANDS = {
    * the same gesture.
    */
   reveal: 'tasks.reveal',
+  /**
+   * What this task can be SHOWN as, without showing it here.
+   *
+   * `reveal` is a desktop gesture — it opens a root and moves the window — and
+   * that is exactly wrong for another member of the net drawing this row in its
+   * own sidebar: it wants to become a second viewer of the task's session, not
+   * to move this machine's window. So the row declares this alongside `reveal`
+   * (`TreeItem.presents`), it reports a `PresentEffect` and performs nothing, and
+   * the caller decides what showing means on its own surface.
+   *
+   * It is deliberately NOT `reveal` with a flag. A flag would mean every verb
+   * that presents anything grows a second mode nobody can see from the outside,
+   * and the row is the honest place to say "here is the read-only way to ask".
+   */
+  presentation: 'tasks.presentation',
 } as const;
 
 /** The composer's UI module, resolved by the renderer's table (ADR 0033). */
@@ -210,6 +225,14 @@ export const tasksManifest: Manifest = {
       { id: TASK_COMMANDS.suggestName, title: 'Tasks: Suggest a Name' },
       { id: TASK_COMMANDS.delete, title: 'Tasks: Delete' },
       { id: TASK_COMMANDS.reveal, title: 'Tasks: Reveal' },
+      /*
+       * No `title`, deliberately: an untitled command is not in the palette (the
+       * SDK documents `title` as exactly that filter). This one answers a
+       * question a client asks on its way to drawing something — there is
+       * nothing for a person to pick, and "Tasks: Presentation" in the palette
+       * would run a verb whose entire effect is a return value.
+       */
+      { id: TASK_COMMANDS.presentation },
     ],
   },
 };

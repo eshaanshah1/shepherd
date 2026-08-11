@@ -3,6 +3,7 @@ import {
   paneId as toPaneId,
   rootId as toRootId,
   s,
+  sessionId as toSessionId,
   type Disposable,
   type PaneID,
   type RootID,
@@ -238,6 +239,19 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
         /** One line, typed once into the new root's pane. `layout.split` documents why. */
         initialCommand: s.optional(s.string()),
         title: s.optional(s.string()),
+        /**
+         * A session this root's pane should SHOW rather than start.
+         *
+         * The caller is another member's terminal: that pty is already running on
+         * another machine, so the pane must be born already bound or the renderer
+         * — which decides to create by looking for a binding in the snapshot —
+         * starts a local shell in it first. See `PaneSeed.session`; the binding is
+         * applied before the pane is announced, which is the whole point.
+         *
+         * Never `initialCommand`'s companion: one types into a session this pane
+         * created, the other adopts one it did not.
+         */
+        session: s.optional(s.string()),
       }),
       handler: (args) => {
         const root = toRootId(args.root);
@@ -269,6 +283,7 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
         const init = {
           ...(args.cwd === undefined ? {} : { cwd: args.cwd }),
           ...(args.initialCommand === undefined ? {} : { initialCommand: args.initialCommand }),
+          ...(args.session === undefined ? {} : { session: toSessionId(args.session) }),
           // A title given here is the USER's name for the pane, not an OSC one:
           // the caller is naming the thing it just made, and a program's own
           // title must still be able to lose to it.

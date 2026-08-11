@@ -118,6 +118,12 @@ interface TreeItemOut {
   collapsed?: boolean;
   command?: { id: string; args?: unknown };
   /**
+   * The verb that answers what this row stands for, without doing anything —
+   * what a client whose surface is on another machine calls instead of
+   * `command`. See `TreeItem.presents`.
+   */
+  presents?: { id: string; args?: unknown };
+  /**
    * The row's context menu. Structural, like everything else here — the SDK's
    * `TreeItemAction` is the contract and this is the shape that satisfies it,
    * so the extension keeps compiling against types it does not import.
@@ -1609,6 +1615,56 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
   );
 
   ctx.subscriptions.push(
+    commands.register(TASK_COMMANDS.presentation, {
+      // No title: not a palette verb. Its whole effect is a return value.
+      schema: s.object({ task: s.string() }),
+      /**
+       * What this task can be SHOWN as — and **nothing else happens.**
+       *
+       * `reveal` next door opens a root and switches this window to it, which is
+       * right for the machine the task lives on and wrong for every other client
+       * of this core. Another member of the net draws this task's row in its own
+       * sidebar and wants to become a SECOND VIEWER of the session; running
+       * `reveal` for it would move a window on this Mac and put nothing on
+       * theirs. So the row declares this verb too (`TreeItem.presents`) and a
+       * client with its own surface asks it instead.
+       *
+       * No `layout.openRoot`, no switch, no restore. An archived task has nothing
+       * live to watch and bringing it back is a decision, not a side effect of
+       * somebody looking at a list.
+       *
+       * **Liveness is checked here, not remembered.** A task's record outlives
+       * the ptys it names — the daemon restarts, a session exits — so a stored
+       * session id is a CLAIM (ADR 0036). `reveal` learned this the expensive
+       * way: presenting a dead one told a phone to open a terminal that could
+       * never paint, and nothing reported a fault because nothing had failed.
+       * That is also why this is a verb rather than a field on the row: a row is
+       * drawn once and clicked later.
+       *
+       * Answers `{}` when there is nothing running. A caller then says so, which
+       * is the truth rather than an empty terminal pretending otherwise.
+       */
+      handler: async (args) => {
+        const task = store.get(args.task);
+        if (task === undefined) throw new Error(`no task ${args.task}`);
+
+        const alive = await commands.invoke<Array<{ id: string }>>('sessions.list', {});
+        const running = new Set(
+          alive.ok && Array.isArray(alive.value) ? alive.value.map((session) => session.id) : [],
+        );
+        const live = task.sessions.find((session) => running.has(session.id));
+        if (live === undefined) {
+          ctx.log.info(`task ${task.id}: nothing running to present`);
+          return {};
+        }
+        return {
+          present: { kind: 'session', sessionId: sessionId(live.id) } satisfies PresentEffect,
+        };
+      },
+    }),
+  );
+
+  ctx.subscriptions.push(
     commands.register(TASK_COMMANDS.reveal, {
       title: 'Tasks: Reveal',
       schema: s.object({ task: s.string() }),
@@ -2128,6 +2184,18 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
               // first (see its handler). One gesture, whatever state the task
               // is in, because "show me this task" is one intention.
               command: { id: TASK_COMMANDS.reveal, args: { task: task.id } },
+              /*
+               * And the read-only way to ask the same question, for a client whose
+               * surface is somewhere else.
+               *
+               * Another member of the net draws this row too, and `reveal` would
+               * move THIS machine's window while putting nothing on theirs. This
+               * verb answers what the task can be shown as and does nothing, so
+               * they attach to the session and this Mac is untouched. Declared
+               * here beside `command` because the shell cannot know either verb —
+               * the same rule `actions` keeps (ADR 0031).
+               */
+              presents: { id: TASK_COMMANDS.presentation, args: { task: task.id } },
               /*
                * The row's right-click menu. Declared HERE because the shell
                * cannot know a task's verbs — a sidebar that hardcoded Reveal /

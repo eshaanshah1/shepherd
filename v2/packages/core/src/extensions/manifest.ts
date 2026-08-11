@@ -180,7 +180,7 @@ export function parseManifest(raw: unknown, source: ExtensionSource): Result<Man
 }
 
 function contributionsOf(raw: {
-  commands?: { id: string; title: string; key?: string }[];
+  commands?: { id: string; title?: string; key?: string }[];
   views?: { id: string; type: string; title: string; region?: string }[];
 }): { commands?: readonly ContributedCommand[]; views?: readonly ContributedView[] } {
   return {

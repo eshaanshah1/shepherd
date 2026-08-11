@@ -28,7 +28,7 @@ interface Call {
    * Main attributes both to the contributing extension today, so what this pins
    * is the seam rather than a live defect.
    */
-  readonly via: 'activate' | 'invoke';
+  readonly via: 'activate' | 'invoke' | 'present';
   readonly type: string;
   readonly command: string;
   readonly args: unknown;
@@ -61,6 +61,10 @@ function bridge(
     invoke: (type, command, args) => {
       calls.push({ via: 'invoke', type, command, args });
       return Promise.resolve({ ok: true, value: { slug: 'a-task' } });
+    },
+    present: (type, presents) => {
+      calls.push({ via: 'present', type, command: presents.id, args: presents.args });
+      return Promise.resolve({ ok: true, value: { shown: true } });
     },
     onChanged: () => () => {},
   };
@@ -155,6 +159,7 @@ describe('ViewDock', () => {
       },
       activate: () => Promise.resolve({ ok: true, value: undefined }),
       invoke: () => Promise.resolve({ ok: true, value: undefined }),
+      present: () => Promise.resolve({ ok: true, value: { shown: false } }),
       onChanged: () => () => {},
     };
 
@@ -444,7 +449,12 @@ describe('views from another member', () => {
   ];
 
   const rows: readonly TreeItem[] = [
-    { id: 'task-9', label: 'A task over there', command: { id: 'tasks.reveal', args: { task: 'task-9' } } },
+    {
+      id: 'task-9',
+      label: 'A task over there',
+      command: { id: 'tasks.reveal', args: { task: 'task-9' } },
+      presents: { id: 'tasks.presentation', args: { task: 'task-9' } },
+    },
   ];
 
   it('names the machine its rows live on', async () => {
@@ -474,8 +484,15 @@ describe('views from another member', () => {
    * member to send it to. A dock that stripped it would run a remote row's verb
    * on this machine — the exact confusion the label exists to prevent, one layer
    * down where no label can help.
+   *
+   * And it is the row's `presents` verb, through `present` — **never its
+   * `command`, through `activate`.** A task's `command` is `tasks.reveal`, which
+   * opens a pane and switches the window on whichever machine runs it: sent
+   * across the net it moves the OTHER Mac's screen and leaves this one showing
+   * nothing. `presents` answers what the row stands for and performs nothing, so
+   * this Mac can open a viewer of that session itself.
    */
-  it('sends a row verb back tagged with the member it came from', async () => {
+  it('asks a remote row what it stands for, and never runs its gesture', async () => {
     const calls: Call[] = [];
     const view = mount(<ViewDock views={bridge(REMOTE, calls, rows)} />);
     await settle();
@@ -483,7 +500,48 @@ describe('views from another member', () => {
     one(view.container, 'view-row').click();
     await settle();
 
+    expect(calls[0]?.via).toBe('present');
     expect(calls[0]?.type).toBe('mac-b∷tasks.tree');
+    expect(calls[0]?.command).toBe('tasks.presentation');
+    // The negative control, and the whole point: `tasks.reveal` was NOT sent.
+    expect(calls.map((call) => call.command)).not.toContain('tasks.reveal');
+    view.unmount();
+  });
+
+  /**
+   * A row that cannot say what it stands for is left alone.
+   *
+   * Falling back to `command` would be the defect above, reached by a different
+   * door — and it would fire on exactly the rows nobody thought about.
+   */
+  it('does nothing at all for a remote row with no presents verb', async () => {
+    const calls: Call[] = [];
+    const bare: readonly TreeItem[] = [
+      { id: 'task-9', label: 'A task over there', command: { id: 'tasks.reveal' } },
+    ];
+    const view = mount(<ViewDock views={bridge(REMOTE, calls, bare)} />);
+    await settle();
+
+    one(view.container, 'view-row').click();
+    await settle();
+
+    expect(calls).toEqual([]);
+    view.unmount();
+  });
+
+  /** A LOCAL row still runs its own gesture — the control for the two above. */
+  it('runs a local row’s command exactly as before', async () => {
+    const calls: Call[] = [];
+    const local: ViewContributionDTO[] = [
+      { extension: 'shepherd.tasks', type: 'tasks.tree', kind: 'tree' },
+    ];
+    const view = mount(<ViewDock views={bridge(local, calls, rows)} />);
+    await settle();
+
+    one(view.container, 'view-row').click();
+    await settle();
+
+    expect(calls[0]?.via).toBe('activate');
     expect(calls[0]?.command).toBe('tasks.reveal');
     view.unmount();
   });
@@ -513,6 +571,7 @@ describe('one list across members', () => {
       children: (type: string) => Promise.resolve({ ok: true, value: rowsByType[type] ?? [] }),
       activate: () => Promise.resolve({ ok: true, value: undefined }),
       invoke: () => Promise.resolve({ ok: true, value: undefined }),
+      present: () => Promise.resolve({ ok: true, value: { shown: false } }),
       onChanged: () => () => {},
     };
   }

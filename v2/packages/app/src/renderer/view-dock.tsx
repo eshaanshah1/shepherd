@@ -225,10 +225,27 @@ function TreeView({
             );
           }
 
-          // No local "and now this row is selected": the command below is what
-          // moves the user, and the contribution reports where they ended up.
+          /*
+           * No local "and now this row is selected": the command below is what
+           * moves the user, and the contribution reports where they ended up.
+           *
+           * **A row belonging to another member takes the other door.** Its
+           * `command` is a gesture meant for the machine the row lives on — for a
+           * task, one that opens a pane and switches THAT window — so running it
+           * from here moves somebody else's screen and leaves this one blank.
+           * `presents` answers what the row stands for instead, and main opens a
+           * viewer of it locally. A remote row with no `presents` is not
+           * clickable-with-nothing-happening: it goes through the same call, which
+           * reports why.
+           */
           const activate = (): void => {
-            if (row.command !== undefined && view !== undefined) void bridge?.activate(view.type, row.command);
+            if (view === undefined) return;
+            if (view.remote !== undefined) {
+              if (row.presents === undefined) return;
+              void bridge?.present(view.type, row.presents);
+              return;
+            }
+            if (row.command !== undefined) void bridge?.activate(view.type, row.command);
           };
 
           /*

@@ -1006,7 +1006,7 @@ function wireManifest(manifest: Manifest): {
   permissions: string[];
   dependencies?: string[];
   contributes?: {
-    commands?: { id: string; title: string; key?: string }[];
+    commands?: { id: string; title?: string; key?: string }[];
     views?: { id: string; type: string; title: string; region?: string }[];
   };
 } {
@@ -1028,7 +1028,10 @@ function wireManifest(manifest: Manifest): {
               : {
                   commands: contributes.commands.map((command) => ({
                     id: command.id,
-                    title: command.title,
+                    // Absent = not user-facing, and it must stay absent rather
+                    // than become an empty string: the palette filters on the
+                    // field's presence.
+                    ...(command.title === undefined ? {} : { title: command.title }),
                     ...(command.key === undefined ? {} : { key: command.key }),
                   })),
                 }),

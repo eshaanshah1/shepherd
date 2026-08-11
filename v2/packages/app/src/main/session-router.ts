@@ -52,6 +52,17 @@ import type { SessionHostLike } from './session-bridge.ts';
  *      the process.
  */
 
+/**
+ * How long a pane keeps waiting for a member that has not answered.
+ *
+ * Twenty tries at two seconds — forty seconds, which covers a Mac waking up and
+ * a Wi-Fi network coming back, and stops well short of a pane that waits for a
+ * machine somebody took on holiday. Giving up ends in an announced exit, never in
+ * silence.
+ */
+const REACH_ATTEMPTS = 20;
+const REACH_DELAY_MS = 2_000;
+
 export interface SessionRouterOptions {
   /** This Mac's own sessions — the daemon client, or a `SessionHost` in a test. */
   readonly local: SessionHostLike;
@@ -158,25 +169,61 @@ export class SessionRouter implements SessionHostLike {
      * Not known YET — which for a member is the ordinary case, not a failure.
      *
      * A restored pane is bound to a remote session before this Mac has dialled
-     * anything, and a member that was asleep may take a while to answer. So the
-     * attach waits for the inventory rather than refusing, and refuses only once
-     * we have actually looked and the session is not there.
+     * anything, and these are machines that sleep and move networks. So the
+     * attach WAITS, and the two ways of waiting are deliberately different:
+     *
+     *   - **The member answered and has no such session.** That is settled: the
+     *     pty is gone, and the pane is told through `onExit` — the only channel
+     *     anything downstream listens on for an absence.
+     *   - **The member has not answered at all.** Nothing is settled. Retried,
+     *     with the reason written into the pane's own stream so the person
+     *     looking at it knows what it is waiting for. A member that cannot be
+     *     reached is a missing section, not a broken window.
      */
     let live = true;
     let attached: Disposable | undefined;
-    void member.ready.then(() => {
-      if (!live || this.#disposed) return;
-      const retried = member.client.attach(bare, sink);
-      if (retried.ok) {
-        attached = retried.value;
-        return;
+    void (async () => {
+      await member.ready;
+      for (let attempt = 0; attempt < REACH_ATTEMPTS; attempt += 1) {
+        if (!live || this.#disposed) return;
+        const retried = member.client.attach(bare, sink);
+        if (retried.ok) {
+          attached = retried.value;
+          return;
+        }
+        if (member.client.connected) {
+          // Reached, and it does not have this session. Settled — and said out
+          // loud, because a pane whose session is gone otherwise shows a black
+          // rectangle for the life of the process.
+          this.#log.warn(`${at} has no session ${bare} to attach to`);
+          this.#announceExit({ sessionId: id, exitCode: -1 });
+          return;
+        }
+        /**
+         * The notice goes into the TERMINAL, once.
+         *
+         * A pane is a screen for bytes, so the honest place to say "I am waiting
+         * for another machine" is the screen. It needs no new pane state and no
+         * second UI, and it repairs itself: when the member answers, R0's
+         * snapshot repaints the whole grid over this line — alt screen and all —
+         * so there is nothing to clear.
+         */
+        if (attempt === 0) {
+          sink(
+            new TextEncoder().encode(
+              `\r\n[2m… waiting for ${at} — it is in this net but has not answered yet[0m\r\n`,
+            ),
+          );
+        }
+        await new Promise((resolve) => setTimeout(resolve, this.#options.retryMs ?? REACH_DELAY_MS));
+        // Ask again rather than merely waiting: `start` re-dials and re-reads the
+        // inventory, which is the whole content of "is it back yet".
+        await member.client.start();
       }
-      // Announced through the channel a pane actually listens to. Nothing polls
-      // for a session's absence, so a silent return here is a pane that stays
-      // black with no way to find out why.
-      this.#log.warn(`${at} has no session ${bare} to attach to`);
+      if (!live || this.#disposed) return;
+      this.#log.warn(`gave up reaching ${at} for ${bare}`);
       this.#announceExit({ sessionId: id, exitCode: -1 });
-    });
+    })();
 
     return ok(
       toDisposable(() => {

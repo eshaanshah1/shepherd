@@ -253,6 +253,35 @@ export interface TreeItem {
    */
   readonly command?: { readonly id: string; readonly args?: unknown };
   /**
+   * The verb that ANSWERS what this row stands for, and does nothing else.
+   *
+   * `command` is a gesture: `tasks.reveal` opens a layout root and switches the
+   * window to it. That is right for the machine the row lives on and wrong for
+   * every other client of the same core — **another member of the net drawing
+   * this row in its own sidebar wants to become a second viewer of the session,
+   * not to move somebody else's window.** So a row may declare a second verb that
+   * reports a `PresentEffect` and performs no local gesture, and a client with a
+   * surface of its own calls that instead.
+   *
+   * Declared by the extension and attributed to it exactly as `command` is (M3
+   * D14), and carried by the shell without being interpreted — a shell that
+   * recovered the intent by matching command ids (`if (id === 'tasks.reveal')
+   * attach(...)`) would have hardcoded `tasks` after all, which is the special
+   * case ADR 0031 exists to prevent.
+   *
+   * **A verb rather than the effect itself, because liveness is a moment.** A row
+   * is drawn once and the session it names can exit before anybody clicks it;
+   * `tasks.reveal` already carries the scar — presenting a recorded session id
+   * without checking it told a phone to open a terminal that could never paint,
+   * and nothing reported a fault because nothing had failed. A verb re-checks at
+   * click time. A field would be that bug with a longer fuse.
+   *
+   * Absent means "there is nothing this row can be shown as elsewhere", and a
+   * remote client then does nothing and says so. It must NOT fall back to
+   * `command`, which would run the gesture on the wrong machine.
+   */
+  readonly presents?: { readonly id: string; readonly args?: unknown };
+  /**
    * The row's context menu — what a right-click on it offers.
    *
    * **Declared by the extension, because the shell cannot know the verbs.** The

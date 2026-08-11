@@ -1,4 +1,4 @@
-import type { CategoryLogger, TreeItem } from '@shepherd/sdk';
+import { sessionId as toSessionId, type CategoryLogger, type PresentEffect, type TreeItem } from '@shepherd/sdk';
 import type { RosterEntry } from '@shepherd/remote';
 import { memberOf, qualify, unqualify, type ViewContributionDTO } from '../shared/index.ts';
 
@@ -38,6 +38,17 @@ export interface RemoteViews {
   list(): Promise<readonly ViewContributionDTO[]>;
   children(type: string, parent?: string): Promise<readonly TreeItem[]>;
   activate(type: string, command: { readonly id: string; readonly args?: unknown }): Promise<void>;
+  /**
+   * Ask a member's row what it stands for, WITHOUT running its gesture.
+   *
+   * The row's `presents` verb, carried and never interpreted — exactly as
+   * `activate` carries `command`. See `TreeItem.presents` for why a click on
+   * another member's row must not run the row's own command.
+   */
+  present(
+    type: string,
+    presents: { readonly id: string; readonly args?: unknown },
+  ): Promise<PresentEffect | undefined>;
   invoke(type: string, command: string, args?: unknown): Promise<unknown>;
 }
 
@@ -97,6 +108,39 @@ export function remoteViews(options: RemoteViewsOptions): RemoteViews {
       const memberId = memberOf(type);
       if (memberId === undefined) return;
       await invokeAt(memberId, command.id, command.args ?? {});
+    },
+
+    /**
+     * What that row would have shown, as the member itself reports it.
+     *
+     * The answer has crossed a wire from a machine this build has never seen, so
+     * it is READ rather than cast: `ok` says the call succeeded, not that the
+     * value has a shape. An unrecognised effect is dropped as though absent —
+     * `PresentEffect` is additive on purpose, and a client that refused an unknown
+     * kind would break against a member running a newer build.
+     */
+    async present(type, presents) {
+      const memberId = memberOf(type);
+      if (memberId === undefined) return undefined;
+      const answer = await invokeAt(memberId, presents.id, presents.args ?? {});
+      if (typeof answer !== 'object' || answer === null) return undefined;
+      const effect = (answer as { present?: unknown }).present;
+      if (typeof effect !== 'object' || effect === null) return undefined;
+      const { kind, sessionId, viewType } = effect as {
+        kind?: unknown;
+        sessionId?: unknown;
+        viewType?: unknown;
+      };
+      if (kind === 'session' && typeof sessionId === 'string' && sessionId !== '') {
+        return { kind: 'session', sessionId: toSessionId(sessionId) };
+      }
+      if (kind === 'view' && typeof viewType === 'string' && viewType !== '') {
+        // Qualified on the way IN, because over there it is an ordinary local
+        // type and here it is that member's — the same rule `list` keeps.
+        return { kind: 'view', viewType: qualify(memberId, viewType) };
+      }
+      log.info(`${memberId} answered ${presents.id} with nothing this build can show`);
+      return undefined;
     },
 
     async invoke(type, command, args) {
