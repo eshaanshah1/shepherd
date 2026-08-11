@@ -21,6 +21,7 @@ export const REMOTE_COMMANDS = {
   nets: 'remote.nets',
   createNet: 'remote.createNet',
   useNet: 'remote.useNet',
+  joinNet: 'remote.join',
   leaveNet: 'remote.leaveNet',
 } as const;
 
@@ -161,6 +162,20 @@ export function registerRemoteCommands(options: RemoteCommandsOptions): Disposab
         remote.setActiveNet(args.net);
         return { active: args.net };
       },
+    }),
+
+    registry.register(REMOTE_COMMANDS.joinNet, {
+      title: 'Remote: Join a Net',
+      permission: 'views',
+      schema: s.object({ link: s.string() }),
+      /**
+       * The other end of `remote.pair`: paste the link that Mac printed.
+       *
+       * It blocks until a human over there answers, which can be a while — and
+       * that is better than returning "asked" and leaving the caller to poll for
+       * an outcome it cannot name.
+       */
+      handler: async (args: { link: string }) => remote.joinNet(args.link),
     }),
 
     registry.register(REMOTE_COMMANDS.leaveNet, {

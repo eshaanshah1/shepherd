@@ -55,6 +55,7 @@ export {
   type TombstoneCheck,
 } from './roster.ts';
 export { foundNet, kvNetStore, type Membership, type NetStore } from './netstore.ts';
+export { JOIN_TIMEOUT_MS, joinNet, type JoinOptions } from './joinclient.ts';
 export {
   loadOrMintIdentity,
   resetIdentity,

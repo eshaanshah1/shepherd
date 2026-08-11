@@ -101,6 +101,15 @@ export interface RemoteAPI {
    */
   createNet(name: string): NetSummary;
 
+  /**
+   * Join a net somebody else founded, from a `shepherd://join` link.
+   *
+   * The mirror of `pairingPayload`: one Mac prints a link, the other consumes
+   * it. Without this the design's own case — a device walking up to a member it
+   * has never met — was reachable for a phone and not for a Mac.
+   */
+  joinNet(uri: string): Promise<NetSummary>;
+
   /** Leave a net: drop the membership, its roster and its revocations. */
   leaveNet(netId: string): void;
 
