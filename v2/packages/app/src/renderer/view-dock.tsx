@@ -14,7 +14,7 @@ import {
   type MarkState,
 } from '@shepherd/ui';
 import type { ViewContributionDTO, ViewsApi } from '../shared/index.ts';
-import { resolveExtensionUi } from './extension-ui.ts';
+import { resolveExtensionRowUi, resolveExtensionUi } from './extension-ui.ts';
 import { mergeRows } from './merge-rows.ts';
 import { unqualify } from '../shared/index.ts';
 
@@ -353,6 +353,48 @@ function TreeView({
             });
           };
 
+          const isSelected =
+            row.root !== undefined && activeRoot !== null && groupOfRoot(row.root) === groupOfRoot(activeRoot);
+
+          /*
+           * A row that draws ITSELF, by name (ADR 0033's seam, one level down).
+           *
+           * Resolved here rather than in `Row`, because a component that
+           * replaces the row replaces its keyboard semantics too — and a `Row`
+           * that sometimes rendered somebody else's markup would have to
+           * describe two contracts in one primitive.
+           *
+           * An unknown name falls through to the ordinary row. That is the
+           * correct failure and it is gentler than a view's: the row still says
+           * what it stands for and is still clickable, it is only missing its
+           * richer form. A rail that dropped rows on a version skew would lose
+           * the list the app exists to show.
+           */
+          const RowComponent = resolveExtensionRowUi(row.component);
+          if (RowComponent !== undefined && view !== undefined) {
+            const contributed = (
+              <li key={key} className="sh-side-row-host" data-testid="view-row" data-row-id={row.id}>
+                <RowComponent
+                  item={row}
+                  selected={isSelected}
+                  invoke={async (command, args) =>
+                    /*
+                      No bridge is not an error the CARD should render — it is
+                      the window still wiring itself up. Answering with a
+                      `ViewInvokeError` keeps the component's contract total
+                      without teaching it what a bridge is.
+                    */
+                    (await bridge?.activate(view.type, { id: command, args })) ?? {
+                      ok: false,
+                      error: { code: 'unavailable', message: 'the extension host is not connected' },
+                    }
+                  }
+                />
+              </li>
+            );
+            return contributed;
+          }
+
           /*
            * `Row`'s root is a `<div>`, not the `<button>` this used to be, and
            * the keyboard semantics come back here rather than from the element.
@@ -370,11 +412,7 @@ function TreeView({
                 entering={arriving.has(key)}
                 // `row.root !== undefined` first, so a row that is about no
                 // root is never lit by the shell also not knowing its own.
-                selected={
-                row.root !== undefined &&
-                activeRoot !== null &&
-                groupOfRoot(row.root) === groupOfRoot(activeRoot)
-              }
+                selected={isSelected}
                 data-testid="view-row"
                 data-row-id={row.id}
                 data-host={view?.remote?.memberId}

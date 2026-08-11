@@ -19,8 +19,8 @@
       "default": "./src/model/index.ts"
     },
     "./ui": {
-      "types": "./ui/composer.tsx",
-      "default": "./ui/composer.tsx"
+      "types": "./ui/index.ts",
+      "default": "./ui/index.ts"
     }
   },
   "scripts": {

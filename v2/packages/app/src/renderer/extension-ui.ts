@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
-import type { ExtensionViewProps } from '@shepherd/sdk';
-import { TaskComposer } from '@shepherd/ext-tasks/ui';
+import type { ExtensionRowProps, ExtensionViewProps } from '@shepherd/sdk';
+import { TaskCard, TaskComposer } from '@shepherd/ext-tasks/ui';
 import { DiagnosticsCard } from '@shepherd/ext-diagnostics/ui';
 import { WorktreeHookEditor } from '@shepherd/ext-worktree-hook/ui';
 
@@ -36,4 +36,30 @@ export const EXTENSION_UI: Readonly<Record<string, ComponentType<ExtensionViewPr
 export function resolveExtensionUi(component: string | undefined): ComponentType<ExtensionViewProps> | undefined {
   if (component === undefined) return undefined;
   return EXTENSION_UI[component];
+}
+
+/**
+ * The same seam, one level down: a contributed ROW's name → its component.
+ *
+ * A separate table from `EXTENSION_UI` because the two have different props and
+ * different lifetimes. A view owns a panel and reports when it is finished; a
+ * row owns one entry in the shell's own list and never is. One table typed as
+ * their union would make every consumer narrow before it could render.
+ *
+ * The failure mode is deliberately gentler than a view's. An unknown view name
+ * draws a "this build has no UI for that" notice, because a docked panel that
+ * silently vanished would look like a broken feature. An unknown ROW name draws
+ * the ORDINARY row — it still says what it stands for, it is still clickable,
+ * and it is missing only its richer form. A rail that dropped rows on a version
+ * skew would lose the list the app exists to show.
+ */
+export const EXTENSION_ROW_UI: Readonly<Record<string, ComponentType<ExtensionRowProps>>> = {
+  'tasks.card': TaskCard,
+};
+
+export function resolveExtensionRowUi(
+  component: string | undefined,
+): ComponentType<ExtensionRowProps> | undefined {
+  if (component === undefined) return undefined;
+  return EXTENSION_ROW_UI[component];
 }
