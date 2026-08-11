@@ -22,8 +22,8 @@ describe('Icon', () => {
     expect(svg(dom.container).getAttribute('class')).toContain('sh-icon');
   });
 
-  it('sizes from the type scale — 12 / 14 / 16 at the approved base', () => {
-    expect(iconSizes).toEqual({ sm: 12, md: 14, lg: 16 });
+  it('sizes from the type scale — 13 / 15 / 17 at the approved base', () => {
+    expect(iconSizes).toEqual({ sm: 13, md: 15, lg: 17 });
     for (const [size, px] of Object.entries(iconSizes)) {
       const dom = mount(<Icon icon={IconPlus} size={size as keyof typeof iconSizes} />);
       expect(svg(dom.container).getAttribute('width'), size).toBe(`${px}`);
@@ -37,22 +37,35 @@ describe('Icon', () => {
   });
 
   it('derives the ramp from the type scale rather than hardcoding it', () => {
-    // The relation, not the numbers: an icon beside 12px text is 12px, and if the
-    // base font size moves the ramp has to move with it. Rounded UP to even,
-    // because an odd box has no centre pixel for a symmetric glyph to straddle.
+    // The relation, not the numbers: an icon beside a control's label is that
+    // label's size, and if the base font size moves the ramp moves with it.
     expect(iconSizes.sm).toBeGreaterThanOrEqual(metrics.type.medium);
     expect(iconSizes.md).toBeGreaterThanOrEqual(metrics.type.body);
     expect(iconSizes.lg).toBeGreaterThanOrEqual(metrics.type.large);
-    for (const px of Object.values(iconSizes)) expect(px % 2).toBe(0);
+    // ODD, so a symmetric glyph has a centre PIXEL to sit on rather than a centre
+    // boundary for its 1.75px stroke to straddle. §7 sizes icons 11–17 and the
+    // prototypes draw 11 / 13 / 15 / 17, which is the same answer from the
+    // drawings rather than from the geometry.
+    for (const px of Object.values(iconSizes)) expect(px % 2, `${px}`).toBe(1);
+  });
+
+  it('never collides two rungs, at any base', () => {
+    // Three independent roundings of three type steps did collide — at base 16
+    // `sm` and `md` both landed on 17. Stepping by 2 from one anchor is what
+    // makes that unrepresentable.
+    expect(iconSizes.sm).toBeLessThan(iconSizes.md);
+    expect(iconSizes.md).toBeLessThan(iconSizes.lg);
   });
 
   it('fixes the stroke at one weight, whatever the size', () => {
-    // Tabler's own default is 2. One weight is the Flock rule; a `weight` prop is
-    // how two apparent line weights in one row start.
-    expect(ICON_STROKE).toBe(1.5);
+    // Tabler's own default is 2. §7: one stroke weight, 1.7–1.8 — a `weight` prop
+    // is how two apparent line weights in one row start.
+    expect(ICON_STROKE).toBe(1.75);
+    expect(ICON_STROKE).toBeGreaterThanOrEqual(1.7);
+    expect(ICON_STROKE).toBeLessThanOrEqual(1.8);
     for (const size of ['sm', 'md', 'lg'] as const) {
       const dom = mount(<Icon icon={IconTerminal2} size={size} />);
-      expect(svg(dom.container).getAttribute('stroke-width'), size).toBe('1.5');
+      expect(svg(dom.container).getAttribute('stroke-width'), size).toBe('1.75');
     }
   });
 

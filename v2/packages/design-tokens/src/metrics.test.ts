@@ -11,11 +11,12 @@ import { cssVariables } from './css.ts';
 
 /**
  * The scale is derived, and a derivation is only worth having if it reproduces
- * the numbers that were approved. These cases are the mock's own integers — 9 /
- * 10 / 11 / 12 / 13 / 15 / 17 of type, 22 / 28 / 34 of control, 4 / 6 / 8 / 12 /
- * 14 of space, 20 of line box, 28 of row — asserted against `round(base * ratio)`
- * rather than against a literal. Change a ratio and the named case below says
- * which value moved.
+ * the numbers that were approved. These cases are Shepherd UI §2's own integers
+ * — 10.5 / 11 / 11.5 / 12.5 / 13 / 14 / 16 / 19 of type, 24 / 28 / 34 of control,
+ * `2 4 6 7 9 10 12 14 16 20` of space, `5 6 8 10 12 14 16` of radius, 34 of row,
+ * and the fixed bands 28 / 38 / 40 / 44 / 124 / 332 — asserted against
+ * `round(base * ratio)` rather than against a literal. Change a ratio and the
+ * named case below says which value moved.
  */
 describe('the derived scale at the approved defaults', () => {
   it('takes exactly two inputs', () => {
@@ -25,58 +26,95 @@ describe('the derived scale at the approved defaults', () => {
   });
 
   it('produces the approved type scale', () => {
-    expect(metrics.type.nano).toBe(9);
-    expect(metrics.type.micro).toBe(10);
-    expect(metrics.type.small).toBe(11);
-    expect(metrics.type.medium).toBe(12);
-    expect(metrics.type.body).toBe(13);
-    expect(metrics.type.large).toBe(15);
-    expect(metrics.type.title).toBe(17);
+    expect(metrics.type).toEqual({
+      nano: 10.5,
+      micro: 11,
+      small: 11.5,
+      medium: 12.5,
+      body: 13,
+      card: 14,
+      large: 16,
+      title: 19,
+    });
   });
 
-  it('produces the approved control heights, 22 / 28 / 34', () => {
-    expect(metrics.control.sm).toBe(22);
-    expect(metrics.control.md).toBe(28);
-    expect(metrics.control.lg).toBe(34);
+  it('produces the approved control heights, 24 / 28 / 34', () => {
+    expect(metrics.control).toEqual({ sm: 24, md: 28, lg: 34 });
   });
 
   it('produces the approved space scale', () => {
-    expect(metrics.space).toEqual({ xs: 4, sm: 6, md: 8, lg: 12, xl: 14 });
+    expect(metrics.space).toEqual({
+      hair: 2,
+      xs: 4,
+      sm: 6,
+      snug: 7,
+      md: 9,
+      mid: 10,
+      lg: 12,
+      xl: 14,
+      xxl: 16,
+      huge: 20,
+    });
   });
 
-  it('produces the two industrial radii and the one soft one', () => {
-    expect(metrics.radius).toEqual({ sm: 4, md: 6, soft: 16 });
+  it('produces the radius set `5 6 8 10 12 14 16`', () => {
+    expect(metrics.radius).toEqual({ sm: 5, md: 6, row: 8, card: 10, window: 12, well: 14, soft: 16 });
   });
 
-  it('produces the 20px line box and the 28px row', () => {
+  it('produces the 20px line box and the 34px row', () => {
     expect(metrics.lineHeight).toBe(20);
-    expect(metrics.rowHeight).toBe(28);
+    expect(metrics.rowHeight).toBe(34);
+  });
+
+  it('produces the fixed chrome bands the shell is built from', () => {
+    // `a task holds tabs; a tab holds panes` — §5's hierarchy, as furniture.
+    expect(metrics.band).toEqual({
+      tab: 28,
+      paneHead: 38,
+      tabStrip: 40,
+      titlebar: 44,
+      skyStrip: 124,
+      rail: 332,
+    });
   });
 
   it('derives the micro-label size rather than typing it twice', () => {
-    expect(metrics.microLabel.fontSize).toBe(metrics.type.micro);
-    expect(metrics.microLabel.trackingMin).toBe(0.1);
-    expect(metrics.microLabel.trackingMax).toBe(0.16);
+    // The ONE surviving uppercase label: a ⌘K palette group heading at 10.5/600,
+    // `0.05em`. §6 refuses uppercase micro-labels with tracking everywhere else,
+    // which is why the two tracking values are now equal rather than a band.
+    expect(metrics.microLabel.fontSize).toBe(metrics.type.nano);
+    expect(metrics.microLabel.trackingMin).toBe(0.05);
+    expect(metrics.microLabel.trackingMax).toBe(0.05);
   });
 
-  it('matches a medium control to the row height, by sharing the ratio', () => {
-    // Orca's rule: a control matches the row height around it. Expressed as one
-    // shared number so the two cannot drift when either input moves.
-    expect(ratios.control.md).toBe(ratios.row);
-    expect(metrics.control.md).toBe(metrics.rowHeight);
+  it('matches a LARGE control to the row height, by sharing the ratio', () => {
+    // A control matches the row height around it. Expressed as one shared number
+    // so the two cannot drift when either input moves. The row grew from 28 to 34
+    // with this language, so the control that matches it is `lg`, not `md` — and
+    // `md` is now the tab, which is the other height a control sits inside.
+    expect(ratios.control.lg).toBe(ratios.row);
+    expect(metrics.control.lg).toBe(metrics.rowHeight);
+    expect(ratios.control.md).toBe(ratios.band.tab);
+    expect(metrics.control.md).toBe(metrics.band.tab);
   });
 
-  it('emits nothing fractional', () => {
-    const all = [
-      ...Object.values(metrics.type),
+  it('keeps every LENGTH whole, and lets only type be fractional', () => {
+    // The integer rule is about the 1px hairlines this language draws its whole
+    // hierarchy in: a rule off a subpixel boundary is a blurred rule. A glyph is
+    // antialiased at every size, so §2 can ask for 12.5 and get it for free.
+    const lengths = [
       ...Object.values(metrics.control),
+      ...Object.values(metrics.band),
       ...Object.values(metrics.space),
       ...Object.values(metrics.radius),
       metrics.lineHeight,
       metrics.rowHeight,
       metrics.hairline,
     ];
-    for (const value of all) expect(Number.isInteger(value), `${value}`).toBe(true);
+    for (const value of lengths) expect(Number.isInteger(value), `${value} is a fractional length`).toBe(true);
+    for (const size of Object.values(metrics.type)) {
+      expect(Number.isInteger(size * 2), `${size} is finer than a half pixel`).toBe(true);
+    }
   });
 });
 
@@ -84,9 +122,25 @@ describe('the derivation under other inputs', () => {
   const spacious = deriveMetrics({ baseFontSize: 13, density: densities.spacious });
 
   it('scales heights and spacing with density, at 1.15', () => {
-    expect(spacious.rowHeight).toBe(32);
-    expect(spacious.control).toEqual({ sm: 25, md: 32, lg: 39 });
-    expect(spacious.space).toEqual({ xs: 5, sm: 7, md: 9, lg: 14, xl: 16 });
+    expect(spacious.rowHeight).toBe(39);
+    expect(spacious.control).toEqual({ sm: 28, md: 32, lg: 39 });
+    expect(spacious.space).toEqual({
+      hair: 2,
+      xs: 5,
+      sm: 7,
+      snug: 8,
+      md: 10,
+      mid: 12,
+      lg: 14,
+      xl: 16,
+      xxl: 18,
+      huge: 23,
+    });
+  });
+
+  it('scales the chrome bands too — a compact user gets a compact frame', () => {
+    expect(spacious.band.titlebar).toBe(51);
+    expect(spacious.band.rail).toBe(382);
   });
 
   it('leaves TYPE alone when only density moves', () => {
@@ -113,20 +167,23 @@ describe('the derivation under other inputs', () => {
   it('moves the whole scale when the base moves', () => {
     const big = deriveMetrics({ baseFontSize: 16, density: 1 });
     expect(big.type.body).toBe(16);
-    expect(big.rowHeight).toBe(34);
+    expect(big.rowHeight).toBe(42);
     expect(big.lineHeight).toBe(25);
     expect(big.radius.soft).toBe(20);
   });
 
   it('stays monotonic at every density mode', () => {
+    const ORDER = ['hair', 'xs', 'sm', 'snug', 'md', 'mid', 'lg', 'xl', 'xxl', 'huge'] as const;
     for (const density of Object.values(densities)) {
       const scale = deriveMetrics({ baseFontSize: 13, density });
       expect(scale.control.sm).toBeLessThan(scale.control.md);
       expect(scale.control.md).toBeLessThan(scale.control.lg);
-      expect(scale.space.xs).toBeLessThan(scale.space.sm);
-      expect(scale.space.sm).toBeLessThan(scale.space.md);
-      expect(scale.space.md).toBeLessThan(scale.space.lg);
-      expect(scale.space.lg).toBeLessThan(scale.space.xl);
+      // A scale that stops ascending is a step that has collided with its
+      // neighbour, and at that point one of the two is doing nothing.
+      for (let i = 1; i < ORDER.length; i += 1) {
+        const [prev, step] = [ORDER[i - 1] as never, ORDER[i] as never];
+        expect(scale.space[prev], `${prev} → ${step} at ${density}`).toBeLessThanOrEqual(scale.space[step]);
+      }
     }
   });
 });
@@ -143,20 +200,23 @@ describe('the scale in the emitted variable set', () => {
     expect(vars['--sh-base-font-size']).toBe('13px');
     expect(vars['--sh-density']).toBe('1');
     expect(vars['--sh-font-size']).toBe('13px');
-    expect(vars['--sh-font-size-title']).toBe('17px');
-    expect(vars['--sh-font-size-nano']).toBe('9px');
-    expect(vars['--sh-control-sm']).toBe('22px');
+    expect(vars['--sh-font-size-title']).toBe('19px');
+    expect(vars['--sh-font-size-nano']).toBe('10.5px');
+    expect(vars['--sh-control-sm']).toBe('24px');
     expect(vars['--sh-control-lg']).toBe('34px');
-    expect(vars['--sh-space-md']).toBe('8px');
+    expect(vars['--sh-space-md']).toBe('9px');
     expect(vars['--sh-radius-soft']).toBe('16px');
-    expect(vars['--sh-micro-font-size']).toBe('10px');
-    expect(vars['--sh-micro-tracking']).toBe('0.1em');
-    expect(vars['--sh-micro-tracking-wide']).toBe('0.16em');
+    expect(vars['--sh-radius-card']).toBe('10px');
+    expect(vars['--sh-band-titlebar']).toBe('44px');
+    expect(vars['--sh-band-pane-head']).toBe('38px');
+    expect(vars['--sh-micro-font-size']).toBe('10.5px');
+    expect(vars['--sh-micro-tracking']).toBe('0.05em');
+    expect(vars['--sh-micro-tracking-wide']).toBe('0.05em');
   });
 
   it('takes a scale, so a settings surface is one argument away', () => {
     const vars = cssVariables('dark', deriveMetrics({ baseFontSize: 13, density: densities.compact }));
-    expect(vars['--sh-row-height']).toBe('24px');
+    expect(vars['--sh-row-height']).toBe('29px');
     expect(vars['--sh-density']).toBe('0.85');
     // …and the colours are untouched by it.
     expect(vars['--sh-surface']).toBe(cssVariables('dark')['--sh-surface']);

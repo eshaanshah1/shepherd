@@ -130,14 +130,14 @@ describe('probeRoles', () => {
   });
 
   it('names the WASH, not the role the wash is built from', () => {
-    // `fillHover` is `color-mix(… var(--sh-text) 6% …)`, so a probe of `text`
-    // moves this background too. The answer is the wash; `text` is how it is
-    // built, and the reduction that decides so is read off `roles.ts`.
-    fixture(`#target { background-color: var(--sh-fill-hover); }`, `<div id="target">x</div>`);
+    // `scrim` is `color-mix(… var(--sh-scrim-ink) 76% …)`, so a probe of
+    // `scrimInk` moves this background too. The answer is the wash; `scrimInk` is
+    // how it is built, and the reduction that decides so is read off `roles.ts`.
+    fixture(`#target { background-color: var(--sh-scrim); }`, `<div id="target">x</div>`);
 
     const finding = find(must('target'), 'background-color');
-    expect(finding.role).toBe('fillHover');
-    expect(finding.via).toContain('text');
+    expect(finding.role).toBe('scrim');
+    expect(finding.via).toContain('scrimInk');
   });
 
   it('says NO ROLE for a hardcoded colour, and names no token either', () => {
@@ -155,12 +155,23 @@ describe('probeRoles', () => {
     expect(find(must('target'), 'background-color').role).toBeNull();
   });
 
-  it('says NO ROLE but names the private token when a call site is on tier 1', () => {
-    fixture(`#target { background-color: var(--sh-ink-line); }`, `<div id="target">x</div>`);
+  it('can no longer find a call site on tier 1, because tier 1 is not emitted', () => {
+    // This case used to be `var(--sh-ink-line)`, and `paletteToken` existed to
+    // name it: "you are on tier 1" rather than "unknown colour".
+    //
+    // Shepherd UI stopped emitting tier 1 at all, so the defect is now
+    // UNREPRESENTABLE — the variable does not exist and a rule naming it resolves
+    // to nothing, which is a stronger guarantee than a report about it. The
+    // finding is pinned here rather than deleted because `paletteToken` is now
+    // structurally always null, and that is worth failing loudly if tier 1 ever
+    // starts being emitted again.
+    fixture(`#target { background-color: var(--sh-line); }`, `<div id="target">x</div>`);
+    expect(find(must('target'), 'background-color').role).toBe('line');
 
-    const finding = find(must('target'), 'background-color');
-    expect(finding.role).toBeNull();
-    expect(finding.paletteToken).toBe('ink-line');
+    fixture(`#target { background-color: var(--sh-ink-line); }`, `<div id="target">x</div>`);
+    const gone = find(must('target'), 'background-color');
+    expect(gone.role).toBeNull();
+    expect(gone.paletteToken).toBeNull();
   });
 
   it('answers with the RE-DECLARING ancestor, not :root, inside a scoped subtree', () => {
@@ -269,7 +280,7 @@ describe('probeRoles', () => {
   it('honours a narrowed candidate list, so the answer cannot come from elsewhere', () => {
     fixture(`#target { background-color: var(--sh-surface); }`, `<div id="target">x</div>`);
 
-    const finding = probeRoles(must('target'), { read: substituting, roles: ['accent', 'danger'] }).find(
+    const finding = probeRoles(must('target'), { read: substituting, roles: ['sky', 'red'] }).find(
       (candidate) => candidate.property === 'background-color',
     );
     expect(finding?.role).toBeNull();
@@ -294,11 +305,11 @@ describe('roleDependencies', () => {
 
   it('follows an alias to the token it ends at', () => {
     // `focusRing` → `accent`, and `accent` is a token role, so the walk stops.
-    expect([...roleDependencies('focusRing')]).toEqual(['accent']);
+    expect([...roleDependencies('focusRing')]).toEqual(['sky']);
   });
 
   it('follows a wash to the role it is a wash OF', () => {
-    expect([...roleDependencies('fillHover')]).toEqual(['text']);
+    expect([...roleDependencies('scrim')]).toEqual(['scrimInk']);
   });
 });
 

@@ -11,18 +11,18 @@ export const cssVarName = (token: string): string => `--sh-${token}`;
 /**
  * The variable map for a mode. Consumers set these on a root element.
  *
- * It emits **both tiers**: the roles (`--sh-surface`, tier 2, public) and the
- * palette tokens they resolve from (`--sh-ink`, tier 1, private). That is
- * deliberate and temporary in spirit but permanent in mechanism: the shell's
- * stylesheet is written against the palette names today, so dropping them would
- * break every rule in it at once, and a migration that has to land in one commit
- * is a migration nobody can review. Call sites move to roles one at a time; the
- * private names stay emitted because `roleValue` needs `--sh-text` to exist for
- * its own `var()` references anyway.
+ * It emits **the roles and nothing else** — one public vocabulary, which is what
+ * §2 asks for. Flock emitted both tiers, and said why: its shell stylesheet was
+ * written against the palette names, so dropping them would have broken every
+ * rule at once. That reason expired with Flock. Tier 1 is now genuinely private:
+ * a stylesheet cannot name a luminance step even by accident, because the
+ * variable does not exist.
+ *
+ * `roleValue`'s alias and wash forms emit `var(--sh-…)` pointing at other ROLES,
+ * so every reference they make is to a name emitted here.
  */
 export function cssVariables(mode: ThemeMode, scale: Metrics = metrics): Record<string, string> {
   const vars: Record<string, string> = {};
-  for (const token of colorTokens) vars[cssVarName(token)] = palette[token][mode];
   for (const role of roleNames) vars[roleVarName(role)] = roleValue(role, mode);
 
   vars[cssVarName('font-sans')] = fonts.sans;
@@ -50,6 +50,9 @@ export function cssVariables(mode: ThemeMode, scale: Metrics = metrics): Record<
   }
   for (const [step, height] of Object.entries(scale.control)) {
     vars[cssVarName(`control-${step}`)] = `${height}px`;
+  }
+  for (const [band, height] of Object.entries(scale.band)) {
+    vars[cssVarName(`band-${band.replace(/[A-Z]/g, (u) => `-${u.toLowerCase()}`)}`)] = `${height}px`;
   }
   for (const [step, gap] of Object.entries(scale.space)) {
     vars[cssVarName(`space-${step}`)] = `${gap}px`;
