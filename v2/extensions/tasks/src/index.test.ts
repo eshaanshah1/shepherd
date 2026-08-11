@@ -201,19 +201,19 @@ function harness(
       // That exact shape is what the extension classifies as "this task never
       // spawned" and stays silent about, so a fake that answered OK would let
       // the classifier rot untested.
-      if (id === 'layout.closeRoot') {
-        const root = String((args as { root?: unknown }).root);
-        if (!roots.delete(root)) {
+      if (id === 'layout.closeGroup') {
+        const group = String((args as { group?: unknown }).group);
+        if (!roots.delete(group)) {
           return {
             ok: false,
             error: {
               code: 'handler-failed',
-              message: `"layout.closeRoot" failed: no root ${root}`,
-              commandId: 'layout.closeRoot',
+              message: `"layout.closeGroup" failed: no group ${group}`,
+              commandId: 'layout.closeGroup',
             },
           } as never;
         }
-        return { ok: true, value: { root, closedPanes: 1 } as never };
+        return { ok: true, value: { group, closedRoots: 1, closedPanes: 1 } as never };
       }
       // `layout.split` answers with the pane id ITSELF, which is what the kernel
       // returns and what `startSession` records. The blanket `undefined` below
@@ -928,7 +928,7 @@ describe('a task owns a layout root', () => {
       await h.run('tasks.delete', { task: 't1' });
       const deleting = h.trace.slice(spawned);
 
-      const closed = deleting.indexOf('invoke layout.closeRoot');
+      const closed = deleting.indexOf('invoke layout.closeGroup');
       const firstGit = deleting.findIndex((entry) => entry.startsWith('git '));
       // Both indices asserted present first: `indexOf` answers -1 for a line
       // that never happened, and -1 is less than everything, so a comparison
@@ -960,8 +960,8 @@ describe('a task owns a layout root', () => {
       const h = (live = harness({ tasks: [task()], onWarn: (line) => warnings.push(line) }));
       await h.run('tasks.delete', { task: 't1' });
 
-      expect(h.invoked.some((call) => call.id === 'layout.closeRoot')).toBe(true);
-      expect(warnings.filter((line) => line.includes('root'))).toEqual([]);
+      expect(h.invoked.some((call) => call.id === 'layout.closeGroup')).toBe(true);
+      expect(warnings.filter((line) => line.includes('pane group'))).toEqual([]);
     });
 
     it('WARNS when the root refuses for any other reason', async () => {
@@ -970,20 +970,20 @@ describe('a task owns a layout root', () => {
         tasks: [task()],
         onWarn: (line) => warnings.push(line),
         invoke: (id) =>
-          id === 'layout.closeRoot'
+          id === 'layout.closeGroup'
             ? {
                 ok: false,
                 error: {
                   code: 'handler-failed',
-                  message: '"layout.closeRoot" failed: task:t1 is the home root and cannot be closed',
-                  commandId: 'layout.closeRoot',
+                  message: '"layout.closeGroup" failed: no such thing',
+                  commandId: 'layout.closeGroup',
                 },
               }
             : undefined,
       }));
       await h.run('tasks.delete', { task: 't1' });
 
-      expect(warnings.some((line) => line.includes('its root was not closed'))).toBe(true);
+      expect(warnings.some((line) => line.includes('its pane group was not closed'))).toBe(true);
     });
 
     it('archives by closing the root AFTER the worktrees are snapshotted', async () => {
@@ -992,7 +992,7 @@ describe('a task owns a layout root', () => {
       await h.run('tasks.archive', { task: 't1' });
 
       const removed = h.trace.lastIndexOf(`git worktree remove --force ${join(h.dataDir, 'fix-login', 'api')}`);
-      const closed = h.trace.lastIndexOf('invoke layout.closeRoot');
+      const closed = h.trace.lastIndexOf('invoke layout.closeGroup');
       expect(removed).toBeGreaterThanOrEqual(0);
       expect(closed).toBeGreaterThan(removed);
     });
@@ -1302,6 +1302,28 @@ describe('a task row', () => {
   });
 });
 
+describe('a task owns a pane GROUP', () => {
+  it('opens its root as the anchor of its own group', async () => {
+    // One string, two roles: `task:t1` is the task's first tab AND the name of
+    // the group every later tab of it joins.
+    const h = (live = harness({ tasks: [task()] }));
+    await h.run('tasks.spawn', { task: 't1', prompt: 'go' });
+
+    const opened = h.invoked.find((call) => call.id === 'layout.openRoot');
+    expect(opened?.args).toMatchObject({ root: 'task:t1', group: 'task:t1' });
+  });
+
+  it('records which tab each session went into', async () => {
+    // What lets the sidebar give each tab its own dot without walking the
+    // layout on every render.
+    const h = (live = harness({ tasks: [task()] }));
+    await h.run('tasks.spawn', { task: 't1', prompt: 'go' });
+
+    const listed = await h.run<{ sessions: TaskSession[] }[]>('tasks.list');
+    expect(listed[0]?.sessions[0]?.root).toBe('task:t1');
+  });
+});
+
 describe('a task whose pane group empties', () => {
   it('archives it — closing every pane on a task is finishing it', async () => {
     const h = (live = harness({
@@ -1318,6 +1340,35 @@ describe('a task whose pane group empties', () => {
 
     // Archive, not delete: the worktrees are snapshotted first, so every
     // uncommitted line survives a gesture that looks like throwing work away.
+    expect(h.invoked.find((call) => call.id === 'tasks.archive')?.args).toEqual({ task: 't1' });
+  });
+
+  it('does NOT archive while another tab of the task still has panes', async () => {
+    /*
+     * The sharpest edge in the whole tabs change. A task's tabs are separate
+     * roots, so closing the first one announces a closed root while the second
+     * is still running an agent — and archiving there snapshots and removes the
+     * worktrees out from under work that is very much in flight.
+     */
+    const h = (live = harness({
+      tasks: [task({ sessions: [{ id: 's1', role: 'orchestrator', pane: 'p1' }] })],
+    }));
+
+    h.emit('layout.rootClosed', { root: 'task:t1', group: 'task:t1', groupEmpty: false });
+    // Given every chance to archive, and it must not have.
+    for (let tick = 0; tick < 20; tick += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(h.invoked.some((call) => call.id === 'tasks.archive')).toBe(false);
+  });
+
+  it('archives when the LAST tab of the task empties, whichever tab that is', async () => {
+    // The announcement names the tab that closed — `task:t1/tab-2`, which
+    // matches no task — and the GROUP, which is what the task is known by.
+    const h = (live = harness({
+      tasks: [task({ sessions: [{ id: 's1', role: 'orchestrator', pane: 'p1' }] })],
+    }));
+
+    h.emit('layout.rootClosed', { root: 'task:t1/tab-2', group: 'task:t1', groupEmpty: true });
+    await until(() => h.invoked.some((call) => call.id === 'tasks.archive'));
     expect(h.invoked.find((call) => call.id === 'tasks.archive')?.args).toEqual({ task: 't1' });
   });
 

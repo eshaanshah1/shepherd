@@ -193,6 +193,20 @@ const ROOT_CLOSED_TOPIC = 'layout.rootClosed';
 
 interface RootClosed {
   readonly root?: string;
+  /** Which pane GROUP emptied — a task's tabs all share one. */
+  readonly group?: string;
+  /**
+   * Whether that was the group's LAST root.
+   *
+   * The whole reason the field exists. Reacting to the bare root id would
+   * archive a task the moment its first tab closed, while another tab sat there
+   * with a live agent in it — the task is finished with when ALL of its tabs
+   * are.
+   *
+   * Optional, and absent means "yes": a kernel that predates tabs sends one root
+   * per group, and a test that names only a root is describing that same case.
+   */
+  readonly groupEmpty?: boolean;
 }
 
 interface SessionExited {
@@ -784,9 +798,11 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    */
   ctx.subscriptions.push(
     events.on<RootClosed>(ROOT_CLOSED_TOPIC, (payload) => {
-      const root = payload?.root;
-      if (typeof root !== 'string') return;
-      const task = store.list().find((candidate) => taskRootId(candidate.id) === root);
+      // One tab of a task closing is not the task closing.
+      if (payload?.groupEmpty === false) return;
+      const group = payload?.group ?? payload?.root;
+      if (typeof group !== 'string') return;
+      const task = store.list().find((candidate) => taskRootId(candidate.id) === group);
       if (task === undefined || task.lifecycle !== 'running') return;
 
       ctx.log.info(`task ${task.id}: its pane group closed`);
@@ -900,7 +916,12 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
 
     const opened = await commands.invoke<{ root: string; pane: string | null; created: boolean }>(
       'layout.openRoot',
-      { root, cwd, initialCommand: command, title },
+      /*
+       * `group: root` — the task's root is the ANCHOR of the task's own pane
+       * group, and every later tab of it joins that group. One string, two
+       * roles, which is exactly what `taskRootId`'s note is about.
+       */
+      { root, group: root, cwd, initialCommand: command, title },
     );
     if (!opened.ok) {
       input.onFailure();
@@ -1034,6 +1055,16 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       ...(input.repo === undefined ? {} : { repo: input.repo }),
       role: input.role,
       pane,
+      /*
+       * Which TAB it went into, so the sidebar can give that tab its own dot.
+       *
+       * The anchor, because that is where `openAgentPane` puts every agent — it
+       * mints the anchor root or splits it, and never opens a second tab.
+       * Spawning into whichever tab is on screen is a nicer gesture and a
+       * different decision; recording the truth of today is what keeps this
+       * field from being a guess.
+       */
+      root: taskRootId(task.id),
     };
     ctx.log.info(`task ${task.id}: opened pane ${pane} in ${cwd} for a ${input.role}`);
     void correlate(task.id, session).catch((error: unknown) => {
@@ -1164,12 +1195,20 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * failure that happens to mention a root is still reported.
    */
   async function closeTaskRoot(task: TaskRecord): Promise<void> {
-    const root = taskRootId(task.id);
-    const closed = await commands.invoke('layout.closeRoot', { root });
+    const group = taskRootId(task.id);
+    /*
+     * The GROUP, not the root.
+     *
+     * A task's tabs are all of it. Closing only the anchor would leave its other
+     * tabs on screen with live agents in them and no task behind them — rows
+     * pointing at a task that has just been archived, and ptys nothing will ever
+     * close.
+     */
+    const closed = await commands.invoke('layout.closeGroup', { group });
     if (closed.ok) return;
-    if (closed.error.code === 'handler-failed' && closed.error.message.includes(`no root ${root}`)) return;
+    if (closed.error.code === 'handler-failed' && closed.error.message.includes(`no group ${group}`)) return;
     ctx.log.warn(
-      `task ${task.id}: its root was not closed — ${closed.error.code}: ${closed.error.message}`,
+      `task ${task.id}: its pane group was not closed — ${closed.error.code}: ${closed.error.message}`,
     );
   }
 
