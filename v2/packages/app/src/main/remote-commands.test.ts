@@ -50,6 +50,7 @@ function remoteApi(over: Partial<RemoteAPI> = {}): RemoteAPI {
     setActiveNet: () => undefined,
     createNet: () => net,
     joinNet: async () => net,
+    invokeAt: async () => ({ views: [] }),
     leaveNet: () => undefined,
     members: () => [],
     revoke: () => undefined,

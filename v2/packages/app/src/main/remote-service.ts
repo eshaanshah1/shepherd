@@ -18,11 +18,13 @@ import {
   kvNetStore,
   joinNet as joinAnotherNet,
   loadOrMintIdentity,
+  memberClient,
   pinOf,
   type Endpoint,
   type Identity,
   type JoinRequest,
   type JoinRequestHandler,
+  type MemberClient,
   type Membership,
   type NetSummary,
   type PairingPayload,
@@ -148,6 +150,8 @@ export function createRemoteService(options: RemoteServiceOptions): RemoteAPI & 
 
   /** connectionId -> the device it turned out to be. */
   const admitted = new Map<number, string>();
+  /** memberId -> a live connection to that member, for driving it from here. */
+  const members = new Map<string, MemberClient>();
   let approve: JoinRequestHandler | undefined;
   let server: RemoteServer | undefined;
   const listeners: Disposable[] = [];
@@ -374,6 +378,50 @@ export function createRemoteService(options: RemoteServiceOptions): RemoteAPI & 
       return summarize(joined.value);
     },
 
+    async invokeAt(memberId: string, command: string, args: unknown) {
+      const membership = store.active();
+      if (membership === undefined) throw new Error('this Mac is in no net');
+
+      const entry = store.roster(membership.netId).find((row) => row.memberId === memberId);
+      const address = entry?.addrs[0];
+      if (entry === undefined || address === undefined) {
+        // Named rather than shrugged at: "not in the net" and "in the net but
+        // nowhere to reach" call for different actions, and a phone that serves
+        // nothing is legitimately the second.
+        throw new Error(
+          entry === undefined
+            ? `${memberId} is not a member of ${membership.netName}`
+            : `${entry.name} is in this net but has no address to reach it at`,
+        );
+      }
+      const [host, port] = [address.slice(0, address.lastIndexOf(':')), address.slice(address.lastIndexOf(':') + 1)];
+
+      /**
+       * One live client per member, kept.
+       *
+       * A connection per call would pay the TLS handshake and the whole
+       * membership check on every keystroke's worth of UI, and would drop the
+       * `changed` notice that tells this Mac a remote view's rows moved.
+       */
+      let client = members.get(memberId);
+      if (client === undefined) {
+        client = memberClient({
+          membership,
+          host,
+          port: Number.parseInt(port, 10),
+          deviceId,
+          deviceName,
+          now: () => Date.now(),
+          ...(reachable === undefined
+            ? {}
+            : { advertise: { port: reachable.port } }),
+          log: (message: string) => log.info(`member ${entry.name}: ${message}`),
+        });
+        members.set(memberId, client);
+      }
+      return client.invoke(command, args);
+    },
+
     leaveNet: (netId) => store.removeMembership(netId),
 
     members: () => {
@@ -398,6 +446,8 @@ export function createRemoteService(options: RemoteServiceOptions): RemoteAPI & 
     },
 
     dispose() {
+      for (const client of members.values()) client.stop();
+      members.clear();
       server?.stop();
       for (const listener of listeners.splice(0)) listener.dispose();
       wires.clear();

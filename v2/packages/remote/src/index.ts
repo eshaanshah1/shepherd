@@ -57,6 +57,12 @@ export {
 export { foundNet, kvNetStore, type Membership, type NetStore } from './netstore.ts';
 export { JOIN_TIMEOUT_MS, joinNet, type JoinOptions } from './joinclient.ts';
 export {
+  CALL_TIMEOUT_MS,
+  memberClient,
+  type MemberClient,
+  type MemberClientOptions,
+} from './memberclient.ts';
+export {
   loadOrMintIdentity,
   resetIdentity,
   peerMatchesPin,
