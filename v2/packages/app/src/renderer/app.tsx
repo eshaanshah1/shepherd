@@ -79,6 +79,7 @@ export function placeholderSnapshots(tree: SplitNode = leaf(makePane({}))): Layo
     roots: [
       {
         root: 'window-1',
+        group: 'window-1',
         tree,
         focusedPaneId: leafIds(tree)[0] ?? null,
         zoomedPaneId: null,
@@ -383,6 +384,19 @@ export function App({
   const findTarget =
     terminals === null || focusedPaneId === null ? null : (terminals.search(paneId(focusedPaneId)) ?? null);
 
+  /**
+   * Which group a root is a tab of — the page's one answer to that question.
+   *
+   * Off the snapshot, so the sidebar's highlight, the tab strip and the stage
+   * are three readings of one envelope. A root the envelope does not carry is
+   * its own group, which is both the kernel's default and the honest answer for
+   * a root that has not arrived yet.
+   */
+  const groupOfRoot = useCallback(
+    (root: string) => snapshots?.roots.find((candidate) => candidate.root === root)?.group ?? root,
+    [snapshots],
+  );
+
   const contributions = useContributions(viewsApi);
   /** Every accelerator an overlay declared, for the footer's keycap strip. */
   const raisable = contributions.filter((view) => view.surface === 'overlay' && view.key !== undefined);
@@ -422,6 +436,9 @@ export function App({
           // The same value the stage below draws from, so a row's highlight and
           // the pane group on screen cannot get out of step.
           activeRoot={snapshots?.active ?? null}
+          // …and which group that root is a tab of, so a task's row stays lit
+          // while you are on its second tab.
+          groupOfRoot={groupOfRoot}
           actions={
             <>
               <span className="sh-side-title">Tasks</span>

@@ -188,6 +188,16 @@ export interface SessionDescriptor {
 export interface LayoutSnapshot {
   readonly root: string;
   /**
+   * The pane group this root is a TAB OF — its own id unless somebody grouped
+   * it, so every root has one and nothing here is optional.
+   *
+   * The page reads it twice: to build the tab strip (the roots sharing the
+   * active root's group) and to decide which sidebar row is selected. Both are
+   * derivations of this envelope rather than state, which is what keeps the
+   * strip and the highlight from being able to disagree with the stage.
+   */
+  readonly group: string;
+  /**
    * The pane tree, or **null for a root that holds no panes** — which is a real
    * state since the empty-state fix: closing the last pane of the home root
    * leaves it open and empty rather than closing the window.

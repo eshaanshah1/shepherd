@@ -59,10 +59,18 @@ function RemoteLabel({ view }: { view: ViewContributionDTO }): React.JSX.Element
   );
 }
 
+/**
+ * A root nobody grouped is a group of one — the same default the kernel applies
+ * at the mint, spelled here so a dock rendered without the map behaves exactly
+ * as it did before groups existed.
+ */
+const identityGroup = (root: string): string => root;
+
 export function ViewDock({
   views: bridge,
   actions,
   activeRoot = null,
+  groupOfRoot = identityGroup,
 }: {
   views: ViewsApi | null;
   /**
@@ -74,6 +82,23 @@ export function ViewDock({
    * read twice, so a switch nobody clicked moves both or neither.
    */
   activeRoot?: string | null;
+  /**
+   * Which pane GROUP a root belongs to — read off the same snapshot.
+   *
+   * A root is a tab of a group, and a task's row names the group's anchor root.
+   * Comparing root ids alone would blank the highlight the moment you switched
+   * to that task's second tab, when you are plainly still looking at the task.
+   *
+   * A FUNCTION rather than a group id, so the comparison stays symmetric: both
+   * sides go through it, and a row naming a tab (not an anchor) is selected on
+   * the same terms. The default is the identity, which is exactly the behaviour
+   * before groups existed — a root is its own group.
+   *
+   * Still no new state. The map it closes over arrives in the envelope the
+   * stage is drawn from, so the highlight and the visible panes remain one
+   * value read twice (ADR 0035).
+   */
+  groupOfRoot?: (root: string) => string;
   /**
    * Buttons in the sidebar's header — the shell's, not an extension's.
    *
@@ -159,6 +184,7 @@ export function ViewDock({
             rowsByType={rows}
             bridge={bridge}
             activeRoot={activeRoot}
+            groupOfRoot={groupOfRoot}
           />
         ))}
         {components.map((view) => (
@@ -179,6 +205,7 @@ function TreeView({
   rowsByType,
   bridge,
   activeRoot,
+  groupOfRoot,
 }: {
   base: string;
   /** Every member contributing this list, this Mac included. */
@@ -186,6 +213,7 @@ function TreeView({
   rowsByType: Readonly<Record<string, readonly TreeItem[]>>;
   bridge: ViewsApi | null;
   activeRoot: string | null;
+  groupOfRoot: (root: string) => string;
 }): React.JSX.Element {
   const byType = new Map(views.map((view) => [view.type, view]));
   const merged = mergeRows(views.map((view) => ({ key: view.type, rows: rowsByType[view.type] ?? [] })));
@@ -341,7 +369,11 @@ function TreeView({
                 entering={arriving.has(key)}
                 // `row.root !== undefined` first, so a row that is about no
                 // root is never lit by the shell also not knowing its own.
-                selected={row.root !== undefined && row.root === activeRoot}
+                selected={
+                row.root !== undefined &&
+                activeRoot !== null &&
+                groupOfRoot(row.root) === groupOfRoot(activeRoot)
+              }
                 data-testid="view-row"
                 data-row-id={row.id}
                 data-host={view?.remote?.memberId}

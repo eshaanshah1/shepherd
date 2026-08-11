@@ -344,6 +344,26 @@ describe('a contributed row-s actions', () => {
     view.unmount();
   });
 
+  it('keeps a row selected while the window is on ANOTHER TAB of its group', async () => {
+    // A task's row names its anchor root; its second tab is a different root in
+    // the same group. Comparing root ids alone would blank the highlight the
+    // moment you switched tabs — you are still looking at that task.
+    const rows: readonly TreeItem[] = [
+      { id: 'task-1', label: 'One', root: 'task:task-1' },
+      { id: 'task-2', label: 'Two', root: 'task:task-2' },
+    ];
+    const groupOfRoot = (root: string) => root.split('/')[0] ?? root;
+    const view = mount(
+      <ViewDock views={bridge(TREE, [], rows)} activeRoot="task:task-1/tab-2" groupOfRoot={groupOfRoot} />,
+    );
+    await settle();
+    expect(all(view.container, 'view-row').map((row) => row.dataset.selected)).toEqual([
+      'true',
+      undefined,
+    ]);
+    view.unmount();
+  });
+
   it('highlights nothing when the window is on a root no row names', async () => {
     // The home root, and the moments after a task is archived. A row left lit
     // for a task no longer on screen is the stale highlight this replaces.
