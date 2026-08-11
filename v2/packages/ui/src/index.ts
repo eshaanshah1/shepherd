@@ -7,11 +7,11 @@
  * extension reaching for `var(--sh-ink-raised)`, a private palette name that was
  * already a public API by accident.
  *
- * **Fifteen now, and none of the three arrived alone.** Spec §6 names the risk a
+ * **Seventeen now, and none of the five arrived alone.** Spec §6 names the risk a
  * primitive set built ahead of its call sites runs — it grows members nobody
  * needs — and the mitigation is the rule that each new one lands with its first
  * real consumer in the same change, because a primitive with no caller is a
- * design nobody has tested. The three that joined the twelve, each with the
+ * design nobody has tested. The five that joined the twelve, each with the
  * caller that bought it:
  *
  *   `Menu`            a right-click on a sidebar task row (Reveal / Archive /
@@ -25,9 +25,16 @@
  *                     `title` documented as "shown in the palette", and there
  *                     was no palette — so `layout.zoom`, `layout.rename` and
  *                     every `tasks.*` verb had no way to be run from the UI.
+ *   `Switch`          the settings screen's `boolean` row. There was no boolean
+ *                     control at all, so a toggle was a `Button` that lied about
+ *                     its state or a checkbox that lied about when it applies.
+ *   `Select`          the settings screen's `enum` row. It was on the list below
+ *                     until this wave, and its absence is why `tasks` built
+ *                     `RepoPicker` inside its own UI: an extension that had to
+ *                     pick from a list had to hand-roll the listbox.
  *
- * Still deliberately absent, and still for the same reason: Select, Tabs, Toast,
- * Popover, Table.
+ * Still deliberately absent, and still for the same reason: Tabs, Toast, Popover,
+ * Table.
  *
  * `cva` is a dependency and is deliberately NOT re-exported: a primitive uses it
  * to build its own variants, and an extension building variants of its own means
@@ -44,6 +51,8 @@ export { ICON_STROKE, Icon, iconSizes, type IconProps, type IconSize } from './i
 // Controls
 export { Button, buttonVariants, type ButtonProps, type ButtonSize, type ButtonVariant } from './button.tsx';
 export { IconButton, type IconButtonProps, type IconButtonSize } from './icon-button.tsx';
+export { Switch, type SwitchProps } from './switch.tsx';
+export { Select, DEFAULT_OPTION_LABEL, type SelectOption, type SelectProps } from './select.tsx';
 export { KeyCap, type KeyCapProps } from './keycap.tsx';
 /**
  * Display only, and here beside `KeyCap` for that reason rather than because a
