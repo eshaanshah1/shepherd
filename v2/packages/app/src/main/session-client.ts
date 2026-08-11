@@ -178,7 +178,15 @@ export class SessionClient {
     };
     this.#sessions.set(id, optimistic);
 
-    void this.#request(REQUEST.create, { spec: { ...withEnv, id } }).then((answer) => {
+    /*
+     * `seed` crosses as BASE64: the request frame is JSON, and a `Uint8Array`
+     * put through it arrives as `{"0":27,"1":91,…}` — an object the daemon would
+     * feed as nothing at all, silently. The daemon decodes it back (`server.ts`).
+     */
+    const wireSpec: Record<string, unknown> = { ...withEnv, id };
+    if (withEnv.seed !== undefined) wireSpec['seed'] = Buffer.from(Array.from(withEnv.seed)).toString('base64');
+
+    void this.#request(REQUEST.create, { spec: wireSpec }).then((answer) => {
       if (!answer.ok) {
         // The pane will show an empty terminal and no bytes will ever arrive, so
         // the branch that ends in "and then nothing happens" says why.

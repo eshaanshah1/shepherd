@@ -53,6 +53,22 @@ export interface SessionSpec {
   readonly rows?: number;
   readonly term?: string;
   /**
+   * A previously captured screen, put into this session's mirror before its pty
+   * says anything — what a RESTORED pane is made of.
+   *
+   * The mirror is the one authority on what a viewer arriving late should see,
+   * and a restored pane is the latest possible arrival: the screen it is showing
+   * belongs to a pty that ended days ago. Seeding here rather than writing the
+   * bytes into one renderer's xterm is what makes the replay reach EVERY viewer
+   * — the pane that opened it, and a phone that attaches an hour afterwards.
+   *
+   * It goes in through the same `feed` a live pty's output does, deliberately:
+   * at create time there are no sinks yet, so feeding it lands in the mirror
+   * alone, and nothing downstream needs a second case for "this part is a
+   * recording".
+   */
+  readonly seed?: Uint8Array;
+  /**
    * Lines the host keeps behind the screen, per session.
    *
    * Scrollback DEPTH, not a byte budget — the `ringBytes` it replaces measured a
@@ -288,6 +304,10 @@ export class SessionHost {
       rows: resolved.rows,
       exited: false,
     };
+    // BEFORE the pty is wired: the seeded screen is what was there before, and
+    // anything the new child says belongs after it.
+    if (spec.seed !== undefined && spec.seed.length > 0) record.fanout.feed(spec.seed);
+
     this.#sessions.set(id, record);
 
     pty.onData((chunk: string | Buffer) => {
