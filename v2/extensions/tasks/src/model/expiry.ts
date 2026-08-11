@@ -6,7 +6,15 @@
  * mechanism and it was too long to be a real garbage collector — an archive
  * nobody can name is disk nobody can free.
  */
-export const ARCHIVE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+/**
+ * **7 literal days.** It was 30.
+ *
+ * An archive now carries a task's tabs and the screen each of them was showing,
+ * which makes it a real shelf rather than a tombstone — and a shelf that fills
+ * up is one nobody trusts. Literal days for the reason it always was: a month is
+ * a variable length and a user asking "does this still exist" counts days.
+ */
+export const ARCHIVE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export interface ExpiryCandidate {
   readonly id: string;

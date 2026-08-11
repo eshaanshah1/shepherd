@@ -1519,6 +1519,21 @@ describe('archiving keeps the tabs and their screens', () => {
   });
 });
 
+describe('mark done', () => {
+  it('offers Mark done on a live task and nothing on an archived one', async () => {
+    const h = (live = harness({
+      tasks: [task(), task({ id: 't2', lifecycle: 'archived', archivedAt: 1 })],
+    }));
+    expect((await rowOf(h, 't1'))?.primaryAction).toMatchObject({
+      id: 'tasks.archive',
+      label: 'Mark done',
+      icon: 'check',
+      args: { task: 't1' },
+    });
+    expect((await rowOf(h, 't2'))?.primaryAction).toBeUndefined();
+  });
+});
+
 describe('restoring a task with tabs rebuilds the SCREEN', () => {
   const archivedWithTabs = () =>
     task({
