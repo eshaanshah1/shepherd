@@ -75,6 +75,17 @@ export interface RemoteServiceOptions {
    */
   readonly devices: KV;
   readonly log: CategoryLogger;
+  /**
+   * A member said one of its views changed, and this Mac is showing it.
+   *
+   * The notice already travels — the control channel has always sent it to a
+   * connected client, which is how the phone stays live. What was missing was
+   * anybody listening on this side. Without it a task finishing on the other Mac
+   * would sit stale in this sidebar until something else happened to refresh it,
+   * which is precisely the "why is this list wrong" that makes people stop
+   * trusting a list.
+   */
+  readonly onMemberViewChanged?: (memberId: string, type: string) => void;
 }
 
 /**
@@ -88,7 +99,7 @@ export interface RemoteServiceOptions {
 const DEVICE_ID = 'device-id';
 
 export function createRemoteService(options: RemoteServiceOptions): RemoteAPI & Disposable {
-  const { support, registry, devices, log } = options;
+  const { support, registry, devices, log, onMemberViewChanged } = options;
 
   const deviceId =
     devices.get(DEVICE_ID, s.string()) ??
@@ -419,6 +430,7 @@ export function createRemoteService(options: RemoteServiceOptions): RemoteAPI & 
             : { advertise: { port: reachable.port } }),
           log: (message: string) => log.info(`member ${entry.name}: ${message}`),
         });
+        client.onChanged((type) => onMemberViewChanged?.(memberId, type));
         members.set(memberId, client);
       }
       return client.invoke(command, args);

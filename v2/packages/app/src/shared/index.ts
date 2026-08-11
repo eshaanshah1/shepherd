@@ -38,3 +38,4 @@ export { OutputCoalescer, type CoalescerOptions } from './coalescer.ts';
 
 export type { AgentIndicatorDTO } from './channels.ts';
 export type { AgentsApi, ViewContributionDTO, ViewsApi } from './bridge.ts';
+export { memberOf, qualify, unqualify } from './view-types.ts';

@@ -451,9 +451,10 @@ describe('views from another member', () => {
     const view = mount(<ViewDock views={bridge(REMOTE, [], rows)} />);
     await settle();
 
-    const label = one(view.container, 'view-remote');
-    expect(label.textContent).toBe('Mac B');
-    expect(label.getAttribute('data-member')).toBe('mac-b');
+    // On the ROW, not over a section: there is one list, and each row says
+    // where it lives.
+    expect(one(view.container, 'view-row-host').textContent).toBe('Mac B');
+    expect(one(view.container, 'view-row').getAttribute('data-host')).toBe('mac-b');
     view.unmount();
   });
 
@@ -464,7 +465,7 @@ describe('views from another member', () => {
     const view = mount(<ViewDock views={bridge(local, [], rows)} />);
     await settle();
 
-    expect(all(view.container, 'view-remote')).toHaveLength(0);
+    expect(all(view.container, 'view-row-host')).toHaveLength(0);
     view.unmount();
   });
 
@@ -484,6 +485,69 @@ describe('views from another member', () => {
 
     expect(calls[0]?.type).toBe('mac-b∷tasks.tree');
     expect(calls[0]?.command).toBe('tasks.reveal');
+    view.unmount();
+  });
+});
+
+/**
+ * The whole point of a net, seen in the sidebar: one body of work.
+ *
+ * Two Macs contribute the same list; a reader should see one list with each row
+ * labelled, not two lists to reconcile — and a task that finished over there
+ * belongs in the same DONE as one that finished here.
+ */
+describe('one list across members', () => {
+  const BOTH: ViewContributionDTO[] = [
+    { extension: 'shepherd.tasks', type: 'tasks.tree', kind: 'tree' },
+    {
+      extension: 'shepherd.tasks',
+      type: 'mac-b∷tasks.tree',
+      kind: 'tree',
+      remote: { memberId: 'mac-b', name: 'Mac B' },
+    },
+  ];
+
+  function bridgeFor(rowsByType: Record<string, readonly TreeItem[]>): ViewsApi {
+    return {
+      list: () => Promise.resolve({ ok: true, value: BOTH }),
+      children: (type: string) => Promise.resolve({ ok: true, value: rowsByType[type] ?? [] }),
+      activate: () => Promise.resolve({ ok: true, value: undefined }),
+      invoke: () => Promise.resolve({ ok: true, value: undefined }),
+      onChanged: () => () => {},
+    };
+  }
+
+  it('draws one section, with both machines’ rows under one DONE', async () => {
+    const view = mount(
+      <ViewDock
+        views={bridgeFor({
+          'tasks.tree': [
+            { id: 'here-1', label: 'Local task' },
+            { id: 'd', label: 'DONE', section: true },
+            { id: 'here-2', label: 'Local finished' },
+          ],
+          'mac-b∷tasks.tree': [
+            { id: 'there-1', label: 'Remote task' },
+            { id: 'd', label: 'DONE', section: true },
+            { id: 'there-2', label: 'Remote finished' },
+          ],
+        })}
+      />,
+    );
+    await settle();
+
+    // One heading, not one per machine.
+    expect(all(view.container, 'view-group')).toHaveLength(1);
+    // Live work from both, then finished work from both — one list, in one order.
+    const drawn = all(view.container, 'view-row');
+    expect(drawn.map((row) => row.getAttribute('data-row-id'))).toEqual([
+      'here-1',
+      'there-1',
+      'here-2',
+      'there-2',
+    ]);
+    // …and only the rows that live elsewhere say so.
+    expect(drawn.map((row) => row.getAttribute('data-host'))).toEqual([null, 'mac-b', null, 'mac-b']);
     view.unmount();
   });
 });

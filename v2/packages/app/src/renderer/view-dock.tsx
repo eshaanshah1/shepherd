@@ -6,6 +6,8 @@ import type { TreeItem, TreeItemAction, TreeItemSeparator } from '@shepherd/sdk'
 import { Menu, Row, SectionLabel, StatusDot, type MenuEntry, type StatusRole } from '@shepherd/ui';
 import type { ViewContributionDTO, ViewsApi } from '../shared/index.ts';
 import { resolveExtensionUi } from './extension-ui.ts';
+import { mergeRows } from './merge-rows.ts';
+import { unqualify } from '../shared/index.ts';
 
 /**
  * The left sidebar — the first place an extension's own UI appears on screen.
@@ -121,40 +123,64 @@ export function ViewDock({
   const docked = views.filter((view) => view.kind === 'tree' || (view.surface ?? 'dock') === 'dock');
   if (docked.length === 0 && actions === undefined) return null;
 
+  /**
+   * One list per KIND of list, not one per machine.
+   *
+   * Every member's `tasks.tree` is the same list seen from a different place, so
+   * they are drawn together and each row says where it lives. A section per
+   * member would make the reader do the merging — and would put a task that
+   * finished over there in a second DONE list underneath this one's.
+   */
+  const groups = new Map<string, ViewContributionDTO[]>();
+  for (const view of docked) {
+    if (view.kind !== 'tree') continue;
+    const base = unqualify(view.type);
+    groups.set(base, [...(groups.get(base) ?? []), view]);
+  }
+  const components = docked.filter((view) => view.kind === 'component');
+
   return (
     <nav className="sh-side" data-testid="view-dock">
       {actions === undefined ? null : <div className="sh-side-head">{actions}</div>}
       <div className="sh-side-scroll">
-        {docked.map((view) =>
-          view.kind === 'component' ? (
-            <ComponentView key={view.type} view={view} bridge={bridge} />
-          ) : (
-            <TreeView
-              key={view.type}
-              view={view}
-              rows={rows[view.type] ?? []}
-              bridge={bridge}
-              activeRoot={activeRoot}
-            />
-          ),
-        )}
+        {[...groups].map(([base, contributions]) => (
+          <TreeView
+            key={base}
+            base={base}
+            views={contributions}
+            rowsByType={rows}
+            bridge={bridge}
+            activeRoot={activeRoot}
+          />
+        ))}
+        {components.map((view) => (
+          <ComponentView key={view.type} view={view} bridge={bridge} />
+        ))}
       </div>
     </nav>
   );
 }
 
-/** A contributed tree — P6's kind, drawn by the sidebar itself. */
+/**
+ * A contributed tree — P6's kind, drawn by the sidebar itself, and drawn ONCE
+ * however many members contribute it.
+ */
 function TreeView({
-  view,
-  rows,
+  base,
+  views,
+  rowsByType,
   bridge,
   activeRoot,
 }: {
-  view: ViewContributionDTO;
-  rows: readonly TreeItem[];
+  base: string;
+  /** Every member contributing this list, this Mac included. */
+  views: readonly ViewContributionDTO[];
+  rowsByType: Readonly<Record<string, readonly TreeItem[]>>;
   bridge: ViewsApi | null;
   activeRoot: string | null;
 }): React.JSX.Element {
+  const byType = new Map(views.map((view) => [view.type, view]));
+  const merged = mergeRows(views.map((view) => ({ key: view.type, rows: rowsByType[view.type] ?? [] })));
   /*
    * Every heading a contribution sends is drawn, including one that is the
    * first row. "DONE" over an all-finished list still says what the list IS,
@@ -166,7 +192,7 @@ function TreeView({
    * theory that it divided nothing. It divides the list from the sidebar's
    * empty space, which is the only division left when the live work is gone.
    */
-  const shown = rows;
+  const shown = merged;
 
   /**
    * Everything after the LAST heading is pinned to the bottom of the sidebar.
@@ -176,19 +202,22 @@ function TreeView({
    * the list is short and the sidebar is tall. The split is on the last section
    * rather than on a name, because the dock must not know what "done" means.
    */
-  const lastSection = shown.map((row) => row.section === true).lastIndexOf(true);
+  const lastSection = shown.map((entry) => entry.row.section === true).lastIndexOf(true);
   const top = lastSection === -1 ? shown : shown.slice(0, lastSection);
   const bottom = lastSection === -1 ? [] : shown.slice(lastSection);
 
-  const renderRow = (row: TreeItem): React.JSX.Element => {
+  const renderRow = (entry: { key: string; row: TreeItem }): React.JSX.Element => {
     {
+          const { row } = entry;
+          const view = byType.get(entry.key);
+          const key = `${entry.key}:${row.id}`;
           if (row.section === true) {
             // A heading, not a row: `SectionLabel` draws the uppercase
             // micro-label, the `·` before the count and the rule to the edge.
             // Deliberately not a button — a group that looked clickable and did
             // nothing is the affordance lie this field exists to avoid.
             return (
-              <li key={row.id}>
+              <li key={key}>
                 <SectionLabel data-testid="view-group" {...(row.description === undefined ? {} : { count: row.description })}>
                   {row.label}
                 </SectionLabel>
@@ -199,7 +228,7 @@ function TreeView({
           // No local "and now this row is selected": the command below is what
           // moves the user, and the contribution reports where they ended up.
           const activate = (): void => {
-            if (row.command !== undefined) void bridge?.activate(view.type, row.command);
+            if (row.command !== undefined && view !== undefined) void bridge?.activate(view.type, row.command);
           };
 
           /*
@@ -213,6 +242,7 @@ function TreeView({
           const runAction = (id: string): void => {
             const chosen = declared.find((entry) => !isSeparator(entry) && entry.id === id);
             if (chosen === undefined || isSeparator(chosen)) return;
+            if (view === undefined) return;
             void bridge?.activate(view.type, {
               id: chosen.id,
               ...(chosen.args === undefined ? {} : { args: chosen.args }),
@@ -237,6 +267,7 @@ function TreeView({
                 selected={row.root !== undefined && row.root === activeRoot}
                 data-testid="view-row"
                 data-row-id={row.id}
+                data-host={view?.remote?.memberId}
                 // A token name, resolved here. An extension never sends a raw
                 // colour, so a contribution cannot break the theme.
                 data-tint={row.tint ?? 'none'}
@@ -265,6 +296,18 @@ function TreeView({
                 }
               >
                 {row.label}
+                {/*
+                  Which machine this row is on, and ONLY when it is not this one.
+                  A remote row is otherwise identical to a local one — same
+                  label, same verbs, same dot — so acting on the wrong Mac is
+                  silent without it. Drawn in the row's own text ramp rather than
+                  as a badge: it is a fact about the row, not a decoration.
+                */}
+                {view?.remote === undefined ? null : (
+                  <span className="sh-row-host" data-testid="view-row-host">
+                    {view.remote.name}
+                  </span>
+                )}
               </Row>
           );
 
@@ -281,7 +324,7 @@ function TreeView({
            * dead shell.
            */
           return (
-            <li key={row.id}>
+            <li key={key}>
               {declared.length === 0 ? (
                 rowElement
               ) : (
@@ -295,8 +338,7 @@ function TreeView({
   };
 
   return (
-    <section className="sh-side-view" data-view-type={view.type} data-remote={view.remote?.memberId}>
-      <RemoteLabel view={view} />
+    <section className="sh-side-view" data-view-type={base}>
       {top.length === 0 ? null : <ul className="sh-rows">{top.map(renderRow)}</ul>}
       {/*
         The finished tasks, pinned to the FOOT of the sidebar rather than merely
@@ -313,7 +355,7 @@ function TreeView({
             there are more than seven — long enough to read as a list, short
             enough that finished work never crowds out the live work above it.
           */}
-          <ul className="sh-rows">{renderRow(bottom[0] as TreeItem)}</ul>
+          <ul className="sh-rows">{renderRow(bottom[0] as { key: string; row: TreeItem })}</ul>
           <ul className="sh-rows sh-rows-foot-scroll">{bottom.slice(1).map(renderRow)}</ul>
         </div>
       )}
