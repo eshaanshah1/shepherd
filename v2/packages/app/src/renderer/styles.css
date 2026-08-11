@@ -606,7 +606,16 @@ body.sh-dragging {
 .sh-side-scroll {
   flex: 1 1 auto;
   overflow-y: auto;
-  padding: var(--sh-space-md) 0 10px;
+  /*
+   * `0 12px 12px` — README §1's sections.
+   *
+   * The horizontal padding is the one that was missing, and it is what makes
+   * the rail read as a LIST OF CARDS rather than as a column of full-bleed
+   * bands: a card needs a gutter on both sides or its rounded corners have
+   * nothing to be rounded against. No padding at the TOP because the sky strip
+   * is already there and its gradient resolves into the canvas.
+   */
+  padding: 0 var(--sh-space-lg) var(--sh-space-lg);
   display: flex;
   flex-direction: column;
 }
@@ -630,7 +639,29 @@ body.sh-dragging {
 .sh-side-view + .sh-side-view {
   box-shadow: inset 0 var(--sh-hairline) 0 var(--sh-line);
 }
-.sh-rows { list-style: none; margin: 0; padding: 0; }
+.sh-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  /* 7 — §1's section gap. Tighter than the app's other stacks on purpose: these
+     are siblings in one list, and a wider gap makes each card read as its own
+     region rather than as one entry among several. */
+  gap: var(--sh-space-snug);
+}
+
+/*
+ * A contributed row draws its own surface, so the host is a bare box.
+ *
+ * It carries no padding of its own: the card's `12px 13px` is the card's, and a
+ * host that also padded would inset it twice — which is the shape of every "why
+ * is this one 24px in" bug.
+ */
+.sh-side-row-host {
+  display: block;
+  min-inline-size: 0;
+}
 
 /*
  * Finished work sits at the FOOT of the sidebar. `margin-top: auto` in a column

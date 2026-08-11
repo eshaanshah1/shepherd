@@ -40,27 +40,41 @@ describe('SectionLabel', () => {
     );
   });
 
-  it('draws the separator rather than making the caller type it', () => {
-    // The caller supplies two values; the stylesheet supplies the `·`. A heading
-    // with no count then has no orphaned dot, and nobody has to remember which
-    // side it goes on.
-    const rule = rulesMentioning('sh-ui-section-label__count').find((candidate) =>
-      candidate.selectorText.includes('::before'),
+  it('puts the count past the RULE, so a column of headings aligns its numbers', () => {
+    // The `· ` separator this used to draw is gone with the layout: the count now
+    // sits at the far end past a full-width rule, which is what lets the eye run
+    // down a column of headings and read the numbers as a column.
+    const count = rulesMentioning('sh-ui-section-label__count').find(
+      (candidate) => candidate.selectorText === '.sh-ui-section-label__count',
     );
-    expect(rule).toBeDefined();
-    expect(rule?.style.content).toBe('"· "');
+    const rule = rulesMentioning('sh-ui-section-label').find((candidate) =>
+      candidate.selectorText.includes('::after'),
+    );
+    // `order` rather than markup order, because the rule is a pseudo-element and
+    // is therefore always last in the box.
+    expect(rule?.style.getPropertyValue('order')).toBe('1');
+    expect(count?.style.getPropertyValue('order')).toBe('2');
+    // Tabular, or the headings shuffle as work moves between sections.
+    expect(count?.style.getPropertyValue('font-variant-numeric')).toBe('tabular-nums');
   });
 
-  it('is the instrument voice: uppercase micro type with the WIDE tracking', () => {
-    // Rule 5 survived the reference comparison deliberately — both reference apps
-    // went sentence-case for their headings and both are duller for it.
+  it('is SENTENCE case with no tracking — §6 refuses the alternative', () => {
+    // Flock read this as an instrument voice: uppercase micro type at wide
+    // tracking. §6 lists "uppercase micro-labels with tracking" among what this
+    // language refuses, and the argument is that a section heading is the one
+    // string on the surface a reader SCANS rather than reads — uppercase costs
+    // word shape, which is the thing scanning uses. Weight carries it instead.
     const rule = rulesMentioning('sh-ui-section-label').find(
       (candidate) => candidate.selectorText === '.sh-ui-section-label',
     );
-    expect(rule?.style.getPropertyValue('text-transform')).toBe('uppercase');
-    expect(rule?.style.getPropertyValue('font-size')).toBe('var(--sh-micro-font-size)');
-    expect(rule?.style.getPropertyValue('letter-spacing')).toBe('var(--sh-micro-tracking-wide)');
-    expect(rule?.style.getPropertyValue('height')).toBe('var(--sh-row-height)');
+    expect(rule?.style.getPropertyValue('text-transform')).toBe('none');
+    expect(rule?.style.getPropertyValue('letter-spacing')).toBe('0px');
+    expect(rule?.style.getPropertyValue('font-weight')).toBe('600');
+    expect(rule?.style.getPropertyValue('font-size')).toBe('var(--sh-font-size-small)');
+    // A control's height, not a row's: the row grew to 34 with the task card, and
+    // a heading that grew with it would put more space above each group than
+    // between the cards inside it.
+    expect(rule?.style.getPropertyValue('height')).toBe('var(--sh-control-md)');
   });
 
   it('carries a trailing rule by default and can be told not to', () => {

@@ -373,7 +373,22 @@ function TreeView({
           const RowComponent = resolveExtensionRowUi(row.component);
           if (RowComponent !== undefined && view !== undefined) {
             const contributed = (
-              <li key={key} className="sh-side-row-host" data-testid="view-row" data-row-id={row.id}>
+              <li
+                key={key}
+                className="sh-side-row-host"
+                data-testid="view-row"
+                data-row-id={row.id}
+                /*
+                  The SHELL's answer about what is on screen, on the host rather
+                  than inside the component (ADR 0035). A contributed card styles
+                  itself from its own `data-selected`, but the machine-readable
+                  fact has to sit where every row carries it — otherwise "which
+                  row is highlighted" means one thing for an ordinary row and
+                  another for a card, and the smoke that asks the question gets
+                  no answer for half the rail.
+                */
+                data-selected={isSelected ? 'true' : undefined}
+              >
                 <RowComponent
                   item={row}
                   selected={isSelected}
