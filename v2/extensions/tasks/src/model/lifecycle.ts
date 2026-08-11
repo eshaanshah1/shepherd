@@ -1,4 +1,4 @@
-import type { AttentionLevel } from '@shepherd/sdk';
+import { rollUp, type TaskAgentState } from './agent-rollup.ts';
 
 /**
  * A task's state, split into the half that is stored and the half that is not.
@@ -22,31 +22,34 @@ export const LIFECYCLE_STATES = ['draft', 'running', 'review', 'done', 'archived
 /** What the store holds. */
 export type TaskLifecycle = (typeof LIFECYCLE_STATES)[number];
 
-/** What the sidebar groups by. The lifecycle, plus the one derived value. */
-export type TaskDisplayState = TaskLifecycle | 'needs-you';
+/** What the sidebar tints by: the lifecycle's one surviving value, or the rollup. */
+export type TaskDisplayState = TaskLifecycle | TaskAgentState;
 
 export function isLifecycle(value: unknown): value is TaskLifecycle {
   return typeof value === 'string' && (LIFECYCLE_STATES as readonly string[]).includes(value);
 }
 
 /**
- * The one place `needs-you` comes from.
+ * The lifecycle and the agents, meeting in one place.
  *
- * Only a **running** task can need you. A `done` or `archived` task with a
- * straggling session at `urgent` is a task that needs cleaning up, not one that
- * needs answering — and without this narrowing, an archived task whose last
- * session never cleared would sit in the needs-you group permanently. `draft`
- * likewise: nothing has been dispatched yet, so there is nothing to answer.
+ * It used to fold a lifecycle with the sessions' ATTENTION, and `needs-you` was
+ * the only value it could add. That was the bug: `running` covered a working
+ * agent and a sleeping one, so both were blue — and `review`/`done`, the values
+ * that would have been the other colours, are written by nothing anywhere.
  *
- * `info` deliberately does not count. It is the level that exists precisely
- * because it does not alert; promoting it here would reintroduce the noise
- * `AttentionLevel` splits out.
+ * Archived is the one lifecycle value that still wins, because an archived task
+ * is not a thing whose agents are doing anything and reporting `idle` for it
+ * would answer a question nobody asked. In practice the two agree, since an
+ * archived task's sessions are gone; the carve-out makes that a guarantee rather
+ * than a coincidence a stale session could break.
+ *
+ * D4 is untouched and, if anything, stronger: nothing here writes. It reads a
+ * fact `agents-core` publishes, one topic further upstream than before.
  */
 export function displayState(
   lifecycle: TaskLifecycle,
-  sessionAttention: readonly AttentionLevel[],
+  agentStates: readonly string[],
 ): TaskDisplayState {
-  if (lifecycle !== 'running') return lifecycle;
-  const wantsYou = sessionAttention.some((level) => level === 'attention' || level === 'urgent');
-  return wantsYou ? 'needs-you' : lifecycle;
+  if (lifecycle === 'archived') return 'archived';
+  return rollUp(agentStates);
 }

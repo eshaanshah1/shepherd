@@ -16,6 +16,7 @@ import {
   AGENT_STATE_TOPIC,
   AGENTS_COMMANDS,
   QUICK_MODEL_KEY,
+  SESSION_BOUND_TOPIC,
   SESSION_EXIT_TOPIC,
   SESSIONS_LIST_COMMAND,
   VIEWING_TOPIC,
@@ -66,6 +67,8 @@ export interface AgentsAPI {
 
 interface SessionRow {
   readonly id: string;
+  /** Where it is running. Absent for a session not yet bound to a pane. */
+  readonly paneId?: string;
   readonly hasForegroundProcess: boolean | null;
   readonly viewing: boolean | null;
 }
@@ -92,8 +95,10 @@ export function readSessionRows(value: unknown): readonly SessionRow[] {
     if (typeof raw !== 'object' || raw === null) continue;
     const row = raw as Record<string, unknown>;
     if (typeof row['id'] !== 'string') continue;
+    const pane = row['paneId'];
     rows.push({
       id: row['id'],
+      ...(typeof pane === 'string' ? { paneId: pane } : {}),
       hasForegroundProcess: triState(row['hasForegroundProcess']),
       viewing: triState(row['viewing']),
     });
@@ -138,6 +143,24 @@ export const activate: ActivateFn<AgentsAPI> = async (ctx: ExtensionContext, api
 
   // ------------------------------------------------------------------ outputs
 
+  /**
+   * `sessionId → paneId`, so the change this extension emits can be keyed by
+   * either end.
+   *
+   * A consumer cannot re-derive it. `tasks` holds a `pending-` session id for the
+   * first seconds after a spawn and only the pane is true, which is exactly when
+   * an agent hits its trust prompt — `tasks`' own tests have pinned that window
+   * for a while and say so. Resolving once here is the move core's attention
+   * store already makes one layer down.
+   *
+   * Fed by three things and needing all of them: the seed, for sessions that
+   * existed before this extension woke; `session.bound`, for the exact moment a
+   * new one lands; and the sweep, which is a backstop and nothing more (it
+   * returns early unless something is already working or blocked, so it cannot
+   * be relied on to see a quiet session at all).
+   */
+  const panes = new Map<string, string>();
+
   const publish = (change: AgentChange): void => {
     const { level, reason } = attentionFor(change.to, change.reason);
     /**
@@ -150,7 +173,15 @@ export const activate: ActivateFn<AgentsAPI> = async (ctx: ExtensionContext, api
      * whatever the last one was. Threading it is the same discipline `viewing`
      * follows: one computation, carried, never re-derived downstream.
      */
-    events.emit(AGENT_STATE_TOPIC, { ...change, level, alertReason: reason });
+    // The pane rides along so a consumer that can only key by pane — see the
+    // `panes` comment — does not have to go asking for it.
+    const pane = panes.get(change.sessionId);
+    events.emit(AGENT_STATE_TOPIC, {
+      ...change,
+      level,
+      alertReason: reason,
+      ...(pane === undefined ? {} : { pane }),
+    });
     // `none` is a clear, and `attention.set` treats it as one — so there is no
     // branch here, which is the point: one mapping, one call, no second opinion
     // about when an agent stops needing you.
@@ -206,9 +237,21 @@ export const activate: ActivateFn<AgentsAPI> = async (ctx: ExtensionContext, api
   );
 
   ctx.subscriptions.push(
+    events.on(SESSION_BOUND_TOPIC, (payload) => {
+      const bound = payload as { sessionId?: string; paneId?: string };
+      if (typeof bound.sessionId !== 'string' || typeof bound.paneId !== 'string') return;
+      // NOT deferred behind `afterSeed`: this is a fact, not a transition, and a
+      // later seed row for the same session carries the same pane. Holding it
+      // back would leave the map empty for exactly the window it exists to cover.
+      panes.set(bound.sessionId, bound.paneId);
+    }),
+  );
+
+  ctx.subscriptions.push(
     events.on(SESSION_EXIT_TOPIC, (payload) => {
       const exit = payload as { sessionId?: string };
       if (typeof exit.sessionId !== 'string') return;
+      panes.delete(exit.sessionId);
       // The exact signal, so a dead session's record and every kind's slot for it
       // go together rather than waiting for the sweep to infer it.
       afterSeed(() => void registry.forget(exit.sessionId as string));
@@ -237,6 +280,7 @@ export const activate: ActivateFn<AgentsAPI> = async (ctx: ExtensionContext, api
   // topic, and this extension has to read the inventory anyway.
   for (const row of await readSessions()) {
     if (row.viewing !== null) registry.setViewing(row.id, row.viewing);
+    if (row.paneId !== undefined) panes.set(row.id, row.paneId);
   }
   const queued = buffered ?? [];
   buffered = undefined;
@@ -252,6 +296,7 @@ export const activate: ActivateFn<AgentsAPI> = async (ctx: ExtensionContext, api
       // evidence of anything — the registry treats it as such.
       registry.observe(row.id, row.hasForegroundProcess ?? undefined);
       if (row.viewing !== null && !row.viewing) registry.setViewing(row.id, false);
+      if (row.paneId !== undefined) panes.set(row.id, row.paneId);
     }
     schedule();
   };
@@ -273,7 +318,14 @@ export const activate: ActivateFn<AgentsAPI> = async (ctx: ExtensionContext, api
     commands.register(AGENTS_COMMANDS.list, {
       title: 'Agents: List Tracked Sessions',
       schema: s.nothing(),
-      handler: () => ({ agents: registry.list() }),
+      // The pane rides here too: a mirror seeded from this snapshot has to key
+      // the same way the subscription does, or it seeds nothing.
+      handler: () => ({
+        agents: registry.list().map((record) => {
+          const pane = panes.get(record.sessionId);
+          return { ...record, ...(pane === undefined ? {} : { pane }) };
+        }),
+      }),
     }),
   );
 
@@ -446,4 +498,10 @@ export const activate: ActivateFn<AgentsAPI> = async (ctx: ExtensionContext, api
 export interface AgentStateChanged extends AgentChange {
   readonly level: 'none' | 'info' | 'attention' | 'urgent';
   readonly alertReason: string;
+  /**
+   * Where it is running. Absent only if the session bound before this extension
+   * woke AND the seed has not landed — a consumer keying by pane skips such a
+   * change rather than guessing at one.
+   */
+  readonly pane?: string;
 }
