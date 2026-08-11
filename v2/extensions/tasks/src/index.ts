@@ -1,4 +1,5 @@
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import {
   fuzzyMatch,
   s,
@@ -26,6 +27,15 @@ import { orderSuggestions, rankScored } from './model/pick-order.ts';
 import { repoName } from './model/repo-name.ts';
 import { completeDirectories, exactRepoPath, looksLikeRepo } from './suggest.ts';
 import { taskRootId } from './model/root-id.ts';
+
+/**
+ * How much of a tab's screen is kept when a task is shelved.
+ *
+ * Enough to scroll back through what an agent did, and bounded: a build log that
+ * printed a hundred thousand lines must not become a hundred-megabyte file
+ * nobody asked for.
+ */
+const ARCHIVE_HISTORY_LINES = 1000;
 /**
  * Asked of `agents-core`, never of a vendor: a task that named `claudeCode.*`
  * would be a task that knows which agent it hired (D11).
@@ -35,6 +45,12 @@ const AGENTS_RESUME_COMMAND = 'agents.resumeCommand';
 import { displayState } from './model/lifecycle.ts';
 import { isTaskAgentState, rollUp, tintFor } from './model/agent-rollup.ts';
 import { capTabRows } from './model/tab-rows.ts';
+import {
+  archiveTabsFrom,
+  historyPath,
+  type ArchivedTab,
+  type RootReading,
+} from './model/archive-tabs.ts';
 import { synthTaskRoot } from './model/root-synth.ts';
 import { planLaunch } from './model/launch.ts';
 import { writePastedImages, type PastedImage } from './images.ts';
@@ -1272,6 +1288,96 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * exist" command to ask instead. Scoped to THIS root's id so an unrelated
    * failure that happens to mention a root is still reported.
    */
+  /** Where an archived screen lives. Outside any task root — a task root is deleted. */
+  const archiveDir = (): string => `${ctx.dataDir}/.archives`;
+
+  /**
+   * Every tab of a task, and the screen each of its panes was showing.
+   *
+   * The layout is asked rather than the record: the record knows which sessions
+   * a task started, and the layout knows what is actually on screen — splits the
+   * user made, panes they opened themselves, a tab with no agent in it at all.
+   *
+   * **Best-effort, per pane.** A session that has already exited has no mirror,
+   * and a task you cannot shelve because one pane's history could not be read is
+   * a worse outcome than a tab that comes back blank. Each failure is warned
+   * about and the pane is archived without a `history`.
+   */
+  async function captureTabs(task: TaskRecord): Promise<readonly ArchivedTab[]> {
+    const listed = await commands.invoke<readonly unknown[]>('layout.listRoots', {
+      group: taskRootId(task.id),
+    });
+    if (!listed.ok || !Array.isArray(listed.value)) return [];
+
+    const roots: RootReading[] = [];
+    const history: Record<string, string> = {};
+
+    for (const raw of listed.value) {
+      // Read defensively: this crossed a port, and `ok` says the call succeeded
+      // rather than that the value has a shape.
+      const row = raw as { root?: unknown; tree?: unknown; focusedPane?: unknown; panes?: unknown };
+      if (typeof row.root !== 'string') continue;
+      const panes = Array.isArray(row.panes) ? row.panes : [];
+
+      const reading: RootReading['panes'][number][] = [];
+      for (const rawPane of panes) {
+        const p = rawPane as { pane?: unknown; cwd?: unknown; userTitle?: unknown; session?: unknown };
+        if (typeof p.pane !== 'string') continue;
+        reading.push({
+          pane: p.pane,
+          cwd: typeof p.cwd === 'string' ? p.cwd : null,
+          userTitle: typeof p.userTitle === 'string' ? p.userTitle : null,
+        });
+
+        if (typeof p.session !== 'string') continue;
+        const relative = historyPath(task.id, row.root, p.pane);
+        try {
+          const captured = await commands.invoke<{ bytes?: unknown }>('sessions.capture', {
+            session: p.session,
+            lines: ARCHIVE_HISTORY_LINES,
+          });
+          if (!captured.ok || typeof captured.value?.bytes !== 'string') {
+            throw new Error(captured.ok ? 'no bytes' : captured.error.message);
+          }
+          const file = `${archiveDir()}/${relative}`;
+          mkdirSync(dirname(file), { recursive: true });
+          writeFileSync(file, Buffer.from(captured.value.bytes, 'base64'));
+          history[p.pane] = relative;
+        } catch (error) {
+          ctx.log.warn(
+            `task ${task.id}: pane ${p.pane} was archived without its history — ${(error instanceof Error ? error.message : String(error))}`,
+          );
+        }
+      }
+
+      roots.push({
+        root: row.root,
+        ...(row.tree === undefined || row.tree === null ? {} : { tree: row.tree }),
+        focusedPane: typeof row.focusedPane === 'string' ? row.focusedPane : null,
+        panes: reading,
+      });
+    }
+
+    return archiveTabsFrom({
+      roots,
+      // `resumeTarget` is the only session field restore needs, and it is opaque
+      // (D11) — it names the agent's own way back without this extension ever
+      // learning which agent that is.
+      sessions: task.sessions.flatMap((session) =>
+        session.pane === undefined
+          ? []
+          : [
+              {
+                pane: session.pane,
+                sessionId: session.id,
+                ...(session.resumeTarget === undefined ? {} : { resumeTarget: session.resumeTarget }),
+              },
+            ],
+      ),
+      history,
+    });
+  }
+
   async function closeTaskRoot(task: TaskRecord): Promise<void> {
     const group = taskRootId(task.id);
     /*
@@ -2113,6 +2219,21 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           // Gitignored files go either way; the user hears about it first.
           for (const warning of out.warnings) warnings.push(`${repo.name}: ${warning}`);
         }
+        /*
+         * The tabs, and what was on each of their screens.
+         *
+         * BEFORE `closeTaskRoot`, which is what kills the ptys — and a mirror
+         * dies with its session. Capturing afterwards would archive N empty
+         * screens and report no fault, because nothing would have failed.
+         *
+         * AFTER the worktree snapshots, so a conflicted repo that refuses above
+         * does not leave a directory of `.term` files behind for a task that is
+         * still live.
+         */
+        const tabs = await captureTabs(task);
+        task = { ...task, ...(tabs.length === 0 ? {} : { tabs }) };
+        store.put(task);
+
         // AFTER the snapshots, and that order is the whole of it: a conflicted
         // worktree refuses above, and a refusal that had already closed the
         // task's panes would leave the user with the work still on disk and no

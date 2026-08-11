@@ -1415,6 +1415,110 @@ describe("a task's tabs, as its sidebar sublist", () => {
   });
 });
 
+describe('archiving keeps the tabs and their screens', () => {
+  const withGroup = (extra?: (id: string, args: unknown) => unknown) =>
+    harness({
+      tasks: [task({ sessions: [{ id: 's1', role: 'orchestrator', pane: 'p1', root: 'task:t1' }] })],
+      git: archivable,
+      invoke: (id, args) => {
+        if (id === 'layout.listRoots') {
+          return {
+            ok: true,
+            value: [
+              {
+                root: 'task:t1',
+                group: 'task:t1',
+                label: 'api',
+                focusedPane: 'p1',
+                tree: { kind: 'leaf', pane: { id: 'p1' } },
+                panes: [{ pane: 'p1', cwd: '/wt', userTitle: null, session: 's1' }],
+              },
+              {
+                root: 'task:t1/tab-2',
+                group: 'task:t1',
+                label: 'logs',
+                focusedPane: 'p2',
+                tree: { kind: 'leaf', pane: { id: 'p2' } },
+                panes: [{ pane: 'p2', cwd: '/wt/api', userTitle: 'logs', session: null }],
+              },
+            ],
+          } as never;
+        }
+        if (id === 'sessions.capture') {
+          return { ok: true, value: { bytes: Buffer.from('previous work').toString('base64') } } as never;
+        }
+        return extra?.(id, args) as never;
+      },
+    });
+
+  it('captures every screen BEFORE it closes the group', async () => {
+    // `layout.closeGroup` kills the ptys and a mirror dies with its session.
+    // Capturing afterwards would archive empty screens and report no fault,
+    // because nothing would have failed.
+    const h = (live = withGroup());
+    await h.run('tasks.archive', { task: 't1' });
+
+    const captured = h.trace.indexOf('invoke sessions.capture');
+    const closed = h.trace.indexOf('invoke layout.closeGroup');
+    expect(captured).toBeGreaterThanOrEqual(0);
+    expect(closed).toBeGreaterThan(captured);
+  });
+
+  it('records each tab with its panes, and writes a history file per captured pane', async () => {
+    const h = (live = withGroup());
+    await h.run('tasks.archive', { task: 't1' });
+
+    const stored = (await h.run<{ tabs?: { root: string; panes: { history?: string }[] }[] }[]>('tasks.list'))[0];
+    expect(stored?.tabs?.map((tab) => tab.root)).toEqual(['task:t1', 'task:t1/tab-2']);
+    const history = stored?.tabs?.[0]?.panes[0]?.history;
+    expect(history).toBeDefined();
+    expect(existsSync(join(h.dataDir, '.archives', history as string))).toBe(true);
+    // The pane with no session had nothing to capture, and says so by omission.
+    expect(stored?.tabs?.[1]?.panes[0]?.history).toBeUndefined();
+  });
+
+  it('archives a pane WITHOUT history when its screen cannot be read', async () => {
+    // A session that has already exited has no mirror. A task you cannot shelve
+    // because one pane's history could not be read is the worse outcome.
+    const warnings: string[] = [];
+    const h = (live = harness({
+      tasks: [task({ sessions: [{ id: 's1', role: 'orchestrator', pane: 'p1', root: 'task:t1' }] })],
+      git: archivable,
+      onWarn: (line) => warnings.push(line),
+      invoke: (id) => {
+        if (id === 'layout.listRoots') {
+          return {
+            ok: true,
+            value: [
+              {
+                root: 'task:t1',
+                group: 'task:t1',
+                label: 'api',
+                focusedPane: 'p1',
+                tree: { kind: 'leaf', pane: { id: 'p1' } },
+                panes: [{ pane: 'p1', cwd: '/wt', userTitle: null, session: 's1' }],
+              },
+            ],
+          } as never;
+        }
+        if (id === 'sessions.capture') {
+          return {
+            ok: false,
+            error: { code: 'handler-failed', message: 'no session s1', commandId: id },
+          } as never;
+        }
+        return undefined;
+      },
+    }));
+    await h.run('tasks.archive', { task: 't1' });
+
+    const stored = (await h.run<{ lifecycle: string; tabs?: { panes: { history?: string }[] }[] }[]>('tasks.list'))[0];
+    expect(stored?.lifecycle).toBe('archived');
+    expect(stored?.tabs?.[0]?.panes[0]?.history).toBeUndefined();
+    expect(warnings.some((line) => line.includes('without its history'))).toBe(true);
+  });
+});
+
 describe('a task whose pane group empties', () => {
   it('archives it — closing every pane on a task is finishing it', async () => {
     const h = (live = harness({
