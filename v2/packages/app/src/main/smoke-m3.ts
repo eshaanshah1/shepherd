@@ -636,7 +636,72 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
   );
   say('ok — the sidebar followed the window nobody clicked');
 
-  // --- 9. and closing its panes FINISHES it.
+  /**
+   * --- 8b. a task can hold a SECOND TAB, and the first tab closing is not the
+   * task closing.
+   *
+   * Two claims that no unit test can make, for the reason the step below it
+   * exists: they are about the real bus, the real layout store and the real
+   * daemon holding the ptys.
+   *
+   *   - **switching tabs keeps every session.** Every root is mounted and
+   *     hidden, so a switch must not tear a pane down — a torn-down pane is a
+   *     released terminal and then, on the way back, a SECOND pty. v1's remount
+   *     lesson, and a unit test that renders one root cannot see it.
+   *   - **closing one tab does not archive the task.** `tasks` archives when it
+   *     hears a pane group closed; before `groupEmpty` it heard the anchor's id
+   *     and shelved the task while an agent ran on in tab 2. The unit tests for
+   *     it supply both halves of that correlation, which is precisely the shape
+   *     that hid the archive-on-close bug the step below is about.
+   */
+  const tab = (await invoke('layout.newTab', { group: `task:${composed.id}` })) as { root?: string };
+  check(
+    typeof tab.root === 'string' && tab.root.startsWith(`task:${composed.id}/`),
+    `newTab minted a root in the task's group: ${JSON.stringify(tab)}`,
+  );
+  const secondTab = String(tab.root);
+
+  /*
+   * Wait for the new tab's pty FIRST. The pane is minted by the command and the
+   * session is created by the renderer when it mounts — so a count taken here
+   * without waiting measures the moment before the tab has a terminal, and the
+   * "switching kept every session" claim would pass by counting the arrival of
+   * the one it was supposed to be watching.
+   */
+  const bothLive = await until(
+    "the new tab's session to exist",
+    async () => (await invoke('sessions.list')) as { id: string }[],
+    (list) => list.length >= 2,
+  );
+  const beforeSwitch = (bothLive as { id: string }[]).map((session) => session.id).sort();
+  await invoke('layout.switchRoot', { root: `task:${composed.id}` });
+  await invoke('layout.switchRoot', { root: secondTab });
+  const afterSwitch = ((await invoke('sessions.list')) as { id: string }[])
+    .map((session) => session.id)
+    .sort();
+  check(
+    afterSwitch.length === beforeSwitch.length &&
+      afterSwitch.every((id, index) => id === beforeSwitch[index]),
+    `switching tabs kept every session, the SAME ones (${beforeSwitch.length} -> ${afterSwitch.length})`,
+  );
+  say('ok — a hidden tab keeps its ptys');
+
+  for (;;) {
+    const closed = (await invoke('layout.close', { root: secondTab }).catch(() => null)) as {
+      wasLastPane?: boolean;
+    } | null;
+    if (closed === null || closed.wasLastPane === true) break;
+  }
+  const stillRunning = ((await invoke('tasks.list')) as { id: string; lifecycle: string }[]).find(
+    (t) => t.id === composed.id,
+  );
+  check(
+    stillRunning?.lifecycle === 'running',
+    `closing one tab left the task running: ${JSON.stringify(stillRunning)}`,
+  );
+  say('ok — one tab closing is not the task closing');
+
+  // --- 9. and closing its LAST tab's panes FINISHES it.
   //
   // The one step whose absence shipped a bug: the archive-on-close was wired to
   // `session.exit`, counting the task's own recorded panes down to zero, and
