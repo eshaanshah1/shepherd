@@ -28,6 +28,7 @@ import {
 import { MENU_INVOCATIONS } from '../shared/menu-commands.ts';
 import { EmptyState } from './empty-state.tsx';
 import { FindBar } from './find-bar.tsx';
+import { SkyStrip } from './sky-strip.tsx';
 import { ViewDock, raiseIcon } from './view-dock.tsx';
 import { ViewOverlay } from './view-overlay.tsx';
 import { SettingsScreen } from './settings-screen.tsx';
@@ -378,27 +379,17 @@ export function App({
 
 
   /**
-   * Where you are: the focused pane's own name, and the path under it.
+   * The focused pane, for the find bar below.
    *
-   * Read off the pane rather than off the task list, because the renderer knows
-   * nothing about tasks — `tasks` sets a pane's `userTitle` when it spawns
-   * (`Ship the login fix · api`), so the name the pane carries IS the task's,
-   * with no coupling in this file. A window with no snapshot yet says the app's
-   * name, which is the one moment that is honest.
+   * This used to also feed a titlebar breadcrumb (`task / pane`). That is gone:
+   * it restated the rail and the pane head at once, and §1's rule is that
+   * nothing repeats itself down the hierarchy. The pane is still resolved here
+   * because ⌘F needs to know which grid it is searching.
    */
   const focused =
     active === null || active.tree === null || active.focusedPaneId === null
       ? null
       : findPane(active.tree, paneId(active.focusedPaneId));
-  // A pane nobody named shows its path where the name would be, rather than a
-  // placeholder: "Untitled" tells you nothing, and a plain shell in ~/dev is a
-  // thing you can recognise.
-  const named = focused?.userTitle ?? (focused?.title === '' ? null : focused?.title) ?? null;
-  const where = focused?.cwd === null || focused?.cwd === undefined ? '' : shorten(focused.cwd);
-  const crumb = {
-    task: named ?? (where === '' ? 'Shepherd' : where),
-    pane: named === null ? '' : where,
-  };
 
   /**
    * The find bar's target: whichever pane is focused right now, re-resolved on
@@ -515,28 +506,21 @@ export function App({
     <div className="sh-app">
       {/*
         The window's OWN titlebar (`titleBarStyle: 'hiddenInset'`), carrying the
-        traffic lights and a breadcrumb — where you are, which is the one fact
-        the sidebar cannot show while it is scrolled somewhere else.
-        It said "SHEPHERD" before, under a native bar that also said Shepherd.
+        traffic lights and the app's name — and NOTHING else on the left.
+
+        The breadcrumb that used to live here is deleted. It read `task / pane`,
+        which is a restatement of the rail and the pane head: §1's rule is that
+        nothing repeats itself down the hierarchy, and the breadcrumb repeated
+        two levels of it at once. What it was FOR — knowing where you are while
+        the rail is scrolled elsewhere — is answered by the rail's own selection
+        and by the pane head naming its tree.
+
+        The one cell that survives is the one no other surface can show: a
+        renderer with no bridge looks exactly like an app with no panes.
       */}
       <header className="sh-plate">
-        <span className="sh-crumb">
-          <span className="sh-crumb-task">{crumb.task}</span>
-          {crumb.pane !== '' && (
-            <>
-              <span className="sh-crumb-sep" aria-hidden="true">
-                /
-              </span>
-              <span className="sh-crumb-pane">{crumb.pane}</span>
-            </>
-          )}
-        </span>
+        <span className="sh-wordmark">Shepherd</span>
         <span className="sh-plate-spacer" />
-        {/*
-          A pane count was here and it counted what you can see. The one cell
-          that survives is the one you CANNOT see: a renderer with no bridge
-          looks like an app with no panes, and that is worth a word.
-        */}
         {terminals === null && <span className="sh-plate-cell is-ember">NO BRIDGE</span>}
       </header>
 
@@ -550,10 +534,20 @@ export function App({
           // while you are on its second tab.
           groupOfRoot={groupOfRoot}
           actions={
-            <>
-              <span className="sh-side-title">Tasks</span>
-              <span className="sh-plate-spacer" />
-              {raisable.map((view) => (
+            /*
+              The panel's name lives on the sky strip, overlaid at its foot — one
+              surface carrying the picture and the heading, which is what makes
+              the strip a window rather than a band of decoration above a list.
+
+              The panel's ONE primary action rides in the same row, which is also
+              why `raisable` collapses to a single button here: §4 allows one
+              primary per surface, and the rail is one surface.
+            */
+            <SkyStrip
+              title="Work"
+              action={
+                <>
+                  {raisable.map((view) => (
                 <IconButton
                   key={view.type}
                   icon={raiseIcon(view.icon)}
@@ -572,8 +566,10 @@ export function App({
                   title={`${view.title ?? view.type} (${accelLabel(view.key ?? '')})`}
                   onClick={() => window.dispatchEvent(new CustomEvent('sh:raise-view', { detail: view.type }))}
                 />
-              ))}
-            </>
+                  ))}
+                </>
+              }
+            />
           }
         />
         {/*

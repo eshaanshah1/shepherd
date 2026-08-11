@@ -72,11 +72,11 @@
  * The signal, and the only one.
  *
  * The ROLE is named rather than the colour — an extension that re-declares
- * `--sh-accent` gets its own pill for free, and cobalt stays a fact about the
+ * `--sh-sky` gets its own pill for free, and cobalt stays a fact about the
  * token layer.
  */
 .sh-ui-pill .sh-icon {
-  color: var(--sh-accent);
+  color: var(--sh-sky);
 }
 
 /*
@@ -86,5 +86,5 @@
  * is worse than a loud one.
  */
 .sh-ui-pill:not(:has(.sh-icon)) {
-  color: var(--sh-accent);
+  color: var(--sh-sky);
 }

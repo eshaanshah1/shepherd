@@ -562,11 +562,14 @@ describe('roots the window switches between', () => {
     view.unmount();
   });
 
-  it('names the ACTIVE root\'s focused pane, not one behind it', () => {
-    // A pane count used to live here and it counted what you can already see.
-    // What the titlebar carries now is where you ARE, and the claim worth
-    // pinning is the same one: it reads from the active root, so a hidden root's
-    // focused pane can never be what the window says you are looking at.
+  it('says the APP\'s name in the titlebar, and nothing about where you are', () => {
+    // This used to assert a `task / pane` breadcrumb read off the active root.
+    // §1 deletes it: the titlebar says the app's name and nothing else, because
+    // the crumb restated the rail and the pane head at once — and §6 refuses
+    // repeating a name down the hierarchy.
+    //
+    // The claim worth pinning now is the REFUSAL. A titlebar that quietly grew a
+    // pane name back would pass every other test in this file.
     const home = makePane({ userTitle: 'home' });
     const task = makePane({ userTitle: 'task' });
     const { view } = render({
@@ -577,12 +580,21 @@ describe('roots the window switches between', () => {
       ),
     });
     // The TITLEBAR's text, not the document's: every root stays mounted by
-    // design, so the hidden root's pane is legitimately in the DOM — asserting
-    // over the whole container would be asserting that the mount rule is
-    // broken.
-    const crumb = view.container.querySelector('.sh-crumb')?.textContent ?? '';
-    expect(crumb).toContain('home');
-    expect(crumb).not.toContain('task');
+    // design, so a pane's name is legitimately in the DOM elsewhere.
+    const plate = view.container.querySelector('.sh-plate')?.textContent ?? '';
+    expect(plate).toContain('Shepherd');
+    expect(plate).not.toContain('home');
+    expect(plate).not.toContain('task');
+    expect(view.container.querySelector('.sh-crumb')).toBeNull();
+    view.unmount();
+  });
+
+  it('draws the sky strip once, in the rail', () => {
+    // §5's one decorative surface, and the discipline is that it is bounded: an
+    // earlier version spread the scene behind the whole app and was rejected as
+    // distracting. Two of them would be the same mistake by another door.
+    const { view } = render({ snapshot: snapshotsOf('window-1', rootOf(leaf(makePane({})))) });
+    expect(view.container.querySelectorAll('[data-testid="sky-strip"]')).toHaveLength(1);
     view.unmount();
   });
 

@@ -10,7 +10,7 @@
 .sh-ui-menu {
   min-width: calc(10 * var(--sh-space-xl));
 
-  background: var(--sh-surface-raised);
+  background: var(--sh-raised);
   color: var(--sh-text);
   border: var(--sh-hairline) solid var(--sh-line);
   /* The machined corner. A menu is chrome, not a writing surface — `radius-soft`
@@ -82,7 +82,7 @@
  */
 .sh-ui-menu__item[data-highlighted] {
   background: var(--sh-fill-selected);
-  color: var(--sh-text-selected);
+  color: var(--sh-text-on-wool);
 }
 
 /*
@@ -111,12 +111,12 @@
  * and it would go wrong the day a fill needs an ink that is not the surface.
  */
 .sh-ui-menu__item--danger {
-  color: var(--sh-danger);
+  color: var(--sh-red);
 }
 
 .sh-ui-menu__item--danger[data-highlighted] {
-  background: var(--sh-danger);
-  color: var(--sh-accent-text);
+  background: var(--sh-red);
+  color: var(--sh-text-on-wool);
 }
 
 /* ------------------------------------------------------------- icon + text */

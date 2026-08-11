@@ -70,12 +70,12 @@ describe('Pill', () => {
   });
 
   it('puts the one signal on the glyph, in the ROLE', () => {
-    // Named rather than hued: an extension that re-declares `--sh-accent` gets
+    // Named rather than hued: an extension that re-declares `--sh-sky` gets
     // its own pill for free, and cobalt stays a fact about the token layer.
     const glyph = rulesMentioning('sh-ui-pill').find(
       (candidate) => candidate.selectorText === '.sh-ui-pill .sh-icon',
     );
-    expect(glyph?.style.color).toBe('var(--sh-accent)');
+    expect(glyph?.style.color).toBe('var(--sh-sky)');
   });
 
   it('gives the label the accent back when there is no glyph to carry it', () => {
@@ -84,7 +84,7 @@ describe('Pill', () => {
     const fallback = rulesMentioning('sh-ui-pill').find((candidate) =>
       candidate.selectorText.includes(':not(:has(.sh-icon))'),
     );
-    expect(fallback?.style.color).toBe('var(--sh-accent)');
+    expect(fallback?.style.color).toBe('var(--sh-sky)');
   });
 
   it('paints in roles only', () => {

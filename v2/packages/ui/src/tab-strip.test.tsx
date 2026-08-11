@@ -91,7 +91,7 @@ describe('TabStrip', () => {
       .flatMap((rule) => [...rule.style].map((property) => rule.style.getPropertyValue(property)))
       .join(' ');
     expect(values).not.toMatch(/#[0-9a-f]{3,8}\b|\brgb|\bhsl|\boklch/i);
-    expect(values).toContain('var(--sh-accent)');
+    expect(values).toContain('var(--sh-sky)');
   });
 
   it('declares its height exactly once', () => {

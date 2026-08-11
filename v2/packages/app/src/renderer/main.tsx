@@ -31,6 +31,7 @@ import './settings.css';
  * second styling mechanism.
  */
 import './task-card.css';
+import './sky-strip.css';
 
 /**
  * The composition root: the only file that knows the bridge is a global, that a

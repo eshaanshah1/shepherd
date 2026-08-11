@@ -32,8 +32,8 @@
    * rule a property of this container instead of a list of components that
    * remembered to opt out.
    */
-  --sh-surface: var(--sh-surface-raised);
-  --sh-surface-sunken: transparent;
+  --sh-surface: var(--sh-raised);
+  --sh-sunken: transparent;
   --sh-line: transparent;
 
   display: flex;
@@ -42,7 +42,7 @@
      thing separating one field from the next. */
   gap: var(--sh-space-lg);
 
-  background: var(--sh-surface-raised);
+  background: var(--sh-raised);
   color: var(--sh-text);
 
   /*

@@ -142,7 +142,7 @@ describe('Row', () => {
     const selected = row(mount(<Row selected>a</Row>).container);
     const style = getComputedStyle(selected);
     expect(style.background).toBe('var(--sh-fill-selected)');
-    expect(style.color).toBe('var(--sh-text-selected)');
+    expect(style.color).toBe('var(--sh-text-on-wool)');
     expect(style.background).not.toContain('color-mix');
   });
 

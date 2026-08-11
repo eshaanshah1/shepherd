@@ -539,7 +539,7 @@ function ScopeCard({
           {status ?? ''}
         </span>
         <span className="sh-hook__footer-spacer" />
-        <Button type="button" size="sm" variant="default" onClick={onTestRun}>
+        <Button type="button" size="sm" variant="secondary" onClick={onTestRun}>
           test run
         </Button>
         <Button
@@ -547,7 +547,7 @@ function ScopeCard({
           size="sm"
           // Exactly one primary per surface (rule 3): the card being edited. Three
           // primaries is three "the main thing to do here", which is none.
-          variant={primary ? 'primary' : 'default'}
+          variant={primary ? 'primary' : 'secondary'}
           data-testid={saveTestId}
           disabled={saveDisabled}
           onClick={onSave}
