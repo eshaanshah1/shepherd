@@ -820,6 +820,17 @@ void app.whenReady().then(async () => {
       if (remote === undefined) throw new Error('remote is not running');
       return remote.invokeAt(memberId, command, args);
     },
+    /**
+     * The members answered, late — which is the only way they can answer, since
+     * the list they answer is drawn without waiting for them. The page is told
+     * the way it is always told: a nudge, and it re-reads. No one view type
+     * changed here, the SET did, so there is no type to name.
+     */
+    changed: () => {
+      for (const contents of webContents.getAllWebContents()) {
+        if (!contents.isDestroyed()) contents.send(EMIT.viewsChanged, '');
+      }
+    },
     log: logger.child('session'),
   });
 
@@ -872,7 +883,14 @@ void app.whenReady().then(async () => {
     // This Mac's own first: they are the ones that always answer, and a sidebar
     // whose order depends on which machine replied fastest is a sidebar that
     // moves under the cursor.
-    value: [...views.list(), ...(await fromMembers.list())],
+    //
+    // **Neither half is awaited over a wire.** This used to await
+    // `fromMembers.list()`, which asks every member — so a profile with two
+    // paired Macs that were switched off (packets dropped, not refused) never
+    // answered this call at all, and the renderer's sidebar stayed empty for the
+    // life of the process while the control socket, which asks nobody, answered
+    // in milliseconds. A member's views arrive on the nudge below instead.
+    value: [...views.list(), ...fromMembers.list()],
   }));
   ipcMain.handle(INVOKE.viewsChildren, async (_event, type: string, parent?: string) => ({
     ok: true,

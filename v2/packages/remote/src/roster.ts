@@ -167,6 +167,29 @@ export function rosterAddress(
   return [`${host}:${servingPort}`];
 }
 
+/**
+ * A hint split back into the two halves a dial needs — or nothing, when it is
+ * not a dialable address at all.
+ *
+ * **An entry is a hint written by whoever last saw that member, and not
+ * necessarily by this build.** `rosterAddress` only started carrying the serving
+ * port today, so a real profile holds entries that are a bare `192.168.0.117`;
+ * splitting one at its last `:` yields the host `192.168.0.11` on port 192 — a
+ * dial at an address that was never in this net, indistinguishable afterwards
+ * from that member being asleep. Measured: two such entries, two sockets left in
+ * `SYN_SENT`.
+ *
+ * Refusing it says the true thing instead, and costs the caller nothing: an
+ * entry that names no port is repaired the next time that member connects here.
+ */
+export function splitAddress(address: string): { readonly host: string; readonly port: number } | undefined {
+  const mark = address.lastIndexOf(':');
+  if (mark <= 0) return undefined;
+  const port = Number.parseInt(address.slice(mark + 1), 10);
+  if (!Number.isInteger(port) || port <= 0 || port > 65_535) return undefined;
+  return { host: address.slice(0, mark), port };
+}
+
 /** `127.0.0.1`, `::1`, `localhost`, or nothing at all. */
 export function isLoopback(host: string): boolean {
   const bare = host.replace(/^\[|\]$/g, '');

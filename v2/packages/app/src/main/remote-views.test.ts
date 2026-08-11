@@ -56,7 +56,8 @@ describe('remoteViews', () => {
       command === 'views.list' ? { views: [{ extension: 'tasks', type: 'tasks.tree', kind: 'tree' }] } : {},
     );
 
-    const listed = await views.list();
+    await views.refresh();
+    const listed = views.list();
     expect(listed).toHaveLength(1);
     expect(listed[0]?.type).toBe(qualify('mac-b', 'tasks.tree'));
     // The tag is what the sidebar draws its indicator from — a member id alone
@@ -70,8 +71,69 @@ describe('remoteViews', () => {
       asked.push(member);
       return { views: [] };
     });
-    await views.list();
+    await views.refresh();
     expect(asked).toEqual(['mac-b']);
+  });
+
+  /**
+   * **The sidebar never waits on the net.** `list` is what the window's
+   * `views.list` answers from, and it used to await every member first — so two
+   * paired Macs that were switched off (packets dropped, not refused) meant the
+   * renderer's sidebar never received its views at all, including this Mac's own.
+   * The members' section is allowed to arrive late; the window is not allowed to
+   * arrive never.
+   */
+  it('answers from what the members last said, without waiting for them', async () => {
+    let answer: (value: unknown) => void = () => undefined;
+    const views = remoteViews({
+      members: () => members,
+      // A member that is switched off: this never settles.
+      invokeAt: async () => await new Promise((resolve) => void (answer = resolve)),
+      log: nullLogger.child('session'),
+    });
+
+    // Nothing yet — and, crucially, no waiting for it.
+    expect(views.list()).toEqual([]);
+
+    answer({ views: [{ extension: 'tasks', type: 'tasks.tree', kind: 'tree' }] });
+    await vi.waitFor(() => expect(views.list()).toHaveLength(1));
+  });
+
+  /**
+   * A late answer is only worth having if somebody is told. The shell re-reads on
+   * a nudge and is never pushed to, so the refresh that fills the section in has
+   * to raise the same nudge a local extension raises.
+   */
+  it('nudges when a refresh changes the answer, and stays quiet when it does not', async () => {
+    const nudges: number[] = [];
+    const views = remoteViews({
+      members: () => members,
+      invokeAt: async () => ({ views: [{ extension: 'tasks', type: 'tasks.tree', kind: 'tree' }] }),
+      changed: () => void nudges.push(1),
+      log: nullLogger.child('session'),
+    });
+
+    await views.refresh();
+    expect(nudges).toHaveLength(1);
+    // The same answer again is not news. Without this the nudge the renderer
+    // re-reads on would provoke the read that raises the next nudge, forever.
+    await views.refresh();
+    expect(nudges).toHaveLength(1);
+  });
+
+  it('asks the members once, however many readers ask at once', async () => {
+    let calls = 0;
+    const views = remoteViews({
+      members: () => members,
+      invokeAt: async () => {
+        calls += 1;
+        return { views: [] };
+      },
+      log: nullLogger.child('session'),
+    });
+
+    await Promise.all([views.refresh(), views.refresh(), views.refresh()]);
+    expect(calls).toBe(1);
   });
 
   /**
@@ -92,8 +154,21 @@ describe('remoteViews', () => {
       log: nullLogger.child('session'),
     });
 
-    const listed = await views.list();
-    expect(listed.map((v) => v.remote?.memberId)).toEqual(['mac-b']);
+    await views.refresh();
+    expect(views.list().map((v) => v.remote?.memberId)).toEqual(['mac-b']);
+  });
+
+  /**
+   * The same rule one call along. A member that went to sleep between `list` and
+   * its rows would otherwise reject into the renderer's read loop, which walks
+   * the trees in order and awaits each — so one asleep member cost every view
+   * after it its rows.
+   */
+  it('answers no rows for a member that cannot be reached, rather than throwing', async () => {
+    const views = remote(async () => {
+      throw new Error('asleep');
+    });
+    await expect(views.children(qualify('mac-b', 'tasks.tree'))).resolves.toEqual([]);
   });
 
   it('routes rows and row verbs to the member that owns the view', async () => {

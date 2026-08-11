@@ -23,19 +23,40 @@ import { memberOf, qualify, unqualify, type ViewContributionDTO } from '../share
  * These are machines that sleep, move networks and get closed; a sidebar that
  * failed to draw because one of them was asleep would be a sidebar nobody could
  * rely on.
+ *
+ * That rule is why `list` does not go to the wire. Catching each member's error
+ * was only half of it: a Mac that is switched off does not fail, it says
+ * *nothing* — and the window's `views.list` awaited every member before it
+ * answered, so two paired Macs that were off left the sidebar empty for as long
+ * as the app ran, this Mac's own views included. The members are asked in the
+ * background and the answer arrives as the same `changed` nudge a local
+ * extension raises, because the shell already re-reads on one.
  */
 
 export interface RemoteViewsOptions {
   /** The net's roster, read per call so a member that just joined is included. */
   readonly members: () => readonly RosterEntry[];
   readonly invokeAt: (memberId: string, command: string, args: unknown) => Promise<unknown>;
+  /**
+   * Raised when a refresh changed what `list` answers — the same nudge a local
+   * view raises, so the shell re-reads through the path it already has.
+   */
+  readonly changed?: () => void;
   readonly log: CategoryLogger;
 }
 
 export interface RemoteViews {
   /** Whether this view type belongs to a member rather than to this Mac. */
   owns(type: string): boolean;
-  list(): Promise<readonly ViewContributionDTO[]>;
+  /**
+   * What the members last answered. **Synchronous, and deliberately so:** this
+   * is what the window's view list is built from, and its type is the guarantee
+   * that a machine on the other side of a network can never delay it. Reading it
+   * schedules the next `refresh`.
+   */
+  list(): readonly ViewContributionDTO[];
+  /** Ask every reachable member again. One in flight at a time. */
+  refresh(): Promise<void>;
   children(type: string, parent?: string): Promise<readonly TreeItem[]>;
   activate(type: string, command: { readonly id: string; readonly args?: unknown }): Promise<void>;
   /**
@@ -53,47 +74,95 @@ export interface RemoteViews {
 }
 
 export function remoteViews(options: RemoteViewsOptions): RemoteViews {
-  const { members, invokeAt, log } = options;
+  const { members, invokeAt, changed, log } = options;
 
   /** Everyone in the net this Mac could actually call. */
   const reachable = (): readonly RosterEntry[] => members().filter((member) => member.addrs.length > 0);
 
+  /** The members' last answer. Empty is a real state: nobody has answered yet. */
+  let held: readonly ViewContributionDTO[] = [];
+  /**
+   * The refresh in flight, so a window that re-reads three times over asks the
+   * net once. It is also what makes `list`'s implicit refresh safe to leave
+   * un-throttled: a member that takes twenty seconds to time out cannot be
+   * dialled again while it is still being dialled.
+   */
+  let asking: Promise<void> | undefined;
+
+  const ask = async (): Promise<readonly ViewContributionDTO[]> => {
+    const answers = await Promise.all(
+      reachable().map(async (member) => {
+        try {
+          const answer = (await invokeAt(member.memberId, 'views.list', {})) as {
+            views?: readonly ViewContributionDTO[];
+          };
+          return (answer.views ?? []).map((view) => ({
+            ...view,
+            type: qualify(member.memberId, view.type),
+            // What the shell draws its indicator from. The id alone would put
+            // an opaque uuid on screen; the name is what a person recognises.
+            remote: { memberId: member.memberId, name: member.name },
+          }));
+        } catch (error) {
+          // Said out loud, and then dropped: a member that is asleep is the
+          // ordinary case, not a fault, and it must not empty the sidebar.
+          log.info(`${member.name} did not answer for its views: ${String(error)}`);
+          return [];
+        }
+      }),
+    );
+    return answers.flat();
+  };
+
+  const refresh = async (): Promise<void> => {
+    if (asking !== undefined) return await asking;
+    asking = (async () => {
+      const answered = await ask();
+      // Compared before it is announced: the shell re-reads on a nudge, so a
+      // nudge for an unchanged list would provoke the read that raises the next
+      // one, and the two would keep each other going for ever.
+      const news = JSON.stringify(answered) !== JSON.stringify(held);
+      held = answered;
+      if (news) changed?.();
+    })();
+    try {
+      await asking;
+    } finally {
+      asking = undefined;
+    }
+  };
+
   return {
     owns: (type) => memberOf(type) !== undefined,
 
-    async list() {
-      const answers = await Promise.all(
-        reachable().map(async (member) => {
-          try {
-            const answer = (await invokeAt(member.memberId, 'views.list', {})) as {
-              views?: readonly ViewContributionDTO[];
-            };
-            return (answer.views ?? []).map((view) => ({
-              ...view,
-              type: qualify(member.memberId, view.type),
-              // What the shell draws its indicator from. The id alone would put
-              // an opaque uuid on screen; the name is what a person recognises.
-              remote: { memberId: member.memberId, name: member.name },
-            }));
-          } catch (error) {
-            // Said out loud, and then dropped: a member that is asleep is the
-            // ordinary case, not a fault, and it must not empty the sidebar.
-            log.info(`${member.name} did not answer for its views: ${String(error)}`);
-            return [];
-          }
-        }),
-      );
-      return answers.flat();
+    list() {
+      // The read is what schedules the next read. A caller asks this list when
+      // it suspects it is stale, which is exactly when the members are worth
+      // asking again — and the answer lands one nudge later rather than in this
+      // call, which is the whole point.
+      void refresh();
+      return held;
     },
+
+    refresh,
 
     async children(type, parent) {
       const memberId = memberOf(type);
       if (memberId === undefined) return [];
-      const rows = await invokeAt(memberId, 'views.children', {
-        type: unqualify(type),
-        ...(parent === undefined ? {} : { parent }),
-      });
-      return Array.isArray(rows) ? (rows as readonly TreeItem[]) : [];
+      try {
+        const rows = await invokeAt(memberId, 'views.children', {
+          type: unqualify(type),
+          ...(parent === undefined ? {} : { parent }),
+        });
+        return Array.isArray(rows) ? (rows as readonly TreeItem[]) : [];
+      } catch (error) {
+        // `list`'s rule, one call along: a member that went to sleep between the
+        // two is a section with no rows. Thrown, it would reject into the
+        // renderer's read loop — which walks the trees in order and awaits each
+        // — and cost every view after this one its rows.
+        log.info(`${memberId} did not answer for ${type}'s rows: ${String(error)}`);
+        return [];
+      }
     },
 
     /**
