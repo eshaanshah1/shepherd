@@ -22,7 +22,15 @@
 
   display: inline-flex;
   align-items: center;
-  gap: var(--sh-space-xs);
+  /*
+   * Half a step, and the only sub-scale value in the kit — an optical fix, not a
+   * new size. `xs` is 4px, but the glyph carries its own air: the icon box is
+   * 14px around a path that spans ~18 of its 24 viewBox units, so ~1px of
+   * padding sits inside the SVG on each edge before the gap begins. Spending a
+   * full step on top of that reads as a word-space and detaches the mark from
+   * the word it marks. Still derived, so density scaling carries it.
+   */
+  gap: calc(var(--sh-space-xs) / 2);
   flex: 0 0 auto;
 
   height: var(--sh-ui-pill-height);
