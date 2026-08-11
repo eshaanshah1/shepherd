@@ -444,9 +444,9 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       const list = next.get(row.group) ?? [];
       list.push({
         root: row.root,
-        // A tab whose pane has no name yet reads as its root id rather than as
-        // an empty row — ugly, and findable, which is the right failure.
-        label: typeof row.label === 'string' && row.label !== '' ? row.label : row.root,
+        // A root with no panes has no label to give. It says so rather than
+        // showing its id: `task:t1/tab-2` in the sidebar is an internal name.
+        label: typeof row.label === 'string' && row.label !== '' ? row.label : 'Empty',
         session: typeof row.focusedSession === 'string' ? row.focusedSession : null,
       });
       next.set(row.group, list);

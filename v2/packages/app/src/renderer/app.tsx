@@ -428,7 +428,10 @@ export function App({
        * pane in `~` therefore reads as its own last component, which is what a
        * terminal tab has always shown.
        */
-      return { id: root.root, label: pane === null ? root.root : displayTitle(pane, '') };
+      // A root with no panes is a real state (its last pane was closed), and it
+      // is still a tab you can switch to. It says so — a raw root id is an
+      // internal name, and `window-1` on a tab teaches nothing.
+      return { id: root.root, label: pane === null ? 'Empty' : displayTitle(pane, '') };
     });
   }, [snapshots, active]);
 
