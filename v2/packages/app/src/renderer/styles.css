@@ -875,16 +875,17 @@ body.sh-dragging {
 }
 
 /*
- * A repo pill in the brief.
+ * A repo pill in the brief carries NO styling of its own, deliberately — the
+ * class is a hook, and this comment is why it has no rules under it.
  *
- * `Pill` already carries the whole treatment — accent hairline, a 12% accent
- * tint, `small` type, a height that cannot open the line box it sits in. This
- * adds the one thing a repo pill needs that an image pill does not: the mono
- * family, because the text is `#` plus a repo name and both are things you type.
+ * It used to set the mono family, on the grounds that `#shepherd` was a thing
+ * you type. Both halves of that stopped being true at once: the `#` is the
+ * picker's syntax and no longer reaches the label, and what remains is a repo's
+ * NAME sitting in an English sentence. `Pill` draws it the way it draws every
+ * other token in the brief — a glyph in accent, the label in the prose's own
+ * face and size — and a second family here would be the one thing making a repo
+ * read as code rather than as the word it is.
  */
-.sh-composer-repo-pill {
-  font-family: var(--sh-font-mono);
-}
 
 /*
  * The picker, anchored to the `#` it belongs to.

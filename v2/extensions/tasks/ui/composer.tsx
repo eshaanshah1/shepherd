@@ -457,8 +457,8 @@ export function TaskComposer({
    * `data-token` is what `readValue` returns in its place, so the brief submits
    * as `fix the retry loop in shepherd` — the sentence somebody wrote, with the
    * repo still in it. The `#` is the PICKER's, not the sentence's: it opens a
-   * popover here and means nothing to an agent reading the brief, which is why
-   * the label keeps it and the token does not. `data-repo-path` is what
+   * popover here and means nothing to an agent reading the brief, so neither the
+   * token nor the label carries it. `data-repo-path` is what
    * `syncScope` reads, and it carries the PATH because a name does not identify a
    * repo: two `api` directories in different trees are the case this picker
    * exists to survive.
@@ -470,7 +470,16 @@ export function TaskComposer({
     pill.dataset["token"] = name;
     pill.dataset["repoPath"] = path;
     pill.title = path;
-    pill.append(`#${name}`);
+    // A folder glyph rather than the `#`, for the reason the token drops it too:
+    // the `#` is the PICKER's syntax and means nothing in the finished sentence.
+    // Pill's signal is its icon (see `pill.css`), so a repo says "repo" the way
+    // an image says "image" — with a mark, not with punctuation.
+    pill.innerHTML =
+      '<svg class="sh-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" ' +
+      'stroke="currentColor" stroke-width="1.5" stroke-linecap="round" ' +
+      'stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2"/></svg>';
+    pill.append(name);
     return pill;
   };
 
