@@ -48,6 +48,16 @@ export type LayoutNode = LayoutLeaf | LayoutSplit;
 
 export interface LayoutRoot {
   readonly id: RootID;
+  /**
+   * The pane group this root is a TAB OF — an opaque string, defaulting to the
+   * root's own id, so a root nobody grouped is a group of one.
+   *
+   * An extension filters by it to find the tabs of something it owns (`tasks`
+   * names its group `task:<id>`). Nothing in core reads it: what a group MEANS
+   * is the business of whoever opened the roots, which is the same rule that
+   * keeps the kernel from knowing what a task is (ADR 0031).
+   */
+  readonly group: string;
   /** One tree per region. A region with no views is absent from the map. */
   readonly regions: Readonly<Partial<Record<RegionName, LayoutNode>>>;
   readonly focused: NodeID | null;
