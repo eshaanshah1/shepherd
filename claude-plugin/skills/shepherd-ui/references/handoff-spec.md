@@ -45,9 +45,43 @@ and drawn at real size in `Shepherd Primitives.dc.html`. Recreate the UI to thos
 values. Where a value is not in the skill doc, read it off the prototype's inline
 style rather than inventing one.
 
-Two things are deliberately *not* final and need a design pass before shipping:
-- the **light theme** (a derived sketch exists at the foot of `Shepherd Redesign.dc.html`);
-- the **settings surface**, which does not exist in the product yet.
+Both themes are drawn in full. One thing is deliberately *not* designed: the
+**settings surface**, which does not exist in the product yet.
+
+Light is **derived, not re-decided** — same structure, same marks, same geometry,
+same five jobs. Only two things change beyond the ramp inversion:
+1. `wool` becomes **ink** (`#141414`). "Waiting on you" is whatever is loudest
+   against the surface, which on paper is black.
+2. The sky strip is at **noon** — XP-blue gradient, pixel clouds, green hills,
+   a white sheep. Same geometry, same 3px pixel grid.
+
+The light ramp, inverted from the dark one job for job:
+
+| role | dark | light |
+|---|---|---|
+| `sunken` | `#070708` | `#F4F4F4` |
+| `canvas` | `#0A0A0A` | `#EFEFEF` |
+| `pane` | `#0D0D0D` | `#FFFFFF` |
+| `surface` | `#0F0F0F` | `#FAFAFA` |
+| `well` | `#121212` | `#FFFFFF` |
+| `raised` | `#161616` | `#FFFFFF` |
+| `fill` | `#1B1B1B` | `#E4E4E4` |
+| `line` | `#1C1C1C` | `#E2E2E2` |
+| `lineStrong` | `#272727` | `#D2D2D2` |
+| `text` | `#EDEDED` | `#141414` |
+| `textDim` | `#A8A8A8` | `#565656` |
+| `textFaint` | `#8C8C8C` | `#6E6E6E` |
+| `textMute` | `#5A5A5A` | `#767676` |
+| `textGhost` | `#3A3A3A` | `#C2C2C2` |
+| `sky` | `#7FB6E8` | `#2E6FB8` |
+| `grass` | `#86C06A` | `#3F7A50` |
+| `wool` / `ink` | `#EDEDED` | `#141414` |
+| `clay` | `#C4796B` | `#A8483A` |
+| `red` | `#E05C4F` | `#C4392C` |
+| repo: sky / stone / taupe / slate | `#7FB6E8` `#8C9AA8` `#CFCBBE` `#6E7B8C` | `#2E6FB8` `#5D6B7A` `#8A8375` `#46586B` |
+
+The scrim goes from `rgb(6 6 6 / 76%)` to `rgb(24 24 24 / 20%)`, and every shadow
+alpha drops to roughly a fifth — a 55% black shadow over paper reads as soot.
 
 ## Files in this bundle
 
@@ -55,7 +89,8 @@ Two things are deliberately *not* final and need a design pass before shipping:
 |---|---|
 | `shepherd-ui-skill.md` | **the normative design language.** Tokens, primitive rules, shell structure, refusals. Read first. |
 | `Shepherd Primitives.dc.html` | every control at real size in every state, each specimen captioned with its exact spec |
-| `Shepherd Redesign.dc.html` | the assembled screens: main window, ⌘T composer mid-mention, ⌘K palette, empty state, state legend, light-theme sketch |
+| `Shepherd Redesign.dc.html` | the assembled screens, dark (canonical): main window, ⌘T composer mid-mention, ⌘K palette, empty state, state legend |
+| `Shepherd Redesign Light.dc.html` | the same screens, light — derived from the same ramp, with the noon sky |
 | `Shepherd Today.dc.html` | the **pre-redesign** UI, recreated pixel-for-pixel from the current source, for before/after comparison |
 | `PROMPT.md` | a ready-to-paste prompt for Claude Code |
 

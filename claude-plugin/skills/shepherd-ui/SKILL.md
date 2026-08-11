@@ -24,7 +24,8 @@ jobs, and a status word beside every status dot.
 |---|---|---|
 | `references/handoff-spec.md` | per-screen specs with exact values — titlebar, rail, sky strip, task cards, tab strip, pane heads, composer, palette, empty state | before recreating any screen |
 | `references/primitives.dc.html` | every control at real size in every state, each specimen captioned with its spec | **source of truth for any value the spec does not state** |
-| `references/redesign.dc.html` | the assembled screens: main window, ⌘T composer mid-mention, ⌘K palette, empty state, state legend, light-theme sketch | to see how the pieces sit together |
+| `references/redesign.dc.html` | the assembled screens, dark (canonical): main window, ⌘T composer mid-mention, ⌘K palette, empty state, state legend | to see how the pieces sit together |
+| `references/redesign-light.dc.html` | the same screens in light — derived from the same ramp, with the noon sky | when building the light theme |
 | `references/today-before.dc.html` | the pre-redesign UI, recreated from source | before/after comparison only |
 | `references/implementation-order.md` | the staged rollout: tokens → marks → primitives → shell → composer → sky strip | when planning the work |
 
@@ -36,10 +37,10 @@ per component, `cn()` for class composition), tokens generated from
 `packages/design-tokens`. No Tailwind, no component library, no second styling
 mechanism.
 
-Two things are deliberately **not** final and need a design pass before shipping:
-the **light theme** (a derived sketch exists at the foot of `redesign.dc.html`)
-and the **settings surface**. Do not invent them — say when you reach a point
-where one is needed.
+**Both themes are drawn in full.** Build dark first and generate light from the
+ramp in §2 — light is *derived, not re-decided*. One thing is deliberately not
+designed: the **settings surface**, which does not exist in the product yet. Do
+not invent it — say when you reach a point where it is needed.
 
 ---
 
@@ -107,6 +108,31 @@ free, and a hardcoded hex is a review flag.
 Repo identity is a sixth axis with its own fixed marks — `#7FB6E8` sky,
 `#8C9AA8` stone, `#CFCBBE` wool, `#6E7B8C` slate. **Grass is not in that set**;
 a repo tinted green would read as something that passed.
+
+### Light, derived
+
+Light is the same language, not a second one: same structure, same marks, same
+geometry, same five jobs. Two things change beyond inverting the ramp — `wool`
+becomes **ink** `#141414` (on paper the loudest thing available is black), and
+the sky strip is at noon (XP-blue gradient, pixel clouds, green hills, a white
+sheep — same geometry, same 3px pixel grid).
+
+| role | light | | role | light |
+|---|---|---|---|---|
+| `sunken` | `#F4F4F4` | | `text` | `#141414` |
+| `canvas` | `#EFEFEF` | | `textDim` | `#565656` |
+| `pane` | `#FFFFFF` | | `textFaint` | `#6E6E6E` |
+| `surface` | `#FAFAFA` | | `textMute` | `#767676` |
+| `well` | `#FFFFFF` | | `textGhost` | `#C2C2C2` |
+| `raised` | `#FFFFFF` | | `sky` | `#2E6FB8` |
+| `fill` | `#E4E4E4` | | `grass` | `#3F7A50` |
+| `line` | `#E2E2E2` | | `clay` | `#A8483A` |
+| `lineStrong` | `#D2D2D2` | | `red` | `#C4392C` |
+
+Repo marks: `#2E6FB8` sky · `#5D6B7A` stone · `#8A8375` taupe · `#46586B` slate.
+The scrim goes from `rgb(6 6 6 / 76%)` to `rgb(24 24 24 / 20%)` and every shadow
+alpha drops to about a fifth of its dark value — 55% black over paper reads as
+soot, which is the dead grey this language refuses.
 
 ### Type
 
