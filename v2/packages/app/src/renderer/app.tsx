@@ -14,6 +14,7 @@ import {
   COMMANDS,
   type AgentIndicatorDTO,
   type AgentsApi,
+  type SettingsApi,
   type ViewsApi,
   type CommandID,
   type CommandsApi,
@@ -26,6 +27,7 @@ import { EmptyState } from './empty-state.tsx';
 import { FindBar } from './find-bar.tsx';
 import { ViewDock, raiseIcon } from './view-dock.tsx';
 import { ViewOverlay } from './view-overlay.tsx';
+import { SettingsScreen } from './settings-screen.tsx';
 import { useContributions } from './contributions.ts';
 import { SplitView } from './split-view.tsx';
 import { TerminalPane } from './terminal-pane.tsx';
@@ -60,6 +62,8 @@ export interface AppProps {
   readonly agents?: AgentsApi | null;
   /** Contributed views (M3). Absent = no dock, not a crash. */
   readonly views?: ViewsApi | null;
+  /** Settings. Absent = ⌘, draws nothing, not a crash. */
+  readonly settings?: SettingsApi | null;
   /** Rendered until (or instead of) main's first push. The no-bridge and test seam. */
   readonly initialSnapshot?: LayoutSnapshots;
   /**
@@ -94,6 +98,7 @@ export function App({
   commands,
   agents: agentsApi = null,
   views: viewsApi = null,
+  settings: settingsApi = null,
   initialSnapshot,
   onSnapshot,
 }: AppProps): ReactNode {
@@ -383,6 +388,22 @@ export function App({
   const findTarget =
     terminals === null || focusedPaneId === null ? null : (terminals.search(paneId(focusedPaneId)) ?? null);
 
+  /**
+   * The takeover layer's visibility, which is MAIN's answer rather than this
+   * component's state.
+   *
+   * `window.settings` owns it, because the same value feeds `presence.overlay` and
+   * ADR 0020 allows exactly one writer of "is the user looking at this". So ⌘,
+   * (the menu), the palette entry, `shepherd raw window.settings` and Esc in the
+   * screen all move one variable, and the page follows it the way it follows the
+   * layout.
+   */
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  useEffect(() => {
+    if (settingsApi === null) return;
+    return settingsApi.onVisibility((open) => setSettingsOpen(open));
+  }, [settingsApi]);
+
   const contributions = useContributions(viewsApi);
   /** Every accelerator an overlay declared, for the footer's keycap strip. */
   const raisable = contributions.filter((view) => view.surface === 'overlay' && view.key !== undefined);
@@ -527,6 +548,33 @@ export function App({
           )}
         </main>
       </div>
+
+      {/*
+        The takeover layer.
+
+        Painted OVER `.sh-body` rather than instead of it: every root underneath
+        stays mounted, so every pty keeps running and comes back exactly as it
+        was. A conditional mount around the stage is v1's `_ConditionalContent`
+        lesson — a torn-down pane is a released terminal and then, on the way
+        back, a second pty.
+
+        Mounted only while open, like `FindBar`: it takes the keyboard on mount,
+        and a permanently mounted one would have to be told not to.
+      */}
+      {settingsOpen && (
+        <SettingsScreen
+          settings={settingsApi}
+          onClose={() => {
+            // ASK main to close it; do not close it here. The answer comes back
+            // through `onVisibility`, which is what keeps this page and the
+            // viewing predicate from disagreeing about a takeover.
+            void settingsApi?.setOpen(false);
+            // Hand the keyboard back to the pane the user was reading — the fix
+            // `FindBar` carries, for the same reason.
+            if (focusedPaneId !== null) terminals?.focus(paneId(focusedPaneId));
+          }}
+        />
+      )}
 
       <ViewOverlay views={contributions} bridge={viewsApi} />
 

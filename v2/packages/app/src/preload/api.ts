@@ -104,6 +104,7 @@ export function createBridge(ipc: IpcLike): ShepherdBridge {
       set: (key, value) => invoke(INVOKE.settingsSet, key, value),
       reset: (key) => invoke(INVOKE.settingsReset, key),
       setOpen: (open) => invoke(INVOKE.settingsOpen, open),
+      invoke: (page, command, args) => invoke(INVOKE.settingsInvoke, page, command, args),
       onChanged: (listener) => subscribe<{ key: string; value: SettingValue }>(EMIT.settingsChanged, listener),
       onVisibility: (listener) => subscribe<boolean>(EMIT.settingsVisibility, listener),
     },

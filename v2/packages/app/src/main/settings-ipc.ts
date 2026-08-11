@@ -1,6 +1,6 @@
 import { ipcMain, webContents } from 'electron';
-import { USER, type Disposable, type SettingValue } from '@shepherd/sdk';
-import type { CommandRegistry, EventBus } from '@shepherd/core';
+import { USER, extensionId, type Disposable, type SettingValue } from '@shepherd/sdk';
+import type { CommandRegistry, EventBus, SettingsRegistry } from '@shepherd/core';
 import { EMIT, INVOKE, type IpcResult, type SettingsSnapshotDTO } from '../shared/index.ts';
 import { SETTINGS_CHANGED_TOPIC, SETTINGS_COMMANDS } from './settings-commands.ts';
 import { SETTINGS_VISIBILITY_COMMAND } from './settings-visibility.ts';
@@ -22,6 +22,15 @@ import { SETTINGS_VISIBILITY_COMMAND } from './settings-visibility.ts';
 export interface SettingsIpcOptions {
   readonly registry: CommandRegistry;
   readonly bus: EventBus;
+  /**
+   * Read for ONE question: who owns a page, so a command run by a contributed
+   * page is attributed to the extension that contributed it.
+   *
+   * Values still go through the verb table — this is not a way around it. It is
+   * the same lookup `ViewRegistry` does for a tree row's click (D14), against the
+   * record that already exists.
+   */
+  readonly settings: SettingsRegistry;
 }
 
 export interface SettingsIpc extends Disposable {
@@ -44,7 +53,7 @@ function broadcast(channel: string, payload: unknown): void {
 }
 
 export function registerSettingsIpc(options: SettingsIpcOptions): SettingsIpc {
-  const { registry, bus } = options;
+  const { registry, bus, settings } = options;
 
   const through = async (command: string, args: unknown): Promise<IpcResult<unknown>> => {
     const result = await registry.invoke(command, args, USER);
@@ -87,6 +96,34 @@ export function registerSettingsIpc(options: SettingsIpcOptions): SettingsIpc {
   });
 
   /**
+   * A contributed page running a command — as the EXTENSION that contributed the
+   * page, never as the user.
+   *
+   * D14, one surface along: the click is the user's, the command id is the
+   * extension's, and the user cannot see it. A page whose command ran with
+   * `USER`'s unconditional trust would be a way for any extension to reach past
+   * its own grant, which is the hole `ViewRegistry.invoke` closed for tree rows.
+   */
+  ipcMain.handle(
+    INVOKE.settingsInvoke,
+    async (_event, page: unknown, command: unknown, args: unknown): Promise<IpcResult<unknown>> => {
+      if (typeof page !== 'string' || typeof command !== 'string') {
+        return { ok: false, error: { code: 'invalid-argument', message: 'page and command must be strings' } };
+      }
+      const owner = settings.pages().find((candidate) => candidate.id === page)?.owner;
+      if (owner === undefined) {
+        // Reported rather than silently resolved: a form whose submit does
+        // nothing is the "and then nothing happens" branch the log rule exists for.
+        return { ok: false, error: { code: 'unknown-page', message: `no extension owns the settings page "${page}"` } };
+      }
+      const result = await registry.invoke(command, args, { kind: 'extension', id: extensionId(owner) });
+      return result.ok
+        ? { ok: true, value: result.value }
+        : { ok: false, error: { code: result.error.code, message: result.error.message } };
+    },
+  );
+
+  /**
    * A changed setting reaches the page from the BUS, not from the write.
    *
    * So a change made anywhere — the CLI in a pane behind the window, an extension
@@ -105,6 +142,7 @@ export function registerSettingsIpc(options: SettingsIpcOptions): SettingsIpc {
       ipcMain.removeHandler(INVOKE.settingsSet);
       ipcMain.removeHandler(INVOKE.settingsReset);
       ipcMain.removeHandler(INVOKE.settingsOpen);
+      ipcMain.removeHandler(INVOKE.settingsInvoke);
     },
   };
 }

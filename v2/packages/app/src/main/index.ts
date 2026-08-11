@@ -1094,7 +1094,7 @@ void app.whenReady().then(async () => {
    * presence is recomputed — because a takeover the predicate did not hear about
    * is a pane reported as seen while a settings screen covers it.
    */
-  const settingsIpc = registerSettingsIpc({ registry, bus });
+  const settingsIpc = registerSettingsIpc({ registry, bus, settings });
   registerSettingsVisibility({
     registry,
     onChange: (open) => {
