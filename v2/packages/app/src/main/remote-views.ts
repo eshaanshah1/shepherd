@@ -1,6 +1,6 @@
 import type { CategoryLogger, TreeItem } from '@shepherd/sdk';
 import type { RosterEntry } from '@shepherd/remote';
-import type { ViewContributionDTO } from '../shared/index.ts';
+import { memberOf, qualify, unqualify, type ViewContributionDTO } from '../shared/index.ts';
 
 /**
  * Another member's views, drawn on this Mac.
@@ -24,34 +24,6 @@ import type { ViewContributionDTO } from '../shared/index.ts';
  * failed to draw because one of them was asleep would be a sidebar nobody could
  * rely on.
  */
-
-/**
- * The separator, chosen to be something no extension will ever put in a view
- * type: a double colon that is one character (U+2237), not two ASCII colons a
- * type could plausibly contain.
- */
-const SEPARATOR = '∷';
-
-export function qualify(memberId: string, type: string): string {
-  return `${memberId}${SEPARATOR}${type}`;
-}
-
-/** Which member owns this type, or undefined for one of this Mac's own. */
-export function memberOf(type: string): string | undefined {
-  const at = type.indexOf(SEPARATOR);
-  return at < 0 ? undefined : type.slice(0, at);
-}
-
-/**
- * The type as the member that owns it knows it.
- *
- * Split on the FIRST separator only: everything after it is the extension's own
- * string and may contain anything, including another separator.
- */
-export function unqualify(type: string): string {
-  const at = type.indexOf(SEPARATOR);
-  return at < 0 ? type : type.slice(at + SEPARATOR.length);
-}
 
 export interface RemoteViewsOptions {
   /** The net's roster, read per call so a member that just joined is included. */
@@ -134,3 +106,5 @@ export function remoteViews(options: RemoteViewsOptions): RemoteViews {
     },
   };
 }
+
+export { memberOf, qualify, unqualify };

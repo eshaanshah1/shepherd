@@ -53,6 +53,7 @@ import { registerViewCommands } from './view-commands.ts';
 import { createRemoteService, PAIRED_DEVICE_PERMISSIONS } from './remote-service.ts';
 import { registerRemoteCommands } from './remote-commands.ts';
 import { remoteViews } from './remote-views.ts';
+import { qualify } from '../shared/index.ts';
 import { resolveTransport, type Identity, type RemoteAPI } from '@shepherd/remote';
 import { SessionClient } from './session-client.ts';
 import { daemonConnector } from './daemon-launcher.ts';
@@ -672,6 +673,17 @@ void app.whenReady().then(async () => {
       // no userData. One store, two processes (ADR 0021).
       devices: remoteStore.namespace('devices'),
       log: logger.child('session'),
+      /**
+       * A member's view changed, so this window re-reads it — the same nudge a
+       * local extension sends, through the same channel. The page never learns
+       * that the change came from another machine; it learns that a list it is
+       * drawing is stale, which is all it has ever been told.
+       */
+      onMemberViewChanged: (memberId, type) => {
+        for (const contents of webContents.getAllWebContents()) {
+          if (!contents.isDestroyed()) contents.send(EMIT.viewsChanged, qualify(memberId, type));
+        }
+      },
     });
     registerRemoteCommands({ remote, registry, log: logger.child('session') });
     /**
