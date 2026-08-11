@@ -75,6 +75,16 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
+    /**
+     * Ed25519, which the platform does not offer until API 33.
+     *
+     * `minSdk` is 31, so `KeyPairGenerator.getInstance("Ed25519")` is absent on
+     * two of the versions this app supports — and a signing scheme that works on
+     * some phones is a net that admits some phones. Bouncy Castle's lightweight
+     * API is used directly (no provider registration), which also means the
+     * shep-net tests run as plain JVM unit tests rather than needing a device.
+     */
+    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
     implementation(platform("com.google.firebase:firebase-bom:33.3.0"))
     implementation("com.google.firebase:firebase-messaging")
     // The REAL org.json, because android.jar's is a stub that returns defaults

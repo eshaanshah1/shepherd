@@ -1,7 +1,6 @@
 package com.eshaan.shepherd.v2
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
@@ -11,14 +10,16 @@ import org.junit.Test
  * a USB forward was three separate pairings with three device ids and three
  * approvals; and moving between access points stranded the phone on a record
  * whose address now belongs to nobody. The pin does not move, so it is the key.
+ *
+ * Since shep-nets this record is ONLY an address list: the phone's identity is a
+ * membership of a net, shared by every Mac in it.
  */
 class KnownMacTest {
 
     private fun mac(vararg endpoints: Endpoint) = KnownMac(
         pin = "abc123",
         endpoints = endpoints.toList(),
-        deviceId = "device-1",
-        secret = "s3cret",
+        netId = "net-1",
     )
 
     @Test
@@ -29,9 +30,9 @@ class KnownMacTest {
         val known = mac(wifi).reachableAt(tailnet)
 
         assertEquals(listOf(tailnet, wifi), known.endpoints)
-        // The things that make it the same Mac to the HOST are untouched.
-        assertEquals("device-1", known.deviceId)
-        assertEquals("s3cret", known.secret)
+        // The net it belongs to is untouched: identity is the MEMBERSHIP, held
+        // once per net, not something this record carries per address.
+        assertEquals("net-1", known.netId)
     }
 
     @Test
@@ -48,7 +49,7 @@ class KnownMacTest {
     }
 
     @Test
-    fun `an address that moved is replaced, keeping the pairing`() {
+    fun `an address that moved is replaced, keeping the membership`() {
         // The access point changed and the Mac has a new IP. That is a new
         // address on a Mac we already know, not a Mac we have to pair with.
         val old = Endpoint("192.168.1.5", 8722, 8723, via = "wifi")
@@ -57,7 +58,7 @@ class KnownMacTest {
         val known = mac(old).reachableAt(moved)
 
         assertEquals(moved, known.candidates.first())
-        assertEquals("s3cret", known.secret)
+        assertEquals("net-1", known.netId)
     }
 
     @Test
@@ -69,9 +70,17 @@ class KnownMacTest {
         assertEquals(known, KnownMac.fromJson(known.toJson()))
     }
 
+    /**
+     * A record written before shep-nets names no net. It reads back as a Mac with
+     * no membership rather than failing to read at all — the phone then joins
+     * once, which is what the Mac's own migration does and for the same reason:
+     * a membership is a signature over a public key, and the old record has none.
+     */
     @Test
-    fun `an unpaired Mac round-trips with no secret, rather than the string null`() {
-        val fresh = mac(Endpoint("192.168.1.5", 8722, 8723)).copy(secret = null)
-        assertNull(KnownMac.fromJson(fresh.toJson()).secret)
+    fun `a record from before nets reads back with no net rather than not at all`() {
+        val legacy = org.json.JSONObject()
+            .put("pin", "abc123")
+            .put("endpoints", org.json.JSONArray())
+        assertEquals("", KnownMac.fromJson(legacy).netId)
     }
 }

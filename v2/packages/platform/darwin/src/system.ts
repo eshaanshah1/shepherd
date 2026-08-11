@@ -1,4 +1,4 @@
-import { homedir, userInfo } from 'node:os';
+import { homedir, hostname, userInfo } from 'node:os';
 import { appPaths, type AppPaths } from './paths.ts';
 
 // The one place a node OS API is reached for (lint-enforced: `node:os` is
@@ -19,6 +19,18 @@ export function systemHome(): string {
  */
 export function systemUserName(): string {
   return userInfo().username;
+}
+
+/**
+ * What this machine calls itself — the name a shep-net shows other members.
+ *
+ * A person recognises "Eshaan's MacBook Air" and recognises nothing about a
+ * device id, so this is what a join sheet and a member list read from. It is a
+ * display string only: membership is decided by a signed credential, never by a
+ * name anybody can claim.
+ */
+export function systemHostName(): string {
+  return hostname();
 }
 
 export function resolveAppPaths(isDev: boolean): AppPaths {

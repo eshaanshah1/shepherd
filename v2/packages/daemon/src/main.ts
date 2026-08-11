@@ -4,7 +4,7 @@ import { dirname } from 'node:path';
 import { SessionHost, SessionServer, SqliteStore, reclaimSocketPath } from '@shepherd/core';
 import {
   RemoteServer,
-  kvDeviceStore,
+  kvNetStore,
   loadOrMintIdentity,
   resolveTransport,
   type EndpointFactory,
@@ -166,7 +166,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       const remembered = await readPort(`${support}/remote-data-port`);
       const remote = new RemoteServer({
         // The DATA path follows the control path onto the network, because a
-        // device holds both and half a pairing is no pairing: reachable views
+        // device holds both and half a membership is no membership: reachable views
         // and an unreachable terminal is the shape this whole milestone exists
         // to avoid.
         endpoint: endpointFor({
@@ -174,10 +174,12 @@ export async function main(argv: readonly string[]): Promise<number> {
           ...(remembered === undefined ? {} : { port: remembered }),
         }),
         identity: identity.value,
-        // THE store, opened read-mostly by this process too. The app writes a
-        // new pairing (only it can show an approval); the daemon reads, so a
-        // device that paired there is admitted here with no second approval.
-        devices: kvDeviceStore(
+        // THE store, opened read-mostly by this process too. The app admits a
+        // new member (only it can show an approval); the daemon reads, so a
+        // device that joined there is admitted here with no second ceremony —
+        // and a member of the net the app has never seen is admitted by its
+        // chain, which is the same code path.
+        net: kvNetStore(
           new SqliteStore({ location: `${support}/remote.db`, logger: log }).namespace('devices'),
         ),
         sessions: server,
@@ -186,7 +188,6 @@ export async function main(argv: readonly string[]): Promise<number> {
         // and refusing is the only honest answer a process with no UI can give.
         approve: async () => false,
         log: daemon,
-        newSecret: () => crypto.randomUUID(),
         newCode: () => '',
         now: () => Date.now(),
       });
@@ -199,13 +200,12 @@ export async function main(argv: readonly string[]): Promise<number> {
         listening = await new RemoteServer({
           endpoint: endpointFor({ identity: identity.value }),
           identity: identity.value,
-          devices: kvDeviceStore(
+          net: kvNetStore(
             new SqliteStore({ location: `${support}/remote.db`, logger: log }).namespace('devices'),
           ),
           sessions: server,
           approve: async () => false,
           log: daemon,
-          newSecret: () => crypto.randomUUID(),
           newCode: () => '',
           now: () => Date.now(),
         }).start();

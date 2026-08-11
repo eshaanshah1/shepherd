@@ -1,22 +1,60 @@
-// The remote library. Pairing and identity are pure/near-pure and land first;
-// the server and the endpoints build on them.
+// The remote library. The net's trust core (`net`, `join`, `roster`) is pure and
+// lands first; identity, the store, the server and the endpoints build on it.
+export {
+  ROOT,
+  MAX_CHAIN,
+  credentialBytes,
+  issueCredential,
+  verifyChain,
+  type ChainInput,
+  type ChainVerdict,
+  type Credential,
+  type Sign,
+  type Verify,
+} from './net.ts';
+export {
+  generateMemberKey,
+  netIdOf,
+  signWith,
+  verifySignature,
+  type MemberKey,
+} from './netcrypto.ts';
 export {
   REMOTE_PROTOCOL_VERSION,
   CODE_LIFETIME_MS,
   CODE_ATTEMPTS,
+  PROOF_LIFETIME_MS,
   codeState,
   freshCode,
-  pairingDecision,
+  hostProofBytes,
+  issueHostProof,
+  issueProof,
+  joinDecision,
+  proofBytes,
   sasChoices,
   sasDigits,
   spendAttempt,
+  type Candidate,
   type CodeState,
   type Hello,
-  type PairedDevice,
+  type JoinDecision,
+  type JoinInput,
+  type NetState,
   type PairingCode,
-  type PairingDecision,
-  type PairingInput,
-} from './pairing.ts';
+  type Proof,
+} from './join.ts';
+export {
+  issueTombstone,
+  mergeEntries,
+  mergeTombstones,
+  revokedIds,
+  tombstoneBytes,
+  verifyTombstone,
+  type RosterEntry,
+  type Tombstone,
+  type TombstoneCheck,
+} from './roster.ts';
+export { foundNet, kvNetStore, type Membership, type NetStore } from './netstore.ts';
 export {
   loadOrMintIdentity,
   resetIdentity,
@@ -38,19 +76,19 @@ export {
 export {
   REMOTE,
   RemoteServer,
+  type AdmittedMember,
   type Approval,
-  type DeviceStore,
   type RemoteServerOptions,
   type SessionSink,
 } from './server.ts';
 export { CONTROL, ControlChannel, controlSink, type ControlChannelOptions, type ControlHost } from './control.ts';
-export type {
-  PairingPayload,
-  PairingRequest,
-  PairingRequestHandler,
-  RemoteAPI,
-} from './api.ts';
-export { kvDeviceStore } from './devices.ts';
+export type { JoinRequest, JoinRequestHandler, NetSummary, RemoteAPI } from './api.ts';
+export {
+  JOIN_SCHEME,
+  encodeJoinURI,
+  parseJoinURI,
+  type PairingPayload,
+} from './payload.ts';
 
 export {
   registerTransport,

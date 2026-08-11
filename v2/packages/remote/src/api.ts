@@ -1,7 +1,8 @@
 import type { Disposable } from '@shepherd/sdk';
 import type { Endpoint } from './endpoint.ts';
 import type { Identity } from './identity.ts';
-import type { PairedDevice } from './pairing.ts';
+import type { PairingPayload } from './payload.ts';
+import type { RosterEntry } from './roster.ts';
 
 /**
  * What an extension may do with remote — the seam `remote-lan`,
@@ -60,7 +61,7 @@ export interface RemoteAPI {
   serve(factory: (identity: Identity, port?: number) => Endpoint): Promise<Disposable>;
 
   /**
-   * Show a pairing code, and return its digits.
+   * Show a join code, and return its digits.
    *
    * One device, five minutes, three attempts. Minting a new one invalidates
    * whatever was showing — a code is a moment, not a setting.
@@ -79,18 +80,50 @@ export interface RemoteAPI {
    */
   pairingPayload(): PairingPayload | undefined;
 
-  devices(): readonly PairedDevice[];
+  /**
+   * The nets this device belongs to, and which one is live.
+   *
+   * Several memberships, one active: the active net decides what the transports
+   * advertise, browse and will dial. It costs one field and does not block the
+   * case the design is for — a phone watching two laptops works because both
+   * laptops are members of ONE net. The rule only bites ACROSS nets, which is
+   * where the separation is wanted.
+   */
+  nets(): readonly NetSummary[];
+  activeNet(): NetSummary | undefined;
+  setActiveNet(netId: string): void;
 
   /**
-   * Forget a device and drop its live connections NOW.
+   * Create a net with this device as its founding member.
+   *
+   * The root key is minted here and stays here. Every later admission is signed
+   * by the admitting member's own key, so no other device ever needs it.
+   */
+  createNet(name: string): NetSummary;
+
+  /** Leave a net: drop the membership, its roster and its revocations. */
+  leaveNet(netId: string): void;
+
+  /**
+   * Everyone in the active net, as the roster knows them.
+   *
+   * Roster entries are HINTS — a name and last-known addresses. Authority is the
+   * credential chain a member presents on connect, never this list.
+   */
+  members(): readonly RosterEntry[];
+
+  /**
+   * Revoke a member and drop its live connections NOW.
    *
    * Immediate rather than eventual because the person revoking is usually doing
-   * it because the device is in somebody else's hands.
+   * it because the device is in somebody else's hands. It also writes a signed
+   * tombstone, which is the half that reaches the OTHER members: gossip is what
+   * makes a revocation true anywhere but here.
    */
-  revoke(deviceId: string): void;
+  revoke(memberId: string): void;
 
   /**
-   * Approve or deny a device asking to pair.
+   * Approve or deny a device asking to join this net.
    *
    * The handler shows whatever UI it likes — a sheet, a notification, a CLI
    * prompt — and answers. Core does not draw, and it cannot: it is loaded by the
@@ -100,30 +133,21 @@ export interface RemoteAPI {
    * request is a design where a device gets in because the slower one was going
    * to say no.
    */
-  onPairingRequest(handler: PairingRequestHandler): Disposable;
+  onJoinRequest(handler: JoinRequestHandler): Disposable;
 }
 
-export interface PairingPayload {
-  /** How a client addresses this Mac on the endpoint that produced this. */
-  readonly host: string;
-  readonly port: number;
-  /** Lowercase hex SHA-256 of the certificate DER. */
-  readonly pin: string;
-  /**
-   * Where the DATA path listens — the daemon's port, not this one.
-   *
-   * A device holds two connections: control here, data there. Absent means the
-   * daemon is not serving devices yet, and a client that gets a payload without
-   * it can pair and browse but cannot open a terminal — which is worth saying
-   * rather than letting it look like a dead socket.
-   */
-  readonly dataPort?: number;
-  /** Absent when no code is showing — a payload without one cannot pair. */
-  readonly code?: string;
-  readonly protocolVersion: number;
+/** A net, as anything outside core needs to see it. */
+export interface NetSummary {
+  /** Hex SHA-256 of the net's root public key. */
+  readonly netId: string;
+  readonly name: string;
+  /** This device's id within it. */
+  readonly memberId: string;
+  /** Whether this device founded it, and so holds the root key. */
+  readonly founded: boolean;
 }
 
-export interface PairingRequest {
+export interface JoinRequest {
   readonly deviceId: string;
   readonly deviceName: string;
   /** Where it connected from, for a sheet that says "a device on 192.168.1.4". */
@@ -138,4 +162,4 @@ export interface PairingRequest {
   readonly sas?: string;
 }
 
-export type PairingRequestHandler = (request: PairingRequest) => Promise<boolean>;
+export type JoinRequestHandler = (request: JoinRequest) => Promise<boolean>;
