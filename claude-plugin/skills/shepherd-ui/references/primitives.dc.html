@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  body { margin: 0; background: #060606; }
+  a { color: #7FB6E8; text-decoration: none; }
+  a:hover { color: #EDEDED; }
+  @keyframes shpRun { 0%{opacity:1} 50%{opacity:.18} 100%{opacity:1} }
+</style>
+</helmet>
+
+<div style="min-height:100%;background:#060606;padding:48px;display:flex;flex-direction:column;gap:40px;font-family:'Geist',-apple-system,'Helvetica Neue',sans-serif;width:1500px;">
+
+  <div style="display:flex;flex-direction:column;gap:9px;max-width:880px;">
+    <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#5A5A5A;">SHEPHERD UI · PRIMITIVES · v1</div>
+    <div style="font-size:28px;font-weight:600;color:#EDEDED;letter-spacing:-0.025em;line-height:1.15;">Every control, at real size, in every state.</div>
+    <div style="font-size:15px;line-height:24px;color:#8C8C8C;text-wrap:pretty;max-width:760px;">Nothing on this page is decorative. Each specimen is drawn at the size it ships at, and the mono line under it is the whole spec — height, inset, radius, and which role paints it. If a screen needs something that is not here, it is a new primitive and it gets a line in the skill, not a one-off style.</div>
+  </div>
+
+  <!-- ============================================================ 0 · tokens -->
+  <div style="display:flex;flex-direction:column;gap:14px;">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#EDEDED;">00 · TOKENS</span>
+      <span style="flex:1 1 auto;height:1px;background:#1C1C1C;"></span>
+    </div>
+
+    <div style="display:flex;gap:14px;flex-wrap:wrap;">
+      <!-- neutral ramp -->
+      <div style="width:470px;background:#0C0C0C;border:1px solid #1C1C1C;border-radius:10px;padding:16px;display:flex;flex-direction:column;gap:12px;">
+        <div style="font-size:12.5px;font-weight:600;color:#EDEDED;">Neutral ramp — true neutral, nine steps</div>
+        <div style="display:flex;flex-direction:column;gap:1px;">
+          <div style="display:flex;align-items:center;gap:12px;height:26px;"><span style="width:52px;height:20px;border-radius:4px;background:#070708;border:1px solid #1C1C1C;"></span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#A8A8A8;width:96px;">#070708</span><span style="font-size:12px;color:#5A5A5A;">sunken — behind everything</span></div>
+          <div style="display:flex;align-items:center;gap:12px;height:26px;"><span style="width:52px;height:20px;border-radius:4px;background:#0A0A0A;border:1px solid #1C1C1C;"></span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#A8A8A8;width:96px;">#0A0A0A</span><span style="font-size:12px;color:#5A5A5A;">canvas — window, rail, stage</span></div>
+          <div style="display:flex;align-items:center;gap:12px;height:26px;"><span style="width:52px;height:20px;border-radius:4px;background:#0D0D0D;border:1px solid #1C1C1C;"></span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#A8A8A8;width:96px;">#0D0D0D</span><span style="font-size:12px;color:#5A5A5A;">pane — the grid's own ground</span></div>
+          <div style="display:flex;align-items:center;gap:12px;height:26px;"><span style="width:52px;height:20px;border-radius:4px;background:#0F0F0F;border:1px solid #1C1C1C;"></span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#A8A8A8;width:96px;">#0F0F0F</span><span style="font-size:12px;color:#5A5A5A;">surface — a resting card</span></div>
+          <div style="display:flex;align-items:center;gap:12px;height:26px;"><span style="width:52px;height:20px;border-radius:4px;background:#121212;border:1px solid #1C1C1C;"></span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#A8A8A8;width:96px;">#121212</span><span style="font-size:12px;color:#5A5A5A;">well — the composer, a modal</span></div>
+          <div style="display:flex;align-items:center;gap:12px;height:26px;"><span style="width:52px;height:20px;border-radius:4px;background:#161616;border:1px solid #1C1C1C;"></span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#A8A8A8;width:96px;">#161616</span><span style="font-size:12px;color:#5A5A5A;">raised — a selected card</span></div>
+          <div style="display:flex;align-items:center;gap:12px;height:26px;"><span style="width:52px;height:20px;border-radius:4px;background:#1B1B1B;border:1px solid #1C1C1C;"></span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#A8A8A8;width:96px;">#1B1B1B</span><span style="font-size:12px;color:#5A5A5A;">active row, hover fill</span></div>
+          <div style="display:flex;align-items:center;gap:12px;height:26px;"><span style="width:52px;height:20px;border-radius:4px;background:#1C1C1C;"></span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#A8A8A8;width:96px;">#1C1C1C</span><span style="font-size:12px;color:#5A5A5A;">line — every seam</span></div>
+          <div style="display:flex;align-items:center;gap:12px;height:26px;"><span style="width:52px;height:20px;border-radius:4px;background:#272727;"></span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#A8A8A8;width:96px;">#272727</span><span style="font-size:12px;color:#5A5A5A;">lineStrong — a well's edge</span></div>
+        </div>
+        <div style="font-size:12px;line-height:18px;color:#5A5A5A;">Separation is a luminance step first and a hairline second. There are no shadows in the chrome; the one exception is a layer that floats over another floating layer, and there is exactly one of those.</div>
+      </div>
+
+      <!-- text + accents -->
+      <div style="width:470px;background:#0C0C0C;border:1px solid #1C1C1C;border-radius:10px;padding:16px;display:flex;flex-direction:column;gap:12px;">
+        <div style="font-size:12.5px;font-weight:600;color:#EDEDED;">Ink, and the five colours that mean something</div>
+        <div style="display:flex;flex-direction:column;gap:1px;">
+          <div style="display:flex;align-items:center;gap:12px;height:26px;"><span style="width:52px;font-size:13px;color:#EDEDED;">Text</span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#A8A8A8;width:96px;">#EDEDED</span><span style="font-size:12px;color:#5A5A5A;">primary — a title, a live value</span></div>
+          <div style="display:flex;align-items:center;gap:12px;height:26px;"><span style="width:52px;font-size:13px;color:#A8A8A8;">Text</span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#A8A8A8;width:96px;">#A8A8A8</span><span style="font-size:12px;color:#5A5A5A;">dim — a control at rest</span></div>
+          <div style="display:flex;align-items:center;gap:12px;height:26px;"><span style="width:52px;font-size:13px;color:#8C8C8C;">Text</span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#A8A8A8;width:96px;">#8C8C8C</span><span style="font-size:12px;color:#5A5A5A;">faint — a section label, a secondary row</span></div>
+          <div style="display:flex;align-items:center;gap:12px;height:26px;"><span style="width:52px;font-size:13px;color:#5A5A5A;">Text</span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#A8A8A8;width:96px;">#5A5A5A</span><span style="font-size:12px;color:#5A5A5A;">mute — a path, a timestamp</span></div>
+          <div style="display:flex;align-items:center;gap:12px;height:26px;"><span style="width:52px;font-size:13px;color:#3A3A3A;">Text</span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#A8A8A8;width:96px;">#3A3A3A</span><span style="font-size:12px;color:#5A5A5A;">ghost — a separator glyph, a disabled hint</span></div>
+        </div>
+        <div style="height:1px;background:#1C1C1C;margin:2px 0;"></div>
+        <div style="display:flex;flex-direction:column;gap:1px;">
+          <div style="display:flex;align-items:center;gap:12px;height:26px;"><span style="width:52px;height:20px;border-radius:4px;background:#7FB6E8;"></span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#A8A8A8;width:96px;">#7FB6E8</span><span style="font-size:12px;color:#8C8C8C;">sky — live, focus, send</span></div>
+          <div style="display:flex;align-items:center;gap:12px;height:26px;"><span style="width:52px;height:20px;border-radius:4px;background:#86C06A;"></span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#A8A8A8;width:96px;">#86C06A</span><span style="font-size:12px;color:#8C8C8C;">grass — passed, done, git added</span></div>
+          <div style="display:flex;align-items:center;gap:12px;height:26px;"><span style="width:52px;height:20px;border-radius:4px;background:#EDEDED;"></span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#A8A8A8;width:96px;">#EDEDED</span><span style="font-size:12px;color:#8C8C8C;">wool — waiting on you, and the one action</span></div>
+          <div style="display:flex;align-items:center;gap:12px;height:26px;"><span style="width:52px;height:20px;border-radius:4px;background:#C4796B;"></span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#A8A8A8;width:96px;">#C4796B</span><span style="font-size:12px;color:#8C8C8C;">clay — git removed</span></div>
+          <div style="display:flex;align-items:center;gap:12px;height:26px;"><span style="width:52px;height:20px;border-radius:4px;background:#E05C4F;"></span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#A8A8A8;width:96px;">#E05C4F</span><span style="font-size:12px;color:#8C8C8C;">red — a run that failed</span></div>
+        </div>
+        <div style="font-size:12px;line-height:18px;color:#5A5A5A;">A hue on screen is a decision, never a finish. Repo identity is a sixth axis and draws from a fixed set of marks: <span style="color:#7FB6E8;">sky</span>, <span style="color:#8C9AA8;">stone</span>, <span style="color:#CFCBBE;">wool</span>, <span style="color:#6E7B8C;">slate</span> — grass stays reserved for "passed".</div>
+      </div>
+
+      <!-- type + geometry -->
+      <div style="width:470px;background:#0C0C0C;border:1px solid #1C1C1C;border-radius:10px;padding:16px;display:flex;flex-direction:column;gap:12px;">
+        <div style="font-size:12.5px;font-weight:600;color:#EDEDED;">Type, and the two faces</div>
+        <div style="display:flex;flex-direction:column;gap:6px;">
+          <div style="display:flex;align-items:baseline;gap:12px;"><span style="font-size:19px;font-weight:600;color:#EDEDED;letter-spacing:-0.022em;">Work</span><span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">19 / 600 / −0.022em · a panel's name, once</span></div>
+          <div style="display:flex;align-items:baseline;gap:12px;"><span style="font-size:16px;color:#EDEDED;letter-spacing:-0.005em;">what needs doing?</span><span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">16 / 400 · the brief</span></div>
+          <div style="display:flex;align-items:baseline;gap:12px;"><span style="font-size:14px;font-weight:600;color:#EDEDED;letter-spacing:-0.01em;">Fix the retry loop</span><span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">14 / 600 · a card title</span></div>
+          <div style="display:flex;align-items:baseline;gap:12px;"><span style="font-size:13px;color:#EDEDED;">a row, a menu item</span><span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">13 / 400 · body</span></div>
+          <div style="display:flex;align-items:baseline;gap:12px;"><span style="font-size:12.5px;color:#A8A8A8;">a control's label</span><span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">12.5 / 500 · control</span></div>
+          <div style="display:flex;align-items:baseline;gap:12px;"><span style="font-size:11.5px;font-weight:600;color:#8C8C8C;">In flight</span><span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">11.5 / 600 · section label — sentence case, no tracking</span></div>
+          <div style="display:flex;align-items:baseline;gap:12px;"><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#A8A8A8;font-variant-numeric:tabular-nums;">02:41 +142 −38</span><span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">mono 11 · tabular-nums</span></div>
+          <div style="display:flex;align-items:baseline;gap:12px;"><span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">~/dev/shepherd/api</span><span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">mono 10.5 · a path, an id</span></div>
+        </div>
+        <div style="font-size:12px;line-height:18px;color:#5A5A5A;"><span style="color:#A8A8A8;">Geist</span> for what the app says. <span style="color:#A8A8A8;">JetBrains Mono</span> for what the machine produced — a path, a number, a command, the grid. Anything measurable is <span style="font-family:'JetBrains Mono',monospace;">tabular-nums</span> so it stops jittering. Section labels are sentence case: uppercase micro-tracking is instrument cosplay.</div>
+        <div style="height:1px;background:#1C1C1C;"></div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;">
+          <span style="display:inline-flex;align-items:center;height:24px;padding:0 8px;border-radius:5px;background:#161616;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#A8A8A8;">r5 chip</span>
+          <span style="display:inline-flex;align-items:center;height:24px;padding:0 8px;border-radius:6px;background:#161616;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#A8A8A8;">r6 control</span>
+          <span style="display:inline-flex;align-items:center;height:24px;padding:0 8px;border-radius:8px;background:#161616;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#A8A8A8;">r8 row</span>
+          <span style="display:inline-flex;align-items:center;height:24px;padding:0 8px;border-radius:10px;background:#161616;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#A8A8A8;">r10 card</span>
+          <span style="display:inline-flex;align-items:center;height:24px;padding:0 8px;border-radius:12px;background:#161616;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#A8A8A8;">r12 window</span>
+          <span style="display:inline-flex;align-items:center;height:24px;padding:0 10px;border-radius:16px;background:#161616;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#A8A8A8;">r16 well</span>
+          <span style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:#161616;font-family:'JetBrains Mono',monospace;font-size:10px;color:#A8A8A8;">○</span>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">
+          <span>space 2 · 4 · 6 · 7 · 9 · 10 · 12 · 14 · 16 · 20</span>
+          <span style="color:#3A3A3A;">|</span>
+          <span>heights: row 34 · control 24/28/34 · tab 28 · pane head 38 · tab strip 40 · titlebar 44</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ 1 · state marks -->
+  <div style="display:flex;flex-direction:column;gap:14px;">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#EDEDED;">01 · STATE MARK</span>
+      <span style="flex:1 1 auto;height:1px;background:#1C1C1C;"></span>
+      <span style="font-size:12px;color:#5A5A5A;">the one component every list, tab and pane head shares</span>
+    </div>
+    <div style="background:#0C0C0C;border:1px solid #1C1C1C;border-radius:10px;padding:18px;display:flex;gap:26px;flex-wrap:wrap;">
+      <div style="display:flex;flex-direction:column;gap:9px;width:196px;">
+        <div style="display:flex;align-items:center;gap:12px;height:20px;"><span style="display:flex;gap:1.5px;align-items:flex-end;height:8px;width:8px;"><span style="display:block;width:2px;height:8px;background:#7FB6E8;"></span><span style="display:block;width:2px;height:8px;background:#7FB6E8;"></span><span style="display:block;width:2px;height:8px;background:#7FB6E8;animation:shpRun 1.1s steps(1,end) infinite;"></span></span><span style="font-size:13px;color:#EDEDED;">working</span></div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;line-height:16px;color:#5A5A5A;">3 bars 2×8, gap 1.5, sky<br>3rd bar steps(1,end) 1.1s<br>slot 12×12, mark never resizes</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:9px;width:196px;">
+        <div style="display:flex;align-items:center;gap:12px;height:20px;"><span style="display:flex;width:8px;"><span style="display:block;width:8px;height:8px;background:#EDEDED;"></span></span><span style="font-size:13px;color:#EDEDED;">waiting on you</span></div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;line-height:16px;color:#5A5A5A;">solid square 8×8, wool<br>the row also OPENS — see §07<br>the only thing allowed to grow</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:9px;width:196px;">
+        <div style="display:flex;align-items:center;gap:12px;height:20px;"><span style="display:flex;width:8px;"><span style="display:block;width:7px;height:7px;border-radius:50%;border:1px solid #4A4A4A;"></span></span><span style="font-size:13px;color:#EDEDED;">resting</span></div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;line-height:16px;color:#5A5A5A;">ring 7×7, 1px #4A4A4A<br>hollow: nothing is happening<br>no colour, no animation</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:9px;width:196px;">
+        <div style="display:flex;align-items:center;gap:12px;height:20px;"><span style="display:flex;width:8px;"><span style="display:block;width:8px;height:8px;background:#E05C4F;"></span></span><span style="font-size:13px;color:#EDEDED;">failed</span></div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;line-height:16px;color:#5A5A5A;">solid square 8×8, red<br>square, like waiting — a square<br>always means "your move"</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:9px;width:196px;">
+        <div style="display:flex;align-items:center;gap:12px;height:20px;"><span style="display:flex;width:8px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#5A5A5A" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="margin-left:-2px;"><path d="m5 12 5 5L20 7"></path></svg></span><span style="font-size:13px;color:#EDEDED;">shipped</span></div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;line-height:16px;color:#5A5A5A;">check 12, mute<br>and it leaves the list —<br>counted at the foot, not listed</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:9px;width:196px;">
+        <div style="display:flex;align-items:center;gap:12px;height:20px;"><span style="display:flex;gap:1.5px;"><span style="display:block;width:4px;height:8px;background:#86C06A;"></span><span style="display:block;width:4px;height:8px;background:#86C06A;"></span><span style="display:block;width:4px;height:8px;background:#86C06A;"></span><span style="display:block;width:4px;height:8px;background:#2A2A2A;"></span></span><span style="font-size:13px;color:#EDEDED;">suites</span></div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;line-height:16px;color:#5A5A5A;">n cells 4×8, gap 1.5<br>grass when green, #2A2A2A pending<br>a count you read without counting</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ 2 · button -->
+  <div style="display:flex;flex-direction:column;gap:14px;">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#EDEDED;">02 · BUTTON</span>
+      <span style="flex:1 1 auto;height:1px;background:#1C1C1C;"></span>
+      <span style="font-size:12px;color:#5A5A5A;">one primary per surface, and it is wool — never a hue</span>
+    </div>
+    <div style="background:#0C0C0C;border:1px solid #1C1C1C;border-radius:10px;padding:18px;display:flex;flex-direction:column;gap:18px;">
+
+      <div style="display:grid;grid-template-columns:104px repeat(5,1fr);gap:12px;align-items:center;">
+        <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;"></span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">rest</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">hover</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">active</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">focus</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">disabled</span>
+
+        <span style="font-size:12.5px;color:#A8A8A8;">primary</span>
+        <span><span style="display:inline-flex;align-items:center;justify-content:center;height:28px;padding:0 12px;border-radius:6px;background:#EDEDED;color:#0A0A0A;font-size:12.5px;font-weight:600;">Start</span></span>
+        <span><span style="display:inline-flex;align-items:center;justify-content:center;height:28px;padding:0 12px;border-radius:6px;background:#FFFFFF;color:#0A0A0A;font-size:12.5px;font-weight:600;">Start</span></span>
+        <span><span style="display:inline-flex;align-items:center;justify-content:center;height:28px;padding:0 12px;border-radius:6px;background:#C9C9C9;color:#0A0A0A;font-size:12.5px;font-weight:600;">Start</span></span>
+        <span><span style="display:inline-flex;align-items:center;justify-content:center;height:28px;padding:0 12px;border-radius:6px;background:#EDEDED;color:#0A0A0A;font-size:12.5px;font-weight:600;outline:2px solid #7FB6E8;outline-offset:2px;">Start</span></span>
+        <span><span style="display:inline-flex;align-items:center;justify-content:center;height:28px;padding:0 12px;border-radius:6px;background:#EDEDED;color:#0A0A0A;font-size:12.5px;font-weight:600;opacity:0.36;">Start</span></span>
+
+        <span style="font-size:12.5px;color:#A8A8A8;">secondary</span>
+        <span><span style="display:inline-flex;align-items:center;justify-content:center;height:28px;padding:0 12px;border-radius:6px;border:1px solid #272727;color:#A8A8A8;font-size:12.5px;font-weight:500;">Deny</span></span>
+        <span><span style="display:inline-flex;align-items:center;justify-content:center;height:28px;padding:0 12px;border-radius:6px;border:1px solid #383838;background:#161616;color:#EDEDED;font-size:12.5px;font-weight:500;">Deny</span></span>
+        <span><span style="display:inline-flex;align-items:center;justify-content:center;height:28px;padding:0 12px;border-radius:6px;border:1px solid #383838;background:#1F1F1F;color:#EDEDED;font-size:12.5px;font-weight:500;">Deny</span></span>
+        <span><span style="display:inline-flex;align-items:center;justify-content:center;height:28px;padding:0 12px;border-radius:6px;border:1px solid #272727;color:#A8A8A8;font-size:12.5px;font-weight:500;outline:2px solid #7FB6E8;outline-offset:2px;">Deny</span></span>
+        <span><span style="display:inline-flex;align-items:center;justify-content:center;height:28px;padding:0 12px;border-radius:6px;border:1px solid #272727;color:#A8A8A8;font-size:12.5px;font-weight:500;opacity:0.36;">Deny</span></span>
+
+        <span style="font-size:12.5px;color:#A8A8A8;">ghost</span>
+        <span><span style="display:inline-flex;align-items:center;justify-content:center;height:28px;padding:0 10px;border-radius:6px;color:#8C8C8C;font-size:12.5px;">Dismiss</span></span>
+        <span><span style="display:inline-flex;align-items:center;justify-content:center;height:28px;padding:0 10px;border-radius:6px;background:#1B1B1B;color:#EDEDED;font-size:12.5px;">Dismiss</span></span>
+        <span><span style="display:inline-flex;align-items:center;justify-content:center;height:28px;padding:0 10px;border-radius:6px;background:#232323;color:#EDEDED;font-size:12.5px;">Dismiss</span></span>
+        <span><span style="display:inline-flex;align-items:center;justify-content:center;height:28px;padding:0 10px;border-radius:6px;color:#8C8C8C;font-size:12.5px;outline:2px solid #7FB6E8;outline-offset:2px;">Dismiss</span></span>
+        <span><span style="display:inline-flex;align-items:center;justify-content:center;height:28px;padding:0 10px;border-radius:6px;color:#8C8C8C;font-size:12.5px;opacity:0.36;">Dismiss</span></span>
+
+        <span style="font-size:12.5px;color:#A8A8A8;">danger</span>
+        <span><span style="display:inline-flex;align-items:center;justify-content:center;height:28px;padding:0 12px;border-radius:6px;border:1px solid #4A2620;color:#E05C4F;font-size:12.5px;font-weight:500;">Delete</span></span>
+        <span><span style="display:inline-flex;align-items:center;justify-content:center;height:28px;padding:0 12px;border-radius:6px;border:1px solid #E05C4F;background:#E05C4F;color:#0A0A0A;font-size:12.5px;font-weight:600;">Delete</span></span>
+        <span><span style="display:inline-flex;align-items:center;justify-content:center;height:28px;padding:0 12px;border-radius:6px;border:1px solid #C24A3E;background:#C24A3E;color:#0A0A0A;font-size:12.5px;font-weight:600;">Delete</span></span>
+        <span><span style="display:inline-flex;align-items:center;justify-content:center;height:28px;padding:0 12px;border-radius:6px;border:1px solid #4A2620;color:#E05C4F;font-size:12.5px;font-weight:500;outline:2px solid #7FB6E8;outline-offset:2px;">Delete</span></span>
+        <span><span style="display:inline-flex;align-items:center;justify-content:center;height:28px;padding:0 12px;border-radius:6px;border:1px solid #4A2620;color:#E05C4F;font-size:12.5px;font-weight:500;opacity:0.36;">Delete</span></span>
+      </div>
+
+      <div style="height:1px;background:#1C1C1C;"></div>
+
+      <div style="display:flex;align-items:flex-end;gap:26px;flex-wrap:wrap;">
+        <div style="display:flex;flex-direction:column;gap:9px;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span style="display:inline-flex;align-items:center;justify-content:center;height:24px;padding:0 9px;border-radius:5px;background:#EDEDED;color:#0A0A0A;font-size:11.5px;font-weight:600;">sm</span>
+            <span style="display:inline-flex;align-items:center;justify-content:center;height:28px;padding:0 12px;border-radius:6px;background:#EDEDED;color:#0A0A0A;font-size:12.5px;font-weight:600;">md</span>
+            <span style="display:inline-flex;align-items:center;justify-content:center;height:34px;padding:0 15px;border-radius:8px;background:#EDEDED;color:#0A0A0A;font-size:13px;font-weight:600;">lg</span>
+          </div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">24 / r5 / px9 · 28 / r6 / px12 · 34 / r8 / px15 — a button matches the row it sits in</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:9px;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span style="display:inline-flex;align-items:center;gap:9px;height:28px;padding:0 12px;border-radius:6px;background:#EDEDED;color:#0A0A0A;font-size:12.5px;font-weight:600;">Start<span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;opacity:0.5;">⏎</span></span>
+            <span style="display:inline-flex;align-items:center;justify-content:center;height:28px;width:66px;border-radius:6px;background:#EDEDED;color:#0A0A0A;font-family:'JetBrains Mono',monospace;font-size:12px;">⠹</span>
+          </div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">with key hint · busy: label hidden, width pinned</div>
+        </div>
+      </div>
+      <div style="font-size:12px;line-height:18px;color:#5A5A5A;max-width:900px;">Transitions are 140ms linear on colour only. Nothing translates, scales or springs — a control that moves under the cursor is a control whose target moved mid-click. Disabled is 36% opacity on the live colour, never a dimmer colour. Focus is a 2px sky outline at 2px offset, on <span style="font-family:'JetBrains Mono',monospace;">:focus-visible</span> only. Back-out paths (Cancel, Dismiss, Close) are ghost and carry no colour and no key hint.</div>
+    </div>
+  </div>
+
+  <!-- ============================================================ 3 · icon button, send -->
+  <div style="display:flex;flex-direction:column;gap:14px;">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#EDEDED;">03 · ICON BUTTON · SEND</span>
+      <span style="flex:1 1 auto;height:1px;background:#1C1C1C;"></span>
+    </div>
+    <div style="background:#0C0C0C;border:1px solid #1C1C1C;border-radius:10px;padding:18px;display:flex;gap:34px;flex-wrap:wrap;align-items:flex-end;">
+      <div style="display:flex;flex-direction:column;gap:9px;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:5px;color:#5A5A5A;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span>
+          <span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:6px;background:#1B1B1B;color:#EDEDED;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span>
+          <span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:6px;color:#5A5A5A;outline:2px solid #7FB6E8;outline-offset:2px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span>
+          <span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:6px;color:#5A5A5A;opacity:0.36;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span>
+        </div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">24 / 26 square · r5 / r6 · glyph 13–14 at 1.8 stroke · rest mute, hover fill #1B1B1B</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:9px;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:50%;background:#7FB6E8;color:#08131C;"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"></path></svg></span>
+          <span style="display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:50%;background:#9BC6EE;color:#08131C;"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"></path></svg></span>
+          <span style="display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:50%;background:#1F1F1F;color:#4A4A4A;"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"></path></svg></span>
+        </div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">send · 34 circle · sky, hover +10% L, empty #1F1F1F — the ONE round thing in the app</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:9px;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="display:inline-flex;align-items:center;height:22px;padding:0 6px;border:1px solid #272727;border-radius:5px;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#A8A8A8;">⌘K</span>
+          <span style="display:inline-flex;align-items:center;height:22px;padding:0 6px;border:1px solid #272727;border-radius:5px;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#A8A8A8;">⌘⇧D</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#5A5A5A;">⏎ start</span>
+        </div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">key hint · boxed only in a legend; inline it is bare mono at #5A5A5A</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ 4 · field + well -->
+  <div style="display:flex;flex-direction:column;gap:14px;">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#EDEDED;">04 · FIELD · WELL</span>
+      <span style="flex:1 1 auto;height:1px;background:#1C1C1C;"></span>
+    </div>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;">
+      <div style="width:470px;background:#0C0C0C;border:1px solid #1C1C1C;border-radius:10px;padding:18px;display:flex;flex-direction:column;gap:16px;">
+        <div style="display:flex;flex-direction:column;gap:7px;">
+          <span style="font-size:11.5px;font-weight:600;color:#8C8C8C;">Worktree base</span>
+          <span style="display:block;height:30px;line-height:28px;padding:0 10px;border-radius:6px;background:#070708;border:1px solid #272727;font-family:'JetBrains Mono',monospace;font-size:12px;color:#EDEDED;">~/dev/worktrees</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">rest · sunken well, 1px lineStrong, r6, h30</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:7px;">
+          <span style="display:block;height:30px;line-height:28px;padding:0 10px;border-radius:6px;background:#070708;border:1px solid #7FB6E8;font-family:'JetBrains Mono',monospace;font-size:12px;color:#EDEDED;">~/dev/worktrees<span style="display:inline-block;width:1.5px;height:14px;background:#7FB6E8;vertical-align:-2px;"></span></span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">focus · border becomes sky. no ring, no glow</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:7px;">
+          <span style="display:block;height:30px;line-height:28px;padding:0 10px;border-radius:6px;background:#070708;border:1px solid #E05C4F;font-family:'JetBrains Mono',monospace;font-size:12px;color:#EDEDED;">/nope</span>
+          <span style="font-size:11.5px;color:#E05C4F;">Not a directory Shepherd can write to.</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">invalid · red edge AND a sentence. never colour alone</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:7px;">
+          <span style="display:block;height:30px;line-height:28px;padding:0 10px;border-radius:6px;background:#070708;border:1px solid #272727;font-family:'JetBrains Mono',monospace;font-size:12px;color:#5A5A5A;">~/dev/worktrees</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">disabled · 36% on the live colour</span>
+        </div>
+      </div>
+
+      <div style="width:470px;background:#0C0C0C;border:1px solid #1C1C1C;border-radius:10px;padding:18px;display:flex;flex-direction:column;gap:14px;">
+        <div style="font-size:12.5px;font-weight:600;color:#EDEDED;">The well — a writing surface, not an instrument</div>
+        <div style="background:#121212;border:1px solid #272727;border-radius:16px;padding:16px 16px 0;min-height:76px;font-size:16px;line-height:26px;color:#5A5A5A;">what needs doing?</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">r16 · 1px lineStrong · #121212 · inset 16/20 · min-height 3 lines · placeholder mute</div>
+        <div style="height:1px;background:#1C1C1C;"></div>
+        <div style="background:#121212;border:1px solid #272727;border-radius:16px;padding:16px;font-size:16px;line-height:26px;color:#EDEDED;">fix the retry loop in <span style="display:inline-flex;align-items:center;gap:6px;height:25px;padding:0 9px;border-radius:7px;background:#1E1E1E;vertical-align:-2px;font-size:15px;font-weight:500;color:#EDEDED;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#7FB6E8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2"></path></svg>relay</span> and <span style="color:#7FB6E8;">#ap</span><span style="display:inline-block;width:1.5px;height:18px;background:#EDEDED;vertical-align:-3px;"></span></div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">the well has no inner hairlines: space is the structure. a control that needs an edge in here asks for one explicitly</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ 5 · pill + chip -->
+  <div style="display:flex;flex-direction:column;gap:14px;">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#EDEDED;">05 · PILL · CHIP · REPO MARK</span>
+      <span style="flex:1 1 auto;height:1px;background:#1C1C1C;"></span>
+    </div>
+    <div style="background:#0C0C0C;border:1px solid #1C1C1C;border-radius:10px;padding:18px;display:flex;gap:34px;flex-wrap:wrap;align-items:flex-start;">
+      <div style="display:flex;flex-direction:column;gap:9px;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="display:inline-flex;align-items:center;gap:6px;height:25px;padding:0 9px;border-radius:7px;background:#1E1E1E;font-size:15px;font-weight:500;color:#EDEDED;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#7FB6E8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2"></path></svg>relay</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;height:25px;padding:0 9px;border-radius:7px;background:#1E1E1E;font-size:15px;font-weight:500;color:#EDEDED;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#7FB6E8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="3"></rect><path d="m4 15 4-4a3 5 0 0 1 3 0l5 5"></path></svg>Image 1</span>
+        </div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">PILL — a token inside prose. h25 r7 #1E1E1E, label at the sentence's size,<br>glyph in sky. It is a word the app is holding, not a control.</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:9px;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:5px;background:#202020;font-family:'JetBrains Mono',monospace;font-size:10px;color:#A8A8A8;"><span style="display:block;width:5px;height:5px;border-radius:1.5px;background:#7FB6E8;"></span>relay</span>
+          <span style="display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:5px;background:#202020;font-family:'JetBrains Mono',monospace;font-size:10px;color:#A8A8A8;"><span style="display:block;width:5px;height:5px;border-radius:1.5px;background:#8C9AA8;"></span>core</span>
+          <span style="display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:5px;background:#202020;font-family:'JetBrains Mono',monospace;font-size:10px;color:#A8A8A8;"><span style="display:block;width:5px;height:5px;border-radius:1.5px;background:#CFCBBE;"></span>github</span>
+          <span style="display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:5px;background:#202020;font-family:'JetBrains Mono',monospace;font-size:10px;color:#A8A8A8;">main</span>
+        </div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">CHIP — metadata. h20 r5 #202020, mono 10, label dim.<br>A repo chip carries its identity mark; a branch chip does not.</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:9px;">
+        <div style="display:flex;align-items:center;gap:9px;">
+          <span style="display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 8px;border-radius:6px;color:#A8A8A8;font-size:12.5px;">Sonnet 4.6<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#5A5A5A" stroke-width="2.2" stroke-linecap="round"><path d="m6 9 6 6 6-6"></path></svg></span>
+          <span style="width:1px;height:16px;background:#282828;"></span>
+          <span style="display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 8px;border-radius:6px;color:#A8A8A8;font-size:12.5px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#7A7A7A" stroke-width="1.8" stroke-linecap="round"><path d="M6 3v12a3 3 0 0 0 3 3h6"></path><circle cx="6" cy="18" r="2.6"></circle><circle cx="18" cy="6" r="2.6"></circle></svg>worktree<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#5A5A5A" stroke-width="2.2" stroke-linecap="round"><path d="m6 9 6 6 6-6"></path></svg></span>
+        </div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">SELECT — ghost text + chevron, divided by a 1px×16 rule.<br>Inside a well, a bordered box would be the loudest thing on it.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ 6 · row -->
+  <div style="display:flex;flex-direction:column;gap:14px;">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#EDEDED;">06 · ROW · SECTION HEADER</span>
+      <span style="flex:1 1 auto;height:1px;background:#1C1C1C;"></span>
+      <span style="font-size:12px;color:#5A5A5A;">one height, whatever the row says</span>
+    </div>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;">
+      <div style="width:470px;background:#0A0A0A;border:1px solid #1C1C1C;border-radius:10px;padding:12px 10px;display:flex;flex-direction:column;">
+        <div style="display:flex;align-items:center;gap:8px;padding:4px 4px 2px;">
+          <span style="font-size:11.5px;font-weight:600;color:#8C8C8C;">Resting</span>
+          <span style="flex:1 1 auto;height:1px;background:#1C1C1C;"></span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;font-variant-numeric:tabular-nums;">4</span>
+        </div>
+        <div style="height:34px;display:flex;align-items:center;gap:11px;padding:0 9px;border-radius:8px;">
+          <span style="display:block;width:7px;height:7px;border-radius:50%;border:1px solid #4A4A4A;flex:0 0 auto;"></span>
+          <span style="flex:1 1 auto;font-size:13px;color:#8C8C8C;">rest — label faint, meta mute</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#3A3A3A;">1h</span>
+        </div>
+        <div style="height:34px;display:flex;align-items:center;gap:11px;padding:0 9px;border-radius:8px;background:#141414;">
+          <span style="display:block;width:7px;height:7px;border-radius:50%;border:1px solid #4A4A4A;flex:0 0 auto;"></span>
+          <span style="flex:1 1 auto;font-size:13px;color:#EDEDED;">hover — fill #141414, label to text</span>
+          <span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:5px;color:#8C8C8C;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="5" cy="12" r=".8"></circle><circle cx="12" cy="12" r=".8"></circle><circle cx="19" cy="12" r=".8"></circle></svg></span>
+        </div>
+        <div style="position:relative;height:34px;display:flex;align-items:center;gap:11px;padding:0 9px;border-radius:8px;background:#1B1B1B;">
+          <span style="position:absolute;left:0;top:9px;bottom:9px;width:2px;border-radius:0 2px 2px 0;background:#7FB6E8;"></span>
+          <span style="display:flex;gap:1.5px;align-items:flex-end;height:8px;flex:0 0 auto;"><span style="display:block;width:2px;height:8px;background:#7FB6E8;"></span><span style="display:block;width:2px;height:8px;background:#7FB6E8;"></span><span style="display:block;width:2px;height:8px;background:#7FB6E8;animation:shpRun 1.1s steps(1,end) infinite;"></span></span>
+          <span style="flex:1 1 auto;font-size:13px;color:#EDEDED;">selected — fill + a 2px sky edge</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#8C8C8C;">02:41</span>
+        </div>
+        <div style="height:34px;display:flex;align-items:center;gap:11px;padding:0 9px;border-radius:8px;">
+          <span style="display:block;width:8px;height:8px;background:#E05C4F;flex:0 0 auto;"></span>
+          <span style="flex:1 1 auto;font-size:13px;color:#A8A8A8;">failed — mark carries it, not the fill</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">26m</span>
+        </div>
+        <div style="padding:8px 4px 0;font-family:'JetBrains Mono',monospace;font-size:10.5px;line-height:16px;color:#5A5A5A;">h34 · gap 11 · inset 9 · r8 · mark slot 12 fixed · label 13 · meta mono 10.5 tabular<br>NO rule may declare a second height. Selection is a fill + an edge, never inverse video.</div>
+      </div>
+
+      <div style="width:470px;background:#0A0A0A;border:1px solid #1C1C1C;border-radius:10px;padding:12px 10px;display:flex;flex-direction:column;gap:2px;">
+        <div style="display:flex;align-items:center;gap:8px;padding:4px 4px 6px;">
+          <span style="font-size:11.5px;font-weight:600;color:#8C8C8C;">Trailing slot</span>
+          <span style="flex:1 1 auto;height:1px;background:#1C1C1C;"></span>
+        </div>
+        <div style="height:34px;display:flex;align-items:center;gap:11px;padding:0 9px;border-radius:8px;">
+          <span style="display:block;width:7px;height:7px;border-radius:50%;border:1px solid #4A4A4A;"></span>
+          <span style="flex:1 1 auto;font-size:13px;color:#8C8C8C;">at rest it holds the metadata</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#3A3A3A;">3h</span>
+        </div>
+        <div style="height:34px;display:flex;align-items:center;gap:11px;padding:0 9px;border-radius:8px;background:#141414;">
+          <span style="display:block;width:7px;height:7px;border-radius:50%;border:1px solid #4A4A4A;"></span>
+          <span style="flex:1 1 auto;font-size:13px;color:#EDEDED;">on hover the actions take the same cell</span>
+          <span style="display:inline-flex;gap:2px;">
+            <span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:5px;color:#8C8C8C;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6"></path><circle cx="12" cy="12" r="2.4"></circle></svg></span>
+            <span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:5px;color:#8C8C8C;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="3" y="8" width="18" height="12" rx="2"></rect><path d="M3 8V6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2"></path></svg></span>
+          </span>
+        </div>
+        <div style="padding:8px 4px 0;font-family:'JetBrains Mono',monospace;font-size:10.5px;line-height:16px;color:#5A5A5A;">Both children live in ONE grid cell, so the track is as wide as the wider of<br>them and revealing the actions cannot reflow the row or re-truncate the label.<br>Hidden by <span style="color:#A8A8A8;">visibility</span>, never <span style="color:#A8A8A8;">display:none</span>; revealed on hover AND focus-within.</div>
+        <div style="height:1px;background:#1C1C1C;margin:8px 0;"></div>
+        <div style="display:flex;align-items:center;gap:8px;padding:0 4px;">
+          <span style="font-size:11.5px;font-weight:600;color:#EDEDED;">Waiting on you</span>
+          <span style="flex:1 1 auto;height:1px;background:#1C1C1C;"></span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#8C8C8C;font-variant-numeric:tabular-nums;">1</span>
+        </div>
+        <div style="padding:6px 4px 0;font-family:'JetBrains Mono',monospace;font-size:10.5px;line-height:16px;color:#5A5A5A;">SECTION HEADER · label 11.5/600 · rule to the edge · count mono tabular.<br>The label goes wool when the section is the one that needs you.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ 7 · task card -->
+  <div style="display:flex;flex-direction:column;gap:14px;">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#EDEDED;">07 · TASK CARD</span>
+      <span style="flex:1 1 auto;height:1px;background:#1C1C1C;"></span>
+      <span style="font-size:12px;color:#5A5A5A;">the only element allowed to change size, and only for one reason</span>
+    </div>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;">
+      <div style="width:308px;display:flex;flex-direction:column;gap:9px;">
+        <div style="background:#0F0F0F;border:1px solid #1C1C1C;border-radius:10px;padding:12px 13px;display:flex;flex-direction:column;gap:9px;">
+          <div style="display:flex;align-items:baseline;gap:9px;">
+            <span style="display:flex;gap:1.5px;align-items:flex-end;height:8px;transform:translateY(-2px);"><span style="display:block;width:2px;height:8px;background:#4E7492;"></span><span style="display:block;width:2px;height:8px;background:#4E7492;"></span><span style="display:block;width:2px;height:8px;background:#4E7492;"></span></span>
+            <span style="flex:1 1 auto;font-size:14px;font-weight:500;color:#C4C4C4;line-height:19px;letter-spacing:-0.01em;">Wire up GitHub sync</span>
+            <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;font-variant-numeric:tabular-nums;">11:08</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;font-family:'JetBrains Mono',monospace;font-size:11px;font-variant-numeric:tabular-nums;">
+            <span style="color:#6E9C79;">+61</span><span style="color:#A8685C;">−4</span><span style="color:#2E2E2E;">·</span><span style="color:#4A4A4A;">2 files</span>
+          </div>
+        </div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">resting · #0F0F0F / 1px line · r10 · inset 12/13 · gap 9</div>
+      </div>
+
+      <div style="width:308px;display:flex;flex-direction:column;gap:9px;">
+        <div style="background:#161616;border:1px solid #333333;border-radius:10px;padding:12px 13px;display:flex;flex-direction:column;gap:9px;">
+          <div style="display:flex;align-items:baseline;gap:9px;">
+            <span style="display:flex;gap:1.5px;align-items:flex-end;height:8px;transform:translateY(-2px);"><span style="display:block;width:2px;height:8px;background:#7FB6E8;"></span><span style="display:block;width:2px;height:8px;background:#7FB6E8;"></span><span style="display:block;width:2px;height:8px;background:#7FB6E8;animation:shpRun 1.1s steps(1,end) infinite;"></span></span>
+            <span style="flex:1 1 auto;font-size:14px;font-weight:600;color:#EDEDED;line-height:19px;letter-spacing:-0.01em;">Fix the retry loop in the relay</span>
+            <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#8C8C8C;font-variant-numeric:tabular-nums;">02:41</span>
+          </div>
+          <div style="font-size:13px;line-height:19px;color:#8C8C8C;">Running <span style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#C4C4C4;">pnpm -r test</span> — 3 of 4 suites green</div>
+          <div style="display:flex;align-items:center;gap:10px;font-family:'JetBrains Mono',monospace;font-size:11px;font-variant-numeric:tabular-nums;">
+            <span style="color:#86C06A;">+142</span><span style="color:#C4796B;">−38</span><span style="color:#3A3A3A;">·</span><span style="color:#5A5A5A;">6 files</span>
+            <span style="flex:1 1 auto;"></span>
+            <span style="display:flex;gap:1.5px;"><span style="display:block;width:4px;height:8px;background:#86C06A;"></span><span style="display:block;width:4px;height:8px;background:#86C06A;"></span><span style="display:block;width:4px;height:8px;background:#86C06A;"></span><span style="display:block;width:4px;height:8px;background:#333333;"></span></span>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span style="display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:5px;background:#202020;font-family:'JetBrains Mono',monospace;font-size:10px;color:#A8A8A8;"><span style="display:block;width:5px;height:5px;border-radius:1.5px;background:#7FB6E8;"></span>relay</span>
+            <span style="display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:5px;background:#202020;font-family:'JetBrains Mono',monospace;font-size:10px;color:#A8A8A8;"><span style="display:block;width:5px;height:5px;border-radius:1.5px;background:#8C9AA8;"></span>core</span>
+            <span style="flex:1 1 auto;"></span>
+            <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#5A5A5A;">retry-loop</span>
+          </div>
+        </div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">selected + in flight · #161616 / 1px #333 · title 600 wool</div>
+      </div>
+
+      <div style="width:308px;display:flex;flex-direction:column;gap:9px;">
+        <div style="background:#121313;border:1px solid #414243;border-radius:10px;padding:12px 13px;display:flex;flex-direction:column;gap:9px;">
+          <div style="display:flex;align-items:baseline;gap:9px;">
+            <span style="display:block;width:8px;height:8px;background:#EDEDED;transform:translateY(-1px);"></span>
+            <span style="flex:1 1 auto;font-size:14px;font-weight:600;color:#EDEDED;line-height:19px;letter-spacing:-0.01em;">Bump node-pty to 1.1.0</span>
+            <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#8C8C8C;font-variant-numeric:tabular-nums;">04:12</span>
+          </div>
+          <div style="font-size:13px;line-height:19px;color:#A8A8A8;">Overwrite <span style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#DCDCDC;">spawn-helper</span> permissions?</div>
+          <div style="display:flex;align-items:center;gap:7px;">
+            <span style="display:inline-flex;align-items:center;gap:7px;height:27px;padding:0 11px;border-radius:7px;background:#EDEDED;color:#0A0A0A;font-size:12.5px;font-weight:600;">Allow<span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;opacity:0.5;">Y</span></span>
+            <span style="display:inline-flex;align-items:center;gap:7px;height:27px;padding:0 11px;border-radius:7px;border:1px solid #303030;color:#A8A8A8;font-size:12.5px;font-weight:500;">Deny<span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;opacity:0.55;">N</span></span>
+            <span style="flex:1 1 auto;"></span>
+            <span style="display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:5px;background:#1C1C1C;font-family:'JetBrains Mono',monospace;font-size:10px;color:#8C8C8C;"><span style="display:block;width:5px;height:5px;border-radius:1.5px;background:#8C9AA8;"></span>core</span>
+          </div>
+        </div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">waiting on you · edge #414243, the question inline,<br>and the answer is in the card — not behind a click</div>
+      </div>
+
+      <div style="width:308px;display:flex;flex-direction:column;gap:9px;">
+        <div style="background:#0F0F0F;border:1px solid #1C1C1C;border-radius:10px;padding:12px 13px;display:flex;flex-direction:column;gap:9px;">
+          <div style="display:flex;align-items:baseline;gap:9px;">
+            <span style="display:block;width:8px;height:8px;background:#E05C4F;transform:translateY(-1px);"></span>
+            <span style="flex:1 1 auto;font-size:14px;font-weight:500;color:#C4C4C4;line-height:19px;letter-spacing:-0.01em;">Tailnet pairing QR</span>
+            <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;font-variant-numeric:tabular-nums;">26:40</span>
+          </div>
+          <div style="font-size:13px;line-height:19px;color:#8C8C8C;"><span style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#C4796B;">exit 1</span> — tailscale not on this host</div>
+          <div style="display:flex;align-items:center;gap:7px;">
+            <span style="display:inline-flex;align-items:center;height:27px;padding:0 11px;border-radius:7px;border:1px solid #272727;color:#A8A8A8;font-size:12.5px;font-weight:500;">Retry</span>
+            <span style="display:inline-flex;align-items:center;height:27px;padding:0 11px;border-radius:7px;color:#8C8C8C;font-size:12.5px;">Open log</span>
+          </div>
+        </div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">failed · the card keeps the resting surface. red is in the<br>mark and in the exit code, and nowhere else</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ 8 · tabs + pane -->
+  <div style="display:flex;flex-direction:column;gap:14px;">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#EDEDED;">08 · TAB · PANE HEAD</span>
+      <span style="flex:1 1 auto;height:1px;background:#1C1C1C;"></span>
+      <span style="font-size:12px;color:#5A5A5A;">a task holds tabs; a tab holds panes</span>
+    </div>
+    <div style="background:#0A0A0A;border:1px solid #1C1C1C;border-radius:10px;overflow:hidden;">
+      <div style="height:40px;display:flex;align-items:center;gap:2px;padding:0 10px;border-bottom:1px solid #141414;">
+        <span style="display:inline-flex;align-items:center;gap:9px;height:28px;padding:0 11px;border-radius:7px;background:#1A1A1A;color:#EDEDED;font-size:12.5px;font-weight:500;">
+          <span style="display:flex;gap:1.5px;align-items:flex-end;height:8px;"><span style="display:block;width:2px;height:8px;background:#7FB6E8;"></span><span style="display:block;width:2px;height:8px;background:#7FB6E8;"></span><span style="display:block;width:2px;height:8px;background:#7FB6E8;animation:shpRun 1.1s steps(1,end) infinite;"></span></span>
+          agent
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#5A5A5A" stroke-width="2" stroke-linecap="round" style="margin-right:-2px;"><path d="M18 6 6 18M6 6l12 12"></path></svg>
+        </span>
+        <span style="display:inline-flex;align-items:center;gap:9px;height:28px;padding:0 11px;border-radius:7px;background:#141414;color:#EDEDED;font-size:12.5px;">
+          <span style="display:flex;gap:1.5px;"><span style="display:block;width:4px;height:8px;background:#86C06A;"></span><span style="display:block;width:4px;height:8px;background:#86C06A;"></span><span style="display:block;width:4px;height:8px;background:#86C06A;"></span><span style="display:block;width:4px;height:8px;background:#2A2A2A;"></span></span>
+          tests
+        </span>
+        <span style="display:inline-flex;align-items:center;gap:9px;height:28px;padding:0 11px;border-radius:7px;color:#8C8C8C;font-size:12.5px;">
+          <span style="display:block;width:7px;height:7px;border-radius:50%;border:1px solid #4A4A4A;"></span>
+          scratch
+        </span>
+        <span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:6px;color:#5A5A5A;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span>
+        <span style="flex:1 1 auto;"></span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#3A3A3A;">active #1A1A1A · hover #141414 · rest transparent · h28 r7</span>
+      </div>
+      <div style="padding:12px;display:flex;gap:12px;">
+        <div style="flex:1 1 0;border-radius:10px;overflow:hidden;background:#0D0D0D;border:1px solid #2A2A2A;">
+          <div style="height:38px;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid #1C1C1C;">
+            <span style="display:flex;gap:1.5px;align-items:flex-end;height:8px;"><span style="display:block;width:2px;height:8px;background:#7FB6E8;"></span><span style="display:block;width:2px;height:8px;background:#7FB6E8;"></span><span style="display:block;width:2px;height:8px;background:#7FB6E8;animation:shpRun 1.1s steps(1,end) infinite;"></span></span>
+            <span style="display:inline-flex;align-items:center;gap:7px;font-size:13px;font-weight:600;color:#EDEDED;letter-spacing:-0.01em;"><span style="display:block;width:7px;height:7px;border-radius:2px;background:#7FB6E8;"></span>relay</span>
+            <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">retry-loop</span>
+            <span style="flex:1 1 auto;"></span>
+            <span style="display:flex;align-items:center;gap:10px;font-family:'JetBrains Mono',monospace;font-size:11px;font-variant-numeric:tabular-nums;"><span style="color:#86C06A;">+142</span><span style="color:#C4796B;">−38</span><span style="color:#3A3A3A;">·</span><span style="color:#5A5A5A;">6 files</span></span>
+            <span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:5px;color:#5A5A5A;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="5" cy="12" r=".6"></circle><circle cx="12" cy="12" r=".6"></circle><circle cx="19" cy="12" r=".6"></circle></svg></span>
+          </div>
+          <div style="padding:12px 14px;font-family:'JetBrains Mono',monospace;font-size:12.5px;line-height:21px;color:#5A5A5A;">focused · border #2A2A2A</div>
+        </div>
+        <div style="flex:1 1 0;border-radius:10px;overflow:hidden;background:#0D0D0D;border:1px solid #1A1A1A;">
+          <div style="height:38px;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid #171717;">
+            <span style="display:block;width:7px;height:7px;border-radius:50%;border:1px solid #4A4A4A;"></span>
+            <span style="display:inline-flex;align-items:center;gap:7px;font-size:13px;font-weight:500;color:#8C8C8C;"><span style="display:block;width:7px;height:7px;border-radius:50%;border:1px solid #4A4A4A;"></span>shell</span>
+            <span style="flex:1 1 auto;"></span>
+          </div>
+          <div style="padding:12px 14px;font-family:'JetBrains Mono',monospace;font-size:12.5px;line-height:21px;color:#5A5A5A;">unfocused · border #1A1A1A. never dimmed by opacity</div>
+        </div>
+      </div>
+      <div style="padding:0 14px 14px;font-family:'JetBrains Mono',monospace;font-size:10.5px;line-height:16px;color:#5A5A5A;">Pane head h38, inset 14, seam 1px. It says WHICH TREE the pane is in — never the task's name, which the rail already carries.<br>Focus is one border step, not an opacity change: dimming an unfocused pane makes its own output unreadable while it is still running.</div>
+    </div>
+  </div>
+
+  <!-- ============================================================ 9 · menu, tooltip, overlays -->
+  <div style="display:flex;flex-direction:column;gap:14px;">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#EDEDED;">09 · MENU · TOOLTIP · OVERLAY</span>
+      <span style="flex:1 1 auto;height:1px;background:#1C1C1C;"></span>
+    </div>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;">
+      <div style="display:flex;flex-direction:column;gap:9px;">
+        <div style="width:232px;background:#161616;border:1px solid #2A2A2A;border-radius:10px;padding:5px;box-shadow:0 18px 44px rgb(0 0 0 / 55%);">
+          <div style="height:30px;display:flex;align-items:center;gap:10px;padding:0 9px;border-radius:7px;background:#232323;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#EDEDED" stroke-width="1.7" stroke-linecap="round"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6"></path><circle cx="12" cy="12" r="2.4"></circle></svg>
+            <span style="flex:1 1 auto;font-size:13px;color:#EDEDED;">Reveal</span>
+          </div>
+          <div style="height:30px;display:flex;align-items:center;gap:10px;padding:0 9px;border-radius:7px;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8C8C8C" stroke-width="1.7" stroke-linecap="round"><rect x="3" y="8" width="18" height="12" rx="2"></rect><path d="M3 8V6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2"></path></svg>
+            <span style="flex:1 1 auto;font-size:13px;color:#C4C4C4;">Archive</span>
+          </div>
+          <div style="height:1px;background:#262626;margin:5px 7px;"></div>
+          <div style="height:30px;display:flex;align-items:center;gap:10px;padding:0 9px;border-radius:7px;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#E05C4F" stroke-width="1.7" stroke-linecap="round"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"></path></svg>
+            <span style="flex:1 1 auto;font-size:13px;color:#E05C4F;">Delete</span>
+            <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5A5A5A;">⌫</span>
+          </div>
+        </div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;line-height:16px;color:#5A5A5A;">MENU · #161616 / 1px #2A2A2A · r10 · pad 5 · item h30 r7<br>the one shadow in the app: a layer over a layer</div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:9px;">
+        <span style="display:inline-flex;align-items:center;height:24px;padding:0 8px;border-radius:6px;background:#1F1F1F;border:1px solid #2A2A2A;font-size:11.5px;color:#EDEDED;">Blocked · waiting on you</span>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;line-height:16px;color:#5A5A5A;">TOOLTIP · h24 r6 · the WORD a mark stands for.<br>Every mark has one, and it is also its accessible name.</div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:9px;">
+        <div style="width:300px;height:132px;border-radius:10px;overflow:hidden;border:1px solid #1C1C1C;background:#0A0A0A;position:relative;">
+          <div style="position:absolute;inset:0;background:rgb(6 6 6 / 76%);"></div>
+          <div style="position:absolute;top:22px;left:22px;right:22px;background:#121212;border:1px solid #272727;border-radius:14px;padding:14px;">
+            <div style="font-size:13px;color:#EDEDED;">Archive this task?</div>
+            <div style="font-size:12px;color:#8C8C8C;margin-top:5px;line-height:17px;">Two worktrees will be removed. The transcript is kept.</div>
+            <div style="display:flex;gap:7px;margin-top:12px;justify-content:flex-end;">
+              <span style="display:inline-flex;align-items:center;height:26px;padding:0 10px;border-radius:6px;color:#8C8C8C;font-size:12px;">Cancel</span>
+              <span style="display:inline-flex;align-items:center;height:26px;padding:0 10px;border-radius:6px;background:#EDEDED;color:#0A0A0A;font-size:12px;font-weight:600;">Archive</span>
+            </div>
+          </div>
+        </div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;line-height:16px;color:#5A5A5A;">MODAL · scrim rgb(6 6 6 / 76%) · card #121212 r14<br>pinned near the top, never vertically centred — it grows downward</div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:9px;">
+        <div style="width:300px;background:#0A0A0A;border:1px solid #1C1C1C;border-radius:10px;padding:16px;display:flex;flex-direction:column;align-items:center;gap:14px;">
+          <span style="position:relative;display:block;width:180px;height:56px;">
+            <span style="position:absolute;left:0;right:0;bottom:0;height:22px;border-radius:100% 100% 0 0 / 18px 18px;background:#121D16;"></span>
+            <span style="position:absolute;left:78px;bottom:15px;width:27px;height:21px;">
+              <span style="position:absolute;left:6px;top:0;width:3px;height:3px;background:#3A3A38;"></span>
+              <span style="position:absolute;left:12px;top:0;width:3px;height:3px;background:#3A3A38;"></span>
+              <span style="position:absolute;left:18px;top:0;width:3px;height:3px;background:#3A3A38;"></span>
+              <span style="position:absolute;left:3px;top:3px;width:21px;height:9px;background:#3A3A38;"></span>
+              <span style="position:absolute;left:0;top:6px;width:6px;height:6px;background:#2E2E2C;"></span>
+              <span style="position:absolute;left:9px;top:12px;width:3px;height:6px;background:#262625;"></span>
+              <span style="position:absolute;left:18px;top:12px;width:3px;height:6px;background:#262625;"></span>
+            </span>
+          </span>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:5px;">
+            <span style="font-size:14px;font-weight:500;color:#8C8C8C;">The flock is quiet.</span>
+            <span style="font-size:12px;color:#4A4A4A;">Describe a change to start an agent.</span>
+          </div>
+        </div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;line-height:16px;color:#5A5A5A;">EMPTY · the mascot, 3px pixels, at #3A3A38.<br>The sheep is the only illustration in the app.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ 10 · don'ts -->
+  <div style="display:flex;flex-direction:column;gap:14px;">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#EDEDED;">10 · WHAT THIS LANGUAGE REFUSES</span>
+      <span style="flex:1 1 auto;height:1px;background:#1C1C1C;"></span>
+    </div>
+    <div style="background:#0C0C0C;border:1px solid #1C1C1C;border-radius:10px;padding:18px;display:grid;grid-template-columns:repeat(2,1fr);gap:12px 34px;">
+      <div style="display:flex;gap:10px;"><span style="color:#E05C4F;font-family:'JetBrains Mono',monospace;font-size:12px;">✕</span><span style="font-size:13px;line-height:20px;color:#A8A8A8;">A status word next to a status mark. The mark is the state; the word is the tooltip.</span></div>
+      <div style="display:flex;gap:10px;"><span style="color:#E05C4F;font-family:'JetBrains Mono',monospace;font-size:12px;">✕</span><span style="font-size:13px;line-height:20px;color:#A8A8A8;">Inverse video for selection. A fill plus a 2px edge, and the label stays legible.</span></div>
+      <div style="display:flex;gap:10px;"><span style="color:#E05C4F;font-family:'JetBrains Mono',monospace;font-size:12px;">✕</span><span style="font-size:13px;line-height:20px;color:#A8A8A8;">Uppercase micro-labels with tracking. Sentence case at 11.5/600 says the same thing without the costume.</span></div>
+      <div style="display:flex;gap:10px;"><span style="color:#E05C4F;font-family:'JetBrains Mono',monospace;font-size:12px;">✕</span><span style="font-size:13px;line-height:20px;color:#A8A8A8;">Repeating a name down the hierarchy. The task is named in the rail, the tab by its purpose, the pane by its tree.</span></div>
+      <div style="display:flex;gap:10px;"><span style="color:#E05C4F;font-family:'JetBrains Mono',monospace;font-size:12px;">✕</span><span style="font-size:13px;line-height:20px;color:#A8A8A8;">A second hue for decoration. Sky, grass, wool, clay and red are spoken for; nothing else gets in.</span></div>
+      <div style="display:flex;gap:10px;"><span style="color:#E05C4F;font-family:'JetBrains Mono',monospace;font-size:12px;">✕</span><span style="font-size:13px;line-height:20px;color:#A8A8A8;">Shadows for elevation. The luminance step is the elevation. One exception, §09, and it is written down.</span></div>
+      <div style="display:flex;gap:10px;"><span style="color:#E05C4F;font-family:'JetBrains Mono',monospace;font-size:12px;">✕</span><span style="font-size:13px;line-height:20px;color:#A8A8A8;">Continuous animation. The meter is <span style="font-family:'JetBrains Mono',monospace;font-size:12px;">steps(1,end)</span>, so it repaints twice a second, not every frame.</span></div>
+      <div style="display:flex;gap:10px;"><span style="color:#E05C4F;font-family:'JetBrains Mono',monospace;font-size:12px;">✕</span><span style="font-size:13px;line-height:20px;color:#A8A8A8;">Motion that moves a control. Colour changes over 140ms; positions do not change at all.</span></div>
+      <div style="display:flex;gap:10px;"><span style="color:#E05C4F;font-family:'JetBrains Mono',monospace;font-size:12px;">✕</span><span style="font-size:13px;line-height:20px;color:#A8A8A8;">A row that grows for hover actions. They share one grid cell with the metadata.</span></div>
+      <div style="display:flex;gap:10px;"><span style="color:#E05C4F;font-family:'JetBrains Mono',monospace;font-size:12px;">✕</span><span style="font-size:13px;line-height:20px;color:#A8A8A8;">Two primary buttons on one surface. If both are loud, neither is.</span></div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>
