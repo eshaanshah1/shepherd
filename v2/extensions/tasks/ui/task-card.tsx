@@ -181,12 +181,8 @@ export function TaskCard({ item, selected, invoke }: ExtensionRowProps): ReactEl
                     second is bordered — never `danger`, because `Deny` is a
                     back-out path and back-out paths carry nothing.
 
-                    `default` is the primitive's current name for what §4 calls
-                    `secondary`; the rename lands with `Button`'s own rewrite
-                    rather than here, so this file does not depend on a change it
-                    does not make.
                   */
-                  variant={index === 0 ? 'primary' : 'default'}
+                  variant={index === 0 ? 'primary' : 'secondary'}
                   size="sm"
                   onClick={() => answer(choice)}
                 >

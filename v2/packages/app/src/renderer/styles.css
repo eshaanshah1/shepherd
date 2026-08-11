@@ -9,7 +9,7 @@
  * started to drift from one — that is the whole reason the file shrank.
  *
  * Colours are tier-2 ROLES (`--sh-surface`, `--sh-text`, `--sh-line`) wherever a
- * rule was touched by the port. The tier-1 palette names (`--sh-ink`,
+ * rule was touched by the port. The tier-1 palette names (`--sh-surface`,
  * `--sh-wool`) still appear in the sections nobody has been through yet; both are
  * emitted, so the migration is call site by call site rather than one commit.
  * There are no hex literals here and there must never be: a colour typed into a
@@ -90,7 +90,7 @@ body,
 }
 
 body {
-  background: var(--sh-ink-deep);
+  background: var(--sh-canvas);
   color: var(--sh-wool);
   font-family: var(--sh-font-sans);
   font-size: var(--sh-font-size);
@@ -109,7 +109,7 @@ body.sh-dragging {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: var(--sh-ink);
+  background: var(--sh-surface);
 }
 
 /* --------------------------------------------------------------- titlebar */
@@ -133,7 +133,17 @@ body.sh-dragging {
  * than typed: a control's height plus its own padding, which is what the bar is.
  */
 :root {
-  --sh-plate-height: calc(var(--sh-control-md) + var(--sh-space-md) * 2);
+  /*
+   * 44 — a FIXED band, not a derived one.
+   *
+   * It used to be `control-md + 2 × space-md`, which described the bar as "a
+   * control with padding". That was true when the bar held cells; it holds a
+   * wordmark and the traffic lights now, and the traffic lights are 44 tall
+   * whatever this app thinks its control scale is. Reading it from `band`
+   * keeps the one number that must match macOS in the place every other fixed
+   * band lives.
+   */
+  --sh-plate-height: var(--sh-band-titlebar);
 }
 
 .sh-plate {
@@ -144,61 +154,56 @@ body.sh-dragging {
   flex: 0 0 auto;
   /* Clears the traffic lights, which the window keeps. */
   padding: 0 14px 0 84px;
-  background: var(--sh-ink);
-  /* 38px of CONTENT box, so the brand and the cells centre where the traffic
-     lights do. A border-bottom here would make it 37. */
-  box-shadow: inset 0 calc(-1 * var(--sh-hairline)) 0 var(--sh-ink-line);
-  color: var(--sh-wool-faint);
-  font-size: 11px;
-  letter-spacing: 0.1em;
+  /* `canvas`, not `surface`: the titlebar, the rail and the stage are ONE
+     ground, and the seams between them carry the hierarchy. */
+  background: var(--sh-canvas);
+  /*
+   * Inset rather than `border-bottom`, and the reason is measured: with
+   * `border-box` a 1px border eats a pixel of the CONTENT box, and everything
+   * flex-centred in the band then lands half a pixel off the traffic lights.
+   * A box — a card, a chip, a field — uses a real border; it has four edges and
+   * nothing to line up with.
+   */
+  box-shadow: inset 0 calc(-1 * var(--sh-hairline)) 0 var(--sh-line);
+  color: var(--sh-text-ghost);
+  font-size: var(--sh-font-size-medium);
+  /* No tracking. §6 refuses uppercase micro-labels with tracking, and the bar
+     inherited both from Flock. */
+  letter-spacing: 0;
   -webkit-app-region: drag;
 }
 
-/* Where you are: the task in the app's voice, the pane in the machine's. */
-.sh-crumb {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  min-width: 0;
-  letter-spacing: 0;
-}
-
-.sh-crumb-task {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--sh-wool);
+/*
+ * The app's name, and nothing else on the left.
+ *
+ * §1: the titlebar says the app's name and nothing else. What was here was a
+ * `task / pane` breadcrumb, which restated the rail and the pane head at once.
+ */
+.sh-wordmark {
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--sh-text);
   white-space: nowrap;
-}
-
-.sh-crumb-sep { color: var(--sh-wool-faint); }
-
-.sh-crumb-pane {
-  font-family: var(--sh-font-mono);
-  font-size: 11px;
-  color: var(--sh-wool-faint);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
 }
 
 .sh-plate-cell {
   font-size: 10px;
   font-weight: 500;
   letter-spacing: 0.12em;
-  color: var(--sh-wool-faint);
+  color: var(--sh-text-mute);
   white-space: nowrap;
 }
 
 /* The value, one luminance step up. The emphasis is luminance, not weight. */
 .sh-plate-cell b {
-  color: var(--sh-wool-dim);
+  color: var(--sh-text-faint);
   font-weight: 500;
 }
 
 .sh-plate-cell.is-ember,
 .sh-plate-cell.is-ember b {
-  color: var(--sh-ember);
+  color: var(--sh-red);
 }
 
 .sh-plate-spacer { flex: 1 1 auto; }
@@ -258,7 +263,7 @@ body.sh-dragging {
   align-items: center;
   gap: var(--sh-space-xs);
 
-  background: var(--sh-surface-raised);
+  background: var(--sh-raised);
   border: var(--sh-hairline) solid var(--sh-line);
   border-radius: var(--sh-radius-md);
   padding: var(--sh-space-xs);
@@ -360,7 +365,7 @@ body.sh-dragging {
   /* `--sh-pane-title-bg` is the pane's OWN grid colour, published inline by
      `TerminalPane`. The token is the fallback for a pane that has no terminal
      behind it (the placeholder card) and for the layout leaf outside it. */
-  background: var(--sh-pane-title-bg, var(--sh-ink-term));
+  background: var(--sh-pane-title-bg, var(--sh-pane));
   overflow: hidden;
 }
 
@@ -394,7 +399,7 @@ body.sh-dragging {
   --sh-text-dim: var(--sh-pane-title-fg-on-dark);
   --sh-text-faint: var(--sh-pane-title-faint-on-dark);
   --sh-line: var(--sh-pane-title-rule-on-dark);
-  --sh-surface: var(--sh-pane-title-bg, var(--sh-ink-term));
+  --sh-surface: var(--sh-pane-title-bg, var(--sh-pane));
 }
 
 .sh-pane[data-pane-title-surface='light'] {
@@ -402,7 +407,7 @@ body.sh-dragging {
   --sh-text-dim: var(--sh-pane-title-fg-on-light);
   --sh-text-faint: var(--sh-pane-title-faint-on-light);
   --sh-line: var(--sh-pane-title-rule-on-light);
-  --sh-surface: var(--sh-pane-title-bg, var(--sh-ink-term));
+  --sh-surface: var(--sh-pane-title-bg, var(--sh-pane));
 }
 
 /*
@@ -465,7 +470,7 @@ body.sh-dragging {
   padding: calc(var(--sh-line-height) / 4) calc(var(--sh-line-height) / 2);
   /* The same colour the head above it is painted with, from the same variable —
      the padding around the grid must not be a third of a shade off it. */
-  background: var(--sh-pane-title-bg, var(--sh-ink-term));
+  background: var(--sh-pane-title-bg, var(--sh-pane));
   overflow: hidden;
 }
 
@@ -499,7 +504,7 @@ body.sh-dragging {
 }
 
 .sh-pane-meta {
-  color: var(--sh-wool-faint);
+  color: var(--sh-text-mute);
 }
 
 .sh-pane-hint {
@@ -507,14 +512,14 @@ body.sh-dragging {
   font-size: 10px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: var(--sh-signal);
+  color: var(--sh-sky);
 }
 
 /* ---------------------------------------------------------------- dividers */
 
 .sh-divider {
   flex: 0 0 auto;
-  background: var(--sh-ink-line);
+  background: var(--sh-line);
   position: relative;
   z-index: 1;
 }
@@ -540,7 +545,7 @@ body.sh-dragging {
 }
 
 .sh-divider:hover {
-  background: var(--sh-cobalt);
+  background: var(--sh-sky);
 }
 
 /* ---------------------------------------------------------------- sidebar */
@@ -562,12 +567,18 @@ body.sh-dragging {
 .sh-body { display: flex; flex: 1 1 auto; min-height: 0; }
 
 .sh-side {
-  width: 268px;
-  flex: 0 0 268px;
+  /*
+   * 332 — wide enough for a task's title, its elapsed stamp and its diff line
+   * on one card without any of them truncating. It grew from 268 with the card:
+   * a rail sized for one-line rows cannot hold a four-line one.
+   */
+  width: var(--sh-band-rail);
+  flex: 0 0 var(--sh-band-rail);
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: var(--sh-ink);
+  /* One ground with the titlebar and the stage; the seam does the work. */
+  background: var(--sh-canvas);
   /*
    * The ONE chrome edge that stays a real border, deliberately.
    *
@@ -583,7 +594,7 @@ body.sh-dragging {
    * nothing to knock out of step. (Synara draws the same seam as an inset stroke,
    * but on a `::before` OVER the content rather than on the container.)
    */
-  border-right: var(--sh-hairline) solid var(--sh-ink-line);
+  border-right: var(--sh-hairline) solid var(--sh-line);
 }
 
 /*
@@ -676,16 +687,17 @@ body.sh-dragging {
  * It lines up with the pane title bar across the divider (both 28px inside a
  * band), so the two chrome rows read as one horizon rather than two ledges.
  */
+/*
+ * The rail's head is now the sky strip and nothing else.
+ *
+ * It used to be a padded row with a `Tasks` label and a border under it. The
+ * label moved onto the strip (overlaid at its foot, which is what makes the
+ * strip a window rather than decoration above a list), and the border went with
+ * it: the strip's own gradient resolves into `canvas` at its bottom edge, so a
+ * hairline there would draw a line across a fade.
+ */
 .sh-side-head {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 44px;
-  padding: 0 10px 0 14px;
-  /* The titlebar's own drag region ends at the sidebar; this row is part of the
-     same band visually, so it drags too. */
-  -webkit-app-region: drag;
+  flex: none;
 }
 
 .sh-side-title {
@@ -755,30 +767,30 @@ body.sh-dragging {
 /* A button is a key (rule 5): flat, bordered, honest. Hover inverts it. */
 .sh-ext-card button {
   background: none;
-  color: var(--sh-wool-dim);
+  color: var(--sh-text-faint);
   font: inherit;
   font-size: 10px;
   line-height: 15px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  border: var(--sh-hairline) solid var(--sh-ink-line);
+  border: var(--sh-hairline) solid var(--sh-line);
   border-radius: 3px;
   padding: 2px 8px;
   cursor: pointer;
 }
 
-.sh-ext-card button:hover:not(:disabled) { color: var(--sh-ink); background: var(--sh-wool); }
-.sh-ext-card button:disabled { color: var(--sh-wool-faint); cursor: default; }
+.sh-ext-card button:hover:not(:disabled) { color: var(--sh-surface); background: var(--sh-wool); }
+.sh-ext-card button:disabled { color: var(--sh-text-mute); cursor: default; }
 .sh-ext-card button[type='submit'] {
-  border-color: color-mix(in srgb, var(--sh-cobalt) 50%, transparent);
-  color: var(--sh-cobalt);
+  border-color: color-mix(in srgb, var(--sh-sky) 50%, transparent);
+  color: var(--sh-sky);
 }
-.sh-ext-card button[type='submit']:hover:not(:disabled) { background: var(--sh-cobalt); color: var(--sh-ink); }
+.sh-ext-card button[type='submit']:hover:not(:disabled) { background: var(--sh-sky); color: var(--sh-surface); }
 
 .sh-ext-answer {
   /* Whatever a command answered — JSON, an error code. Machine output. */
   font-family: var(--sh-font-mono);
-  color: var(--sh-wool-faint);
+  color: var(--sh-text-mute);
   font-size: 11px;
   word-break: break-word;
 }
@@ -873,7 +885,7 @@ body.sh-dragging {
   color: var(--sh-text-faint);
 }
 
-.sh-composer-hash:hover .sh-composer-hash-glyph { color: var(--sh-accent); }
+.sh-composer-hash:hover .sh-composer-hash-glyph { color: var(--sh-sky); }
 
 /*
  * The scope line. Machine vocabulary again (it names repos), and the quietest
@@ -957,7 +969,7 @@ body.sh-dragging {
    * step the ladder does not have, and it moves with a theme the way a fourth
    * hardcoded ink never would. FINDING: the roles need a `surfaceOverlay`.
    */
-  background: color-mix(in oklab, var(--sh-text) 7%, var(--sh-surface-raised));
+  background: color-mix(in oklab, var(--sh-text) 7%, var(--sh-raised));
   border: var(--sh-hairline) solid var(--sh-line);
   border-radius: var(--sh-radius-soft);
   overflow: hidden;
@@ -1053,7 +1065,7 @@ body.sh-dragging {
  * takes the row's own ink instead: accent-on-accent-block is unreadable, and the
  * row being selected is already the stronger signal.
  */
-.sh-composer-picker-hit { color: var(--sh-accent); }
+.sh-composer-picker-hit { color: var(--sh-sky); }
 .sh-ui-row--selected .sh-composer-picker-hit { color: inherit; }
 
 /*
@@ -1104,7 +1116,7 @@ body.sh-dragging {
  * carries the identical treatment, which is why the list is now the two surfaces
  * this file actually owns.
  *
- * These two keep the tier-1 `--sh-ink-line` deliberately, and it is the one place
+ * These two keep the tier-1 `--sh-line` deliberately, and it is the one place
  * in this port where a role would have been WRONG. Inside a pane, `--sh-line` is
  * the surface scope's re-declared SEAM alpha (6% of the pane's own ink), which is
  * correct for a hairline under a bar and invisible as a scrollbar thumb — a
@@ -1113,7 +1125,7 @@ body.sh-dragging {
  */
 
 .sh-side-scroll,
-.sh-term .xterm-viewport { scrollbar-width: thin; scrollbar-color: var(--sh-ink-line) transparent; }
+.sh-term .xterm-viewport { scrollbar-width: thin; scrollbar-color: var(--sh-line) transparent; }
 
 .sh-side-scroll::-webkit-scrollbar,
 .sh-term .xterm-viewport::-webkit-scrollbar { width: var(--sh-space-md); height: var(--sh-space-md); }
@@ -1123,12 +1135,12 @@ body.sh-dragging {
 
 .sh-side-scroll::-webkit-scrollbar-thumb,
 .sh-term .xterm-viewport::-webkit-scrollbar-thumb {
-  background: var(--sh-ink-line);
+  background: var(--sh-line);
   border-radius: 0;
 }
 
 .sh-side-scroll::-webkit-scrollbar-thumb:hover,
-.sh-term .xterm-viewport::-webkit-scrollbar-thumb:hover { background: var(--sh-wool-faint); }
+.sh-term .xterm-viewport::-webkit-scrollbar-thumb:hover { background: var(--sh-text-mute); }
 
 @media (prefers-reduced-motion: reduce) {
   * {

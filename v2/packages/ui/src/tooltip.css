@@ -14,7 +14,7 @@
 .sh-ui-tooltip {
   max-width: 32ch;
 
-  background: var(--sh-surface-raised);
+  background: var(--sh-raised);
   color: var(--sh-text);
   border: var(--sh-hairline) solid var(--sh-line);
   border-radius: var(--sh-radius-sm);

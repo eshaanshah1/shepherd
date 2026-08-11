@@ -25,7 +25,7 @@
   padding: var(--sh-space-xs);
   border: var(--sh-hairline) solid var(--sh-line);
   border-radius: var(--sh-control-sm);
-  background: var(--sh-surface-sunken);
+  background: var(--sh-sunken);
   cursor: pointer;
   transition: background var(--sh-motion), border-color var(--sh-motion);
 }
@@ -40,8 +40,8 @@
 }
 
 .sh-ui-switch[aria-checked='true'] {
-  background: var(--sh-accent);
-  border-color: var(--sh-accent);
+  background: var(--sh-sky);
+  border-color: var(--sh-sky);
 }
 
 .sh-ui-switch:disabled {
@@ -62,7 +62,7 @@
 }
 
 .sh-ui-switch[aria-checked='true'] .sh-ui-switch__knob {
-  background: var(--sh-accent-text);
+  background: var(--sh-text-on-wool);
   transform: translateX(var(--sh-switch-travel));
 }
 

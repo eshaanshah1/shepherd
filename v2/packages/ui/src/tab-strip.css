@@ -6,7 +6,7 @@
  * floating control — the panes below it are the content, and a strip that
  * invented its own height would put a seam at an arbitrary place on the way in.
  *
- * The active tab is marked by an UNDERLINE in `--sh-accent`, not by a fill.
+ * The active tab is marked by an UNDERLINE in `--sh-sky`, not by a fill.
  * Rule 4's solid `text` fill is the sidebar's selected row, and reusing it here
  * would put two differently-shaped "this one" marks on screen at once for two
  * different things (which task, which tab of it). An underline is the weaker
@@ -72,7 +72,7 @@
 
 .sh-ui-tab[data-active='true'] {
   color: var(--sh-text);
-  box-shadow: inset 0 -2px 0 0 var(--sh-accent);
+  box-shadow: inset 0 -2px 0 0 var(--sh-sky);
 }
 
 .sh-ui-tab__label {

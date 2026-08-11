@@ -23,10 +23,10 @@ describe('Composer', () => {
     const style = getComputedStyle(composer(dom.container));
 
     // Emitted as REFERENCES, not resolved colours — that is what makes the
-    // mechanism compose: a theme re-declaring `--sh-surface-raised` moves this
+    // mechanism compose: a theme re-declaring `--sh-raised` moves this
     // with it, where a baked hex would freeze it to the built-in palette.
-    expect(style.getPropertyValue('--sh-surface')).toBe('var(--sh-surface-raised)');
-    expect(style.getPropertyValue('--sh-surface-sunken')).toBe('transparent');
+    expect(style.getPropertyValue('--sh-surface')).toBe('var(--sh-raised)');
+    expect(style.getPropertyValue('--sh-sunken')).toBe('transparent');
     expect(style.getPropertyValue('--sh-line')).toBe('transparent');
   });
 

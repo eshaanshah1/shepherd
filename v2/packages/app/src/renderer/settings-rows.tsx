@@ -168,7 +168,7 @@ function Degraded({
           {owner ?? 'This extension'} couldn’t list its choices.
         </span>
         {onRetry !== undefined && (
-          <Button type="button" size="sm" variant="default" data-testid="setting-retry" onClick={onRetry}>
+          <Button type="button" size="sm" variant="secondary" data-testid="setting-retry" onClick={onRetry}>
             retry
           </Button>
         )}

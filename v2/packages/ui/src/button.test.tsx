@@ -5,7 +5,7 @@ import { Button, type ButtonSize, type ButtonVariant } from './button.tsx';
 import { BRAILLE_FRAMES } from './spinner.ts';
 import './styles.css';
 
-const VARIANTS: ButtonVariant[] = ['primary', 'default', 'ghost', 'danger'];
+const VARIANTS: ButtonVariant[] = ['primary', 'secondary', 'ghost', 'danger'];
 const SIZES: ButtonSize[] = ['sm', 'md', 'lg'];
 
 const button = (container: HTMLElement): HTMLElement => {
@@ -50,7 +50,7 @@ describe('Button', () => {
   it('defaults to default/md', () => {
     const dom = mount(<Button>Go</Button>);
     const el = button(dom.container);
-    expect(el.className).toContain('sh-ui-button--default');
+    expect(el.className).toContain('sh-ui-button--secondary');
     expect(el.className).toContain('sh-ui-button--md');
   });
 
