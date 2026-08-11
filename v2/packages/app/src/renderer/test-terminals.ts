@@ -81,6 +81,15 @@ export class SpySession implements SessionApi {
     return Promise.resolve({ ok: true, value: undefined });
   }
 
+  setViewport(
+    sessionId: string,
+    viewerId: string,
+    viewport: { readonly cols: number; readonly rows: number } | null,
+  ): Promise<IpcResult<void>> {
+    this.#record('setViewport', sessionId, viewerId, viewport);
+    return Promise.resolve({ ok: true, value: undefined });
+  }
+
   kill(sessionId: string): Promise<IpcResult<void>> {
     this.#record('kill', sessionId);
     return Promise.resolve({ ok: true, value: undefined });

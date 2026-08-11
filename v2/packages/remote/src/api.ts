@@ -1,6 +1,7 @@
 import type { Disposable } from '@shepherd/sdk';
 import type { Endpoint } from './endpoint.ts';
 import type { Identity } from './identity.ts';
+import type { MemberSocket } from './membersession.ts';
 import type { PairingPayload } from './payload.ts';
 import type { RosterEntry } from './roster.ts';
 
@@ -123,6 +124,21 @@ export interface RemoteAPI {
    * address the roster last knew, and admitted because its chain checks out.
    */
   invokeAt(memberId: string, command: string, args: unknown): Promise<unknown>;
+
+  /**
+   * A socket onto that member's SESSION protocol, already past the door.
+   *
+   * The other half of `invokeAt`, and deliberately a different channel: control
+   * is JSON commands, data is a pty. A member holds both, and half a membership
+   * is no membership — reachable views and an unreachable terminal is the shape
+   * this whole milestone exists to avoid.
+   *
+   * It hands back a socket rather than a client because the client already
+   * exists: whatever speaks the session protocol to this Mac's own daemon speaks
+   * it to another member unchanged, which is what stops a second attach
+   * implementation from being written.
+   */
+  sessionSocket(memberId: string): Promise<MemberSocket>;
 
   /** Leave a net: drop the membership, its roster and its revocations. */
   leaveNet(netId: string): void;

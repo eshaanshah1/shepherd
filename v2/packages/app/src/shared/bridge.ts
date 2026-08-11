@@ -33,6 +33,28 @@ export interface SessionApi {
   write(sessionId: string, data: string | Uint8Array): Promise<IpcResult<void>>;
   paste(sessionId: string, text: string): Promise<IpcResult<void>>;
   resize(sessionId: string, cols: number, rows: number): Promise<IpcResult<void>>;
+  /**
+   * What this viewer can display. **This — not `resize` — is how a pane reports
+   * its own size.**
+   *
+   * One pty has one size and it may have several viewers: this Mac's pane, a
+   * phone, another member watching the same session. `resize` is last-writer-
+   * wins, so a pane that reported its window that way fought every other viewer
+   * for the pty, and the arbitration `core/session/viewport.ts` exists for could
+   * never see the local pane's opinion at all. Declared as a viewport instead,
+   * the smallest of each dimension wins and the big screen letterboxes rather
+   * than the small one clipping.
+   *
+   * `null` WITHDRAWS the opinion, which is what a pane that stopped watching
+   * does — so a viewer going away stops constraining the pty it was shrinking.
+   * A sole viewer is trivially the smallest, so a single-machine session behaves
+   * exactly as it did when this was a `resize`.
+   */
+  setViewport(
+    sessionId: string,
+    viewerId: string,
+    viewport: { readonly cols: number; readonly rows: number } | null,
+  ): Promise<IpcResult<void>>;
   kill(sessionId: string): Promise<IpcResult<void>>;
   /** Returns an unsubscribe function — a pane that unmounts stops listening. */
   onData(listener: (message: SessionDataMessage) => void): () => void;
@@ -197,6 +219,7 @@ export const BRIDGE_SURFACE = {
     'write',
     'paste',
     'resize',
+    'setViewport',
     'kill',
     'onData',
     'onExit',

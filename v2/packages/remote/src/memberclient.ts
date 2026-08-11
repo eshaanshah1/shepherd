@@ -1,10 +1,13 @@
 import { connect, type TLSSocket } from 'node:tls';
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { FrameDecoder, encodeJsonFrame, type Frame } from '@shepherd/core';
 import { CONTROL } from './control.ts';
-import { REMOTE_PROTOCOL_VERSION, hostProofBytes, issueProof } from './join.ts';
-import { verifyChain, type Credential } from './net.ts';
-import { signWith, verifySignature } from './netcrypto.ts';
+import {
+  REMOTE_KINDS,
+  certPinOf,
+  checkMemberAccept,
+  memberHelloFrame,
+} from './memberhandshake.ts';
 import type { Membership } from './netstore.ts';
 
 /**
@@ -28,7 +31,7 @@ import type { Membership } from './netstore.ts';
  * pin in hand: the binding is signed by the net rather than copied off a link.
  */
 
-const REMOTE = { hello: 128, accepted: 129, rejected: 130, pendingApproval: 131 } as const;
+const REMOTE = REMOTE_KINDS;
 
 export interface MemberClientOptions {
   /** This device's membership of the net the target belongs to. */
@@ -96,23 +99,17 @@ export function memberClient(options: MemberClientOptions): MemberClient {
         }
         // Learned, not trusted: the accept below must produce a credential that
         // names this very certificate, or the connection is refused.
-        observedPin = createHash('sha256').update(peer.raw).digest('hex');
+        observedPin = certPinOf(peer.raw);
 
         tls.write(
-          encodeJsonFrame(REMOTE.hello as never, {
+          memberHelloFrame({
+            membership: options.membership,
             deviceId: options.deviceId,
             deviceName: options.deviceName,
-            protocolVersion: REMOTE_PROTOCOL_VERSION,
-            publicKey: options.membership.memberKey.publicKey,
-            certPin: '',
+            observedPin,
             nonce,
-            pinVerified: true,
+            now: options.now(),
             ...(options.advertise === undefined ? {} : { advertise: options.advertise }),
-            chain: options.membership.chain,
-            proof: issueProof(
-              { netId: options.membership.netId, hostPin: observedPin, at: options.now() },
-              signWith(options.membership.memberKey.privateKey),
-            ),
           }),
         );
       });
@@ -124,7 +121,7 @@ export function memberClient(options: MemberClientOptions): MemberClient {
         for (const frame of frames) {
           const kind = frame.kind as number;
           if (kind === REMOTE.accepted) {
-            const why = checkMember(frame, options.membership, nonce, observedPin);
+            const why = checkMemberAccept(frame, options.membership, nonce, observedPin);
             if (why !== undefined) {
               fail(why);
               return;
@@ -217,39 +214,6 @@ export function memberClient(options: MemberClientOptions): MemberClient {
   };
 }
 
-/** Is this really a member of our net, holding the certificate it claims? */
-function checkMember(
-  frame: Frame,
-  membership: Membership,
-  nonce: string,
-  observedPin: string,
-): string | undefined {
-  const body = frame.json as {
-    netId?: string;
-    rootPublicKey?: string;
-    hostChain?: readonly Credential[];
-    proof?: string;
-  };
-  if (body.netId !== membership.netId || body.rootPublicKey !== membership.rootPublicKey) {
-    return 'that member belongs to a different net';
-  }
-  if (body.hostChain === undefined) return 'that member sent no membership of its own';
-  const verdict = verifyChain({
-    chain: body.hostChain,
-    netId: membership.netId,
-    rootPublicKey: membership.rootPublicKey,
-    tombstoned: new Set(),
-    verify: verifySignature,
-  });
-  if (!verdict.ok) return verdict.reason;
-  if (body.proof === undefined) return 'that member did not prove it holds its own key';
-  if (!verifySignature(verdict.member.publicKey, hostProofBytes({ netId: membership.netId, nonce }), body.proof)) {
-    return 'that member could not prove it holds the key its membership names';
-  }
-  // The credential names the certificate it serves on, which is what makes
-  // dialling a roster address with no pin in hand safe.
-  if (verdict.member.certPin !== '' && verdict.member.certPin.toLowerCase() !== observedPin) {
-    return 'that member’s certificate is not the one its membership names';
-  }
-  return undefined;
-}
+// `checkMember` used to live here. It is now `checkMemberAccept` in
+// `memberhandshake.ts`, shared with the data channel — see that file's comment
+// on why two copies of this check is one copy too many.

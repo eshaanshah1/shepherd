@@ -24,6 +24,7 @@ import {
   type Identity,
   type JoinRequest,
   type JoinRequestHandler,
+  memberSessionSocket,
   type MemberClient,
   type Membership,
   type NetSummary,
@@ -389,6 +390,55 @@ export function createRemoteService(options: RemoteServiceOptions): RemoteAPI & 
       store.setActiveNet(joined.value.netId);
       log.info(`joined net ${joined.value.netName} as ${joined.value.memberId}`);
       return summarize(joined.value);
+    },
+
+    /**
+     * The DATA path to a member: a socket onto its session protocol.
+     *
+     * Not cached, unlike `invokeAt`'s control client — the caller
+     * (`SessionRouter`) keeps one `SessionClient` per member and reconnects
+     * through this on its own schedule, so caching a socket here would be a
+     * second lifetime for the same connection and the two would disagree about
+     * whether it is up.
+     *
+     * The host comes off the roster's control address and the port off
+     * `dataPort`, because they are different listeners in different processes —
+     * the app serves control, `shepherdd` serves the ptys.
+     */
+    async sessionSocket(memberId: string) {
+      const membership = store.active();
+      if (membership === undefined) throw new Error('this Mac is in no net');
+
+      const entry = store.roster(membership.netId).find((row) => row.memberId === memberId);
+      const address = entry?.addrs[0];
+      if (entry === undefined || address === undefined) {
+        throw new Error(
+          entry === undefined
+            ? `${memberId} is not a member of ${membership.netName}`
+            : `${entry.name} is in this net but has no address to reach it at`,
+        );
+      }
+      if (entry.dataPort === undefined) {
+        /**
+         * In the net, reachable, and serving no terminals — which is a real
+         * state and not a fault. A member whose daemon has not come up, or that
+         * has no data path at all, advertises no `dataPort`; a phone in the
+         * roster is legitimately the same. Named, because "nothing happened when
+         * I clicked" has to be traceable to something.
+         */
+        throw new Error(`${entry.name} is not serving terminals`);
+      }
+      const host = address.slice(0, address.lastIndexOf(':'));
+      return await memberSessionSocket({
+        membership,
+        host,
+        port: entry.dataPort,
+        deviceId,
+        deviceName,
+        now: () => Date.now(),
+        ...(reachable === undefined ? {} : { advertise: { port: reachable.port } }),
+        log: (message: string) => log.info(`member ${entry.name}: ${message}`),
+      });
     },
 
     async invokeAt(memberId: string, command: string, args: unknown) {

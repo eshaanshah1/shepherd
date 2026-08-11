@@ -155,7 +155,9 @@ describe('PaneSessionRegistry lifetime', () => {
     h.registry.attach(h.pane, h.host());
     await h.registry.settled();
 
-    expect(h.session.names).toEqual(['create', 'attach', 'resize']);
+    // `setViewport`, not `resize`: a pane declares what it can show and the host
+    // arbitrates between every viewer of that pty. See `SessionApi.setViewport`.
+    expect(h.session.names).toEqual(['create', 'attach', 'setViewport']);
     expect(h.registry.inspect(h.pane.id)?.sessionId).toBe('s1');
     expect(h.registry.inspect(h.pane.id)?.streaming).toBe(true);
     expect(h.registry.inspect(h.pane.id)?.mounted).toBe(true);
@@ -256,10 +258,12 @@ describe('PaneSessionRegistry lifetime', () => {
     h.registry.release(h.pane.id);
     await h.registry.settled();
 
-    // `detach` so main stops coalescing bytes into a view that is gone; no
-    // `kill`, because core already killed it and a second one would be an
-    // `unknown-session` error on a perfectly correct close.
-    expect(h.session.names).toEqual(['detach']);
+    // The viewport is WITHDRAWN and then `detach` so main stops coalescing bytes
+    // into a view that is gone; no `kill`, because core already killed it and a
+    // second one would be an `unknown-session` error on a perfectly correct
+    // close. The withdrawal is not tidiness: a closed pane whose viewport
+    // survived would keep every other viewer of that pty letterboxed.
+    expect(h.session.names).toEqual(['setViewport', 'detach']);
     expect(h.session.names).not.toContain('kill');
     expect(h.terminals[0]?.disposed).toBe(true);
     expect(h.registry.inspect(h.pane.id)).toBeUndefined();
@@ -279,8 +283,9 @@ describe('PaneSessionRegistry lifetime', () => {
 
     // `detach` the VIEW leaves the stream running on purpose (that is what makes
     // a remount cost an `appendChild` instead of a replay), so the stream is still
-    // live here and release is the thing that ends it.
-    expect(h.session.names).toEqual(['detach']);
+    // live here and release is the thing that ends it — withdrawing this pane's
+    // viewport on the way out.
+    expect(h.session.names).toEqual(['setViewport', 'detach']);
     expect(h.session.names).not.toContain('kill');
   });
 
@@ -334,7 +339,11 @@ describe('PaneSessionRegistry lifetime', () => {
     h.registry.dispose();
     await h.registry.settled();
 
-    expect(h.session.names).toEqual(['detach']);
+    // The window is going away, so this renderer stops being a viewer: it says so
+    // — withdrawing its viewport — before it stops listening. A page that merely
+    // detached would leave its size constraining a pty that outlives it, which
+    // after R1 it does.
+    expect(h.session.names).toEqual(['setViewport', 'detach']);
     expect(h.terminals[0]?.disposed).toBe(true);
   });
 });
@@ -384,16 +393,25 @@ describe('PaneSessionRegistry streaming', () => {
     expect(h.session.calls[0]?.args).toEqual(['s1', 'ls\r']);
   });
 
-  it('resizes the pty when the terminal re-measures, and not before it is bound', async () => {
+  it('declares a viewport when the terminal re-measures, and not before it is bound', async () => {
     const h = harness();
     h.registry.attach(h.pane, h.host());
-    h.terminals[0]?.resizedTo(120, 40); // before create resolved: nothing to resize
+    h.terminals[0]?.resizedTo(120, 40); // before create resolved: nothing to report
     await h.registry.settled();
     h.session.calls.length = 0;
 
     h.terminals[0]?.resizedTo(120, 40);
 
-    expect(h.session.calls).toEqual([{ name: 'resize', args: ['s1', 120, 40] }]);
+    /*
+     * An OPINION keyed by the pane, not a command. `resize` is last-writer-wins,
+     * so a pane reporting its window that way fought every other viewer of the
+     * same pty — this Mac's other pane, a phone, another member — at the rate a
+     * `ResizeObserver` fires. Keyed by pane id so two panes on one session are two
+     * viewers rather than one that overwrites the other.
+     */
+    expect(h.session.calls).toEqual([
+      { name: 'setViewport', args: ['s1', h.pane.id, { cols: 120, rows: 40 }] },
+    ]);
   });
 
   it('does NOT report the host’s own answer back to it — the resize storm', async () => {
@@ -436,7 +454,9 @@ describe('PaneSessionRegistry streaming', () => {
 
     h.terminals[0]?.resizedTo(100, 50);
 
-    expect(h.session.calls).toEqual([{ name: 'resize', args: ['s1', 100, 50] }]);
+    expect(h.session.calls).toEqual([
+      { name: 'setViewport', args: ['s1', h.pane.id, { cols: 100, rows: 50 }] },
+    ]);
   });
 
   it('a second attach with no detach moves the one terminal rather than making two', async () => {

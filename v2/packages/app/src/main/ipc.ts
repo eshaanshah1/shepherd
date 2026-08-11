@@ -129,6 +129,37 @@ export function registerSessionIpc(
     return resized.ok ? okValue(undefined) : failFrom(resized.error);
   });
 
+  /**
+   * A viewer's opinion about the size, or its withdrawal. See
+   * `SessionApi.setViewport`.
+   *
+   * A malformed viewport is refused rather than coerced: `arbitrate` treats a
+   * non-positive dimension as "not measured yet" and a caller that meant to
+   * withdraw must say `null`, so silently turning junk into either one would
+   * make the pty's size depend on which reading it got.
+   */
+  handle(INVOKE.sessionViewport, (_event, args) => {
+    const id = parseId(args[0]);
+    if (!id.ok) return id;
+    if (typeof args[1] !== 'string' || args[1] === '') {
+      return fail('invalid-argument', 'setViewport expects a viewer id');
+    }
+    const viewport = args[2];
+    if (viewport === null || viewport === undefined) {
+      const cleared = bridge.setViewport(id.value, args[1], undefined);
+      return cleared.ok ? okValue(undefined) : failFrom(cleared.error);
+    }
+    if (typeof viewport !== 'object') {
+      return fail('invalid-argument', 'setViewport expects a viewport or null');
+    }
+    const { cols, rows } = viewport as { cols?: unknown; rows?: unknown };
+    if (!isPositiveInt(cols) || !isPositiveInt(rows)) {
+      return fail('invalid-argument', 'a viewport needs two positive integers');
+    }
+    const set = bridge.setViewport(id.value, args[1], { cols, rows });
+    return set.ok ? okValue(undefined) : failFrom(set.error);
+  });
+
   handle(INVOKE.sessionKill, (_event, args) => {
     const id = parseId(args[0]);
     if (!id.ok) return id;
@@ -144,6 +175,7 @@ export function registerSessionIpc(
       INVOKE.sessionWrite,
       INVOKE.sessionPaste,
       INVOKE.sessionResize,
+      INVOKE.sessionViewport,
       INVOKE.sessionKill,
     ]) {
       ipcMain.removeHandler(channel);

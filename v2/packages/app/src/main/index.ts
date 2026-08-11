@@ -53,9 +53,10 @@ import { registerViewCommands } from './view-commands.ts';
 import { createRemoteService, PAIRED_DEVICE_PERMISSIONS } from './remote-service.ts';
 import { registerRemoteCommands } from './remote-commands.ts';
 import { remoteViews } from './remote-views.ts';
-import { qualify } from '../shared/index.ts';
+import { memberOf, qualify } from '../shared/index.ts';
 import { resolveTransport, type Identity, type RemoteAPI } from '@shepherd/remote';
 import { SessionClient } from './session-client.ts';
+import { SessionRouter } from './session-router.ts';
 import { daemonConnector } from './daemon-launcher.ts';
 import { registerSessionIpc } from './ipc.ts';
 import { registerWindowIpc } from './window-ipc.ts';
@@ -232,7 +233,7 @@ function daemonEntry(): string {
   return bundled;
 }
 
-const host: SessionHostLike = USE_DAEMON
+const local: SessionHostLike = USE_DAEMON
   ? new SessionClient({
       connect: daemonConnector({
         socketPath: `${support}/session.sock`,
@@ -246,6 +247,30 @@ const host: SessionHostLike = USE_DAEMON
       onError: (error, context) =>
         process.stderr.write(`[shepherd] session ${context}: ${String(error)}\n`),
     });
+
+/**
+ * Sessions from anywhere in the net, behind ONE `SessionHostLike`.
+ *
+ * A qualified id (`mac-b∷01H…`) is another member's session and an unqualified
+ * one is this Mac's, which is the bookkeeping `remote-views.ts` already does for
+ * view types. Everything downstream — `SessionBridge`, the IPC layer, the
+ * renderer, the smokes — keeps seeing one API and one opaque id, so watching
+ * another Mac's terminal is a transport change rather than a second terminal
+ * implementation. See `session-router.ts`, and in particular why a `kill` of a
+ * remote session is a detach.
+ *
+ * `connect` reaches for `remote` lazily on purpose: the net is only up in
+ * `whenReady`, and a member is only dialled when somebody actually opens one of
+ * its rows.
+ */
+const host: SessionHostLike = new SessionRouter({
+  local,
+  connect: async (memberId) => {
+    if (remote === undefined) throw new Error('remote is not running');
+    return await remote.sessionSocket(memberId);
+  },
+  log: logger.child('session'),
+});
 
 /**
  * The one store. On disk under this build's own userData, so an extension's
@@ -330,10 +355,22 @@ const layout = new LayoutStore({
   storage: store.namespace('layout'),
   sessions: {
     kill: (id) => void host.kill(id),
-    // R1 (ADR 0036): a restored pane's persisted `sessionId` is a claim, and
-    // the daemon's inventory is what settles it. `has` reads the mirror
-    // `SessionClient.start()` filled from the daemon's own `list`.
-    isLive: (id) => host.has(id),
+    /**
+     * R1 (ADR 0036): a restored pane's persisted `sessionId` is a claim, and the
+     * daemon's inventory is what settles it. `has` reads the mirror
+     * `SessionClient.start()` filled from the daemon's own `list`.
+     *
+     * **A member's session is adopted optimistically, because nothing here can
+     * settle it.** The authority is another machine: this runs while the layout
+     * is being restored, before anything has been dialled, and asking would mean
+     * a synchronous answer to a question that needs a TLS handshake and a
+     * possibly-sleeping Mac. Answering `false` would drop the binding and the
+     * pane would create a LOCAL shell where B's terminal used to be — a silent
+     * substitution, which is worse than a pane that says it cannot reach B yet.
+     * `SessionRouter.attach` is where the claim is finally tested, and an
+     * unreachable member becomes an announced exit rather than a black pane.
+     */
+    isLive: (id) => memberOf(id) !== undefined || host.has(id),
   },
 });
 
@@ -721,8 +758,8 @@ void app.whenReady().then(async () => {
    * and the app continues; every pane then simply creates, which is the pre-R1
    * behaviour and a much better outcome than refusing to start.
    */
-  if (host instanceof SessionClient) {
-    const adopted = await host.start();
+  if (local instanceof SessionClient) {
+    const adopted = await local.start();
     if (!adopted.ok) {
       logger.child('session').error(`starting without the daemon's inventory: ${adopted.error}`);
     }
