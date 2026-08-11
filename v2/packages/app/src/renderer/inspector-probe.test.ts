@@ -37,7 +37,6 @@ import {
  *   - the ancestor-chain write and the exact restore, inline layer included;
  *   - the wash/alias reduction — that `fillHover` wins over `text` for a
  *     background painted by the wash, with `text` reported as `via`;
- *   - the palette fallback, naming the tier-1 token when no role explains it;
  *   - `declaringElement` naming a re-declaring ancestor rather than `:root`,
  *     which is the case the scoped-re-declaration design (§2) turns on;
  *   - `paintSite` widening from the element outward.
@@ -59,7 +58,8 @@ import {
  *     reads as `''` and every pseudo slot is (correctly, for jsdom) skipped —
  *     which means the pseudo path is exercised by real Chromium and by nothing
  *     here. It was added because a `StatusDot` is entirely its `::before`, and
- *     that is the shape the real audit confirmed.
+ *     that is the shape the real audit confirmed. (`StatusDot` is gone — its
+ *     replacement `StateMark` draws the same way, from a `::before`.)
  *
  * Two of the tests below exist ONLY because a real-Chromium run found the
  * behaviour they pin (`drawn`, and the pseudo skip). That order — measure the
@@ -145,7 +145,6 @@ describe('probeRoles', () => {
 
     const finding = find(must('target'), 'background-color');
     expect(finding.role).toBeNull();
-    expect(finding.paletteToken).toBeNull();
     expect(finding.value).toBe('rgb(12, 34, 56)');
   });
 
@@ -155,23 +154,18 @@ describe('probeRoles', () => {
     expect(find(must('target'), 'background-color').role).toBeNull();
   });
 
-  it('can no longer find a call site on tier 1, because tier 1 is not emitted', () => {
-    // This case used to be `var(--sh-ink-line)`, and `paletteToken` existed to
-    // name it: "you are on tier 1" rather than "unknown colour".
-    //
-    // Shepherd UI stopped emitting tier 1 at all, so the defect is now
-    // UNREPRESENTABLE — the variable does not exist and a rule naming it resolves
-    // to nothing, which is a stronger guarantee than a report about it. The
-    // finding is pinned here rather than deleted because `paletteToken` is now
-    // structurally always null, and that is worth failing loudly if tier 1 ever
-    // starts being emitted again.
+  it('answers NO ROLE for a name the token layer does not emit', () => {
+    // `--sh-ink-line` was a tier-1 variable and a call site on it was a real
+    // finding — `paletteToken` existed to name it. Shepherd UI stopped emitting
+    // tier 1 entirely, so a rule naming a luminance step now resolves to
+    // nothing, which is a stronger guarantee than a report about it. The field
+    // went with the finding; what is pinned here is that the ROLE path still
+    // works and the private name still buys nothing.
     fixture(`#target { background-color: var(--sh-line); }`, `<div id="target">x</div>`);
     expect(find(must('target'), 'background-color').role).toBe('line');
 
     fixture(`#target { background-color: var(--sh-ink-line); }`, `<div id="target">x</div>`);
-    const gone = find(must('target'), 'background-color');
-    expect(gone.role).toBeNull();
-    expect(gone.paletteToken).toBeNull();
+    expect(find(must('target'), 'background-color').role).toBeNull();
   });
 
   it('answers with the RE-DECLARING ancestor, not :root, inside a scoped subtree', () => {
