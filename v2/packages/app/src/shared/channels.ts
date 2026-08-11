@@ -66,6 +66,22 @@ export const INVOKE = {
    * whichever machine runs it. See `TreeItem.presents`.
    */
   viewsPresent: 'views:present',
+  /**
+   * Settings. Pull-shaped like `layoutGet`: the page asks on mount and then
+   * follows `EMIT.settingsChanged`, so an HMR remount re-pulls for free and a
+   * renderer that mounted late is never short a page.
+   */
+  settingsList: 'settings:list',
+  settingsSet: 'settings:set',
+  settingsReset: 'settings:reset',
+  /**
+   * "Put the screen up / take it down."
+   *
+   * The page ASKS; it does not decide. Main owns whether the screen is open
+   * (`settings-visibility.ts`) because the same answer feeds `presence.overlay`,
+   * and two copies of "what is on screen" is ADR 0035's mistake.
+   */
+  settingsOpen: 'settings:open',
 } as const;
 
 /** Main → renderer, fire-and-forget (`webContents.send`). */
@@ -83,6 +99,10 @@ export const EMIT = {
   agentsChanged: 'agents:changed',
   /** A contributed view's data changed; re-ask for its rows. */
   viewsChanged: 'views:changed',
+  /** One setting changed, whoever changed it — the screen, the CLI, an extension. */
+  settingsChanged: 'settings:changed',
+  /** Whether the settings screen is up. Main's word; the page draws it. */
+  settingsVisibility: 'settings:visibility',
 } as const;
 
 export type InvokeChannel = (typeof INVOKE)[keyof typeof INVOKE];

@@ -1,3 +1,4 @@
+import type { SettingValue } from '@shepherd/sdk';
 import {
   EMIT,
   INVOKE,
@@ -88,6 +89,23 @@ export function createBridge(ipc: IpcLike): ShepherdBridge {
       present: (type: string, presents: { id: string; args?: unknown }) =>
         invoke(INVOKE.viewsPresent, type, presents),
       onChanged: (listener: (type: string) => void) => subscribe<string>(EMIT.viewsChanged, listener),
+    },
+    /**
+     * Settings. What the page may ask for: which pages exist, a write, a reset,
+     * to be told when a value or the screen's visibility changed, and to ask that
+     * the screen be raised or dropped.
+     *
+     * It cannot name a bus topic, cannot name a caller, and cannot DECIDE whether
+     * the screen is up — main owns that, because the same answer feeds
+     * `presence.overlay` and ADR 0020 allows exactly one writer of it.
+     */
+    settings: {
+      list: () => invoke(INVOKE.settingsList),
+      set: (key, value) => invoke(INVOKE.settingsSet, key, value),
+      reset: (key) => invoke(INVOKE.settingsReset, key),
+      setOpen: (open) => invoke(INVOKE.settingsOpen, open),
+      onChanged: (listener) => subscribe<{ key: string; value: SettingValue }>(EMIT.settingsChanged, listener),
+      onVisibility: (listener) => subscribe<boolean>(EMIT.settingsVisibility, listener),
     },
     window: {
       close: () => invoke(INVOKE.windowClose),

@@ -8,7 +8,7 @@
 // and the renderer both do.
 
 import { LAYOUT_COMMANDS } from '@shepherd/core/layout';
-import { COMMANDS, commandIds, type CommandID } from './commands.ts';
+import { COMMANDS, SETTINGS_VISIBILITY_COMMAND, commandIds, type CommandID } from './commands.ts';
 
 /**
  * One place, so a keystroke and a button cannot come to mean different things.
@@ -39,6 +39,9 @@ export const MENU_INVOCATIONS: Readonly<Record<CommandID, Invocation>> = {
   [COMMANDS.focusRight]: { command: LAYOUT_COMMANDS.focusDirection, args: { direction: 'right' } },
   [COMMANDS.focusUp]: { command: LAYOUT_COMMANDS.focusDirection, args: { direction: 'up' } },
   [COMMANDS.focusDown]: { command: LAYOUT_COMMANDS.focusDirection, args: { direction: 'down' } },
+  // No `open` argument: the menu item TOGGLES, which is what ⌘, means everywhere
+  // else. Main owns the state (`settings-visibility.ts`).
+  [COMMANDS.openSettings]: { command: SETTINGS_VISIBILITY_COMMAND, args: {} },
 };
 
 /**
