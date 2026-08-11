@@ -68,6 +68,23 @@ export function menuTemplate({ appName, isDev }: MenuOptions): MenuItemSpec[] {
       label: 'Pane',
       submenu: [
         {
+          id: COMMANDS.newTab,
+          label: 'New Tab',
+          /*
+           * ⌘⇧T, NOT ⌘T.
+           *
+           * `tasks` contributes its composer overlay on ⌘T
+           * (`registerViewType(..., { key: 'CmdOrCtrl+T' })`), and AppKit
+           * resolves a menu key equivalent before the page ever sees the
+           * keystroke — so binding this to ⌘T would not compete with the
+           * composer, it would delete it. The file's own opening note is about
+           * exactly this hazard.
+           */
+          accelerator: 'CmdOrCtrl+Shift+T',
+          command: COMMANDS.newTab,
+        },
+        { type: 'separator' },
+        {
           id: COMMANDS.splitRight,
           label: 'Split Right',
           // ADR 0012: ⌘D is a ROW of panes — side by side.

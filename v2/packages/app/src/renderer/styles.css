@@ -208,6 +208,13 @@ body.sh-dragging {
   min-height: 0;
   display: flex;
   /*
+   * A COLUMN, so the tab strip takes its own band along the top and the roots
+   * take everything under it. It was a row when the stage held nothing but
+   * roots; the roots are still laid out as a row internally (`.sh-root` is the
+   * flex container the splits live in), so nothing about a pane tree moved.
+   */
+  flex-direction: column;
+  /*
    * No padding and no per-pane border. Hairlines come from the CONTAINERS — the
    * plate's bottom rule, the dock's right rule, the status bar's top rule, and
    * one `.sh-divider` between siblings. A border on the pane itself doubled

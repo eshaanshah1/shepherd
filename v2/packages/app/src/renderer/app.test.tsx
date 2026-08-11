@@ -812,3 +812,72 @@ function clickButton(container: HTMLElement, label: string): void {
   if (button === undefined) throw new Error(`no button labelled ${label}`);
   act(() => button.dispatchEvent(new MouseEvent('click', { bubbles: true })));
 }
+
+describe('the tab strip', () => {
+  const tabbed = (active: string): LayoutSnapshots =>
+    snapshotsOf(
+      active,
+      rootOf(leaf(makePane({ userTitle: 'api' })), undefined, 'task:t1', 'task:t1'),
+      rootOf(leaf(makePane({ userTitle: 'logs' })), undefined, 'task:t1/tab-2', 'task:t1'),
+      rootOf(leaf(makePane({ userTitle: 'home' })), undefined, 'window-1', 'window-1'),
+    );
+
+  const tabLabels = (container: HTMLElement): string[] =>
+    [...container.querySelectorAll<HTMLElement>('[role="tab"]')].map((tab) => tab.textContent ?? '');
+
+  it('draws no strip for a group of one', () => {
+    // A single-tab task looks exactly as the app does today: the strip appears
+    // at the moment a second tab does, the way Safari's does.
+    const { view } = render();
+    expect(view.container.querySelector('[data-testid="tab-strip"]')).toBeNull();
+    view.unmount();
+  });
+
+  it('draws one tab per root of the ACTIVE group, and no others', () => {
+    // The home root is mounted and hidden like every other; it is a different
+    // group, so it is not a tab of this one.
+    const { view } = render({ snapshot: tabbed('task:t1') });
+    expect(tabLabels(view.container)).toEqual(['api', 'logs']);
+    view.unmount();
+  });
+
+  it('marks the tab the window is on', () => {
+    const { view } = render({ snapshot: tabbed('task:t1/tab-2') });
+    const selected = [...view.container.querySelectorAll<HTMLElement>('[role="tab"]')].map((tab) =>
+      tab.getAttribute('aria-selected'),
+    );
+    expect(selected).toEqual(['false', 'true']);
+    view.unmount();
+  });
+
+  it('switches root when a tab is clicked, through the same funnel as everything else', () => {
+    const { view, commands } = render({ snapshot: tabbed('task:t1') });
+    act(() => view.container.querySelectorAll<HTMLElement>('[role="tab"]')[1]?.click());
+    expect(commands.calls).toContainEqual({
+      command: 'layout.switchRoot',
+      args: { root: 'task:t1/tab-2' },
+    });
+    view.unmount();
+  });
+
+  it('asks the kernel for a new tab, naming no group — "the one I am looking at"', () => {
+    const { view, commands } = render({ snapshot: tabbed('task:t1') });
+    act(() => view.container.querySelector<HTMLElement>('[data-testid="tab-new"]')?.click());
+    expect(commands.calls).toContainEqual({ command: 'layout.newTab', args: {} });
+    view.unmount();
+  });
+
+  it('labels a tab with its focused pane, exactly as the sidebar does', () => {
+    // `displayTitle`, whose own doc comment says it is what the sidebar and the
+    // tab strip show. A pane nobody named falls through to its cwd.
+    const { view } = render({
+      snapshot: snapshotsOf(
+        'task:t1',
+        rootOf(leaf(makePane({ title: 'vim' })), undefined, 'task:t1', 'task:t1'),
+        rootOf(leaf(makePane({ cwd: '/src/api' })), undefined, 'task:t1/tab-2', 'task:t1'),
+      ),
+    });
+    expect(tabLabels(view.container)).toEqual(['vim', 'src/api']);
+    view.unmount();
+  });
+});
