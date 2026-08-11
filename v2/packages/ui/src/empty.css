@@ -34,42 +34,53 @@
  * drawing, a photograph and a spinner are three different things and this
  * package owns none of them.
  *
- * FINDING, reported with this wave: `--sh-space-xl` × 4 (56px at the defaults)
- * is a ceiling with no metric behind it — there is no illustration scale, and an
- * empty state's art is not type, not a control and not a row. Composed from the
- * space scale rather than typed so it moves with the base size and density,
- * which is the same trade `composer.css` records for its 26px inset.
+ * The ceiling was `--sh-space-xl` × 4 — 56px — and it was reported at the time as
+ * a number with no metric behind it. It has now cost something: Shepherd UI's
+ * empty state is a 180×56 meadow, and a 56px clamp turned it into a dark square
+ * with a sheep balanced on top.
+ *
+ * So the ceiling is GONE and the illustration owns its own size, which is what
+ * the rest of this comment already argued: a line drawing, a photograph and a
+ * spinner are three different things and this package owns none of them. What
+ * stays is the guarantee that matters — it cannot overflow the empty state and
+ * push the sentence off-centre.
  */
 .sh-ui-empty__art {
   display: flex;
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  max-width: calc(4 * var(--sh-space-xl));
-  max-height: calc(4 * var(--sh-space-xl));
-}
-
-.sh-ui-empty__art > * {
   max-width: 100%;
-  max-height: 100%;
 }
 
 /*
  * The sentence.
  *
- * SERIF, and this rule is the point of the component (rule 6: serif only where
- * the app speaks in sentences). `large` rather than `title`, because the one
- * type step in the app belongs to a composer's title and an empty state is
- * quieter than the thing you are about to do — and `textDim`, because it is the
- * app talking, not a value you have to read to act.
+ * **Sans, not serif.** Flock kept a third face for "where the app speaks in
+ * sentences"; §2 has two, split by job — what the app says is sans, what the
+ * machine produced is mono. An empty state is the app talking. The sentence
+ * carries by size and weight instead of by changing voice, which is also the
+ * more honest signal: a different typeface says "this is a different kind of
+ * thing", and it is not.
+ *
+ * `large` rather than `title`, because the one 19px step belongs to a panel's
+ * name — and `textMute`, because an empty state is the app being quiet.
  */
 .sh-ui-empty__say {
   margin: 0;
-  font-family: var(--sh-font-serif);
+  font-family: var(--sh-font-sans);
   font-size: var(--sh-font-size-large);
+  font-weight: 500;
   line-height: var(--sh-line-height);
-  color: var(--sh-text-dim);
+  color: var(--sh-text-mute);
   max-width: 44ch;
+}
+
+/* The one control on an empty stage, so there is no doubt which it is. */
+.sh-ui-empty__act {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /*
@@ -81,10 +92,15 @@
  */
 
 /*
- * The hint. The instrument voice under the sentence — micro, tracked, faint —
- * so the two lines are a sentence and a legend rather than two sentences at
- * different sizes. It is laid out as a row because it almost always contains a
- * `KeyCap`, and a keycap on a text baseline sits low.
+ * The hint — a legend under the action, not a second sentence.
+ *
+ * It was uppercase micro type at tracking, which §6 refuses; and a legend that
+ * shouts under a quiet sentence is the specific case the refusal is about. It is
+ * a step SMALLER and a step darker than the sentence instead, which is what
+ * makes it read as an aside.
+ *
+ * Laid out as a row because it almost always contains a `KeyCap`, and a keycap
+ * on a text baseline sits low.
  */
 .sh-ui-empty__hint {
   display: flex;
@@ -94,9 +110,9 @@
   margin: 0;
 
   font-family: var(--sh-font-sans);
-  font-size: var(--sh-micro-font-size);
-  letter-spacing: var(--sh-micro-tracking);
+  font-size: var(--sh-font-size-medium);
+  letter-spacing: 0;
   line-height: 1;
-  text-transform: uppercase;
-  color: var(--sh-text-faint);
+  text-transform: none;
+  color: var(--sh-text-ghost);
 }
