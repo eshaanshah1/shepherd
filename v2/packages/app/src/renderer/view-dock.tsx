@@ -8,10 +8,10 @@ import {
   Menu,
   Row,
   SectionLabel,
-  StatusDot,
+  StateMark,
   rowEnterMs,
   type MenuEntry,
-  type StatusRole,
+  type MarkState,
 } from '@shepherd/ui';
 import type { ViewContributionDTO, ViewsApi } from '../shared/index.ts';
 import { resolveExtensionUi } from './extension-ui.ts';
@@ -419,16 +419,21 @@ function TreeView({
                 }
                 leading={
                   /*
-                    The dot IS the status, and it takes a ROLE — never a colour
+                    The mark IS the state, and it takes a STATE — never a colour
                     and never the extension's own tint spelling. A coloured dot
                     beside the word RUNNING says one thing twice and gives the row
-                    a third column to align; v1 signalled state with the dot's
-                    colour alone, deliberately. The description stays as the row's
-                    tooltip, so the word is a hover away rather than gone — and
-                    `StatusDot` also carries it for a screen reader, which the
-                    bare `aria-hidden` span never did.
+                    a third column to align.
+
+                    `busy` is deliberately not passed on. It used to swap the dot
+                    for a braille spinner, which was a second way of looking busy
+                    beside the dot's own colour; §3 has exactly one — the working
+                    meter — and a row that is busy is a row whose mark is
+                    `working`. Rows that set `busy` without a working tint now
+                    read as whatever they actually are, which is the honest
+                    answer: a task being archived is resting, and the archiving is
+                    not a state of the task.
                   */
-                  <StatusDot role={statusRole(row.tint)} busy={row.busy === true} />
+                  <StateMark state={markState(row.tint)} />
                 }
               >
                 {row.label}
@@ -508,7 +513,7 @@ const isSeparator = (
  * A contributed action → a `Menu` entry.
  *
  * The one translation this file performs, and it is the same shape as
- * `statusRole` below: an extension writes a NAME and the shell resolves it
+ * `markState` below: an extension writes a NAME and the shell resolves it
  * against its own set. An unknown glyph name renders no glyph rather than a
  * placeholder — the label is the thing to read, and a "missing icon" box would
  * make an extension's typo louder than its verb.
@@ -565,38 +570,51 @@ export function raiseIcon(name: string | undefined): ComponentType<TablerIconPro
 }
 
 /**
- * A contribution's tint word → one of `StatusDot`'s five roles.
+ * A contribution's tint word → one of `StateMark`'s five states.
  *
  * The translation lives HERE, at the boundary, and that is the point of it. An
  * extension writes whatever vocabulary its own model uses (`tasks` says
  * `needs-you`, an agent says `blocked`, a future PR view will say `review`), and
  * the shipped `.sh-dot` accepted all of those as separate CSS selectors — four
  * spellings of one colour, which is how a rename became impossible. Reducing
- * them to a role once, in a function, means the primitive never learns any of
+ * them to a state once, in a function, means the primitive never learns any of
  * these words and a new spelling costs one line here.
  *
- * Anything unrecognised is `idle` rather than an invented sixth state: a tint the
- * shell does not know is not an emergency, and rule 3 says a saturated colour
- * always means something specific.
+ * The word `tint` is now a misnomer and stays anyway: it is the SDK's published
+ * field name (`TreeItem.tint`), and renaming a public field to match an internal
+ * mapping is a breaking change to every extension for a spelling nobody sees.
+ * What changed underneath is that it no longer selects a colour at all — it
+ * selects a SHAPE, and the colour follows from that.
+ *
+ * Anything unrecognised is `resting` rather than an invented sixth state: a tint
+ * the shell does not know is not an emergency, and a hollow ring is the mark that
+ * claims nothing.
  */
-const TINT_ROLES: Readonly<Record<string, StatusRole>> = {
+const TINT_STATES: Readonly<Record<string, MarkState>> = {
   working: 'working',
   running: 'working',
   cobalt: 'working',
   accent: 'working',
-  'needs-you': 'attention',
-  blocked: 'attention',
-  review: 'attention',
-  hay: 'attention',
-  done: 'success',
-  'needs-check': 'success',
-  pasture: 'success',
-  error: 'danger',
-  ember: 'danger',
+  sky: 'working',
+  'needs-you': 'waiting',
+  blocked: 'waiting',
+  review: 'waiting',
+  hay: 'waiting',
+  wool: 'waiting',
+  // `needs-check` is a finished turn nobody has looked at, so it is YOUR MOVE —
+  // a square, not a tick. `done` is the task itself finishing, which is the one
+  // state that leaves the list.
+  'needs-check': 'waiting',
+  done: 'shipped',
+  pasture: 'shipped',
+  grass: 'shipped',
+  error: 'failed',
+  ember: 'failed',
+  red: 'failed',
 };
 
-export function statusRole(tint: string | undefined): StatusRole {
-  return (tint === undefined ? undefined : TINT_ROLES[tint]) ?? 'idle';
+export function markState(tint: string | undefined): MarkState {
+  return (tint === undefined ? undefined : TINT_STATES[tint]) ?? 'resting';
 }
 
 /**
