@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { ExtensionViewProps } from "@shepherd/sdk";
-import { Button, Composer, Menu, PromptField, type PromptFieldHandle } from "@shepherd/ui";
+import { Composer, Menu, PromptField, SendButton, type PromptFieldHandle } from "@shepherd/ui";
 import { repoName } from "../src/model/repo-name.ts";
 import type { PastedImage } from "../src/images.ts";
 import { readPastedImage } from "./paste-image.ts";
@@ -840,20 +840,28 @@ export function TaskComposer({
             </Menu>
           )}
           {/*
-            The ONE loud thing on the card (rule 3: two primary buttons means
-            neither is). `busy` is the primitive's: the label is replaced by a
-            braille spinner with the width pinned, so the control does not narrow
-            mid-click and take the row with it.
+            The ONE weighted control on the card, and the only round element in
+            the product.
+
+            It was a `create task` primary — a `wool` block, the same treatment
+            §4 gives the one action on every other surface. On a WELL that is
+            wrong twice over: a filled rectangle beside ghost selects is the
+            loudest thing on a surface whose whole idea is that space carries the
+            structure, and the composer's action is not "one of the things here"
+            but the terminus of the sentence you just wrote. A circle says that
+            and nothing else does.
+
+            No `busy` state: `SendButton` has no label to replace with a spinner,
+            and the disabled-while-in-flight guard below is what stops a double
+            send. Feedback matched to duration (§4) puts a local action under
+            100ms in the "show nothing" band anyway.
           */}
-          <Button
-            variant="primary"
+          <SendButton
             type="submit"
+            label="Start this task"
             data-testid="composer-create"
-            disabled={titleOf(brief) === ""}
-            busy={busy}
-          >
-            create task
-          </Button>
+            disabled={titleOf(brief) === "" || busy}
+          />
         </div>
 
         <output className="sh-ext-answer" data-testid="composer-status">

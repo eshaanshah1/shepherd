@@ -1,17 +1,19 @@
 /*
  * TabStrip.
  *
- * One row tall, on the same `--sh-row-height` rhythm as `Row` and
- * `SectionLabel`, so the strip reads as a band of the chrome rather than a
- * floating control — the panes below it are the content, and a strip that
- * invented its own height would put a seam at an arbitrary place on the way in.
+ * A fixed band — 40 — with 28-tall tabs inside it. Not `row-height`: the row grew
+ * to 34 with the task card, and the strip is furniture rather than a list.
  *
- * The active tab is marked by an UNDERLINE in `--sh-sky`, not by a fill.
- * Rule 4's solid `text` fill is the sidebar's selected row, and reusing it here
- * would put two differently-shaped "this one" marks on screen at once for two
- * different things (which task, which tab of it). An underline is the weaker
- * mark, which is correct: the tab is a subdivision of the row that is already
- * lit.
+ * **The active tab is a FILL, not an underline.** The underline was `sky`, and
+ * §2 gives that colour one job — "live · focus · send" — which a tab that merely
+ * happens to be the one you are on is not. It also collided with the mark a tab
+ * carries for the agent inside it: a blue rule under a blue working meter is two
+ * blues meaning two things a hand's width apart.
+ *
+ * The fill is one luminance step, which is the same way this language says "this
+ * one" everywhere else. The worry it replaces — two differently-shaped marks on
+ * screen for "which task" and "which tab" — turns out not to apply: a selected
+ * task is a CARD and a selected tab is a 28px chip, and nobody confuses them.
  */
 
 .sh-ui-tabs {
@@ -19,9 +21,9 @@
   align-items: stretch;
   gap: var(--sh-space-xs);
 
-  height: var(--sh-row-height);
+  height: var(--sh-band-tab-strip);
   flex: 0 0 auto;
-  padding: 0 var(--sh-space-sm);
+  padding: 0 var(--sh-space-mid);
 
   /* The one real border in the strip: the seam between chrome and panes. */
   border-bottom: var(--sh-hairline) solid var(--sh-line);
@@ -49,30 +51,37 @@
 
   display: flex;
   align-items: center;
+  gap: var(--sh-space-md);
   flex: 0 1 auto;
   min-width: 0;
   max-width: 14rem;
-  padding: 0 var(--sh-space-md);
 
-  color: var(--sh-text-faint);
+  /* 28 inside a 40 band, so the tab is a chip ON the strip rather than a
+     division OF it — which is what lets the active one take a fill without the
+     whole band looking striped. */
+  height: var(--sh-band-tab);
+  align-self: center;
+  padding: 0 var(--sh-space-md);
+  border-radius: var(--sh-radius-row);
+  font-size: var(--sh-font-size-medium);
+
+  color: var(--sh-text-mute);
   cursor: default;
 
-  /*
-   * The mark is drawn as an inset shadow rather than a border, for `Row`'s
-   * reason: a 1px border would come out of the content box and drop the label
-   * half a pixel off the tabs beside it. Transparent when inactive, so the box
-   * is identical in both states and only the paint changes.
-   */
-  box-shadow: inset 0 -2px 0 0 transparent;
+  transition:
+    color var(--sh-motion) linear,
+    background var(--sh-motion) linear;
 }
 
 .sh-ui-tab:hover {
+  background: var(--sh-fill-hover);
   color: var(--sh-text-dim);
 }
 
 .sh-ui-tab[data-active='true'] {
+  background: var(--sh-fill-tab);
   color: var(--sh-text);
-  box-shadow: inset 0 -2px 0 0 var(--sh-sky);
+  font-weight: 500;
 }
 
 .sh-ui-tab__label {

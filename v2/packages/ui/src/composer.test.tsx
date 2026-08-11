@@ -25,7 +25,7 @@ describe('Composer', () => {
     // Emitted as REFERENCES, not resolved colours — that is what makes the
     // mechanism compose: a theme re-declaring `--sh-raised` moves this
     // with it, where a baked hex would freeze it to the built-in palette.
-    expect(style.getPropertyValue('--sh-surface')).toBe('var(--sh-raised)');
+    expect(style.getPropertyValue('--sh-surface')).toBe('var(--sh-well)');
     expect(style.getPropertyValue('--sh-sunken')).toBe('transparent');
     expect(style.getPropertyValue('--sh-line')).toBe('transparent');
   });
@@ -44,14 +44,21 @@ describe('Composer', () => {
     expect(field?.getAttribute('data-variant')).toBe('bordered');
   });
 
-  it('is the soft surface: 16px radius from the token, and no border', () => {
+  it('is a WELL: the soft radius, and a real edge on it', () => {
+    // It used to be `raised` with no border — a menu's treatment, which is right
+    // for something that floats over a surface and wrong for something you
+    // WRITE on. §2 gives the composer its own luminance step and §4 gives a well
+    // its own edge: `lineStrong`, because a well is a box with four corners and
+    // at `line` it disappears into the chrome behind the scrim.
     const rule = rulesMentioning('sh-ui-composer').find(
       (candidate) => candidate.selectorText === '.sh-ui-composer',
     );
     expect(rule?.style.getPropertyValue('border-radius')).toBe('var(--sh-radius-soft)');
-    // Rule 2: the luminance step IS the elevation, and there is no second one.
-    expect(rule?.style.getPropertyValue('box-shadow')).toBe('');
-    expect(rule?.style.getPropertyValue('border')).toBe('');
+    expect(rule?.style.getPropertyValue('background')).toBe('var(--sh-well)');
+    expect(rule?.style.getPropertyValue('border')).toContain('var(--sh-line-strong)');
+    // …and the INNER hairlines stay off, which is what the re-declaration above
+    // buys: inside a well, space is the structure.
+    expect(rule?.style.getPropertyValue('--sh-line')).toBe('transparent');
   });
 
   it('composes its padding from the space scale rather than typing a number', () => {
