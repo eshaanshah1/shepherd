@@ -474,7 +474,9 @@ describe('a root can hold no panes', () => {
     first.flush();
 
     const payload = storage.raw.get('layout') as { roots: { id: string; tree: unknown }[] };
-    expect(payload.roots).toEqual([{ id: 'window-1', tree: null, focusedPaneId: null }]);
+    expect(payload.roots).toEqual([
+      { id: 'window-1', group: 'window-1', tree: null, focusedPaneId: null },
+    ]);
 
     const second = build(storage);
     const root = second.open();
@@ -1001,5 +1003,62 @@ describe('the initial-input seam (M3 D10)', () => {
     const second = build(storage);
     const restored = second.open();
     expect(second.takeInitialInput(second.focused(restored) as PaneID)).toBeUndefined();
+  });
+});
+
+describe('a root belongs to a group', () => {
+  it('defaults a root to a group of its own', () => {
+    const store = build();
+    store.open('window-1');
+    expect(store.groupOf(rootId('window-1'))).toBe('window-1');
+    expect(store.rootsInGroup('window-1')).toEqual([rootId('window-1')]);
+  });
+
+  it('puts roots opened with the same group together, in creation order', () => {
+    const store = build();
+    store.open('task:t1', {}, { group: 'task:t1' });
+    store.open('task:t1/tab-2', {}, { group: 'task:t1' });
+    expect(store.rootsInGroup('task:t1')).toEqual([rootId('task:t1'), rootId('task:t1/tab-2')]);
+  });
+
+  it('answers undefined for a root it does not hold', () => {
+    expect(build().groupOf(rootId('nope'))).toBeUndefined();
+  });
+
+  it('drops a removed root out of its group', () => {
+    const store = build();
+    store.open('task:t1', {}, { group: 'task:t1' });
+    store.open('task:t1/tab-2', {}, { group: 'task:t1' });
+    store.removeRoot(rootId('task:t1/tab-2'));
+    expect(store.rootsInGroup('task:t1')).toEqual([rootId('task:t1')]);
+  });
+
+  it('round-trips a group through storage', () => {
+    const storage = fakeKV();
+    const first = build(storage);
+    first.open('task:t1', {}, { group: 'task:t1' });
+    first.open('task:t1/tab-2', {}, { group: 'task:t1' });
+    first.flush();
+
+    const second = build(storage);
+    second.open('task:t1');
+    second.open('task:t1/tab-2');
+    expect(second.rootsInGroup('task:t1')).toEqual([rootId('task:t1'), rootId('task:t1/tab-2')]);
+  });
+
+  it('reads a payload written before groups existed as one group per root', () => {
+    // The whole reason this stays `schemaVersion: 1`: an older payload has no
+    // `group`, and every root in it is its own — which is exactly how the app
+    // behaved before groups existed, rather than a migration.
+    const storage = fakeKV();
+    storage.set('layout', {
+      schemaVersion: 1,
+      roots: [
+        { id: 'window-1', tree: { kind: 'leaf', pane: { id: 'old-1' } }, focusedPaneId: 'old-1' },
+      ],
+    });
+    const store = build(storage);
+    store.open('window-1');
+    expect(store.groupOf(rootId('window-1'))).toBe('window-1');
   });
 });
