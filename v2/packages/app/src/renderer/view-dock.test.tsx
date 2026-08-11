@@ -344,6 +344,47 @@ describe('a contributed row-s actions', () => {
     view.unmount();
   });
 
+  it('draws a row’s primary action, named, and nothing for a row without one', async () => {
+    // `Row` has had a hover slot since it shipped (its rule 4); what was missing
+    // was any way for a CONTRIBUTED row to declare into it.
+    const rows: readonly TreeItem[] = [
+      {
+        id: 't1',
+        label: 'One',
+        primaryAction: { id: 'tasks.archive', label: 'Mark done', icon: 'check', args: { task: 't1' } },
+      },
+      { id: 't2', label: 'Two' },
+    ];
+    const view = mount(<ViewDock views={bridge(TREE, [], rows)} />);
+    await settle();
+    const buttons = all(view.container, 'row-primary-action');
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0]?.getAttribute('aria-label')).toBe('Mark done');
+    view.unmount();
+  });
+
+  it('runs a primary action as the extension, and NOT the row underneath it', async () => {
+    // D14, and the containment rule: the click is the user's, the command id is
+    // the extension's — and a control inside a clickable row must not fire both.
+    const calls: Call[] = [];
+    const rows: readonly TreeItem[] = [
+      {
+        id: 't1',
+        label: 'One',
+        command: { id: 'tasks.reveal', args: { task: 't1' } },
+        primaryAction: { id: 'tasks.archive', label: 'Mark done', args: { task: 't1' } },
+      },
+    ];
+    const view = mount(<ViewDock views={bridge(TREE, calls, rows)} />);
+    await settle();
+    act(() => one(view.container, 'row-primary-action').click());
+    await settle();
+    expect(calls).toEqual([
+      { via: 'activate', type: 'tasks.tree', command: 'tasks.archive', args: { task: 't1' } },
+    ]);
+    view.unmount();
+  });
+
   it('keeps a row selected while the window is on ANOTHER TAB of its group', async () => {
     // A task's row names its anchor root; its second tab is a different root in
     // the same group. Comparing root ids alone would blank the highlight the

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentType } from 'react';
-import { IconArchive, IconEye, IconPlus, IconSettings, IconTrash } from '@tabler/icons-react';
+import { IconArchive, IconCheck, IconEye, IconPlus, IconSettings, IconTrash } from '@tabler/icons-react';
 import type { IconProps as TablerIconProps } from '@tabler/icons-react';
 import type { TreeItem, TreeItemAction, TreeItemSeparator } from '@shepherd/sdk';
 import {
+  IconButton,
   Menu,
   Row,
   SectionLabel,
@@ -390,6 +391,32 @@ function TreeView({
                   event.preventDefault();
                   activate();
                 }}
+                actions={
+                  /*
+                    The row's ONE hover verb, in the slot `Row` has always had
+                    for it. `stopPropagation` because this control sits INSIDE a
+                    row that is itself a button: without it, marking a task done
+                    would also reveal it, and the window would move to a task on
+                    its way to the DONE section.
+                  */
+                  row.primaryAction === undefined ? undefined : (
+                    <IconButton
+                      icon={raiseIcon(row.primaryAction.icon)}
+                      size="sm"
+                      label={row.primaryAction.label}
+                      title={row.primaryAction.label}
+                      data-testid="row-primary-action"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (view === undefined || row.primaryAction === undefined) return;
+                        void bridge?.activate(view.type, {
+                          id: row.primaryAction.id,
+                          ...(row.primaryAction.args === undefined ? {} : { args: row.primaryAction.args }),
+                        });
+                      }}
+                    />
+                  )
+                }
                 leading={
                   /*
                     The dot IS the status, and it takes a ROLE — never a colour
@@ -516,6 +543,7 @@ function toMenuEntry(entry: TreeItemAction | TreeItemSeparator): MenuEntry {
  * wiring one.
  */
 const ACTION_ICONS: Readonly<Record<string, ComponentType<TablerIconProps>>> = {
+  check: IconCheck,
   eye: IconEye,
   archive: IconArchive,
   trash: IconTrash,

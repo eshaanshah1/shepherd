@@ -314,6 +314,39 @@ export interface TreeItem {
    * "and these two delete things" is said without saying it in the labels.
    */
   readonly actions?: readonly (TreeItemAction | TreeItemSeparator)[];
+  /**
+   * The row's ONE verb worth a control of its own — drawn in the trailing slot,
+   * revealed on hover and on keyboard focus within the row.
+   *
+   * `Row` has had that slot since it shipped (its rule 4: "the trailing area is
+   * a 1-cell grid … a hover ACTION in every row that wants one"); what was
+   * missing was any way for a CONTRIBUTED row to declare into it. `command` is
+   * the row's click, `presents` its read-only twin, `actions` its menu — and
+   * none of them is "the thing you do to this row most, worth a button".
+   *
+   * Declared by the extension for the reason `actions` is: the shell cannot know
+   * a row's verbs, and a sidebar that hardcoded a checkmark would be a sidebar
+   * that knows what a task is (ADR 0031). **Attributed to the CONTRIBUTING
+   * EXTENSION, never to the user** (M3 D14) — the click is genuinely the user's,
+   * the command id behind it is not, and they cannot see it. It travels the same
+   * seam a row's click does, so there is one attribution rule rather than two
+   * that must agree.
+   *
+   * **Singular on purpose.** A row with three hover buttons is a toolbar, and
+   * `actions` already exists for the rest. `label` is required for `IconButton`'s
+   * reason: an icon-only control has no accessible name, and this one is icon-
+   * only by construction.
+   *
+   * A client with another surface may draw it as a swipe, a button, or not at
+   * all — it is a field on a row, not a desktop gesture.
+   */
+  readonly primaryAction?: {
+    readonly id: string;
+    readonly label: string;
+    /** A glyph NAME, resolved by the renderer against its own set. Never an SVG. */
+    readonly icon?: string;
+    readonly args?: unknown;
+  };
 }
 
 /**
