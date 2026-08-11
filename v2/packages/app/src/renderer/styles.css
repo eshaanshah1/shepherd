@@ -331,16 +331,30 @@ body.sh-dragging {
   unrendering one would tear its panes down, and a torn-down pane comes back as
   a second pty. Nothing here may set `display`, or it would fight that.
 */
+/*
+ * The pane group — §1: `padding: 12px, gap: 12`.
+ *
+ * The gutter is what makes a pane read as a CARD sitting on the stage rather
+ * than as a region of it, and it is the other half of the border step that
+ * replaced opacity dimming: an edge with nothing around it is a seam, and a
+ * seam cannot say "this one is focused".
+ *
+ * On the group rather than on each pane, so a split's two panes are separated by
+ * one gutter instead of two abutting margins — which is also what makes the
+ * divider between them land on the gap rather than beside it.
+ */
 .sh-root {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
+  padding: var(--sh-space-lg);
 }
 
 .sh-split-root,
 .sh-split,
 .sh-split-child {
   display: flex;
+  gap: var(--sh-space-lg);
   flex: 1 1 0;
   min-width: 0;
   min-height: 0;
@@ -367,10 +381,32 @@ body.sh-dragging {
      behind it (the placeholder card) and for the layout leaf outside it. */
   background: var(--sh-pane-title-bg, var(--sh-pane));
   overflow: hidden;
+
+  /* A pane is a card: `r10`, and an edge that says whether it is the focused
+     one. */
+  border-radius: var(--sh-radius-card);
+  border: var(--sh-hairline) solid var(--sh-line);
+  transition: border-color var(--sh-motion) linear;
 }
 
-.sh-pane[data-focused] { transition: opacity var(--sh-motion) linear; }
-.sh-pane[data-focused='false'] { opacity: 0.62; }
+/*
+ * **Focus is ONE BORDER STEP, and an unfocused pane is not dimmed.**
+ *
+ * This was `opacity: 0.62`, carried from v1. §6 refuses it by name, and the
+ * reason is not aesthetic: a dimmed pane is one whose live output you can no
+ * longer read. The whole premise of this app is running several agents at once
+ * and watching them — and the panes you are NOT focused on are precisely the
+ * ones you are watching, because the focused one is the one you are typing in.
+ * Dimming them makes the app worse at its own job in exact proportion to how
+ * many are open.
+ *
+ * Opacity also washed the terminal's own colours, so a `grass` test line in an
+ * unfocused pane was a different green from the same line focused — two shades
+ * of one token, from a rule that never meant to touch colour at all.
+ */
+.sh-pane[data-focused='true'] {
+  border-color: var(--sh-line-active);
+}
 
 /* ------------------------------------------------------- pane chrome surface */
 /*

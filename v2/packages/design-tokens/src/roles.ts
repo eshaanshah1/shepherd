@@ -78,6 +78,7 @@ export type RoleName =
   // states
   | 'fillHover'
   | 'fillActive'
+  | 'fillTab'
   | 'fillSelected'
   | 'textOnWool'
   | 'focusRing';
@@ -352,6 +353,13 @@ export const roles: Readonly<Record<RoleName, RoleSpec>> = {
     token: 'fill',
     job: 'an active row — the one the keyboard is on, in a menu or a palette.',
     notFor: 'selection in the rail. A selected task is a card, and it is `raised` plus `edgeSelected`.',
+  },
+  fillTab: {
+    kind: 'token',
+    token: 'active',
+    job: 'the tab you are on — one luminance step, and the only mark it needs.',
+    notFor:
+      'a `sky` underline, which is what this replaced. That colour has one job — "live · focus · send" — and a tab that merely happens to be the one you are on is none of them. It also collided with the mark a tab carries for the agent inside it.',
   },
   fillSelected: {
     kind: 'alias',

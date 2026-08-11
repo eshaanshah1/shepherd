@@ -985,6 +985,15 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
   const diffs = new Map<string, DiffStats>();
 
   /**
+   * The last suite result reported for a task — see `TASK_COMMANDS.reportSuite`.
+   *
+   * Transient for the same reason `diffs` is: a result describes a moment, and
+   * one persisted into the store would outlive the code it measured. A restart
+   * showing no meter is correct — nothing has run yet in this session.
+   */
+  const suites = new Map<string, { readonly total: number; readonly passed: number }>();
+
+  /**
    * One task's diff, re-read.
    *
    * `inFlight` exists because the triggers overlap: a turn finishing, a pane
@@ -2594,6 +2603,27 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     }),
   );
   ctx.subscriptions.push(
+    commands.register(TASK_COMMANDS.reportSuite, {
+      title: 'Tasks: Report a suite result',
+      schema: s.object({ task: s.string(), total: s.int(), passed: s.int() }),
+      handler: (args) => {
+        const task = store.get(args.task);
+        // A result for a task that does not exist is a caller's mistake worth
+        // hearing about, not a silently-kept number keyed on nothing.
+        if (task === undefined) return { ok: false, reason: 'no such task' };
+
+        // Clamped rather than refused: `4 of 3 passed` is a caller bug, and
+        // drawing four full cells is a better answer than drawing none.
+        const total = Math.max(0, Math.trunc(args.total));
+        const passed = Math.min(Math.max(0, Math.trunc(args.passed)), total);
+        if (total === 0) suites.delete(args.task);
+        else suites.set(args.task, { total, passed });
+        changed();
+        return { ok: true, total, passed };
+      },
+    }),
+  );
+  ctx.subscriptions.push(
     commands.register(TASK_COMMANDS.delete, {
       title: 'Tasks: Delete',
       schema: s.object({ task: s.string() }),
@@ -2830,6 +2860,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
             mark: markOf(state),
             elapsed: formatElapsed(task.createdAt, ctx.clock.now()),
             diff: diffs.get(task.id),
+            suite: suites.get(task.id),
             repos: task.repos.map((repo, index) => ({
               name: repo.name,
               /*
