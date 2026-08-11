@@ -154,6 +154,26 @@ describe('SessionServer sessions', () => {
     await waitFor(() => client.output().includes('over-the-wire'), 'pty output over the wire');
   });
 
+  it('decodes a base64 SEED and replays it to the first viewer', async () => {
+    /*
+     * The frame is JSON, so a restored screen crosses as base64 and the server
+     * has to decode it. Left to the cast beside it, a string would arrive where
+     * `Uint8Array` is declared and a restored pane would replay garbage — which
+     * is why this is asserted across the real frame rather than against
+     * `host.create` alone.
+     */
+    const { server } = harness();
+    const client = fakeConnection();
+    greet(server, client.connection);
+
+    const seed = Buffer.from('work from before\r\n', 'utf8').toString('base64');
+    send(server, 1, REQUEST.create, { seq: 1, spec: { ...SHELL, seed } });
+    const id = (client.replies()[1]?.json as { value: { id: string } }).value.id;
+
+    send(server, 1, REQUEST.attach, { seq: 2, sessionId: id });
+    await waitFor(() => client.output().includes('work from before'), 'the seeded screen');
+  });
+
   /**
    * THE claim this whole process exists for.
    *

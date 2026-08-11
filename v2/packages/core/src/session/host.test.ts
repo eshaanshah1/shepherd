@@ -626,3 +626,44 @@ describe('foreground — the IO shell over it', () => {
     expect(host.foreground(sessionId('nope')).name).toBeUndefined();
   });
 });
+
+describe('a session created with its screen already on it', () => {
+  it('shows the seeded screen to the first viewer, before the pty says anything', async () => {
+    // What a restored pane is made of: the bytes belong to a pty that ended days
+    // ago, and the mirror is the one thing that answers "what should someone
+    // arriving now see".
+    const host = makeHost();
+    const created = host.create({
+      cwd: '/tmp',
+      command: '/bin/sh',
+      args: ['-c', 'sleep 5'],
+      seed: new TextEncoder().encode('work from before\r\n'),
+    });
+    expect(isOk(created)).toBe(true);
+    if (!isOk(created)) return;
+
+    const seen = await new Promise<string>((resolve) => {
+      host.snapshot(created.value.id, (bytes) => resolve(new TextDecoder().decode(bytes)));
+    });
+    expect(seen).toContain('work from before');
+  });
+
+  it('keeps what the live pty says AFTER the seed', async () => {
+    const host = makeHost();
+    const created = host.create({
+      cwd: '/tmp',
+      command: '/bin/sh',
+      args: ['-c', 'echo live-output; sleep 5'],
+      seed: new TextEncoder().encode('work from before\r\n'),
+    });
+    expect(isOk(created)).toBe(true);
+    if (!isOk(created)) return;
+
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const seen = await new Promise<string>((resolve) => {
+      host.snapshot(created.value.id, (bytes) => resolve(new TextDecoder().decode(bytes)));
+    });
+    expect(seen).toContain('work from before');
+    expect(seen).toContain('live-output');
+  });
+});

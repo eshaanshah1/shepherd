@@ -212,7 +212,21 @@ export class SessionServer {
 
     switch (frame.kind) {
       case REQUEST.create: {
-        const created = this.#host.create(body['spec'] as SessionSpec);
+        /*
+         * `seed` is the one field that cannot survive the cast beside it.
+         *
+         * It is bytes, and this frame is JSON — so it travels as base64 and has
+         * to be decoded here. Left to the cast, a string would arrive where a
+         * `Uint8Array` is declared, `feed` would iterate its characters as byte
+         * values, and a restored pane would replay garbage. A cast is not a
+         * check, and this is the field that proves it.
+         */
+        const raw = body['spec'] as SessionSpec & { seed?: unknown };
+        const seed = typeof raw.seed === 'string' ? new Uint8Array(Buffer.from(raw.seed, 'base64')) : undefined;
+        const created = this.#host.create({
+          ...raw,
+          ...(seed === undefined ? { seed: undefined } : { seed }),
+        });
         this.#reply(client, seq, created.ok, created.ok ? created.value : created.error);
         return;
       }
