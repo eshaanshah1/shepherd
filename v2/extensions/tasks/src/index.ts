@@ -2380,11 +2380,20 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     views.registerViewType(TASK_VIEWS.composer, {
       kind: 'component',
       component: TASK_VIEWS.composer,
-      // A form you open, fill in and dismiss — v1's ⌘T composer, declared rather
+      // A form you open, fill in and dismiss — v1's composer, declared rather
       // than hardcoded into the shell. In the dock it would sit there taking a
       // third of the sidebar forever.
       surface: 'overlay',
-      key: 'CmdOrCtrl+T',
+      /*
+       * ⌘N, and ⌘T is the shell's New Tab.
+       *
+       * The conventional pair, and the one users already have in their fingers:
+       * ⌘N makes a new THING, ⌘T makes a new tab of the thing you are in. The
+       * composer held ⌘T while a task was a single pane group and there were no
+       * tabs to make; now there are, and a task's tabs are the gesture you reach
+       * for far more often.
+       */
+      key: 'CmdOrCtrl+N',
       title: 'New task',
     }),
   );
