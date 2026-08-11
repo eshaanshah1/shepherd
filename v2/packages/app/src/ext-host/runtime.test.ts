@@ -123,6 +123,7 @@ const activateAsk = (overrides: Record<string, unknown> = {}): HostFrame => ({
     apiVersion: '1.0.0',
     permissions: ['storage'],
     storage: {},
+    settings: {},
     dataDir: '/tmp/shepherd-test/ext',
     homeDir: '/tmp/shepherd-test/home',
     userName: 'ada',
@@ -392,6 +393,114 @@ describe('the extension host runtime', () => {
       expect(storing.seen.ctx?.storage.get('pings', s.number())).toBeUndefined();
       await settle();
       expect(storing.calls().some((call) => call.call.kind === 'log')).toBe(true);
+    });
+  });
+
+  describe('api.proposed.settings', () => {
+    /**
+     * The seeded mirror, and the thing that makes it different from
+     * `ctx.storage`: a setting has more than one writer, so the mirror is
+     * corrected by the bus rather than trusted.
+     */
+    const seeded = async (settings: Record<string, unknown>) => {
+      const h = harness();
+      h.runtime.start();
+      await h.receive(helloOk);
+      await h.receive(activateAsk({ settings }));
+      return h;
+    };
+
+    /** The subscription id the CHILD minted for the change topic. */
+    const changeSubscription = (h: Harness): string => {
+      const call = h
+        .calls()
+        .map((frame) => frame.call)
+        .find((call) => call.kind === 'event.on' && call.topic === 'settings.changed');
+      if (call === undefined || call.kind !== 'event.on') throw new Error('nothing subscribed to settings.changed');
+      return call.subscription;
+    };
+
+    it('reads a seeded value synchronously', async () => {
+      const h = await seeded({ 'one.model': 'sonnet' });
+      expect(h.seen.api?.proposed.settings.get('one.model', s.string())).toBe('sonnet');
+    });
+
+    it('throws for a key it was never seeded, rather than answering undefined', async () => {
+      const h = await seeded({});
+      // `get` PROMISES a value — the declared default backs it. So a missing key
+      // is never "the user has not chosen"; it is an undeclared key or another
+      // extension's, and both are caller bugs that have to be loud.
+      expect(() => h.seen.api?.proposed.settings.get('other.key', s.string())).toThrow(/other\.key/);
+    });
+
+    it('sets through the settings.set COMMAND, so the one authorizer sees it', async () => {
+      const h = await seeded({ 'one.model': 'sonnet' });
+      const pending = h.seen.api?.proposed.settings.set('one.model', 'opus');
+      await settle();
+      expect(h.calls().at(-1)?.call).toEqual({
+        kind: 'command.invoke',
+        commandId: 'settings.set',
+        args: { key: 'one.model', value: 'opus' },
+      });
+      await h.answer(wireOk({ key: 'one.model', value: 'opus' }));
+      expect(await pending).toEqual({ ok: true, value: undefined });
+    });
+
+    it('reports a denied write as denied, not as an invalid value', async () => {
+      const h = await seeded({ 'one.model': 'sonnet' });
+      const pending = h.seen.api?.proposed.settings.set('one.model', 'opus');
+      await settle();
+      await h.answer(wireErr('denied', 'lacks permission "settings"'));
+      expect(await pending).toEqual({
+        ok: false,
+        error: { code: 'denied', message: 'lacks permission "settings"' },
+      });
+    });
+
+    it('updates the mirror from the bus, because the SCREEN is a second writer', async () => {
+      const h = await seeded({ 'one.model': 'sonnet' });
+      const seenChanges: [string, unknown][] = [];
+      h.seen.api?.proposed.settings.onDidChange((key, value) => seenChanges.push([key, value]));
+      await h.receive({
+        kind: 'event',
+        subscription: changeSubscription(h),
+        topic: 'settings.changed',
+        payload: { key: 'one.model', value: 'opus' },
+        seq: 1,
+        ts: 0,
+        source: { kind: 'user' },
+      });
+      expect(h.seen.api?.proposed.settings.get('one.model', s.string())).toBe('opus');
+      expect(seenChanges).toEqual([['one.model', 'opus']]);
+    });
+
+    it('drops a change to a key it cannot see, rather than widening its own seed', async () => {
+      const h = await seeded({ 'one.model': 'sonnet' });
+      await h.receive({
+        kind: 'event',
+        subscription: changeSubscription(h),
+        topic: 'settings.changed',
+        payload: { key: 'other.secret', value: 'nope' },
+        seq: 1,
+        ts: 0,
+        source: { kind: 'user' },
+      });
+      expect(() => h.seen.api?.proposed.settings.get('other.secret', s.string())).toThrow();
+    });
+
+    it('ignores a malformed change event rather than poisoning the mirror', async () => {
+      const h = await seeded({ 'one.model': 'sonnet' });
+      await h.receive({
+        kind: 'event',
+        subscription: changeSubscription(h),
+        topic: 'settings.changed',
+        payload: { nope: true },
+        seq: 1,
+        ts: 0,
+        source: { kind: 'user' },
+      });
+      expect(h.seen.api?.proposed.settings.get('one.model', s.string())).toBe('sonnet');
+      expect(h.calls().some((frame) => frame.call.kind === 'log')).toBe(true);
     });
   });
 
@@ -804,7 +913,13 @@ describe('the extension host runtime', () => {
       const subscription = subscribing
         .calls()
         .map((call) => call.call)
-        .find((call): call is { kind: 'event.on'; topic: string; subscription: string } => call.kind === 'event.on');
+        // Named by TOPIC, not "the first `event.on`": the API object subscribes
+        // to `settings.changed` on its own behalf, so "the first one" is not this
+        // extension's.
+        .find(
+          (call): call is { kind: 'event.on'; topic: string; subscription: string } =>
+            call.kind === 'event.on' && call.topic === 'some.topic',
+        );
       expect(subscription).toBeDefined();
 
       await subscribing.receive({

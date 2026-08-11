@@ -36,6 +36,24 @@ export type { Permission, ExtensionSource } from './permission.ts';
 export { PERMISSIONS, isPermission } from './permission.ts';
 export type { Manifest, ActivationEvent, ContributedCommand, ContributedView } from './manifest.ts';
 export { manifestSchema } from './manifest.ts';
+export type {
+  SettingChoice,
+  SettingSpec,
+  SettingType,
+  SettingValue,
+  SettingsAPI,
+  SettingsError,
+  SettingsPage,
+  SettingsPageWire,
+} from './api-settings.ts';
+export {
+  SETTING_TYPES,
+  settingChoicesSchema,
+  settingSpecSchema,
+  settingValueSchema,
+  settingsPageSchema,
+} from './api-settings.ts';
+export { CORE_NAMESPACE, defaultsOf, namespaceOf, pageIssues, validateSetting } from './settings.ts';
 
 // ----------------------------------------------------------------------- API
 export type {

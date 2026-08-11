@@ -167,6 +167,12 @@ export {
   type AttentionCommandsOptions,
 } from './attention/index.ts';
 
+/**
+ * Settings — the registry over the one store, holding what an extension's
+ * manifest declared and what the user has actually chosen.
+ */
+export { SettingsRegistry, type OwnedPage, type SettingsRegistryOptions } from './settings/index.ts';
+
 export {
   parseManifest,
   isExtensionIdShape,

@@ -311,6 +311,22 @@ const hostAskSchema = s.union(
     /** This extension's whole `KV` namespace — see the `storage.set` comment. */
     storage: s.record(s.unknown()),
     /**
+     * This extension's EFFECTIVE settings: its own namespace, plus the kernel's
+     * `shepherd.*`.
+     *
+     * A seed for `storage`'s reason — `SettingsAPI.get` is synchronous and the
+     * values live in main — but with the second half of that comment's warning
+     * now true. A setting has more than one writer (the screen, the CLI, the
+     * extension itself), so this mirror is not write-through-and-trust: it is
+     * corrected by the `settings.changed` bus event, which every writer's change
+     * passes through.
+     *
+     * Required rather than optional, for `homeDir`'s reason: an extension seeded
+     * with nothing reads defaults that are not the user's, and a fixture that
+     * builds an `activate` frame should have to say so.
+     */
+    settings: s.record(s.unknown()),
+    /**
      * A directory of its own, under the app's support dir (D1b).
      *
      * The host resolves it because the child cannot: `boundaries.js` denies

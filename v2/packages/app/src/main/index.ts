@@ -19,6 +19,7 @@ import {
   ExtensionRegistry,
   PermissionStore,
   SessionHost,
+  SettingsRegistry,
   SqliteStore,
   registerSessionCommands,
 } from '@shepherd/core';
@@ -30,6 +31,7 @@ import { claudeCodeManifest } from '@shepherd/ext-claude-code/manifest';
 import { tasksManifest } from '@shepherd/ext-tasks/manifest';
 import { worktreeHookManifest } from '@shepherd/ext-worktree-hook/manifest';
 import {
+  CORE_NAMESPACE,
   KERNEL,
   createLogger,
   extensionId,
@@ -85,6 +87,8 @@ import { publishViewingEdges } from './viewing-topic.ts';
 import { publishSessionBound } from './session-bound.ts';
 import { registerCaptureCommand } from './capture-command.ts';
 import { registerReloadCommand } from './reload-command.ts';
+import { registerSettingsCommands } from './settings-commands.ts';
+import { GENERAL_PAGE } from './settings-general.ts';
 
 /**
  * The Electron entry point (electron-vite builds this to `out/main`, and
@@ -293,6 +297,16 @@ const store = new SqliteStore({ location: join(boot.userData, 'store.db'), logge
  * `ExtensionRegistry.add` is the moment it runs.
  */
 const permissions = new PermissionStore(store.namespace('permissions'), logger);
+
+/**
+ * Settings — the registry, with the app's own page contributed into it FIRST, so
+ * `shepherd.theme` exists before any window or extension reads one.
+ *
+ * The kernel contributes through the same call an extension does, deliberately:
+ * see `settings-general.ts`.
+ */
+const settings = new SettingsRegistry({ store, logger });
+settings.contribute(CORE_NAMESPACE, [GENERAL_PAGE]);
 
 const registry = new CommandRegistry({
   logger,
@@ -527,6 +541,9 @@ const extensionHost = new ExtensionHost({
   permissions,
   bus,
   kv: (namespace) => store.namespace(namespace),
+  // Where a manifest's `contributes.settings` lands, and where each extension's
+  // seed is read from.
+  settings,
   support,
   // Resolved at the platform boundary, where `node:os` is allowed, and handed
   // down: an extension cannot compute it and some of what it has to cooperate
@@ -1047,6 +1064,13 @@ void app.whenReady().then(async () => {
       return true;
     },
   });
+
+  /**
+   * The settings verbs, BEFORE the extensions below: a built-in's `activate` may
+   * write a setting (the quick-tier migration does), and a write into a verb
+   * table that has not been filled in yet is a refusal nobody asked for.
+   */
+  registerSettingsCommands({ registry, settings, bus });
 
   // Extensions, after the command table exists and before the sockets open — so
   // a CLI client cannot arrive before `diagnostics.ping` is registered, and so a
