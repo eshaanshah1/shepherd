@@ -29,4 +29,12 @@ describe('expired', () => {
     // the oldest tasks first — backwards from what the field means.
     expect(expired([{ id: 't1', lifecycle: 'archived' }], NOW)).toEqual([]);
   });
+
+  it('is a WEEK, and the number is the thing to change', () => {
+    // Pinned literally rather than through the constant it is testing: the TTL
+    // moved from 30 days to 7 when an archive started carrying tabs and their
+    // screens, and a test written in terms of the constant would have agreed
+    // with any value at all.
+    expect(ARCHIVE_TTL_MS).toBe(7 * 24 * 60 * 60 * 1000);
+  });
 });

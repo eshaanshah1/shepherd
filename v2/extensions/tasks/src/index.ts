@@ -2589,6 +2589,19 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
 
         rmSync(root, { recursive: true, force: true });
 
+        /*
+         * And the archived SCREENS, which live outside the task root on purpose
+         * — the task root is what was just deleted.
+         *
+         * Without this they outlive every record that names them: nothing left
+         * in the app could ever mention those files again, and `.archives` would
+         * grow by a task's worth of scrollback every time one expired.
+         */
+        rmSync(`${archiveDir()}/${task.id.replace(/[^A-Za-z0-9_-]/g, '_')}`, {
+          recursive: true,
+          force: true,
+        });
+
         // The rmSync just took directories out from under any registration git
         // still holds (finding #1) — exactly the state this handler's comment
         // warns about, where the next `worktree add` on that branch fails
@@ -2796,6 +2809,26 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
                * the same rule `actions` keeps (ADR 0031).
                */
               presents: { id: TASK_COMMANDS.presentation, args: { task: task.id } },
+              /*
+               * The ONE verb worth a button: finishing with a task is the
+               * gesture you make most, and it was two clicks into a context
+               * menu nobody discovers by looking.
+               *
+               * Nothing on an archived task — the verb that is available is the
+               * one that changes its state, which is the rule `actions` below
+               * already follows. Offering "Mark done" on something already done
+               * is an item that either fails or does nothing.
+               */
+              ...(task.lifecycle === 'archived'
+                ? {}
+                : {
+                    primaryAction: {
+                      id: TASK_COMMANDS.archive,
+                      label: 'Mark done',
+                      icon: 'check',
+                      args: { task: task.id },
+                    },
+                  }),
               /*
                * The row's right-click menu. Declared HERE because the shell
                * cannot know a task's verbs — a sidebar that hardcoded Reveal /
