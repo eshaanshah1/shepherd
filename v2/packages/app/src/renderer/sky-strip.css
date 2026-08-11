@@ -61,15 +61,23 @@
   background: var(--sh-scene-hill);
 }
 
-/* Two further hills, each a step off the first, so the range has depth without
-   a third colour. Mixed rather than named for the same reason a hover fill is:
-   they track a re-declared `--sh-scene-hill`. */
+/*
+ * Two further hills, each a step off the first, so the range has depth without
+ * a third colour. Mixed rather than named for the same reason a hover fill is:
+ * they track a re-declared `--sh-scene-hill`.
+ *
+ * **Both step toward `canvas`, never toward `text`.** The near hill mixed toward
+ * the ink and the result was a pale band across the rail, brighter than any
+ * surface in the app and sitting directly under the panel's name — a decorative
+ * surface outshouting the heading it exists to hold. Depth in a dark scene is
+ * made by receding, and the ground is what things recede into.
+ */
 .sh-sky__hill--far {
   background: color-mix(in srgb, var(--sh-scene-hill) 82%, var(--sh-canvas));
 }
 
 .sh-sky__hill--near {
-  background: color-mix(in srgb, var(--sh-scene-hill) 92%, var(--sh-text));
+  background: color-mix(in srgb, var(--sh-scene-hill) 62%, var(--sh-canvas));
 }
 
 /* ── the flock ─────────────────────────────────────────────────────────────── */
@@ -138,3 +146,69 @@
  * the surface where the refusal matters most: a moving thing in the corner of
  * the eye is exactly what the strip must not be while you are reading a pane.
  */
+
+/* ── the meadow: the empty state's version of the same scene ───────────────── */
+
+/*
+ * 180×56, one hill and one sheep. Quieter than the strip by construction — no
+ * sky, no stars, no glow — because an empty state's picture has to sit under the
+ * button it is inviting you to press.
+ */
+.sh-meadow {
+  position: relative;
+  display: block;
+  inline-size: 180px;
+  block-size: 56px;
+  overflow: hidden;
+}
+
+.sh-meadow__hill {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  /*
+   * Far WIDER than the frame that clips it — 420 in a 180 box.
+   *
+   * A hill the width of its own container is a rounded rectangle: you see both
+   * flanks turn down, and two visible corners read as a box. Overflowing the
+   * frame means only the shallow crown is on screen and the slope runs off both
+   * edges, which is what a hill looks like. Same trick the rail's strip uses,
+   * where the 400px ellipse is clipped by a 332px rail.
+   */
+  inline-size: 420px;
+  block-size: 40px;
+  border-radius: 100% 100% 0 0 / 34px 34px;
+  background: var(--sh-scene-hill);
+}
+
+.sh-meadow .sh-sky__sheep {
+  /* Standing ON the hill's crown rather than at a fixed inset from the box: the
+     meadow is shorter than the strip, so the strip's `bottom: 48px` would put
+     the sheep in the air. */
+  right: auto;
+  left: 50%;
+  /* On the crown: the hill peaks ~26px up in this frame, and the sheep's feet
+     sit at its own box's bottom edge. */
+  bottom: 22px;
+  margin-inline-start: -13px;
+}
+
+/*
+ * At rest, and unlit.
+ *
+ * The neutral ramp rather than `wool`, because nothing is grazing here — a lit
+ * sheep on an empty stage would be the brightest thing in a view whose whole
+ * message is that there is nothing to look at.
+ */
+.sh-sky__sheep[data-resting] > i {
+  background: var(--sh-scene-flock-rest);
+}
+
+.sh-sky__sheep[data-resting] > i[data-part='shade'] {
+  background: color-mix(in srgb, var(--sh-scene-flock-rest) 78%, var(--sh-canvas));
+}
+
+.sh-sky__sheep[data-resting] > i[data-part='eye'] {
+  background: var(--sh-canvas);
+}

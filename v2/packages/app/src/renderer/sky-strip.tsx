@@ -56,6 +56,24 @@ const SHEEP: ReadonlyArray<readonly [number, number, number, number, 'wool' | 's
   [18, 12, 3, 6, 'shade'],
 ];
 
+/**
+ * The sheep, on its own, so the empty state's meadow and the rail's strip draw
+ * the SAME animal.
+ *
+ * Exported rather than duplicated because it is the app's only illustration —
+ * two copies of it is two things that can drift into being two mascots, and the
+ * pixel grid is exactly the sort of detail that drifts.
+ */
+export function PixelSheep({ resting = false }: { readonly resting?: boolean }): ReactElement {
+  return (
+    <span className="sh-sky__sheep" data-resting={resting ? 'true' : undefined}>
+      {SHEEP.map(([x, y, w, h, part], index) => (
+        <i key={index} data-part={part} style={{ left: `${x}px`, top: `${y}px`, inlineSize: `${w}px`, blockSize: `${h}px` }} />
+      ))}
+    </span>
+  );
+}
+
 export interface SkyStripProps {
   /** The panel's name — 19/600, once per panel, overlaid at the strip's foot. */
   readonly title: string;
@@ -91,15 +109,7 @@ export function SkyStrip({ title, count, action }: SkyStripProps): ReactElement 
         <i className="sh-sky__hill sh-sky__hill--far" style={{ right: -60, width: 300, height: 62, borderRadius: '100% 100% 0 0 / 56px 56px' }} />
         <i className="sh-sky__hill sh-sky__hill--near" style={{ left: -10, width: 400, height: 44, borderRadius: '100% 100% 0 0 / 34px 34px' }} />
 
-        <span className="sh-sky__sheep">
-          {SHEEP.map(([x, y, w, h, part], index) => (
-            <i
-              key={index}
-              data-part={part}
-              style={{ left: `${x}px`, top: `${y}px`, inlineSize: `${w}px`, blockSize: `${h}px` }}
-            />
-          ))}
-        </span>
+        <PixelSheep />
       </div>
 
       {/*

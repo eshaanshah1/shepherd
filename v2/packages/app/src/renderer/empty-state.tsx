@@ -1,67 +1,72 @@
 import type { ReactNode } from 'react';
-import { Empty, KeyCap } from '@shepherd/ui';
+import { Button, Empty, KeyCap } from '@shepherd/ui';
+import { PixelSheep } from './sky-strip.tsx';
 
 /**
- * The stage with nothing on it — Flock rule 9's "personality lives in moments".
+ * The stage with nothing on it.
  *
- * The LAYOUT is now `Empty`, a primitive: an illustration slot, a serif
- * sentence, a hint. What stays here is the only part that is Shepherd's rather
- * than generic — **the ewe** — which is passed IN. She is the app's mascot, not
- * a decoration a contributed view's empty list should inherit.
+ * A 180×56 meadow — one hill, one sheep, at rest and unlit — then `The flock is
+ * quiet.`, a sub-line, and the panel's one primary action.
  *
- * The serif is the *only* place the app is allowed to speak in sentences (rule
- * 6), and this is one of the three moments the language names for it (empty
- * states, errors, onboarding). It is now enforced by the primitive's stylesheet
- * rather than by this file remembering a class name — which matters, because for
- * the whole of this component's life it did not: `.sh-empty`, `.sh-ewe`,
- * `.sh-empty-say` and `.sh-empty-hint` had **no rules anywhere in the repo**, so
- * the ewe drew as solid black default-filled circles in the top-left corner of
- * the stage. Nobody saw it, because it was never reachable.
+ * Two things changed from Flock's version, and both are §2:
  *
- * **It is reachable now**, and that is the other half of this change. A root can
- * hold no panes: closing the last pane of the home root leaves it empty rather
- * than closing the window, so "nothing here" is a real projection and not only
- * the instant before main's first push. The old comment here said a zero-pane
- * projection never arrives; that was true and it was the bug.
+ *   - **No serif.** Flock kept a third face for "where the app speaks in
+ *     sentences". This language has two, split by job: what the app says is
+ *     sans, what the machine produced is mono. An empty state is the app
+ *     talking, so it is sans — and the sentence carries by SIZE and weight
+ *     rather than by changing voice.
+ *   - **The hint stopped being an uppercase tracked legend.** §6 refuses those,
+ *     and a legend that shouts under a quiet sentence is the specific thing it
+ *     is refusing.
  *
- * The ewe's fills are `--sh-*` variables, not the mock's unprefixed ones: the
- * renderer namespaces every token (see `cssVarName`), and a verbatim copy of the
- * mock's `var(--wool-dim)` resolves to nothing and draws an invisible sheep.
+ * The sheep is the same component the rail's sky strip draws, imported rather
+ * than redrawn: it is the app's ONLY illustration, and two copies of it are two
+ * things that can drift into being two mascots.
  */
 export function EmptyState(): ReactNode {
   return (
     <Empty
       data-testid="empty-state"
       illustration={
-        <svg className="sh-ewe" width="58" height="52" viewBox="0 0 58 52">
-          <circle cx="29" cy="30" r="13" />
-          <circle cx="20" cy="15" r="5" />
-          <circle cx="29" cy="12" r="5.5" />
-          <circle cx="38" cy="15" r="5" />
-          <ellipse cx="11" cy="28" rx="5.5" ry="3" />
-          <ellipse cx="47" cy="28" rx="5.5" ry="3" />
-          <circle cx="24.5" cy="29" r="1.4" stroke="none" className="sh-ewe-eye" />
-          <circle cx="33.5" cy="29" r="1.4" stroke="none" className="sh-ewe-eye" />
-          <path d="M26.5 36 C27.5 37.2, 30.5 37.2, 31.5 36" />
-        </svg>
+        /*
+         * The meadow. A hill and a sheep, nothing else — this is the empty
+         * state, so the picture has to be quieter than the button under it.
+         * The sheep is `resting`: unlit, in the neutral ramp rather than in
+         * wool, because nothing is grazing here.
+         */
+        <span className="sh-meadow" aria-hidden="true">
+          <i className="sh-meadow__hill" />
+          <PixelSheep resting />
+        </span>
       }
       hint={
         /*
          * `KeyCap`, not a `<span class="sh-key">` — and not a button either. The
          * primitive is display-only by construction (no `onClick` in its type),
-         * which is the rule this hint has to obey: v2's sidebar footer put a
-         * pressable `⌘N NEW TASK` keycap at the bottom of the list as the only
-         * way to add a task, which teaches a shortcut instead of being a control.
-         * It was replaced by a real `IconButton` at the top of the dock, and this
-         * line survives as what it always was — a legend, in the one place where
-         * a legend is the whole point.
+         * which is the rule this hint has to obey: a pressable keycap as the only
+         * way to add a task teaches a shortcut instead of being a control. The
+         * real control is the Button above it; this is the legend beside it.
          */
         <>
-          <KeyCap>⌘N</KeyCap> COMPOSE A TASK
+          Press <KeyCap>⌘T</KeyCap> to start one
         </>
       }
+      action={
+        /*
+         * ONE primary per surface, and on an empty stage this is unambiguously
+         * it: there is nothing else here to compete with.
+         */
+        <Button
+          variant="primary"
+          size="md"
+          data-testid="empty-compose"
+          onClick={() => window.dispatchEvent(new CustomEvent('sh:raise-view', { detail: 'tasks.composer' }))}
+        >
+          New task
+        </Button>
+      }
     >
-      Nothing grazing here yet.
+      The flock is quiet.
     </Empty>
   );
 }
