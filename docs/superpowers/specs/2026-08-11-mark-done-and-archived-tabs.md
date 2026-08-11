@@ -10,7 +10,7 @@
 
 1. A task row gets a **checkmark on hover** — "mark done" — running the archive it already has.
 2. **Archiving preserves the whole group**: every tab, its pane tree, each pane's cwd, its session identity, and the last 1000 lines of what was on screen.
-3. **Restoring reproduces it**: the tabs come back with their splits and their scrollback painted. It does **not** relaunch agents — it rebuilds the *screen*, and each pane is left with its agent's resume line **staged at the prompt, unsubmitted**.
+3. **Restoring reproduces it**: the tabs come back with their splits and their scrollback painted. It does **not** relaunch agents — it rebuilds the *screen*, and each pane is left with its agent's resume line **staged at the prompt, unsubmitted**. Pressing Enter is what resumes an agent, and that is the user's to press.
 4. An archived task **lives one week**, not thirty days.
 
 ## 1. The affordance — `TreeItem.primaryAction`
