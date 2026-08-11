@@ -44,6 +44,9 @@ const AGENTS_RESUME_TARGET = 'agents.resumeTarget';
 const AGENTS_RESUME_COMMAND = 'agents.resumeCommand';
 import { displayState } from './model/lifecycle.ts';
 import { isTaskAgentState, rollUp, tintFor } from './model/agent-rollup.ts';
+import { collectTaskDiff } from './model/diff-collect.ts';
+import type { DiffStats } from './model/diff-stats.ts';
+import { formatElapsed } from './model/elapsed.ts';
 import { capTabRows } from './model/tab-rows.ts';
 import {
   archiveTabsFrom,
@@ -142,6 +145,15 @@ interface TreeItemOut {
   /** The layout root this row stands for — the shell highlights from it. */
   root?: string;
   collapsed?: boolean;
+  /**
+   * The component this row draws itself as, by NAME, and its props.
+   *
+   * Structural like the rest of this interface: the SDK's `TreeItem` is the
+   * contract and this is the shape that satisfies it, so the extension keeps
+   * compiling against types it does not import.
+   */
+  component?: string;
+  data?: unknown;
   command?: { id: string; args?: unknown };
   /**
    * The verb that answers what this row stands for, without doing anything —
@@ -954,6 +966,92 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     }
     if (stale.length > 0) changed();
   };
+
+  /**
+   * What each task has CHANGED — read from git, cached, never per render.
+   *
+   * Transient like `busy` above and for a stronger reason: this is a fact about
+   * a WORKTREE, and a worktree can be edited by anything on the machine. A value
+   * persisted into the store would be a claim about disk that survives the disk
+   * changing, and it would be wrong from the first commit made in a terminal.
+   *
+   * **Refreshed on a beat, not on a render.** `rowFor` runs on every tree
+   * change, and a `git diff` per row per change is a subprocess storm — v1 spent
+   * a third of a core learning that lesson with `RepoSignals`. So the tree reads
+   * whatever is in this map (drawing no diff line when there is nothing yet) and
+   * the refresh below fills it and nudges the tree once, which is the same
+   * shape v1 landed on for PR status.
+   */
+  const diffs = new Map<string, DiffStats>();
+
+  /**
+   * One task's diff, re-read.
+   *
+   * `inFlight` exists because the triggers overlap: a turn finishing, a pane
+   * being focused and the periodic refresh can all fire within a second of each
+   * other, and without it that is three `git diff` processes racing to write the
+   * same key. One read per task at a time; the later callers get the earlier
+   * read's answer on the next beat, which is soon enough for a number that
+   * changes when a human types.
+   */
+  const inFlight = new Set<string>();
+
+  async function refreshDiff(task: TaskRecord): Promise<void> {
+    if (inFlight.has(task.id)) return;
+    inFlight.add(task.id);
+    try {
+      const stats = await collectTaskDiff(api.proposed.process, task.repos.map((repo) => repo.path));
+      const before = diffs.get(task.id);
+      if (stats === null) {
+        // UNKNOWN, not zero — and an unreadable repo does not erase the last
+        // number we did read. A worktree mid-`git worktree remove` would
+        // otherwise blank a card and then restore it a second later.
+        return;
+      }
+      diffs.set(task.id, stats);
+      // Only nudge the tree when the ANSWER moved. The refresh runs on a timer,
+      // and a tree change per tick would re-render the rail twice a minute for
+      // nothing.
+      if (
+        before === undefined ||
+        before.added !== stats.added ||
+        before.removed !== stats.removed ||
+        before.files !== stats.files
+      ) {
+        changed();
+      }
+    } catch (error) {
+      // A git failure is not a reason to take the sidebar down. The card simply
+      // draws no diff line, which is the honest rendering of "we do not know".
+      ctx.log.warn(`diff read failed for ${task.id} — ${String(error)}`);
+    } finally {
+      inFlight.delete(task.id);
+    }
+  }
+
+  /**
+   * Every live task. Archived ones have no worktree to read.
+   *
+   * **Demand-driven, not fired at activate.** Two reasons, and the second is the
+   * one that matters:
+   *
+   *   - Startup is already provisioning worktrees, which is git work the user is
+   *     actually waiting on. Racing it with reads for a number nobody has looked
+   *     at yet spends the same subprocess budget on the wrong thing.
+   *   - A rail that is never drawn should do no git AT ALL. Hanging this off the
+   *     tree read means the cost is paid by the surface that wants it, which is
+   *     also why an app with the sidebar closed is silent.
+   *
+   * It is safe to call from `getChildren`: `inFlight` bounds it to one read per
+   * task, and the nudge below only fires when the ANSWER moved — so read →
+   * refresh → changed → read settles after one round instead of spinning.
+   */
+  function refreshDiffs(): void {
+    for (const task of store.list()) {
+      if (task.lifecycle === 'archived') continue;
+      void refreshDiff(task);
+    }
+  }
 
   const nextId = (): string => `task-${ctx.clock.now()}-${store.list().length}`;
 
@@ -2719,6 +2817,37 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
             );
           }
 
+          /**
+           * What the card is handed — every field optional, and absent whenever
+           * we do not actually know.
+           *
+           * A card that omits a fact is honest; one that invents a zero is not.
+           * The diff is whatever the last read put in `diffs`, which is nothing
+           * at all until the first refresh lands — so a freshly-opened app draws
+           * cards with no diff line for a beat rather than a row of `+0 −0`.
+           */
+          const cardFor = (task: TaskRecord, state: string): unknown => ({
+            mark: markOf(state),
+            elapsed: formatElapsed(task.createdAt, ctx.clock.now()),
+            diff: diffs.get(task.id),
+            repos: task.repos.map((repo, index) => ({
+              name: repo.name,
+              /*
+               * A ROLE name, and the assignment is by POSITION within the task
+               * rather than by a hash of the path.
+               *
+               * A hash would be stable across tasks, which sounds better and is
+               * worse: two repos in one task could collide onto one mark, and
+               * the mark's only job is telling THIS task's repos apart. Position
+               * cannot collide, and §2 gives exactly four.
+               */
+              mark: `repo${(index % 4) + 1}`,
+            })),
+          });
+
+          // The surface that wants the numbers pays for them — see `refreshDiffs`.
+          refreshDiffs();
+
           const all = [...store.list()].sort((a, b) => b.createdAt - a.createdAt);
           if (all.length === 0) {
             // The empty state is the SHELL's, not a fake row: a list saying
@@ -2788,6 +2917,17 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
                */
               root: taskRootId(task.id),
               collapsed: true,
+              /*
+               * The row draws itself as a CARD (ADR 0033's seam, one level
+               * down). `label`, `tint` and `command` above stay honest and stay
+               * required-shaped: they are what a remote member draws in its own
+               * sidebar, what the row is announced as, and what happens when it
+               * is clicked — and none of those may depend on a renderer this
+               * client might not be. A build with no `tasks.card` draws the
+               * ordinary row and loses nothing but the richer form.
+               */
+              component: 'tasks.card',
+              data: cardFor(task, state),
               // Something is happening to it right now — a snapshot being taken,
               // worktrees being rebuilt. The row says so where its status mark
               // is, rather than looking idle for the seconds git takes.
@@ -2905,9 +3045,49 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * which is the argument for having written the test.
    */
   sweep();
+  /*
+   * A beat under the demand-driven read, so a rail left open still tracks work
+   * an agent is doing while nobody is clicking.
+   *
+   * 20s rather than something tighter: a diff moves when a human or an agent
+   * writes a file, and neither does it four times a second. v1's nudge watcher
+   * shipped without a ceiling and spent a third of a core at idle — the lesson
+   * there was that a debounce only cancels PENDING work, so the bound has to be
+   * on the rate itself.
+   */
+  const diffTimer = setInterval(refreshDiffs, 20_000);
+  ctx.subscriptions.push(toDisposable(() => clearInterval(diffTimer)));
 
   ctx.log.info(`ready — ${store.list().length} task(s), data in ${ctx.dataDir}`);
   return { list: () => store.list(), get: (id) => store.get(id) };
+}
+
+/**
+ * A task's displayed state → the mark the card draws.
+ *
+ * The same translation `view-dock` does for `tint`, and it is duplicated on
+ * purpose rather than shared: that one maps the whole vocabulary of every
+ * extension, and this one maps the words THIS extension writes. A shared table
+ * would make either side's new word a change to the other's file.
+ */
+function markOf(state: string): string {
+  switch (state) {
+    case 'working':
+    case 'running':
+      return 'working';
+    case 'blocked':
+    case 'needs-you':
+    case 'needsCheck':
+    case 'needs-check':
+      return 'waiting';
+    case 'error':
+    case 'failed':
+      return 'failed';
+    case 'done':
+      return 'shipped';
+    default:
+      return 'resting';
+  }
 }
 
 /** Which task owns a session, or none. The scoping predicate, in one place. */
