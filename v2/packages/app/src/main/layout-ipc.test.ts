@@ -295,3 +295,49 @@ describe('a paneless root in the envelope', () => {
     expect(await get()).toMatchObject({ ok: false, error: { code: 'no-root' } });
   });
 });
+
+describe('a group remembers which tab it was on', () => {
+  it('returns you to the tab you left when you switch to the group', () => {
+    // Switching to a task means "take me back to this task", which is how every
+    // tabbed application in existence reads it. Landing on tab 1 instead loses
+    // the tab you were working in every time you glance at something else.
+    const { ipc, store } = harness();
+    store.open('task:t1', {}, { group: 'task:t1' });
+    store.newTab('task:t1');
+
+    ipc.setActive(rootId('task:t1/tab-2'));
+    ipc.setActive(HOME);
+    ipc.setActive(rootId('task:t1'));
+    expect(ipc.getActive()).toBe(rootId('task:t1/tab-2'));
+  });
+
+  it('honours a tab named directly, which is what the tab strip clicks', () => {
+    const { ipc, store } = harness();
+    store.open('task:t1', {}, { group: 'task:t1' });
+    store.newTab('task:t1');
+
+    ipc.setActive(rootId('task:t1/tab-2'));
+    ipc.setActive(rootId('task:t1'));
+    // Named a specific tab while already inside the group: it must land there,
+    // or the strip could never move you off the remembered tab.
+    expect(ipc.getActive()).toBe(rootId('task:t1'));
+  });
+
+  it('falls back to the anchor when the remembered tab has gone', () => {
+    const { ipc, store } = harness();
+    store.open('task:t1', {}, { group: 'task:t1' });
+    store.newTab('task:t1');
+
+    ipc.setActive(rootId('task:t1/tab-2'));
+    ipc.setActive(HOME);
+    store.removeRoot(rootId('task:t1/tab-2'));
+    ipc.setActive(rootId('task:t1'));
+    expect(ipc.getActive()).toBe(rootId('task:t1'));
+  });
+
+  it('leaves an ungrouped root exactly as it was', () => {
+    const { ipc } = harness();
+    ipc.setActive(TASK);
+    expect(ipc.getActive()).toBe(TASK);
+  });
+});
