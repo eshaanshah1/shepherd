@@ -1,6 +1,14 @@
 import type { ProcessAPI } from '@shepherd/sdk';
-import type { RepoProvisionedFact } from '@shepherd/ext-tasks/manifest';
-import { describeOutcomes, planHooks, tail, TAIL_LINES, type HookOutcome } from './model/plan.ts';
+import type { RepoProvisionedFact, TaskProvisionedFact } from '@shepherd/ext-tasks/manifest';
+import {
+  describeOutcomes,
+  planHooks,
+  repoName,
+  tail,
+  TAIL_LINES,
+  type HookOutcome,
+  type SetRun,
+} from './model/index.ts';
 
 /**
  * A hook, actually run.
@@ -96,6 +104,101 @@ export async function runHooks(
       outcomes.push({
         kind: run.kind,
         ok: false,
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return describeOutcomes(outcomes);
+}
+
+/**
+ * The environment a SET hook is handed, on top of the one it inherits.
+ *
+ * Four names, and the absences are the design: `WORKTREE_DIR`, `WORKTREE_SRC`,
+ * `WORKTREE_NAME` and `REPO_NAME` would each have to name a single repo, and
+ * this hook has no single repo. A script wanting one checkout says
+ * `$TASK_ROOT/alpha` — the worktree's directory name is the repo's name, and a
+ * set hook knows its own repos by construction, because it was selected by them.
+ *
+ * `HOOK_REPOS` exists so a generic loop is writable without hardcoding names:
+ * `readarray -t repos <<< "$HOOK_REPOS"`.
+ */
+export function setHookEnv(fact: TaskProvisionedFact, worktrees: readonly string[]): Record<string, string> {
+  return {
+    TASK_ROOT: fact.task.root,
+    TASK_SLUG: fact.task.slug,
+    WORKTREE_BRANCH: fact.branch,
+    HOOK_REPOS: worktrees.join('\n'),
+  };
+}
+
+/**
+ * Every matched set hook, at the task root, one at a time.
+ *
+ * Sequential because they share a cwd: concurrency here is racing writes to a
+ * single directory, and there are never many. The order is `matchSets`' — size
+ * ascending, then key — and this only preserves it.
+ *
+ * A failure does not stop the next set. The global→repo skip exists because the
+ * second depends on the first; two unrelated repo sets have no such
+ * relationship, so each reports independently and the messages join.
+ */
+export async function runSetHooks(
+  process_: ProcessAPI,
+  input: {
+    readonly sets: readonly SetRun[];
+    readonly fact: TaskProvisionedFact;
+  },
+): Promise<{ readonly ok: boolean; readonly message?: string }> {
+  if (input.sets.length === 0) return { ok: true };
+
+  const worktreeOf = new Map(input.fact.repos.map((repo) => [repo.path, repo.worktree]));
+  const outcomes: HookOutcome[] = [];
+
+  for (const set of input.sets) {
+    // `matchSets` selected these against the same `repos`, so every path
+    // resolves; `flatMap` is how that is expressed without an unreachable branch
+    // or a silent empty string in the middle of `HOOK_REPOS`.
+    const worktrees = set.paths.flatMap((path) => {
+      const worktree = worktreeOf.get(path);
+      return worktree === undefined ? [] : [worktree];
+    });
+    // The directories under the task root, which is what a person reading the
+    // failure is looking at.
+    const scope = set.paths.map((path) => repoName(path)).join(' + ');
+    const opts = {
+      cwd: input.fact.task.root,
+      env: setHookEnv(input.fact, worktrees),
+      timeoutMs: HOOK_TIMEOUT_MS,
+    };
+
+    try {
+      const result = await process_.exec([BASH, '-lc', set.script], opts);
+      if (result.ok) {
+        outcomes.push({ kind: 'set', ok: true, detail: '', scope });
+        continue;
+      }
+
+      const merged = [result.stdout, result.stderr].filter((part) => part.trim() !== '').join('\n');
+      outcomes.push({
+        kind: 'set',
+        ok: false,
+        scope,
+        detail: tail(
+          merged.trim() === ''
+            ? `exited ${result.code} with no output (a hook that hangs is killed after ${HOOK_TIMEOUT_MS / 1000}s)`
+            : `exited ${result.code}\n${merged}`,
+          TAIL_LINES,
+        ),
+      });
+    } catch (error) {
+      // A hook that cannot even be launched is still the hook's problem, and it
+      // must not become the task's.
+      outcomes.push({
+        kind: 'set',
+        ok: false,
+        scope,
         detail: error instanceof Error ? error.message : String(error),
       });
     }

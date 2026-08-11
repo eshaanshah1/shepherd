@@ -105,4 +105,87 @@ describe('the hook store', () => {
     expect(store.forRepo('/src/alpha')).toBeUndefined();
     expect(store.listRepos()).toEqual([]);
   });
+
+  it('round-trips a set hook, keyed by its repos', () => {
+    const store = createStore(fakeKv(), '/Users/x');
+    store.setForSet(['/src/alpha', '/src/beta'], 'ln -sf alpha/dist beta/vendor');
+    expect(store.forSet(['/src/alpha', '/src/beta'])).toBe('ln -sf alpha/dist beta/vendor');
+  });
+
+  it('treats {a,b} and {b,a} as ONE set', () => {
+    // Sorted before the key is built. Two orders of the same repos are one hook,
+    // or the editor and the CLI would disagree about what exists.
+    const store = createStore(fakeKv(), '/Users/x');
+    store.setForSet(['/src/beta', '/src/alpha'], 'echo hi');
+    expect(store.forSet(['/src/alpha', '/src/beta'])).toBe('echo hi');
+  });
+
+  it('expands ~ in every member, so two spellings are one set', () => {
+    const store = createStore(fakeKv(), '/Users/x');
+    store.setForSet(['~/dev/alpha', '/src/beta'], 'echo hi');
+    expect(store.forSet(['/Users/x/dev/alpha', '/src/beta'])).toBe('echo hi');
+  });
+
+  it('collapses a repeated repo to one member', () => {
+    // After expansion, not before — `~/dev/alpha` and `/Users/x/dev/alpha` are
+    // the same repo typed twice, and a two-member set of one repo would key
+    // differently from the one-member set that means the same thing.
+    const store = createStore(fakeKv(), '/Users/x');
+    store.setForSet(['~/dev/alpha', '/Users/x/dev/alpha'], 'echo hi');
+    expect(store.forSet(['/Users/x/dev/alpha'])).toBe('echo hi');
+    expect(store.listSets()).toEqual([{ paths: ['/Users/x/dev/alpha'], script: 'echo hi' }]);
+  });
+
+  it('clears a set hook on an empty script', () => {
+    const store = createStore(fakeKv(), '/Users/x');
+    store.setForSet(['/src/alpha', '/src/beta'], 'echo hi');
+    store.setForSet(['/src/alpha', '/src/beta'], '  \n ');
+    expect(store.forSet(['/src/alpha', '/src/beta'])).toBeUndefined();
+    expect(store.listSets()).toEqual([]);
+  });
+
+  it('refuses a set with no repos', () => {
+    // It would be a subset of every task — a second global hook, with a key
+    // indistinguishable from the prefix itself.
+    const store = createStore(fakeKv(), '/Users/x');
+    expect(() => store.setForSet([], 'echo everywhere')).toThrow(/at least one repo/);
+  });
+
+  it('answers undefined for a read of no repos rather than throwing', () => {
+    // Asymmetric on purpose: a WRITE forms an identity and must be refused, but
+    // this read runs inside somebody's provisioning and "there is no hook" is
+    // the honest degradation.
+    const store = createStore(fakeKv(), '/Users/x');
+    expect(store.forSet([])).toBeUndefined();
+  });
+
+  it('keeps repo hooks and set hooks in separate namespaces', () => {
+    const store = createStore(fakeKv(), '/Users/x');
+    store.setForRepo('/src/alpha', 'echo repo');
+    store.setForSet(['/src/alpha'], 'echo set');
+    expect(store.forRepo('/src/alpha')).toBe('echo repo');
+    expect(store.forSet(['/src/alpha'])).toBe('echo set');
+    expect(store.listRepos()).toEqual([{ path: '/src/alpha', script: 'echo repo' }]);
+    expect(store.listSets()).toEqual([{ paths: ['/src/alpha'], script: 'echo set' }]);
+  });
+
+  it('lists sets by size then key, and never a repo or the global hook', () => {
+    const store = createStore(fakeKv(), '/Users/x');
+    store.setGlobal('echo global');
+    store.setForRepo('/src/alpha', 'echo repo');
+    store.setForSet(['/src/beta', '/src/gamma'], 'bg');
+    store.setForSet(['/src/alpha', '/src/beta'], 'ab');
+    store.setForSet(['/src/alpha'], 'a');
+    expect(store.listSets()).toEqual([
+      { paths: ['/src/alpha'], script: 'a' },
+      { paths: ['/src/alpha', '/src/beta'], script: 'ab' },
+      { paths: ['/src/beta', '/src/gamma'], script: 'bg' },
+    ]);
+  });
+
+  it('drops a stored set that no longer parses rather than crashing', () => {
+    const store = createStore(fakeKv({ 'hook:set:/src/alpha': { script: 42 } }), '/Users/x');
+    expect(store.forSet(['/src/alpha'])).toBeUndefined();
+    expect(store.listSets()).toEqual([]);
+  });
 });

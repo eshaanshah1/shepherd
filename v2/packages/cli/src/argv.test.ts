@@ -122,6 +122,45 @@ describe('parseArgv', () => {
     });
   });
 
+  it('accumulates --repos into an array, so a set is a set', () => {
+    expect(
+      parseArgv([
+        'worktree-hook',
+        'set',
+        '--repos',
+        '~/dev/alpha',
+        '--repos',
+        '~/dev/beta',
+        '--script',
+        'ln -sf a b',
+      ]),
+    ).toMatchObject({
+      ok: true,
+      command: 'worktreeHook.set',
+      args: { repos: ['~/dev/alpha', '~/dev/beta'], script: 'ln -sf a b' },
+    });
+  });
+
+  it('accumulates a SINGLE --repos into a one-element array', () => {
+    // The shape of an argument must not depend on how many were given — the same
+    // rule that keeps `--repo` a string. A one-repo set is a real scope, and it
+    // must not arrive as a bare string that names the repo hook instead.
+    expect(parseArgv(['worktree-hook', 'clear', '--repos', '~/dev/alpha'])).toMatchObject({
+      ok: true,
+      args: { repos: ['~/dev/alpha'] },
+    });
+  });
+
+  it('does not accumulate --repos for a noun that does not declare it', () => {
+    // `task new` accumulates `--repo` into `{path, name}` objects; `--repos`
+    // there is an ordinary flag and must stay a string rather than silently
+    // becoming a second way to name repos.
+    expect(parseArgv(['task', 'new', '--title', 'x', '--repos', 'a'])).toMatchObject({
+      ok: true,
+      args: { repos: 'a' },
+    });
+  });
+
   it('still accumulates repeated --repo for task new', () => {
     expect(parseArgv(['task', 'new', '--title', 'x', '--repo', '/a', '--repo', '/b'])).toMatchObject({
       ok: true,

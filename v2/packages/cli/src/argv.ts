@@ -61,6 +61,24 @@ const REPO_FLAG = 'repo';
  */
 const REPO_REPEATS = 'task';
 
+/**
+ * Flags that ALWAYS accumulate into an array, per noun — even given once.
+ *
+ * `--repos` names a SET of repos, which is a different scope from `--repo`'s one
+ * repo: a set hook runs once at the task root, a repo hook runs in each
+ * worktree. Two flags one letter apart is not lovely, and the alternatives are
+ * worse: making `--repo` repeat for this noun would change the shape of the
+ * existing one-repo call, and a `set-group`/`clear-group`/`get-group` verb triple
+ * doubles the verb table for one concept.
+ *
+ * Always an array, never "an array once it repeats", for the reason
+ * `REPO_REPEATS` gives above: the shape of an argument must not depend on how
+ * many were given.
+ */
+const ACCUMULATES: Readonly<Record<string, readonly string[]>> = {
+  'worktree-hook': ['repos'],
+};
+
 export function parseArgv(argv: readonly string[], env: Record<string, string | undefined> = {}): Parsed {
   const [noun, verb, ...rest] = argv;
   if (noun === undefined) {
@@ -80,7 +98,7 @@ export function parseArgv(argv: readonly string[], env: Record<string, string | 
     return fail(`unknown verb "${verb ?? ''}" for "${noun}". Known: ${known}`);
   }
 
-  const parsedArgs = parseFlags(rest, noun === REPO_REPEATS);
+  const parsedArgs = parseFlags(rest, noun);
   if (!parsedArgs.ok) return parsedArgs;
 
   return {
@@ -99,10 +117,11 @@ export function parseArgv(argv: readonly string[], env: Record<string, string | 
 
 function parseFlags(
   rest: readonly string[],
-  repoRepeats: boolean,
+  noun: string,
 ): { ok: true; value: Record<string, unknown> } | { ok: false; error: string } {
   const args: Record<string, unknown> = {};
   const repos: { path: string; name: string }[] = [];
+  const accumulates = ACCUMULATES[noun] ?? [];
 
   for (let i = 0; i < rest.length; i += 1) {
     const token = rest[i] ?? '';
@@ -121,10 +140,13 @@ function parseFlags(
       value = token.slice(eq + 1);
     }
 
-    if (name === REPO_FLAG && repoRepeats) {
+    if (name === REPO_FLAG && noun === REPO_REPEATS) {
       // The name is the basename, which is what the task root calls it and what
       // namespaces a skill collision.
       repos.push({ path: value, name: value.split('/').filter((p) => p !== '').pop() ?? value });
+    } else if (accumulates.includes(name)) {
+      const seen = args[name];
+      args[name] = Array.isArray(seen) ? [...(seen as string[]), value] : [value];
     } else {
       args[name] = value;
     }

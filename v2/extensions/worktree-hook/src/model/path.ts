@@ -17,3 +17,16 @@ export function expandHome(path: string, home: string): string {
   if (!path.startsWith('~/')) return path;
   return `${home}${path.slice(1)}`;
 }
+
+/**
+ * `/Users/x/dev/alpha` → `alpha`.
+ *
+ * The same basename rule `tasks` uses to name a worktree's directory and the CLI
+ * uses to name a picked repo, so a set labelled `alpha + beta` names the two
+ * directories that are actually under the task root. A local copy for
+ * `expandHome`'s reason above: one extension may not value-import another, and
+ * this is one line of string handling.
+ */
+export function repoName(path: string): string {
+  return path.split('/').filter((part) => part !== '').pop() ?? path;
+}

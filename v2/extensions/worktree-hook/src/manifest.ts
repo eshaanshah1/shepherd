@@ -18,6 +18,12 @@ export const TASKS_ID = 'shepherd.tasks';
  */
 export const REPO_PROVISIONED_POINT_ID = 'tasks.repoProvisioned';
 
+/**
+ * `tasks.taskProvisioned`, spelled out for `REPO_PROVISIONED_POINT_ID`'s reason
+ * and pinned the same way in `manifest.test.ts`.
+ */
+export const TASK_PROVISIONED_POINT_ID = 'tasks.taskProvisioned';
+
 export const WORKTREE_HOOK_COMMANDS = {
   get: 'worktreeHook.get',
   set: 'worktreeHook.set',

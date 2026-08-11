@@ -45,7 +45,14 @@ fight it.
    — the API and the M0–M4 milestones.
 4. [`docs/superpowers/specs/2026-08-06-architecture-review.md`](docs/superpowers/specs/2026-08-06-architecture-review.md)
    — what v1 got wrong; **its Rebuild checklist is normative for v2**.
-5. ADRs [0021](.claude/adr/0021-v2-store-is-node-sqlite.md)–[0037](.claude/adr/0037-v2-the-daemon-can-be-replaced-so-the-mirror-is-re-read-not-remembered.md).
+5. ADRs [0021](.claude/adr/0021-v2-store-is-node-sqlite.md)–[0039](.claude/adr/0039-v2-a-task-is-a-second-provisioning-subject-not-a-finer-step.md).
+   **0039** is why `tasks` has a *second* provisioning point despite
+   `REPO_PROVISIONED_POINT`'s comment forbidding one: the rule is against finer
+   *steps* of a repo's provisioning, and a question about the **task** is a
+   different subject. Read it before adding a third — the bar is a new subject,
+   not a new moment. It also records why widening a fact delivered N times cannot
+   answer a question about a *set* of repos: the provider would have to guess
+   which delivery was the last, and nothing in the fact says how many are coming.
    **0029–0032 are M3's**, and each records something measured rather than
    reasoned: what Claude Code actually reads at a generated task root, why the
    transport deadline is the caller's, how a contributed view declares itself

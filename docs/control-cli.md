@@ -114,13 +114,13 @@ bill.
 customization; the rest is the network). Nothing user-facing may wait on one — see
 ADR 0038.
 
-### The worktree hook in v2 — per REPO, not per workspace
+### The worktree hook in v2 — per REPO or per SET, not per workspace
 | Command | Description |
 |---|---|
-| `shepherd worktree-hook get [--repo <path>]` | The script for that repo, or the global one, plus every repo that has a hook. |
-| `shepherd worktree-hook set [--repo <path>] --script <sh>` | Set it. An empty script clears. |
-| `shepherd worktree-hook clear [--repo <path>]` | Clear it. |
-| `shepherd worktree-hook test-run --script <sh> --at <dir>` | Run a script against a directory you nominate, without saving it. |
+| `shepherd worktree-hook get [--repo <path>] [--repos <path> …]` | The script for that repo or that set, or the global one, plus every repo and every set that has a hook. |
+| `shepherd worktree-hook set [--repo <path>] [--repos <path> …] --script <sh>` | Set it. An empty script clears. |
+| `shepherd worktree-hook clear [--repo <path>] [--repos <path> …]` | Clear it. |
+| `shepherd worktree-hook test-run [--repos <path> …] --script <sh> --at <dir>` | Run a script against a directory you nominate, without saving it. With `--repos` it runs as a set hook. |
 
 A v2 task worktrees several repos at once, so the v1 unit does not survive the move:
 what a hook does — copy *this* repo's `.env`, symlink *this* repo's vendored
@@ -133,6 +133,27 @@ The environment is v1's, unchanged (`WORKTREE_DIR`, `WORKTREE_SRC`, `WORKTREE_BR
 worktree and the shell is still `/bin/bash -lc`. So `scripts/worktree-hook.sh` runs
 under either build. A non-zero exit keeps the worktree and still spawns the agents —
 the repo's row reads `ready — hook failed` and carries the last 20 lines of output.
+
+`--repo` is one repo and a hook in **each** worktree. `--repos` repeats and names a
+**set**, whose hook runs **once, at the task root**, when every one of them is on
+the task — subset, so a third repo joining does not silence a pair. Giving both is
+an error rather than a precedence rule nobody would remember. That scope exists for
+wiring that lives *between* checkouts and so cannot be written from inside either:
+
+```sh
+shepherd worktree-hook set \
+  --repos ~/Home/dev/alpha --repos ~/Home/dev/beta \
+  --script 'ln -sf "$TASK_ROOT/alpha/dist" "$TASK_ROOT/beta/vendor/alpha"'
+```
+
+A set hook gets `TASK_ROOT` (also its cwd), `TASK_SLUG`, `WORKTREE_BRANCH` and
+`HOOK_REPOS` (its own worktree dirs, newline-separated) — and deliberately none of
+the `WORKTREE_*`/`REPO_NAME` names, each of which would have to name one repo when
+this hook has none. A failure reads `— set hook failed` on the **task's** row.
+
+Note the **global** hook runs once per worktree and the worktrees now provision
+concurrently, so a global hook doing machine-wide setup can run several copies of
+itself and has to guard itself.
 
 **v1 hooks do not migrate.** They were per-workspace and there is no sound mapping to
 a repo, so an existing `workspace hook` has to be entered once as a repo hook:

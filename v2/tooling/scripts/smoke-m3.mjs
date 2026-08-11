@@ -23,6 +23,7 @@ killStrays(FLAG);
 const userData = mkdtempSync(join(tmpdir(), 'shepherd-v2-m3-'));
 const support = mkdtempSync(join(tmpdir(), 'shepherd-v2-m3-sup-'));
 const repo = mkdtempSync(join(tmpdir(), 'shepherd-v2-m3-repo-'));
+const repo2 = mkdtempSync(join(tmpdir(), 'shepherd-v2-m3-repo2-'));
 // A throwaway HOME as well as a throwaway support dir, because `ctx.homeDir` is
 // written to: `tasks` pre-seeds Claude Code's trust record for every task root
 // it generates, and without this the smoke would leave records for a dozen
@@ -36,16 +37,26 @@ writeFileSync(join(home, '.claude.json'), '{}\n');
 
 // `-c user.*` per command: an unset user.name fails the commit, and gpgsign
 // would block it on a passphrase prompt with no UI to answer (v1's lesson).
-const git = (...args) =>
+const gitIn = (cwd, ...args) =>
   spawnSync('git', ['-c', 'user.email=smoke@shepherd', '-c', 'user.name=smoke', '-c', 'commit.gpgsign=false', ...args], {
-    cwd: repo,
+    cwd,
     encoding: 'utf8',
   });
+const git = (...args) => gitIn(repo, ...args);
+
 git('init', '-q', '.');
 writeFileSync(join(repo, 'README.md'), 'hello\n');
 writeFileSync(join(repo, 'gone.txt'), 'delete me\n');
 git('add', '-A');
 git('commit', '-qm', 'init');
+
+// A second repo, so the smoke can create a task of TWO repos and assert that one
+// set hook ran once in the directory holding both. Only what `worktree add`
+// needs: a commit, so the branch it forks has somewhere to start.
+gitIn(repo2, 'init', '-q', '.');
+writeFileSync(join(repo2, 'README.md'), 'hello from web\n');
+gitIn(repo2, 'add', '-A');
+gitIn(repo2, 'commit', '-qm', 'init');
 
 let output = '';
 let status = 1;
@@ -60,6 +71,7 @@ try {
       `--shepherd-support=${support}`,
       `--shepherd-home=${home}`,
       `--shepherd-m3-repo=${repo}`,
+      `--shepherd-m3-repo2=${repo2}`,
     ],
     {
       encoding: 'utf8',
@@ -77,6 +89,7 @@ try {
   rmSync(support, { recursive: true, force: true });
   rmSync(home, { recursive: true, force: true });
   rmSync(repo, { recursive: true, force: true });
+  rmSync(repo2, { recursive: true, force: true });
 }
 
 check(status === 0, `electron exited ${status}`);
@@ -89,6 +102,10 @@ check(
 check(
   output.includes('ok — the repo’s worktree hook ran before the task root was built'),
   'the repo’s worktree hook ran in its worktree, under a real shell',
+);
+check(
+  output.includes('ok — both repos provisioned and the set hook ran at the task root'),
+  'the set hook ran at the task root, under a real shell',
 );
 check(output.includes('ok — the round trip is byte-identical'), 'archive/restore kept the work');
 check(output.includes('ok — creating a task alerted nobody'), 'the silence held');

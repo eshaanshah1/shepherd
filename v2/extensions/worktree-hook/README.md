@@ -22,15 +22,24 @@ not be committable into a repo somebody else clones.
 
 | Scope | Key | Runs |
 |---|---|---|
-| Global | `hook:global` | first, in every worktree |
+| Global | `hook:global` | first, in every worktree — **possibly several at once** |
 | Per repo | `hook:repo:<absolute source repo path>` | after the global one, in that repo's worktree |
+| Per set | `hook:set:` + the paths, `\n`-joined | once, at the **task root**, after every worktree is ready |
 
 The **source repo path** is the key, because it is the only stable identity a
 repo has in v2 — there is no repo registry, just the `{path, name}` a user picks
 per task. `~` is expanded before the key is built, so `~/dev/alpha` and
 `/Users/x/dev/alpha` are one hook rather than two.
 
-Setting a hook to an empty or whitespace-only script **clears** it.
+A **set**'s members are expanded, then deduped, then sorted, then joined — in
+that order, because the joined string *is* the hook. Deduping after expansion
+makes `~/dev/alpha` and `/Users/x/dev/alpha` one member; sorting makes `{a,b}`
+and `{b,a}` one hook. The prefix is `hook:set:` and not `hook:repos:`, which is
+one character away from being caught by `startsWith('hook:repo:')`.
+
+Setting a hook to an empty or whitespace-only script **clears** it. A set with
+**no** repos is refused on write: it would be a subset of every task — a second
+global hook — with a key indistinguishable from the bare prefix.
 
 ## How it runs
 
@@ -60,6 +69,47 @@ reach them.
 
 stdout and stderr are merged. A hook is killed after **600 seconds**.
 
+**The global hook runs once per worktree, and the worktrees provision
+concurrently.** So a global hook doing machine-wide setup — `mise install`,
+warming a shared cache, anything that writes one path for all of them — can have
+several copies of itself running at the same time, and has to guard itself with a
+lockfile or a sentinel. A repo hook and a set hook each get one invocation per
+task and need no such guard.
+
+## How a set hook runs
+
+Same shell, same timeout, same tail. What differs is where and when: `cwd` is the
+**task root**, and it runs once, after every repo's worktree exists and the root
+has been written.
+
+| Variable | Value |
+|---|---|
+| `TASK_ROOT` | the task root, which is also the cwd |
+| `TASK_SLUG` | the task slug |
+| `WORKTREE_BRANCH` | the task's branch |
+| `HOOK_REPOS` | this set's worktree dirs, newline-separated, in the key's sorted order |
+
+`HOOK_REPOS` is there so a generic loop is writable without hardcoding names
+(`readarray -t repos <<< "$HOOK_REPOS"`). A script wanting one specific checkout
+says `$TASK_ROOT/alpha` — a worktree's directory name is its repo's name, and a
+set hook knows its own repos by construction, because it was selected by them.
+
+**Deliberately absent: `WORKTREE_DIR`, `WORKTREE_SRC`, `WORKTREE_NAME`,
+`REPO_NAME`.** Each would have to name a single repo, and this hook has no single
+repo. Inherited from whichever path sorted first they would mean something
+different than they do one scope up, and the failure that produces is a script
+that ran successfully against the wrong checkout.
+
+Matching is **subset**: the hook fires when every repo in it is on the task,
+whatever else is. A task carrying `{1,2,3}` therefore runs the `{1,2}`, `{1,3}`,
+`{2,3}` and `{1,2,3}` hooks — wiring written for a pair stays valid when a third
+repo joins. They run **sequentially**, ordered by set size then by key: they share
+one cwd, so concurrency there is racing writes to a single directory, and a
+smaller set is the more basic wiring a larger one plausibly builds on.
+
+A **one-repo set is allowed** and is not a spelling of the repo hook: different
+cwd, different moment, and it fires once rather than per worktree.
+
 ## When a hook fails
 
 The worktree is kept, provisioning continues, the task root is still built and
@@ -74,6 +124,16 @@ output, with a count of what was dropped.
 If the **global** hook fails, that repo's own hook is skipped — it likely
 depended on the global one, and running it anyway produces a second failure
 caused by the first. The message says so.
+
+For a **set** hook, three things differ. A set that does not match is **not** a
+failure: it is silent, and it silently covers the case where a repo of its own
+failed to provision or failed its hook, because such a repo is absent from the
+ready set the match is made against. A set hook that *does* fail puts
+`<state> — set hook failed` on the **task's** row (appended, so the row's state
+still reads true) and its message on `tasks.list`'s task-level `hookIssue`. And
+matched sets are **siblings, not a chain**: one failing does not skip the rest,
+and their messages join. The global→repo skip exists only because the second
+depends on the first; two unrelated repo sets have no such relationship.
 
 ## Where it plugs in
 
@@ -98,12 +158,30 @@ fresh one.
 ⌘⇧H raises the editor. From the CLI:
 
 ```sh
-shepherd worktree-hook get                                    # the global hook, plus every repo that has one
+shepherd worktree-hook get                                    # the global hook, plus every repo and set that has one
 shepherd worktree-hook get   --repo ~/dev/alpha
 shepherd worktree-hook set   --repo ~/dev/alpha --script 'cp "$WORKTREE_SRC/.env" .'
 shepherd worktree-hook clear --repo ~/dev/alpha
 shepherd worktree-hook test-run --script 'ls' --at /tmp/throwaway
+
+# a SET: --repos repeats, and one hook runs at the task root
+shepherd worktree-hook set   --repos ~/dev/alpha --repos ~/dev/beta \
+  --script 'ln -sf "$TASK_ROOT/alpha/dist" "$TASK_ROOT/beta/vendor/alpha"'
+shepherd worktree-hook clear --repos ~/dev/alpha --repos ~/dev/beta
+shepherd worktree-hook test-run --repos ~/dev/alpha --repos ~/dev/beta \
+  --script 'echo "$HOOK_REPOS"' --at /tmp/throwaway
 ```
+
+`--repo` is one repo and a hook in **each** worktree; `--repos` repeats and names
+a **set**, whose hook runs **once at the task root**. Giving both is an error
+rather than a precedence rule nobody would remember. `--repos` always accumulates
+into an array, even given once, because the shape of an argument must not depend
+on how many were passed.
+
+`test-run` takes `--repos` too, and it matters more than it looks: a set script
+tested through the repo path runs with `TASK_ROOT` unset, so
+`cp "$TASK_ROOT/alpha/.env" .` becomes `cp /alpha/.env .` and the test reports a
+bug that does not exist.
 
 `test-run` is v1's "Test run": it runs a script against a directory you nominate
 so a typo is found before a worktree exists rather than after. The directory is
@@ -124,3 +202,10 @@ keeps out of an extension.
   mapping to a repo. An existing workspace hook has to be entered once as a repo
   hook.
 - **No per-repo timeout.** One number, 600s, until something needs otherwise.
+- **No dedupe of identical scripts, and no "every task, once" scope.** Both were
+  considered and declined; the design doc's *Rejected* section has the argument.
+  The short version: a script is one opaque string to `bash -lc`, so the commands
+  inside two hooks cannot be compared; deduping whole scripts would have to key on
+  the environment too, at which point the case it exists for stops matching; and
+  the empty set — a hook running once per task at the root, unconditionally — was
+  offered and turned down, leaving `hook:global` carrying both of its jobs.

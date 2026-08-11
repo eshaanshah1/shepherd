@@ -38,7 +38,14 @@ import {
   type ViewProvider,
 } from '@shepherd/sdk';
 import { activate } from './index.ts';
-import { REPO_PROVISIONED_POINT, type RepoProvisioned, type RepoProvisionedFact } from './manifest.ts';
+import {
+  REPO_PROVISIONED_POINT,
+  TASK_PROVISIONED_POINT,
+  type RepoProvisioned,
+  type RepoProvisionedFact,
+  type TaskProvisioned,
+  type TaskProvisionedFact,
+} from './manifest.ts';
 import { TASK_SCHEMA_VERSION, type TaskRecord, type TaskSession } from './store.ts';
 import { taskRootId } from './model/root-id.ts';
 
@@ -1679,7 +1686,13 @@ describe('tasks.repoProvisioned', () => {
     });
     await until(() => worktrees.length === 2);
 
-    expect(worktrees).toEqual([join(h.dataDir, 'fix-login', 'api'), join(h.dataDir, 'fix-login', 'web')]);
+    // Sorted: the chains run concurrently, so which repo's provider is called
+    // first is a race. What this test is about is that each repo gets one call
+    // in its OWN worktree — the ordering claim that does matter lives in
+    // `provisioning repos concurrently` below, on `landed`.
+    expect([...worktrees].sort()).toEqual(
+      [join(h.dataDir, 'fix-login', 'api'), join(h.dataDir, 'fix-login', 'web')].sort(),
+    );
   });
 
   it('is not consulted for a repo whose worktree never appeared', async () => {
@@ -1781,6 +1794,298 @@ describe('tasks.repoProvisioned', () => {
     await until(() => seen.length > 0);
 
     expect(seen).toEqual([join(h.dataDir, 'fix-login', 'api')]);
+  });
+});
+
+/**
+ * `tasks.taskProvisioned` — the second and last provisioning seam.
+ *
+ * `repoProvisioned` is delivered once per repo and carries nothing about its
+ * siblings, so a provider gated on a SET of repos cannot be built on it: it
+ * would either fire N times or have to accumulate state across calls and guess
+ * which delivery was the last, and nothing in that fact says how many are
+ * coming. This one is delivered once for the whole task.
+ *
+ * `repos` carries only the checkouts that landed AND that no `repoProvisioned`
+ * provider complained about. That single definition is the whole skip rule: a
+ * repo that failed either step is simply absent from the set it would have
+ * matched, so there is no second cascade to reason about.
+ */
+describe('tasks.taskProvisioned', () => {
+  const API = { name: 'api', path: '/src/api' };
+  const WEB = { name: 'web', path: '/src/web' };
+
+  it('hands a provider the task, its branch and every ready repo', async () => {
+    const h = (live = harness());
+    const seen: TaskProvisionedFact[] = [];
+    h.point<TaskProvisioned>(TASK_PROVISIONED_POINT).register(async (fact) => {
+      seen.push(fact);
+      return { ok: true };
+    });
+
+    await h.run('tasks.create', { title: 'Fix login', repos: [API, WEB] });
+    await until(() => seen.length > 0);
+
+    expect(seen).toEqual([
+      {
+        task: { slug: 'fix-login', root: join(h.dataDir, 'fix-login') },
+        branch: 'fix-login',
+        repos: [
+          { path: '/src/api', name: 'api', worktree: join(h.dataDir, 'fix-login', 'api') },
+          { path: '/src/web', name: 'web', worktree: join(h.dataDir, 'fix-login', 'web') },
+        ],
+      },
+    ]);
+  });
+
+  it('runs ONCE for the task, after the root is written and before any pane opens', async () => {
+    // The mirror image of `repoProvisioned`'s ordering test, and deliberately
+    // the opposite answer on the first assertion: a set hook works at the task
+    // root, so the root has to exist and be finished — materialize replaces
+    // stale links, and a hook that ran before it could have its work removed.
+    const h = (live = harness());
+    let calls = 0;
+    let rootAtCallTime: boolean | undefined;
+    let panesAtCallTime = 0;
+    h.point<TaskProvisioned>(TASK_PROVISIONED_POINT).register(async () => {
+      calls += 1;
+      rootAtCallTime = existsSync(join(h.dataDir, 'fix-login', 'CLAUDE.md'));
+      panesAtCallTime = h.invoked.filter((call) => call.id === 'layout.openRoot').length;
+      return { ok: true };
+    });
+
+    await h.run('tasks.create', { title: 'Fix login', repos: [API, WEB] });
+    await until(() => rootAtCallTime !== undefined);
+
+    expect(calls).toBe(1);
+    expect(rootAtCallTime).toBe(true);
+    expect(panesAtCallTime).toBe(0);
+  });
+
+  it('waits for a slow provider rather than racing it', async () => {
+    const h = (live = harness());
+    let finished = false;
+    h.point<TaskProvisioned>(TASK_PROVISIONED_POINT).register(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      finished = true;
+      return { ok: true };
+    });
+
+    await h.run('tasks.create', { title: 'Fix login', repos: [API] });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    expect(finished).toBe(true);
+  });
+
+  it('leaves out a repo whose worktree never appeared', async () => {
+    const h = (live = harness({
+      git: (call) =>
+        call.args[0] === 'worktree' && call.args[1] === 'add' && call.opts.cwd === '/src/web'
+          ? { ok: false, code: 128, stdout: '', stderr: 'fatal: nope\n' }
+          : OK,
+    }));
+    const seen: TaskProvisionedFact[] = [];
+    h.point<TaskProvisioned>(TASK_PROVISIONED_POINT).register(async (fact) => {
+      seen.push(fact);
+      return { ok: true };
+    });
+
+    await h.run('tasks.create', { title: 'Fix login', repos: [API, WEB] });
+    await until(() => seen.length > 0);
+
+    expect(seen[0]?.repos.map((repo) => repo.name)).toEqual(['api']);
+  });
+
+  it('leaves out a repo a repoProvisioned provider complained about', async () => {
+    // The checkout exists, so it is not a failed repo — but something it needed
+    // did not happen, and cross-repo wiring against a half-provisioned checkout
+    // produces a second failure caused by the first.
+    const h = (live = harness());
+    h.point<RepoProvisioned>(REPO_PROVISIONED_POINT).register(async (fact) =>
+      fact.repo.name === 'web' ? { ok: false, message: 'the repo hook failed — exited 3' } : { ok: true },
+    );
+    const seen: TaskProvisionedFact[] = [];
+    h.point<TaskProvisioned>(TASK_PROVISIONED_POINT).register(async (fact) => {
+      seen.push(fact);
+      return { ok: true };
+    });
+
+    await h.run('tasks.create', { title: 'Fix login', repos: [API, WEB] });
+    await until(() => seen.length > 0);
+
+    expect(seen[0]?.repos.map((repo) => repo.name)).toEqual(['api']);
+  });
+
+  it('degrades the task rather than failing it, and says so on its row', async () => {
+    const warnings: string[] = [];
+    const h = (live = harness({ onWarn: (line) => warnings.push(line) }));
+    h.point<TaskProvisioned>(TASK_PROVISIONED_POINT).register(async () => ({
+      ok: false,
+      message: 'the set hook api + web failed — exited 3\nln: nope',
+    }));
+
+    const created = await h.run<{ id: string }>('tasks.create', { title: 'Fix login', repos: [API] });
+    // Until the row is no longer BUSY: `whileBusy` wraps the whole of
+    // provisioning and overwrites the description with `provisioning…` while it
+    // holds, so asserting the description before then reads the spinner.
+    await until(async () => (await rowOf(h, created.id))?.busy !== true);
+
+    const listed = await h.run<{ hookIssue?: string }[]>('tasks.list');
+    expect(listed[0]?.hookIssue).toBe('the set hook api + web failed — exited 3\nln: nope');
+    expect((await rowOf(h, created.id))?.description).toContain('— set hook failed');
+    expect(h.invoked.some((call) => call.id === 'layout.openRoot')).toBe(true);
+    expect(warnings.some((line) => line.includes('ln: nope'))).toBe(true);
+  });
+
+  it('treats a throwing provider as a failure rather than losing the task', async () => {
+    const h = (live = harness());
+    h.point<TaskProvisioned>(TASK_PROVISIONED_POINT).register(async () => {
+      throw new Error('boom');
+    });
+
+    await h.run('tasks.create', { title: 'Fix login', repos: [API] });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    const listed = await h.run<{ hookIssue?: string }[]>('tasks.list');
+    expect(listed[0]?.hookIssue).toContain('boom');
+  });
+
+  it('runs every provider in registration order and joins their messages', async () => {
+    const h = (live = harness());
+    const point = h.point<TaskProvisioned>(TASK_PROVISIONED_POINT);
+    point.register(async () => ({ ok: false, message: 'first failed' }));
+    point.register(async () => ({ ok: false, message: 'second failed' }));
+
+    await h.run('tasks.create', { title: 'Fix login', repos: [API] });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    const listed = await h.run<{ hookIssue?: string }[]>('tasks.list');
+    expect(listed[0]?.hookIssue).toBe('first failed\nsecond failed');
+  });
+});
+
+/**
+ * Provisioning repos concurrently.
+ *
+ * Serially this was probe 2's ~2.5s of network per repo, spent one repo at a
+ * time. Two things the serial loop got for free have to be asserted now: a
+ * chain owns its failures, and `landed` is read back by INDEX rather than by
+ * completion — it feeds `synthTaskRoot`, so a root ordered by whichever git
+ * finished first would vary run to run for reasons nobody can see.
+ */
+describe('provisioning repos concurrently', () => {
+  const API = { name: 'api', path: '/src/api' };
+  const WEB = { name: 'web', path: '/src/web' };
+
+  it('runs the repos at the same time rather than one after another', async () => {
+    // Deterministic, not timing-based: api's chain is HELD open on its fetch,
+    // and web's chain has to reach `worktree add` while it is still parked.
+    // Serially it never would, and `until` fails.
+    let release: (() => void) | undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const h = (live = harness({
+      git: async (call) => {
+        if (call.opts.cwd === '/src/api' && call.args[0] === 'fetch') await held;
+        return OK;
+      },
+    }));
+
+    await h.run('tasks.create', { title: 'Fix login', repos: [API, WEB] });
+    await until(() => h.git.some((call) => call.opts.cwd === '/src/web' && call.args[0] === 'worktree'));
+
+    release?.();
+  });
+
+  it('lands them in the TASK’s order even when they finish in the other one', async () => {
+    // api is the slow one, so completion order is the reverse of the task's.
+    // An implementation that appended on completion answers ['web', 'api'].
+    const h = (live = harness({
+      git: async (call) => {
+        // Only the LAST call of api's chain, not all six of them: one 20ms delay
+        // inverts completion order, where delaying every git call costs more
+        // wall clock than `until`'s tick budget and times out instead.
+        if (call.opts.cwd === '/src/api' && call.args[0] === 'worktree' && call.args[1] === 'add') {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        return OK;
+      },
+    }));
+    const seen: TaskProvisionedFact[] = [];
+    h.point<TaskProvisioned>(TASK_PROVISIONED_POINT).register(async (fact) => {
+      seen.push(fact);
+      return { ok: true };
+    });
+
+    await h.run('tasks.create', { title: 'Fix login', repos: [API, WEB] });
+    await until(() => seen.length > 0);
+
+    expect(seen[0]?.repos.map((repo) => repo.name)).toEqual(['api', 'web']);
+  });
+
+  it('carries that order into the generated CLAUDE.md', async () => {
+    // The reason the order matters at all: this file is the only thing loaded at
+    // session start, and it is what namespaces a skill collision.
+    const h = (live = harness({
+      git: async (call) => {
+        // Only the LAST call of api's chain, not all six of them: one 20ms delay
+        // inverts completion order, where delaying every git call costs more
+        // wall clock than `until`'s tick budget and times out instead.
+        if (call.opts.cwd === '/src/api' && call.args[0] === 'worktree' && call.args[1] === 'add') {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        return OK;
+      },
+    }));
+
+    await h.run('tasks.create', { title: 'Fix login', repos: [API, WEB] });
+    await until(() => existsSync(join(h.dataDir, 'fix-login', 'CLAUDE.md')));
+
+    const claudeMd = readFileSync(join(h.dataDir, 'fix-login', 'CLAUDE.md'), 'utf8');
+    expect(claudeMd.indexOf('api/')).toBeLessThan(claudeMd.indexOf('web/'));
+  });
+
+  it('does not let one repo’s throw abandon its sibling', async () => {
+    // A rejection, not a non-zero exit: `Promise.all` over chains that do not
+    // catch their own failures abandons every sibling mid-`worktree add`, and a
+    // registered worktree whose directory is gone is the state nothing cleans
+    // up later.
+    const warnings: string[] = [];
+    const h = (live = harness({
+      onWarn: (line) => warnings.push(line),
+      git: (call) =>
+        call.opts.cwd === '/src/api' && call.args[0] === 'worktree' && call.args[1] === 'add'
+          ? Promise.reject(new Error('spawn EACCES'))
+          : OK,
+    }));
+    const seen: TaskProvisionedFact[] = [];
+    h.point<TaskProvisioned>(TASK_PROVISIONED_POINT).register(async (fact) => {
+      seen.push(fact);
+      return { ok: true };
+    });
+
+    await h.run('tasks.create', { title: 'Fix login', repos: [API, WEB] });
+    await until(() => seen.length > 0);
+
+    expect(seen[0]?.repos.map((repo) => repo.name)).toEqual(['web']);
+    expect(warnings.some((line) => line.includes('spawn EACCES'))).toBe(true);
+  });
+
+  it('still marks a repo that failed to provision as failed', async () => {
+    const h = (live = harness({
+      git: (call) =>
+        call.args[0] === 'worktree' && call.args[1] === 'add' && call.opts.cwd === '/src/web'
+          ? { ok: false, code: 128, stdout: '', stderr: 'fatal: nope\n' }
+          : OK,
+    }));
+
+    await h.run('tasks.create', { title: 'Fix login', repos: [API, WEB] });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    const listed = await h.run<{ repos: { name: string; provisioning: string }[] }[]>('tasks.list');
+    expect(listed[0]?.repos.find((repo) => repo.name === 'web')?.provisioning).toBe('failed');
+    expect(listed[0]?.repos.find((repo) => repo.name === 'api')?.provisioning).toBe('ready');
   });
 });
 
