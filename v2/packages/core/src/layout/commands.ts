@@ -446,11 +446,27 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
          * fires `onLastPaneClosed`, and having the shell react to the last pane
          * of a root we are already tearing down would race this handler.
          */
+        // Captured BEFORE the root is drained: afterwards there is no root left
+        // to ask, and `groupOf` would answer undefined.
+        const group = store.groupOf(root) ?? String(root);
+
         const panes = store.panes(root);
         for (const pane of panes) unwrap(store.close(pane));
         unwrap(store.removeRoot(root));
-        // A window showing a root that no longer exists draws nothing at all.
-        if (activeRoot() === root) onSwitchRoot(homeRoot);
+
+        /*
+         * A window showing a root that no longer exists draws nothing at all —
+         * so it goes somewhere, and where is a SIBLING TAB first.
+         *
+         * Falling straight home would mean closing tab 2 of a task threw you out
+         * of the task, when the tab you were not looking at is right there and
+         * is the same pane group you were working in. Home is what is left when
+         * the group is finished.
+         */
+        if (activeRoot() === root) {
+          const sibling = store.rootsInGroup(group).find((candidate) => candidate !== root);
+          onSwitchRoot(sibling ?? homeRoot);
+        }
         return { root: args.root, closedPanes: panes.length };
       },
     }),
