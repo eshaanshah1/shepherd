@@ -15,7 +15,11 @@ Everything you need is in `design_handoff_ui_overhaul/`:
   any code. Tokens, primitive rules, shell structure, and an explicit list of
   what the language refuses.
 - `README.md` — per-screen specs with exact values.
-- `Shepherd Redesign.dc.html` — the assembled screens. Open it in a browser.
+- `Shepherd Redesign.dc.html` — the assembled screens, dark (canonical). Open it
+  in a browser.
+- `Shepherd Redesign Light.dc.html` — the same screens in light. Light is
+  *derived*: same structure, same marks, same geometry. Build the dark theme
+  first and generate light from the ramp table in the README.
 - `Shepherd Primitives.dc.html` — every control at real size in every state,
   each specimen captioned with its spec. This is the source of truth for any
   value the README does not state.
@@ -80,8 +84,9 @@ rejected as distracting.
 - `pnpm -r test`, `pnpm -r typecheck`, `pnpm lint` and `pnpm smoke:terminal` must
   pass at every stop. Run `SHEPHERD_CAPTURE=/tmp/shot.png pnpm dev` and look at
   the screenshot before telling me a step is done.
-- The light theme and the settings surface are explicitly **not** designed yet.
-  Do not invent them; tell me when you reach a point where one is needed.
+- The **settings surface** is explicitly not designed yet. Do not invent it; tell
+  me when you reach a point where it is needed. Both themes *are* designed — see
+  `Shepherd Redesign Light.dc.html` and the ramp table in the README.
 - If you find a value that is in neither the README nor the primitives sheet,
   read it off the prototype's inline style. If it is in neither, ask.
 
