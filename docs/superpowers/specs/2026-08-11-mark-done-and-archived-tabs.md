@@ -80,6 +80,15 @@ interface ArchivedTab {
 
 The bytes go to `<dataDir>/.archives/<taskId>/<root>/<pane>.term`, and the record stores the relative path. A file per pane rather than a column: a build log is megabytes, and SQLite is where the *record* lives, not where a terminal's history does.
 
+**Capture only happens on the path where there is something to capture — and
+that is a real limit, found by the smoke rather than reasoned about.** Closing a
+task's panes by hand destroys each screen as it goes, so by the time the last one
+empties the group and triggers the archive, the roots are gone and there is
+nothing to read. Marking a task done while it is on screen (the checkmark, or
+`tasks.archive` from anywhere) is what preserves it. This is inherent: capturing
+the other path would mean capturing continuously, against every pane, on the
+chance that the next close is the last one.
+
 **Capture is best-effort and never blocks the archive.** A session that has already exited has no mirror, and a task you cannot archive because one pane's history could not be read is a worse outcome than a tab that comes back blank. Failures are logged and the pane is archived without `history`.
 
 ## 3. What restoring rebuilds
