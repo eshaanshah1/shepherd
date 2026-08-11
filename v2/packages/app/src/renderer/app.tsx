@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { paneId, type PaneID } from '@shepherd/sdk';
+import type { ThemeMode } from '@shepherd/design-tokens';
 import { CommandPalette, IconButton, type PaletteCommand } from '@shepherd/ui';
 import {
   LAYOUT_COMMANDS,
@@ -31,7 +32,13 @@ import { ViewOverlay } from './view-overlay.tsx';
 import { SettingsScreen } from './settings-screen.tsx';
 import { useContributions } from './contributions.ts';
 import { useSetting } from './use-setting.ts';
-import { applyThemeVariables, resolveThemeMode, watchPrefersDark } from './theme.ts';
+import {
+  DEFAULT_THEME_MODE,
+  applyThemeVariables,
+  resolveThemeMode,
+  terminalBackground,
+  watchPrefersDark,
+} from './theme.ts';
 
 import { SplitView } from './split-view.tsx';
 import { TerminalPane } from './terminal-pane.tsx';
@@ -331,6 +338,14 @@ export function App({
    * on WHICH root it is in: every root is mounted, and only the active one's
    * panes hold a terminal (see `TerminalPane.visible`).
    */
+  /**
+   * The mode actually on screen — state, not a local, because a THIRD thing needs
+   * it: each pane's chrome is painted with its grid's own colour
+   * (`--sh-pane-title-bg`), and a head left on the default palette over a
+   * re-themed grid is the seam that rule exists to prevent.
+   */
+  const [themeMode, setThemeMode] = useState<ThemeMode>(DEFAULT_THEME_MODE);
+
   const makeRenderPane = useCallback(
     (visible: boolean) =>
     (pane: Pane, focused: boolean): ReactNode => {
@@ -345,13 +360,18 @@ export function App({
           terminals={terminals}
           focused={focused}
           visible={visible}
+          // The colour this pane's grid is painted with. Passed rather than let
+          // to default, or the head keeps the build's default palette while the
+          // grid under it moves — which is exactly the two-palette seam the
+          // custom property exists to prevent.
+          background={terminalBackground(themeMode)}
           {...(sessionId === undefined ? {} : { sessionId })}
           {...(agent === undefined ? {} : { agentState: agent.state })}
           {...(agent?.reason === undefined ? {} : { agentReason: agent.reason })}
         />
       );
     },
-    [terminals, sessionsByPane, agents],
+    [terminals, sessionsByPane, agents, themeMode],
   );
 
 
@@ -428,6 +448,7 @@ export function App({
       const mode = resolveThemeMode(themeSetting, watcher.prefersDark());
       applyThemeVariables(document.documentElement, mode);
       terminals?.retheme(mode);
+      setThemeMode(mode);
     };
     const watcher = watchPrefersDark(() => paint());
     paint();

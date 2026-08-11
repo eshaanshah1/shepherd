@@ -91,6 +91,7 @@ import { registerSettingsCommands } from './settings-commands.ts';
 import { GENERAL_PAGE } from './settings-general.ts';
 import { registerSettingsIpc } from './settings-ipc.ts';
 import { registerSettingsVisibility } from './settings-visibility.ts';
+import { presenceFor } from './presence-input.ts';
 
 /**
  * The Electron entry point (electron-vite builds this to `out/main`, and
@@ -465,15 +466,10 @@ let appActive = true;
 let settingsOpen = false;
 
 function syncPresence(): void {
-  viewing.setPresence({
-    appActive,
-    // Not ours to be frontmost in: a switch driven from the CLI while the app is
-    // in the background must not resurrect a focused root.
-    focusedRoot: appActive ? activeRoot() : null,
-    // An agent that blocks while the user is reading settings must still notify,
-    // and reading settings must not mark a pane as seen.
-    overlay: settingsOpen,
-  });
+  // The composition is `presenceFor`'s, so it is assertable without Electron —
+  // ADR 0020 allows one writer of "is the user looking at this", and the cost of
+  // that rule is that the one writer has to be provably right.
+  viewing.setPresence(presenceFor({ appActive, activeRoot: activeRoot(), settingsOpen }));
 }
 
 /**
