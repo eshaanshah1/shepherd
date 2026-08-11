@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { paneId, type PaneID } from '@shepherd/sdk';
-import { CommandPalette, IconButton, type PaletteCommand } from '@shepherd/ui';
+import { CommandPalette, IconButton, TabStrip, type PaletteCommand } from '@shepherd/ui';
 import {
   LAYOUT_COMMANDS,
+  displayTitle,
   findPane,
   leaf,
   leafIds,
@@ -397,6 +398,40 @@ export function App({
     [snapshots],
   );
 
+  /**
+   * The tabs of the group on screen.
+   *
+   * Derived from the same envelope the stage draws from — there is no tab state
+   * anywhere in this file, and there must not be. A remembered "current tab"
+   * would be a second copy of what the snapshot already says, which is how the
+   * sidebar's equivalent went stale twice before ADR 0035 pinned it down.
+   *
+   * **Empty for a group of one**, so a single-tab task looks exactly as the app
+   * does today and the strip appears at the moment a second tab does.
+   */
+  const tabs = useMemo(() => {
+    if (snapshots === null || active === null) return [];
+    const siblings = snapshots.roots.filter((root) => root.group === active.group);
+    if (siblings.length < 2) return [];
+    return siblings.map((root) => {
+      const pane =
+        root.tree === null || root.focusedPaneId === null
+          ? null
+          : findPane(root.tree, paneId(root.focusedPaneId));
+      /*
+       * The SAME resolution the sidebar uses, and `displayTitle`'s own doc
+       * comment says so in as many words: the user's name, else the program's
+       * live OSC title, else a tail of the cwd. Spelling it out here instead
+       * would be the hand-synced pair this codebase keeps getting bitten by.
+       *
+       * `home` is empty because the renderer has no business knowing one; a
+       * pane in `~` therefore reads as its own last component, which is what a
+       * terminal tab has always shown.
+       */
+      return { id: root.root, label: pane === null ? root.root : displayTitle(pane, '') };
+    });
+  }, [snapshots, active]);
+
   const contributions = useContributions(viewsApi);
   /** Every accelerator an overlay declared, for the footer's keycap strip. */
   const raisable = contributions.filter((view) => view.surface === 'overlay' && view.key !== undefined);
@@ -476,6 +511,21 @@ export function App({
           roots are hidden with `display: none` rather than not rendered.
         */}
         <main className="sh-stage" ref={stageRef}>
+          {/*
+            The tabs of the group on screen, ABOVE the roots and as a sibling of
+            them — never wrapping them. Every root stays mounted whichever tab is
+            showing, and a wrapper that re-parented them on a switch would be a
+            remounted pane, which is a second pty.
+          */}
+          {tabs.length > 0 && (
+            <TabStrip
+              tabs={tabs}
+              activeId={snapshots?.active ?? ''}
+              onSelect={(root) => invoke(LAYOUT_COMMANDS.switchRoot, { root })}
+              onNew={() => invoke(LAYOUT_COMMANDS.newTab, {})}
+              newIcon={raiseIcon('plus')}
+            />
+          )}
           {/*
             TWO ways to have nothing on the stage, and they draw the same thing.
 

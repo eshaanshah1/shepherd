@@ -30,6 +30,9 @@ export interface Invocation {
 }
 
 export const MENU_INVOCATIONS: Readonly<Record<CommandID, Invocation>> = {
+  // No `group`, for the reason stated above: a chrome gesture means "the group I
+  // am looking at", and that default lives in `registerLayoutCommands`.
+  [COMMANDS.newTab]: { command: LAYOUT_COMMANDS.newTab, args: {} },
   // ADR 0012's vocabulary, read off `@shepherd/core/layout` rather than from the
   // word: `row` is a ROW OF PANES — side by side. `column` is stacked.
   [COMMANDS.splitRight]: { command: LAYOUT_COMMANDS.split, args: { axis: 'row' } },

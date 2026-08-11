@@ -12,6 +12,7 @@
  * template nobody installed.
  */
 export const COMMANDS = {
+  newTab: 'tab.new',
   splitRight: 'pane.splitRight',
   splitDown: 'pane.splitDown',
   closePane: 'pane.close',
