@@ -43,28 +43,30 @@ what a task is (ADR 0031).
 
 `packages/core/src/layout/store.ts`
 
-`RootState` gains two fields:
+`RootState` gains **one** field:
 
 - **`group: string`** — defaults to the root's own id, so a lone root is a group
   of one and every existing root keeps behaving identically. Set at mint only:
   a root does not move between groups, because the thing that owns the group
   (a task) is also the thing that opened the root.
-- **`title: string | null`** — the creator's or user's name for the tab. `null`
-  means "derive it", which is the normal case (see §3, tab labels).
 
-Both are persisted in `PersistedLayout.roots[]` and both stay at
+There is deliberately **no root title.** A tab is named by its focused pane, via
+the `displayTitle` that already exists and whose doc comment already says it is
+"what the sidebar and the tab strip show" — see §3. A second name on the root
+would be a field nothing sets and a second answer to a question that has one.
+
+`group` is persisted in `PersistedLayout.roots[]` and stays at
 **`schemaVersion: 1`**, for the same reason the nullable `tree` did: an older
-build reading a payload with `group`/`title` ignores the unknown fields and gets
-N independent roots — which is exactly today's behaviour, not corruption.
-Bumping the version would instead discard the whole payload, including roots
-that decode perfectly.
+build reading a payload with `group` ignores the unknown field and gets N
+independent roots — which is exactly today's behaviour, not corruption. Bumping
+the version would instead discard the whole payload, including roots that decode
+perfectly.
 
 New store surface:
 
 ```ts
 groupOf(root: RootID): string | undefined
 rootsInGroup(group: string): readonly RootID[]   // creation order = tab order
-renameRoot(root: RootID, title: string | null): Result<void, string>
 newTab(group: string, init?: PaneSeed): Result<RootID, string>
 ```
 
@@ -89,7 +91,6 @@ caller for it yet (ADR 0031).
 | `layout.openRoot` | gains `group` (optional; defaults to the root id) |
 | `layout.newTab` | **new** — `{ group?, cwd?, initialCommand? }` |
 | `layout.closeGroup` | **new** — `{ group }` |
-| `layout.renameRoot` | **new** — `{ root, title }` |
 | `layout.listRoots` | **new** — `{ group? }`, read-only |
 | `layout.closeRoot` | falls back to a sibling tab before the home root |
 | `layout.switchRoot` | a group anchor lands on the group's last-active root |
@@ -107,8 +108,10 @@ pointing at it. This is what `tasks.archive` and `tasks.delete` call.
 **`layout.listRoots`** exists because `createLayout()` in the extension host
 refuses every synchronous read (`ACROSS_A_PORT`), and `tasks` now needs to know
 which roots are in its group and what they are called in order to draw its
-sidebar rows. It answers `[{ root, group, title, focusedPane, focusedSession }]`
-— a command, like every other thing an extension reaches across the port.
+sidebar rows. It answers `[{ root, group, label, focusedPane, focusedSession }]`
+— where `label` is the resolved `displayTitle` of the root's focused pane, so
+the desktop strip, the sidebar and a phone all read one string computed in one
+place. A command, like every other thing an extension reaches across the port.
 
 **`layout.switchRoot` on a group's anchor** resolves to that group's
 most-recently-active root, so returning to a task puts you back on the tab you
@@ -141,7 +144,7 @@ rule is unchanged: it empties and the window stays open on `EmptyState`.
 ### New bus topic: `layout.rootsChanged`
 
 Emitted (debounced, alongside the existing persist debounce) whenever a root is
-added, removed, renamed, or its focused pane's title changes. `tasks` subscribes
+added, removed, or its focused pane is renamed or changes OSC title. `tasks` subscribes
 in order to re-emit its tree when a tab's OSC title changes — without it, the
 sidebar's tab labels would be whatever they were at spawn time forever.
 
@@ -149,7 +152,7 @@ sidebar's tab labels would be whatever they were at spawn time forever.
 
 `packages/app`
 
-`LayoutSnapshot` gains `group: string` and `title: string | null`.
+`LayoutSnapshot` gains `group: string`.
 
 **A new `TabStrip` primitive in `@shepherd/ui`** (`tab-strip.tsx` +
 `tab-strip.css`) — not hand-rolled in the renderer, per the design-system rule.
@@ -164,19 +167,19 @@ look identical; the strip appears when a second tab does, the way Safari's does.
 - `+` → `layout.newTab {}`
 - accelerator: **`⌘⇧T`**. `⌘T` is `tasks`' composer overlay and stays that.
 
-**Tab label**, resolved in one place and in this order:
+**Tab label = `displayTitle(focusedPane, home)`** — the function that already
+exists in `layout/pane.ts` and whose doc comment already says it is "what the
+sidebar and the tab strip show": the user's name (`userTitle`, `null` by
+default), else the program's live OSC title, else a two-component tail of the
+cwd. Renaming a tab is `layout.rename` on its focused pane; there is no second
+naming mechanism and no new resolution rule to keep in step with this one.
 
-1. the root's `title` (`layout.renameRoot`), if set;
-2. the focused pane's **live OSC title** — what the program in the pane calls
-   itself, which is what a terminal tab has always shown;
-3. the focused pane's `userTitle`;
-4. the basename of its cwd.
-
-OSC before `userTitle` is deliberate and is the one ordering inversion in the
-file: `tasks` renames a spawned pane to `Ship the login fix · api` for the
-breadcrumb, and a tab strip that showed that would repeat the task name in every
-tab of the task. Putting OSC first keeps the breadcrumb exactly as it is and
-gives the tab the name the program chose.
+The consequence to know rather than to fix: `tasks` writes
+`Ship the login fix · api` into the spawned pane's `userTitle` today (index.ts
+:1025), so a task's agent tab is labelled with the task name and its repo. That
+is left exactly as it is — it is already what the pane head strip and the
+titlebar breadcrumb show, and changing it to make tab labels shorter would
+change two surfaces that are not this feature.
 
 **`ViewDock`'s row highlight becomes group-aware:** a row is selected when
 `groupOf(row.root) === groupOf(active)`. Still one reading of one snapshot value
@@ -267,8 +270,8 @@ host-side state re-emitted through `onDidChange`.
 
 **Unit** — `layout/store.test.ts`: group defaulting, `rootsInGroup` order,
 `newTab` id minting against live *and* persisted roots, `closeGroup` draining
-every pane through the terminator, persistence round-trip with `group`/`title`,
-and a v1-payload-without-group restore. `layout/commands.test.ts`: sibling
+every pane through the terminator, persistence round-trip with `group`, and a
+payload-without-`group` restore (every root its own group, today's behaviour). `layout/commands.test.ts`: sibling
 fall-through on `closeRoot`, `groupEmpty` on the last root only, anchor →
 last-active resolution. `tasks`: the cap-at-3 shape for 1/2/3/4/5 tabs, expanded
 and collapsed, per-tab tint rollup, `presentation` for a named root.
