@@ -424,3 +424,66 @@ describe('the dock-s foot group', () => {
     view.unmount();
   });
 });
+
+/**
+ * A remote view has to SAY it is remote.
+ *
+ * Everything else about it is identical to a local one — the same rows, the
+ * same verbs, the same state dot — which is the design working. It is also the
+ * hazard: archiving a task on the wrong Mac looks exactly like archiving it on
+ * this one, and nothing about the gesture would tell you.
+ */
+describe('views from another member', () => {
+  const REMOTE: ViewContributionDTO[] = [
+    {
+      extension: 'shepherd.tasks',
+      type: 'mac-b∷tasks.tree',
+      kind: 'tree',
+      remote: { memberId: 'mac-b', name: 'Mac B' },
+    },
+  ];
+
+  const rows: readonly TreeItem[] = [
+    { id: 'task-9', label: 'A task over there', command: { id: 'tasks.reveal', args: { task: 'task-9' } } },
+  ];
+
+  it('names the machine its rows live on', async () => {
+    const view = mount(<ViewDock views={bridge(REMOTE, [], rows)} />);
+    await settle();
+
+    const label = one(view.container, 'view-remote');
+    expect(label.textContent).toBe('Mac B');
+    expect(label.getAttribute('data-member')).toBe('mac-b');
+    view.unmount();
+  });
+
+  it('says nothing about a view that lives on this Mac', async () => {
+    const local: ViewContributionDTO[] = [
+      { extension: 'shepherd.tasks', type: 'tasks.tree', kind: 'tree' },
+    ];
+    const view = mount(<ViewDock views={bridge(local, [], rows)} />);
+    await settle();
+
+    expect(all(view.container, 'view-remote')).toHaveLength(0);
+    view.unmount();
+  });
+
+  /**
+   * The verb goes back with the QUALIFIED type, which is how main knows which
+   * member to send it to. A dock that stripped it would run a remote row's verb
+   * on this machine — the exact confusion the label exists to prevent, one layer
+   * down where no label can help.
+   */
+  it('sends a row verb back tagged with the member it came from', async () => {
+    const calls: Call[] = [];
+    const view = mount(<ViewDock views={bridge(REMOTE, calls, rows)} />);
+    await settle();
+
+    one(view.container, 'view-row').click();
+    await settle();
+
+    expect(calls[0]?.type).toBe('mac-b∷tasks.tree');
+    expect(calls[0]?.command).toBe('tasks.reveal');
+    view.unmount();
+  });
+});

@@ -53,7 +53,13 @@ describe('founding a net', () => {
     const founded = foundNet({ netName: 'Home', memberId: 'mac-mini', memberName: 'Mac mini', certPin: 'pin', now: 7 });
 
     expect(founded.netId).toBe(netIdOf(founded.rootPublicKey));
-    expect(founded.rootPrivateKey).toBeDefined();
+    /**
+     * The root PRIVATE key is gone — it signed once and was destroyed, so the
+     * founder holds nothing anybody else lacks. A membership that still carried
+     * it would make one member permanently more powerful than the rest, which
+     * is the thing this net does not have.
+     */
+    expect(JSON.stringify(founded)).not.toContain('rootPrivateKey');
     expect(founded.chain).toHaveLength(1);
     expect(
       verifyChain({

@@ -30,6 +30,25 @@ import { resolveExtensionUi } from './extension-ui.ts';
  * clicked" and main attributes it to the contributing extension (D14).
  */
 
+/**
+ * Whose machine these rows are on — drawn only when it is not this one.
+ *
+ * A remote row is otherwise indistinguishable from a local one: same label, same
+ * verbs, same state dot. That is the point of the design and also its one
+ * hazard, because archiving a task on the wrong Mac looks exactly like
+ * archiving it on this one and says nothing while it happens. So the section
+ * says where it lives, in the same uppercase micro-label the shell already uses
+ * for a group — no new colour, no badge, no second visual language.
+ */
+function RemoteLabel({ view }: { view: ViewContributionDTO }): React.JSX.Element | null {
+  if (view.remote === undefined) return null;
+  return (
+    <SectionLabel data-testid="view-remote" data-member={view.remote.memberId}>
+      {view.remote.name}
+    </SectionLabel>
+  );
+}
+
 export function ViewDock({
   views: bridge,
   actions,
@@ -276,7 +295,8 @@ function TreeView({
   };
 
   return (
-    <section className="sh-side-view" data-view-type={view.type}>
+    <section className="sh-side-view" data-view-type={view.type} data-remote={view.remote?.memberId}>
+      <RemoteLabel view={view} />
       {top.length === 0 ? null : <ul className="sh-rows">{top.map(renderRow)}</ul>}
       {/*
         The finished tasks, pinned to the FOOT of the sidebar rather than merely
@@ -444,6 +464,7 @@ export function ComponentView({
         one call site — `role`/`aria-level` are props the component already
         spreads, and they say exactly the same thing to the same readers.
       */}
+      <RemoteLabel view={view} />
       <SectionLabel role="heading" aria-level={2}>
         {view.title ?? view.type}
       </SectionLabel>

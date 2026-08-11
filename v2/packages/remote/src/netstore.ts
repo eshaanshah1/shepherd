@@ -39,15 +39,6 @@ export interface Membership {
   readonly netName: string;
   /** Hex SPKI DER. Every member holds it; it is what a chain terminates at. */
   readonly rootPublicKey: string;
-  /**
-   * Set ONLY on the device that founded the net.
-   *
-   * Any member can admit — an admission is signed with the admitter's OWN key,
-   * not this one — so the root key is needed exactly once, when the net is
-   * created. It stays where it was generated rather than travelling to every
-   * member, because a key that is everywhere is a key that leaks from anywhere.
-   */
-  readonly rootPrivateKey?: string;
   readonly memberId: string;
   /** This device's own signing key pair for this net. */
   readonly memberKey: MemberKey;
@@ -57,13 +48,19 @@ export interface Membership {
 }
 
 /**
- * Found a net: mint its root key, mint this device's member key, and sign the
- * one credential the root key will ever sign.
+ * Found a net: mint its root key, sign this device's credential with it, and
+ * **throw the root private key away**.
  *
- * The root key is used **once**. Every later admission is signed by the admitting
- * member's own key (any member may admit), so the root exists to be the thing a
- * chain terminates at rather than a thing anybody reaches for. It stays on this
- * device; a key copied to every member is a key that leaks from any of them.
+ * It signs exactly once, ever. Every later admission is signed by whichever
+ * member is doing the admitting, with its own key — so after this function
+ * returns, nothing in the net can use the root key again, and keeping it would
+ * be keeping the one secret that makes the founder different from everybody
+ * else. There are no server members and no client members here; the founder is
+ * simply whoever went first, and this is what makes that true rather than
+ * nearly true.
+ *
+ * The public half stays, because it is what every chain terminates at and what
+ * the net's id is derived from.
  */
 export function foundNet(options: {
   readonly netName: string;
@@ -93,7 +90,6 @@ export function foundNet(options: {
     netId,
     netName: options.netName,
     rootPublicKey: root.publicKey,
-    rootPrivateKey: root.privateKey,
     memberId: options.memberId,
     memberKey,
     chain: [credential],
@@ -133,7 +129,6 @@ const MEMBERSHIP = s.stored({
   netId: s.string(),
   netName: s.string(),
   rootPublicKey: s.string(),
-  rootPrivateKey: s.optional(s.string()),
   memberId: s.string(),
   memberKey: s.stored({ publicKey: s.string(), privateKey: s.string() }),
   chain: s.array(CREDENTIAL),

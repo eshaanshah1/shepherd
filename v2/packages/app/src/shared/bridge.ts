@@ -146,6 +146,15 @@ export interface ViewContributionDTO {
   readonly title?: string;
   /** The glyph on the control that raises an overlay. Defaults to `plus`. */
   readonly icon?: string;
+  /**
+   * Whose view this is, when it is not this Mac's.
+   *
+   * Present only for a view read off another member of the net. The page draws
+   * an indicator from it — a row that runs somewhere else must SAY so, because
+   * every other cue (its label, its verbs, its state dot) is identical to a
+   * local one and acting on the wrong machine is silent.
+   */
+  readonly remote?: { readonly memberId: string; readonly name: string };
 }
 
 export interface ViewsApi {

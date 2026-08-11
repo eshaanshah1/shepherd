@@ -142,8 +142,10 @@ describe('joining another Mac’s net', () => {
     // can bind this member's credential to the certificate it presents.
     expect(joined.value.chain[0]?.certPin).toBe('the-macbooks-own-cert');
 
-    // It has no root key: only the founder holds that, and it signs exactly once.
-    expect(joined.value.rootPrivateKey).toBeUndefined();
+    // Nobody holds a root private key — not even the founder, which destroyed
+    // it the instant it signed its own credential. A joiner certainly does not.
+    expect(JSON.stringify(joined.value)).not.toContain('rootPrivateKey');
+    expect(JSON.stringify(home.membership)).not.toContain('rootPrivateKey');
 
     // The founder now knows it as a member.
     expect(home.net.roster(home.membership.netId).map((e) => e.memberId)).toContain('macbook');
