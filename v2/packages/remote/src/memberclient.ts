@@ -64,6 +64,8 @@ export function memberClient(options: MemberClientOptions): MemberClient {
   const changed = new Set<(type: string) => void>();
   let socket: TLSSocket | undefined;
   let ready: Promise<void> | undefined;
+  /** The deadline on the connection attempt itself — see `connectOnce`. */
+  let dial: ReturnType<typeof setTimeout> | undefined;
   let seq = 1;
   let stopped = false;
 
@@ -81,6 +83,7 @@ export function memberClient(options: MemberClientOptions): MemberClient {
       let observedPin = '';
 
       const fail = (reason: string) => {
+        clearTimeout(dial);
         ready = undefined;
         socket?.destroy();
         socket = undefined;
@@ -90,6 +93,29 @@ export function memberClient(options: MemberClientOptions): MemberClient {
         }
         reject(new Error(reason));
       };
+
+      /**
+       * **The dial is under the deadline too, not just the round trip.**
+       *
+       * A member that is switched off does not refuse the connection — the
+       * packet is dropped, and the OS keeps retrying the SYN for over a minute.
+       * `invoke` armed its timer only after this promise settled, so the
+       * per-call deadline covered everything except the part that actually
+       * hangs, and every later call awaited this same never-settling promise.
+       *
+       * Measured on a real profile: two paired Macs that were off left two
+       * sockets in `SYN_SENT`, and because the sidebar's `views.list` asks every
+       * member before it answers, the sidebar never drew — not the members'
+       * section, the whole thing, including this Mac's own views.
+       *
+       * Failing here rather than only rejecting the caller is the other half:
+       * `fail` clears `ready`, so the next call redials instead of inheriting a
+       * connection attempt nobody is waiting on any more.
+       */
+      dial = setTimeout(
+        () => fail(`could not reach ${options.host}:${options.port} in time`),
+        options.timeoutMs ?? CALL_TIMEOUT_MS,
+      );
 
       const tls = connect({ host: options.host, port: options.port, rejectUnauthorized: false }, () => {
         const peer = tls.getPeerX509Certificate();
@@ -127,6 +153,7 @@ export function memberClient(options: MemberClientOptions): MemberClient {
               return;
             }
             log(`connected to ${options.host}:${options.port}`);
+            clearTimeout(dial);
             resolve();
             continue;
           }
@@ -203,6 +230,7 @@ export function memberClient(options: MemberClientOptions): MemberClient {
 
     stop() {
       stopped = true;
+      clearTimeout(dial);
       for (const [id, call] of [...pending]) {
         call.reject(new Error('this member client was stopped'));
         pending.delete(id);

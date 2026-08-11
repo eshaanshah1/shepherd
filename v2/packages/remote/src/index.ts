@@ -50,6 +50,7 @@ export {
   selfAdvertisement,
   mergeTombstones,
   revokedIds,
+  splitAddress,
   tombstoneBytes,
   verifyTombstone,
   type RosterEntry,
