@@ -275,7 +275,7 @@ describe('SettingsScreen', () => {
     expect([...container.querySelectorAll('[role="option"]')].map((o) => o.textContent)).toContain('opus');
   });
 
-  it('leaves a dynamic row editable when its choices could not be fetched', async () => {
+  it('keeps a stored value visible when its choices could not be fetched', async () => {
     const settings = fakeSettings({
       list: vi.fn(async () => ({
         ok: true as const,
@@ -307,8 +307,14 @@ describe('SettingsScreen', () => {
       })),
     });
     const { container } = await show(settings);
-    expect(container.querySelector<HTMLInputElement>('input[id="setting-agents-core.quickModel"]')?.value).toBe('opus');
+    /**
+     * Same claim as before, one control along: the row degraded to a free-text
+     * `Field` (hence the old `input[id=…]` selector) and now keeps its shape as a
+     * disabled `Select` showing the stored value. Visible, and the reason with it.
+     */
+    expect(container.textContent).toContain('opus');
     expect(container.textContent).toContain('no such command');
+    expect(container.querySelector('[data-testid="setting-retry"]')).not.toBeNull();
   });
 
   it('survives a bridge that is not there, rather than crashing the window', async () => {

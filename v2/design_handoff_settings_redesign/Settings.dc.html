@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  body { margin: 0; background: #0E0D0B; }
+  a { color: #62A3FF; text-decoration: none; }
+  a:hover { color: #E9E2D2; }
+</style>
+</helmet>
+
+<div style="display:flex;flex-direction:column;gap:56px;padding:48px;background:#0E0D0B;font-family:'DM Sans',-apple-system,'Helvetica Neue',sans-serif;color:#E9E2D2">
+
+  <section style="display:flex;flex-direction:column;gap:24px">
+    <div style="display:flex;align-items:baseline;gap:14px">
+      <h2 style="margin:0;font-size:17px;font-weight:500;color:#E9E2D2">Settings — <a href="#1a">1a</a> today, <a href="#1b">1b</a> redesign</h2>
+      <span style="font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:11px;color:#6E6759">packages/app/src/renderer/settings-*.tsx · extensions/worktree-hook/ui/editor.tsx</span>
+    </div>
+
+    <div style="display:flex;flex-wrap:wrap;align-items:flex-start;gap:48px">
+
+      <!-- ===================================================== 1a  RECREATION -->
+      <div id="1a" style="display:flex;flex-direction:column;gap:18px;width:1240px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="display:inline-flex;align-items:center;height:22px;padding:0 8px;border:1px solid #343027;border-radius:4px;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:11px;color:#A49B89">1a</span>
+          <span style="font-size:13px;color:#A49B89">Today, recreated from source</span>
+        </div>
+
+        <!-- General, today -->
+        <div style="display:flex;flex-direction:column;width:1240px;border:1px solid #343027;border-radius:8px;overflow:hidden;background:#1B1915">
+          <div style="display:flex;align-items:center;gap:10px;height:44px;flex:0 0 auto;padding:0 14px;background:#1B1915;box-shadow:inset 0 -1px 0 #343027;color:#6E6759;font-size:11px;letter-spacing:0.1em">
+            <div style="display:flex;gap:8px">
+              <span style="width:12px;height:12px;border-radius:50%;background:#343027"></span>
+              <span style="width:12px;height:12px;border-radius:50%;background:#343027"></span>
+              <span style="width:12px;height:12px;border-radius:50%;background:#343027"></span>
+            </div>
+            <div style="display:flex;align-items:baseline;gap:8px;margin-left:44px;letter-spacing:0">
+              <span style="font-size:13px;font-weight:500;color:#E9E2D2">shepherd</span>
+              <span style="color:#6E6759">/</span>
+              <span style="font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:11px;color:#6E6759">~/dev/shepherd — zsh</span>
+            </div>
+            <span style="flex:1 1 auto"></span>
+            <span style="font-size:10px;font-weight:500;letter-spacing:0.12em">PANES <b style="color:#A49B89;font-weight:500">3</b></span>
+          </div>
+
+          <div style="display:flex;flex-direction:column;height:300px;background:#1B1915">
+            <div style="display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid #343027">
+              <span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border:1px solid transparent;border-radius:6px;color:#6E6759;font-size:13px">←</span>
+              <h1 style="margin:0;font-size:12px;font-weight:500;color:#E9E2D2">Settings</h1>
+              <span style="flex:1 1 auto"></span>
+              <span style="display:block;width:220px;padding:6px 8px;border:1px solid #343027;border-radius:4px;background:#14120E;font-size:13px;line-height:20px;color:#6E6759">Search settings</span>
+            </div>
+            <div style="display:grid;grid-template-columns:136px minmax(0,1fr);flex:1 1 auto;min-height:0">
+              <nav style="padding:6px;border-right:1px solid #343027;display:flex;flex-direction:column">
+                <div style="display:flex;align-items:center;height:28px;margin:0 6px;padding:0 6px;border-radius:6px;background:#E9E2D2;color:#1B1915;font-size:13px">General</div>
+                <div style="display:flex;align-items:center;height:28px;margin:0 6px;padding:0 6px;border-radius:6px;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:13px;color:#6E6759;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">agents-core</div>
+                <div style="display:flex;align-items:center;height:28px;margin:0 6px;padding:0 6px;border-radius:6px;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:13px;color:#6E6759;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">worktree-hook</div>
+              </nav>
+              <div style="padding:12px;overflow:hidden">
+                <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 14px;font-size:10px;letter-spacing:0.16em;text-transform:uppercase;color:#6E6759;white-space:nowrap">
+                  <span>General</span>
+                  <span style="flex:1 1 auto;border-top:1px solid #343027"></span>
+                </div>
+                <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:8px 0">
+                  <div style="min-width:0">
+                    <label style="display:block;font-size:13px;color:#E9E2D2">Theme</label>
+                    <p style="margin:4px 0 0;font-size:11px;line-height:20px;color:#A49B89">Follow the system, or pin the app to one palette.</p>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:6px;flex:0 0 auto">
+                    <span style="display:flex;align-items:center;justify-content:space-between;gap:6px;width:102px;height:28px;padding:0 6px;border:1px solid #343027;border-radius:4px;background:#14120E;font-size:13px;color:#E9E2D2">System<span style="width:6px;height:6px;border-right:1px solid #A49B89;border-bottom:1px solid #A49B89;transform:translateY(-25%) rotate(45deg)"></span></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Models, today -->
+        <div style="display:flex;flex-direction:column;width:1240px;border:1px solid #343027;border-radius:8px;overflow:hidden;background:#1B1915">
+          <div style="display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid #343027">
+            <span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:6px;color:#6E6759;font-size:13px">←</span>
+            <h1 style="margin:0;font-size:12px;font-weight:500;color:#E9E2D2">Settings</h1>
+            <span style="flex:1 1 auto"></span>
+            <span style="display:block;width:220px;padding:6px 8px;border:1px solid #343027;border-radius:4px;background:#14120E;font-size:13px;line-height:20px;color:#6E6759">Search settings</span>
+          </div>
+          <div style="display:grid;grid-template-columns:136px minmax(0,1fr);height:260px">
+            <nav style="padding:6px;border-right:1px solid #343027;display:flex;flex-direction:column">
+              <div style="display:flex;align-items:center;height:28px;margin:0 6px;padding:0 6px;border-radius:6px;font-size:13px;color:#E9E2D2">General</div>
+              <div style="display:flex;align-items:center;height:28px;margin:0 6px;padding:0 6px;border-radius:6px;background:#E9E2D2;color:#1B1915;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">agents-core</div>
+              <div style="display:flex;align-items:center;height:28px;margin:0 6px;padding:0 6px;border-radius:6px;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:13px;color:#6E6759;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">worktree-hook</div>
+            </nav>
+            <div style="padding:12px;overflow:hidden">
+              <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 14px;font-size:10px;letter-spacing:0.16em;text-transform:uppercase;color:#6E6759">
+                <span>Models</span>
+                <span style="flex:1 1 auto;border-top:1px solid #343027"></span>
+              </div>
+              <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:8px 0">
+                <div style="min-width:0">
+                  <label style="display:block;font-size:13px;color:#E9E2D2">Quick-tier agent</label>
+                  <p style="margin:4px 0 0;font-size:11px;line-height:20px;color:#A49B89">Which agent answers short, non-interactive questions.</p>
+                </div>
+                <div style="flex:0 0 auto;display:flex;flex-direction:column;gap:4px;width:620px">
+                  <span style="display:block;height:32px;border:1px solid #E85D43;border-radius:4px;background:#14120E"></span>
+                  <span style="font-size:11px;line-height:20px;color:#E85D43">"agents.quickModelChoices" failed: invalid-args: expected object, got undefined</span>
+                </div>
+              </div>
+              <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:8px 0;border-top:1px solid #343027">
+                <div style="min-width:0">
+                  <label style="display:block;font-size:13px;color:#E9E2D2">Quick-tier model</label>
+                  <p style="margin:4px 0 0;font-size:11px;line-height:20px;color:#A49B89">Left as Default, the chosen agent picks its own.</p>
+                </div>
+                <div style="flex:0 0 auto;display:flex;flex-direction:column;gap:4px;width:620px">
+                  <span style="display:block;height:32px;border:1px solid #E85D43;border-radius:4px;background:#14120E"></span>
+                  <span style="font-size:11px;line-height:20px;color:#E85D43">"agents.quickModelChoices" failed: invalid-args: expected object, got undefined</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Worktree hooks, today -->
+        <div style="display:flex;flex-direction:column;width:1240px;border:1px solid #343027;border-radius:8px;overflow:hidden;background:#1B1915">
+          <div style="display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid #343027">
+            <span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:6px;color:#6E6759;font-size:13px">←</span>
+            <h1 style="margin:0;font-size:12px;font-weight:500;color:#E9E2D2">Settings</h1>
+            <span style="flex:1 1 auto"></span>
+            <span style="display:block;width:220px;padding:6px 8px;border:1px solid #343027;border-radius:4px;background:#14120E;font-size:13px;line-height:20px;color:#6E6759">Search settings</span>
+          </div>
+          <div style="display:grid;grid-template-columns:136px minmax(0,1fr);height:920px">
+            <nav style="padding:6px;border-right:1px solid #343027;display:flex;flex-direction:column">
+              <div style="display:flex;align-items:center;height:28px;margin:0 6px;padding:0 6px;border-radius:6px;font-size:13px;color:#E9E2D2">General</div>
+              <div style="display:flex;align-items:center;height:28px;margin:0 6px;padding:0 6px;border-radius:6px;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:13px;color:#6E6759">agents-core</div>
+              <div style="display:flex;align-items:center;height:28px;margin:0 6px;padding:0 6px;border-radius:6px;background:#E9E2D2;color:#1B1915;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:13px">worktree-hook</div>
+            </nav>
+            <div style="padding:12px;overflow:hidden">
+              <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 14px;font-size:10px;letter-spacing:0.16em;text-transform:uppercase;color:#6E6759">
+                <span>Worktree hooks</span>
+                <span style="flex:1 1 auto;border-top:1px solid #343027"></span>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:12px;padding:26px;border-radius:16px;background:#24211B">
+                <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 14px;font-size:10px;letter-spacing:0.16em;text-transform:uppercase;color:#6E6759">
+                  <span>every repo</span>
+                  <span style="flex:1 1 auto;border-top:1px solid transparent"></span>
+                </div>
+                <label style="font-size:13px;color:#E9E2D2">Runs first, in every worktree</label>
+                <span style="display:block;min-height:60px;padding:6px 8px;font-size:13px;line-height:20px;color:#6E6759">direnv allow</span>
+                <div style="display:flex;align-items:center;gap:12px;padding-top:12px;border-top:1px solid rgba(233,226,210,0.16)">
+                  <span style="flex:1 1 auto"></span>
+                  <span style="display:inline-flex;align-items:center;height:28px;padding:0 12px;border:1px solid rgba(233,226,210,0.16);border-radius:6px;font-size:12px;font-weight:500;color:#A49B89">save global hook</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 14px;font-size:10px;letter-spacing:0.16em;text-transform:uppercase;color:#6E6759"><span>one repo</span></div>
+                <label style="font-size:13px;color:#E9E2D2">Repo</label>
+                <span style="display:block;padding:6px 8px;font-size:13px;line-height:20px;color:#6E6759">~/dev/alpha</span>
+                <label style="font-size:13px;color:#E9E2D2">Runs in that repo’s worktree</label>
+                <span style="display:block;min-height:80px;padding:6px 8px;font-family:'DM Sans',sans-serif;font-size:13px;line-height:20px;color:#6E6759">cp "$WORKTREE_SRC/.env" "$WORKTREE_DIR/.env"</span>
+                <div style="display:flex;align-items:center;gap:12px;padding-top:12px;border-top:1px solid rgba(233,226,210,0.16)">
+                  <span style="flex:1 1 auto"></span>
+                  <span style="display:inline-flex;align-items:center;height:28px;padding:0 12px;border:1px solid #62A3FF;border-radius:6px;background:#62A3FF;font-size:12px;font-weight:500;color:#24211B">save repo hook</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 14px;font-size:10px;letter-spacing:0.16em;text-transform:uppercase;color:#6E6759"><span>a set of repos</span></div>
+                <label style="font-size:13px;color:#E9E2D2">Repos</label>
+                <span style="display:block;padding:6px 8px;font-size:13px;line-height:20px;color:#6E6759">+ repo</span>
+                <label style="font-size:13px;color:#E9E2D2">Runs once at the task root, when all of them are present</label>
+                <span style="display:block;min-height:80px;padding:6px 8px;font-size:13px;line-height:20px;color:#6E6759">ln -sf "$TASK_ROOT/alpha/dist" "$TASK_ROOT/beta/vendor/alpha"</span>
+                <div style="display:flex;align-items:center;gap:12px;padding-top:12px;border-top:1px solid rgba(233,226,210,0.16)">
+                  <span style="flex:1 1 auto"></span>
+                  <span style="display:inline-flex;align-items:center;height:28px;padding:0 12px;border:1px solid #62A3FF;border-radius:6px;background:#62A3FF;font-size:12px;font-weight:500;color:#24211B">save set hook</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ======================================================== 1b REDESIGN -->
+      <div id="1b" style="display:flex;flex-direction:column;gap:18px;width:1240px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="display:inline-flex;align-items:center;height:22px;padding:0 8px;border:1px solid #62A3FF;border-radius:4px;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:11px;color:#62A3FF">1b</span>
+          <span style="font-size:13px;color:#A49B89">Redesign — measured column, grouped nav, cards that name themselves</span>
+        </div>
+
+        <!-- General, redesigned -->
+        <div style="display:flex;flex-direction:column;width:1240px;border:1px solid #343027;border-radius:8px;overflow:hidden;background:#1B1915">
+          <div style="display:flex;align-items:center;gap:10px;height:44px;flex:0 0 auto;padding:0 14px;background:#1B1915;box-shadow:inset 0 -1px 0 #343027;color:#6E6759;font-size:11px;letter-spacing:0.1em">
+            <div style="display:flex;gap:8px">
+              <span style="width:12px;height:12px;border-radius:50%;background:#343027"></span>
+              <span style="width:12px;height:12px;border-radius:50%;background:#343027"></span>
+              <span style="width:12px;height:12px;border-radius:50%;background:#343027"></span>
+            </div>
+            <div style="display:flex;align-items:baseline;gap:8px;margin-left:44px;letter-spacing:0">
+              <span style="font-size:13px;font-weight:500;color:#E9E2D2">shepherd</span>
+              <span style="color:#6E6759">/</span>
+              <span style="font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:11px;color:#6E6759">~/dev/shepherd — zsh</span>
+            </div>
+            <span style="flex:1 1 auto"></span>
+            <span style="font-size:10px;font-weight:500;letter-spacing:0.12em">PANES <b style="color:#A49B89;font-weight:500">3</b></span>
+          </div>
+
+          <div style="display:flex;flex-direction:column;height:400px;background:#1B1915">
+            <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid #343027">
+              <span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border:1px solid #343027;border-radius:4px;color:#A49B89;font-size:13px">←</span>
+              <h1 style="margin:0;font-size:13px;font-weight:500;color:#E9E2D2">Settings</h1>
+              <span style="flex:1 1 auto"></span>
+              <div style="display:flex;align-items:center;gap:6px;width:260px;height:28px;padding:0 8px;border:1px solid #343027;border-radius:4px;background:#14120E">
+                <span style="font-size:11px;color:#6E6759">⌕</span>
+                <span style="flex:1 1 auto;font-size:13px;color:#6E6759">Search settings</span>
+                <span style="display:inline-flex;align-items:center;height:16px;padding:0 4px;border:1px solid #343027;border-radius:4px;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:9px;color:#6E6759">⌘F</span>
+              </div>
+            </div>
+
+            <div style="display:grid;grid-template-columns:208px minmax(0,1fr);flex:1 1 auto;min-height:0">
+              <nav style="padding:8px 0;border-right:1px solid #343027;display:flex;flex-direction:column;gap:2px;background:#1B1915">
+                <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 14px;font-size:10px;letter-spacing:0.16em;text-transform:uppercase;color:#6E6759">
+                  <span>App</span><span style="flex:1 1 auto;border-top:1px solid #343027"></span>
+                </div>
+                <div style="display:flex;align-items:center;height:28px;margin:0 6px;padding:0 8px;border-radius:6px;background:#E9E2D2;color:#1B1915;font-size:13px">General</div>
+                <div style="display:flex;align-items:center;gap:8px;height:28px;margin-top:8px;padding:0 14px;font-size:10px;letter-spacing:0.16em;text-transform:uppercase;color:#6E6759">
+                  <span>Extensions</span><span style="flex:1 1 auto;border-top:1px solid #343027"></span>
+                </div>
+                <div style="display:flex;align-items:center;height:28px;margin:0 6px;padding:0 8px;border-radius:6px;font-size:13px;color:#A49B89">Models</div>
+                <div style="display:flex;align-items:center;height:28px;margin:0 6px;padding:0 8px;border-radius:6px;font-size:13px;color:#A49B89">Worktree hooks</div>
+              </nav>
+
+              <div style="padding:26px;overflow:hidden">
+                <div style="max-width:640px;display:flex;flex-direction:column;gap:20px">
+                  <div style="display:flex;flex-direction:column;gap:6px">
+                    <div style="display:flex;align-items:baseline;gap:10px">
+                      <h2 style="margin:0;font-size:17px;font-weight:500;color:#E9E2D2">General</h2>
+                      <span style="font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:11px;color:#6E6759">shepherd</span>
+                    </div>
+                    <p style="margin:0;font-family:'Iowan Old Style',Palatino,Georgia,serif;font-size:15px;line-height:20px;color:#A49B89">How the app looks and behaves, everywhere.</p>
+                  </div>
+
+                  <div style="border:1px solid #343027;border-radius:6px;background:#24211B;overflow:hidden">
+                    <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 12px;border-bottom:1px solid #343027;font-size:10px;letter-spacing:0.16em;text-transform:uppercase;color:#6E6759">
+                      <span>Appearance</span>
+                    </div>
+                    <div style="display:grid;grid-template-columns:minmax(0,1fr) 240px;gap:12px;align-items:start;padding:12px">
+                      <div style="min-width:0">
+                        <div style="display:flex;align-items:center;gap:8px">
+                          <label style="font-size:13px;color:#E9E2D2">Theme</label>
+                          <span style="width:4px;height:4px;border-radius:50%;background:#F2762E"></span>
+                          <span style="font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:#6E6759">changed</span>
+                        </div>
+                        <p style="margin:4px 0 0;font-size:11px;line-height:20px;color:#A49B89">Follow the system, or pin the app to one palette.</p>
+                      </div>
+                      <div style="display:flex;align-items:center;gap:6px">
+                        <span style="display:flex;align-items:center;justify-content:space-between;gap:6px;flex:1 1 auto;height:28px;padding:0 8px;border:1px solid #343027;border-radius:4px;background:#14120E;font-size:13px;color:#E9E2D2">Light<span style="width:6px;height:6px;border-right:1px solid #A49B89;border-bottom:1px solid #A49B89;transform:translateY(-25%) rotate(45deg)"></span></span>
+                        <span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border:1px solid #343027;border-radius:4px;font-size:11px;color:#A49B89">↺</span>
+                      </div>
+                    </div>
+                    <div style="display:grid;grid-template-columns:minmax(0,1fr) 240px;gap:12px;align-items:start;padding:12px;border-top:1px solid #343027">
+                      <div style="min-width:0">
+                        <label style="font-size:13px;color:#E9E2D2">Density</label>
+                        <p style="margin:4px 0 0;font-size:11px;line-height:20px;color:#A49B89">Row height and spacing across the chrome.</p>
+                      </div>
+                      <div style="display:flex;align-items:center;gap:6px">
+                        <span style="display:flex;align-items:center;justify-content:space-between;gap:6px;flex:1 1 auto;height:28px;padding:0 8px;border:1px solid #343027;border-radius:4px;background:#14120E;font-size:13px;color:#E9E2D2">Comfortable<span style="width:6px;height:6px;border-right:1px solid #A49B89;border-bottom:1px solid #A49B89;transform:translateY(-25%) rotate(45deg)"></span></span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Models, redesigned -->
+        <div style="display:flex;flex-direction:column;width:1240px;border:1px solid #343027;border-radius:8px;overflow:hidden;background:#1B1915">
+          <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid #343027">
+            <span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border:1px solid #343027;border-radius:4px;color:#A49B89;font-size:13px">←</span>
+            <h1 style="margin:0;font-size:13px;font-weight:500;color:#E9E2D2">Settings</h1>
+            <span style="flex:1 1 auto"></span>
+            <div style="display:flex;align-items:center;gap:6px;width:260px;height:28px;padding:0 8px;border:1px solid #343027;border-radius:4px;background:#14120E">
+              <span style="font-size:11px;color:#6E6759">⌕</span>
+              <span style="flex:1 1 auto;font-size:13px;color:#6E6759">Search settings</span>
+              <span style="display:inline-flex;align-items:center;height:16px;padding:0 4px;border:1px solid #343027;border-radius:4px;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:9px;color:#6E6759">⌘F</span>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:208px minmax(0,1fr);height:380px">
+            <nav style="padding:8px 0;border-right:1px solid #343027;display:flex;flex-direction:column;gap:2px">
+              <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 14px;font-size:10px;letter-spacing:0.16em;text-transform:uppercase;color:#6E6759"><span>App</span><span style="flex:1 1 auto;border-top:1px solid #343027"></span></div>
+              <div style="display:flex;align-items:center;height:28px;margin:0 6px;padding:0 8px;border-radius:6px;font-size:13px;color:#A49B89">General</div>
+              <div style="display:flex;align-items:center;gap:8px;height:28px;margin-top:8px;padding:0 14px;font-size:10px;letter-spacing:0.16em;text-transform:uppercase;color:#6E6759"><span>Extensions</span><span style="flex:1 1 auto;border-top:1px solid #343027"></span></div>
+              <div style="display:flex;align-items:center;height:28px;margin:0 6px;padding:0 8px;border-radius:6px;background:#E9E2D2;color:#1B1915;font-size:13px">Models</div>
+              <div style="display:flex;align-items:center;height:28px;margin:0 6px;padding:0 8px;border-radius:6px;font-size:13px;color:#A49B89">Worktree hooks</div>
+            </nav>
+            <div style="padding:26px;overflow:hidden">
+              <div style="max-width:640px;display:flex;flex-direction:column;gap:20px">
+                <div style="display:flex;flex-direction:column;gap:6px">
+                  <div style="display:flex;align-items:baseline;gap:10px">
+                    <h2 style="margin:0;font-size:17px;font-weight:500;color:#E9E2D2">Models</h2>
+                    <span style="font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:11px;color:#6E6759">agents-core</span>
+                  </div>
+                  <p style="margin:0;font-family:'Iowan Old Style',Palatino,Georgia,serif;font-size:15px;line-height:20px;color:#A49B89">Which agent and model answer the short questions the app asks on your behalf.</p>
+                </div>
+
+                <div style="border:1px solid #343027;border-radius:6px;background:#24211B;overflow:hidden">
+                  <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 12px;border-bottom:1px solid #343027;font-size:10px;letter-spacing:0.16em;text-transform:uppercase;color:#6E6759">
+                    <span>Quick tier</span>
+                    <span style="flex:1 1 auto"></span>
+                    <span style="display:inline-flex;align-items:center;gap:6px;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:9px;letter-spacing:0.1em;color:#6E6759"><span style="width:4px;height:4px;border-radius:50%;background:#E85D43"></span>choices unavailable</span>
+                  </div>
+                  <div style="display:grid;grid-template-columns:minmax(0,1fr) 240px;gap:12px;align-items:start;padding:12px">
+                    <div style="min-width:0">
+                      <label style="font-size:13px;color:#E9E2D2">Quick-tier agent</label>
+                      <p style="margin:4px 0 0;font-size:11px;line-height:20px;color:#A49B89">Which agent answers short, non-interactive questions.</p>
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:6px">
+                      <span style="display:flex;align-items:center;justify-content:space-between;gap:6px;height:28px;padding:0 8px;border:1px solid #343027;border-radius:4px;background:#14120E;font-size:13px;color:#6E6759">No choices<span style="width:6px;height:6px;border-right:1px solid #343027;border-bottom:1px solid #343027;transform:translateY(-25%) rotate(45deg)"></span></span>
+                      <div style="display:flex;align-items:center;gap:8px">
+                        <span style="font-size:11px;color:#A49B89">agents-core couldn’t list its choices.</span>
+                        <span style="display:inline-flex;align-items:center;height:22px;padding:0 8px;border:1px solid #343027;border-radius:4px;font-size:11px;color:#A49B89">retry</span>
+                      </div>
+                      <sc-if value="{{ showDetails }}" hint-placeholder-val="{{ true }}">
+                        <span style="font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:9px;line-height:14px;color:#6E6759;word-break:break-word">agents.quickModelChoices → invalid-args: expected object, got undefined</span>
+                      </sc-if>
+                    </div>
+                  </div>
+                  <div style="display:grid;grid-template-columns:minmax(0,1fr) 240px;gap:12px;align-items:start;padding:12px;border-top:1px solid #343027">
+                    <div style="min-width:0">
+                      <label style="font-size:13px;color:#E9E2D2">Quick-tier model</label>
+                      <p style="margin:4px 0 0;font-size:11px;line-height:20px;color:#A49B89">Left as Default, the chosen agent picks its own.</p>
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:6px">
+                      <span style="display:flex;align-items:center;justify-content:space-between;gap:6px;height:28px;padding:0 8px;border:1px solid #343027;border-radius:4px;background:#14120E;font-size:13px;color:#6E6759">Default<span style="width:6px;height:6px;border-right:1px solid #343027;border-bottom:1px solid #343027;transform:translateY(-25%) rotate(45deg)"></span></span>
+                      <span style="font-size:11px;color:#6E6759">Waiting on an agent above.</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Worktree hooks, redesigned -->
+        <div style="display:flex;flex-direction:column;width:1240px;border:1px solid #343027;border-radius:8px;overflow:hidden;background:#1B1915">
+          <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid #343027">
+            <span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border:1px solid #343027;border-radius:4px;color:#A49B89;font-size:13px">←</span>
+            <h1 style="margin:0;font-size:13px;font-weight:500;color:#E9E2D2">Settings</h1>
+            <span style="flex:1 1 auto"></span>
+            <div style="display:flex;align-items:center;gap:6px;width:260px;height:28px;padding:0 8px;border:1px solid #343027;border-radius:4px;background:#14120E">
+              <span style="font-size:11px;color:#6E6759">⌕</span>
+              <span style="flex:1 1 auto;font-size:13px;color:#6E6759">Search settings</span>
+              <span style="display:inline-flex;align-items:center;height:16px;padding:0 4px;border:1px solid #343027;border-radius:4px;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:9px;color:#6E6759">⌘F</span>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:208px minmax(0,1fr);height:1020px">
+            <nav style="padding:8px 0;border-right:1px solid #343027;display:flex;flex-direction:column;gap:2px">
+              <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 14px;font-size:10px;letter-spacing:0.16em;text-transform:uppercase;color:#6E6759"><span>App</span><span style="flex:1 1 auto;border-top:1px solid #343027"></span></div>
+              <div style="display:flex;align-items:center;height:28px;margin:0 6px;padding:0 8px;border-radius:6px;font-size:13px;color:#A49B89">General</div>
+              <div style="display:flex;align-items:center;gap:8px;height:28px;margin-top:8px;padding:0 14px;font-size:10px;letter-spacing:0.16em;text-transform:uppercase;color:#6E6759"><span>Extensions</span><span style="flex:1 1 auto;border-top:1px solid #343027"></span></div>
+              <div style="display:flex;align-items:center;height:28px;margin:0 6px;padding:0 8px;border-radius:6px;font-size:13px;color:#A49B89">Models</div>
+              <div style="display:flex;align-items:center;height:28px;margin:0 6px;padding:0 8px;border-radius:6px;background:#E9E2D2;color:#1B1915;font-size:13px">Worktree hooks</div>
+            </nav>
+
+            <div style="padding:26px;overflow:hidden">
+              <div style="max-width:640px;display:flex;flex-direction:column;gap:20px">
+                <div style="display:flex;flex-direction:column;gap:6px">
+                  <div style="display:flex;align-items:baseline;gap:10px">
+                    <h2 style="margin:0;font-size:17px;font-weight:500;color:#E9E2D2">Worktree hooks</h2>
+                    <span style="font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:11px;color:#6E6759">worktree-hook</span>
+                  </div>
+                  <p style="margin:0;font-family:'Iowan Old Style',Palatino,Georgia,serif;font-size:15px;line-height:20px;color:#A49B89">Scripts that run when a worktree is created. Three scopes, run in the order below.</p>
+                </div>
+
+                <!-- every repo -->
+                <div style="border:1px solid #343027;border-radius:6px;background:#24211B;overflow:hidden">
+                  <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 12px;border-bottom:1px solid #343027;font-size:10px;letter-spacing:0.16em;text-transform:uppercase;color:#6E6759">
+                    <span>1 · Every repo</span>
+                    <span style="flex:1 1 auto"></span>
+                    <span style="font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:9px;letter-spacing:0.1em;color:#6E6759">$WORKTREE_DIR</span>
+                  </div>
+                  <div style="display:flex;flex-direction:column;gap:8px;padding:12px">
+                    <p style="margin:0;font-size:13px;line-height:20px;color:#E9E2D2">Runs first, in every worktree.</p>
+                    <div style="min-height:60px;padding:8px;border:1px solid #343027;border-radius:4px;background:#14120E;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:12px;line-height:20px;color:#E9E2D2">direnv allow</div>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-top:1px solid #343027">
+                    <sc-if value="{{ saved }}" hint-placeholder-val="{{ true }}">
+                      <span style="font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:#6E6759">saved · 2m ago</span>
+                    </sc-if>
+                    <span style="flex:1 1 auto"></span>
+                    <span style="display:inline-flex;align-items:center;height:22px;padding:0 8px;border:1px solid #343027;border-radius:4px;font-size:11px;color:#A49B89">test run</span>
+                    <span style="display:inline-flex;align-items:center;height:22px;padding:0 8px;border:1px solid #343027;border-radius:4px;font-size:11px;font-weight:500;color:#E9E2D2">save</span>
+                  </div>
+                </div>
+
+                <!-- one repo -->
+                <div style="border:1px solid #343027;border-radius:6px;background:#24211B;overflow:hidden">
+                  <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 12px;border-bottom:1px solid #343027;font-size:10px;letter-spacing:0.16em;text-transform:uppercase;color:#6E6759">
+                    <span>2 · One repo</span>
+                    <span style="flex:1 1 auto"></span>
+                    <span style="font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:9px;letter-spacing:0.1em;color:#6E6759">$WORKTREE_SRC → $WORKTREE_DIR</span>
+                  </div>
+                  <div style="display:flex;flex-direction:column;gap:8px;padding:12px">
+                    <div style="display:grid;grid-template-columns:minmax(0,1fr) 240px;gap:12px;align-items:center">
+                      <p style="margin:0;font-size:13px;line-height:20px;color:#E9E2D2">Runs in that repo’s worktree.</p>
+                      <span style="display:flex;align-items:center;height:28px;padding:0 8px;border:1px solid #343027;border-radius:4px;background:#14120E;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:12px;color:#E9E2D2">~/dev/alpha</span>
+                    </div>
+                    <div style="min-height:80px;padding:8px;border:1px solid #343027;border-radius:4px;background:#14120E;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:12px;line-height:20px;color:#E9E2D2">cp "$WORKTREE_SRC/.env" "$WORKTREE_DIR/.env"</div>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-top:1px solid #343027">
+                    <span style="flex:1 1 auto"></span>
+                    <span style="display:inline-flex;align-items:center;height:22px;padding:0 8px;border:1px solid #343027;border-radius:4px;font-size:11px;color:#A49B89">test run</span>
+                    <span style="display:inline-flex;align-items:center;height:22px;padding:0 8px;border:1px solid #62A3FF;border-radius:4px;background:#62A3FF;font-size:11px;font-weight:500;color:#1B1915">save</span>
+                  </div>
+                </div>
+
+                <!-- a set of repos -->
+                <div style="border:1px solid #343027;border-radius:6px;background:#24211B;overflow:hidden">
+                  <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 12px;border-bottom:1px solid #343027;font-size:10px;letter-spacing:0.16em;text-transform:uppercase;color:#6E6759">
+                    <span>3 · A set of repos</span>
+                    <span style="flex:1 1 auto"></span>
+                    <span style="font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:9px;letter-spacing:0.1em;color:#6E6759">$TASK_ROOT</span>
+                  </div>
+                  <div style="display:flex;flex-direction:column;gap:8px;padding:12px">
+                    <p style="margin:0;font-size:13px;line-height:20px;color:#E9E2D2">Runs once at the task root, when all of them are present.</p>
+                    <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px">
+                      <span style="display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;border:1px solid #343027;border-radius:4px;background:#1B1915;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:11px;color:#E9E2D2">alpha<span style="color:#6E6759">×</span></span>
+                      <span style="display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;border:1px solid #343027;border-radius:4px;background:#1B1915;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:11px;color:#E9E2D2">beta<span style="color:#6E6759">×</span></span>
+                      <span style="display:inline-flex;align-items:center;height:22px;padding:0 8px;border:1px dashed #343027;border-radius:4px;font-size:11px;color:#6E6759">+ repo</span>
+                    </div>
+                    <div style="min-height:80px;padding:8px;border:1px solid #343027;border-radius:4px;background:#14120E;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:12px;line-height:20px;color:#E9E2D2">ln -sf "$TASK_ROOT/alpha/dist" "$TASK_ROOT/beta/vendor/alpha"</div>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-top:1px solid #343027">
+                    <span style="font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:#6E6759">2 repos · not saved</span>
+                    <span style="flex:1 1 auto"></span>
+                    <span style="display:inline-flex;align-items:center;height:22px;padding:0 8px;border:1px solid #343027;border-radius:4px;font-size:11px;color:#A49B89">test run</span>
+                    <span style="display:inline-flex;align-items:center;height:22px;padding:0 8px;border:1px solid #343027;border-radius:4px;font-size:11px;font-weight:500;color:#E9E2D2">save</span>
+                  </div>
+                </div>
+
+                <!-- stored -->
+                <div style="display:flex;flex-direction:column;gap:2px">
+                  <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 12px;font-size:10px;letter-spacing:0.16em;text-transform:uppercase;color:#6E6759">
+                    <span>Stored · 3</span><span style="flex:1 1 auto;border-top:1px solid #343027"></span>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 12px;border-radius:6px;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:12px;color:#A49B89">
+                    <span style="flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">~/dev/alpha</span>
+                    <span style="font-size:11px;color:#6E6759">1 line</span>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 12px;border-radius:6px;background:#24211B;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:12px;color:#E9E2D2">
+                    <span style="flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">~/dev/beta</span>
+                    <span style="display:inline-flex;align-items:center;height:22px;padding:0 8px;border:1px solid #343027;border-radius:4px;font-size:11px;color:#A49B89">clear</span>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 12px;border-radius:6px;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:12px;color:#A49B89">
+                    <span style="flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">alpha + beta</span>
+                    <span style="font-size:11px;color:#6E6759">set</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;showDetails&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;States&quot;},&quot;saved&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;States&quot;}}">
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      showDetails: this.props.showDetails ?? true,
+      saved: this.props.saved ?? true,
+    };
+  }
+}
+</script>
+</body>
+</html>

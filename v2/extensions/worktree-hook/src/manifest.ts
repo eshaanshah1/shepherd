@@ -65,6 +65,7 @@ export const WORKTREE_HOOK_VIEW = 'worktree-hook.editor';
 export const WORKTREE_HOOK_PAGE: SettingsPage = {
   id: 'worktreeHook.editor',
   title: 'Worktree hooks',
+  description: 'Scripts that run when a worktree is created. Three scopes, run in the order below.',
   order: 200,
   component: WORKTREE_HOOK_VIEW,
 };

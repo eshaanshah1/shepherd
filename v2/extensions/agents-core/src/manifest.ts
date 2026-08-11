@@ -89,12 +89,14 @@ export const QUICK_MODEL_SETTING = 'agents-core.quickModel';
 export const AGENTS_MODELS_PAGE: SettingsPage = {
   id: 'agents.models',
   title: 'Models',
+  description: 'Which agent and model answer the short questions the app asks on your behalf.',
   order: 100,
   settings: [
     {
       key: QUICK_KIND_SETTING,
       type: 'enum',
       label: 'Quick-tier agent',
+      group: 'Quick tier',
       description: 'Which agent answers short, non-interactive questions.',
       default: null,
       nullable: true,
@@ -104,6 +106,7 @@ export const AGENTS_MODELS_PAGE: SettingsPage = {
       key: QUICK_MODEL_SETTING,
       type: 'enum',
       label: 'Quick-tier model',
+      group: 'Quick tier',
       description: 'Left as Default, the chosen agent picks its own.',
       default: null,
       nullable: true,

@@ -69,6 +69,18 @@ export interface SettingSpec {
 export interface SettingsPage {
   readonly id: string;
   readonly title: string;
+  /**
+   * One sentence under the title, in the app's serif — rule 6: serif only where
+   * the app speaks in sentences rather than labels.
+   *
+   * Optional, and the page renders nothing when it is absent: a contributed page
+   * supplies its own or says nothing, which is the same choice `SettingSpec
+   * .description` gives a row. It is here rather than in the shell because the
+   * sentence describes what the EXTENSION's page is for, and a table of copy in
+   * the renderer keyed by page id would make the shell the authority on what
+   * every extension's settings mean.
+   */
+  readonly description?: string;
   /** Lower sorts first. Absent sorts after every page that declared one. */
   readonly order?: number;
   readonly settings?: readonly SettingSpec[];
@@ -120,6 +132,7 @@ export const settingSpecSchema = s.object({
 export const settingsPageSchema = s.object({
   id: s.string(),
   title: s.string(),
+  description: s.optional(s.string()),
   order: s.optional(s.number()),
   settings: s.optional(s.array(settingSpecSchema)),
   component: s.optional(s.string()),

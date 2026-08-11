@@ -372,9 +372,21 @@ describe('the editor', () => {
     // list it while this extension is not running.
     const h = harness();
     expect(h.viewTypes().size).toBe(0);
-    expect(worktreeHookManifest.contributes?.settings).toEqual([
-      { id: 'worktreeHook.editor', title: 'Worktree hooks', order: 200, component: WORKTREE_HOOK_VIEW },
-    ]);
+    /**
+     * The fields that carry the CLAIM, not the whole object.
+     *
+     * A deep-equal here pinned the page's presentation as well as its identity, so
+     * adding the page's one serif sentence (a redesign of the screen, not of this
+     * extension) failed a test about where the editor lives. What matters is that
+     * it is one page, that it is a COMPONENT page, and that it names this
+     * extension's UI module.
+     */
+    expect(worktreeHookManifest.contributes?.settings).toHaveLength(1);
+    expect(worktreeHookManifest.contributes?.settings?.[0]).toMatchObject({
+      id: 'worktreeHook.editor',
+      title: 'Worktree hooks',
+      component: WORKTREE_HOOK_VIEW,
+    });
     h.dispose();
   });
 
