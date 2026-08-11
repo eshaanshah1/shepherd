@@ -791,6 +791,7 @@ export class LayoutStore {
     if (!state) return undefined;
     return {
       id: state.id,
+      group: state.group,
       // A paneless root contributes NO region rather than an empty one: `regions`
       // is `Partial<Record<RegionName, LayoutNode>>` and an absent key already
       // means "nothing here", so an extension reading it needs no new case.

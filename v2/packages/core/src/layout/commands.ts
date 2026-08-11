@@ -9,6 +9,7 @@ import {
   type RootID,
 } from '@shepherd/sdk';
 import type { CommandRegistry } from '../commands/registry.ts';
+import { displayTitle } from './pane.ts';
 import type { LayoutStore } from './store.ts';
 
 /**
@@ -79,6 +80,9 @@ export const LAYOUT_COMMANDS = {
   switchRoot: 'layout.switchRoot',
   openRoot: 'layout.openRoot',
   closeRoot: 'layout.closeRoot',
+  newTab: 'layout.newTab',
+  closeGroup: 'layout.closeGroup',
+  listRoots: 'layout.listRoots',
 } as const;
 
 export function registerLayoutCommands(options: LayoutCommandsOptions): Disposable {
@@ -252,6 +256,15 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
          * created, the other adopts one it did not.
          */
         session: s.optional(s.string()),
+        /**
+         * The pane group this root is a tab of. Defaults to the root's own id.
+         *
+         * Applies to the MINT only, like every other field here: a root that
+         * already exists belongs to whatever group it was opened in, and this
+         * verb being idempotent is precisely why it must not re-decide that —
+         * the second caller would move a root out from under the first.
+         */
+        group: s.optional(s.string()),
       }),
       handler: (args) => {
         const root = toRootId(args.root);
@@ -295,8 +308,119 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
           return { root: args.root, pane: store.focused(root), created: true };
         }
 
-        store.open(args.root, init);
+        store.open(args.root, init, args.group === undefined ? {} : { group: args.group });
         return { root: args.root, pane: store.focused(root), created: true };
+      },
+    }),
+
+    /**
+     * The three GROUP verbs — a group being the set of roots the window shows
+     * as tabs of one thing.
+     *
+     * They are commands for the reason everything else here is: `tasks`, the
+     * tab strip, ⌘⇧T and the CLI all make tabs, and four implementations of
+     * "and now switch to it" is what this file exists to prevent.
+     */
+    registry.register(LAYOUT_COMMANDS.newTab, {
+      title: 'New Tab',
+      permission: 'layout',
+      schema: s.object({
+        group: s.optional(s.string()),
+        cwd: s.optional(s.string()),
+        /** One line, typed once into the new tab's pane. `layout.split` documents why. */
+        initialCommand: s.optional(s.string()),
+      }),
+      /**
+       * Another tab of the group you are looking at.
+       *
+       * Both defaults are one idea a level apart: an unqualified gesture means
+       * "here". The group defaults to the ACTIVE root's, and the cwd to the pane
+       * you were looking at — which is what makes ⌘⇧T inside a task land in that
+       * task's worktree without the kernel knowing what a worktree is.
+       */
+      handler: (args) => {
+        const from = resolveRoot(undefined);
+        const group = args.group ?? store.groupOf(from) ?? String(from);
+        const focused = store.focused(from);
+        const inherited = args.cwd ?? (focused === null ? undefined : (store.pane(focused)?.cwd ?? undefined));
+        const root = unwrap(
+          store.newTab(group, {
+            ...(inherited === undefined || inherited === null ? {} : { cwd: inherited }),
+            ...(args.initialCommand === undefined ? {} : { initialCommand: args.initialCommand }),
+          }),
+        );
+        // And LAND you in it. A tab you have to go and find is a tab the gesture
+        // did not finish making.
+        onSwitchRoot(root);
+        return { root: String(root), pane: store.focused(root) };
+      },
+    }),
+
+    registry.register(LAYOUT_COMMANDS.closeGroup, {
+      title: 'Close Tab Group',
+      permission: 'layout',
+      schema: s.object({ group: s.string() }),
+      /**
+       * Every tab of a group, closed — what finishing with a task means.
+       *
+       * Each pane goes through `store.close`, which is the ONE terminator (ADR
+       * 0022) and the only thing that ends a pty. Dropping the roots without
+       * draining them would leak a live session per pane with nothing left
+       * pointing at it.
+       *
+       * The home root is skipped rather than refused, for the reason
+       * `closeRoot` refuses it outright: it is what everything falls back to.
+       * Skipping rather than failing matters because the home root's group also
+       * holds ordinary tabs, and a group whose first member cannot be closed
+       * must not make the other members uncloseable.
+       */
+      handler: (args) => {
+        const roots = store.rootsInGroup(args.group);
+        if (roots.length === 0) return unwrap(fail(`no group ${args.group}`));
+        let closedPanes = 0;
+        let closedRoots = 0;
+        for (const root of roots) {
+          if (root === homeRoot) continue;
+          for (const pane of store.panes(root)) {
+            unwrap(store.close(pane));
+            closedPanes += 1;
+          }
+          unwrap(store.removeRoot(root));
+          closedRoots += 1;
+        }
+        // A window drawing a root that no longer exists draws nothing at all.
+        if (!store.hasRoot(activeRoot())) onSwitchRoot(homeRoot);
+        return { group: args.group, closedRoots, closedPanes };
+      },
+    }),
+
+    registry.register(LAYOUT_COMMANDS.listRoots, {
+      // No title: not a palette verb. It is the read an extension makes because
+      // `LayoutAPI`'s synchronous getters cannot cross a port.
+      permission: 'layout',
+      schema: s.object({ group: s.optional(s.string()) }),
+      handler: (args) => {
+        const roots = args.group === undefined ? store.roots() : store.rootsInGroup(args.group);
+        return roots.map((root) => {
+          const pane = store.focused(root);
+          const found = pane === null ? null : store.pane(pane);
+          return {
+            root: String(root),
+            group: store.groupOf(root) ?? String(root),
+            /*
+             * ONE label, resolved HERE.
+             *
+             * `displayTitle` is what the sidebar and the tab strip both show —
+             * its own doc comment says so — and resolving it in each consumer
+             * instead is exactly the hand-synced pair this codebase keeps
+             * getting bitten by. The home is empty because a caller that wants
+             * `~` for it can say so; core does not read the environment.
+             */
+            label: found === null ? '' : displayTitle(found, ''),
+            focusedPane: pane === null ? null : String(pane),
+            focusedSession: pane === null ? null : (store.sessionFor(pane) ?? null),
+          };
+        });
       },
     }),
 

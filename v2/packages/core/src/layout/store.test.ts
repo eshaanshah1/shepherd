@@ -489,7 +489,13 @@ describe('a root can hold no panes', () => {
     // here" — an extension reading it needs no new case.
     const store = build();
     const root = store.open('window-1', undefined, { empty: true });
-    expect(store.project(root)).toEqual({ id: 'window-1', regions: {}, focused: null, zoomed: null });
+    expect(store.project(root)).toEqual({
+      id: 'window-1',
+      group: 'window-1',
+      regions: {},
+      focused: null,
+      zoomed: null,
+    });
   });
 
   it('answers the pane queries without walking a tree that is not there', () => {
@@ -1112,5 +1118,95 @@ describe('newTab', () => {
 
   it('refuses a group with no name', () => {
     expect(build().newTab('')).toEqual({ ok: false, error: 'a tab needs a group' });
+  });
+});
+
+describe('the group commands', () => {
+  it('openRoot mints a root into a named group', async () => {
+    const { registry, store } = wiredRoots();
+    await registry.invoke(LAYOUT_COMMANDS.openRoot, { root: 'task:t1', group: 'task:t1' }, USER);
+    expect(store.groupOf(rootId('task:t1'))).toBe('task:t1');
+  });
+
+  it('newTab opens a sibling of the active root and switches to it', async () => {
+    const { registry, store, switched } = wiredRoots();
+    store.open('task:t1', {}, { group: 'task:t1' });
+    await registry.invoke(LAYOUT_COMMANDS.switchRoot, { root: 'task:t1' }, USER);
+
+    const result = await registry.invoke(LAYOUT_COMMANDS.newTab, {}, USER);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toMatchObject({ root: 'task:t1/tab-2' });
+    expect(store.rootsInGroup('task:t1')).toEqual([rootId('task:t1'), rootId('task:t1/tab-2')]);
+    expect(switched.at(-1)).toBe('task:t1/tab-2');
+  });
+
+  it('newTab inherits the cwd of the pane you were looking at', async () => {
+    // What makes ⌘⇧T inside a task land in that task's worktree without the
+    // kernel knowing what a worktree is.
+    const { registry, store } = wiredRoots();
+    store.open('task:t1', { cwd: '/tmp/wt' }, { group: 'task:t1' });
+    await registry.invoke(LAYOUT_COMMANDS.switchRoot, { root: 'task:t1' }, USER);
+
+    await registry.invoke(LAYOUT_COMMANDS.newTab, {}, USER);
+    const pane = store.focused(rootId('task:t1/tab-2'));
+    expect(pane === null ? null : store.pane(pane)?.cwd).toBe('/tmp/wt');
+  });
+
+  it('closeGroup ends every session in every tab', async () => {
+    // `store.close` is the ONE terminator (ADR 0022). Dropping the roots without
+    // draining them leaks a live pty per pane with nothing pointing at it.
+    const { registry, store } = wiredRoots();
+    store.open('task:t1', {}, { group: 'task:t1' });
+    store.newTab('task:t1');
+    for (const root of store.rootsInGroup('task:t1')) {
+      const pane = store.focused(root);
+      if (pane !== null) store.bindSession(pane, sessionId(`s-${root}`));
+    }
+
+    const result = await registry.invoke(LAYOUT_COMMANDS.closeGroup, { group: 'task:t1' }, USER);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toMatchObject({ closedRoots: 2, closedPanes: 2 });
+    expect(killed).toEqual(['s-task:t1', 's-task:t1/tab-2']);
+    expect(store.rootsInGroup('task:t1')).toEqual([]);
+  });
+
+  it('closeGroup refuses a group nobody opened', async () => {
+    const { registry } = wiredRoots();
+    const result = await registry.invoke(LAYOUT_COMMANDS.closeGroup, { group: 'task:ghost' }, USER);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain('no group task:ghost');
+  });
+
+  it('closeGroup leaves the home root alone, so the window has somewhere to fall back to', async () => {
+    const { registry, store, home } = wiredRoots();
+    const result = await registry.invoke(LAYOUT_COMMANDS.closeGroup, { group: 'window-1' }, USER);
+    expect(result.ok).toBe(true);
+    expect(store.hasRoot(home)).toBe(true);
+  });
+
+  it('listRoots reports a group, filtered, with one resolved label per tab', async () => {
+    const { registry, store } = wiredRoots();
+    store.open('task:t1', { userTitle: 'api' }, { group: 'task:t1' });
+    store.newTab('task:t1');
+
+    const result = await registry.invoke(LAYOUT_COMMANDS.listRoots, { group: 'task:t1' }, USER);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const rows = result.value as readonly { root: string; group: string; label: string }[];
+    expect(rows.map((row) => row.root)).toEqual(['task:t1', 'task:t1/tab-2']);
+    expect(rows[0]?.label).toBe('api');
+    expect(rows.every((row) => row.group === 'task:t1')).toBe(true);
+  });
+
+  it('listRoots reports the session each tab is showing', async () => {
+    const { registry, store } = wiredRoots();
+    store.open('task:t1', {}, { group: 'task:t1' });
+    store.bindSession(store.focused(rootId('task:t1')) as PaneID, sessionId('s-1'));
+
+    const result = await registry.invoke(LAYOUT_COMMANDS.listRoots, { group: 'task:t1' }, USER);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const rows = result.value as readonly { focusedSession: string | null }[];
+    expect(rows[0]?.focusedSession).toBe('s-1');
   });
 });
