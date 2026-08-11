@@ -115,7 +115,9 @@ export function createRemoteService(options: RemoteServiceOptions): RemoteAPI & 
     netId: membership.netId,
     name: membership.netName,
     memberId: membership.memberId,
-    founded: membership.rootPrivateKey !== undefined,
+    // A FACT about how this device got in, not a capability: the root key that
+    // signed it was destroyed the moment it did (see `foundNet`).
+    founded: membership.chain[membership.chain.length - 1]?.memberId === membership.memberId,
   });
 
   const control = new ControlChannel({

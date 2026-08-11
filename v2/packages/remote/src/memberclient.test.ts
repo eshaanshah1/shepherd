@@ -132,7 +132,7 @@ function memberOf(home: Membership, memberId: string, name = memberId): Membersh
     },
     signWith(home.memberKey.privateKey),
   );
-  return { ...home, memberId, memberKey: key, chain: [credential, ...home.chain], rootPrivateKey: undefined };
+  return { ...home, memberId, memberKey: key, chain: [credential, ...home.chain] };
 }
 
 describe('one Mac driving another', () => {

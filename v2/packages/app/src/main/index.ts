@@ -52,6 +52,7 @@ import { SessionBridge, type SessionHostLike } from './session-bridge.ts';
 import { registerViewCommands } from './view-commands.ts';
 import { createRemoteService, PAIRED_DEVICE_PERMISSIONS } from './remote-service.ts';
 import { registerRemoteCommands } from './remote-commands.ts';
+import { remoteViews } from './remote-views.ts';
 import { resolveTransport, type Identity, type RemoteAPI } from '@shepherd/remote';
 import { SessionClient } from './session-client.ts';
 import { daemonConnector } from './daemon-launcher.ts';
@@ -751,13 +752,40 @@ void app.whenReady().then(async () => {
   // has somewhere to land rather than being emitted at nobody.
   // Contributed views: three reads and one gesture. The page names a view type
   // — which main told it about — never a topic and never a caller.
-  ipcMain.handle(INVOKE.viewsList, () => ({ ok: true, value: views.list() }));
+  /**
+   * Views from every member of the net, drawn together.
+   *
+   * A remote view arrives through the SAME three calls as a local one, because
+   * it is the same conversation held with a different machine — see
+   * `remote-views.ts`. Which member owns a view rides in its type, so every
+   * handler below routes on that one fact and nothing else in the shell has to
+   * learn that other Macs exist.
+   */
+  const fromMembers = remoteViews({
+    members: () => remote?.members() ?? [],
+    invokeAt: async (memberId, command, args) => {
+      if (remote === undefined) throw new Error('remote is not running');
+      return remote.invokeAt(memberId, command, args);
+    },
+    log: logger.child('session'),
+  });
+
+  ipcMain.handle(INVOKE.viewsList, async () => ({
+    ok: true,
+    // This Mac's own first: they are the ones that always answer, and a sidebar
+    // whose order depends on which machine replied fastest is a sidebar that
+    // moves under the cursor.
+    value: [...views.list(), ...(await fromMembers.list())],
+  }));
   ipcMain.handle(INVOKE.viewsChildren, async (_event, type: string, parent?: string) => ({
     ok: true,
-    value: await views.children(type, parent),
+    value: fromMembers.owns(type)
+      ? await fromMembers.children(type, parent)
+      : await views.children(type, parent),
   }));
   ipcMain.handle(INVOKE.viewsActivate, async (_event, type: string, command: { id: string; args?: unknown }) => {
-    await views.activate(type, command);
+    if (fromMembers.owns(type)) await fromMembers.activate(type, command);
+    else await views.activate(type, command);
     return { ok: true, value: undefined };
   });
   /**
