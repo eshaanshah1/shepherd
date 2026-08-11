@@ -44,6 +44,16 @@ export interface SessionDefaults {
 
 export interface SessionIpcOptions {
   readonly defaults: SessionDefaults;
+  /**
+   * The screen this pane was staged to be born showing, if any — consumed once.
+   *
+   * The renderer asks for a session; the SEED belongs to the pane, and the
+   * layout is what holds it. Attaching it here rather than sending it through
+   * the create request keeps a screenful of bytes off the renderer's wire and
+   * out of a page's reach — a page that could seed a mirror could paint anything
+   * into any terminal's scrollback.
+   */
+  readonly takeSeed?: (paneId: string) => Uint8Array | undefined;
 }
 
 export function registerSessionIpc(
@@ -80,7 +90,12 @@ export function registerSessionIpc(
   handle(INVOKE.sessionCreate, (_event, args) => {
     const spec = parseCreate(args[0], options.defaults);
     if (!spec.ok) return spec;
-    const created = bridge.create(spec.value);
+    // One-shot, and taken at the moment the session is actually made: a restored
+    // pane replays its screen once, and a pane whose session dies and is
+    // replaced comes back empty rather than replaying a screen from before the
+    // task was shelved.
+    const seed = spec.value.paneId === undefined ? undefined : options.takeSeed?.(spec.value.paneId);
+    const created = bridge.create(seed === undefined ? spec.value : { ...spec.value, seed });
     return created.ok ? okValue(describe(created.value)) : failFrom(created.error);
   });
 

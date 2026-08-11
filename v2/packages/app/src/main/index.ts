@@ -33,6 +33,7 @@ import {
   KERNEL,
   createLogger,
   extensionId,
+  paneId,
   rootId,
   systemClock,
   type Permission,
@@ -777,7 +778,12 @@ void app.whenReady().then(async () => {
     }
   }
 
-  registerSessionIpc(bridge, { defaults: shellDefaults() });
+  registerSessionIpc(bridge, {
+    defaults: shellDefaults(),
+    // The layout holds a restored pane's screen until its session exists. This
+    // is the moment it does.
+    takeSeed: (id) => layout.takeInitialSeed(paneId(id)),
+  });
   registerWindowIpc();
 
   const layoutIpc = registerLayoutIpc({

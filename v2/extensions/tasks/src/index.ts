@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import {
   fuzzyMatch,
@@ -1378,6 +1378,117 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     });
   }
 
+  /**
+   * Put an archived task's tabs back — the SCREEN, and nothing else.
+   *
+   * **It relaunches nothing.** Each pane comes back at its directory with the
+   * screen it had, and its agent's resume line is TYPED AND LEFT SITTING at the
+   * prompt. Pressing Enter is what resumes an agent, and that is the user's to
+   * press: restoring a five-tab task to glance at it must not start five agents.
+   *
+   * The mechanism is one character. `layout.setInitialInput` documents that a
+   * newline in the staged string is an Enter press, so a line with none is typed
+   * and waits. There is no new seam here, and the "exactly one initial input per
+   * pane" invariant is untouched.
+   *
+   * Ids are the ARCHIVED ones (`layout.openRoot` takes the root to open), so a
+   * restored task's tabs come back under the names they had — which is what the
+   * sidebar's rows and the strip both key on.
+   */
+  async function rebuildTabs(task: TaskRecord): Promise<void> {
+    const group = taskRootId(task.id);
+    for (const tab of task.tabs ?? []) {
+      const first = tab.panes[0];
+      const seed = readHistory(tab.panes[0]?.history);
+      const staged = await stagedResumeLine(task, first);
+
+      const opened = await commands.invoke('layout.openRoot', {
+        root: tab.root,
+        group,
+        ...(first?.cwd === undefined || first.cwd === null ? {} : { cwd: first.cwd }),
+        ...(first?.userTitle === undefined || first.userTitle === null ? {} : { title: first.userTitle }),
+        ...(seed === undefined ? {} : { seed }),
+        ...(staged === undefined ? {} : { initialCommand: staged }),
+      });
+      if (!opened.ok) {
+        // Reported and stepped over: the other tabs are still worth putting
+        // back, and a restore that gave up on the first failure would leave a
+        // task half on screen with nothing saying why.
+        ctx.log.warn(
+          `task ${task.id}: tab ${tab.root} was not restored — ${opened.error.code}: ${opened.error.message}`,
+        );
+        continue;
+      }
+
+      /*
+       * The rest of the tab's panes, in order, each with its own screen and its
+       * own staged line. The SPLIT SHAPE is not rebuilt: `layout.split` takes an
+       * axis and no path, so a tree of ratios cannot be reproduced through it,
+       * and a restore that silently produced a different arrangement would be
+       * worse than one that is honestly flat. The panes, their directories and
+       * their history all come back; the geometry does not, yet.
+       */
+      for (const pane of tab.panes.slice(1)) {
+        const paneSeed = readHistory(pane.history);
+        const paneStaged = await stagedResumeLine(task, pane);
+        const split = await commands.invoke('layout.split', {
+          axis: 'row',
+          root: tab.root,
+          ...(pane.cwd === null ? {} : { cwd: pane.cwd }),
+          ...(paneSeed === undefined ? {} : { seed: paneSeed }),
+          ...(paneStaged === undefined ? {} : { initialCommand: paneStaged }),
+        });
+        if (!split.ok) {
+          ctx.log.warn(
+            `task ${task.id}: a pane of ${tab.root} was not restored — ${split.error.code}: ${split.error.message}`,
+          );
+        }
+      }
+    }
+    ctx.log.info(`task ${task.id}: restored ${(task.tabs ?? []).length} tab(s), agents staged but not resumed`);
+  }
+
+  /** A captured screen off disk, base64 for the command envelope. Absent if unreadable. */
+  function readHistory(relative: string | undefined): string | undefined {
+    if (relative === undefined) return undefined;
+    try {
+      return readFileSync(`${archiveDir()}/${relative}`).toString('base64');
+    } catch (error) {
+      // A missing file is an expired or hand-cleaned archive; the tab still
+      // comes back, blank, which is better than refusing to restore it.
+      ctx.log.warn(`task: a tab's screen could not be read — ${String(error)}`);
+      return undefined;
+    }
+  }
+
+  /**
+   * The line that WOULD resume this pane's agent — built, not run.
+   *
+   * Asked of the agent kind through `agents.resumeCommand`, exactly as
+   * `resumeSession` does, so `tasks` still never learns a binary or a flag
+   * (D11). Trailing whitespace is trimmed because the one thing that must not
+   * be in it is a newline.
+   */
+  async function stagedResumeLine(
+    task: TaskRecord,
+    pane: { readonly resumeTarget?: string } | undefined,
+  ): Promise<string | undefined> {
+    const target = pane?.resumeTarget;
+    if (target === undefined || target === '') return undefined;
+    const answer = await commands.invoke<unknown>(AGENTS_RESUME_COMMAND, { target });
+    const command =
+      answer.ok && typeof answer.value === 'object' && answer.value !== null
+        ? (answer.value as { command?: unknown }).command
+        : undefined;
+    if (typeof command !== 'string' || command === '') {
+      ctx.log.info(`task ${task.id}: a restored pane has no resume command to stage`);
+      return undefined;
+    }
+    // THE character. A trailing newline is an Enter press, and this line is
+    // meant to sit at the prompt until somebody decides to run it.
+    return command.replace(/\s+$/u, '');
+  }
+
   async function closeTaskRoot(task: TaskRecord): Promise<void> {
     const group = taskRootId(task.id);
     /*
@@ -2310,6 +2421,22 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
            * fixed. `tasks.spawn` is right there when you do want a new one.
            */
           const restored = store.get(task.id);
+
+          /*
+           * A task archived WITH its tabs comes back as those tabs — and comes
+           * back QUIET.
+           *
+           * `rebuildTabs` paints each pane's screen and leaves its agent's
+           * resume line at the prompt, unsubmitted. The loop below is the older
+           * path, for a record written before tabs existed: it opens one pane
+           * per session and runs the line.
+           */
+          if ((restored?.tabs ?? []).length > 0) {
+            await rebuildTabs(restored as TaskRecord);
+            changed();
+            return { task: task.id, restored: true };
+          }
+
           for (const session of restored?.sessions ?? []) {
             if (session.resumeTarget === undefined) continue;
             try {

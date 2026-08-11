@@ -236,6 +236,13 @@ export class LayoutStore {
    * does not re-run a command, and a map that reached disk would undo that.
    */
   readonly #initialInput = new Map<PaneID, string>();
+  /**
+   * A previously captured screen, per pane, waiting for that pane's session to
+   * be created. **In memory only**, for the same reason `#initialInput` is: it
+   * describes a session that does not exist yet, and a map that reached disk
+   * would replay a restored screen on every launch forever.
+   */
+  readonly #initialSeed = new Map<PaneID, Uint8Array>();
   readonly #sessionByPane = new Map<PaneID, SessionID>();
   readonly #paneBySession = new Map<SessionID, PaneID>();
   readonly #listeners = new Set<(root: RootID) => void>();
@@ -369,7 +376,10 @@ export class LayoutStore {
     // Pending initial input for panes that never got a session would otherwise
     // outlive the panes it names, and every entry here is keyed by a pane id
     // that can never be minted again.
-    for (const pane of state.tree === null ? [] : leafIds(state.tree)) this.#initialInput.delete(pane);
+    for (const pane of state.tree === null ? [] : leafIds(state.tree)) {
+      this.#initialInput.delete(pane);
+      this.#initialSeed.delete(pane);
+    }
     this.#roots.delete(id);
     this.#changed(id);
     this.#log.info(`removed root ${id}`);
@@ -542,6 +552,24 @@ export class LayoutStore {
     const input = this.#initialInput.get(pane);
     this.#initialInput.delete(pane);
     return input;
+  }
+
+  /**
+   * The screen this pane should be BORN showing — a restored tab's history.
+   *
+   * The companion of `setInitialInput`, and one-shot for the same reason: the
+   * second caller gets `undefined` because the first deleted it. A pane whose
+   * session dies and is replaced must not silently replay a screen from before
+   * the task was archived.
+   */
+  setInitialSeed(pane: PaneID, seed: Uint8Array): void {
+    this.#initialSeed.set(pane, seed);
+  }
+
+  takeInitialSeed(pane: PaneID): Uint8Array | undefined {
+    const seed = this.#initialSeed.get(pane);
+    this.#initialSeed.delete(pane);
+    return seed;
   }
 
   bindSession(pane: PaneID, session: SessionID): void {
