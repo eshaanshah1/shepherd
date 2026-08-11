@@ -115,6 +115,14 @@ export interface OpenOptions {
    * terminal sitting in a directory that had usually just been deleted.
    */
   readonly empty?: boolean;
+  /**
+   * The pane group this root is a tab of. Defaults to the root's own id.
+   *
+   * Applies only to the MINT, like `empty` and `init` above: a restored root
+   * already belongs to whatever group it was in, and re-deciding that here
+   * would let the second caller of `open` move a root out from under the first.
+   */
+  readonly group?: string;
 }
 
 export interface CloseOutcome {
@@ -152,6 +160,17 @@ export interface PersistedLayout {
      */
     readonly tree: PersistedNode | null;
     readonly focusedPaneId: string | null;
+    /**
+     * The pane group this root is a tab of.
+     *
+     * **Optional, and still `schemaVersion: 1`** — for the same reason the
+     * nullable `tree` above is. An older build ignores a field it does not know
+     * and gets N independent roots, which is precisely how it behaved before
+     * groups existed; bumping the version would instead discard the WHOLE
+     * payload, including every root that decodes perfectly. Absent on read means
+     * the root is its own group, which is the same default the mint applies.
+     */
+    readonly group?: string;
   }[];
 }
 
@@ -160,6 +179,22 @@ const DEFAULT_PERSIST_DEBOUNCE_MS = 400;
 
 interface RootState {
   readonly id: RootID;
+  /**
+   * Which pane group this root is a TAB OF.
+   *
+   * Defaults to the root's own id, so a root nobody grouped is a group of one
+   * and behaves exactly as it did before groups existed — that default is what
+   * makes tabs additive rather than a migration, here and in the persisted
+   * payload both.
+   *
+   * An OPAQUE string the kernel never interprets: `tasks` names its group
+   * `task:<id>`, the home root's is `window-1`, and nothing here learns what
+   * either means (ADR 0031). Set at mint and never changed — a root does not
+   * move between groups, because whatever owns the group is also what opened
+   * the root, and a root that could be reparented would need an answer for what
+   * happens to the group it left.
+   */
+  readonly group: string;
   /**
    * The pane tree, or **null for a root that holds no panes**.
    *
@@ -265,6 +300,7 @@ export class LayoutStore {
     if (options.empty === true) {
       const state: RootState = {
         id: rootId(id),
+        group: options.group ?? id,
         tree: null,
         focusedPaneId: null,
         zoomedPaneId: null,
@@ -278,6 +314,7 @@ export class LayoutStore {
     const pane = makePane(init ?? {}, this.#newPane);
     const state: RootState = {
       id: rootId(id),
+      group: options.group ?? id,
       tree: leaf(pane),
       focusedPaneId: pane.id,
       zoomedPaneId: null,
@@ -350,6 +387,28 @@ export class LayoutStore {
     return record.roots
       .filter((saved) => typeof saved?.id === 'string' && saved.id !== '')
       .map((saved) => rootId(saved.id));
+  }
+
+  /**
+   * Which pane group a root is a tab of, or undefined for a root not open.
+   *
+   * Undefined rather than the id itself for an unknown root, deliberately: the
+   * default belongs to the mint, and answering "its own id" here would make a
+   * typo indistinguishable from a root that exists.
+   */
+  groupOf(root: RootID): string | undefined {
+    return this.#roots.get(root)?.group;
+  }
+
+  /**
+   * The roots of one group, in creation order — which IS tab order.
+   *
+   * Insertion order of `#roots` rather than an explicit index: a `Map` keeps it,
+   * `#restore` re-inserts in persisted order, and an order field with no
+   * reordering gesture to write it would be a second fact nobody maintains.
+   */
+  rootsInGroup(group: string): readonly RootID[] {
+    return [...this.#roots.values()].filter((state) => state.group === group).map((state) => state.id);
   }
 
   /**
@@ -805,6 +864,7 @@ export class LayoutStore {
       schemaVersion: 1,
       roots: [...this.#roots.values()].map((state) => ({
         id: state.id,
+        group: state.group,
         // `null` for an emptied root, and it has to be written rather than
         // skipped: a root dropped from the payload is a root that comes back
         // MINTED on the next launch, which would refill the empty state with a
@@ -873,6 +933,9 @@ export class LayoutStore {
 
     const state: RootState = {
       id,
+      // A payload written before groups existed has none, and every root in it
+      // is its own — which is exactly how the app behaved then.
+      group: saved.group ?? id,
       tree,
       focusedPaneId: tree === null ? null : firstLeafId(tree),
       zoomedPaneId: null,
