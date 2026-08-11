@@ -7,6 +7,7 @@ import { ROOT, issueCredential, type Credential } from './net.ts';
 import {
   issueTombstone,
   rosterAddress,
+  selfAdvertisement,
   mergeEntries,
   mergeTombstones,
   revokedIds,
@@ -158,5 +159,32 @@ describe('rosterAddress', () => {
     // machine, to themselves.
     expect(rosterAddress('127.0.0.1:54321', 8723)).toEqual([]);
     expect(rosterAddress('::1:54321', 8723)).toEqual([]);
+  });
+});
+
+/**
+ * The mirror of `rosterAddress`, and a defect measured on two real Macs: a Mac
+ * launched without `--shepherd-remote=wifi` served control on loopback and still
+ * advertised its port, so every other member held an entry that looked perfectly
+ * healthy and could never be dialled.
+ */
+describe('selfAdvertisement', () => {
+  it('advertises a real address', () => {
+    expect(selfAdvertisement({ host: '192.168.1.20', port: 8722 })).toEqual({ port: 8722 });
+    expect(selfAdvertisement({ host: '192.168.1.20', port: 8722 }, 8724)).toEqual({
+      port: 8722,
+      dataPort: 8724,
+    });
+  });
+
+  it('advertises NOTHING when what it serves on is loopback', () => {
+    for (const host of ['127.0.0.1', '::1', '[::1]', 'localhost', '']) {
+      expect(selfAdvertisement({ host, port: 8722 }, 8724)).toBeUndefined();
+    }
+  });
+
+  it('advertises nothing when it is not serving at all', () => {
+    expect(selfAdvertisement(undefined)).toBeUndefined();
+    expect(selfAdvertisement(undefined, 8724)).toBeUndefined();
   });
 });

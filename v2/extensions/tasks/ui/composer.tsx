@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { ExtensionViewProps } from "@shepherd/sdk";
-import { Button, Composer, PromptField, type PromptFieldHandle } from "@shepherd/ui";
+import { Button, Composer, Menu, PromptField, type PromptFieldHandle } from "@shepherd/ui";
 import { repoName } from "../src/model/repo-name.ts";
 import type { PastedImage } from "../src/images.ts";
 import { readPastedImage } from "./paste-image.ts";
@@ -102,6 +102,45 @@ function readSegments(value: unknown, display: string): readonly DisplaySegment[
  * `isRepo` defaults to the SAFE reading of a provider that omits it: a candidate
  * is treated as a repo, so none is falsely accused of not being one.
  */
+/** A machine a task can start on. */
+interface Machine {
+  readonly id: string;
+  readonly name: string;
+  /** This Mac. Drawn first and selected by default. */
+  readonly here: boolean;
+}
+
+/**
+ * This Mac, as the fallback list.
+ *
+ * The picker is never empty and never absent: with no net, or with nothing
+ * answering, there is still exactly one machine a task can start on and it is
+ * this one. A control that disappeared when the answer was boring would be a
+ * control that looks broken the one time somebody goes looking for it.
+ */
+const LOCAL_MACHINE: Machine = { id: "here", name: "This Mac", here: true };
+
+/**
+ * The answer to `tasks.machines`, read rather than cast.
+ *
+ * It has crossed the port from an extension, and `ok` says the call succeeded,
+ * not that the value has a shape. This Mac is prepended if the answer somehow
+ * omitted it, because a picker with no local option cannot create a local task.
+ */
+function readMachines(value: unknown): readonly Machine[] {
+  const rows = (value as { machines?: unknown } | null)?.machines;
+  if (!Array.isArray(rows)) return [LOCAL_MACHINE];
+  const seen = new Set<string>();
+  const read = rows.flatMap((entry: unknown): Machine[] => {
+    if (typeof entry !== "object" || entry === null) return [];
+    const { id, name, here } = entry as { id?: unknown; name?: unknown; here?: unknown };
+    if (typeof id !== "string" || id === "" || seen.has(id)) return [];
+    seen.add(id);
+    return [{ id, name: typeof name === "string" && name !== "" ? name : id, here: here === true }];
+  });
+  return read.some((machine) => machine.here) ? read : [LOCAL_MACHINE, ...read];
+}
+
 function readSuggestions(value: unknown): readonly RepoSuggestion[] {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
@@ -181,6 +220,21 @@ export function TaskComposer({
    * arrive and the extension names the task from the brief instead.
    */
   const [suggested, setSuggested] = useState<string | null>(null);
+  /**
+   * WHICH machine this task will start on, and everything it could be.
+   *
+   * A task is one machine's: its repos are checkouts on a disk, its worktrees are
+   * directories there, and its agents are ptys in that machine's daemon. So this
+   * is not a preference applied afterwards — it decides where the whole task is
+   * made, which is why the repo suggestions are asked of it too.
+   *
+   * `here` is the default and the first entry, always. A composer that opened on
+   * another machine because that is what was picked last is a composer that
+   * creates work in a place nobody looked at.
+   */
+  const [machines, setMachines] = useState<readonly Machine[]>([LOCAL_MACHINE]);
+  const [machine, setMachine] = useState<string>(LOCAL_MACHINE.id);
+  const [pickingMachine, setPickingMachine] = useState(false);
   const listId = useId();
   const card = useRef<HTMLDivElement | null>(null);
   const promptRef = useRef<PromptFieldHandle | null>(null);
@@ -210,10 +264,41 @@ export function TaskComposer({
   /** The brief the last name ask was about, so a pause with no new words asks nothing. */
   const namedFor = useRef("");
 
+  /**
+   * The machines, asked once on mount.
+   *
+   * Once rather than live: a member joining mid-brief is not worth re-rendering a
+   * form somebody is typing into, and the list is re-read the next time the
+   * composer opens. A member that has gone away since is caught where it matters
+   * — `tasks.create` forwards to it and reports what it said.
+   */
+  useEffect(() => {
+    let live = true;
+    void (async () => {
+      const answer = await invoke("tasks.machines", {});
+      if (!live || !answer.ok) return;
+      setMachines(readMachines(answer.value));
+    })();
+    return () => {
+      live = false;
+    };
+  }, [invoke]);
+
   const askForSuggestions = async (
     forTitle: string,
     forBrief: string,
     forQuery: string,
+    /**
+     * WHOSE checkouts, passed explicitly rather than read from state.
+     *
+     * The machine picker asks again the moment the machine changes, and a closure
+     * over `machine` still holds the OLD value at that point — React has not
+     * re-rendered yet. So the picker would show the repos of the machine you just
+     * left, which is indistinguishable from the ask not working and lands wrong
+     * paths in a task that then fails to provision over there. Found by a test
+     * asserting the member on the ask rather than only on the button.
+     */
+    forMember: string = machine,
   ): Promise<void> => {
     asked.current += 1;
     const mine = asked.current;
@@ -221,6 +306,9 @@ export function TaskComposer({
       title: forTitle,
       brief: forBrief,
       query: forQuery,
+      // Whose checkouts to offer. A repo path only means something on the machine
+      // that holds it, so the picker has to ask the machine the task is for.
+      member: forMember,
     });
     if (answer.ok && mine === asked.current) setSuggestions(readSuggestions(answer.value));
   };
@@ -527,6 +615,7 @@ export function TaskComposer({
       ...(suggested === null ? {} : { name: suggested }),
       ...(pasted.current.length === 0 ? {} : { images: pasted.current }),
       repos: scope.map((repo) => ({ path: repo.path, name: repo.name })),
+      member: machine,
     });
     setBusy(false);
     if (!result.ok) {
@@ -700,6 +789,56 @@ export function TaskComposer({
             {scopeLine(scope.map((repo) => repo.name))}
           </span>
           <span className="sh-composer-spacer" />
+          {/*
+            WHERE this task will be made — and drawn only when there is a choice.
+
+            One machine is not a decision, and a picker that always says "This Mac"
+            is a control that teaches nothing and takes space in the one row that
+            has to stay readable. With members in the net it is the first thing to
+            get right about a task, because it decides which disk the worktrees
+            land on: `#repo` beside it is already asking that machine what it has.
+
+            `Menu` rather than a hand-rolled dropdown — the design system's rule is
+            that a control comes from it — driven `open` so a left click opens what
+            is otherwise a right-click menu. The trigger reuses the `#repo`
+            button's own class so the row keeps one visual language rather than
+            gaining a second kind of small button.
+          */}
+          {machines.length < 2 ? null : (
+            <Menu
+              items={machines.map((entry) => ({
+                id: entry.id,
+                label: entry.here ? `${entry.name} (here)` : entry.name,
+              }))}
+              open={pickingMachine}
+              onOpenChange={setPickingMachine}
+              onSelect={(id) => {
+                setMachine(id);
+                setPickingMachine(false);
+                /*
+                 * The repo list belongs to the machine, so it is asked again the
+                 * moment the machine changes. Not merely cleared: the picker's
+                 * zero-query answer is the history of repos actually used over
+                 * there, which is exactly what somebody wants to see next.
+                 */
+                setSuggestions([]);
+                void askForSuggestions(titleOf(brief), brief, "", id);
+              }}
+            >
+              <button
+                type="button"
+                className="sh-composer-hash"
+                data-testid="composer-machine"
+                data-machine={machine}
+                onClick={() => setPickingMachine(true)}
+              >
+                <span className="sh-composer-hash-glyph" aria-hidden="true">
+                  @
+                </span>
+                {machines.find((entry) => entry.id === machine)?.name ?? LOCAL_MACHINE.name}
+              </button>
+            </Menu>
+          )}
           {/*
             The ONE loud thing on the card (rule 3: two primary buttons means
             neither is). `busy` is the primitive's: the label is replaced by a

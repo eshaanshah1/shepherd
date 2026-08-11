@@ -25,6 +25,7 @@ import {
   type JoinRequest,
   type JoinRequestHandler,
   memberSessionSocket,
+  selfAdvertisement,
   type MemberClient,
   type Membership,
   type NetSummary,
@@ -367,17 +368,21 @@ export function createRemoteService(options: RemoteServiceOptions): RemoteAPI & 
          * everyone's roster with no address, so the phone that just joined can
          * never dial it. The ports only; the other end supplies the address.
          */
-        ...(reachable === undefined
-          ? {}
-          : {
-              advertise: {
-                port: reachable.port,
-                ...(() => {
-                  const dataPort = readPort(join(support, 'remote-data-port'));
-                  return dataPort === undefined ? {} : { dataPort };
-                })(),
-              },
-            }),
+        /*
+         * …unless what we serve on is loopback, in which case NOTHING is
+         * advertised (`selfAdvertisement`). Joining a net while serving on
+         * 127.0.0.1 used to write an entry on every other member that named a
+         * port only this machine can reach — healthy in every field and
+         * undiallable. Being absent from their address book is the honest state:
+         * this Mac is a client until it serves somewhere reachable.
+         */
+        ...(() => {
+          const advertise = selfAdvertisement(
+            reachable,
+            readPort(join(support, 'remote-data-port')),
+          );
+          return advertise === undefined ? {} : { advertise };
+        })(),
         // A Mac that is already in this net presents its membership instead of
         // a code, which is how it is readmitted with no ceremony at all.
         ...(() => {
@@ -436,7 +441,13 @@ export function createRemoteService(options: RemoteServiceOptions): RemoteAPI & 
         deviceId,
         deviceName,
         now: () => Date.now(),
-        ...(reachable === undefined ? {} : { advertise: { port: reachable.port } }),
+        // Nothing at all when what we serve on is loopback: see
+        // `selfAdvertisement`. A healthy-looking roster entry nobody can dial is
+        // worse than no entry.
+        ...(() => {
+          const advertise = selfAdvertisement(reachable);
+          return advertise === undefined ? {} : { advertise };
+        })(),
         log: (message: string) => log.info(`member ${entry.name}: ${message}`),
       });
     },
@@ -475,9 +486,12 @@ export function createRemoteService(options: RemoteServiceOptions): RemoteAPI & 
           deviceId,
           deviceName,
           now: () => Date.now(),
-          ...(reachable === undefined
-            ? {}
-            : { advertise: { port: reachable.port } }),
+          // See `selfAdvertisement`: a Mac serving on loopback advertises
+          // nothing rather than an address that resolves, over there, to them.
+          ...(() => {
+            const advertise = selfAdvertisement(reachable);
+            return advertise === undefined ? {} : { advertise };
+          })(),
           log: (message: string) => log.info(`member ${entry.name}: ${message}`),
         });
         client.onChanged((type) => onMemberViewChanged?.(memberId, type));

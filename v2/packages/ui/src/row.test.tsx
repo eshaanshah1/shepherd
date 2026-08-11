@@ -238,4 +238,56 @@ describe('Row', () => {
     expect(el.getAttribute('tabindex')).toBe('0');
     expect(node).toBe(el);
   });
+
+  /**
+   * The entrance, and what it is allowed to move.
+   *
+   * A contributed list is re-read whole, so a task appearing is one paint with N
+   * rows and the next with N+1 — which reads as the list flickering rather than
+   * as something joining it. The mark is the caller's decision (only it knows
+   * what the list was); this is the half that says what arriving LOOKS like.
+   */
+  it('marks a row as arriving only when it is', () => {
+    const arriving = mount(<Row entering>new</Row>);
+    expect(row(arriving.container).classList.contains(rowClasses.entering)).toBe(true);
+
+    const settled = mount(<Row>old</Row>);
+    expect(settled.container.querySelector(`.${rowClasses.entering}`)).toBeNull();
+  });
+
+  /**
+   * MUTATION TARGET: the entrance animates opacity and transform, and NOTHING
+   * that costs layout.
+   *
+   * The height invariant above already refuses a height on this rule. This is the
+   * other half — the keyframes themselves, which that test cannot see, and where
+   * a `height` or a `margin` would reflow every row below for the length of the
+   * animation.
+   */
+  it('animates only compositable properties, never layout', () => {
+    const frames = [...(document.styleSheets as unknown as CSSStyleSheet[])]
+      .flatMap((sheet) => [...sheet.cssRules])
+      .filter((rule): rule is CSSKeyframesRule => rule.constructor.name === 'CSSKeyframesRule')
+      .filter((rule) => rule.name === 'sh-ui-row-enter');
+    expect(frames).toHaveLength(1);
+
+    const touched = new Set<string>();
+    for (const frame of [...(frames[0]?.cssRules ?? [])] as CSSKeyframeRule[]) {
+      for (const property of [...frame.style]) touched.add(property);
+    }
+    expect([...touched].sort()).toEqual(['opacity', 'transform']);
+  });
+
+  it('turns the entrance off under prefers-reduced-motion', () => {
+    // Off, not shortened: an entrance carries no information, so the honest
+    // accommodation is that the row is simply there.
+    const media = [...(document.styleSheets as unknown as CSSStyleSheet[])]
+      .flatMap((sheet) => [...sheet.cssRules])
+      .filter((rule): rule is CSSMediaRule => rule.constructor.name === 'CSSMediaRule')
+      .filter((rule) => rule.conditionText.includes('prefers-reduced-motion'));
+    const off = media
+      .flatMap((rule) => [...rule.cssRules] as CSSStyleRule[])
+      .filter((rule) => rule.selectorText === `.${rowClasses.entering}`);
+    expect(off.map((rule) => rule.style.animation)).toEqual(['none']);
+  });
 });

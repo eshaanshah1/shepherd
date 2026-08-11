@@ -1,9 +1,17 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentType } from 'react';
 import { IconArchive, IconEye, IconPlus, IconSettings, IconTrash } from '@tabler/icons-react';
 import type { IconProps as TablerIconProps } from '@tabler/icons-react';
 import type { TreeItem, TreeItemAction, TreeItemSeparator } from '@shepherd/sdk';
-import { Menu, Row, SectionLabel, StatusDot, type MenuEntry, type StatusRole } from '@shepherd/ui';
+import {
+  Menu,
+  Row,
+  SectionLabel,
+  StatusDot,
+  rowEnterMs,
+  type MenuEntry,
+  type StatusRole,
+} from '@shepherd/ui';
 import type { ViewContributionDTO, ViewsApi } from '../shared/index.ts';
 import { resolveExtensionUi } from './extension-ui.ts';
 import { mergeRows } from './merge-rows.ts';
@@ -195,6 +203,56 @@ function TreeView({
   const shown = merged;
 
   /**
+   * Which rows are ARRIVING, so the list grows instead of being swapped.
+   *
+   * A contributed tree is re-read whole — that is the design (`views.children`
+   * answers rows, the dock never patches them) — so a task appearing used to be
+   * one paint with N rows and the next with N+1, which reads as the list
+   * flickering rather than as something joining it. React keeps the surviving
+   * rows' DOM because they are keyed, so all that is missing is a mark on the new
+   * ones and a transition on that mark.
+   *
+   * Three things it deliberately does not do. It does not animate on the FIRST
+   * list: everything is new then, and a sidebar that flies in on every launch is
+   * a sidebar you wait for. It does not animate HEIGHT — rule 9 is that a row's
+   * height never changes, and an entrance that grew one would reflow the whole
+   * list under the cursor for the length of the animation. And it forgets a key
+   * once the row is gone, so a task that comes back is arriving again.
+   */
+  const keys = shown.map((entry) => `${entry.key}:${entry.row.id}`);
+  const fingerprint = keys.join('\u0000');
+  const known = useRef<Set<string> | null>(null);
+  const [arriving, setArriving] = useState<ReadonlySet<string>>(() => new Set());
+  useEffect(() => {
+    /*
+     * Read back OUT of the fingerprint, so this effect depends on exactly one
+     * value.
+     *
+     * Depending on the `keys` array instead would re-run it on every render (a
+     * fresh array each time) — and re-running it also re-runs its CLEANUP, which
+     * clears the timer that ends the animation. A repaint mid-entrance would then
+     * leave the mark on for good, and the row would replay its arrival the next
+     * time React had cause to recreate the element.
+     */
+    const keys = fingerprint === '' ? [] : fingerprint.split('\u0000');
+    const current = new Set(keys);
+    const first = known.current === null;
+    const fresh = first ? [] : keys.filter((key) => !known.current?.has(key));
+    known.current = current;
+    if (fresh.length === 0) return undefined;
+    setArriving(new Set(fresh));
+    /*
+     * Cleared after the transition rather than left on, because the class is what
+     * makes the animation run: a row that kept it would replay its entrance the
+     * next time React had cause to recreate the element. The timer's length is
+     * the CSS's, named once in `@shepherd/ui` and imported rather than guessed at
+     * — two numbers that must match are one number that will not.
+     */
+    const timer = setTimeout(() => setArriving(new Set()), rowEnterMs);
+    return () => clearTimeout(timer);
+  }, [fingerprint]);
+
+  /**
    * Everything after the LAST heading is pinned to the bottom of the sidebar.
    *
    * Finished work belongs at the physical bottom, not merely last in the list —
@@ -279,6 +337,8 @@ function TreeView({
             <Row
                 role="button"
                 tabIndex={0}
+                // Arriving, not merely present: see `arriving` above.
+                entering={arriving.has(key)}
                 // `row.root !== undefined` first, so a row that is about no
                 // root is never lit by the shell also not knowing its own.
                 selected={row.root !== undefined && row.root === activeRoot}

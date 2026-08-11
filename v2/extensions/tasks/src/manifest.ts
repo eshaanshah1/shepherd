@@ -65,6 +65,15 @@ export const TASK_COMMANDS = {
    * and the row is the honest place to say "here is the read-only way to ask".
    */
   presentation: 'tasks.presentation',
+  /**
+   * Which machines a new task could start on — this Mac, and every member of the
+   * net that can actually be reached.
+   *
+   * A command for the reason `suggestRepos` is one (D5): the composer is a page,
+   * it cannot reach another extension's verb table, and it must not learn how. So
+   * it asks its own extension, which asks the shell.
+   */
+  machines: 'tasks.machines',
 } as const;
 
 /** The composer's UI module, resolved by the renderer's table (ADR 0033). */
@@ -233,6 +242,7 @@ export const tasksManifest: Manifest = {
        * would run a verb whose entire effect is a return value.
        */
       { id: TASK_COMMANDS.presentation },
+      { id: TASK_COMMANDS.machines },
     ],
   },
 };

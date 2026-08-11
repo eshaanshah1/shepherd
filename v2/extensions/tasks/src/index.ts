@@ -99,6 +99,15 @@ export interface TasksAPI {
 const repoArg = s.object({ path: s.string(), name: s.string() });
 
 /**
+ * The machine that is always in the list: this one.
+ *
+ * A NAME rather than an empty string, because a caller comparing against `''`
+ * cannot tell "nothing was chosen" from "this Mac was chosen" — and those differ
+ * the moment the default does.
+ */
+export const LOCAL_MACHINE = 'here';
+
+/**
  * How long a pane is given to report its session, and how often it is asked.
  *
  * Five seconds of 500ms polls. A pane that has not produced a session by then
@@ -215,6 +224,36 @@ function orchestratorPrompt(task: { title: string; brief: string }): string {
 
 export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
   const { commands, events, points, views } = api.proposed;
+
+  /**
+   * A verb about a task on ANOTHER machine, run there instead of here.
+   *
+   * Answers `undefined` when the task belongs to this Mac, which is the ordinary
+   * case and the one the caller falls through to. `remote.at` carries the command
+   * rather than defining one, so the member runs the identical verb its own UI
+   * would — there is no remote-shaped dialect of `tasks.create` to keep in step.
+   *
+   * `member` is stripped on the way out. Over there this IS the local machine, and
+   * a forwarded `member` naming somebody else would either bounce back to us or
+   * hop again.
+   */
+  const forwardToMember = async (
+    command: string,
+    args: { member?: string } & Record<string, unknown>,
+  ): Promise<unknown | undefined> => {
+    const member = args.member;
+    if (member === undefined || member === '' || member === LOCAL_MACHINE) return undefined;
+    const { member: _here, ...rest } = args;
+    const answer = await commands.invoke('remote.at', { member, command, args: rest });
+    if (!answer.ok) {
+      // The member's own words, not a summary: "that Mac is asleep" and "that verb
+      // exploded" call for different actions and a generic failure is what makes a
+      // remote call impossible to debug from either end.
+      throw new Error(`${member} could not run ${command}: ${answer.error.message}`);
+    }
+    return answer.value;
+  };
+
   const store = new TaskStore(ctx.storage);
   /** Per-repo provisioning state. In memory, deliberately — see `provision`. */
   const provisioning = new Map<string, 'working' | 'ready' | 'failed'>();
@@ -587,8 +626,20 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         title: s.optional(s.string()),
         brief: s.optional(s.string()),
         query: s.optional(s.string()),
+        /** Whose checkouts to offer. See `tasks.create`'s `member`. */
+        member: s.optional(s.string()),
       }),
-      handler: (args) => {
+      handler: async (args) => {
+        /*
+         * Asked of the machine the task will be CREATED on, not of this one.
+         *
+         * A repo path is meaningful only on the machine that holds it, so a
+         * picker offering this Mac's checkouts for a task starting on another Mac
+         * would offer paths that do not exist over there — and `git worktree add`
+         * would fail after the brief had been typed and Create pressed.
+         */
+        const elsewhere = await forwardToMember(TASK_COMMANDS.suggestRepos, args);
+        if (elsewhere !== undefined) return elsewhere;
         const input = { title: args.title ?? '', brief: args.brief ?? '' };
         // Expanded HERE, like `tasks.create` does, so the field and the CLI flag
         // keep agreeing about what `~` means.
@@ -1451,9 +1502,60 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
   }
 
   ctx.subscriptions.push(
+    commands.register(TASK_COMMANDS.machines, {
+      // No title: the composer asks it, a person does not.
+      schema: s.nothing(),
+      /**
+       * Where a new task could start.
+       *
+       * This Mac first and always — it is the one machine that is certainly
+       * reachable — then every member of the net with an address. A member with no
+       * address is in the net and cannot be dialled (a phone, or a Mac serving on
+       * loopback), and offering it would be offering a choice that fails after the
+       * brief has been typed.
+       *
+       * `here` rather than an empty id standing for this Mac: a caller comparing
+       * against `''` is a caller that treats "not chosen" and "chosen this Mac" as
+       * the same state, and those differ the moment a default changes.
+       */
+      handler: async () => {
+        const members = await commands.invoke<Array<{ id: string; name: string; addrs?: string[] }>>(
+          'remote.members',
+          {},
+        );
+        const reachable =
+          members.ok && Array.isArray(members.value)
+            ? members.value.filter((member) => (member.addrs ?? []).length > 0)
+            : [];
+        return {
+          machines: [
+            { id: LOCAL_MACHINE, name: 'This Mac', here: true },
+            ...reachable.map((member) => ({ id: member.id, name: member.name, here: false })),
+          ],
+        };
+      },
+    }),
+  );
+
+  ctx.subscriptions.push(
     commands.register(TASK_COMMANDS.create, {
       schema: s.object({
         title: s.string(),
+        /**
+         * WHICH machine this task belongs on.
+         *
+         * Absent, or `here`, is this Mac. Anything else is a member of the net,
+         * and this verb then forwards ITSELF over there rather than creating a
+         * local record about a task that lives elsewhere — a task's repos, its
+         * worktrees and its agents are all on one machine, and a half-record here
+         * would be a row that can never be provisioned.
+         *
+         * Forwarding rather than a second verb, because it is the same task
+         * creation: the member runs `tasks.create` exactly as its own composer
+         * would, and its own sidebar (and therefore this one, merged) shows the
+         * result.
+         */
+        member: s.optional(s.string()),
         brief: s.optional(s.string()),
         /**
          * A name the caller already has — the composer's speculative ask, landed
@@ -1469,7 +1571,9 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
          */
         images: s.optional(s.array(s.object({ mediaType: s.string(), data: s.string() }))),
       }),
-      handler: (args) => {
+      handler: async (args) => {
+        const elsewhere = await forwardToMember(TASK_COMMANDS.create, args);
+        if (elsewhere !== undefined) return elsewhere;
         // The slug is resolved ONCE against what is taken and then stored (D8).
         // Re-deriving it later would let two tasks titled the same resolve to one
         // folder and quietly share a worktree.
