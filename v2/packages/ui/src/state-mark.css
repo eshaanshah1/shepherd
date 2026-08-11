@@ -1,0 +1,133 @@
+/*
+ * The state mark — §3.
+ *
+ * ONE fixed box, five shapes inside it. Every length here is a literal px rather
+ * than a scale step, and that is deliberate: these are the sizes of MARKS, not of
+ * chrome. A 7px ring beside 13px text is 7px because 7 is what reads as a ring at
+ * arm's length, and scaling it with the density mode would make the vocabulary
+ * (ring vs square vs meter) harder to tell apart at exactly the density where the
+ * rows are already tightest.
+ */
+
+.sh-ui-mark {
+  /*
+   * The fixed slot. `inline-grid` + `place-items: center` so every shape centres
+   * in the same box without any of them knowing the box's size — which is what
+   * lets the mark change state without the row reflowing.
+   */
+  display: inline-grid;
+  place-items: center;
+  inline-size: 12px;
+  block-size: 12px;
+  flex: none;
+  position: relative;
+}
+
+/* ── waiting on you · failed — a solid 8×8 square ────────────────────────────
+ *
+ * A square always means *your move*. The two share a shape because they are the
+ * same request; they differ in how bad it is that you have not answered yet.
+ */
+.sh-ui-mark[data-state='waiting']::before,
+.sh-ui-mark[data-state='failed']::before {
+  content: '';
+  inline-size: 8px;
+  block-size: 8px;
+}
+
+.sh-ui-mark[data-state='waiting']::before {
+  background: var(--sh-mark-waiting);
+}
+
+.sh-ui-mark[data-state='failed']::before {
+  background: var(--sh-mark-failed);
+}
+
+/* ── resting — a hollow 7×7 ring ─────────────────────────────────────────────
+ *
+ * Hollow, and that is the whole signal: there is nothing inside it because
+ * nothing is happening. A filled circle at this value would read as a sixth
+ * state.
+ */
+.sh-ui-mark[data-state='resting']::before {
+  content: '';
+  inline-size: 7px;
+  block-size: 7px;
+  border: var(--sh-hairline) solid var(--sh-mark-rest);
+  border-radius: 50%;
+}
+
+/* ── shipped — a check, and then it leaves the list ──────────────────────────
+ *
+ * Drawn as two borders on a rotated box rather than as an icon, because `Icon`
+ * takes a Tabler component and this is 12px of chrome inside a 12px slot — a
+ * glyph at that size is mostly antialiasing. It is also the one mark that is
+ * transient by design: a shipped task becomes a count at the foot of the rail.
+ */
+.sh-ui-mark[data-state='shipped']::before {
+  content: '';
+  inline-size: 4px;
+  block-size: 8px;
+  margin-block-start: -2px;
+  border-inline-end: 1.5px solid var(--sh-text-ghost);
+  border-block-end: 1.5px solid var(--sh-text-ghost);
+  transform: rotate(45deg);
+}
+
+/* ── working — three bars, and only the third one moves ─────────────────────── */
+
+.sh-ui-mark__bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 1.5px;
+}
+
+.sh-ui-mark__bars > i {
+  inline-size: 2px;
+  block-size: 8px;
+  background: var(--sh-mark-working);
+}
+
+/*
+ * `steps(1, end)` rather than a fade, and 1.1s rather than something snappier.
+ *
+ * The reason is measured rather than aesthetic: a stepped cycle repaints twice a
+ * second instead of every frame, and twelve open panes of continuously-repainting
+ * indicators peg the GPU. It is also more legible — a meter that eases is a meter
+ * you have to watch rather than glance at.
+ *
+ * Only the THIRD bar animates. Three bars all pulsing is a loading spinner; three
+ * bars with one moving is a thing that is working.
+ */
+@keyframes sh-mark-working {
+  0% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.18;
+  }
+
+  100% {
+    opacity: 1;
+  }
+}
+
+.sh-ui-mark__bars > i:last-child {
+  animation: sh-mark-working 1.1s steps(1, end) infinite;
+}
+
+/*
+ * Reduced motion renders the meter COMPLETE and static, never frozen mid-cycle.
+ *
+ * A frozen partial mark reads as broken — the app looks like it stopped
+ * mid-repaint — while a complete one reads as an intentional marker. This is the
+ * same reasoning behind the reduced-motion rule for every indicator here: remove
+ * the animation, not the meaning.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .sh-ui-mark__bars > i:last-child {
+    animation: none;
+    opacity: 1;
+  }
+}
