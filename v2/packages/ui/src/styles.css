@@ -46,7 +46,9 @@
 @import './prompt-field.css';
 @import './row.css';
 @import './section-label.css';
+@import './select.css';
 @import './status-dot.css';
+@import './switch.css';
 @import './tab-strip.css';
 @import './textarea.css';
 @import './tooltip.css';

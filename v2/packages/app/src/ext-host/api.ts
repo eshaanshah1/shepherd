@@ -2,6 +2,8 @@ import {
   formatIssues,
   ok,
   err,
+  s,
+  settingValueSchema,
   toDisposable,
   PointRegistry,
   type AttentionAPI,
@@ -34,6 +36,9 @@ import {
   type Schema,
   type SecretStore,
   type SessionAPI,
+  type SettingValue,
+  type SettingsAPI,
+  type SettingsError,
   type Shepherd,
   type ViewAPI,
   type ViewProvider,
@@ -212,6 +217,98 @@ export function createStorage(seed: Readonly<Record<string, unknown>>, services:
     },
     /** Sorted, matching the store's `ORDER BY key` so the two cannot disagree. */
     keys: () => [...mirror.keys()].sort(),
+  };
+}
+
+// ----------------------------------------------------------------------- settings
+
+/** Core's `SETTINGS_CHANGED_TOPIC` and the `settings.set` verb, as literals. */
+const SETTINGS_CHANGED_TOPIC = 'settings.changed';
+const SETTINGS_SET = 'settings.set';
+
+const settingsChangeSchema = s.object({ key: s.string(), value: settingValueSchema });
+
+/**
+ * `api.proposed.settings` — a CORRECTED mirror plus one command.
+ *
+ * The difference from `ctx.storage` beside it is the whole design. A KV namespace
+ * has exactly one writer, so its mirror never needs invalidating; a SETTING has
+ * three — this extension, the settings screen, and `shepherd settings` typed in a
+ * pane. So this subscribes to the change topic and keeps the mirror true rather
+ * than trusting its own last write. The `storage.set` comment in
+ * `ext-protocol.ts` predicted exactly this ("the day a second writer exists (a
+ * settings UI editing an extension's keys), this grows a push frame and that
+ * argument has to be revisited"), and the push frame it needed already existed:
+ * a bus event.
+ *
+ * The seed carries this extension's own namespace plus `shepherd.*`, so the
+ * mirror's key set IS the access rule — a change to somebody else's setting
+ * arrives on the same topic and is dropped, because putting it in would hand
+ * over a value the seed deliberately withheld.
+ */
+export function createSettings(seed: Readonly<Record<string, unknown>>, services: ExtHostServices): SettingsAPI {
+  const mirror = new Map<string, unknown>(Object.entries(seed));
+  const listeners = new Set<(key: string, value: SettingValue) => void>();
+
+  /**
+   * Subscribed only when there is something to correct.
+   *
+   * An extension whose seed is empty declared no settings and can see no
+   * `shepherd.*` value either, so every change on this topic would be one it must
+   * drop — and a subscription that can only ever drop is a frame per write per
+   * extension, forever, for nothing.
+   */
+  if (mirror.size > 0) services.subscribe(SETTINGS_CHANGED_TOPIC, (payload) => {
+    const parsed = settingsChangeSchema.parse(payload);
+    if (!parsed.ok) {
+      services.log('warn', `settings.changed did not match its shape, ignoring: ${formatIssues(parsed.error)}`);
+      return;
+    }
+    const { key, value } = parsed.value;
+    if (!mirror.has(key)) return;
+    mirror.set(key, value);
+    for (const listener of [...listeners]) listener(key, value);
+  });
+
+  return {
+    get<T>(key: string, schema: Schema<T>): T {
+      if (!mirror.has(key)) {
+        /**
+         * A throw, not `undefined`. `get` promises a value backed by a declared
+         * default, so a missing key is never "the user has not chosen" — it is an
+         * undeclared key, or another extension's, and both are caller bugs that
+         * must be loud. Same refusal-over-silence rule as the rest of this file.
+         */
+        throw new NotImplementedError(
+          `settings.get("${key}")`,
+          'no such setting was seeded for this extension. Either it is not declared in this manifest\'s ' +
+            '`contributes.settings`, or it belongs to another extension — an extension reads its own namespace ' +
+            'and `shepherd.*`, and nothing else.',
+        );
+      }
+      const parsed = schema.parse(mirror.get(key));
+      if (parsed.ok) return parsed.value;
+      throw new NotImplementedError(
+        `settings.get("${key}")`,
+        `the stored value does not match the schema this caller passed: ${formatIssues(parsed.error)}. ` +
+          'A setting is validated against its declared spec when written, so this is a disagreement between the ' +
+          'spec in the manifest and the schema at the call, not a corrupt store.',
+      );
+    },
+
+    async set(key: string, value: SettingValue): Promise<Result<void, SettingsError>> {
+      const answer = await services.call({ kind: 'command.invoke', commandId: SETTINGS_SET, args: { key, value } });
+      if (answer.ok) return ok(undefined);
+      return err({
+        code: answer.error.code === 'denied' ? 'denied' : 'invalid-value',
+        message: answer.error.message,
+      });
+    },
+
+    onDidChange(fn) {
+      listeners.add(fn);
+      return toDisposable(() => void listeners.delete(fn));
+    },
   };
 }
 
@@ -784,6 +881,14 @@ export interface ShepherdOptions {
    */
   readonly proposed: boolean;
   readonly services: ExtHostServices;
+  /**
+   * This extension's effective settings — its own namespace plus `shepherd.*`.
+   *
+   * A seed for `ContextOptions.storage`'s reason (`SettingsAPI.get` is
+   * synchronous and the values live in main), corrected afterwards by the change
+   * topic. See `createSettings`.
+   */
+  readonly settings: Readonly<Record<string, unknown>>;
   /** Whose API object this is — the host's word, from the `activate` ask. */
   readonly id: string;
   /** That extension's declared `dependencies`, the only ids it may reach. */
@@ -804,6 +909,7 @@ export function createShepherd(options: ShepherdOptions): Shepherd {
     layout: createLayout(),
     views: gated('views', () => createViews(services, options.viewProviders)),
     attention: gated('attention', () => createAttention(services)),
+    settings: gated('settings', () => createSettings(options.settings, services)),
     points: gated('points', () => createPoints(caller)),
     extensions: gated('extensions', () => createExtensions(caller)),
     // Gated like every other group on whether `proposed` is assembled at all;

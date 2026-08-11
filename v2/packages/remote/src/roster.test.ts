@@ -8,6 +8,7 @@ import {
   issueTombstone,
   rosterAddress,
   selfAdvertisement,
+  splitAddress,
   mergeEntries,
   mergeTombstones,
   revokedIds,
@@ -159,6 +160,29 @@ describe('rosterAddress', () => {
     // machine, to themselves.
     expect(rosterAddress('127.0.0.1:54321', 8723)).toEqual([]);
     expect(rosterAddress('::1:54321', 8723)).toEqual([]);
+  });
+});
+
+describe('splitAddress', () => {
+  it('splits a hint at its port', () => {
+    expect(splitAddress('192.168.1.7:8723')).toEqual({ host: '192.168.1.7', port: 8723 });
+    expect(splitAddress('[fd00::1]:8723')).toEqual({ host: '[fd00::1]', port: 8723 });
+  });
+
+  /**
+   * The one this exists for. An entry written by a build whose `rosterAddress`
+   * did not carry the port is a bare IP, and slicing it at its last `:` dials
+   * `192.168.0.11` on port 192 — a machine that was never in this net. Two of
+   * them sat in `SYN_SENT` in a real profile, which is what "that member is
+   * asleep" looked like from the app.
+   */
+  it('refuses a hint that names no port, rather than inventing one', () => {
+    expect(splitAddress('192.168.0.117')).toBeUndefined();
+    expect(splitAddress('')).toBeUndefined();
+    expect(splitAddress(':8723')).toBeUndefined();
+    expect(splitAddress('192.168.0.117:')).toBeUndefined();
+    expect(splitAddress('192.168.0.117:nope')).toBeUndefined();
+    expect(splitAddress('192.168.0.117:99999')).toBeUndefined();
   });
 });
 

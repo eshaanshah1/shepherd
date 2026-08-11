@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { paneId, type PaneID } from '@shepherd/sdk';
+import type { ThemeMode } from '@shepherd/design-tokens';
 import { CommandPalette, IconButton, TabStrip, type PaletteCommand } from '@shepherd/ui';
 import {
   LAYOUT_COMMANDS,
@@ -15,7 +16,9 @@ import {
   COMMANDS,
   type AgentIndicatorDTO,
   type AgentsApi,
+  type SettingsApi,
   type ViewsApi,
+  THEME_KEY,
   type CommandID,
   type CommandsApi,
   type LayoutApi,
@@ -27,7 +30,17 @@ import { EmptyState } from './empty-state.tsx';
 import { FindBar } from './find-bar.tsx';
 import { ViewDock, raiseIcon } from './view-dock.tsx';
 import { ViewOverlay } from './view-overlay.tsx';
+import { SettingsScreen } from './settings-screen.tsx';
 import { useContributions } from './contributions.ts';
+import { useSetting } from './use-setting.ts';
+import {
+  DEFAULT_THEME_MODE,
+  applyThemeVariables,
+  resolveThemeMode,
+  terminalBackground,
+  watchPrefersDark,
+} from './theme.ts';
+
 import { SplitView } from './split-view.tsx';
 import { TerminalPane } from './terminal-pane.tsx';
 import type { PaneTerminals } from './pane-sessions.ts';
@@ -61,6 +74,8 @@ export interface AppProps {
   readonly agents?: AgentsApi | null;
   /** Contributed views (M3). Absent = no dock, not a crash. */
   readonly views?: ViewsApi | null;
+  /** Settings. Absent = ⌘, draws nothing, not a crash. */
+  readonly settings?: SettingsApi | null;
   /** Rendered until (or instead of) main's first push. The no-bridge and test seam. */
   readonly initialSnapshot?: LayoutSnapshots;
   /**
@@ -96,6 +111,7 @@ export function App({
   commands,
   agents: agentsApi = null,
   views: viewsApi = null,
+  settings: settingsApi = null,
   initialSnapshot,
   onSnapshot,
 }: AppProps): ReactNode {
@@ -324,6 +340,14 @@ export function App({
    * on WHICH root it is in: every root is mounted, and only the active one's
    * panes hold a terminal (see `TerminalPane.visible`).
    */
+  /**
+   * The mode actually on screen — state, not a local, because a THIRD thing needs
+   * it: each pane's chrome is painted with its grid's own colour
+   * (`--sh-pane-title-bg`), and a head left on the default palette over a
+   * re-themed grid is the seam that rule exists to prevent.
+   */
+  const [themeMode, setThemeMode] = useState<ThemeMode>(DEFAULT_THEME_MODE);
+
   const makeRenderPane = useCallback(
     (visible: boolean) =>
     (pane: Pane, focused: boolean): ReactNode => {
@@ -338,13 +362,18 @@ export function App({
           terminals={terminals}
           focused={focused}
           visible={visible}
+          // The colour this pane's grid is painted with. Passed rather than let
+          // to default, or the head keeps the build's default palette while the
+          // grid under it moves — which is exactly the two-palette seam the
+          // custom property exists to prevent.
+          background={terminalBackground(themeMode)}
           {...(sessionId === undefined ? {} : { sessionId })}
           {...(agent === undefined ? {} : { agentState: agent.state })}
           {...(agent?.reason === undefined ? {} : { agentReason: agent.reason })}
         />
       );
     },
-    [terminals, sessionsByPane, agents],
+    [terminals, sessionsByPane, agents, themeMode],
   );
 
 
@@ -434,6 +463,49 @@ export function App({
       return { id: root.root, label: pane === null ? 'Empty' : displayTitle(pane, '') };
     });
   }, [snapshots, active]);
+
+  /**
+   * The takeover layer's visibility, which is MAIN's answer rather than this
+   * component's state.
+   *
+   * `window.settings` owns it, because the same value feeds `presence.overlay` and
+   * ADR 0020 allows exactly one writer of "is the user looking at this". So ⌘,
+   * (the menu), the palette entry, `shepherd raw window.settings` and Esc in the
+   * screen all move one variable, and the page follows it the way it follows the
+   * layout.
+   */
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  useEffect(() => {
+    if (settingsApi === null) return;
+    return settingsApi.onVisibility((open) => setSettingsOpen(open));
+  }, [settingsApi]);
+
+  /**
+   * The theme, in BOTH halves.
+   *
+   * `applyThemeVariables` paints the chrome and `terminals.retheme` paints every
+   * grid, from one resolved mode. Both, or the app runs on two palettes — which is
+   * exactly the drift `theme.ts`'s one-token-map rule exists to prevent, and what
+   * v1 had between `Theme.swift` and `writeBaseTheme()`.
+   *
+   * `system` resolves through `matchMedia` here rather than through Electron's
+   * `nativeTheme` in main: one place, and it re-resolves on its own when the OS
+   * flips. No relaunch — a terminal's palette is a property of its xterm instance,
+   * and a setting that needed a restart would be the first thing anyone tried and
+   * the first thing that looked broken.
+   */
+  const themeSetting = useSetting(settingsApi, THEME_KEY);
+  useEffect(() => {
+    const paint = (): void => {
+      const mode = resolveThemeMode(themeSetting, watcher.prefersDark());
+      applyThemeVariables(document.documentElement, mode);
+      terminals?.retheme(mode);
+      setThemeMode(mode);
+    };
+    const watcher = watchPrefersDark(() => paint());
+    paint();
+    return () => watcher.dispose();
+  }, [themeSetting, terminals]);
 
   const contributions = useContributions(viewsApi);
   /** Every accelerator an overlay declared, for the footer's keycap strip. */
@@ -597,6 +669,33 @@ export function App({
           )}
         </main>
       </div>
+
+      {/*
+        The takeover layer.
+
+        Painted OVER `.sh-body` rather than instead of it: every root underneath
+        stays mounted, so every pty keeps running and comes back exactly as it
+        was. A conditional mount around the stage is v1's `_ConditionalContent`
+        lesson — a torn-down pane is a released terminal and then, on the way
+        back, a second pty.
+
+        Mounted only while open, like `FindBar`: it takes the keyboard on mount,
+        and a permanently mounted one would have to be told not to.
+      */}
+      {settingsOpen && (
+        <SettingsScreen
+          settings={settingsApi}
+          onClose={() => {
+            // ASK main to close it; do not close it here. The answer comes back
+            // through `onVisibility`, which is what keeps this page and the
+            // viewing predicate from disagreeing about a takeover.
+            void settingsApi?.setOpen(false);
+            // Hand the keyboard back to the pane the user was reading — the fix
+            // `FindBar` carries, for the same reason.
+            if (focusedPaneId !== null) terminals?.focus(paneId(focusedPaneId));
+          }}
+        />
+      )}
 
       <ViewOverlay views={contributions} bridge={viewsApi} />
 

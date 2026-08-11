@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "shepherd.worktree-hook — a script you choose, run inside every worktree a task creates for a repo.",
+  "description": "shepherd.worktree-hook \u2014 a script you choose, run inside every worktree a task creates for a repo.",
   "//exports": "The split every extension makes: main imports ./manifest to register, the utility process imports the root (which pulls in `activate`), ./model is the pure layer, and ./ui is the half the renderer mounts.",
   "exports": {
     ".": {
@@ -23,7 +23,7 @@
       "default": "./ui/editor.tsx"
     }
   },
-  "//dependencies": "@shepherd/ext-tasks is a TYPE-ONLY dependency — `import type` and nothing else. The runtime relationship is the point id plus the manifest's `dependencies` entry, which is the gate the host can review; a value import would route around it. See extensions/README.md.",
+  "//dependencies": "@shepherd/ext-tasks is a TYPE-ONLY dependency \u2014 `import type` and nothing else. The runtime relationship is the point id plus the manifest's `dependencies` entry, which is the gate the host can review; a value import would route around it. See extensions/README.md.",
   "//shepherd": "The manifest, as an extension declares it. `src/manifest.ts` is the typed copy the host loads, and `manifest.test.ts` asserts the two are identical.",
   "shepherd": {
     "id": "shepherd.worktree-hook",
@@ -35,8 +35,7 @@
     ],
     "permissions": [
       "storage",
-      "process.exec",
-      "views"
+      "process.exec"
     ],
     "dependencies": [
       "shepherd.tasks"
@@ -58,6 +57,15 @@
         {
           "id": "worktreeHook.testRun",
           "title": "Worktree Hook: Test Run"
+        }
+      ],
+      "settings": [
+        {
+          "id": "worktreeHook.editor",
+          "title": "Worktree hooks",
+          "description": "Scripts that run when a worktree is created. Three scopes, run in the order below.",
+          "order": 200,
+          "component": "worktree-hook.editor"
         }
       ]
     }

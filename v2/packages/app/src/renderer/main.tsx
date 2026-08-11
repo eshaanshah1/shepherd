@@ -19,6 +19,10 @@ import { createXtermTerminal } from './xterm-terminal.ts';
  */
 import '@shepherd/ui/styles.css';
 import './styles.css';
+// The takeover layer's own sheet, after the shell's for the same reason the
+// shell's comes after the primitives': it has to be able to win at equal
+// specificity over the frame it paints across.
+import './settings.css';
 
 /**
  * The composition root: the only file that knows the bridge is a global, that a
@@ -123,6 +127,7 @@ createRoot(host).render(
       commands={bridge?.commands ?? null}
       agents={bridge?.agents ?? null}
       views={bridge?.views ?? null}
+      settings={bridge?.settings ?? null}
       // With no bridge there is no main process to project a tree, so the page
       // draws one placeholder pane rather than nothing at all — which is what
       // `pnpm --filter @shepherd/app dev`-without-electron shows you.

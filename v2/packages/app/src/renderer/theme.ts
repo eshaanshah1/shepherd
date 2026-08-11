@@ -1,7 +1,7 @@
 import { cssVariables, xtermTheme, type ThemeMode } from '@shepherd/design-tokens';
 
 /**
- * The mode this build starts in, in ONE place.
+ * The mode the first paint uses, in ONE place.
  *
  * It was typed three times ('dark' at the theme push, at the terminal factory,
  * and implicitly wherever chrome guessed what the grid looked like), and three
@@ -12,8 +12,48 @@ import { cssVariables, xtermTheme, type ThemeMode } from '@shepherd/design-token
  * Note what it is NOT used for: nothing decides a *foreground* from it. That
  * decision is `paneTitleSurface`'s, off the measured background — see
  * `terminalBackground` below and the pane chrome in `terminal-pane.tsx`.
+ *
+ * It stopped being the ANSWER when `shepherd.theme` landed: the setting is main's
+ * and arrives one push after mount, so this is the value on screen until it does.
+ * Left dark deliberately — a flash of light on a dark setup is the worse of the
+ * two, and the push is milliseconds away.
  */
 export const DEFAULT_THEME_MODE: ThemeMode = 'dark';
+
+/**
+ * Watch the OS's own light/dark preference.
+ *
+ * A seam rather than a `window.matchMedia` call at the call site, because the API
+ * may be ABSENT: jsdom has none, and a page that threw on mount there would take
+ * every renderer test with it — which is exactly what happened when this was
+ * inlined. Absent resolves to DARK, matching `DEFAULT_THEME_MODE`, so an
+ * environment that cannot answer keeps the app looking the way it already did.
+ */
+export function watchPrefersDark(onChange: () => void): { prefersDark(): boolean; dispose(): void } {
+  const query = typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+  query?.addEventListener('change', onChange);
+  return {
+    prefersDark: () => query?.matches ?? true,
+    dispose: () => query?.removeEventListener('change', onChange),
+  };
+}
+
+/**
+ * `shepherd.theme` → the mode to paint.
+ *
+ * `system` is resolved in the RENDERER against `matchMedia`, in one place, and it
+ * re-resolves on its own when the OS flips. An Electron `nativeTheme` mirror in
+ * main would be a second copy of an answer the page can already see, and the two
+ * would disagree during a theme change — which is exactly the class of bug the
+ * one-token-map rule exists to prevent.
+ */
+export function resolveThemeMode(setting: string, prefersDark: boolean): ThemeMode {
+  if (setting === 'dark' || setting === 'light') return setting;
+  // Anything else — `system`, or a value written by a build that knows a mode this
+  // one does not — follows the OS. A stored value we cannot read is not a reason
+  // to ignore the user's own OS-level choice.
+  return prefersDark ? 'dark' : 'light';
+}
 
 /**
  * The colour the grid is actually painted with — the input the pane chrome

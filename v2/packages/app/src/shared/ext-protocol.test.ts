@@ -123,6 +123,7 @@ describe('readFrames', () => {
         apiVersion: '1.0.0',
         permissions: ['storage'],
         storage: { pings: 4 },
+        settings: { 'shepherd.theme': 'dark' },
         dataDir: '/tmp/shepherd-test/ext',
         homeDir: '/tmp/shepherd-test/home',
         userName: 'ada',

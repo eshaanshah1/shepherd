@@ -38,6 +38,15 @@ export const LOG_CATEGORIES = [
   'extension',
   /** Agent lifecycle: the state relay, its alerts, and the badge. */
   'agent',
+  /**
+   * Settings: which pages were contributed, and every write.
+   *
+   * Its own category rather than `storage`'s, because the questions differ. A
+   * storage line answers "did this key persist"; a settings line answers "who
+   * changed this, and did a contributed page get refused" — and the second one is
+   * what you grep for when the screen is missing a section.
+   */
+  'settings',
 ] as const;
 export type LogCategory = (typeof LOG_CATEGORIES)[number];
 

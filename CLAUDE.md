@@ -37,15 +37,25 @@ fight it.
    real agent in the task's worktree (ADR 0034). The app **ships as `Shep.app`**
    with a design system (`@shepherd/ui`), and a task's full circle is live:
    closing its panes archives it, clicking it restores the worktrees and
-   **reattaches its agents** rather than re-prompting them. **Scratch (D9) and
-   then M4, the dogfood gate, are next.**
+   **reattaches its agents** rather than re-prompting them. **Settings** landed
+   after that (ADR 0040): ⌘, takes over the window with a screen the app and every
+   extension contribute pages to, declared in a manifest and held by the kernel —
+   which is also how **light mode** finally reached the palette
+   `@shepherd/design-tokens` has always shipped. **Scratch (D9) and then M4, the
+   dogfood gate, are next.**
 2. [`docs/superpowers/specs/2026-08-06-ade-minimal-core-sketch.md`](docs/superpowers/specs/2026-08-06-ade-minimal-core-sketch.md)
    — thesis and **every decision** (§7, §7b, §7c the headless-agent seam, §7d presence).
 3. [`docs/superpowers/specs/2026-08-06-ade-v2-core-design.md`](docs/superpowers/specs/2026-08-06-ade-v2-core-design.md)
    — the API and the M0–M4 milestones.
 4. [`docs/superpowers/specs/2026-08-06-architecture-review.md`](docs/superpowers/specs/2026-08-06-architecture-review.md)
    — what v1 got wrong; **its Rebuild checklist is normative for v2**.
-5. ADRs [0021](.claude/adr/0021-v2-store-is-node-sqlite.md)–[0039](.claude/adr/0039-v2-a-task-is-a-second-provisioning-subject-not-a-finer-step.md).
+5. ADRs [0021](.claude/adr/0021-v2-store-is-node-sqlite.md)–[0040](.claude/adr/0040-v2-settings-are-declared-in-a-manifest-and-held-by-the-kernel.md).
+   **0040** is settings: a page is STATIC data in a manifest, so the screen opens
+   with zero extensions activated and activation stays lazy; only non-default
+   values are stored, so reset is real and a changed default reaches an existing
+   install; and the takeover feeds `presence.overlay` rather than checking
+   visibility itself, which is the clause `api-layout.ts` promised in M1 and
+   nothing implemented until something covered the grid.
    **0039** is why `tasks` has a *second* provisioning point despite
    `REPO_PROVISIONED_POINT`'s comment forbidding one: the rule is against finer
    *steps* of a repo's provisioning, and a question about the **task** is a
@@ -124,10 +134,24 @@ env -u NODE_OPTIONS pnpm ship --dev   # → /Applications/Shep Night.app, daily 
   `ps -o pid,ppid,lstart -p <session pid>`: a session `sessions.list` names whose
   pid does not exist, or whose parent is not the current daemon, is a ghost.
 - **`@shepherd/ui` is the design system; do not hand-roll a control.** Roles →
-  derived metrics → primitives (`packages/ui/src`), and a component paints in
-  ROLE tokens (`--sh-accent`), never a hue. Rule 7's working indicator is the
-  braille spinner (`useBrailleFrame`), and pulses/shimmer are banned — a row that
-  is busy sets `TreeItem.busy`.
+  derived metrics → primitives (`packages/ui/src` — seventeen, `Switch` and
+  `Select` being the settings rows'), and a component paints in ROLE tokens
+  (`--sh-accent`), never a hue. Rule 7's working indicator is the braille spinner
+  (`useBrailleFrame`), and pulses/shimmer are banned — a row that is busy sets
+  `TreeItem.busy`.
+- **A setting key must sit in the declaring extension's own namespace**, and the
+  host derives that namespace from the manifest id rather than believing the
+  extension. A page whose keys fall outside it is refused, and the refusal fails
+  the whole activation — half a page drawn reads as a missing feature. Two traps
+  live one layer under it: `contributionsOf` (`core/extensions/manifest.ts`) drops
+  any contribution kind it does not NAME, and `packages/app/src/shared/**` may not
+  import a runtime VALUE (the sandboxed preload loads that barrel; a value there
+  fails the preload script and takes the window with it). Both cost a debugging
+  session; both now have the comment and the test.
+- **`settings.get` in an extension THROWS for a key it was not seeded**, rather
+  than answering `undefined`. It promises a value backed by a declared default, so
+  a missing key is an undeclared one or somebody else's — never "the user has not
+  chosen".
 - **Answers from a command are `unknown`, and a cast is not a check.** They have
   crossed an IPC port and come from an extension this code has never seen. `ok`
   says the call succeeded, not that the value has a shape. Read defensively.

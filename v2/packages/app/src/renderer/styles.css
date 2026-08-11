@@ -127,11 +127,20 @@ body.sh-dragging {
  * are centred with room for a real breadcrumb beside them.
  */
 
+/*
+ * 44px, and the settings layer reads the same value to sit below it — two numbers
+ * that must match are one number that will not. Expressed from the scale rather
+ * than typed: a control's height plus its own padding, which is what the bar is.
+ */
+:root {
+  --sh-plate-height: calc(var(--sh-control-md) + var(--sh-space-md) * 2);
+}
+
 .sh-plate {
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 44px;
+  height: var(--sh-plate-height);
   flex: 0 0 auto;
   /* Clears the traffic lights, which the window keeps. */
   padding: 0 14px 0 84px;

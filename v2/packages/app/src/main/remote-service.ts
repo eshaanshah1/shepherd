@@ -26,6 +26,7 @@ import {
   type JoinRequestHandler,
   memberSessionSocket,
   selfAdvertisement,
+  splitAddress,
   type MemberClient,
   type Membership,
   type NetSummary,
@@ -416,11 +417,16 @@ export function createRemoteService(options: RemoteServiceOptions): RemoteAPI & 
 
       const entry = store.roster(membership.netId).find((row) => row.memberId === memberId);
       const address = entry?.addrs[0];
-      if (entry === undefined || address === undefined) {
+      // Split rather than sliced: a hint that names no port would otherwise
+      // become a host one character short of a real one. See `splitAddress`.
+      const dialable = address === undefined ? undefined : splitAddress(address);
+      if (entry === undefined || dialable === undefined) {
         throw new Error(
           entry === undefined
             ? `${memberId} is not a member of ${membership.netName}`
-            : `${entry.name} is in this net but has no address to reach it at`,
+            : `${entry.name} is in this net but has no address to reach it at${
+                address === undefined ? '' : ` (${address} names no port)`
+              }`,
         );
       }
       if (entry.dataPort === undefined) {
@@ -433,10 +439,9 @@ export function createRemoteService(options: RemoteServiceOptions): RemoteAPI & 
          */
         throw new Error(`${entry.name} is not serving terminals`);
       }
-      const host = address.slice(0, address.lastIndexOf(':'));
       return await memberSessionSocket({
         membership,
-        host,
+        host: dialable.host,
         port: entry.dataPort,
         deviceId,
         deviceName,
@@ -458,17 +463,22 @@ export function createRemoteService(options: RemoteServiceOptions): RemoteAPI & 
 
       const entry = store.roster(membership.netId).find((row) => row.memberId === memberId);
       const address = entry?.addrs[0];
-      if (entry === undefined || address === undefined) {
+      // An address this build cannot dial is the same case as no address at all,
+      // and saying so beats dialing the wrong machine for twenty seconds — which
+      // is what slicing a portless hint at its last `:` did. See `splitAddress`.
+      const dialable = address === undefined ? undefined : splitAddress(address);
+      if (entry === undefined || dialable === undefined) {
         // Named rather than shrugged at: "not in the net" and "in the net but
         // nowhere to reach" call for different actions, and a phone that serves
         // nothing is legitimately the second.
         throw new Error(
           entry === undefined
             ? `${memberId} is not a member of ${membership.netName}`
-            : `${entry.name} is in this net but has no address to reach it at`,
+            : `${entry.name} is in this net but has no address to reach it at${
+                address === undefined ? '' : ` (${address} names no port)`
+              }`,
         );
       }
-      const [host, port] = [address.slice(0, address.lastIndexOf(':')), address.slice(address.lastIndexOf(':') + 1)];
 
       /**
        * One live client per member, kept.
@@ -481,8 +491,8 @@ export function createRemoteService(options: RemoteServiceOptions): RemoteAPI & 
       if (client === undefined) {
         client = memberClient({
           membership,
-          host,
-          port: Number.parseInt(port, 10),
+          host: dialable.host,
+          port: dialable.port,
           deviceId,
           deviceName,
           now: () => Date.now(),

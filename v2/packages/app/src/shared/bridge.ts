@@ -3,7 +3,7 @@
 // know about, and the renderer cannot reach for something the preload does not
 // offer. Shared code imports neither electron nor react (lint).
 
-import type { TreeItem } from '@shepherd/sdk';
+import type { SettingSpec, SettingValue, TreeItem } from '@shepherd/sdk';
 import type {
   IpcResult,
   LayoutSnapshot,
@@ -209,12 +209,63 @@ export interface ViewsApi {
   onChanged(listener: (type: string) => void): () => void;
 }
 
+/**
+ * A contributed settings page, as the page needs it.
+ *
+ * `owner` rides along because the nav draws it as a subtitle — a list of subjects
+ * with the extension named underneath, rather than a list of packages. The specs
+ * cross whole: they are declarative data (that is the point of §1.1), so the page
+ * can draw a row without asking anybody anything.
+ */
+export interface SettingsPageDTO {
+  readonly id: string;
+  readonly title: string;
+  /** The page's one serif sentence. Absent = the header draws none. */
+  readonly description?: string;
+  readonly owner: string;
+  readonly order?: number;
+  readonly component?: string;
+  readonly settings?: readonly SettingSpec[];
+}
+
+export interface SettingsSnapshotDTO {
+  readonly pages: readonly SettingsPageDTO[];
+  readonly values: Readonly<Record<string, SettingValue>>;
+  /** The keys nothing is stored for — what the reset affordance is drawn from. */
+  readonly defaults: readonly string[];
+}
+
+/**
+ * Settings, from the page's side.
+ *
+ * Note what it cannot do: name a bus topic, name a caller, or decide whether the
+ * screen is open. A write is attributed to `USER` by main — correct here for the
+ * palette's reason, that the user is typing in their own settings screen — and
+ * visibility is main's answer, which this only asks to change.
+ */
+export interface SettingsApi {
+  list(): Promise<IpcResult<SettingsSnapshotDTO>>;
+  set(key: string, value: SettingValue): Promise<IpcResult<void>>;
+  reset(key: string): Promise<IpcResult<void>>;
+  setOpen(open: boolean): Promise<IpcResult<void>>;
+  /**
+   * A command run by a contributed page, as the extension that contributed it.
+   *
+   * The page names its own id, which main told it about, and the command id. It
+   * cannot name a caller — see `ViewsApi.invoke`, same rule (D14).
+   */
+  invoke(page: string, command: string, args?: unknown): Promise<IpcResult<unknown>>;
+  onChanged(listener: (change: { readonly key: string; readonly value: SettingValue }) => void): () => void;
+  onVisibility(listener: (open: boolean) => void): () => void;
+}
+
 export interface ShepherdBridge {
   readonly session: SessionApi;
   readonly commands: CommandsApi;
   readonly layout: LayoutApi;
   readonly agents: AgentsApi;
   readonly views: ViewsApi;
+  readonly settings: SettingsApi;
   readonly window: WindowApi;
 }
 
@@ -250,6 +301,7 @@ export const BRIDGE_SURFACE = {
    * protecting and what this generalizes without widening.
    */
   views: ['list', 'children', 'activate', 'invoke', 'present', 'onChanged'],
+  settings: ['list', 'set', 'reset', 'setOpen', 'invoke', 'onChanged', 'onVisibility'],
   window: ['close'],
 } as const satisfies Record<keyof ShepherdBridge, readonly string[]>;
 

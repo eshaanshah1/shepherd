@@ -35,6 +35,15 @@ export const PERMISSIONS = [
    * start declaring against it.
    */
   'agents',
+  /**
+   * Write a setting in this extension's own namespace.
+   *
+   * READING needs no grant: an extension is handed its own effective values at
+   * activation, and a permission over "may I know my own configuration" would be
+   * a permission over nothing. Writing is a grant because a setting is a user's
+   * decision, and an extension that can rewrite one silently can undo one.
+   */
+  'settings',
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];

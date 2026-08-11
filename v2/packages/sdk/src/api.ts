@@ -4,6 +4,7 @@ import type { Disposable } from './disposable.ts';
 import type { ExtensionID } from './ids.ts';
 import type { Permission, ExtensionSource } from './permission.ts';
 import type { SessionAPI } from './api-sessions.ts';
+import type { SettingsAPI } from './api-settings.ts';
 import type { LayoutAPI, ViewAPI } from './api-layout.ts';
 import type {
   AttentionAPI,
@@ -107,6 +108,14 @@ export interface ProposedAPI {
   readonly layout: LayoutAPI;
   readonly views: ViewAPI;
   readonly attention: AttentionAPI;
+  /**
+   * The settings this extension declared in its manifest, read and written.
+   *
+   * `get` is backed by the declared default, so it always answers — see
+   * `SettingsAPI`. Writing needs the `settings` permission, enforced by the one
+   * authorizer in the dispatcher because a write is a command.
+   */
+  readonly settings: SettingsAPI;
   readonly points: PointsAPI;
   readonly extensions: ExtensionsAPI;
   /** Implemented when `tasks` needs git (M3); typed now so the shape is fixed. */

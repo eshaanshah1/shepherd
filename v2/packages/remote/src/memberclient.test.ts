@@ -8,6 +8,7 @@
 
 import { execFile } from 'node:child_process';
 import { mkdtemp } from 'node:fs/promises';
+import { createServer, type AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -261,6 +262,40 @@ describe('one Mac driving another', () => {
     });
     cleanups.push(() => client.stop());
 
+    await expect(client.invoke('views.list', {})).rejects.toThrow();
+  });
+
+  /**
+   * A member that is switched off does not REFUSE the connection — the packet is
+   * dropped and the OS keeps retrying the SYN for over a minute. The per-call
+   * timer was armed only once `connectOnce` had settled, so the deadline this
+   * option documents covered the round trip and not the dial, and a caller waited
+   * on the operating system's patience rather than its own.
+   *
+   * Measured on a real profile: two paired Macs that were off left two sockets in
+   * `SYN_SENT`, `views.list` never answered, and the sidebar never drew at all.
+   * A server that accepts and then says nothing is the same wedge without the
+   * unroutable address — no `secureConnect`, no `error`, no `close`.
+   */
+  it('gives up on a member that accepts and then says nothing', async () => {
+    const silent = createServer(() => undefined);
+    await new Promise<void>((resolve) => void silent.listen(0, '127.0.0.1', resolve));
+    cleanups.push(() => silent.close());
+    const b = await mac({});
+    const client = memberClient({
+      membership: memberOf(b.membership, 'mac-a'),
+      host: '127.0.0.1',
+      port: (silent.address() as AddressInfo).port,
+      deviceId: 'mac-a',
+      deviceName: 'Mac A',
+      now: () => Date.now(),
+      timeoutMs: 300,
+    });
+    cleanups.push(() => client.stop());
+
+    await expect(client.invoke('views.list', {})).rejects.toThrow();
+    // …and the next call redials rather than awaiting the same dead promise: a
+    // member that was asleep at 9am is reachable at 10.
     await expect(client.invoke('views.list', {})).rejects.toThrow();
   });
 

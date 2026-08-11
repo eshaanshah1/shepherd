@@ -1,4 +1,4 @@
-import type { Manifest } from '@shepherd/sdk';
+import type { Manifest, SettingsPage } from '@shepherd/sdk';
 
 /**
  * The manifest, typed, so main can register this extension without importing its
@@ -39,18 +39,36 @@ export const WORKTREE_HOOK_COMMANDS = {
 } as const;
 
 /**
- * The editor's view type, resolved by the renderer's table (ADR 0033).
+ * The editor's UI module, resolved by the renderer's table (ADR 0033).
  *
- * There is deliberately no `worktreeHook.edit` COMMAND beside it. An overlay is
- * raised by the accelerator it declares or by a gesture inside the page, and the
- * SDK gives an extension's service half no way to raise its own view — so a
- * command that claimed to open this one would be a palette entry that does
- * nothing. The key below is how you get here.
+ * Still a NAME rather than code — that part is unchanged — but it is no longer a
+ * view: it is a settings PAGE (see `WORKTREE_HOOK_PAGE`), so there is no view type
+ * registered for it and no accelerator that raises it. ⌘, and the nav are how you
+ * get here.
  */
 export const WORKTREE_HOOK_VIEW = 'worktree-hook.editor';
 
-/** What raises the editor. A modifier is required, or the key is deleted from every terminal. */
-export const WORKTREE_HOOK_KEY = 'CmdOrCtrl+Shift+H';
+/**
+ * The editor, where it always belonged.
+ *
+ * `index.ts` carried the note "a view of its own ONLY because v2 has no settings
+ * surface yet. When there is one this belongs inside it." This is that — and it is
+ * the component escape hatch's first consumer, which is what makes the hatch a
+ * mechanism rather than a paragraph in a spec: a per-repo script editor is not a
+ * row of widgets, and a schema stretched until it could express one would be a UI
+ * toolkit in a JSON file.
+ *
+ * No `settings` keys of its own: the scripts stay in this extension's KV, where
+ * `storage`'s comment says why (a hook copies THIS machine's `.env`, so it must
+ * never be committable), and the page is how you edit them.
+ */
+export const WORKTREE_HOOK_PAGE: SettingsPage = {
+  id: 'worktreeHook.editor',
+  title: 'Worktree hooks',
+  description: 'Scripts that run when a worktree is created. Three scopes, run in the order below.',
+  order: 200,
+  component: WORKTREE_HOOK_VIEW,
+};
 
 export const worktreeHookManifest: Manifest = {
   id: WORKTREE_HOOK_ID,
@@ -67,10 +85,11 @@ export const worktreeHookManifest: Manifest = {
    * symlinks THIS machine's caches, so it is reachable through the app and the
    * Shepherd CLI and can never be committed into a repo somebody else clones.
    *
-   * `views` is the editor, which exists only because v2 has no settings surface
-   * yet — see the README, and delete the view when there is one.
+   * `views` is GONE with the overlay: the editor is a settings page now, and a
+   * page needs no view registration — so the grant would be one nothing uses, and
+   * an unused permission in a manifest is a grant nobody can justify at review.
    */
-  permissions: ['storage', 'process.exec', 'views'],
+  permissions: ['storage', 'process.exec'],
   /**
    * Declared, not discovered (§7c). The point this extension registers into
    * belongs to `tasks`, and naming it here is what lets the host activate them
@@ -85,5 +104,6 @@ export const worktreeHookManifest: Manifest = {
       { id: WORKTREE_HOOK_COMMANDS.clear, title: 'Worktree Hook: Clear' },
       { id: WORKTREE_HOOK_COMMANDS.testRun, title: 'Worktree Hook: Test Run' },
     ],
+    settings: [WORKTREE_HOOK_PAGE],
   },
 };

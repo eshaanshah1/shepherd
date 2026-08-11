@@ -341,6 +341,7 @@ export class ExtHostRuntime {
           dependencies,
           world: this.#world,
           viewProviders: record.views,
+          settings: ask.settings,
         }),
       );
       // Recorded only on success, and after the await: an extension whose
