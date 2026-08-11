@@ -200,8 +200,18 @@ one or five:
 
 - **Always shown, even for one tab.** The layout does not change shape as tabs
   are added, which is the whole reason to draw it for one.
-- **Capped at three rows.** With ≤3 tabs, three tab rows. With more, the first
-  two tabs and a `… +N` row.
+- **Capped at three rows.** With ≤3 tabs, three tab rows. With more, two tabs
+  and a `… +N` row.
+- **The two it shows are the two that WANT YOU** — not the first two. An agent
+  that has finished its turn, a shell command that completed while you were
+  elsewhere: those are the tabs worth a row, and a cap that showed tab 1 and tab
+  2 would hide exactly the thing the sidebar exists to surface. The order is
+  `ROLLUP_PRIORITY`'s (`blocked`, `error`, `needsCheck`, `working`, `idle`) with
+  creation order as the tie-break, so a quiet task still reads left-to-right and
+  a loud one floats what changed to the top. `needsCheck` is the state this rule
+  is really about, and it is already the one that clears the moment you look at
+  the pane — so a row promoted for wanting you stops being promoted as soon as
+  you have seen it.
 - **Each tab row owns its status dot** — `tint` is the agent rollup over the
   panes *in that root*, not over the task. The task row's dot stays the rollup
   over all of them, so a collapsed task still says what it says today.
