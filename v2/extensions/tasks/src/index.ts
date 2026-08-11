@@ -33,7 +33,8 @@ import { taskRootId } from './model/root-id.ts';
 const AGENTS_RESUME_TARGET = 'agents.resumeTarget';
 const AGENTS_RESUME_COMMAND = 'agents.resumeCommand';
 import { displayState } from './model/lifecycle.ts';
-import { isTaskAgentState, tintFor } from './model/agent-rollup.ts';
+import { isTaskAgentState, rollUp, tintFor } from './model/agent-rollup.ts';
+import { capTabRows } from './model/tab-rows.ts';
 import { synthTaskRoot } from './model/root-synth.ts';
 import { planLaunch } from './model/launch.ts';
 import { writePastedImages, type PastedImage } from './images.ts';
@@ -190,6 +191,12 @@ const SESSION_EXIT_TOPIC = 'session.exit';
  * however many times the app has restarted since.
  */
 const ROOT_CLOSED_TOPIC = 'layout.rootClosed';
+
+/**
+ * The layout's set of roots changed — one was opened, closed, or its focused
+ * pane renamed. What the sidebar's tab rows are re-read on.
+ */
+const ROOTS_CHANGED_TOPIC = 'layout.rootsChanged';
 
 interface RootClosed {
   readonly root?: string;
@@ -389,6 +396,64 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       const state = session.pane === undefined ? undefined : agentState.get(session.pane);
       return state === undefined ? [] : [state];
     });
+
+  /**
+   * The same rollup, for the sessions in ONE tab.
+   *
+   * A session with no recorded root belongs to the task's anchor — that is where
+   * every session written before tabs existed was in fact opened, so an old
+   * record rolls up into tab 1 rather than into nothing.
+   */
+  const agentStatesOfTab = (task: TaskRecord, root: string): readonly string[] =>
+    task.sessions.flatMap((session) => {
+      if ((session.root ?? taskRootId(task.id)) !== root) return [];
+      const state = session.pane === undefined ? undefined : agentState.get(session.pane);
+      return state === undefined ? [] : [state];
+    });
+
+  /**
+   * `group → its tabs`, mirrored — the layout, as much of it as the sidebar needs.
+   *
+   * A MIRROR for the reason `agentState` above is one: reads do not cross the
+   * port (`LayoutAPI`'s getters throw `ACROSS_A_PORT`), so an extension
+   * subscribes to an announcement and re-reads through a command. The command is
+   * `layout.listRoots`, which is the single authority — nothing here derives a
+   * tab's label, and nothing invents an id.
+   *
+   * It is emphatically NOT a copy of which tab is on SCREEN. That question is
+   * still the layout's alone, answered by the shell from the snapshot it draws
+   * the stage from (ADR 0035); what this holds is which tabs EXIST and what they
+   * are called, which nothing else can tell this extension.
+   */
+  let tabsByGroup = new Map<string, readonly { root: string; label: string; session: string | null }[]>();
+
+  const refreshTabs = async (): Promise<void> => {
+    const answer = await commands.invoke<readonly unknown[]>('layout.listRoots', {});
+    if (!answer.ok || !Array.isArray(answer.value)) return;
+    const next = new Map<string, { root: string; label: string; session: string | null }[]>();
+    for (const raw of answer.value) {
+      // Read defensively: this crossed a port, and `ok` says the call succeeded
+      // rather than that the value has a shape.
+      const row = raw as {
+        root?: unknown;
+        group?: unknown;
+        label?: unknown;
+        focusedSession?: unknown;
+      };
+      if (typeof row.root !== 'string' || typeof row.group !== 'string') continue;
+      const list = next.get(row.group) ?? [];
+      list.push({
+        root: row.root,
+        // A tab whose pane has no name yet reads as its root id rather than as
+        // an empty row — ugly, and findable, which is the right failure.
+        label: typeof row.label === 'string' && row.label !== '' ? row.label : row.root,
+        session: typeof row.focusedSession === 'string' ? row.focusedSession : null,
+      });
+      next.set(row.group, list);
+    }
+    tabsByGroup = next;
+    changed();
+  };
 
   /**
    * Subscribing to the topic, WITHOUT declaring any permission.
@@ -796,6 +861,19 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * Only a RUNNING task — an already archived one has no worktrees to snapshot,
    * and a draft never had a pane to close.
    */
+  /**
+   * The layout gained, lost or renamed something — go and look again.
+   *
+   * Payload-free by design at the source, so this re-reads rather than trusts:
+   * one authority (`layout.listRoots`), not a second copy arriving by a route
+   * that can drop.
+   */
+  ctx.subscriptions.push(events.on(ROOTS_CHANGED_TOPIC, () => void refreshTabs()));
+  // And once at startup, because an extension that only subscribes misses
+  // everything that happened before it was activated — including every tab of
+  // every task restored at launch.
+  void refreshTabs();
+
   ctx.subscriptions.push(
     events.on<RootClosed>(ROOT_CLOSED_TOPIC, (payload) => {
       // One tab of a task closing is not the task closing.
@@ -1760,7 +1838,11 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
   ctx.subscriptions.push(
     commands.register(TASK_COMMANDS.presentation, {
       // No title: not a palette verb. Its whole effect is a return value.
-      schema: s.object({ task: s.string() }),
+      schema: s.object({
+        task: s.string(),
+        /** Which TAB of it. Absent = whichever session of the task is live. */
+        root: s.optional(s.string()),
+      }),
       /**
        * What this task can be SHOWN as — and **nothing else happens.**
        *
@@ -1795,7 +1877,20 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         const running = new Set(
           alive.ok && Array.isArray(alive.value) ? alive.value.map((session) => session.id) : [],
         );
-        const live = task.sessions.find((session) => running.has(session.id));
+        /*
+         * Scoped to the TAB when the row named one, so tapping a task's second
+         * tab on a phone attaches to that tab's agent rather than to whichever
+         * session of the task happens to be listed first.
+         *
+         * Liveness is still checked HERE and never remembered: a row is drawn
+         * once and clicked later, and presenting a recorded id without checking
+         * it is the scar this verb already carries.
+         */
+        const inTab =
+          args.root === undefined
+            ? task.sessions
+            : task.sessions.filter((session) => (session.root ?? taskRootId(task.id)) === args.root);
+        const live = inTab.find((session) => running.has(session.id));
         if (live === undefined) {
           ctx.log.info(`task ${task.id}: nothing running to present`);
           return {};
@@ -1810,7 +1905,19 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
   ctx.subscriptions.push(
     commands.register(TASK_COMMANDS.reveal, {
       title: 'Tasks: Reveal',
-      schema: s.object({ task: s.string() }),
+      schema: s.object({
+        task: s.string(),
+        /**
+         * WHICH tab of it — the row that was clicked.
+         *
+         * Absent means the task's anchor, which is what the task's own row
+         * sends and what every caller before tabs sent. It is only ever a tab of
+         * THIS task: a root from somewhere else would move the window out of the
+         * task the caller named, so it is checked against the group rather than
+         * trusted.
+         */
+        root: s.optional(s.string()),
+      }),
       /**
        * Show me this task — the whole of what clicking a row means.
        *
@@ -1864,7 +1971,17 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           throw new Error(`could not open the task's root: ${opened.error.code}: ${opened.error.message}`);
         }
 
-        const switched = await commands.invoke('layout.switchRoot', { root });
+        /*
+         * The tab named by the row, when it is one of this task's — otherwise
+         * the anchor. Naming a foreign root here would move the window out of
+         * the task the caller asked for, which is a worse failure than ignoring
+         * an argument.
+         */
+        const target =
+          args.root !== undefined && (args.root === root || args.root.startsWith(`${root}/`))
+            ? args.root
+            : root;
+        const switched = await commands.invoke('layout.switchRoot', { root: target });
         if (!switched.ok) {
           throw new Error(`could not switch to the task: ${switched.error.code}: ${switched.error.message}`);
         }
@@ -2107,6 +2224,29 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
   const changed = (): void => {
     for (const fn of treeListeners) fn();
   };
+
+  /**
+   * Which tasks are showing ALL of their tabs.
+   *
+   * In memory and never stored, like `provisioning` beside it: it is a property
+   * of a list somebody is looking at right now, and after a restart there is
+   * nothing expanded because nobody has expanded anything.
+   */
+  const tabsExpanded = new Set<string>();
+
+  ctx.subscriptions.push(
+    commands.register(TASK_COMMANDS.expandTabs, {
+      // No title: a row's own verb, not something to run from the palette — it
+      // means nothing without a task to name.
+      schema: s.object({ task: s.string() }),
+      handler: (args) => {
+        if (tabsExpanded.has(args.task)) tabsExpanded.delete(args.task);
+        else tabsExpanded.add(args.task);
+        changed();
+        return { expanded: tabsExpanded.has(args.task) };
+      },
+    }),
+  );
   ctx.subscriptions.push(
     commands.register(TASK_COMMANDS.delete, {
       title: 'Tasks: Delete',
@@ -2255,19 +2395,55 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       title: 'Tasks',
       data: {
         children: (parent) => {
+          /*
+           * A task's children are its TABS.
+           *
+           * They used to be its repos, saying `ready` / `provisioning…`. That is
+           * now on the task row's own description — one sublist with one
+           * meaning, rather than two kinds of child row you have to tell apart
+           * by reading them.
+           */
           if (parent !== undefined) {
             const task = store.get(parent);
+            if (task === undefined) return Promise.resolve([]);
+            const tabs = (tabsByGroup.get(taskRootId(task.id)) ?? []).map((tab) => ({
+              root: tab.root,
+              label: tab.label,
+              // Each tab's OWN state: the rollup over the sessions in THAT root.
+              // The task row keeps the rollup over all of them, so a task whose
+              // tabs are hidden says exactly what it said before tabs existed.
+              state: rollUp(agentStatesOfTab(task, tab.root)),
+            }));
+
             return Promise.resolve(
-              (task?.repos ?? []).map((repo) => {
-                const key = `${parent}:${repo.name}`;
-                // A hook that failed is said on the row rather than in a log
-                // nobody has open — but it does not overwrite the state, because
-                // the repo really is ready and an agent really is running in it.
-                const issue = hookIssue.get(key);
+              capTabRows(tabs, tabsExpanded.has(task.id)).map((row): TreeItemOut => {
+                if ('kind' in row) {
+                  return {
+                    id: `${task.id}:${row.kind}`,
+                    label: row.kind === 'more' ? `… +${row.count}` : '… less',
+                    // Clickable, deliberately: a row reading "… +3" that did
+                    // nothing when pressed is what `section` exists to avoid.
+                    command: { id: TASK_COMMANDS.expandTabs, args: { task: task.id } },
+                  };
+                }
                 return {
-                  id: key,
-                  label: repo.name,
-                  description: issue === undefined ? (provisioning.get(key) ?? 'ready') : 'ready — hook failed',
+                  id: `tab:${row.root}`,
+                  label: row.label,
+                  tint: tintFor(row.state),
+                  // WHICH root this row is — the identity the shell derives its
+                  // highlight from, exactly as the task row does.
+                  root: row.root,
+                  command: { id: TASK_COMMANDS.reveal, args: { task: task.id, root: row.root } },
+                  /*
+                   * And the read-only way to ask the same question, for a client
+                   * whose surface is somewhere else. Another member of the net
+                   * draws this row too, and `reveal` would move THIS machine's
+                   * window while putting nothing on theirs.
+                   */
+                  presents: {
+                    id: TASK_COMMANDS.presentation,
+                    args: { task: task.id, root: row.root },
+                  },
                 };
               }),
             );
@@ -2299,10 +2475,34 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
             // Said on the row rather than in a log nobody has open — and
             // APPENDED, because the task really is in the state the tint shows.
             const issue = taskIssue.get(task.id);
+            /*
+             * What the repo rows used to say, said HERE.
+             *
+             * The children are the task's tabs now, so a repo has no row of its
+             * own — and `provisioning api…` is exactly the kind of thing this
+             * field already carries: appended, because the task really is in the
+             * state the tint shows while a repo is still landing. Reported for
+             * the first repo that is not ready rather than for all of them: the
+             * row is one line, and "something is still arriving" is the whole of
+             * what it can usefully say.
+             */
+            const pending = task.repos.find((repo) => {
+              const key = `${task.id}:${repo.name}`;
+              return provisioning.get(key) !== undefined || hookIssue.get(key) !== undefined;
+            });
+            const repoNote =
+              pending === undefined
+                ? undefined
+                : hookIssue.get(`${task.id}:${pending.name}`) !== undefined
+                  ? `${pending.name} — hook failed`
+                  : `${provisioning.get(`${task.id}:${pending.name}`) ?? 'provisioning'} ${pending.name}…`;
             return {
               id: task.id,
               label: task.title,
-              description: issue === undefined ? state : `${state} — set hook failed`,
+              description: [
+                issue === undefined ? state : `${state} — set hook failed`,
+                ...(repoNote === undefined ? [] : [repoNote]),
+              ].join(' · '),
               // The word the shell resolves. `isTaskAgentState` rather than a
               // cast: `displayState` still returns the lifecycle union too, and
               // the branch above has only excluded `archived` — the type cannot
