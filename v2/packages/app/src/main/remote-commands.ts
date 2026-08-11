@@ -22,6 +22,7 @@ export const REMOTE_COMMANDS = {
   createNet: 'remote.createNet',
   useNet: 'remote.useNet',
   joinNet: 'remote.join',
+  at: 'remote.at',
   leaveNet: 'remote.leaveNet',
 } as const;
 
@@ -176,6 +177,22 @@ export function registerRemoteCommands(options: RemoteCommandsOptions): Disposab
        * an outcome it cannot name.
        */
       handler: async (args: { link: string }) => remote.joinNet(args.link),
+    }),
+
+    registry.register(REMOTE_COMMANDS.at, {
+      title: 'Remote: Run a Command on Another Member',
+      permission: 'views',
+      schema: s.object({ member: s.string(), command: s.string(), args: s.optional(s.unknown()) }),
+      /**
+       * The seam a remote UI is built on, and deliberately the only one.
+       *
+       * `remote.at` carries a command rather than defining verbs of its own, so
+       * a member's views, its rows and a row's actions all arrive through the
+       * table they already live in. Anything else would be the second routing
+       * path §4.3 exists to prevent — v1 shipped three and they drifted.
+       */
+      handler: async (args: { member: string; command: string; args?: unknown }) =>
+        remote.invokeAt(args.member, args.command, args.args ?? {}),
     }),
 
     registry.register(REMOTE_COMMANDS.leaveNet, {

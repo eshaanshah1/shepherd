@@ -110,6 +110,20 @@ export interface RemoteAPI {
    */
   joinNet(uri: string): Promise<NetSummary>;
 
+  /**
+   * Run a command on another member of this net.
+   *
+   * The point of the whole thing: **UI is always a client**, so a window here
+   * drives a core there through the ONE command registry rather than through a
+   * second, remote-shaped API. Listing another Mac's views is `views.list` sent
+   * to that Mac; opening one of its tasks is that row's own verb. Nothing about
+   * remote appears in the vocabulary.
+   *
+   * Membership is the entire registration — the member is dialled at whatever
+   * address the roster last knew, and admitted because its chain checks out.
+   */
+  invokeAt(memberId: string, command: string, args: unknown): Promise<unknown>;
+
   /** Leave a net: drop the membership, its roster and its revocations. */
   leaveNet(netId: string): void;
 
