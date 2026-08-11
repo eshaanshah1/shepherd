@@ -10,6 +10,8 @@ import {
 } from '@shepherd/sdk';
 import type { CommandRegistry } from '../commands/registry.ts';
 import { displayTitle } from './pane.ts';
+import { panes as panesOf } from './tree.ts';
+import { serializeNode } from './serialize.ts';
 import type { LayoutStore } from './store.ts';
 
 /**
@@ -404,6 +406,7 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
         return roots.map((root) => {
           const pane = store.focused(root);
           const found = pane === null ? null : store.pane(pane);
+          const tree = store.tree(root);
           return {
             root: String(root),
             group: store.groupOf(root) ?? String(root),
@@ -419,6 +422,22 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
             label: found === null ? '' : displayTitle(found, ''),
             focusedPane: pane === null ? null : String(pane),
             focusedSession: pane === null ? null : (store.sessionFor(pane) ?? null),
+            /*
+             * The split shape and every pane in it — what a caller needs to put
+             * this root BACK.
+             *
+             * `serializeNode`'s own format, which is the one the layout will
+             * rebuild from: handing out a second shape would be two descriptions
+             * of one tree, and the restore would be reading whichever of them
+             * had last been kept in step.
+             */
+            tree: tree === undefined ? null : serializeNode(tree, () => undefined),
+            panes: (tree === undefined ? [] : panesOf(tree)).map((leafPane) => ({
+              pane: String(leafPane.id),
+              cwd: leafPane.cwd,
+              userTitle: leafPane.userTitle,
+              session: store.sessionFor(leafPane.id) ?? null,
+            })),
           };
         });
       },
