@@ -1062,3 +1062,55 @@ describe('a root belongs to a group', () => {
     expect(store.groupOf(rootId('window-1'))).toBe('window-1');
   });
 });
+
+describe('newTab', () => {
+  it('mints the next tab of a group and gives it a pane', () => {
+    const store = build();
+    store.open('task:t1', {}, { group: 'task:t1' });
+    const minted = store.newTab('task:t1');
+    expect(minted.ok).toBe(true);
+    if (!minted.ok) return;
+    expect(minted.value).toBe(rootId('task:t1/tab-2'));
+    expect(store.panes(minted.value)).toHaveLength(1);
+    expect(store.rootsInGroup('task:t1')).toEqual([rootId('task:t1'), minted.value]);
+  });
+
+  it('skips an id that is already taken', () => {
+    const store = build();
+    store.open('task:t1', {}, { group: 'task:t1' });
+    store.open('task:t1/tab-2', {}, { group: 'task:t1' });
+    const minted = store.newTab('task:t1');
+    expect(minted.ok && minted.value).toBe(rootId('task:t1/tab-3'));
+  });
+
+  it('skips an id that is only on disk, so a restore cannot collide with it', () => {
+    // Live ids alone are not enough: the shell opens a persisted root lazily, so
+    // a tab minted before its sibling was opened would take an id that is about
+    // to be restored — and `open` is idempotent, so nothing would throw. It
+    // would silently hand the new tab the old tab's panes.
+    const storage = fakeKV();
+    const first = build(storage);
+    first.open('task:t1', {}, { group: 'task:t1' });
+    first.newTab('task:t1');
+    first.flush();
+
+    const second = build(storage);
+    second.open('task:t1');
+    const minted = second.newTab('task:t1');
+    expect(minted.ok && minted.value).toBe(rootId('task:t1/tab-3'));
+  });
+
+  it('carries the seed onto the tab it mints', () => {
+    const store = build();
+    store.open('task:t1', {}, { group: 'task:t1' });
+    const minted = store.newTab('task:t1', { cwd: '/tmp/wt' });
+    expect(minted.ok).toBe(true);
+    if (!minted.ok) return;
+    const pane = store.focused(minted.value);
+    expect(pane === null ? null : store.pane(pane)?.cwd).toBe('/tmp/wt');
+  });
+
+  it('refuses a group with no name', () => {
+    expect(build().newTab('')).toEqual({ ok: false, error: 'a tab needs a group' });
+  });
+});

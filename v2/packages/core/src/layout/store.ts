@@ -329,6 +329,30 @@ export class LayoutStore {
   }
 
   /**
+   * Another tab of `group`, minted with one pane.
+   *
+   * The id is READABLE (`task:t1/tab-2`) rather than random, because it shows up
+   * in `daemon.log`, in the persisted payload and in `shepherd raw
+   * layout.listRoots` — and a random id in any of those tells you nothing about
+   * which group it belongs to.
+   *
+   * The smallest unused N, checked against LIVE and PERSISTED roots both. Live
+   * alone is not enough: the shell opens a persisted root lazily, so a tab
+   * minted before its sibling was opened would take an id that is about to be
+   * restored — and `open` is idempotent, so the collision would not throw. It
+   * would silently hand the new tab the old tab's panes.
+   */
+  newTab(group: string, init: PaneSeed = {}): Result<RootID, string> {
+    if (group === '') return err('a tab needs a group');
+    const taken = new Set<string>([...this.#roots.keys(), ...this.persistedRoots()]);
+    let n = 2;
+    while (taken.has(`${group}/tab-${n}`)) n += 1;
+    const id = `${group}/tab-${n}`;
+    this.open(id, init, { group });
+    return ok(rootId(id));
+  }
+
+  /**
    * Forget a root entirely — the multi-root counterpart of closing a window.
    *
    * It does NOT end sessions: `layout.close` is the one terminator (ADR 0022),
