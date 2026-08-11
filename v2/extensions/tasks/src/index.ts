@@ -12,8 +12,10 @@ import {
   REPO_PROVISIONED_POINT,
   REPO_SUGGESTIONS_POINT,
   TASK_COMMANDS,
+  TASK_PROVISIONED_POINT,
   TASK_VIEWS,
   type RepoProvisioned,
+  type TaskProvisioned,
 } from './manifest.ts';
 import { TaskStore, type RepoArchive, type RepoRef, type TaskRecord, type TaskSession } from './store.ts';
 import { slugify, uniqueSlug } from './model/slug.ts';
@@ -183,6 +185,13 @@ interface SessionExited {
   readonly paneId?: string;
 }
 
+/** A repo whose worktree exists — what the root synthesis and the task seam read. */
+interface LandedRepo {
+  readonly name: string;
+  readonly path: string;
+  readonly worktree: string;
+}
+
 /**
  * What the orchestrator is told. Deliberately thin: the generated `CLAUDE.md`
  * at its cwd already carries the brief and the repo map (ADR 0029), so
@@ -213,6 +222,12 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * exists sends you looking for a git problem that is not there.
    */
   const hookIssue = new Map<string, string>();
+  /**
+   * A task-level provisioning complaint, keyed by task id — `hookIssue`'s
+   * sibling, one scope up. Mirrors it deliberately, including not being swept on
+   * delete: the two should be wrong or right together, not one each way.
+   */
+  const taskIssue = new Map<string, string>();
 
   /**
    * Which tasks are mid-operation, and what the operation is called.
@@ -413,6 +428,17 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     order: 'registration',
   });
   ctx.subscriptions.push(repoProvisioned);
+
+  /**
+   * The same, one scope up: every worktree exists and the root is written.
+   *
+   * Registration order for the same reason — a provider here is a side effect on
+   * the task root, and "which one wins" is not a question anybody is asking.
+   */
+  const taskProvisioned = points.define<TaskProvisioned>(TASK_PROVISIONED_POINT, {
+    order: 'registration',
+  });
+  ctx.subscriptions.push(taskProvisioned);
 
   /**
    * The dogfood rule one level deeper: the built-in ranking registers through the
@@ -1161,6 +1187,17 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     return settled;
   }
 
+  /**
+   * Did this repo get through BOTH steps — `worktree add` and every
+   * `repoProvisioned` provider?
+   *
+   * Named rather than inlined because it is the definition
+   * `TaskProvisionedFact.repos` documents, and a second spelling of it would be
+   * a second answer.
+   */
+  const taskIssueFreeRepo = (taskId: string, repo: string): boolean =>
+    hookIssue.get(`${taskId}:${repo}`) === undefined;
+
   async function provision(
     task: TaskRecord,
     images?: readonly PastedImage[],
@@ -1174,17 +1211,31 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     images?: readonly PastedImage[],
     naming?: { settle: (task: TaskRecord) => Promise<TaskRecord> },
   ): Promise<void> {
+    taskIssue.delete(draft.id);
+
     /**
      * The refs read starts BEFORE the name is awaited, which is the whole reason
-     * `provisionRepo` was split in two.
+     * `provisionRepo` was split in two: reading a repo's refs does not need to
+     * know the branch yet, so the model thinks *during* the network rather than
+     * after it (probe 2: ~2.5s of fetch per repo against a 0.16s `worktree add`).
      *
-     * Probe 2's numbers are what make it worth having: one fetch is ~2.5s of
-     * network per repo and a `worktree add` is 0.16s, so the model thinks *during*
-     * the network rather than after it. Only the FIRST repo is prefetched — by the
-     * time the loop reaches a second, the name settled long ago.
+     * **Every** repo is prefetched, not just the first. Master prefetched one and
+     * said "by the time the loop reaches a second, the name settled long ago" —
+     * true of a serial loop, and no longer true: the chains below run at once, so
+     * a second repo's fetch would start at the same moment as the first's and pay
+     * the full network wait after the name rather than during it.
+     *
+     * Each read is wrapped so it cannot reject while nobody is awaiting it.
+     * `readRepoRefs` does not catch a transport rejection, and N eager promises
+     * would be N chances at an unhandled rejection; the error is carried instead
+     * and thrown at the site that can report it.
      */
-    const first = draft.repos[0];
-    const prefetched = first === undefined ? undefined : readRepoRefs(api.proposed.process, first);
+    const prefetched = draft.repos.map((repo) =>
+      readRepoRefs(api.proposed.process, repo).then(
+        (refs) => ({ ok: true as const, refs }),
+        (error: unknown) => ({ ok: false as const, error }),
+      ),
+    );
 
     /**
      * Everything below works with the SETTLED record, and the shadowing is the
@@ -1196,24 +1247,46 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
      * be a row you press again.
      */
     const task =
-      naming === undefined
-        ? draft
-        : await whileBusy(draft.id, 'naming', () => naming.settle(draft));
+      naming === undefined ? draft : await whileBusy(draft.id, 'naming', () => naming.settle(draft));
     const root = rootOf(task);
-    const landed: { name: string; path: string; worktree: string }[] = [];
-    for (const [index, repo] of task.repos.entries()) {
+
+    /**
+     * One chain per repo — `addWorktree`, then every `repoProvisioned` provider in
+     * that repo's own worktree — and the chains run concurrently.
+     *
+     * A chain CATCHES ITS OWN failures and answers `undefined`, which is what
+     * makes `Promise.all` safe here: a rejecting chain would otherwise abandon its
+     * siblings part-way through `worktree add`, and a worktree git has registered
+     * but whose directory is gone is the state nothing cleans up later.
+     *
+     * The results are read back BY INDEX, never by completion. `landed` feeds
+     * `synthTaskRoot`, which namespaces skill collisions and writes the repo list
+     * into the generated `CLAUDE.md` — ordered by whichever git finished first,
+     * the task root would vary run to run and nothing on screen would say why.
+     */
+    const chains = task.repos.map(async (repo, index): Promise<LandedRepo | undefined> => {
       const key = `${task.id}:${repo.name}`;
       provisioning.set(key, 'working');
       hookIssue.delete(key);
-      const refs =
-        index === 0 && prefetched !== undefined
-          ? await prefetched
-          : await readRepoRefs(api.proposed.process, repo);
-      const outcome = await addWorktree(api.proposed.process, repo, task.slug, `${root}/${repo.name}`, refs);
-      if (outcome.ok) {
+      try {
+        const read = await prefetched[index];
+        if (read === undefined || !read.ok) throw read?.error ?? new Error('the refs read went missing');
+        const outcome = await addWorktree(
+          api.proposed.process,
+          repo,
+          task.slug,
+          `${root}/${repo.name}`,
+          read.refs,
+        );
+        if (!outcome.ok) {
+          provisioning.set(key, 'failed');
+          changed();
+          ctx.log.warn(`task ${task.id}: ${repo.name} did not provision — ${outcome.reason}`);
+          return undefined;
+        }
+
         provisioning.set(key, 'ready');
         changed();
-        landed.push({ name: repo.name, path: repo.path, worktree: outcome.worktree });
 
         /**
          * The seam, here and nowhere else: after the worktree exists, before the
@@ -1245,12 +1318,21 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           ctx.log.warn(`task ${task.id}: ${repo.name} provisioned, but — ${message}`);
           changed();
         }
-      } else {
+
+        return { name: repo.name, path: repo.path, worktree: outcome.worktree };
+      } catch (error) {
+        // `provisionRepo` reaching git through a transport that rejects. Its
+        // siblings are mid-flight; this chain ends and they do not.
         provisioning.set(key, 'failed');
         changed();
-        ctx.log.warn(`task ${task.id}: ${repo.name} did not provision — ${outcome.reason}`);
+        ctx.log.warn(
+          `task ${task.id}: ${repo.name} did not provision — ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return undefined;
       }
-    }
+    });
+
+    const landed = (await Promise.all(chains)).filter((entry): entry is LandedRepo => entry !== undefined);
 
     const plan = synthTaskRoot({
       title: task.title,
@@ -1272,6 +1354,38 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     for (const notice of plan.notices) ctx.log.warn(`task ${task.id}: ${notice}`);
     for (const failure of out.failed) ctx.log.warn(`task ${task.id}: ${failure}`);
     ctx.log.info(`task ${task.id}: ${landed.length}/${task.repos.length} repo(s), ${out.linked} link(s) at ${root}`);
+
+    /**
+     * The second seam: every worktree exists, the root is written, and nothing
+     * has opened in any of it yet.
+     *
+     * After `materializeTaskRoot` rather than before, so the root is finished —
+     * a provider can read the generated `CLAUDE.md`, and materialize's
+     * stale-link `rmSync` cannot reach in behind it. Awaited for
+     * `repoProvisioned`'s reason, one scope up: the orchestrator opens in these
+     * directories moments later.
+     */
+    const ready = landed.filter((repo) => taskIssueFreeRepo(task.id, repo.name));
+    const taskComplaints: string[] = [];
+    for (const provider of taskProvisioned.all()) {
+      try {
+        const done = await provider({
+          task: { slug: task.slug, root },
+          branch: task.slug,
+          repos: ready.map((repo) => ({ path: repo.path, name: repo.name, worktree: repo.worktree })),
+        });
+        if (!done.ok) taskComplaints.push(done.message ?? 'reported a failure with no message');
+      } catch (error) {
+        // Somebody else's extension must not be able to take a task down.
+        taskComplaints.push(error instanceof Error ? error.message : String(error));
+      }
+    }
+    if (taskComplaints.length > 0) {
+      const message = taskComplaints.join('\n');
+      taskIssue.set(task.id, message);
+      ctx.log.warn(`task ${task.id}: provisioned, but — ${message}`);
+      changed();
+    }
 
     /**
      * Say, once, that Shepherd created these directories — before any agent
@@ -1430,6 +1544,8 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           // question is asked.
           displayState: displayState(task.lifecycle, agentStatesOf(task)),
           root: rootOf(task),
+          /** A task-level provisioning complaint — `repos[].hookIssue` one scope up. */
+          hookIssue: taskIssue.get(task.id),
           repos: task.repos.map((repo) => ({
             ...repo,
             provisioning: provisioning.get(`${task.id}:${repo.name}`) ?? 'ready',
@@ -1981,10 +2097,13 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           const rows: TreeItemOut[] = [];
           const rowFor = (task: TaskRecord): TreeItemOut => {
             const state = displayState(task.lifecycle, agentStatesOf(task));
+            // Said on the row rather than in a log nobody has open — and
+            // APPENDED, because the task really is in the state the tint shows.
+            const issue = taskIssue.get(task.id);
             return {
               id: task.id,
               label: task.title,
-              description: state,
+              description: issue === undefined ? state : `${state} — set hook failed`,
               // The word the shell resolves. `isTaskAgentState` rather than a
               // cast: `displayState` still returns the lifecycle union too, and
               // the branch above has only excluded `archived` — the type cannot

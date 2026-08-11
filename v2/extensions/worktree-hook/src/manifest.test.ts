@@ -3,7 +3,12 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { PERMISSIONS } from '@shepherd/sdk';
 import type * as TasksManifest from '@shepherd/ext-tasks/manifest';
-import { REPO_PROVISIONED_POINT_ID, WORKTREE_HOOK_COMMANDS, worktreeHookManifest } from './manifest.ts';
+import {
+  REPO_PROVISIONED_POINT_ID,
+  TASK_PROVISIONED_POINT_ID,
+  WORKTREE_HOOK_COMMANDS,
+  worktreeHookManifest,
+} from './manifest.ts';
 
 /**
  * The id `tasks` declares, as a TYPE.
@@ -13,6 +18,9 @@ import { REPO_PROVISIONED_POINT_ID, WORKTREE_HOOK_COMMANDS, worktreeHookManifest
  * inside the one-extension-may-only-type-import-another rule.
  */
 type TasksPointId = typeof TasksManifest.REPO_PROVISIONED_POINT;
+
+/** The same, for the second seam. */
+type TasksTaskPointId = typeof TasksManifest.TASK_PROVISIONED_POINT;
 
 /**
  * The typed manifest and the `shepherd` key of `package.json` must not drift —
@@ -60,6 +68,12 @@ describe('the worktree-hook manifest', () => {
     // quiet — which is the failure this whole file exists to prevent.
     const declaredByTasks: TasksPointId = REPO_PROVISIONED_POINT_ID;
     expect(declaredByTasks).toBe('tasks.repoProvisioned');
+  });
+
+  it('spells the task point id exactly as tasks defines it', () => {
+    // The same compensation as the test above, for the second seam.
+    const declaredByTasks: TasksTaskPointId = TASK_PROVISIONED_POINT_ID;
+    expect(declaredByTasks).toBe('tasks.taskProvisioned');
   });
 
   it('contributes exactly the commands it registers', () => {

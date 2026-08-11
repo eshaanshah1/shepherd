@@ -47,6 +47,8 @@ export function isM3Options(options: Partial<M3SmokeOptions>): options is M3Smok
 export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): Promise<void> {
   const repo = flagValue(process.argv, '--shepherd-m3-repo');
   if (repo === undefined) die('no --shepherd-m3-repo');
+  const repo2 = flagValue(process.argv, '--shepherd-m3-repo2');
+  if (repo2 === undefined) die('no --shepherd-m3-repo2');
   /**
    * The repo's own name, which is what a `#` mention is matched against.
    *
@@ -77,6 +79,19 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
    * add` could not have produced, so the check below cannot pass by accident.
    */
   await invoke('worktreeHook.set', { repo, script: 'echo hooked > HOOKED.txt' });
+
+  /**
+   * --- 0b. a SET hook over both repos, through the same transport.
+   *
+   * The unit tests own matching, ordering and failure. What no unit test can say
+   * is that a real `/bin/bash` ran at a real task root with both worktrees beside
+   * it — every one of them fakes `ProcessAPI`. The script writes what it found,
+   * so the check below cannot pass by accident.
+   */
+  await invoke('worktreeHook.set', {
+    repos: [repo, repo2],
+    script: 'echo "$HOOK_REPOS" > WIRED.txt',
+  });
 
   /**
    * --- 0c. the quick tier is an OFFLINE stub, so naming needs no network.
@@ -202,6 +217,7 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
   // standing to answer a trust question about a directory it did not create.
   check(names(repo).length === 0, 'the source repo was NOT trusted — only what this app generated');
   say('ok — the generated directories are pre-trusted');
+
 
   // --- 2b. the orchestrator started itself, in a real pane, in the task root.
   //
@@ -652,6 +668,62 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
     `closing the task's panes archived it: ${JSON.stringify(finished)}`,
   );
   say('ok — closing a task finishes it');
+
+  /**
+   * --- 9. two repos, provisioned concurrently, wired by one set hook.
+   *
+   * The set hook runs AFTER `materializeTaskRoot`, so — unlike the repo hook
+   * above — the task-root gate does not already prove it has run, and this needs
+   * its own wait.
+   *
+   * LAST, and that placement is load-bearing. The quick-model stub names every
+   * task the same thing, so the composer's assertions find their task by that
+   * name and pin the `-2` its slug collides into; a two-repo task created before
+   * them takes both the name and the suffix, and the composer gate then times out
+   * against a task it never made. Anything added here goes after them.
+   */
+  const pair = (await invoke('tasks.create', {
+    title: 'Smoke pair',
+    brief: 'Two repos, one set hook.',
+    repos: [
+      { path: repo, name: 'api' },
+      { path: repo2, name: 'web' },
+    ],
+  })) as { id: string; slug: string };
+
+  const pairListed = (await until(
+    'both worktrees and the set hook to land',
+    async () => ((await invoke('tasks.list')) as { id: string; root: string }[]).find((t) => t.id === pair.id),
+    (task) =>
+      task !== undefined &&
+      existsSync(join(task.root, 'api', '.git')) &&
+      existsSync(join(task.root, 'web', '.git')) &&
+      existsSync(join(task.root, 'WIRED.txt')),
+  )) as { root: string };
+
+  /**
+   * `HOOK_REPOS` named both worktrees.
+   *
+   * Compared as a SET: the order is the key's (sorted SOURCE paths), which for two
+   * `mkdtemp` directories depends on their random suffixes rather than on anything
+   * this file controls. The ordering rule itself is owned by `matchSets`' unit
+   * tests; what only a real run can say is that both paths reached a real shell.
+   */
+  const wired = readFileSync(join(pairListed.root, 'WIRED.txt'), 'utf8').trim().split('\n');
+  check(
+    JSON.stringify([...wired].sort()) ===
+      JSON.stringify([join(pairListed.root, 'api'), join(pairListed.root, 'web')].sort()),
+    `HOOK_REPOS named both worktrees: ${wired.join(', ')}`,
+  );
+  const pairClaudeMd = readFileSync(join(pairListed.root, 'CLAUDE.md'), 'utf8');
+  check(pairClaudeMd.includes('api/') && pairClaudeMd.includes('web/'), 'the generated CLAUDE.md carries both repos');
+  // The repos provision concurrently, so this is the claim that `landed` is read
+  // back by index rather than by whichever git finished first.
+  check(
+    pairClaudeMd.indexOf('api/') < pairClaudeMd.indexOf('web/'),
+    'the repo map is in the TASK’s order, not whichever git finished first',
+  );
+  say('ok — both repos provisioned and the set hook ran at the task root');
 
   say('smoke: OK m3');
   app.exit(0);

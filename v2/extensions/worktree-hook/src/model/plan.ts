@@ -9,10 +9,24 @@
  * second is the one that ends up on the row.
  */
 
-export type HookKind = 'global' | 'repo';
+export type HookKind = 'global' | 'repo' | 'set';
 
 export interface HookRun {
   readonly kind: HookKind;
+  readonly script: string;
+  /** The source repo paths a `set` run matched, in key order. Absent for the rest. */
+  readonly paths?: readonly string[];
+}
+
+/** A `set` run, which always knows its repos — it was selected by them. */
+export interface SetRun extends HookRun {
+  readonly kind: 'set';
+  readonly paths: readonly string[];
+}
+
+/** A stored set hook, as the store hands it over: paths already normalized and sorted. */
+export interface HookSet {
+  readonly paths: readonly string[];
   readonly script: string;
 }
 
@@ -21,6 +35,12 @@ export interface HookOutcome {
   readonly ok: boolean;
   /** Merged stdout+stderr, already tailed — or the wording for a hook that never ran. */
   readonly detail: string;
+  /**
+   * WHICH hook of this kind, when there can be several. A task fires as many set
+   * hooks as it has matching subsets, and two failures both reading "the set
+   * hook failed" name neither of them.
+   */
+  readonly scope?: string;
 }
 
 /**
@@ -43,6 +63,35 @@ export function planHooks(scripts: { readonly global?: string; readonly repo?: s
   return runs;
 }
 
+/**
+ * Which set hooks a task fires, and in what order.
+ *
+ * **Subset, not exact match.** A set hook fires when every repo in it is ready,
+ * whatever else is on the task — so wiring written for a pair stays valid when a
+ * third repo joins, which an exact match would silently drop.
+ *
+ * **Size ascending, then key.** Set hooks share one cwd, the task root, so they
+ * run sequentially and the order has to be somebody's decision: a smaller set is
+ * the more basic wiring that a larger one plausibly builds on, and the key
+ * tie-break makes the whole thing reproducible.
+ *
+ * `ready` is the SOURCE repo paths of the ready checkouts. It is the source path
+ * and not the worktree because the source path is what a hook is keyed on — the
+ * only stable identity a repo has in v2.
+ *
+ * A set with no paths is dropped. It would be a subset of every task, i.e. a
+ * second global hook; the store refuses to write one and this is the line that
+ * holds when a key arrives from another build.
+ */
+export function matchSets(sets: readonly HookSet[], ready: readonly string[]): readonly SetRun[] {
+  const have = new Set(ready);
+  const keyOf = (set: HookSet): string => set.paths.join('\n');
+  return sets
+    .filter((set) => set.paths.length > 0 && set.script.trim() !== '' && set.paths.every((path) => have.has(path)))
+    .sort((a, b) => a.paths.length - b.paths.length || keyOf(a).localeCompare(keyOf(b)))
+    .map((set) => ({ kind: 'set', script: set.script, paths: set.paths }));
+}
+
 export function describeOutcomes(
   outcomes: readonly HookOutcome[],
   opts: { readonly skippedRepoHook?: boolean } = {},
@@ -50,7 +99,10 @@ export function describeOutcomes(
   const failed = outcomes.filter((outcome) => !outcome.ok);
   if (failed.length === 0) return { ok: true };
 
-  const lines = failed.map((outcome) => `the ${outcome.kind} hook failed — ${outcome.detail}`);
+  const lines = failed.map(
+    (outcome) =>
+      `the ${outcome.kind} hook${outcome.scope === undefined ? '' : ` ${outcome.scope}`} failed — ${outcome.detail}`,
+  );
   // Said explicitly, because a repo hook that was never run and a repo hook that
   // ran and did nothing are indistinguishable from the outside.
   if (opts.skippedRepoHook === true) lines.push('the repo hook was skipped because the global hook failed');

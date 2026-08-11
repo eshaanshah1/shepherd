@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { ExecErr, ExecOk, ExecOptions, ProcessAPI } from '@shepherd/sdk';
-import type { RepoProvisionedFact } from '@shepherd/ext-tasks/manifest';
-import { HOOK_TIMEOUT_MS, hookEnv, runHooks } from './runner.ts';
+import type { RepoProvisionedFact, TaskProvisionedFact } from '@shepherd/ext-tasks/manifest';
+import { HOOK_TIMEOUT_MS, hookEnv, runHooks, runSetHooks, setHookEnv } from './runner.ts';
+import type { SetRun } from './model/index.ts';
 
 const FACT: RepoProvisionedFact = {
   repo: { path: '/src/alpha', name: 'alpha' },
@@ -9,6 +10,17 @@ const FACT: RepoProvisionedFact = {
   branch: 'fix-thing',
   task: { slug: 'fix-thing', root: '/tasks/fix-thing' },
 };
+
+const TASK_FACT: TaskProvisionedFact = {
+  task: { slug: 'fix-thing', root: '/tasks/fix-thing' },
+  branch: 'fix-thing',
+  repos: [
+    { path: '/src/alpha', name: 'alpha', worktree: '/tasks/fix-thing/alpha' },
+    { path: '/src/beta', name: 'beta', worktree: '/tasks/fix-thing/beta' },
+  ],
+};
+
+const setRun = (paths: readonly string[], script: string): SetRun => ({ kind: 'set', paths, script });
 
 const OK: ExecOk = { ok: true, stdout: '', stderr: '' };
 
@@ -137,6 +149,124 @@ describe('runHooks', () => {
       gitWrite: () => Promise.resolve(OK),
     };
     const result = await runHooks(api, { scripts: { repo: 'anything' }, fact: FACT });
+    expect(result).toEqual({ ok: false, message: expect.stringContaining('spawn EACCES') });
+  });
+});
+
+describe('setHookEnv', () => {
+  it('carries the task and the matched worktrees, and NOTHING that names one repo', () => {
+    // `WORKTREE_DIR`/`WORKTREE_SRC`/`WORKTREE_NAME`/`REPO_NAME` would each have
+    // to name a single repo, and this hook has no single repo. Inherited from
+    // whichever path sorted first they would mean something different than they
+    // do one scope up, and the failure is a script that runs successfully
+    // against the wrong checkout.
+    expect(setHookEnv(TASK_FACT, ['/tasks/fix-thing/alpha', '/tasks/fix-thing/beta'])).toEqual({
+      TASK_ROOT: '/tasks/fix-thing',
+      TASK_SLUG: 'fix-thing',
+      WORKTREE_BRANCH: 'fix-thing',
+      HOOK_REPOS: '/tasks/fix-thing/alpha\n/tasks/fix-thing/beta',
+    });
+  });
+});
+
+describe('runSetHooks', () => {
+  it('spawns nothing when no set matched', async () => {
+    const { api, calls } = fakeProcess();
+    expect(await runSetHooks(api, { sets: [], fact: TASK_FACT })).toEqual({ ok: true });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('runs bash -lc at the TASK ROOT, with the set env and the hook timeout', async () => {
+    const { api, calls } = fakeProcess();
+    await runSetHooks(api, { sets: [setRun(['/src/alpha', '/src/beta'], 'ln -sf a b')], fact: TASK_FACT });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.cmd).toEqual(['/bin/bash', '-lc', 'ln -sf a b']);
+    // The whole point of the scope: the only directory that holds both checkouts.
+    expect(calls[0]?.opts.cwd).toBe('/tasks/fix-thing');
+    expect(calls[0]?.opts.timeoutMs).toBe(HOOK_TIMEOUT_MS);
+    expect(calls[0]?.opts.env).toEqual(setHookEnv(TASK_FACT, ['/tasks/fix-thing/alpha', '/tasks/fix-thing/beta']));
+  });
+
+  it('gives each set only ITS OWN repos in HOOK_REPOS', async () => {
+    const { api, calls } = fakeProcess();
+    await runSetHooks(api, { sets: [setRun(['/src/beta'], 'echo b')], fact: TASK_FACT });
+    expect(calls[0]?.opts.env?.HOOK_REPOS).toBe('/tasks/fix-thing/beta');
+  });
+
+  it('runs the matched sets in the order it was given, one at a time', async () => {
+    // They share one cwd, so concurrency here is racing writes to a single
+    // directory. `matchSets` decided the order; this preserves it.
+    const running: string[] = [];
+    const { api } = fakeProcess((call) => {
+      running.push(call.cmd[2] ?? '');
+      return OK;
+    });
+    await runSetHooks(api, {
+      sets: [setRun(['/src/alpha'], 'first'), setRun(['/src/alpha', '/src/beta'], 'second')],
+      fact: TASK_FACT,
+    });
+    expect(running).toEqual(['first', 'second']);
+  });
+
+  it('names which set failed, by the directories under the task root', async () => {
+    const { api } = fakeProcess(() => ({ ok: false, code: 3, stdout: '', stderr: 'ln: nope' }));
+    const result = await runSetHooks(api, {
+      sets: [setRun(['/src/alpha', '/src/beta'], 'ln -sf a b')],
+      fact: TASK_FACT,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('the set hook alpha + beta failed');
+    expect(result.message).toContain('ln: nope');
+  });
+
+  it('keeps running the other sets when one fails — they are siblings, not a chain', async () => {
+    // The global→repo skip exists because the second depends on the first. Two
+    // unrelated repo sets have no such relationship.
+    const { api, calls } = fakeProcess((call) =>
+      call.cmd[2] === 'first' ? { ok: false, code: 1, stdout: '', stderr: 'nope' } : OK,
+    );
+    const result = await runSetHooks(api, {
+      sets: [setRun(['/src/alpha'], 'first'), setRun(['/src/beta'], 'second')],
+      fact: TASK_FACT,
+    });
+
+    expect(calls.map((call) => call.cmd[2])).toEqual(['first', 'second']);
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('alpha');
+  });
+
+  it('joins the messages when two sets fail', async () => {
+    const { api } = fakeProcess(() => ({ ok: false, code: 1, stdout: '', stderr: 'nope' }));
+    const result = await runSetHooks(api, {
+      sets: [setRun(['/src/alpha'], 'first'), setRun(['/src/beta'], 'second')],
+      fact: TASK_FACT,
+    });
+    expect(result.message?.split('\n').filter((line) => line.startsWith('the set hook'))).toHaveLength(2);
+  });
+
+  it('says the timeout out loud when a set hook fails with no output', async () => {
+    const { api } = fakeProcess(() => ({ ok: false, code: 143, stdout: '', stderr: '' }));
+    const result = await runSetHooks(api, { sets: [setRun(['/src/alpha'], 'sleep 999')], fact: TASK_FACT });
+    expect(result.message).toContain('600s');
+  });
+
+  it('keeps only the last 20 lines of output', async () => {
+    const long = Array.from({ length: 40 }, (_, i) => `line ${i + 1}`).join('\n');
+    const { api } = fakeProcess(() => ({ ok: false, code: 1, stdout: long, stderr: '' }));
+    const result = await runSetHooks(api, { sets: [setRun(['/src/alpha'], 'noisy')], fact: TASK_FACT });
+    expect(result.message).toContain('earlier line(s)');
+    expect(result.message).toContain('line 40');
+  });
+
+  it('reports a throw from exec as a failure rather than throwing', async () => {
+    const api: ProcessAPI = {
+      exec: () => Promise.reject(new Error('spawn EACCES')),
+      gitRead: () => Promise.resolve(OK),
+      gitWrite: () => Promise.resolve(OK),
+    };
+    const result = await runSetHooks(api, { sets: [setRun(['/src/alpha'], 'anything')], fact: TASK_FACT });
     expect(result).toEqual({ ok: false, message: expect.stringContaining('spawn EACCES') });
   });
 });

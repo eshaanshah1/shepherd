@@ -18,9 +18,19 @@ import {
   type ViewAPI,
   type ViewProvider,
 } from '@shepherd/sdk';
-import type { RepoProvisioned, RepoProvisionedFact } from '@shepherd/ext-tasks/manifest';
+import type {
+  RepoProvisioned,
+  RepoProvisionedFact,
+  TaskProvisioned,
+  TaskProvisionedFact,
+} from '@shepherd/ext-tasks/manifest';
 import { activate } from './index.ts';
-import { REPO_PROVISIONED_POINT_ID, WORKTREE_HOOK_COMMANDS, WORKTREE_HOOK_VIEW } from './manifest.ts';
+import {
+  REPO_PROVISIONED_POINT_ID,
+  TASK_PROVISIONED_POINT_ID,
+  WORKTREE_HOOK_COMMANDS,
+  WORKTREE_HOOK_VIEW,
+} from './manifest.ts';
 
 /**
  * The extension through `activate`, with `tasks` played by a real
@@ -40,6 +50,15 @@ const FACT: RepoProvisionedFact = {
   task: { slug: 'fix-thing', root: '/tasks/fix-thing' },
 };
 
+const TASK_FACT: TaskProvisionedFact = {
+  task: { slug: 'fix-thing', root: '/tasks/fix-thing' },
+  branch: 'fix-thing',
+  repos: [
+    { path: '/src/alpha', name: 'alpha', worktree: '/tasks/fix-thing/alpha' },
+    { path: '/src/beta', name: 'beta', worktree: '/tasks/fix-thing/beta' },
+  ],
+};
+
 interface ExecCall {
   readonly cmd: readonly string[];
   readonly opts: ExecOptions;
@@ -49,6 +68,8 @@ interface Harness {
   run<R>(id: string, args?: unknown): Promise<R>;
   /** The providers registered into the point, as `tasks` would see them. */
   providers(): readonly RepoProvisioned[];
+  /** The providers registered into the TASK point, as `tasks` would see them. */
+  taskProviders(): readonly TaskProvisioned[];
   readonly execs: ExecCall[];
   /** What the fake `exec` answers. Reassignable mid-test. */
   reply: (call: ExecCall) => ExecOk | ExecErr;
@@ -102,6 +123,13 @@ function harness(opts: { withPoint?: boolean } = {}): Harness {
           order: 'registration',
           owner: 'shepherd.tasks',
         });
+  const taskPoint =
+    opts.withPoint === false
+      ? undefined
+      : registry.define<TaskProvisioned>(TASK_PROVISIONED_POINT_ID, {
+          order: 'registration',
+          owner: 'shepherd.tasks',
+        });
 
   const viewTypes = new Map<string, ViewProvider>();
   const views: ViewAPI = {
@@ -146,6 +174,7 @@ function harness(opts: { withPoint?: boolean } = {}): Harness {
       return (await spec.handler(args, CALLER)) as R;
     },
     providers: () => point?.all() ?? [],
+    taskProviders: () => taskPoint?.all() ?? [],
     execs,
     get reply() {
       return state.reply;
@@ -259,6 +288,9 @@ describe('the commands', () => {
         { path: '/src/alpha', script: 'echo a' },
         { path: '/src/beta', script: 'echo b' },
       ],
+      // One call fills the whole editor, so the answer carries every scope
+      // there is — empty here, and present rather than absent.
+      sets: [],
     });
     h.dispose();
   });
@@ -331,6 +363,194 @@ describe('the editor view', () => {
       surface: 'overlay',
       key: 'CmdOrCtrl+Shift+H',
     });
+    h.dispose();
+  });
+});
+
+describe('naming a set of repos', () => {
+  it('round-trips a set hook and lists it', async () => {
+    const h = harness();
+    await h.run(WORKTREE_HOOK_COMMANDS.set, { repos: ['/src/alpha', '/src/beta'], script: 'ln -sf a b' });
+
+    expect(await h.run(WORKTREE_HOOK_COMMANDS.get, { repos: ['/src/beta', '/src/alpha'] })).toMatchObject({
+      scope: 'alpha + beta',
+      script: 'ln -sf a b',
+      sets: [{ paths: ['/src/alpha', '/src/beta'], script: 'ln -sf a b' }],
+    });
+    h.dispose();
+  });
+
+  it('fills the whole editor from one call — global, repos AND sets', async () => {
+    // One round-trip, for the reason `repos` was always returned: a second call
+    // to list what exists is a second chance to draw a stale one.
+    const h = harness();
+    await h.run(WORKTREE_HOOK_COMMANDS.set, { script: 'echo global' });
+    await h.run(WORKTREE_HOOK_COMMANDS.set, { repo: '/src/alpha', script: 'echo repo' });
+    await h.run(WORKTREE_HOOK_COMMANDS.set, { repos: ['/src/alpha', '/src/beta'], script: 'echo set' });
+
+    expect(await h.run(WORKTREE_HOOK_COMMANDS.get, {})).toMatchObject({
+      scope: 'global',
+      script: 'echo global',
+      repos: [{ path: '/src/alpha', script: 'echo repo' }],
+      sets: [{ paths: ['/src/alpha', '/src/beta'], script: 'echo set' }],
+    });
+    h.dispose();
+  });
+
+  it('reports clearing a set as clearing, not as saving', async () => {
+    const h = harness();
+    await h.run(WORKTREE_HOOK_COMMANDS.set, { repos: ['/src/alpha'], script: 'echo hi' });
+    expect(await h.run(WORKTREE_HOOK_COMMANDS.set, { repos: ['/src/alpha'], script: '  ' })).toEqual({
+      scope: 'alpha',
+      cleared: true,
+    });
+    expect(await h.run<{ sets: unknown[] }>(WORKTREE_HOOK_COMMANDS.get, {})).toMatchObject({ sets: [] });
+    h.dispose();
+  });
+
+  it('clears a set through the clear verb', async () => {
+    const h = harness();
+    await h.run(WORKTREE_HOOK_COMMANDS.set, { repos: ['/src/alpha', '/src/beta'], script: 'echo hi' });
+    await h.run(WORKTREE_HOOK_COMMANDS.clear, { repos: ['/src/alpha', '/src/beta'] });
+    expect(await h.run<{ sets: unknown[] }>(WORKTREE_HOOK_COMMANDS.get, {})).toMatchObject({ sets: [] });
+    h.dispose();
+  });
+
+  it('refuses a repo AND a set in one call rather than picking one', async () => {
+    // Three scopes on two optional fields, so the illegal fourth combination has
+    // to be refused here — the schema cannot say it, and a precedence rule for
+    // `--repo x --repos y` is a rule nobody would remember.
+    const h = harness();
+    await expect(
+      h.run(WORKTREE_HOOK_COMMANDS.set, { repo: '/src/alpha', repos: ['/src/beta'], script: 'echo hi' }),
+    ).rejects.toThrow(/not both/);
+    h.dispose();
+  });
+
+  it('refuses a set with no repos', async () => {
+    const h = harness();
+    await expect(h.run(WORKTREE_HOOK_COMMANDS.set, { repos: [], script: 'echo hi' })).rejects.toThrow(
+      /at least one repo/,
+    );
+    h.dispose();
+  });
+
+  it('keeps a repo hook and a one-repo set apart', async () => {
+    const h = harness();
+    await h.run(WORKTREE_HOOK_COMMANDS.set, { repo: '/src/alpha', script: 'echo repo' });
+    await h.run(WORKTREE_HOOK_COMMANDS.set, { repos: ['/src/alpha'], script: 'echo set' });
+    expect(await h.run(WORKTREE_HOOK_COMMANDS.get, { repo: '/src/alpha' })).toMatchObject({ script: 'echo repo' });
+    expect(await h.run(WORKTREE_HOOK_COMMANDS.get, { repos: ['/src/alpha'] })).toMatchObject({ script: 'echo set' });
+    h.dispose();
+  });
+});
+
+describe('test-run', () => {
+  it('runs the script alone, as a repo hook, in the directory named', async () => {
+    const h = harness();
+    await h.run(WORKTREE_HOOK_COMMANDS.testRun, { script: 'ls', at: '/tmp/throwaway' });
+    expect(h.execs[0]?.cmd).toEqual(['/bin/bash', '-lc', 'ls']);
+    expect(h.execs[0]?.opts.cwd).toBe('/tmp/throwaway');
+    expect(h.execs[0]?.opts.env?.WORKTREE_DIR).toBe('/tmp/throwaway');
+    h.dispose();
+  });
+
+  it('runs as a SET hook when repos are named, so $TASK_ROOT is not empty', async () => {
+    // Without this, a set script tested through the repo path runs with
+    // TASK_ROOT unset — `cp "$TASK_ROOT/alpha/.env" .` becomes `cp /alpha/.env .`
+    // and the test reports a bug that does not exist.
+    const h = harness();
+    await h.run(WORKTREE_HOOK_COMMANDS.testRun, {
+      repos: ['/src/alpha', '/src/beta'],
+      script: 'echo "$HOOK_REPOS"',
+      at: '/tmp/throwaway',
+    });
+
+    expect(h.execs[0]?.opts.cwd).toBe('/tmp/throwaway');
+    expect(h.execs[0]?.opts.env).toEqual({
+      TASK_ROOT: '/tmp/throwaway',
+      TASK_SLUG: 'test-run',
+      WORKTREE_BRANCH: 'test-run',
+      HOOK_REPOS: '/tmp/throwaway/alpha\n/tmp/throwaway/beta',
+    });
+    h.dispose();
+  });
+
+  it('does not save what it runs', async () => {
+    const h = harness();
+    await h.run(WORKTREE_HOOK_COMMANDS.testRun, { repos: ['/src/alpha'], script: 'ls', at: '/tmp/throwaway' });
+    expect(await h.run<{ sets: unknown[] }>(WORKTREE_HOOK_COMMANDS.get, {})).toMatchObject({ sets: [] });
+    h.dispose();
+  });
+});
+
+describe('the set-hook provider it registers', () => {
+  it('lands exactly one provider in tasks.taskProvisioned', () => {
+    const h = harness();
+    expect(h.taskProviders()).toHaveLength(1);
+    h.dispose();
+  });
+
+  it('spawns nothing when no set hook matches this task', async () => {
+    const h = harness();
+    await h.run(WORKTREE_HOOK_COMMANDS.set, { repos: ['/src/alpha', '/src/gamma'], script: 'echo hi' });
+
+    expect(await h.taskProviders()[0]?.(TASK_FACT)).toEqual({ ok: true });
+    expect(h.execs).toHaveLength(0);
+    h.dispose();
+  });
+
+  it('runs a set hook whose repos are all on the task, at the task root', async () => {
+    const h = harness();
+    await h.run(WORKTREE_HOOK_COMMANDS.set, { repos: ['/src/alpha', '/src/beta'], script: 'ln -sf a b' });
+
+    expect(await h.taskProviders()[0]?.(TASK_FACT)).toEqual({ ok: true });
+    expect(h.execs[0]?.cmd).toEqual(['/bin/bash', '-lc', 'ln -sf a b']);
+    expect(h.execs[0]?.opts.cwd).toBe('/tasks/fix-thing');
+    expect(h.execs[0]?.opts.env?.HOOK_REPOS).toBe('/tasks/fix-thing/alpha\n/tasks/fix-thing/beta');
+    h.dispose();
+  });
+
+  it('runs every matching subset, smallest first', async () => {
+    const h = harness();
+    await h.run(WORKTREE_HOOK_COMMANDS.set, { repos: ['/src/alpha', '/src/beta'], script: 'both' });
+    await h.run(WORKTREE_HOOK_COMMANDS.set, { repos: ['/src/alpha'], script: 'alpha only' });
+
+    await h.taskProviders()[0]?.(TASK_FACT);
+    expect(h.execs.map((call) => call.cmd[2])).toEqual(['alpha only', 'both']);
+    h.dispose();
+  });
+
+  it('finds a set stored under ~ when the task names expanded paths', async () => {
+    const h = harness();
+    await h.run(WORKTREE_HOOK_COMMANDS.set, { repos: ['~/dev/alpha', '~/dev/beta'], script: 'echo hi' });
+
+    await h.taskProviders()[0]?.({
+      ...TASK_FACT,
+      repos: [
+        { path: `${HOME}/dev/alpha`, name: 'alpha', worktree: '/tasks/fix-thing/alpha' },
+        { path: `${HOME}/dev/beta`, name: 'beta', worktree: '/tasks/fix-thing/beta' },
+      ],
+    });
+    expect(h.execs.map((call) => call.cmd[2])).toEqual(['echo hi']);
+    h.dispose();
+  });
+
+  it('reports a failing set hook as a VALUE, never a throw', async () => {
+    const h = harness();
+    h.reply = () => ({ ok: false, code: 3, stdout: '', stderr: 'ln: nope' });
+    await h.run(WORKTREE_HOOK_COMMANDS.set, { repos: ['/src/alpha'], script: 'ln -sf nope' });
+
+    const result = await h.taskProviders()[0]?.(TASK_FACT);
+    expect(result?.ok).toBe(false);
+    expect(result?.message).toContain('the set hook alpha failed');
+    h.dispose();
+  });
+
+  it('warns and stays up when nothing defines the task point', () => {
+    const h = harness({ withPoint: false });
+    expect(h.warnings.some((line) => line.includes(TASK_PROVISIONED_POINT_ID))).toBe(true);
+    expect(h.viewTypes().has(WORKTREE_HOOK_VIEW)).toBe(true);
     h.dispose();
   });
 });

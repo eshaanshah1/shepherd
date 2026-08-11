@@ -84,11 +84,16 @@ export const REPO_SUGGESTIONS_POINT = 'tasks.repoSuggestions';
  * race it invisibly, since the files do land, just sometimes after the agent
  * looked for them.
  *
- * It is the ONLY provisioning point, and it publishes a question rather than a
- * step (the rule `REPO_SUGGESTIONS_POINT` states above). A provider is handed
- * paths and nothing else, so it cannot reach this extension's internals, and it
- * cannot fail a task — see the return type. If a later need wants a different
- * moment, widen this fact; do not add `tasks.repoAboutToProvision` beside it.
+ * It publishes a question rather than a step (the rule `REPO_SUGGESTIONS_POINT`
+ * states above). A provider is handed paths and nothing else, so it cannot reach
+ * this extension's internals, and it cannot fail a task — see the return type. If
+ * a later need wants a different MOMENT in a repo's provisioning, widen this
+ * fact; do not add `tasks.repoAboutToProvision` beside it.
+ *
+ * It is no longer the only provisioning point. `TASK_PROVISIONED_POINT` below is
+ * the second and, per ADR 0039, the bar it had to clear is the bar a third would:
+ * a different SUBJECT, not a different moment. A question about a repo belongs
+ * here; a question about the task belongs there.
  */
 export const REPO_PROVISIONED_POINT = 'tasks.repoProvisioned';
 
@@ -109,6 +114,52 @@ export interface RepoProvisionedFact {
  */
 export type RepoProvisioned = (
   fact: RepoProvisionedFact,
+) => Promise<{ readonly ok: boolean; readonly message?: string }>;
+
+/**
+ * Every worktree this task asked for exists — is anything else needed before it
+ * can be worked in?
+ *
+ * The point above answers that question for ONE repo, in that repo's worktree.
+ * This one answers it for the task, once, at the task root — the only directory
+ * that holds every checkout, and so the only place wiring that exists *between*
+ * two repos can be written.
+ *
+ * That is why it is a second point rather than a wider `RepoProvisionedFact`,
+ * which the comment above forbids. The rule there is against publishing finer
+ * STEPS of one repo's provisioning; this publishes a different SUBJECT. And the
+ * mechanism leaves no choice: that fact is delivered once per repo, so a
+ * provider gated on a repo SET would either fire N times or have to accumulate
+ * state across calls and guess which delivery was the last — and nothing in the
+ * fact says how many are coming. See ADR 0039.
+ *
+ * `repos` carries only the checkouts that landed AND that no `repoProvisioned`
+ * provider complained about. That one definition is the whole skip rule for
+ * anything gated on a set: a repo that failed either step is absent from the set
+ * it would have matched, so there is no second cascade rule to get wrong.
+ */
+export const TASK_PROVISIONED_POINT = 'tasks.taskProvisioned';
+
+export interface TaskProvisionedFact {
+  readonly task: { readonly slug: string; readonly root: string };
+  /** The task's branch — the same slug every repo's worktree is on. */
+  readonly branch: string;
+  /** Ready checkouts, in the order the task lists its repos. */
+  readonly repos: readonly {
+    /** The SOURCE repo, as the user picked it. */
+    readonly path: string;
+    readonly name: string;
+    readonly worktree: string;
+  }[];
+}
+
+/**
+ * `ok: false` DEGRADES the task; it does not fail it. The worktrees are kept,
+ * the root is built and agents still spawn — the same trade `RepoProvisioned`
+ * makes, for the same reason.
+ */
+export type TaskProvisioned = (
+  fact: TaskProvisionedFact,
 ) => Promise<{ readonly ok: boolean; readonly message?: string }>;
 
 export const tasksManifest: Manifest = {
