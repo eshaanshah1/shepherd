@@ -342,6 +342,24 @@ export function createRemoteService(options: RemoteServiceOptions): RemoteAPI & 
         deviceName,
         certPin: identityPin,
         now: () => Date.now(),
+        /**
+         * Where the net can reach this Mac afterwards.
+         *
+         * Without it this Mac is admitted and then unreachable — listed in
+         * everyone's roster with no address, so the phone that just joined can
+         * never dial it. The ports only; the other end supplies the address.
+         */
+        ...(reachable === undefined
+          ? {}
+          : {
+              advertise: {
+                port: reachable.port,
+                ...(() => {
+                  const dataPort = readPort(join(support, 'remote-data-port'));
+                  return dataPort === undefined ? {} : { dataPort };
+                })(),
+              },
+            }),
         // A Mac that is already in this net presents its membership instead of
         // a code, which is how it is readmitted with no ceremony at all.
         ...(() => {

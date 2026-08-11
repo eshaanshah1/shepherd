@@ -14,7 +14,14 @@ import {
 import { issueCredential, type Credential } from './net.ts';
 import { signWith, verifySignature } from './netcrypto.ts';
 import type { Membership, NetStore } from './netstore.ts';
-import { issueTombstone, verifyTombstone, type RosterEntry, type Tombstone } from './roster.ts';
+import {
+  issueTombstone,
+  mergeEntries,
+  rosterAddress,
+  verifyTombstone,
+  type RosterEntry,
+  type Tombstone,
+} from './roster.ts';
 
 /**
  * The remote server: a GATE in front of the session protocol.
@@ -137,6 +144,8 @@ export class RemoteServer {
   readonly #clients = new Map<number, ClientState>();
   #code: PairingCode | undefined;
   #listening: Listening | undefined;
+  /** What each connection said it serves on, until it is admitted. */
+  readonly #advertised = new Map<number, Hello['advertise']>();
 
   constructor(options: RemoteServerOptions) {
     this.#options = options;
@@ -232,6 +241,7 @@ export class RemoteServer {
     // The session server hears about it only if it was ever told about it —
     // and when it does, R1's rule applies: viewers go, sessions do not.
     if (client.sessionClientId !== undefined) this.#options.sessions.disconnect(client.sessionClientId);
+    this.#advertised.delete(id);
     this.#clients.delete(id);
   }
 
@@ -272,6 +282,7 @@ export class RemoteServer {
       readonly roster?: readonly RosterEntry[];
       readonly tombstones?: readonly Tombstone[];
     };
+    this.#advertised.set(client.connection.id, hello.advertise);
     const membership = this.#options.net.active();
     const decision = joinDecision({
       hello,
@@ -331,7 +342,9 @@ export class RemoteServer {
         // attempt — means a denied join does not cost the next attempt.
         this.#code = undefined;
         const credential = this.#issue(membership, decision.candidate);
-        this.#record(membership, credential);
+        // No roster write here: `#admit` is the ONE writer, and it runs next.
+        // Two writes in the same millisecond is a tie last-write-wins cannot
+        // break, and the loser carried the addresses.
         this.#admit(client, membership, credential, hello.nonce, [credential, ...membership.chain]);
       })
       .catch((error: unknown) => {
@@ -363,21 +376,6 @@ export class RemoteServer {
       },
       signWith(membership.memberKey.privateKey),
     );
-  }
-
-  /** Put a newly admitted member in the roster, so other members learn of it. */
-  #record(membership: Membership, credential: Credential): void {
-    const now = this.#options.now();
-    this.#options.net.mergeRoster(membership.netId, [
-      {
-        memberId: credential.memberId,
-        name: credential.name,
-        addrs: [],
-        admittedBy: membership.memberId,
-        admittedAt: now,
-        updatedAt: now,
-      },
-    ]);
   }
 
   /**
@@ -437,11 +435,13 @@ export class RemoteServer {
      */
     try {
       const now = this.#options.now();
+      const advertised = this.#advertised.get(client.connection.id);
       this.#options.net.mergeRoster(membership.netId, [
         {
           memberId: member.memberId,
           name: member.name,
-          addrs: addressOf(client.connection.remoteAddress),
+          addrs: rosterAddress(client.connection.remoteAddress, advertised?.port),
+          ...(advertised?.dataPort === undefined ? {} : { dataPort: advertised.dataPort }),
           admittedBy: member.issuer,
           admittedAt: member.issuedAt,
           updatedAt: now,
@@ -482,7 +482,7 @@ export class RemoteServer {
               signWith(membership.memberKey.privateKey),
             ),
           }),
-      roster: this.#options.net.roster(membership.netId),
+      roster: this.#rosterWithSelf(membership),
       tombstones: this.#options.net.tombstones(membership.netId),
       ...(this.#options.dataPort?.() === undefined ? {} : { dataPort: this.#options.dataPort() }),
     });
@@ -502,6 +502,33 @@ export class RemoteServer {
     this.#log.info(`remote ${client.connection.id} admitted as ${member.name} (${member.memberId})`);
   }
 
+  /**
+   * The roster as this Mac would have somebody else hold it — itself included.
+   *
+   * A member never writes its own entry, because entries are written when
+   * somebody connects and nobody connects to themselves. Handing out that list
+   * unaltered gives a client everyone EXCEPT the machine it is talking to, which
+   * is the one address it definitely needs.
+   *
+   * Its own address comes from the listener rather than the store, so it is
+   * whatever it is actually bound to right now.
+   */
+  #rosterWithSelf(membership: Membership): readonly RosterEntry[] {
+    const held = this.#options.net.roster(membership.netId);
+    const listening = this.#listening;
+    if (listening === undefined) return held;
+    const self: RosterEntry = {
+      memberId: membership.memberId,
+      name: membership.chain[0]?.name ?? membership.memberId,
+      addrs: rosterAddress(listening.address, listening.port),
+      ...(this.#options.dataPort?.() === undefined ? {} : { dataPort: this.#options.dataPort() }),
+      admittedBy: membership.chain[0]?.issuer ?? '',
+      admittedAt: membership.joinedAt,
+      updatedAt: this.#options.now(),
+    };
+    return mergeEntries(held, [self]);
+  }
+
   #reject(client: ClientState, reason: string): void {
     this.#log.warn(`remote ${client.connection.id} refused: ${reason}`);
     this.#send(client, REMOTE.rejected, { reason });
@@ -516,15 +543,4 @@ export class RemoteServer {
       this.#log.warn(`writing to remote ${client.connection.id} threw: ${String(error)}`);
     }
   }
-}
-
-/**
- * A peer's address as a roster hint — dropped when there is nothing useful.
- *
- * Loopback is the case that matters: recording `127.0.0.1` would hand every
- * other member an address that resolves, on their machine, to themselves.
- */
-function addressOf(remoteAddress: string): readonly string[] {
-  const host = remoteAddress.split(':')[0] ?? '';
-  return host === '' || host === '127.0.0.1' || host === '::1' ? [] : [remoteAddress];
 }

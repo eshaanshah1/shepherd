@@ -55,6 +55,15 @@ export interface JoinOptions {
    */
   readonly membership?: Membership;
   /**
+   * What THIS Mac serves on, so the net can dial it back.
+   *
+   * Only the ports: the other member pairs them with the address it actually
+   * saw, which is the half it is right about. Omitted by a device that serves
+   * nothing — it will be listed by name with nowhere to reach it, which is the
+   * truth about a phone.
+   */
+  readonly advertise?: { readonly port: number; readonly dataPort?: number };
+  /**
    * How long to wait for the whole exchange.
    *
    * Generous, because the middle of it is a human deciding. A join that hangs
@@ -120,6 +129,7 @@ export async function joinNet(options: JoinOptions): Promise<Result<Membership, 
             publicKey: key.publicKey,
             certPin: options.certPin,
             nonce,
+            ...(options.advertise === undefined ? {} : { advertise: options.advertise }),
             // We enforced the pin during the handshake rather than learning it,
             // so the other Mac can skip asking a human to compare digits.
             pinVerified: true,
