@@ -126,3 +126,36 @@
   line-height: var(--sh-line-height);
   color: var(--sh-text-faint);
 }
+
+/*
+ * A group heading — **the ONE place uppercase survives.**
+ *
+ * §6 refuses uppercase micro-labels with tracking, and `SectionLabel` gave its
+ * up for exactly that reason. This is the documented exception, and it is
+ * narrow: 10.5/600 at 0.05em, on a heading inside an OVERLAY.
+ *
+ * What makes it different from a rail section label is what the reader is doing.
+ * A rail heading is scanned — you are looking for a task, and uppercase costs
+ * word shape, which is what scanning uses. A palette heading is not read at all
+ * in the normal case: you are typing, and the headings are peripheral structure
+ * telling you the list has regions. Uppercase is better at being furniture, and
+ * worse at being a word — which is the right trade here and the wrong one there.
+ */
+.sh-ui-palette__group {
+  margin: 0;
+  padding: var(--sh-space-md) var(--sh-space-md) var(--sh-space-xs);
+
+  font-family: var(--sh-font-sans);
+  font-size: var(--sh-micro-font-size);
+  font-weight: 600;
+  letter-spacing: var(--sh-micro-tracking);
+  line-height: 1;
+  text-transform: uppercase;
+  color: var(--sh-text-mute);
+}
+
+/* No leading gap on the first heading: the query row above already provides the
+   separation, and a heading that indented from the field looks detached. */
+.sh-ui-palette__group:first-child {
+  padding-block-start: var(--sh-space-xs);
+}
