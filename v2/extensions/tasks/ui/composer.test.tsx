@@ -366,7 +366,9 @@ describe('the keyboard', () => {
     await type('fix it in #s');
     await press('Enter');
     // The `#s` is gone and the pill stands where it was — not appended after it.
-    expect(brief().textContent).toBe(`fix it in #shepherd${NBSP}`);
+    // The pill's own label carries no `#`: that character is the picker's syntax
+    // and belongs to neither the sentence nor the token it submits as.
+    expect(brief().textContent).toBe(`fix it in shepherd${NBSP}`);
     expect(picker()).toBeNull();
   });
 

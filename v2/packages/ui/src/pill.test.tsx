@@ -48,22 +48,43 @@ describe('Pill', () => {
     }
   });
 
-  it('is a rounded rectangle, not a capsule', () => {
-    // Half its height was the first version and it read as an oval, which is
-    // not the reference: soft corners on a rectangular box. It is a step on the
-    // radius scale like everything else in the kit.
-    expect(base().style.borderRadius).toBe('var(--sh-radius-md)');
+  it('has no box — no hairline, no fill, no padding to hold one out', () => {
+    // A hairline, a tint and an accent label at once is four signals on a token
+    // whose whole job is to sit inside a sentence, and together they made a run
+    // of prose look like it had a form control dropped into it.
+    for (const rule of rulesMentioning('sh-ui-pill')) {
+      expect(rule.style.border, rule.selectorText).toBe('');
+      expect(rule.style.borderRadius, rule.selectorText).toBe('');
+      expect(rule.style.background, rule.selectorText).toBe('');
+      expect(rule.style.backgroundColor, rule.selectorText).toBe('');
+    }
+    // Serialized, so `0` comes back as `0px`.
+    expect(base().style.padding).toBe('0px');
   });
 
-  it('draws in accent — hairline, label and the tint under them', () => {
-    // The ROLE, never the hue: an extension that re-declares `--sh-accent` gets
+  it('reads as prose — the sentence’s ink and the sentence’s size', () => {
+    expect(base().style.color).toBe('var(--sh-text)');
+    // Not the `small` step. A token a size down from its sentence reads as a
+    // chip parked in the text rather than as a word of it.
+    expect(base().style.fontSize).toBe('inherit');
+  });
+
+  it('puts the one signal on the glyph, in the ROLE', () => {
+    // Named rather than hued: an extension that re-declares `--sh-accent` gets
     // its own pill for free, and cobalt stays a fact about the token layer.
-    expect(base().style.color).toBe('var(--sh-accent)');
-    expect(base().style.border).toBe('var(--sh-hairline) solid var(--sh-accent)');
-    // A tint of the same accent rather than a solid block — on a tint the role
-    // colour carries the signal, which is what makes the label legible on it.
-    expect(base().style.background).toContain('var(--sh-accent)');
-    expect(base().style.background).toContain('transparent');
+    const glyph = rulesMentioning('sh-ui-pill').find(
+      (candidate) => candidate.selectorText === '.sh-ui-pill .sh-icon',
+    );
+    expect(glyph?.style.color).toBe('var(--sh-accent)');
+  });
+
+  it('gives the label the accent back when there is no glyph to carry it', () => {
+    // The icon is optional in the type, and without this a pill with no icon is
+    // literally indistinguishable from the text around it.
+    const fallback = rulesMentioning('sh-ui-pill').find((candidate) =>
+      candidate.selectorText.includes(':not(:has(.sh-icon))'),
+    );
+    expect(fallback?.style.color).toBe('var(--sh-accent)');
   });
 
   it('paints in roles only', () => {
