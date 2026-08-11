@@ -1,5 +1,5 @@
-// R2's gate: a paired device drives a REAL pty over TLS, and needs no phone and
-// no tailnet to prove it.
+// R2's gate: a MEMBER of this Mac's shep-net drives a REAL pty over TLS, and
+// needs no phone and no tailnet to prove it.
 //
 // Everything below the handshake is R1's session protocol, unchanged and
 // unwrapped — that is the claim being tested. If this file had needed a single
@@ -28,9 +28,13 @@ import {
 import { createLogger, systemClock } from '@shepherd/sdk';
 import { loadOrMintIdentity, peerMatchesPin, type Identity, type Minter } from './identity.ts';
 import { loopbackEndpoint } from './endpoint.ts';
-import { REMOTE, RemoteServer, type DeviceStore } from './server.ts';
+import { REMOTE, RemoteServer } from './server.ts';
 import { CONTROL, ControlChannel, controlSink } from './control.ts';
-import { REMOTE_PROTOCOL_VERSION, type PairedDevice } from './pairing.ts';
+import { REMOTE_PROTOCOL_VERSION, hostProofBytes, issueProof } from './join.ts';
+import { verifyChain, type Credential } from './net.ts';
+import { generateMemberKey, netIdOf, signWith, verifySignature } from './netcrypto.ts';
+import { foundNet, kvNetStore, type NetStore } from './netstore.ts';
+import { issueTombstone, type Tombstone } from './roster.ts';
 
 const run = promisify(execFile);
 const openssl: Minter = async (args) => {
@@ -47,22 +51,30 @@ afterEach(() => {
   for (const cleanup of cleanups.splice(0)) cleanup();
 });
 
-function memoryDevices(): DeviceStore & { list: PairedDevice[] } {
-  const list: PairedDevice[] = [];
-  return {
-    list,
-    all: () => list,
-    put: (device) => {
-      const at = list.findIndex((candidate) => candidate.id === device.id);
-      if (at >= 0) list[at] = device;
-      else list.push(device);
+/**
+ * A net store over a Map — the same KV shape the app opens on SQLite, so what is
+ * exercised here is this package's reads and writes rather than the database's.
+ */
+function memoryNet(certPin: string): NetStore {
+  const values = new Map<string, unknown>();
+  const store = kvNetStore({
+    get: (key, schema) => {
+      if (!values.has(key)) return undefined;
+      const parsed = schema.parse(JSON.parse(JSON.stringify(values.get(key))));
+      return parsed.ok ? parsed.value : undefined;
     },
-    remove: (id) => {
-      const at = list.findIndex((candidate) => candidate.id === id);
-      if (at >= 0) list.splice(at, 1);
-    },
-  };
+    set: (key, value) => void values.set(key, value),
+    delete: (key) => void values.delete(key),
+    keys: () => [...values.keys()],
+  });
+  store.putMembership(
+    foundNet({ netName: 'Test net', memberId: 'this-mac', memberName: 'This Mac', certPin, now: 0 }),
+  );
+  return store;
 }
+
+/** This device's own member key — what its credential names and its proofs use. */
+const phoneKey = generateMemberKey();
 
 async function host(options: { approve?: boolean | (() => Promise<boolean>) } = {}) {
   const dir = join(await mkdtemp(join(tmpdir(), 'shepherd-e2e-')), 'remote-identity');
@@ -73,13 +85,13 @@ async function host(options: { approve?: boolean | (() => Promise<boolean>) } = 
   const sessionHost = new SessionHost();
   const log = createLogger({ clock: systemClock, level: 'error', sink: () => undefined });
   const sessions = new SessionServer({ host: sessionHost, log });
-  const devices = memoryDevices();
+  const net = memoryNet(identity.pin);
 
   const approvals: Array<{ sas?: string }> = [];
   const server = new RemoteServer({
     endpoint: loopbackEndpoint({ identity }),
     identity,
-    devices,
+    net,
     sessions,
     approve: async (request) => {
       approvals.push({ ...(request.sas === undefined ? {} : { sas: request.sas }) });
@@ -87,7 +99,6 @@ async function host(options: { approve?: boolean | (() => Promise<boolean>) } = 
       return options.approve ?? true;
     },
     log: log.child('session'),
-    newSecret: () => 'secret-for-tests',
     newCode: () => '424242',
     now: () => Date.now(),
   });
@@ -100,7 +111,8 @@ async function host(options: { approve?: boolean | (() => Promise<boolean>) } = 
     sessions.dispose();
     sessionHost.dispose();
   });
-  return { identity, server, devices, sessions, sessionHost, approvals, port: started.value.port };
+  const netId = net.active()?.netId ?? '';
+  return { identity, server, net, netId, sessions, sessionHost, approvals, port: started.value.port };
 }
 
 /** A device: pins the cert, speaks the handshake, then speaks R1's protocol. */
@@ -151,8 +163,36 @@ const hello = (over: Record<string, unknown> = {}) =>
     deviceId: 'phone-1',
     deviceName: 'A Phone',
     protocolVersion: REMOTE_PROTOCOL_VERSION,
+    publicKey: phoneKey.publicKey,
+    nonce: 'a-nonce-from-the-phone',
     ...over,
   });
+
+/**
+ * What a member says when it comes back: its chain, and a proof it holds the key
+ * the chain names — bound to THIS host's pin, so a proof captured elsewhere is
+ * useless here.
+ */
+const returning = (chain: readonly Credential[], netId: string, hostPin: string) =>
+  hello({
+    chain,
+    proof: issueProof({ netId, hostPin, at: Date.now() }, signWith(phoneKey.privateKey)),
+  });
+
+/** A revocation this Mac's own membership signed — what a peer would relay. */
+const issueTombstoneFor = (
+  netId: string,
+  memberId: string,
+  membership: { chain: readonly Credential[]; memberKey: { privateKey: string } },
+): Tombstone =>
+  issueTombstone(
+    { netId, memberId, at: Date.now(), signer: membership.chain },
+    signWith(membership.memberKey.privateKey),
+  );
+
+/** The membership the host issued, read off the accept. */
+const issuedChain = (accepted: Frame | undefined): readonly Credential[] =>
+  (accepted?.json as { chain: readonly Credential[] }).chain;
 
 describe('a paired device, over TLS, driving a real pty', () => {
   it('pairs with a code, is approved, and then speaks the SESSION protocol', async () => {
@@ -169,8 +209,42 @@ describe('a paired device, over TLS, driving a real pty', () => {
     // actually negotiated.
     expect(h.approvals).toHaveLength(1);
     expect(h.approvals[0]?.sas).toMatch(/^\d{6}$/);
-    // The secret comes back so the device never needs the code again.
-    expect((phone.of(REMOTE.accepted)[0]?.json as { secret: string }).secret).toBe('secret-for-tests');
+    /**
+     * A MEMBERSHIP comes back, not a secret — a chain the device presents to any
+     * member of this net, including ones this Mac has never told about it. That
+     * is the whole difference between a net and a pairing.
+     */
+    const accepted = phone.of(REMOTE.accepted)[0];
+    const chain = issuedChain(accepted);
+    expect(
+      verifyChain({
+        chain,
+        netId: h.netId,
+        rootPublicKey: h.net.active()?.rootPublicKey ?? '',
+        tombstoned: new Set(),
+        verify: verifySignature,
+      }).ok,
+    ).toBe(true);
+
+    /**
+     * The net's ROOT KEY comes back too, and it has to: without it a joiner
+     * cannot verify anybody's chain later — it would hold a membership and no way
+     * to check the next Mac it met. The joiner does not take it on trust either;
+     * the net id it was given is the hash of this key, so the two check each other.
+     */
+    const root = (accepted?.json as { rootPublicKey: string }).rootPublicKey;
+    expect(netIdOf(root)).toBe(h.netId);
+
+    // And the host proved ITSELF, over the nonce the phone chose — there is no
+    // pinned certificate left to tell a client it reached the right Mac.
+    const answer = accepted?.json as { proof: string; hostChain: readonly Credential[] };
+    expect(
+      verifySignature(
+        (answer.hostChain[0] as Credential).publicKey,
+        hostProofBytes({ netId: h.netId, nonce: 'a-nonce-from-the-phone' }),
+        answer.proof,
+      ),
+    ).toBe(true);
 
     // …and from here it is R1's protocol, verbatim. No translation layer.
     phone.send(encodeJsonFrame(REQUEST.hello, { seq: 1, version: PROTOCOL_VERSION }));
@@ -215,7 +289,7 @@ describe('a paired device, over TLS, driving a real pty', () => {
 
     // Neither ever reached a session, which is the assertion that matters.
     expect(denied.sessionHost.list()).toHaveLength(0);
-    expect(denied.devices.list).toHaveLength(0);
+    expect(denied.net.roster(denied.netId)).toHaveLength(0);
   });
 
   /**
@@ -233,25 +307,95 @@ describe('a paired device, over TLS, driving a real pty', () => {
     expect(h.sessionHost.list()).toHaveLength(0);
   });
 
-  it('lets a returning device in with its secret, and no code showing at all', async () => {
+  it('lets a member back in with its membership, and no code showing at all', async () => {
     const h = await host();
     h.server.showCode();
 
     const first = device(h.port, h.identity.pin);
     await first.ready;
     first.send(hello({ pairingCode: '424242' }));
-    await waitFor(() => first.of(REMOTE.accepted).length > 0, 'the first pairing');
+    await waitFor(() => first.of(REMOTE.accepted).length > 0, 'the first join');
+    const chain = issuedChain(first.of(REMOTE.accepted)[0]);
     first.close();
 
-    // No code is showing now — a returning device must not need one.
+    // No code is showing now — a member coming back must not need one.
     expect(h.server.activeCode).toBeUndefined();
 
     const again = device(h.port, h.identity.pin);
     await again.ready;
-    again.send(hello({ secret: 'secret-for-tests' }));
+    again.send(returning(chain, h.netId, h.identity.pin));
     await waitFor(() => again.of(REMOTE.accepted).length > 0, 'the return');
     // And no second approval was asked for.
     expect(h.approvals).toHaveLength(1);
+  });
+
+  /**
+   * The case the whole design exists for: a device that joined SOMEWHERE ELSE
+   * walks up to this Mac, which has never seen it, and is admitted with nothing
+   * shown to anybody.
+   */
+  it('admits a member of the net that this Mac has never met', async () => {
+    const admitting = await host();
+    admitting.server.showCode();
+
+    const joining = device(admitting.port, admitting.identity.pin);
+    await joining.ready;
+    joining.send(hello({ pairingCode: '424242' }));
+    await waitFor(() => joining.of(REMOTE.accepted).length > 0, 'the join');
+    const chain = issuedChain(joining.of(REMOTE.accepted)[0]);
+    joining.close();
+
+    // A second Mac in the SAME net: it holds the same root, and its own
+    // membership was signed by the first. It has never heard of the phone.
+    const stranger = await host();
+    const admittingNet = admitting.net.active();
+    if (admittingNet === undefined) throw new Error('the admitting Mac is in no net');
+    stranger.net.putMembership({
+      ...admittingNet,
+      memberId: 'other-mac',
+      // Same net, same root, its own copy — what a second Mac holds after joining.
+    });
+    stranger.net.setActiveNet(admittingNet.netId);
+
+    const phone = device(stranger.port, stranger.identity.pin);
+    await phone.ready;
+    phone.send(returning(chain, admittingNet.netId, stranger.identity.pin));
+    await waitFor(() => phone.of(REMOTE.accepted).length > 0, 'the admission with no ceremony');
+    // No code was ever shown there, and no human was asked.
+    expect(stranger.server.activeCode).toBeUndefined();
+    expect(stranger.approvals).toHaveLength(0);
+  });
+
+  /**
+   * A chain is public — it reaches every member. What makes it THIS device's
+   * chain is the key it names, so a copy without that key is worth nothing.
+   */
+  it('refuses a stolen membership presented without its key', async () => {
+    const h = await host();
+    h.server.showCode();
+
+    const joining = device(h.port, h.identity.pin);
+    await joining.ready;
+    joining.send(hello({ pairingCode: '424242' }));
+    await waitFor(() => joining.of(REMOTE.accepted).length > 0, 'the join');
+    const chain = issuedChain(joining.of(REMOTE.accepted)[0]);
+    joining.close();
+
+    const thief = device(h.port, h.identity.pin);
+    await thief.ready;
+    const theirKey = generateMemberKey();
+    thief.send(
+      hello({
+        chain,
+        proof: issueProof(
+          { netId: h.netId, hostPin: h.identity.pin, at: Date.now() },
+          signWith(theirKey.privateKey),
+        ),
+      }),
+    );
+    await waitFor(() => thief.of(REMOTE.rejected).length > 0, 'the refusal');
+    expect((thief.of(REMOTE.rejected)[0]?.json as { reason: string }).reason).toContain('proven');
+    expect(h.sessionHost.list()).toHaveLength(0);
   });
 
   /**
@@ -267,6 +411,7 @@ describe('a paired device, over TLS, driving a real pty', () => {
     await phone.ready;
     phone.send(hello({ pairingCode: '424242' }));
     await waitFor(() => phone.of(REMOTE.accepted).length > 0, 'the accept');
+    const chain = issuedChain(phone.of(REMOTE.accepted)[0]);
 
     phone.send(encodeJsonFrame(REQUEST.hello, { seq: 1, version: PROTOCOL_VERSION }));
     phone.send(
@@ -294,7 +439,7 @@ describe('a paired device, over TLS, driving a real pty', () => {
 
     const back = device(h.port, h.identity.pin);
     await back.ready;
-    back.send(hello({ secret: 'secret-for-tests' }));
+    back.send(returning(chain, h.netId, h.identity.pin));
     await waitFor(() => back.of(REMOTE.accepted).length > 0, 'the reconnect');
     back.send(encodeJsonFrame(REQUEST.hello, { seq: 1, version: PROTOCOL_VERSION }));
     back.send(encodeJsonFrame(REQUEST.attach, { seq: 2, sessionId: id }));
@@ -305,7 +450,7 @@ describe('a paired device, over TLS, driving a real pty', () => {
     expect(back.output().split('before-the-drop')).toHaveLength(2);
   });
 
-  it('drops a revoked device immediately, not eventually', async () => {
+  it('drops a revoked member immediately, and refuses its membership after', async () => {
     const h = await host();
     h.server.showCode();
 
@@ -313,14 +458,114 @@ describe('a paired device, over TLS, driving a real pty', () => {
     await phone.ready;
     phone.send(hello({ pairingCode: '424242' }));
     await waitFor(() => phone.of(REMOTE.accepted).length > 0, 'the accept');
-    expect(h.devices.list).toHaveLength(1);
+    const chain = issuedChain(phone.of(REMOTE.accepted)[0]);
+    expect(h.net.roster(h.netId)).toHaveLength(1);
 
     // Somebody is revoking because the device is in somebody else's hands, so
     // "revoked" has to describe the present rather than a future state.
     h.server.revoke('phone-1');
-    expect(h.devices.list).toHaveLength(0);
+    expect(h.net.revoked(h.netId)).toEqual(new Set(['phone-1']));
     // And its session keeps running — a revoked VIEWER is not a killed agent.
     expect(h.sessionHost.list().length).toBeGreaterThanOrEqual(0);
+
+    // The membership itself is now worthless here, which is the durable half of
+    // revoking: dropping the socket alone would last until it dialled again.
+    const again = device(h.port, h.identity.pin);
+    await again.ready;
+    again.send(returning(chain, h.netId, h.identity.pin));
+    await waitFor(() => again.of(REMOTE.rejected).length > 0, 'the refusal');
+    expect((again.of(REMOTE.rejected)[0]?.json as { reason: string }).reason).toContain('revoked');
+  });
+
+  /**
+   * Gossip is what makes a revocation true anywhere but the Mac that performed
+   * it: a member relays the tombstone, and this Mac — which never revoked
+   * anybody — refuses the device from then on.
+   */
+  it('accepts a revocation relayed by a member, and refuses the subject after', async () => {
+    const h = await host();
+    h.server.showCode();
+
+    const phone = device(h.port, h.identity.pin);
+    await phone.ready;
+    phone.send(hello({ pairingCode: '424242' }));
+    await waitFor(() => phone.of(REMOTE.accepted).length > 0, 'the join');
+    const chain = issuedChain(phone.of(REMOTE.accepted)[0]);
+    phone.close();
+
+    // Somewhere else in the net, this Mac itself was revoked… by itself, which is
+    // the only signer this test has. What matters is the RELAY: it arrives on a
+    // member's connection and is verified before it counts.
+    const membership = h.net.active();
+    if (membership === undefined) throw new Error('no net');
+    const tombstone: Tombstone = issueTombstoneFor(membership.netId, 'phone-1', membership);
+
+    const relay = device(h.port, h.identity.pin);
+    await relay.ready;
+    relay.send(
+      encodeJsonFrame(REMOTE.hello as never, {
+        deviceId: 'phone-1',
+        deviceName: 'A Phone',
+        protocolVersion: REMOTE_PROTOCOL_VERSION,
+        publicKey: phoneKey.publicKey,
+        nonce: 'n',
+        chain,
+        proof: issueProof(
+          { netId: h.netId, hostPin: h.identity.pin, at: Date.now() },
+          signWith(phoneKey.privateKey),
+        ),
+        tombstones: [tombstone],
+      }),
+    );
+    await waitFor(() => h.net.revoked(h.netId).has('phone-1'), 'the relayed revocation to land');
+
+    const after = device(h.port, h.identity.pin);
+    await after.ready;
+    after.send(returning(chain, h.netId, h.identity.pin));
+    await waitFor(() => after.of(REMOTE.rejected).length > 0, 'the refusal');
+  });
+
+  /** A stranger cannot revoke anybody: an unverifiable tombstone is ignored. */
+  it('ignores a revocation nobody in the net signed', async () => {
+    const h = await host();
+    h.server.showCode();
+
+    const phone = device(h.port, h.identity.pin);
+    await phone.ready;
+    phone.send(hello({ pairingCode: '424242' }));
+    await waitFor(() => phone.of(REMOTE.accepted).length > 0, 'the join');
+    const chain = issuedChain(phone.of(REMOTE.accepted)[0]);
+    phone.close();
+
+    const outsider = foundNet({ netName: 'Theirs', memberId: 'them', memberName: 'Them', certPin: '', now: 0 });
+    const forged: Tombstone = {
+      netId: h.netId,
+      memberId: 'this-mac',
+      at: Date.now(),
+      // A chain from ANOTHER net, relabelled. Its signatures do not reach our root.
+      signer: outsider.chain,
+      signature: 'nonsense',
+    };
+
+    const relay = device(h.port, h.identity.pin);
+    await relay.ready;
+    relay.send(
+      encodeJsonFrame(REMOTE.hello as never, {
+        deviceId: 'phone-1',
+        deviceName: 'A Phone',
+        protocolVersion: REMOTE_PROTOCOL_VERSION,
+        publicKey: phoneKey.publicKey,
+        nonce: 'n',
+        chain,
+        proof: issueProof(
+          { netId: h.netId, hostPin: h.identity.pin, at: Date.now() },
+          signWith(phoneKey.privateKey),
+        ),
+        tombstones: [forged],
+      }),
+    );
+    await waitFor(() => relay.of(REMOTE.accepted).length > 0, 'the accept');
+    expect(h.net.revoked(h.netId).size).toBe(0);
   });
 
   /**
@@ -470,15 +715,13 @@ describe('a paired device, over TLS, driving a real pty', () => {
       log: log.child('session'),
     });
 
-    const devices = memoryDevices();
     const server = new RemoteServer({
       endpoint: loopbackEndpoint({ identity }),
       identity,
-      devices,
+      net: memoryNet(identity.pin),
       sessions: controlSink(control, log.child('session')),
       approve: async () => true,
       log: log.child('session'),
-      newSecret: () => 'secret-for-tests',
       newCode: () => '424242',
       now: () => Date.now(),
     });

@@ -278,10 +278,10 @@ const registry = new CommandRegistry({
     // authorization, and for what this deliberately does not extend to.
     // The local CLI, plus every device a human APPROVED at this Mac.
     //
-    // Derived from the paired list per invocation, exactly as `agents` is
+    // Derived from the net's roster per invocation, exactly as `agents` is
     // derived from the pty host's inventory, and for the same stated reason:
     // there is no second registry to keep in step and no revoke path to forget
-    // — revoking removes the record and the grant goes with it.
+    // — a revoked member is tombstoned and the grant goes with it.
     //
     // Nothing populated this for one run, and a phone that had just paired
     // successfully was told `device:… is unknown (not registered as a live
@@ -289,8 +289,8 @@ const registry = new CommandRegistry({
     // caller kind: adding a `Caller` variant is not the same as making one work.
     devices: new Map<string, readonly Permission[]>([
       [LOCAL_DEVICE_ID, LOCAL_DEVICE_PERMISSIONS],
-      ...(remote?.devices() ?? []).map(
-        (device) => [device.id, PAIRED_DEVICE_PERMISSIONS] as const,
+      ...(remote?.members() ?? []).map(
+        (member) => [member.memberId, PAIRED_DEVICE_PERMISSIONS] as const,
       ),
     ]),
     // Every live session is a principal (D9b). Derived from the pty host's own

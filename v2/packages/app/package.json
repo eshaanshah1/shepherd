@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "description": "The Electron shell: main-process wiring, preload bridge, React renderer.",
-  "//main": "Electron's app loader reads `main` literally and never consults `exports`; workspace importers resolve through `exports` and never see `main`. So this field can be the built entry while the source stays the package's public face \u2014 neither has to lie.",
-  "//tabler": "@tabler/icons-react is a DIRECT dependency below, not a re-export from @shepherd/ui. `Icon` takes a Tabler COMPONENT (`icon={IconPlus}`), which is what keeps the bundle tree-shaken \u2014 a barrel re-exporting the set would ship every glyph to every page that imports one primitive. This note lives at the TOP level and not inside `dependencies`, which is where it was: pnpm reads every key in that object as a package name and every value as a specifier, so `\"//@tabler/icons-react\": \"A direct dependency, not a\u2026\"` installed a dependency FROM A DIRECTORY NAMED AFTER THIS SENTENCE and left `packages/app/node_modules/@tabler/icons-react` a dangling symlink to it. It survived because an older node_modules still held a good copy; the next `pnpm install` broke the renderer's typecheck with `Cannot find module '@tabler/icons-react'`, in a file nobody had touched.",
+  "//main": "Electron's app loader reads `main` literally and never consults `exports`; workspace importers resolve through `exports` and never see `main`. So this field can be the built entry while the source stays the package's public face — neither has to lie.",
+  "//tabler": "@tabler/icons-react is a DIRECT dependency below, not a re-export from @shepherd/ui. `Icon` takes a Tabler COMPONENT (`icon={IconPlus}`), which is what keeps the bundle tree-shaken — a barrel re-exporting the set would ship every glyph to every page that imports one primitive. This note lives at the TOP level and not inside `dependencies`, which is where it was: pnpm reads every key in that object as a package name and every value as a specifier, so `\"//@tabler/icons-react\": \"A direct dependency, not a…\"` installed a dependency FROM A DIRECTORY NAMED AFTER THIS SENTENCE and left `packages/app/node_modules/@tabler/icons-react` a dangling symlink to it. It survived because an older node_modules still held a good copy; the next `pnpm install` broke the renderer's typecheck with `Cannot find module '@tabler/icons-react'`, in a file nobody had touched.",
   "main": "./out/main/index.js",
   "types": "./src/shared/index.ts",
   "exports": {
@@ -28,6 +28,7 @@
   },
   "dependencies": {
     "@shepherd/core": "workspace:*",
+    "@shepherd/daemon": "workspace:*",
     "@shepherd/design-tokens": "workspace:*",
     "@shepherd/ext-agents-core": "workspace:*",
     "@shepherd/ext-claude-code": "workspace:*",
@@ -35,30 +36,31 @@
     "@shepherd/ext-tasks": "workspace:*",
     "@shepherd/ext-worktree-hook": "workspace:*",
     "@shepherd/platform-darwin": "workspace:*",
+    "@shepherd/remote": "workspace:*",
     "@shepherd/sdk": "workspace:*",
     "@shepherd/ui": "workspace:*",
     "@tabler/icons-react": "catalog:",
     "@xterm/addon-fit": "catalog:",
     "@xterm/addon-search": "catalog:",
     "@xterm/xterm": "catalog:",
+    "qrcode": "^1.5.4",
     "react": "catalog:",
-    "react-dom": "catalog:",
-    "@shepherd/daemon": "workspace:*",
-    "@shepherd/remote": "workspace:*"
+    "react-dom": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@vitejs/plugin-react": "^4.7.0",
     "electron": "catalog:",
     "electron-builder": "^26.15.3",
     "electron-vite": "catalog:",
+    "esbuild": "^0.28.1",
     "jsdom": "catalog:",
     "react-grab": "^0.1.50",
     "typescript": "catalog:",
     "vite": "catalog:",
-    "vitest": "catalog:",
-    "esbuild": "^0.28.1"
+    "vitest": "catalog:"
   }
 }

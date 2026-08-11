@@ -1,9 +1,10 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { FrameDecoder, type CommandRegistry } from '@shepherd/core';
-import { runExec } from '@shepherd/platform-darwin';
+import { runExec, systemHostName } from '@shepherd/platform-darwin';
 import {
   PERMISSIONS,
+  s,
   type CategoryLogger,
   type Disposable,
   type KV,
@@ -12,15 +13,18 @@ import {
 import {
   ControlChannel,
   RemoteServer,
+  REMOTE_PROTOCOL_VERSION,
+  foundNet,
+  kvNetStore,
   loadOrMintIdentity,
   pinOf,
   type Endpoint,
   type Identity,
-  kvDeviceStore,
-  type PairedDevice,
+  type JoinRequest,
+  type JoinRequestHandler,
+  type Membership,
+  type NetSummary,
   type PairingPayload,
-  type PairingRequest,
-  type PairingRequestHandler,
   type RemoteAPI,
   type RemoteServerOptions,
 } from '@shepherd/remote';
@@ -63,29 +67,53 @@ export interface RemoteServiceOptions {
   readonly support: string;
   readonly registry: CommandRegistry;
   /**
-   * Where paired devices live — a namespace of THE store, opened at a path the
-   * daemon can open too. One record, two readers (ADR 0021).
+   * Where this device's net memberships live — a namespace of THE store, opened
+   * at a path the daemon can open too. One record, two readers (ADR 0021).
    */
   readonly devices: KV;
   readonly log: CategoryLogger;
 }
 
-const PROTOCOL_VERSION = 3;
+/**
+ * This Mac's id inside every net it joins, minted once and kept.
+ *
+ * Kept is the load-bearing half: it is what a credential names and what a
+ * revocation names, so a Mac that minted a fresh one on each launch would arrive
+ * at every other member as a stranger — and the tombstone for the device you
+ * revoked would name an id that no longer exists.
+ */
+const DEVICE_ID = 'device-id';
 
 export function createRemoteService(options: RemoteServiceOptions): RemoteAPI & Disposable {
   const { support, registry, devices, log } = options;
 
+  const deviceId =
+    devices.get(DEVICE_ID, s.string()) ??
+    (() => {
+      const minted = crypto.randomUUID();
+      devices.set(DEVICE_ID, minted);
+      return minted;
+    })();
+  const deviceName = systemHostName();
+
   /**
-   * Paired devices, on disk and shared with the daemon.
+   * The nets this Mac is in, on disk and shared with the daemon.
    *
-   * A device pairs ONCE and connects twice — control here, data there — and the
-   * second connection presents the secret the first was issued. Only this
-   * process can CREATE a pairing, because only this process can show an
-   * approval: the daemon never shows a code, so an unknown device is refused
-   * there by the pairing model as it already stands. A headless process cannot
-   * admit a stranger, which is a property rather than a limitation.
+   * A device joins ONCE and connects twice — control here, data there — and both
+   * connections present the same credential chain. Only this process can ADMIT a
+   * new member, because only this process can show an approval: the daemon never
+   * shows a code, so a device with no membership is refused there by the join
+   * model as it already stands. A headless process cannot admit a stranger,
+   * which is a property rather than a limitation.
    */
-  const store = kvDeviceStore(devices);
+  const store = kvNetStore(devices);
+
+  const summarize = (membership: Membership): NetSummary => ({
+    netId: membership.netId,
+    name: membership.netName,
+    memberId: membership.memberId,
+    founded: membership.rootPrivateKey !== undefined,
+  });
 
   const control = new ControlChannel({
     host: {
@@ -119,7 +147,7 @@ export function createRemoteService(options: RemoteServiceOptions): RemoteAPI & 
 
   /** connectionId -> the device it turned out to be. */
   const admitted = new Map<number, string>();
-  let approve: PairingRequestHandler | undefined;
+  let approve: JoinRequestHandler | undefined;
   let server: RemoteServer | undefined;
   const listeners: Disposable[] = [];
   let identityPin = '';
@@ -176,7 +204,7 @@ export function createRemoteService(options: RemoteServiceOptions): RemoteAPI & 
 
       const serverOptions: Omit<RemoteServerOptions, 'endpoint'> = {
         identity: identity.value,
-        devices: store,
+        net: store,
         sessions: {
           accept: (connection) => {
             // Ours to mint — a caller's id belongs to a different table. See
@@ -196,26 +224,25 @@ export function createRemoteService(options: RemoteServiceOptions): RemoteAPI & 
             control.close(id);
           },
         },
-        onAdmitted: (connectionId, device) => {
-          admitted.set(connectionId, device.id);
-          control.open(connectionId, device.id);
+        onAdmitted: (connectionId, member) => {
+          admitted.set(connectionId, member.memberId);
+          control.open(connectionId, member.memberId);
         },
         approve: async (request) => {
           const handler = approve;
           if (handler === undefined) {
-            log.warn(`refusing ${request.device.name}: nothing is registered to approve pairings`);
+            log.warn(`refusing ${request.candidate.name}: nothing is registered to approve joins`);
             return false;
           }
-          const asked: PairingRequest = {
-            deviceId: request.device.id,
-            deviceName: request.device.name,
+          const asked: JoinRequest = {
+            deviceId: request.candidate.memberId,
+            deviceName: request.candidate.name,
             from: request.from,
             ...(request.sas === undefined ? {} : { sas: request.sas }),
           };
           return handler(asked);
         },
         log,
-        newSecret: () => crypto.randomUUID(),
         // Zero-padded: a "code" with five digits is a code somebody mistypes.
         newCode: () => String(Math.floor(Math.random() * 1_000_000)).padStart(6, '0'),
         now: () => Date.now(),
@@ -257,24 +284,62 @@ export function createRemoteService(options: RemoteServiceOptions): RemoteAPI & 
       } catch {
         dataPort = undefined;
       }
+      /**
+       * No net, no payload. A device cannot be told how to join something this
+       * Mac is not in, and handing back an address with no net would produce a
+       * QR that dials, is refused, and explains nothing.
+       */
+      const net = store.active();
+      if (net === undefined) return undefined;
       return {
         host: reachable.host,
         port: reachable.port,
         ...(dataPort === undefined ? {} : { dataPort }),
         pin: identityPin,
         ...(code === undefined ? {} : { code }),
-        protocolVersion: PROTOCOL_VERSION,
+        netId: net.netId,
+        netName: net.netName,
+        rootPublicKey: net.rootPublicKey,
+        protocolVersion: REMOTE_PROTOCOL_VERSION,
       };
     },
 
-    devices: () => store.all(),
-    revoke: (deviceId) => server?.revoke(deviceId),
+    nets: () => store.memberships().map(summarize),
+    activeNet: () => {
+      const active = store.active();
+      return active === undefined ? undefined : summarize(active);
+    },
+    setActiveNet: (netId) => store.setActiveNet(netId),
 
-    onPairingRequest(handler) {
+    createNet(name) {
+      const membership = foundNet({
+        netName: name,
+        memberId: deviceId,
+        memberName: deviceName,
+        // Empty until this Mac has an identity to bind to; it is filled on the
+        // first `serve`, which is the only point at which this Mac has a
+        // certificate for anyone to reach it by.
+        certPin: identityPin,
+        now: Date.now(),
+      });
+      store.putMembership(membership);
+      log.info(`created net ${name} (${membership.netId.slice(0, 12)}…)`);
+      return summarize(membership);
+    },
+
+    leaveNet: (netId) => store.removeMembership(netId),
+
+    members: () => {
+      const active = store.active();
+      return active === undefined ? [] : store.roster(active.netId);
+    },
+    revoke: (memberId) => server?.revoke(memberId),
+
+    onJoinRequest(handler) {
       if (approve !== undefined) {
         // Two approval surfaces racing to answer one request is a design where a
         // device gets in because the slower one was going to say no.
-        log.warn('a second pairing-approval handler was refused; one is already registered');
+        log.warn('a second join-approval handler was refused; one is already registered');
         return { dispose: () => undefined };
       }
       approve = handler;

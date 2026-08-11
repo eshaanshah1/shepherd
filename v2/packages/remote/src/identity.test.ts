@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadOrMintIdentity, peerMatchesPin, pinOf, resetIdentity, type Minter } from './identity.ts';
-import { sasDigits } from './pairing.ts';
+import { sasDigits } from './join.ts';
 
 const run = promisify(execFile);
 

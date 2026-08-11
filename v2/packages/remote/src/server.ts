@@ -4,12 +4,17 @@ import type { Endpoint, Listening, RemoteConnection } from './endpoint.ts';
 import type { Identity } from './identity.ts';
 import {
   freshCode,
-  pairingDecision,
+  issueHostProof,
+  joinDecision,
   spendAttempt,
+  type Candidate,
   type Hello,
-  type PairedDevice,
   type PairingCode,
-} from './pairing.ts';
+} from './join.ts';
+import { issueCredential, type Credential } from './net.ts';
+import { signWith, verifySignature } from './netcrypto.ts';
+import type { Membership, NetStore } from './netstore.ts';
+import { issueTombstone, verifyTombstone, type RosterEntry, type Tombstone } from './roster.ts';
 
 /**
  * The remote server: a GATE in front of the session protocol.
@@ -26,6 +31,12 @@ import {
  * copies drifted, which is what `applyRemoteCommand` beside `controlRoute` beside
  * `ShortcutActions` was (review §Bad-2).
  *
+ * **What the gate now decides is MEMBERSHIP, not a pairing.** A connection either
+ * carries a credential chain reaching this net's root — in which case it is
+ * admitted with nothing shown to anybody, even if this Mac has never seen the
+ * device — or it carries a pairing code and a human is asked. The old
+ * host-issued `secret` is gone; nothing bearer-shaped is left on this path.
+ *
  * **Frame kinds are disjoint from the session protocol's on purpose** (128+ vs
  * 1–68). One decoder reads both, so a handshake frame arriving mid-stream, or a
  * session frame arriving before the handshake, is a typed refusal rather than a
@@ -39,18 +50,17 @@ export const REMOTE = {
   pendingApproval: 131,
 } as const;
 
-/** What the host decides about a device that wants in. */
+/** What the host decides about a device that wants into the net. */
 export type Approval = (request: {
-  readonly device: PairedDevice;
+  readonly candidate: Candidate;
   readonly sas?: string;
   readonly from: string;
 }) => Promise<boolean>;
 
-/** Where paired devices live across restarts. */
-export interface DeviceStore {
-  all(): readonly PairedDevice[];
-  put(device: PairedDevice): void;
-  remove(deviceId: string): void;
+/** Who a connection turned out to be. */
+export interface AdmittedMember {
+  readonly memberId: string;
+  readonly name: string;
 }
 
 /**
@@ -71,11 +81,12 @@ export interface SessionSink {
 export interface RemoteServerOptions {
   readonly endpoint: Endpoint;
   readonly identity: Identity;
-  readonly devices: DeviceStore;
+  /** The nets this device is in, and the roster of each. */
+  readonly net: NetStore;
   readonly sessions: SessionSink;
   readonly approve: Approval;
   /**
-   * Which DEVICE a connection turned out to be.
+   * Which MEMBER a connection turned out to be.
    *
    * The sink is handed a connection id and nothing else, which is right for the
    * session protocol and wrong for the control channel: a command invoked by a
@@ -84,10 +95,9 @@ export interface RemoteServerOptions {
    * "device:device-1 is unknown (not registered as a live principal)" on a phone
    * that had just paired successfully.
    */
-  readonly onAdmitted?: (connectionId: number, device: PairedDevice) => void;
+  readonly onAdmitted?: (connectionId: number, member: AdmittedMember) => void;
   readonly log: CategoryLogger;
-  /** Injected: randomness stays out of the model (see `pairing.ts`). */
-  readonly newSecret: () => string;
+  /** Injected: randomness stays out of the model (see `join.ts`). */
   readonly newCode: () => string;
   readonly now: () => number;
   /**
@@ -118,7 +128,7 @@ interface ClientState {
    * that can disagree.
    */
   sessionClientId?: number;
-  deviceId?: string;
+  memberId?: string;
 }
 
 export class RemoteServer {
@@ -164,21 +174,34 @@ export class RemoteServer {
   }
 
   /**
-   * Revoke a device and drop it NOW.
+   * Revoke a member and drop it NOW.
    *
-   * Leaving its connections up until they happen to close would mean "revoked"
-   * describes a future state rather than the current one — and the person doing
-   * the revoking is usually doing it because the device is in somebody else's
-   * hands.
+   * Two halves, and both are needed. The **tombstone** is the durable half: it
+   * is signed, it gossips to every other member, and it is what makes the
+   * revocation true anywhere but here. Dropping the live connections is the
+   * immediate half — leaving them up until they happen to close would mean
+   * "revoked" describes a future state, and the person doing the revoking is
+   * usually doing it because the device is in somebody else's hands.
    */
-  revoke(deviceId: string): void {
-    this.#options.devices.remove(deviceId);
+  revoke(memberId: string): void {
+    const membership = this.#options.net.active();
+    if (membership === undefined) {
+      this.#log.warn(`cannot revoke ${memberId}: this Mac is in no net`);
+      return;
+    }
+    this.#options.net.addTombstone(
+      membership.netId,
+      issueTombstone(
+        { netId: membership.netId, memberId, at: this.#options.now(), signer: membership.chain },
+        signWith(membership.memberKey.privateKey),
+      ),
+    );
     for (const [id, client] of [...this.#clients]) {
-      if (client.deviceId !== deviceId) continue;
+      if (client.memberId !== memberId) continue;
       client.connection.close();
       this.#drop(id);
     }
-    this.#log.info(`revoked ${deviceId} and dropped its live connections`);
+    this.#log.info(`revoked ${memberId} and dropped its live connections`);
   }
 
   stop(): void {
@@ -245,14 +268,26 @@ export class RemoteServer {
       return;
     }
 
-    const hello = frame.json as Hello;
-    const decision = pairingDecision({
+    const hello = frame.json as Hello & {
+      readonly roster?: readonly RosterEntry[];
+      readonly tombstones?: readonly Tombstone[];
+    };
+    const membership = this.#options.net.active();
+    const decision = joinDecision({
       hello,
-      devices: this.#options.devices.all(),
+      net:
+        membership === undefined
+          ? undefined
+          : {
+              netId: membership.netId,
+              rootPublicKey: membership.rootPublicKey,
+              revoked: this.#options.net.revoked(membership.netId),
+            },
       code: this.#code,
       now: this.#options.now(),
-      newSecret: this.#options.newSecret(),
       certSha256: this.#options.identity.sha256,
+      hostPin: this.#options.identity.pin,
+      verify: verifySignature,
     });
 
     if (decision.kind === 'reject') {
@@ -263,8 +298,17 @@ export class RemoteServer {
       return;
     }
 
+    // Only reachable with a net: `joinDecision` refuses everything without one.
+    if (membership === undefined) {
+      this.#reject(client, 'this Mac is not in a shep-net yet');
+      return;
+    }
+
     if (decision.kind === 'accept') {
-      this.#admit(client, decision.device);
+      // Gossip travels on the connection of a member that is already proven —
+      // never before, or a stranger could revoke the net on its way past the door.
+      this.#gossip(membership, hello, client.connection.remoteAddress);
+      this.#admit(client, membership, decision.member, hello.nonce);
       return;
     }
 
@@ -273,53 +317,173 @@ export class RemoteServer {
     this.#send(client, REMOTE.pendingApproval, {});
     void this.#options
       .approve({
-        device: decision.device,
+        candidate: decision.candidate,
         ...(decision.sas === undefined ? {} : { sas: decision.sas }),
         from: client.connection.remoteAddress,
       })
       .then((approved) => {
         if (!this.#clients.has(client.connection.id)) return; // gave up waiting
         if (!approved) {
-          this.#reject(client, 'this Mac declined the pairing');
+          this.#reject(client, 'this Mac declined the join');
           return;
         }
         // The code is one device, once. Burning it on approval — not on the
-        // attempt — means a denied pairing does not cost the next attempt.
+        // attempt — means a denied join does not cost the next attempt.
         this.#code = undefined;
-        this.#options.devices.put(decision.device);
-        this.#admit(client, decision.device);
+        const credential = this.#issue(membership, decision.candidate);
+        this.#record(membership, credential);
+        this.#admit(client, membership, credential, hello.nonce, [credential, ...membership.chain]);
       })
       .catch((error: unknown) => {
-        this.#log.error(`approval threw for ${decision.device.id}: ${String(error)}`);
+        this.#log.error(`approval threw for ${decision.candidate.memberId}: ${String(error)}`);
         this.#reject(client, 'the approval could not be shown');
       });
   }
 
-  #admit(client: ClientState, device: PairedDevice): void {
+  /**
+   * Admit a member into this net: a credential over the key it presented, signed
+   * with THIS device's member key.
+   *
+   * Any member may admit, which is what makes a join cost one ceremony instead of
+   * one per device already in the net. The signature is ours rather than the
+   * net root's — the root key stays on the founding device — so the new member's
+   * chain simply grows by one link.
+   */
+  #issue(membership: Membership, candidate: Candidate): Credential {
+    return issueCredential(
+      {
+        netId: membership.netId,
+        epoch: membership.chain[0]?.epoch ?? 1,
+        memberId: candidate.memberId,
+        name: candidate.name,
+        publicKey: candidate.publicKey,
+        certPin: candidate.certPin,
+        issuedAt: this.#options.now(),
+        issuer: membership.memberId,
+      },
+      signWith(membership.memberKey.privateKey),
+    );
+  }
+
+  /** Put a newly admitted member in the roster, so other members learn of it. */
+  #record(membership: Membership, credential: Credential): void {
+    const now = this.#options.now();
+    this.#options.net.mergeRoster(membership.netId, [
+      {
+        memberId: credential.memberId,
+        name: credential.name,
+        addrs: [],
+        admittedBy: membership.memberId,
+        admittedAt: now,
+        updatedAt: now,
+      },
+    ]);
+  }
+
+  /**
+   * Fold in what a proven member brought: roster entries as hints, tombstones
+   * only after each is verified.
+   *
+   * Entries are taken on trust because a forged address costs an attacker a
+   * failed connection and gains them nothing — the chain check happens on
+   * connect. A tombstone DENIES, so it is checked: net, signer's chain, and the
+   * signature over the bytes it claims.
+   */
+  #gossip(membership: Membership, hello: { roster?: readonly RosterEntry[]; tombstones?: readonly Tombstone[] }, from: string): void {
+    if (hello.roster !== undefined && hello.roster.length > 0) {
+      this.#options.net.mergeRoster(membership.netId, hello.roster);
+    }
+    for (const tombstone of hello.tombstones ?? []) {
+      const trustworthy = verifyTombstone({
+        tombstone,
+        netId: membership.netId,
+        rootPublicKey: membership.rootPublicKey,
+        revoked: this.#options.net.revoked(membership.netId),
+        verify: verifySignature,
+      });
+      if (!trustworthy) {
+        this.#log.warn(`ignored an unverifiable revocation of ${tombstone.memberId} relayed by ${from}`);
+        continue;
+      }
+      this.#options.net.addTombstone(membership.netId, tombstone);
+      // A revocation that arrives while its subject is connected must land now,
+      // for the reason `revoke` drops connections rather than waiting.
+      for (const [id, client] of [...this.#clients]) {
+        if (client.memberId !== tombstone.memberId) continue;
+        client.connection.close();
+        this.#drop(id);
+      }
+    }
+  }
+
+  #admit(
+    client: ClientState,
+    membership: Membership,
+    member: Credential,
+    nonce: string | undefined,
+    issuedChain?: readonly Credential[],
+  ): void {
     client.admitted = true;
-    client.deviceId = device.id;
+    client.memberId = member.memberId;
+
     /**
-     * Bookkeeping, and it must not be able to refuse a device — still less to
+     * Bookkeeping, and it must not be able to refuse a member — still less to
      * end the process.
      *
      * This runs in the daemon too, where a throw kills every terminal the user
      * has open (ADR 0036: the session outlives the app, so the daemon dying is
-     * the one failure the design cannot absorb). `lastSeenAt` is a timestamp
-     * nothing depends on; the device is already authenticated by the time we
-     * are here.
+     * the one failure the design cannot absorb). The member is already
+     * authenticated by the time we are here.
      */
     try {
-      this.#options.devices.put({ ...device, lastSeenAt: this.#options.now() });
+      const now = this.#options.now();
+      this.#options.net.mergeRoster(membership.netId, [
+        {
+          memberId: member.memberId,
+          name: member.name,
+          addrs: addressOf(client.connection.remoteAddress),
+          admittedBy: member.issuer,
+          admittedAt: member.issuedAt,
+          updatedAt: now,
+        },
+      ]);
     } catch (error) {
-      this.#log.warn(`could not record last-seen for ${device.id}: ${String(error)}`);
+      this.#log.warn(`could not record ${member.memberId} in the roster: ${String(error)}`);
     }
 
-    // The secret goes back on EVERY admit, not only the first: it is what the
-    // device presents next time, and a client that lost it would otherwise have
-    // to be re-paired by hand.
+    /**
+     * The client is told who IT is, who WE are, and everything the net knows.
+     *
+     * `chain` is present only for a device that just joined — a returning member
+     * already holds its own and would gain nothing from a copy. `proof` answers
+     * the client's nonce, which is how the client knows it reached a member of
+     * its net rather than whoever answered on that address; under a net there is
+     * no pinned certificate left to tell it that.
+     */
     this.#send(client, REMOTE.accepted, {
-      secret: device.secret,
-      deviceId: device.id,
+      netId: membership.netId,
+      netName: membership.netName,
+      /**
+       * The net's root key, and a joiner cannot do without it: a membership with
+       * no root is a membership that can never CHECK anybody — the device would
+       * hold a credential and have no way to verify the next Mac it met. It is
+       * not taken on trust either, since the net id it was handed is the hash of
+       * this key, so the two verify each other.
+       */
+      rootPublicKey: membership.rootPublicKey,
+      memberId: member.memberId,
+      hostChain: membership.chain,
+      ...(issuedChain === undefined ? {} : { chain: issuedChain }),
+      ...(nonce === undefined
+        ? {}
+        : {
+            proof: issueHostProof(
+              { netId: membership.netId, nonce },
+              signWith(membership.memberKey.privateKey),
+            ),
+          }),
+      roster: this.#options.net.roster(membership.netId),
+      tombstones: this.#options.net.tombstones(membership.netId),
       ...(this.#options.dataPort?.() === undefined ? {} : { dataPort: this.#options.dataPort() }),
     });
 
@@ -334,8 +498,8 @@ export class RemoteServer {
     // consumer that keys per-connection state off this hears the same number
     // `feed` and `disconnect` will use. Nothing can arrive in between — this
     // whole path is synchronous — so ordering costs the sink nothing.
-    this.#options.onAdmitted?.(client.sessionClientId, device);
-    this.#log.info(`remote ${client.connection.id} admitted as ${device.name} (${device.id})`);
+    this.#options.onAdmitted?.(client.sessionClientId, { memberId: member.memberId, name: member.name });
+    this.#log.info(`remote ${client.connection.id} admitted as ${member.name} (${member.memberId})`);
   }
 
   #reject(client: ClientState, reason: string): void {
@@ -352,4 +516,15 @@ export class RemoteServer {
       this.#log.warn(`writing to remote ${client.connection.id} threw: ${String(error)}`);
     }
   }
+}
+
+/**
+ * A peer's address as a roster hint — dropped when there is nothing useful.
+ *
+ * Loopback is the case that matters: recording `127.0.0.1` would hand every
+ * other member an address that resolves, on their machine, to themselves.
+ */
+function addressOf(remoteAddress: string): readonly string[] {
+  const host = remoteAddress.split(':')[0] ?? '';
+  return host === '' || host === '127.0.0.1' || host === '::1' ? [] : [remoteAddress];
 }

@@ -1,6 +1,7 @@
 package com.eshaan.shepherd.v2
 
 import android.content.Context
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,6 +28,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.eshaan.shepherd.ui.components.ShepherdTopBar
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 import com.eshaan.shepherd.ui.theme.ShepherdPalette
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -46,18 +49,36 @@ import java.util.UUID
 @Composable
 fun V2App(context: Context, deviceName: String) {
     val macs = remember { MacStore(context) }
+    val nets = remember { NetStore(context) }
     var mac by remember { mutableStateOf(macs.all().firstOrNull()) }
     var session by remember { mutableStateOf<String?>(null) }
 
     val known = mac
     if (known == null) {
-        PairScreen { entered, code ->
-            pairingCodeOnce = code
+        JoinScreen { facts ->
+            // The link is the whole first contact: it carries the net, the root
+            // key, the address and the code. Kept until the accept, because the
+            // membership is issued against the key minted for this attempt.
+            joiningOnce = facts
+            val entered = KnownMac(
+                pin = facts.pin,
+                endpoints = listOf(Endpoint(facts.host, facts.port, facts.dataPort, via = "link")),
+                netId = facts.netId,
+            )
             macs.put(entered)
             mac = entered
         }
         return
     }
+
+    /**
+     * The membership for this Mac's net — the phone's identity, shared by every
+     * Mac in it.
+     *
+     * Null while joining, which is exactly the state the code is for.
+     */
+    var membership by remember(known.netId) { mutableStateOf(nets.byNet(known.netId)) }
+    val deviceId = remember { nets.deviceId() }
 
     /**
      * Which address we are currently trying.
@@ -98,51 +119,62 @@ fun V2App(context: Context, deviceName: String) {
     }
     val state by link.state.collectAsState()
 
-    DisposableEffect(link) {
-        link.start(known.deviceId, deviceName, pairingCodeOnce, known.secret)
+    DisposableEffect(link, membership) {
+        link.start(deviceId, deviceName, joiningOnce, membership)
         onDispose { link.stop() }
     }
 
     /**
-     * The data link waits for a secret, and says so when it cannot start.
+     * The data link waits for a membership, and says so when it cannot start.
      *
-     * It cannot pair — it can only present — so before the app has approved this
-     * phone there is nothing for it to do. Getting this wrong is invisible: the
-     * task list works, a row opens a terminal, and the terminal paints nothing
-     * because the second connection was never dialled.
+     * It cannot join — it can only present — so before this phone is in the net
+     * there is nothing for it to do. The daemon shows no code, which is exactly
+     * what makes serving ptys from a headless process safe. Getting this wrong is
+     * invisible: the task list works, a row opens a terminal, and the terminal
+     * paints nothing because the second connection was never dialled.
      */
-    DisposableEffect(dataLink, known.secret) {
-        val secret = known.secret
-        if (dataLink != null && secret != null) {
-            dataLink.start(known.deviceId, deviceName, null, secret)
+    DisposableEffect(dataLink, membership) {
+        val held = membership
+        if (dataLink != null && held != null) {
+            dataLink.start(deviceId, deviceName, null, held)
         } else {
             SLog.i(
                 SLog.DATA,
-                "data link idle — ${if (dataLink == null) "no data port" else "no secret yet"}",
+                "data link idle — ${if (dataLink == null) "no data port" else "not in the net yet"}",
             )
         }
         onDispose { dataLink?.stop() }
     }
 
     /**
-     * Everything the Mac tells us about itself, folded back into the record.
+     * Everything the Mac tells us, folded back into storage.
      *
-     * The secret and the data port both arrive on admit, and BOTH have to reach
-     * state rather than just storage: the data link starts only once a secret
-     * exists, so writing to prefs alone left it null for the whole session — a
-     * terminal that paints nothing, with no error, because nothing had failed.
-     * And a port is the host's to choose, so a cached one dials a daemon that
-     * moved.
+     * The membership and the data port both arrive on admit, and BOTH have to
+     * reach state rather than only storage: the data link starts only once a
+     * membership exists, so writing to prefs alone left it null for the whole
+     * session — a terminal that paints nothing, with no error, because nothing
+     * had failed. And a port is the host's to choose, so a cached one dials a
+     * daemon that moved.
      */
     LaunchedEffect(state, known.pin) {
         val ready = state as? HostLink.State.Ready ?: return@LaunchedEffect
+        ready.issued?.let { joined ->
+            nets.put(joined)
+            membership = joined
+            // Spent: a code authorizes ONE first contact, and this phone is now
+            // a member. Keeping it would be keeping a credential already used.
+            joiningOnce = null
+            if (known.netId != joined.netId) {
+                val moved = known.copy(netId = joined.netId)
+                macs.put(moved)
+                mac = moved
+            }
+        }
         val reachedAt = endpoint.copy(dataPort = ready.dataPort ?: endpoint.dataPort)
-        val updated = known
-            .copy(secret = ready.deviceSecret ?: known.secret)
-            // Promoted to the front: the address that just worked is
-            // overwhelmingly the one that will work next time.
-            .reachableAt(reachedAt)
-        if (updated != known) {
+        // Promoted to the front: the address that just worked is overwhelmingly
+        // the one that will work next time.
+        val updated = (mac ?: known).reachableAt(reachedAt)
+        if (updated != mac) {
             macs.put(updated)
             mac = updated
         }
@@ -197,70 +229,91 @@ fun V2App(context: Context, deviceName: String) {
 private const val ADDRESS_RETRY_MS = 4_000L
 
 /**
- * First contact: the facts a Mac's pairing payload carries.
+ * First contact: one link, scanned or pasted.
  *
- * Typed rather than scanned, for now. The payload is `host`, `port`, `pin` and a
- * six-digit code — the same four fields a QR would encode — so a scanner is a
- * nicer way in rather than a different one.
+ * The Mac's `remote.pair` hands back a `shepherd://join?…` URI and the same URI
+ * as a QR block. That link carries the net, its root key, the address, the
+ * certificate pin and the six-digit code — five fields nobody would retype, one
+ * of which is 88 hex characters. So there is no typed form here any more: a
+ * camera or a paste, and the parser refuses anything it cannot fully act on
+ * rather than starting a join that fails somewhere the user cannot see.
  */
 @Composable
-private fun PairScreen(onPaired: (KnownMac, String?) -> Unit) {
-    var host by remember { mutableStateOf("127.0.0.1") }
-    var port by remember { mutableStateOf("") }
-    var dataPort by remember { mutableStateOf("") }
-    var pin by remember { mutableStateOf("") }
-    var code by remember { mutableStateOf("") }
+private fun JoinScreen(onJoining: (JoinFacts) -> Unit) {
+    var pasted by remember { mutableStateOf("") }
+    var problem by remember { mutableStateOf<String?>(null) }
+
+    val scanner = rememberLauncherForActivityResult(ScanContract()) { result ->
+        val contents = result.contents ?: return@rememberLauncherForActivityResult // cancelled
+        val facts = JoinLink.parse(contents)
+        if (facts == null) {
+            problem = "That QR is not a Shepherd join link for this version."
+        } else {
+            problem = null
+            onJoining(facts)
+        }
+    }
 
     Column(
         Modifier.fillMaxSize().background(Color(ShepherdPalette.ground)).padding(24.dp),
         verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
     ) {
-        Text("Pair with a Mac", color = Color(ShepherdPalette.textPrimary), fontSize = 20.sp)
+        Text("Join a shep-net", color = Color(ShepherdPalette.textPrimary), fontSize = 20.sp)
         Text(
-            // Loopback is what the Mac serves today, so a USB reverse-forward is
-            // the way in until a LAN transport extension exists.
-            "The Mac's address on this network, or 127.0.0.1 over a USB forward",
+            "On the Mac, run  shepherd raw remote.pair  and scan the QR it prints.",
             color = Color(ShepherdPalette.textDim),
             fontSize = 12.sp,
             modifier = Modifier.padding(top = 4.dp, bottom = 16.dp),
         )
-        Field("Host", host) { host = it }
-        Field("Port", port, numeric = true) { port = it }
-        Field("Data port", dataPort, numeric = true) { dataPort = it }
-        Field("Certificate pin", pin) { pin = it.trim() }
-        Field("Pairing code", code, numeric = true) { code = it }
         Button(
             onClick = {
-                onPaired(
-                    KnownMac(
-                        pin = pin.trim(),
-                        endpoints = listOf(
-                            Endpoint(
-                                host = host.trim(),
-                                port = port.toIntOrNull() ?: 0,
-                                dataPort = dataPort.toIntOrNull() ?: 0,
-                            ),
-                        ),
-                        deviceId = UUID.randomUUID().toString(),
-                        secret = null,
-                    ),
-                    code.ifBlank { null },
+                problem = null
+                scanner.launch(
+                    ScanOptions()
+                        .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                        .setBeepEnabled(false)
+                        .setPrompt("Scan the Mac's join QR"),
                 )
             },
-            enabled = host.isNotBlank() && port.toIntOrNull() != null && pin.length == 64,
-            modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
-        ) { Text("Pair") }
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("Scan the QR") }
+
+        Text(
+            "…or paste the link",
+            color = Color(ShepherdPalette.textDim),
+            fontSize = 12.sp,
+            modifier = Modifier.padding(top = 20.dp, bottom = 4.dp),
+        )
+        Field("shepherd://join?…", pasted) { pasted = it }
+        problem?.let {
+            Text(it, color = Color(ShepherdPalette.textPrimary), fontSize = 12.sp)
+        }
+        Button(
+            onClick = {
+                val facts = JoinLink.parse(pasted)
+                if (facts == null) {
+                    // Named rather than shrugged at: a link that is merely
+                    // truncated looks exactly like one for another net.
+                    problem = "That is not a join link this app can use."
+                } else {
+                    problem = null
+                    onJoining(facts)
+                }
+            },
+            enabled = pasted.isNotBlank(),
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+        ) { Text("Join") }
     }
 }
 
 /**
- * The code, for exactly one connection attempt.
+ * The join link, for exactly one connection attempt.
  *
- * It is not stored: a pairing code authorizes ONE first contact and the secret
- * is what a returning phone presents. Keeping it would be keeping a credential
- * that is already spent.
+ * It is not stored: the code inside it authorizes ONE first contact, and after
+ * that the membership is what this phone presents. Keeping it would be keeping a
+ * credential that is already spent.
  */
-private var pairingCodeOnce: String? = null
+private var joiningOnce: JoinFacts? = null
 
 @Composable
 private fun Field(label: String, value: String, numeric: Boolean = false, onChange: (String) -> Unit) {

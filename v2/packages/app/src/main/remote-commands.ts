@@ -1,10 +1,11 @@
 import { dialog } from 'electron';
+import { toString as qrToString } from 'qrcode';
 import type { CommandRegistry } from '@shepherd/core';
 import { s, type CategoryLogger, type Disposable } from '@shepherd/sdk';
-import type { RemoteAPI } from '@shepherd/remote';
+import { encodeJoinURI, type RemoteAPI } from '@shepherd/remote';
 
 /**
- * Pairing, as verbs and one dialog.
+ * Nets, as verbs and one dialog.
  *
  * Deliberately NOT a settings pane. Everything here is reachable from the
  * palette and from the CLI the moment it is registered, because it is in the one
@@ -15,8 +16,12 @@ import type { RemoteAPI } from '@shepherd/remote';
 
 export const REMOTE_COMMANDS = {
   pair: 'remote.pair',
-  devices: 'remote.devices',
+  members: 'remote.members',
   revoke: 'remote.revoke',
+  nets: 'remote.nets',
+  createNet: 'remote.createNet',
+  useNet: 'remote.useNet',
+  leaveNet: 'remote.leaveNet',
 } as const;
 
 export interface RemoteCommandsOptions {
@@ -42,9 +47,11 @@ export function registerRemoteCommands(options: RemoteCommandsOptions): Disposab
    * read. When `sas` IS present — a client that did not pin — the digits are
    * shown, because then there is something real to compare.
    */
-  const approval = remote.onPairingRequest(async (request) => {
+  const approval = remote.onJoinRequest(async (request) => {
+    const net = remote.activeNet();
     const detail = [
-      `${request.deviceName} at ${request.from} wants to drive this Mac.`,
+      `${request.deviceName} at ${request.from} wants to join ${net?.name ?? 'this net'}.`,
+      'Every Mac in the net will admit it from then on, with no further approval.',
       request.sas === undefined
         ? 'It verified this Mac’s certificate, so there are no digits to compare.'
         : `Check the phone shows: ${request.sas}`,
@@ -52,14 +59,14 @@ export function registerRemoteCommands(options: RemoteCommandsOptions): Disposab
 
     const answer = await dialog.showMessageBox({
       type: 'question',
-      message: 'Allow this device?',
+      message: 'Let this device into your net?',
       detail,
       buttons: ['Allow', "Don't allow"],
       defaultId: 1,
       cancelId: 1,
     });
     const allowed = answer.response === 0;
-    log.info(`pairing ${allowed ? 'allowed' : 'refused'} for ${request.deviceName}`);
+    log.info(`join ${allowed ? 'allowed' : 'refused'} for ${request.deviceName}`);
     return allowed;
   });
 
@@ -67,47 +74,63 @@ export function registerRemoteCommands(options: RemoteCommandsOptions): Disposab
     approval,
 
     registry.register(REMOTE_COMMANDS.pair, {
-      title: 'Remote: Pair a Device',
+      title: 'Remote: Add a Device to This Net',
       permission: 'views',
       schema: s.nothing(),
       /**
-       * Mints a code and hands back everything a device needs.
+       * Mints a code and hands back everything a device needs — three ways.
        *
        * Minted HERE rather than at startup because a code is a moment, not a
        * setting: five minutes, three attempts, one device. A code showing since
        * boot is a code anybody who walked past has had time to use.
+       *
+       * **The QR is not decoration.** Joining means carrying a host, a port, a
+       * 64-character certificate pin and an 88-character root key to the other
+       * device; typed by hand that is done once and never again. So the answer
+       * carries the facts (for a UI), one `shepherd://join` URI (to paste), and
+       * that URI as a QR block (to point a phone at) — one payload, three ways
+       * in, and one parser on the other side rather than one per surface.
        */
-      handler: () => {
+      handler: async () => {
         const code = remote.showPairingCode();
         const payload = remote.pairingPayload();
         if (payload === undefined) {
-          throw new Error('remote is not serving — nothing to pair with yet');
+          throw new Error(
+            remote.activeNet() === undefined
+              ? 'this Mac is in no net yet — run remote.createNet first'
+              : 'remote is not serving — nothing to join yet',
+          );
         }
-        // Logged as well as returned, so it is readable from a terminal pane
-        // without a UI existing.
-        log.info(`pairing code ${code} — ${payload.host}:${payload.port}`);
-        return payload;
+        const uri = encodeJoinURI(payload);
+        // Logged as well as returned, so the whole thing is readable from a
+        // terminal pane with no UI in existence.
+        log.info(`join code ${code} — ${uri}`);
+        return { ...payload, uri, qr: await qr(uri) };
       },
     }),
 
-    registry.register(REMOTE_COMMANDS.devices, {
-      title: 'Remote: Paired Devices',
+    registry.register(REMOTE_COMMANDS.members, {
+      title: 'Remote: Members of This Net',
       permission: 'views',
       schema: s.nothing(),
-      // The secret is deliberately NOT in the answer. It is this Mac's proof
-      // that a device is who it says; a verb that handed it back would make
-      // every caller of a read-only list a place it can leak from.
+      /**
+       * The roster, which holds no secrets to leak — that was the pairwise
+       * model's problem, where a device list sat next to the secret proving each
+       * one. Membership is a signed credential the device itself holds; this is
+       * names and last-known addresses.
+       */
       handler: () =>
-        remote.devices().map((device) => ({
-          id: device.id,
-          name: device.name,
-          pairedAt: device.pairedAt,
-          lastSeenAt: device.lastSeenAt,
+        remote.members().map((member) => ({
+          id: member.memberId,
+          name: member.name,
+          addrs: member.addrs,
+          admittedBy: member.admittedBy,
+          admittedAt: member.admittedAt,
         })),
     }),
 
     registry.register(REMOTE_COMMANDS.revoke, {
-      title: 'Remote: Revoke a Device',
+      title: 'Remote: Revoke a Member',
       permission: 'views',
       schema: s.object({ device: s.string() }),
       handler: (args: { device: string }) => {
@@ -115,7 +138,58 @@ export function registerRemoteCommands(options: RemoteCommandsOptions): Disposab
         return { revoked: args.device };
       },
     }),
+
+    registry.register(REMOTE_COMMANDS.nets, {
+      title: 'Remote: Nets',
+      permission: 'views',
+      schema: s.nothing(),
+      handler: () => ({ nets: remote.nets(), active: remote.activeNet()?.netId }),
+    }),
+
+    registry.register(REMOTE_COMMANDS.createNet, {
+      title: 'Remote: Create a Net',
+      permission: 'views',
+      schema: s.object({ name: s.string() }),
+      handler: (args: { name: string }) => remote.createNet(args.name),
+    }),
+
+    registry.register(REMOTE_COMMANDS.useNet, {
+      title: 'Remote: Switch Net',
+      permission: 'views',
+      schema: s.object({ net: s.string() }),
+      handler: (args: { net: string }) => {
+        remote.setActiveNet(args.net);
+        return { active: args.net };
+      },
+    }),
+
+    registry.register(REMOTE_COMMANDS.leaveNet, {
+      title: 'Remote: Leave a Net',
+      permission: 'views',
+      schema: s.object({ net: s.string() }),
+      handler: (args: { net: string }) => {
+        remote.leaveNet(args.net);
+        return { left: args.net };
+      },
+    }),
   ];
 
   return { dispose: () => subscriptions.forEach((subscription) => subscription.dispose()) };
+}
+
+/**
+ * The join URI as a block of text a camera can read.
+ *
+ * `small: true` uses half-height blocks, which is what keeps a payload this long
+ * inside a normal terminal window — at full height it wraps, and a wrapped QR is
+ * not a QR. A failure here returns empty rather than throwing: the URI beside it
+ * still works, and losing the whole pairing verb because a renderer complained
+ * would be a poor trade.
+ */
+async function qr(uri: string): Promise<string> {
+  try {
+    return await qrToString(uri, { type: 'terminal', small: true, errorCorrectionLevel: 'L' });
+  } catch {
+    return '';
+  }
 }
