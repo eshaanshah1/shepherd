@@ -251,6 +251,15 @@ size: it opens into a card carrying the question and its two answers inline, so
 answering costs no navigation. Everything else is a fixed-height row or a
 fixed-shape card. Finished work leaves the list and becomes a count at the foot.
 
+**A question that does not fit the card does not get a bigger card.** Two answers
+fit; an `AskUserQuestion` with five options, a header and multi-select does not,
+and neither does one whose options are sentences. That card keeps its shape and
+ends in a single full-width ghost bar — `check →` — which does exactly what
+clicking the card does: switches the stage to that task. The terminal already
+renders the question properly, so navigation *is* the answer there, and the rail's
+job was only ever to say which task is asking. This is the seam that stops the
+card becoming a form: there is one inline shape, and everything else is a door.
+
 **The sky strip is the one decorative surface in the app** — a dim gradient, a few
 1px stars, two hills, and a 3px-pixel sheep grazing at its right-hand end, with
 the panel's name overlaid at its foot. It is a window, not a wallpaper: an earlier
