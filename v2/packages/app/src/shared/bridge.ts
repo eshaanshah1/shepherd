@@ -191,6 +191,21 @@ export interface ViewsApi {
    * It cannot name a caller here any more than it can on `commands.invoke`.
    */
   invoke(type: string, command: string, args?: unknown): Promise<IpcResult<unknown>>;
+  /**
+   * Show what a row of ANOTHER member's view stands for, on this Mac.
+   *
+   * The page passes the row's `presents` verb — it does not interpret it — and
+   * main asks that member, reads the `PresentEffect`, and opens the pane here.
+   * The answer says what happened so the page can report "nothing running to
+   * show" rather than leaving a click that visibly did nothing.
+   *
+   * Deliberately NOT `activate` for a remote row: that runs the row's own
+   * gesture, which moves the window on the machine that runs it.
+   */
+  present(
+    type: string,
+    presents: { readonly id: string; readonly args?: unknown },
+  ): Promise<IpcResult<{ readonly shown: boolean; readonly reason?: string }>>;
   onChanged(listener: (type: string) => void): () => void;
 }
 
@@ -234,7 +249,7 @@ export const BRIDGE_SURFACE = {
    * topic or a caller, which is what the agent relay's allow-list was
    * protecting and what this generalizes without widening.
    */
-  views: ['list', 'children', 'activate', 'invoke', 'onChanged'],
+  views: ['list', 'children', 'activate', 'invoke', 'present', 'onChanged'],
   window: ['close'],
 } as const satisfies Record<keyof ShepherdBridge, readonly string[]>;
 

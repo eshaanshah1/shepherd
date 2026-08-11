@@ -70,6 +70,26 @@ import { deserializeNode, serializeNode, type PersistedNode } from './serialize.
  * would silently adopt bindings nobody checked, which is the failure mode the
  * whole verification exists to prevent.
  */
+/**
+ * A pane about to be minted, and optionally the session it is BORN SHOWING.
+ *
+ * `session` exists because a pane that is meant to display an EXISTING session
+ * cannot be bound a moment after it appears. The renderer decides to create a
+ * session by looking at the snapshot it was handed: a pane that arrives with no
+ * binding is a pane it starts a pty for. So a binding applied after the pane was
+ * announced is a race the renderer wins — it creates a second, local shell —
+ * and the fix is not a faster bind but a pane that is never announced unbound.
+ *
+ * The first caller is another member's terminal: the session is already running
+ * on another machine, and nothing here may start one. `tasks.spawn` does not want
+ * it (its pane creates its own session, which is the ordinary path), and nothing
+ * about it reaches disk — `serialize.ts` writes the BINDING, which this only
+ * arrives at sooner.
+ */
+export interface PaneSeed extends PaneInit {
+  readonly session?: SessionID;
+}
+
 export interface SessionSink {
   kill(id: SessionID): void;
   isLive(id: SessionID): boolean;
@@ -235,7 +255,7 @@ export class LayoutStore {
    * failure, because the caller that does it is a caller that stopped needing a
    * first pane and left an argument behind.
    */
-  open(id: string = 'window-1', init?: PaneInit, options: OpenOptions = {}): RootID {
+  open(id: string = 'window-1', init?: PaneSeed, options: OpenOptions = {}): RootID {
     const live = this.#roots.get(rootId(id));
     if (live) return live.id;
 
@@ -264,6 +284,9 @@ export class LayoutStore {
       viewport: { x: 0, y: 0, width: 0, height: 0 },
     };
     this.#roots.set(state.id, state);
+    // BEFORE `#changed`: see `PaneSeed.session`. A pane announced unbound is a
+    // pane the renderer starts a pty for.
+    if (init?.session !== undefined) this.bindSession(pane.id, init.session);
     this.#changed(state.id);
     return state.id;
   }
@@ -514,7 +537,7 @@ export class LayoutStore {
     state.viewport = rect;
   }
 
-  split(root: RootID, axis: SplitAxis, init: PaneInit = {}): Result<PaneID, string> {
+  split(root: RootID, axis: SplitAxis, init: PaneSeed = {}): Result<PaneID, string> {
     const state = this.#roots.get(root);
     if (!state) return err(`no root ${root}`);
 
@@ -543,6 +566,8 @@ export class LayoutStore {
     // Splitting clears zoom: a zoomed pane starving its new sibling to 0×0 is a
     // split the user cannot see.
     state.zoomedPaneId = null;
+    // BEFORE `#changed`: see `PaneSeed.session`.
+    if (init.session !== undefined) this.bindSession(pane.id, init.session);
     this.#changed(root);
     return ok(pane.id);
   }
@@ -740,11 +765,13 @@ export class LayoutStore {
    * would be to close and re-open it, which loses the root's identity and every
    * task that names it.
    */
-  #seed(state: RootState, init: PaneInit): PaneID {
+  #seed(state: RootState, init: PaneSeed): PaneID {
     const pane = makePane(init, this.#newPane);
     state.tree = leaf(pane);
     state.focusedPaneId = pane.id;
     state.zoomedPaneId = null;
+    // BEFORE `#changed`: see `PaneSeed.session`.
+    if (init.session !== undefined) this.bindSession(pane.id, init.session);
     this.#changed(state.id);
     return pane.id;
   }

@@ -57,6 +57,15 @@ export const INVOKE = {
    * quietly come back.
    */
   viewsInvoke: 'views:invoke',
+  /**
+   * "What does this row of ANOTHER member's view stand for, and show it here."
+   *
+   * A separate channel from `activate` because the two are different intentions
+   * and only one of them is safe to send across the net: `activate` runs the
+   * row's own gesture, which for a task opens a pane and switches the window on
+   * whichever machine runs it. See `TreeItem.presents`.
+   */
+  viewsPresent: 'views:present',
 } as const;
 
 /** Main → renderer, fire-and-forget (`webContents.send`). */

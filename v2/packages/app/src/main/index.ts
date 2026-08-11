@@ -57,6 +57,7 @@ import { memberOf, qualify } from '../shared/index.ts';
 import { resolveTransport, type Identity, type RemoteAPI } from '@shepherd/remote';
 import { SessionClient } from './session-client.ts';
 import { SessionRouter } from './session-router.ts';
+import { createRemotePresenter } from './remote-present.ts';
 import { daemonConnector } from './daemon-launcher.ts';
 import { registerSessionIpc } from './ipc.ts';
 import { registerWindowIpc } from './window-ipc.ts';
@@ -263,7 +264,7 @@ const local: SessionHostLike = USE_DAEMON
  * `whenReady`, and a member is only dialled when somebody actually opens one of
  * its rows.
  */
-const host: SessionHostLike = new SessionRouter({
+const sessions = new SessionRouter({
   local,
   connect: async (memberId) => {
     if (remote === undefined) throw new Error('remote is not running');
@@ -271,6 +272,9 @@ const host: SessionHostLike = new SessionRouter({
   },
   log: logger.child('session'),
 });
+
+/** The same object, seen as what everything downstream is written against. */
+const host: SessionHostLike = sessions;
 
 /**
  * The one store. On disk under this build's own userData, so an extension's
@@ -818,6 +822,50 @@ void app.whenReady().then(async () => {
     },
     log: logger.child('session'),
   });
+
+  /**
+   * A member's row, shown HERE — the gesture this milestone exists for.
+   *
+   * `activate` on a remote row used to run that row's own verb over there, which
+   * for a task opens a pane and switches the window on the OTHER Mac while
+   * leaving this one showing nothing. A row's `presents` verb answers what it
+   * stands for and performs nothing, so this Mac becomes a second viewer of the
+   * same pty and nobody else's window moves.
+   */
+  const presenter = createRemotePresenter({
+    reach: (memberId) => sessions.reach(memberId),
+    invoke: (command, args) => registry.invoke(command, args, KERNEL),
+    log: logger.child('session'),
+  });
+
+  ipcMain.handle(
+    INVOKE.viewsPresent,
+    async (_event, type: string, presents: { id: string; args?: unknown }) => {
+      const memberId = memberOf(type);
+      if (memberId === undefined || !fromMembers.owns(type)) {
+        // Only a member's row goes through here. One of this Mac's own rows is
+        // activated, which already does the right thing on the machine it is on.
+        return { ok: true, value: { shown: false, reason: 'that view is local' } };
+      }
+      const effect = await fromMembers.present(type, presents);
+      if (effect === undefined) {
+        // The honest answer, and the one the row's own verb decided: a task with
+        // nothing running has no terminal to show, and an empty pane pretending
+        // otherwise is what `tasks.presentation` refuses to hand back.
+        return { ok: true, value: { shown: false, reason: 'nothing running to show' } };
+      }
+      if (effect.kind === 'view') {
+        // The sidebar already draws every member's views; a `view` effect is
+        // something the page focuses, not something main opens.
+        return { ok: true, value: { shown: false, reason: 'that row asked for a view' } };
+      }
+      const name = remote?.members().find((m) => m.memberId === memberId)?.name ?? memberId;
+      const shown = await presenter.present(memberId, name, effect);
+      return shown.ok
+        ? { ok: true, value: { shown: true } }
+        : { ok: true, value: { shown: false, reason: shown.error } };
+    },
+  );
 
   ipcMain.handle(INVOKE.viewsList, async () => ({
     ok: true,

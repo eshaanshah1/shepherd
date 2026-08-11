@@ -13,7 +13,8 @@ import { createLogger, sessionId, systemClock, type SessionID } from '@shepherd/
 import { SessionRouter } from './session-router.ts';
 import type { ClientSocket } from './session-client.ts';
 
-const nullLogger = createLogger({ clock: systemClock, level: 'error', sink: () => undefined });
+const logger = createLogger({ clock: systemClock, level: 'error', sink: () => undefined });
+const nullLogger = logger.child('session');
 
 let cleanups: Array<() => void> = [];
 afterEach(() => {
@@ -23,7 +24,7 @@ afterEach(() => {
 /** Mac B: its own pty host, its own session server, reachable over a pipe. */
 function memberSide() {
   const host = new SessionHost();
-  const server = new SessionServer({ host, log: nullLogger });
+  const server = new SessionServer({ host, log: logger });
   let deliver: ((bytes: Uint8Array) => void) | undefined;
   let closed: (() => void) | undefined;
   const id = server.accept({
@@ -195,6 +196,18 @@ describe('an unreachable member', () => {
     const { routed } = router(() => Promise.reject(new Error('asleep')));
     const reading = await routed.foreground(sessionId('mac-b∷anything'));
     expect(reading.hasForegroundProcess).toBeUndefined();
+  });
+
+  it('tells the pane what it is waiting for, in the pane', async () => {
+    // The pane is a screen for bytes, so that is where "I cannot reach this
+    // machine yet" belongs — and R0's snapshot repaints over it when the member
+    // answers, so there is nothing to clear.
+    const { routed } = router(() => Promise.reject(new Error('asleep')));
+    const seen: string[] = [];
+    routed.attach(sessionId('mac-b∷anything'), (bytes) => {
+      seen.push(new TextDecoder().decode(bytes));
+    });
+    await until(() => seen.join('').includes('waiting for mac-b'), 'the notice');
   });
 
   it('reports rather than throws when a write cannot be routed', async () => {

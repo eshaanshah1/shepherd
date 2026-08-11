@@ -95,6 +95,9 @@
         {
           "id": "tasks.reveal",
           "title": "Tasks: Reveal"
+        },
+        {
+          "id": "tasks.presentation"
         }
       ]
     }
