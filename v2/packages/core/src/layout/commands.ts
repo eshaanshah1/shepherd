@@ -104,6 +104,19 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
   const resolvePane = (pane: string | undefined, root: RootID): PaneID | null =>
     pane === undefined ? store.focused(root) : toPaneId(pane);
 
+  /**
+   * Hand a freshly minted pane the screen it should be born showing.
+   *
+   * Decoded HERE rather than at the store: base64 is a property of the envelope
+   * a command arrives in, and the store's seam takes bytes.
+   */
+  const stageSeed = (root: RootID, seed: string | undefined): void => {
+    if (seed === undefined || seed === '') return;
+    const pane = store.focused(root);
+    if (pane === null) return;
+    store.setInitialSeed(pane, new Uint8Array(Buffer.from(seed, 'base64')));
+  };
+
   const subscriptions: Disposable[] = [
     registry.register(LAYOUT_COMMANDS.split, {
       title: 'Split Pane',
@@ -127,14 +140,19 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
          * spills a prompt to a file and types a command that reads it back.
          */
         initialCommand: s.optional(s.string()),
+        /** A captured screen, base64 — `layout.openRoot` documents it. */
+        seed: s.optional(s.string()),
       }),
       handler: (args) => {
-        return unwrap(
-          store.split(resolveRoot(args.root), args.axis, {
+        const root = resolveRoot(args.root);
+        const pane = unwrap(
+          store.split(root, args.axis, {
             ...(args.cwd === undefined ? {} : { cwd: args.cwd }),
             ...(args.initialCommand === undefined ? {} : { initialCommand: args.initialCommand }),
           }),
         );
+        stageSeed(root, args.seed);
+        return pane;
       },
     }),
 
@@ -267,6 +285,16 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
          * the second caller would move a root out from under the first.
          */
         group: s.optional(s.string()),
+        /**
+         * A previously captured screen, base64, put into this pane's session
+         * before its pty says anything — a restored tab's history.
+         *
+         * Base64 because it arrives through a command envelope, which is JSON.
+         * One-shot and never persisted, exactly like `initialCommand`: a pane
+         * whose session dies and is replaced must not replay a screen from
+         * before the task was shelved.
+         */
+        seed: s.optional(s.string()),
       }),
       handler: (args) => {
         const root = toRootId(args.root);
@@ -307,10 +335,12 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
 
         if (store.hasRoot(root)) {
           unwrap(store.split(root, 'row', init));
+          stageSeed(root, args.seed);
           return { root: args.root, pane: store.focused(root), created: true };
         }
 
         store.open(args.root, init, args.group === undefined ? {} : { group: args.group });
+        stageSeed(root, args.seed);
         return { root: args.root, pane: store.focused(root), created: true };
       },
     }),

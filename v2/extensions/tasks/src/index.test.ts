@@ -1519,6 +1519,105 @@ describe('archiving keeps the tabs and their screens', () => {
   });
 });
 
+describe('restoring a task with tabs rebuilds the SCREEN', () => {
+  const archivedWithTabs = () =>
+    task({
+      lifecycle: 'archived',
+      archivedAt: 1,
+      archives: [],
+      sessions: [{ id: 's1', role: 'orchestrator', pane: 'p1', root: 'task:t1', resumeTarget: 'opaque' }],
+      tabs: [
+        {
+          root: 'task:t1',
+          focusedPane: 'p1',
+          panes: [{ pane: 'p1', cwd: '/wt', userTitle: null, sessionId: 's1', resumeTarget: 'opaque' }],
+        },
+        {
+          root: 'task:t1/tab-2',
+          focusedPane: 'p2',
+          panes: [{ pane: 'p2', cwd: '/wt/api', userTitle: 'logs' }],
+        },
+      ],
+    });
+
+  const resuming = (id: string) =>
+    id === 'agents.resumeCommand' ? ({ ok: true, value: { command: 'claude --resume opaque' } } as never) : undefined;
+
+  it('reopens every archived tab, in order, in the task’s group', async () => {
+    const h = (live = harness({ tasks: [archivedWithTabs()], invoke: resuming }));
+    await h.run('tasks.restore', { task: 't1' });
+    await until(() => h.invoked.filter((call) => call.id === 'layout.openRoot').length === 2);
+
+    const opened = h.invoked.filter((call) => call.id === 'layout.openRoot');
+    expect(opened.map((call) => (call.args as { root: string }).root)).toEqual([
+      'task:t1',
+      'task:t1/tab-2',
+    ]);
+    expect(opened[0]?.args).toMatchObject({ group: 'task:t1', cwd: '/wt' });
+  });
+
+  it('STAGES the resume line without a newline, so nothing runs', async () => {
+    /*
+     * The whole correction, in one assertion. `setInitialInput` documents a
+     * newline as an Enter press, so a staged line ending in one would relaunch
+     * every agent of a task somebody restored in order to glance at it.
+     */
+    const h = (live = harness({ tasks: [archivedWithTabs()], invoke: resuming }));
+    await h.run('tasks.restore', { task: 't1' });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    const staged = h.invoked.find((call) => call.id === 'layout.openRoot')?.args as {
+      initialCommand?: string;
+    };
+    expect(staged.initialCommand).toBe('claude --resume opaque');
+    expect(staged.initialCommand).not.toContain('\n');
+  });
+
+  it('stages nothing in a tab that had no agent', async () => {
+    const h = (live = harness({ tasks: [archivedWithTabs()], invoke: resuming }));
+    await h.run('tasks.restore', { task: 't1' });
+    await until(() => h.invoked.filter((call) => call.id === 'layout.openRoot').length === 2);
+
+    const second = h.invoked.filter((call) => call.id === 'layout.openRoot')[1]?.args as {
+      initialCommand?: string;
+    };
+    expect(second.initialCommand).toBeUndefined();
+  });
+
+  it('never opens a pane through the RESUME path, which would run the agent', async () => {
+    // `resumeSession` types the line WITH its Enter. A restore that fell through
+    // to it would resume every agent while claiming to have staged them.
+    const h = (live = harness({ tasks: [archivedWithTabs()], invoke: resuming }));
+    await h.run('tasks.restore', { task: 't1' });
+    await until(() => h.invoked.filter((call) => call.id === 'layout.openRoot').length === 2);
+
+    expect(h.invoked.some((call) => call.id === 'layout.split')).toBe(false);
+    const staged = h.invoked
+      .filter((call) => call.id === 'layout.openRoot')
+      .map((call) => (call.args as { initialCommand?: string }).initialCommand);
+    expect(staged.filter((line) => line !== undefined)).toHaveLength(1);
+  });
+
+  it('restores a record written before tabs existed exactly as it always did', async () => {
+    const h = (live = harness({
+      tasks: [
+        task({
+          lifecycle: 'archived',
+          archivedAt: 1,
+          archives: [],
+          sessions: [{ id: 's1', role: 'orchestrator', pane: 'p1', resumeTarget: 'opaque' }],
+        }),
+      ],
+      invoke: resuming,
+    }));
+    await h.run('tasks.restore', { task: 't1' });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    // One root, opened by the old resume path — no second tab invented.
+    expect(h.invoked.filter((call) => call.id === 'layout.openRoot')).toHaveLength(1);
+  });
+});
+
 describe('a task whose pane group empties', () => {
   it('archives it — closing every pane on a task is finishing it', async () => {
     const h = (live = harness({
