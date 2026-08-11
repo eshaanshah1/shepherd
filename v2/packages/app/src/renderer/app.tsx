@@ -106,6 +106,48 @@ export function placeholderSnapshots(tree: SplitNode = leaf(makePane({}))): Layo
   };
 }
 
+/**
+ * A command id → the heading it sits under in ⌘K.
+ *
+ * Read off the id's NAMESPACE, which is the one thing every command already has
+ * and nobody had to be asked for: `layout.split` is a layout verb because it
+ * says so. The alternative — a `group` field on the command registration —
+ * would make every extension declare a heading, and an extension's own opinion
+ * about which of the shell's sections it belongs in is not one worth honouring.
+ *
+ * Only the two the design names get a heading. Anything else is drawn with none:
+ * §6's refusal of "a badge pill on every count" is the same instinct — a heading
+ * above a list of one is furniture pretending to be structure. `tasks.reveal` is
+ * the exception inside `tasks`, because "jump to a task" is what the second
+ * group IS.
+ */
+function paletteGroup(id: string): string | undefined {
+  if (id.startsWith('layout.')) return 'Layout';
+  if (id === 'tasks.reveal' || id.startsWith('window.')) return 'Jump to';
+  return undefined;
+}
+
+/**
+ * Grouped commands, in group order — headings are drawn where the group CHANGES,
+ * so the list has to be sorted or a group appears twice.
+ *
+ * A stable sort within each group, so a command's position only depends on
+ * where it already was. `Layout` first because it acts on what is on screen,
+ * `Jump to` second because it changes what is; ungrouped last, since a heading
+ * cannot follow rows that had none.
+ */
+function grouped(commands: readonly PaletteCommand[]): readonly PaletteCommand[] {
+  const ORDER = ['Layout', 'Jump to', undefined];
+  const withGroup = commands.map((command) => ({ ...command, group: paletteGroup(command.id) }));
+  return withGroup
+    .map((command, position) => ({ command, position }))
+    .sort(
+      (a, b) =>
+        ORDER.indexOf(a.command.group) - ORDER.indexOf(b.command.group) || a.position - b.position,
+    )
+    .map((entry) => entry.command);
+}
+
 export function App({
   terminals,
   layout,
@@ -188,7 +230,7 @@ export function App({
       // A failure leaves the list empty and the palette says "no matching
       // command" — which is honest. Silently rendering the previous list would
       // offer verbs that may no longer be registered.
-      setPaletteCommands(result.ok ? result.value : []);
+      setPaletteCommands(result.ok ? grouped(result.value) : []);
     });
     return () => {
       live = false;

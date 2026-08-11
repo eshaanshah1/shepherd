@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent, ReactElement } from 'react';
 import { Composer } from './composer.tsx';
 import { Field } from './field.tsx';
@@ -62,6 +62,15 @@ export interface PaletteCommand {
   readonly title: string;
   /** Display only, in a `KeyCap`. The palette binds nothing. */
   readonly shortcut?: string;
+  /**
+   * Which heading this command sits under — `Layout`, `Jump to`.
+   *
+   * Optional, and an ungrouped command is drawn with no heading at all rather
+   * than under an invented "Other". A palette with two commands does not need
+   * headings, and one that grew them automatically would put a label above a
+   * list of one.
+   */
+  readonly group?: string;
 }
 
 export interface CommandPaletteProps {
@@ -209,8 +218,25 @@ export function CommandPalette({
             <p className="sh-ui-palette__empty">{emptyLabel}</p>
           ) : (
             matches.map((command, position) => (
+              <Fragment key={command.id}>
+                {/*
+                  A heading whenever the group CHANGES, which is what keeps the
+                  headings a property of the filtered list rather than of the
+                  original one: a query that matches nothing under `Layout`
+                  simply never emits that heading, instead of leaving an empty
+                  section behind.
+
+                  Deliberately NOT a separate pass that groups then flattens.
+                  The keyboard index is a position in `matches`, and any regroup
+                  that reorders rows makes ArrowDown skip — the headings are
+                  drawn between rows that were already in order.
+                */}
+                {command.group === undefined || command.group === matches[position - 1]?.group ? null : (
+                  <p className="sh-ui-palette__group" aria-hidden="true">
+                    {command.group}
+                  </p>
+                )}
               <Row
-                key={command.id}
                 id={`${listId}-${command.id}`}
                 role="option"
                 aria-selected={position === index}
@@ -232,6 +258,7 @@ export function CommandPalette({
               >
                 {command.title}
               </Row>
+              </Fragment>
             ))
           )}
         </div>
