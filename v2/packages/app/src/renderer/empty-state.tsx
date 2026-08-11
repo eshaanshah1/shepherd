@@ -50,14 +50,14 @@ export function EmptyState(): ReactNode {
          * `KeyCap`, not a `<span class="sh-key">` — and not a button either. The
          * primitive is display-only by construction (no `onClick` in its type),
          * which is the rule this hint has to obey: v2's sidebar footer put a
-         * pressable `⌘T NEW TASK` keycap at the bottom of the list as the only
+         * pressable `⌘N NEW TASK` keycap at the bottom of the list as the only
          * way to add a task, which teaches a shortcut instead of being a control.
          * It was replaced by a real `IconButton` at the top of the dock, and this
          * line survives as what it always was — a legend, in the one place where
          * a legend is the whole point.
          */
         <>
-          <KeyCap>⌘T</KeyCap> COMPOSE A TASK
+          <KeyCap>⌘N</KeyCap> COMPOSE A TASK
         </>
       }
     >

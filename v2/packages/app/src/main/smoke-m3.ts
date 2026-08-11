@@ -360,12 +360,17 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
   // if the page had drawn nothing. What it proves end to end is the whole seam
   // — a contributed React component mounted from a NAME, its `invoke` running a
   // command as `shepherd.tasks`, and the answer landing back in the form.
-  // ⌘T, as a real key event into the real window — the composer is an OVERLAY
+  // ⌘N, as a real key event into the real window — the composer is an OVERLAY
   // (ADR 0033's `surface`), declared by the extension with its own accelerator,
   // so it does not exist in the DOM until somebody asks for it. Sending the
   // keystroke is the only way to assert that the binding works; asserting the
   // component in isolation would pass with the accelerator wired to nothing.
-  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 't', modifiers: ['meta'] });
+  //
+  // ⌘N rather than ⌘T since tabs landed: ⌘T is the shell's New Tab, and the two
+  // could not share a key — a menu accelerator is resolved by AppKit before the
+  // page sees the keystroke, so the menu item would have deleted the overlay's
+  // binding rather than competed with it.
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'n', modifiers: ['meta'] });
 
   const composerSeen = await until(
     'the composer to render',
@@ -384,12 +389,12 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
    * A `contenteditable` reports `tabIndex === -1` there — focusable, but absent
    * from the tabbable order the DOM can be asked about — so the focus trap's walk
    * skipped the only field on the card and focused the `#repo` button under it.
-   * ⌘T then opened a composer that swallowed the first thing anybody typed.
+   * ⌘N then opened a composer that swallowed the first thing anybody typed.
    */
   const focused = (await win.webContents.executeJavaScript(
     `document.activeElement?.dataset?.testid ?? null`,
   )) as string | null;
-  check(focused === 'composer-brief', `⌘T lands the caret in the brief: ${JSON.stringify(focused)}`);
+  check(focused === 'composer-brief', `⌘N lands the caret in the brief: ${JSON.stringify(focused)}`);
 
   /**
    * And ⎋ on a card nobody has written in closes it.
@@ -411,7 +416,7 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
   );
   check(dismissedEmpty, '⎋ closes a composer nobody has written in');
 
-  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 't', modifiers: ['meta'] });
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'n', modifiers: ['meta'] });
   const reopened = await until(
     'the composer to come back',
     () =>

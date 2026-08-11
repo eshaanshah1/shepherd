@@ -71,16 +71,17 @@ export function menuTemplate({ appName, isDev }: MenuOptions): MenuItemSpec[] {
           id: COMMANDS.newTab,
           label: 'New Tab',
           /*
-           * ⌘⇧T, NOT ⌘T.
+           * ⌘T, the conventional new-tab key — and it is only free because the
+           * `tasks` composer moved to ⌘N at the same moment.
            *
-           * `tasks` contributes its composer overlay on ⌘T
-           * (`registerViewType(..., { key: 'CmdOrCtrl+T' })`), and AppKit
-           * resolves a menu key equivalent before the page ever sees the
-           * keystroke — so binding this to ⌘T would not compete with the
-           * composer, it would delete it. The file's own opening note is about
-           * exactly this hazard.
+           * That pairing is load-bearing rather than tidy: AppKit resolves a
+           * menu key equivalent BEFORE the page sees the keystroke, so this item
+           * does not compete with a contributed overlay on the same key — it
+           * deletes it. Anything bound here must be a key no `registerViewType`
+           * has claimed, and the file's opening note is about exactly this
+           * hazard.
            */
-          accelerator: 'CmdOrCtrl+Shift+T',
+          accelerator: 'CmdOrCtrl+T',
           command: COMMANDS.newTab,
         },
         { type: 'separator' },
