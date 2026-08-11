@@ -1324,6 +1324,97 @@ describe('a task owns a pane GROUP', () => {
   });
 });
 
+describe("a task's tabs, as its sidebar sublist", () => {
+  /** The kernel answering `layout.listRoots` with a group of `n` tabs. */
+  const withTabs = (n: number) =>
+    harness({
+      tasks: [task({ sessions: [{ id: 's1', role: 'orchestrator', pane: 'p1', root: 'task:t1' }] })],
+      invoke: (id) => {
+        if (id === 'layout.listRoots') {
+          return {
+            ok: true,
+            value: Array.from({ length: n }, (_, index) => ({
+              root: index === 0 ? 'task:t1' : `task:t1/tab-${index + 1}`,
+              group: 'task:t1',
+              label: index === 0 ? 'api' : `tab ${index + 1}`,
+              focusedPane: `p${index + 1}`,
+              focusedSession: index === 0 ? 's1' : null,
+            })),
+          } as never;
+        }
+        return undefined;
+      },
+    });
+
+  it('lists one row per tab, each naming its own root', async () => {
+    const h = (live = withTabs(2));
+    await until(async () => (await h.tree().children('t1')).length === 2);
+
+    const rows = await h.tree().children('t1');
+    expect(rows.map((row) => row.root)).toEqual(['task:t1', 'task:t1/tab-2']);
+    expect(rows.map((row) => row.label)).toEqual(['api', 'tab 2']);
+  });
+
+  it('draws the sublist for a SINGLE tab too — the entry does not change shape', async () => {
+    const h = (live = withTabs(1));
+    await until(async () => (await h.tree().children('t1')).length === 1);
+    expect((await h.tree().children('t1'))[0]?.root).toBe('task:t1');
+  });
+
+  it('presents the session of the tab that was tapped, not the task’s first', async () => {
+    const h = (live = withTabs(2));
+    await until(async () => (await h.tree().children('t1')).length === 2);
+
+    const rows = await h.tree().children('t1');
+    expect(rows[1]?.presents).toEqual({
+      id: 'tasks.presentation',
+      args: { task: 't1', root: 'task:t1/tab-2' },
+    });
+  });
+
+  it('caps at three rows, with an overflow row that says how many are hidden', async () => {
+    const h = (live = withTabs(5));
+    await until(async () => (await h.tree().children('t1')).length === 3);
+
+    const rows = await h.tree().children('t1');
+    expect(rows.at(-1)?.label).toBe('… +3');
+  });
+
+  it('expands in place when the overflow row is run, and folds back', async () => {
+    const h = (live = withTabs(5));
+    await until(async () => (await h.tree().children('t1')).length === 3);
+
+    await h.run('tasks.expandTabs', { task: 't1' });
+    const expanded = await h.tree().children('t1');
+    expect(expanded).toHaveLength(6);
+    expect(expanded.at(-1)?.label).toBe('… less');
+
+    await h.run('tasks.expandTabs', { task: 't1' });
+    expect(await h.tree().children('t1')).toHaveLength(3);
+  });
+
+  it('gives each tab its own dot, rolled up over the sessions in THAT tab', async () => {
+    const h = (live = withTabs(2));
+    await until(async () => (await h.tree().children('t1')).length === 2);
+    h.emit('agents.stateChanged', {
+      sessionId: 's1',
+      kindId: 'claude-code',
+      pane: 'p1',
+      from: 'idle',
+      to: 'needsCheck',
+      turnFinished: true,
+      level: 'attention',
+      alertReason: '',
+    });
+    await until(async () => (await h.tree().children('t1'))[0]?.tint === 'needs-check');
+
+    const rows = await h.tree().children('t1');
+    // Tab 2 holds no session of this task, so it stays quiet — the point of
+    // rolling up per root rather than per task.
+    expect(rows.map((row) => row.tint)).toEqual(['needs-check', 'idle']);
+  });
+});
+
 describe('a task whose pane group empties', () => {
   it('archives it — closing every pane on a task is finishing it', async () => {
     const h = (live = harness({
@@ -1784,15 +1875,19 @@ describe('tasks.repoProvisioned', () => {
     expect(warnings.some((line) => line.includes('cp: no such file'))).toBe(true);
   });
 
-  it('says so on the repo row, without claiming the repo is unprovisioned', async () => {
+  it('says so on the TASK row, without claiming the repo is unprovisioned', async () => {
+    // It was said on the repo's own child row until a task's children became
+    // its tabs. The fact is unchanged and so is the wording — what moved is
+    // which row carries it, and it is APPENDED so the task still reads as the
+    // state it is really in.
     const h = (live = harness());
     h.point<RepoProvisioned>(REPO_PROVISIONED_POINT).register(async () => ({ ok: false, message: 'exited 1' }));
 
     const created = await h.run<{ id: string }>('tasks.create', { title: 'Fix login', repos: [REPO] });
     await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
 
-    const rows = await h.tree().children(created.id);
-    expect(rows[0]?.description).toBe('ready — hook failed');
+    const row = await rowOf(h, created.id);
+    expect(row?.description).toContain(`${REPO.name} — hook failed`);
   });
 
   it('survives a provider that throws, and reports what it threw', async () => {

@@ -66,6 +66,15 @@ export const TASK_COMMANDS = {
    */
   presentation: 'tasks.presentation',
   /**
+   * Show all of a task's tabs in the sidebar, or stop.
+   *
+   * A row's own verb rather than a palette entry: it is what the `… +N` row
+   * runs, and it means nothing without a task to name. Declared here with the
+   * others because the shell cannot know a task's verbs (ADR 0031) — including
+   * this one, which is why the overflow row can be clickable at all.
+   */
+  expandTabs: 'tasks.expandTabs',
+  /**
    * Which machines a new task could start on — this Mac, and every member of the
    * net that can actually be reached.
    *
