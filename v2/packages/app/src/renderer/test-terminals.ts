@@ -135,6 +135,8 @@ export interface FakeTerminal extends TerminalLike {
   opened: HTMLElement | null;
   typed(text: string): void;
   resizedTo(cols: number, rows: number): void;
+  /** Every palette this terminal has been repainted in, in order. */
+  readonly themes: string[];
 }
 
 export function fakeTerminal(): FakeTerminal {
@@ -143,10 +145,12 @@ export function fakeTerminal(): FakeTerminal {
   let resizeListener: ((size: { cols: number; rows: number }) => void) | null = null;
   const disposable = (clear: () => void): TerminalDisposable => ({ dispose: clear });
 
+  const themes: string[] = [];
   const terminal: FakeTerminal = {
     cols: 80,
     rows: 24,
     written,
+    themes,
     disposed: false,
     opened: null,
     open: (host) => {
@@ -169,6 +173,9 @@ export function fakeTerminal(): FakeTerminal {
     },
     focus: () => undefined,
     fit: () => ({ cols: 80, rows: 24 }),
+    // Recorded rather than ignored: the load-bearing claim about a theme change is
+    // that a terminal is REPAINTED and not rebuilt, and only a count can say so.
+    setTheme: (mode) => void themes.push(mode),
     text: () => written.map((chunk) => decode(chunk)).join(''),
     dispose: () => {
       terminal.disposed = true;

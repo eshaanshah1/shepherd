@@ -16,6 +16,7 @@ import {
   type AgentsApi,
   type SettingsApi,
   type ViewsApi,
+  THEME_KEY,
   type CommandID,
   type CommandsApi,
   type LayoutApi,
@@ -29,6 +30,9 @@ import { ViewDock, raiseIcon } from './view-dock.tsx';
 import { ViewOverlay } from './view-overlay.tsx';
 import { SettingsScreen } from './settings-screen.tsx';
 import { useContributions } from './contributions.ts';
+import { useSetting } from './use-setting.ts';
+import { applyThemeVariables, resolveThemeMode, watchPrefersDark } from './theme.ts';
+
 import { SplitView } from './split-view.tsx';
 import { TerminalPane } from './terminal-pane.tsx';
 import type { PaneTerminals } from './pane-sessions.ts';
@@ -403,6 +407,32 @@ export function App({
     if (settingsApi === null) return;
     return settingsApi.onVisibility((open) => setSettingsOpen(open));
   }, [settingsApi]);
+
+  /**
+   * The theme, in BOTH halves.
+   *
+   * `applyThemeVariables` paints the chrome and `terminals.retheme` paints every
+   * grid, from one resolved mode. Both, or the app runs on two palettes — which is
+   * exactly the drift `theme.ts`'s one-token-map rule exists to prevent, and what
+   * v1 had between `Theme.swift` and `writeBaseTheme()`.
+   *
+   * `system` resolves through `matchMedia` here rather than through Electron's
+   * `nativeTheme` in main: one place, and it re-resolves on its own when the OS
+   * flips. No relaunch — a terminal's palette is a property of its xterm instance,
+   * and a setting that needed a restart would be the first thing anyone tried and
+   * the first thing that looked broken.
+   */
+  const themeSetting = useSetting(settingsApi, THEME_KEY);
+  useEffect(() => {
+    const paint = (): void => {
+      const mode = resolveThemeMode(themeSetting, watcher.prefersDark());
+      applyThemeVariables(document.documentElement, mode);
+      terminals?.retheme(mode);
+    };
+    const watcher = watchPrefersDark(() => paint());
+    paint();
+    return () => watcher.dispose();
+  }, [themeSetting, terminals]);
 
   const contributions = useContributions(viewsApi);
   /** Every accelerator an overlay declared, for the footer's keycap strip. */

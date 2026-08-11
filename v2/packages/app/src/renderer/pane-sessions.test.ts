@@ -535,3 +535,32 @@ describe('a page reload', () => {
     expect(h.registry.inspect(h.pane.id)?.sessionId).toBe(first);
   });
 });
+
+describe('retheme', () => {
+  it('repaints every live terminal without building one', () => {
+    const h = harness();
+    h.registry.attach(h.pane, h.host());
+    const built = h.terminals.length;
+
+    h.registry.retheme('light');
+
+    // The load-bearing claim: a theme change costs no new terminal. A rebuilt one
+    // is a released pty and a lost scrollback, which is a high price for a colour
+    // — and a count is the only thing that can tell the two apart.
+    expect(h.terminals).toHaveLength(built);
+    // The tail, not the whole list: a terminal is painted once when it is built
+    // (with the live mode) and again on every change.
+    expect(h.terminals[0]?.themes.at(-1)).toBe('light');
+  });
+
+  it('opens a terminal born LATER in the theme that is live', () => {
+    // Not exotic: a suspended root wakes on a switch, and `tasks.spawn` opens a
+    // pane into a root nobody is looking at. Either would otherwise open in the
+    // factory's default and sit on the wrong palette until the next change.
+    const h = harness();
+    h.registry.retheme('light');
+    h.registry.attach(h.pane, h.host());
+    expect(h.terminals[0]?.themes).toContain('light');
+  });
+});
+

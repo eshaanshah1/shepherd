@@ -33,6 +33,9 @@ function spyTerminals(): SpyTerminals {
     release: (paneId) => calls.push({ name: 'release', paneId }),
     suspend: (pane) => calls.push({ name: 'suspend', paneId: pane.id }),
     focus: (paneId) => calls.push({ name: 'focus', paneId }),
+    // Recorded like every other call, so this file's claim stays what it is: the
+    // component asks for `detach` and nothing else.
+    retheme: () => calls.push({ name: 'retheme', paneId: '' }),
     fit: (paneId) => calls.push({ name: 'fit', paneId }),
     search: () => undefined,
     inspect: (): PaneDiagnostics | undefined => undefined,
