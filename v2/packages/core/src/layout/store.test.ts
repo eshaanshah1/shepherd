@@ -1210,3 +1210,26 @@ describe('the group commands', () => {
     expect(rows[0]?.focusedSession).toBe('s-1');
   });
 });
+
+describe('closing a tab falls through to its sibling', () => {
+  it('lands on a sibling tab rather than throwing you out of the group', async () => {
+    // Falling straight home would mean closing tab 2 of a task threw you out of
+    // the task — the tab you were not looking at is right there.
+    const { registry, store, activeRoot } = wiredRoots();
+    store.open('task:t1', {}, { group: 'task:t1' });
+    store.newTab('task:t1');
+    await registry.invoke(LAYOUT_COMMANDS.switchRoot, { root: 'task:t1/tab-2' }, USER);
+
+    await registry.invoke(LAYOUT_COMMANDS.closeRoot, { root: 'task:t1/tab-2' }, USER);
+    expect(activeRoot()).toBe('task:t1');
+  });
+
+  it('lands on home when the group has no tabs left', async () => {
+    const { registry, store, activeRoot, home } = wiredRoots();
+    store.open('task:t1', {}, { group: 'task:t1' });
+    await registry.invoke(LAYOUT_COMMANDS.switchRoot, { root: 'task:t1' }, USER);
+
+    await registry.invoke(LAYOUT_COMMANDS.closeRoot, { root: 'task:t1' }, USER);
+    expect(activeRoot()).toBe(home);
+  });
+});

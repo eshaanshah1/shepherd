@@ -62,6 +62,7 @@ import { daemonConnector } from './daemon-launcher.ts';
 import { registerSessionIpc } from './ipc.ts';
 import { registerWindowIpc } from './window-ipc.ts';
 import { registerLayoutIpc } from './layout-ipc.ts';
+import { rootClosedFallout } from './root-closed.ts';
 import { installMenu } from './menu.ts';
 import {
   LOCAL_DEVICE_ID,
@@ -969,7 +970,21 @@ void app.whenReady().then(async () => {
         logger.info('layout', 'the home root is empty; the window stays open on the empty state');
         return;
       }
-      layoutIpc.setActive(HOME_ROOT);
+      /*
+       * Read BEFORE the root is removed — afterwards `groupOf` answers undefined
+       * and there is nothing left to ask. The decision itself is a pure function
+       * next door, because it is the one piece of this callback that can be
+       * wrong in a way you only discover by losing work.
+       */
+      const group = layout.groupOf(root) ?? root;
+      const { nextRoot, announcement } = rootClosedFallout({
+        root,
+        group,
+        groupRoots: layout.rootsInGroup(group),
+        homeRoot: HOME_ROOT,
+      });
+
+      layoutIpc.setActive(nextRoot);
       const removed = layout.removeRoot(root);
       if (!removed.ok) logger.warn('layout', `could not remove ${root}: ${removed.error}`);
 
@@ -987,8 +1002,15 @@ void app.whenReady().then(async () => {
        * The layout is the only thing that knows a root ran out of panes, and it
        * knows it whoever opened them and however many times the app restarted.
        * So it is the layout that announces it, and the extension reacts.
+       *
+       * **With the GROUP, and whether it is now empty.** Once a task owns several
+       * roots, the bare root id cannot answer the question the consumer is
+       * asking: closing the first tab of a task would archive it while another
+       * tab sat there with a live agent in it. A task is finished with when ALL
+       * of its tabs are, which is also the only reading a user would give the
+       * gesture.
        */
-      bus.emit('layout.rootClosed', { root }, KERNEL);
+      bus.emit('layout.rootClosed', announcement, KERNEL);
     },
   });
 
