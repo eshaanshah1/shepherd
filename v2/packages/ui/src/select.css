@@ -1,0 +1,101 @@
+/*
+ * Select.
+ *
+ * A trigger that looks like a `Field` (it is the same kind of thing — a value you
+ * can change) over a floating list of `Row`s. The list is positioned absolutely
+ * against the wrapper, so a select inside a scrolling settings page travels with
+ * its row instead of detaching from it.
+ *
+ * The one thing to know before changing the list's layout: `Row` owns its own
+ * height, hover wash and inverse-video selection, and none of that is restated
+ * here. A rule in this file that painted a row's background would be a second
+ * opinion about what a selected row looks like.
+ */
+
+.sh-ui-select {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  /* Wide enough that a one-word label and a model id do not make two visibly
+     different controls in the same column of settings rows. */
+  min-width: calc(var(--sh-control-lg) * 3);
+}
+
+.sh-ui-select__trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sh-space-sm);
+  width: 100%;
+  height: var(--sh-control-md);
+  padding: 0 var(--sh-space-sm);
+  border: var(--sh-hairline) solid var(--sh-line);
+  border-radius: var(--sh-radius-sm);
+  background: var(--sh-surface-sunken);
+  color: var(--sh-text);
+  font: inherit;
+  font-size: var(--sh-font-size-body);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--sh-motion), background var(--sh-motion);
+}
+
+.sh-ui-select__trigger:hover:not(:disabled) {
+  background: var(--sh-fill-hover);
+}
+
+.sh-ui-select__trigger:focus-visible {
+  outline: none;
+  box-shadow: var(--sh-focus-ring);
+}
+
+.sh-ui-select__trigger:disabled {
+  cursor: default;
+  color: var(--sh-text-dim);
+}
+
+.sh-ui-select__value {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* A caret drawn from a border rather than an icon import: it is two lines, and a
+   Tabler glyph here would be the only icon in this package a caller cannot
+   choose. */
+.sh-ui-select__caret {
+  flex: 0 0 auto;
+  width: var(--sh-space-sm);
+  height: var(--sh-space-sm);
+  border-right: var(--sh-hairline) solid var(--sh-text-dim);
+  border-bottom: var(--sh-hairline) solid var(--sh-text-dim);
+  transform: translateY(-25%) rotate(45deg);
+}
+
+.sh-ui-select__list {
+  position: absolute;
+  top: calc(100% + var(--sh-space-xs));
+  left: 0;
+  right: 0;
+  z-index: 10;
+  max-height: calc(var(--sh-row-height) * 8);
+  overflow-y: auto;
+  padding: var(--sh-space-xs);
+  border: var(--sh-hairline) solid var(--sh-line);
+  border-radius: var(--sh-radius-md);
+  /* Raised, because it floats over content. The sunken trigger and the raised
+     list is the same pairing a field and its picker have elsewhere. */
+  background: var(--sh-surface-raised);
+}
+
+/*
+ * The keyboard's highlight, which is NOT selection.
+ *
+ * Selection is the value you have (inverse video, `Row`'s job). This is where the
+ * arrow keys have walked to, and it has to be visible on top of a selected row as
+ * well as a plain one — so it is a wash, which composes, rather than a second
+ * solid fill, which would hide it.
+ */
+.sh-ui-select__option--active {
+  background: var(--sh-fill-hover);
+}
