@@ -47,7 +47,10 @@
   /* The nav is fixed and the page takes the rest. `minmax(0, 1fr)` rather than
      `1fr`, or a long unbroken value in a field stretches the column past the
      window and the whole screen scrolls sideways. */
-  grid-template-columns: calc(var(--sh-control-lg) * 4) minmax(0, 1fr);
+  /* Wide enough for the longest section name a contributed page is likely to
+     have: "Worktree hooks" ellipsised to "Worktree …" at four, which makes the nav
+     ask you to guess. */
+  grid-template-columns: calc(var(--sh-control-lg) * 7) minmax(0, 1fr);
   min-height: 0;
 }
 
@@ -55,6 +58,18 @@
   overflow-y: auto;
   padding: var(--sh-space-sm);
   border-right: var(--sh-hairline) solid var(--sh-line);
+}
+
+/*
+ * A nav entry is a NAME the app says, so it is sans.
+ *
+ * `Row`'s label inherits, and the shell's own rules still set mono in the sections
+ * nobody has been through — so a section title came out in the face reserved for
+ * what the MACHINE produced (`styles.css` states that split). This is the shell
+ * saying "General", not a path or an id.
+ */
+.sh-settings__nav .sh-ui-row__label {
+  font-family: var(--sh-font-sans);
 }
 
 /* The page scrolls in ITS OWN box. A settings screen whose whole body scrolled
@@ -65,8 +80,51 @@
   padding: var(--sh-space-lg);
 }
 
+/*
+ * The MEASURE, and it is the difference between a settings page and a spreadsheet.
+ *
+ * A row is label-left / control-right, so on a 2000px window the control ended up
+ * a screen and a half from the label it belongs to and the page read as two
+ * unrelated columns. Capped and left-aligned instead: the pair stays a pair at any
+ * window size, and a contributed component written for a modal (worktree-hook's
+ * editor was an overlay until this landed) is not stretched to a width nobody
+ * designed it at.
+ */
+.sh-settings__measure {
+  max-width: calc(var(--sh-control-lg) * 18);
+}
+
+/* The heading, and who contributed the page — the nav cannot say it (see the nav
+   row's comment in settings-screen.tsx), so this is where it goes. */
+.sh-settings__heading {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sh-space-sm);
+  margin-bottom: var(--sh-space-sm);
+}
+
+.sh-settings__owner {
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-small);
+  color: var(--sh-text-faint);
+}
+
 .sh-settings__group + .sh-settings__group {
   margin-top: var(--sh-space-lg);
+}
+
+/*
+ * A group is a BOX, not a run of rows.
+ *
+ * "I have no idea where things begin and where they end" — the hairline between
+ * rows said "these are separated" without ever saying what they belonged to. A
+ * surface plus a border says both, and it costs no height per row.
+ */
+.sh-settings__group {
+  border: var(--sh-hairline) solid var(--sh-line);
+  border-radius: var(--sh-radius-md);
+  background: var(--sh-surface-raised);
+  padding: 0 var(--sh-space-md);
 }
 
 /*

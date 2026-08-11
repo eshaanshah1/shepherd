@@ -76,10 +76,22 @@ describe('SettingsScreen', () => {
     expect(nav(container)[1]).toContain('Worktree hooks');
   });
 
-  it('names the extension a page came from, and says nothing for the kernel own pages', async () => {
+  it('keeps the nav a list of SUBJECTS — titles only, no owner', async () => {
+    // The owner used to ride here as `Row.meta`, which is mono and shares the
+    // trailing cell: it won the width and ellipsised the title away, so the nav
+    // read "General / agents-core / worktree-hook". Which extension owns a page
+    // belongs beside the page's heading, and that is asserted below.
     const { container } = await show(fakeSettings());
-    expect(nav(container)[1]).toContain('worktree-hook');
-    expect(nav(container)[0]).not.toContain('shepherd');
+    expect(nav(container)[1]).toContain('Worktree hooks');
+    expect(nav(container)[1]).not.toContain('worktree-hook');
+  });
+
+  it('names the extension beside the page heading, and says nothing for the app own pages', async () => {
+    const { container } = await show(fakeSettings());
+    act(() => container.querySelectorAll<HTMLElement>('[data-testid="settings-nav-item"]')[1]?.click());
+    expect(container.querySelector('.sh-settings__owner')?.textContent).toBe('worktree-hook');
+    act(() => container.querySelectorAll<HTMLElement>('[data-testid="settings-nav-item"]')[0]?.click());
+    expect(container.querySelector('.sh-settings__owner')).toBeNull();
   });
 
   it('writes through the bridge when a row changes', async () => {
@@ -166,7 +178,7 @@ describe('SettingsScreen', () => {
     expect(container.textContent).not.toContain('has no UI in this build');
   });
 
-  it('asks a choicesFrom command exactly once per page, attributed to the page', async () => {
+  it('asks a choicesFrom command once per SETTING, naming the key it is for', async () => {
     const settings = fakeSettings({
       list: vi.fn(async () => ({
         ok: true as const,
@@ -195,7 +207,72 @@ describe('SettingsScreen', () => {
     });
     await show(settings);
     expect(settings.invoke).toHaveBeenCalledTimes(1);
-    expect(settings.invoke).toHaveBeenCalledWith('agents.models', 'agents.quickModelChoices');
+    /**
+     * `{ key }`, and always an object.
+     *
+     * Two things this pins, both of which were broken in the running app: a
+     * command's schema is `s.object`, and `s.object` on `undefined` is
+     * `invalid-args` — which painted the row red as a free-text box. And two rows
+     * naming the SAME command need different answers (kinds for one, models for
+     * the other), which is what the key is for.
+     */
+    expect(settings.invoke).toHaveBeenCalledWith('agents.models', 'agents.quickModelChoices', {
+      key: 'agents-core.quickModel',
+    });
+  });
+
+  it('gives two rows that name the same command their OWN answers', async () => {
+    // `agents.quickModelChoices` serves both quick-tier rows and tells them apart
+    // by the key. A per-command cache put the agent KINDS in the model row.
+    const settings = fakeSettings({
+      list: vi.fn(async () => ({
+        ok: true as const,
+        value: {
+          pages: [
+            {
+              id: 'agents.models',
+              title: 'Models',
+              owner: 'shepherd.agents-core',
+              settings: [
+                {
+                  key: 'agents-core.quickKind',
+                  type: 'enum' as const,
+                  label: 'Agent',
+                  default: null,
+                  nullable: true,
+                  choicesFrom: 'agents.quickModelChoices',
+                },
+                {
+                  key: 'agents-core.quickModel',
+                  type: 'enum' as const,
+                  label: 'Model',
+                  default: null,
+                  nullable: true,
+                  choicesFrom: 'agents.quickModelChoices',
+                },
+              ],
+            },
+          ],
+          values: { 'agents-core.quickKind': null, 'agents-core.quickModel': null },
+          defaults: ['agents-core.quickKind', 'agents-core.quickModel'],
+        },
+      })),
+      invoke: vi.fn(async (_page: string, _command: string, args?: unknown) => ({
+        ok: true as const,
+        value:
+          (args as { key?: string } | undefined)?.key === 'agents-core.quickKind'
+            ? [{ value: 'claude-code', label: 'claude-code' }]
+            : [{ value: 'opus', label: 'opus' }],
+      })),
+    });
+    const { container } = await show(settings);
+    expect(settings.invoke).toHaveBeenCalledTimes(2);
+    const triggers = [...container.querySelectorAll<HTMLElement>('[data-testid="select-trigger"]')];
+    act(() => triggers[0]?.click());
+    expect([...container.querySelectorAll('[role="option"]')].map((o) => o.textContent)).toContain('claude-code');
+    act(() => triggers[0]?.click());
+    act(() => triggers[1]?.click());
+    expect([...container.querySelectorAll('[role="option"]')].map((o) => o.textContent)).toContain('opus');
   });
 
   it('leaves a dynamic row editable when its choices could not be fetched', async () => {
