@@ -23,32 +23,34 @@ describe('roles', () => {
   });
 
   it('paints a token role with the palette value for the mode', () => {
-    expect(roleValue('surface', 'dark')).toBe(palette.ink.dark);
-    expect(roleValue('surface', 'light')).toBe(palette.ink.light);
-    expect(roleValue('accent', 'dark')).toBe(palette.cobalt.dark);
-    expect(roleValue('terminal', 'light')).toBe(palette['ink-term'].light);
+    expect(roleValue('surface', 'dark')).toBe(palette.surface.dark);
+    expect(roleValue('surface', 'light')).toBe(palette.surface.light);
+    expect(roleValue('sky', 'dark')).toBe(palette.sky.dark);
+    expect(roleValue('pane', 'light')).toBe(palette.pane.light);
   });
 
   it('emits an alias as a reference, so a re-declared role carries it', () => {
-    // Scoped re-declaration (spec §2) is the point: `[data-surface='terminal'] {
-    // --sh-text: … }` must move the selection block with it. A hex baked in here
-    // would leave a selected row painted in the app's ink on a themed subtree.
-    expect(roleValue('fillSelected', 'dark')).toBe('var(--sh-text)');
-    expect(roleValue('textSelected', 'dark')).toBe('var(--sh-surface)');
-    expect(roleValue('accentText', 'light')).toBe('var(--sh-surface)');
-    expect(roleValue('focusRing', 'dark')).toBe('var(--sh-accent)');
+    // Scoped re-declaration is the point: `[data-surface='terminal'] { --sh-text:
+    // … }` must move the wool mark and the primary button's ink with it. A hex
+    // baked in here would leave both painted in the app's ink on a themed subtree.
+    expect(roleValue('wool', 'dark')).toBe('var(--sh-text)');
+    expect(roleValue('fillSelected', 'dark')).toBe('var(--sh-raised)');
+    expect(roleValue('textOnWool', 'light')).toBe('var(--sh-canvas)');
+    expect(roleValue('focusRing', 'dark')).toBe('var(--sh-sky)');
   });
 
   it('emits a wash as color-mix over the role it washes, lighter in light mode', () => {
-    expect(roleValue('fillHover', 'dark')).toBe('color-mix(in srgb, var(--sh-text) 6%, transparent)');
-    expect(roleValue('fillHover', 'light')).toBe('color-mix(in srgb, var(--sh-text) 4%, transparent)');
+    // The scrim is the language's one wash, and its asymmetry is a finding rather
+    // than a taper: 55% black over paper reads as soot.
+    expect(roleValue('scrim', 'dark')).toBe('color-mix(in srgb, var(--sh-scrim-ink) 76%, transparent)');
+    expect(roleValue('scrim', 'light')).toBe('color-mix(in srgb, var(--sh-scrim-ink) 20%, transparent)');
   });
 
   it('kebab-cases a role into its variable, one conversion only', () => {
     expect(roleVarName('canvas')).toBe('--sh-canvas');
-    expect(roleVarName('surfaceRaised')).toBe('--sh-surface-raised');
+    expect(roleVarName('lineStrong')).toBe('--sh-line-strong');
     expect(roleVarName('fillHover')).toBe('--sh-fill-hover');
-    expect(roleVarName('accentText')).toBe('--sh-accent-text');
+    expect(roleVarName('markWorkingOff')).toBe('--sh-mark-working-off');
   });
 
   it('gives every role a job AND the negative half', () => {
@@ -69,26 +71,44 @@ describe('roles', () => {
     }
   });
 
-  it('keeps selection SOLID, not a wash — rule 4 is inverse video', () => {
-    // The design-system spec's §2 parenthetical lists `fillSelected` among the
-    // washes; the design language it implements does not, and the reference study
-    // says so explicitly (takeaway 2). Selection is a solid block of `text` with
-    // `textSelected` on it. If this ever becomes a color-mix, hover and selection
-    // stop being one glance apart, which is the property rule 4 buys.
+  it('refuses inverse video for selection — a fill plus an edge, §6', () => {
+    // Flock painted a selected row as a SOLID block of `text` with the surface
+    // colour on it. This language lists that under what it refuses: selection is
+    // `raised` plus `edgeSelected`, and the label stays legible throughout. If
+    // `fillSelected` ever resolves to the ink again, that is the regression.
     expect(roles.fillSelected.kind).toBe('alias');
-    expect(roleToken('fillSelected')).toBe('wool');
-    expect(roleToken('textSelected')).toBe('ink');
+    expect(roleToken('fillSelected')).toBe('raised');
+    expect(roleToken('fillSelected')).not.toBe('ink');
+    expect(roleToken('edgeSelected')).toBe('edgeSelected');
   });
 
-  it('gives the pane-chrome accents a role each, so no call site needs a palette name', () => {
-    // Every accent in the palette has a job (rule 3), so every accent needs a
-    // role — `signal` had none in the spec's list and is on screen today
-    // (`.sh-pane-hint`, the xterm cursor).
-    expect(roleToken('accent')).toBe('cobalt');
-    expect(roleToken('attention')).toBe('hay');
-    expect(roleToken('success')).toBe('pasture');
-    expect(roleToken('danger')).toBe('ember');
-    expect(roleToken('prompt')).toBe('signal');
+  it('gives every mark in §3 a role, so no call site needs a palette name', () => {
+    // A **square** means your move, a **ring** means nothing is happening, a
+    // **meter** means something is. Each is a role because a component asks for
+    // the state, never for the hue behind it.
+    expect(roleToken('markWorking')).toBe('sky');
+    expect(roleToken('markWaiting')).toBe('ink');
+    expect(roleToken('markRest')).toBe('edgeRing');
+    expect(roleToken('markFailed')).toBe('red');
+    expect(roleToken('meterPass')).toBe('grass');
+    expect(roleToken('meterPending')).toBe('lineActive');
+  });
+
+  it('keeps `wool` and `text` one value, and `clay` and `red` two', () => {
+    // "The loudest thing available against this surface" and "primary text" are
+    // one answer in both modes; two names for one value is how the two drift.
+    expect(roleToken('wool')).toBe(roleToken('text'));
+    // clay is git-removed and red is a run that failed. §2 lists "failure" under
+    // clay's `not for` precisely because a diff full of removals must not read as
+    // a broken build.
+    expect(roleToken('clay')).not.toBe(roleToken('red'));
+  });
+
+  it('keeps grass out of the repo-identity set', () => {
+    // §2, stated: a repo tinted green would read as something that passed.
+    const identity = (['repo1', 'repo2', 'repo3', 'repo4'] as const).map(roleToken);
+    expect(identity).not.toContain(roleToken('grass'));
+    expect(new Set(identity).size, 'four repos, four distinct marks').toBe(4);
   });
 });
 
@@ -111,20 +131,30 @@ describe('roles in the emitted variable set', () => {
     }
   });
 
-  it('collides with no palette or metric variable', () => {
-    // Both tiers are emitted into one namespace while call sites migrate, so a
-    // role named after a palette token would silently overwrite it — and the
-    // symptom would be a colour that is right until somebody themes it.
+  it('collides with no metric or font variable', () => {
     const roleVars = new Set(roleNames.map(roleVarName));
     const nonRole = Object.keys(cssVariables('dark')).filter((name) => !roleVars.has(name));
     for (const name of nonRole) expect(roleVars.has(name), name).toBe(false);
     expect(roleVars.size).toBe(roleNames.length);
   });
 
-  it('still emits the private palette tier, so nothing breaks mid-migration', () => {
+  it('emits NO private palette name — tier 1 is unreachable from a stylesheet', () => {
+    // Flock emitted both tiers so its shell stylesheet kept resolving mid-
+    // migration. That reason expired with Flock, and the guarantee is worth more
+    // than the convenience: a rule cannot name a luminance step even by accident,
+    // because the variable does not exist. `sunken`/`canvas`/`line` appear below
+    // as ROLES that happen to share a spelling with their token, which is the
+    // point of a one-cast neutral ramp — the step has no identity to name.
     const vars = cssVariables('dark');
-    expect(vars['--sh-ink']).toBe(palette.ink.dark);
-    expect(vars['--sh-wool-faint']).toBe(palette['wool-faint'].dark);
+    const emitted = new Set(Object.keys(vars));
+    const roleVars = new Set(roleNames.map(roleVarName));
+    for (const token of ['ink', 'inkDim', 'skyDim', 'scrimBase', 'repoSky', 'scnHill'] as const) {
+      const name = `--sh-${token.replace(/[A-Z]/g, (u) => `-${u.toLowerCase()}`)}`;
+      expect(emitted.has(name) && !roleVars.has(name), `${name} leaks tier 1`).toBe(false);
+    }
+    // …and the ink really is only reachable under its role name.
+    expect(vars['--sh-text']).toBe(palette.ink.dark);
+    expect(vars['--sh-ink']).toBeUndefined();
   });
 
   it('changes every token role with the mode and no alias with it', () => {
@@ -149,8 +179,8 @@ describe('roles in the emitted variable set', () => {
 describe('roleToken', () => {
   it('throws rather than recursing when a role resolves through a cycle', () => {
     const cyclic = { ...roles } as Record<RoleName, (typeof roles)[RoleName]>;
-    cyclic.accentText = { kind: 'alias', of: 'focusRing', job: 'x', notFor: 'y' };
-    cyclic.focusRing = { kind: 'alias', of: 'accentText', job: 'x', notFor: 'y' };
+    cyclic.textOnWool = { kind: 'alias', of: 'focusRing', job: 'x', notFor: 'y' };
+    cyclic.focusRing = { kind: 'alias', of: 'textOnWool', job: 'x', notFor: 'y' };
     // `roleToken` reads the module's own table, so the cycle is asserted through
     // the guard's shape rather than by mutating a frozen export: two aliases that
     // point at each other must terminate, and the only way it can is by throwing.
@@ -165,7 +195,7 @@ describe('roleToken', () => {
         current = spec.of;
       }
     };
-    expect(() => walk('accentText')).toThrow('cycle');
+    expect(() => walk('textOnWool')).toThrow('cycle');
     // …and the real table does not contain one.
     for (const role of roleNames) expect(() => roleToken(role)).not.toThrow();
   });

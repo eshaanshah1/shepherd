@@ -73,45 +73,58 @@ export interface XtermSearchDecorations {
 export function xtermSearchDecorations(mode: ThemeMode): XtermSearchDecorations {
   const c = (token: Parameters<typeof color>[0]) => color(token, mode);
   return {
-    matchBackground: c('wool-faint'),
-    matchOverviewRuler: c('wool-faint'),
-    activeMatchBackground: c('signal'),
-    activeMatchBorder: c('signal'),
-    activeMatchColorOverviewRuler: c('signal'),
+    matchBackground: c('inkMute'),
+    matchOverviewRuler: c('inkMute'),
+    activeMatchBackground: c('sky'),
+    activeMatchBorder: c('sky'),
+    activeMatchColorOverviewRuler: c('sky'),
   };
 }
 
 /**
- * Rule 2 in the terminal: the grid is the same surface as the chrome, so the
- * ANSI slots are drawn from the same named accents rather than a stock scheme.
- * magenta/cyan have no Flock job (no purple, rule 2) — they borrow the nearest
- * accent rather than introducing a fourteenth colour.
+ * The grid is the same surface as the chrome, so the ANSI slots are drawn from
+ * the same named colours rather than a stock scheme.
+ *
+ * Two things about this mapping are Shepherd UI's rather than inherited:
+ *
+ *   - **The grid's text is `textDim`, not `text`.** §2 gives the terminal body
+ *     `#C4C4C4` while a title is `#EDEDED`; the app hosts other people's
+ *     programs and its own chrome should be the brighter thing on screen only
+ *     where it is naming something.
+ *   - **The block cursor is `text`.** Flock had a fifth accent (`signal`) whose
+ *     whole job was "a live affordance"; this language has five colours and none
+ *     of them is spare, so the cursor is simply the loudest neutral — which is
+ *     also what the prototype draws.
+ *
+ * yellow/magenta/cyan have no job in a five-colour language. They borrow the
+ * nearest neighbour rather than introducing a sixth hue, which §6 refuses
+ * outright.
  */
 export function xtermTheme(mode: ThemeMode): XtermTheme {
   const c = (token: Parameters<typeof color>[0]) => color(token, mode);
   return {
-    background: c('ink-term'),
-    foreground: c('wool'),
-    cursor: c('signal'),
-    cursorAccent: c('ink-term'),
-    selectionBackground: c('ink-line'),
+    background: c('pane'),
+    foreground: c('inkDim'),
+    cursor: c('ink'),
+    cursorAccent: c('pane'),
+    selectionBackground: c('line'),
 
-    black: c('ink-deep'),
-    red: c('ember'),
-    green: c('pasture'),
-    yellow: c('hay'),
-    blue: c('cobalt'),
-    magenta: c('signal'),
-    cyan: c('cobalt'),
-    white: c('wool-dim'),
+    black: c('canvas'),
+    red: c('red'),
+    green: c('grass'),
+    yellow: c('clay'),
+    blue: c('sky'),
+    magenta: c('sky'),
+    cyan: c('sky'),
+    white: c('inkFaint'),
 
-    brightBlack: c('wool-faint'),
-    brightRed: c('ember'),
-    brightGreen: c('pasture'),
-    brightYellow: c('signal'),
-    brightBlue: c('cobalt'),
-    brightMagenta: c('signal'),
-    brightCyan: c('cobalt'),
-    brightWhite: c('wool'),
+    brightBlack: c('inkGhost'),
+    brightRed: c('red'),
+    brightGreen: c('grass'),
+    brightYellow: c('clay'),
+    brightBlue: c('sky'),
+    brightMagenta: c('sky'),
+    brightCyan: c('sky'),
+    brightWhite: c('ink'),
   };
 }

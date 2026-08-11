@@ -56,16 +56,16 @@ describe('paneTitleSurface', () => {
   });
 
   it('reads both terminal backgrounds the palette ships', () => {
-    expect(paneTitleSurface(palette['ink-term'].dark)).toBe('dark');
-    expect(paneTitleSurface(palette['ink-term'].light)).toBe('light');
+    expect(paneTitleSurface(palette.pane.dark)).toBe('dark');
+    expect(paneTitleSurface(palette.pane.light)).toBe('light');
   });
 
   it('is decided by the colour, not by the app mode', () => {
     // The reason the helper takes a hex and not a `ThemeMode`: an extension may
     // ship a light terminal palette inside a dark app, and the pane chrome has to
     // follow the pane. A mode-keyed version of this cannot express the case.
-    expect(paneTitleSurface(palette['ink-term'].light)).not.toBe(
-      paneTitleSurface(palette['ink-term'].dark),
+    expect(paneTitleSurface(palette.pane.light)).not.toBe(
+      paneTitleSurface(palette.pane.dark),
     );
     expect(paneTitleSurface('#FFFFFF')).toBe('light');
     expect(paneTitleSurface('#000000')).toBe('dark');
@@ -114,8 +114,8 @@ describe('paneTitleAlphas', () => {
 
 describe('paneTitleInk', () => {
   it('takes the ink from the palette, one mode value per surface kind', () => {
-    expect(paneTitleInk('dark')).toBe(palette.wool.dark);
-    expect(paneTitleInk('light')).toBe(palette.wool.light);
+    expect(paneTitleInk('dark')).toBe(palette.ink.dark);
+    expect(paneTitleInk('light')).toBe(palette.ink.light);
   });
 
   it('always picks the ink that actually contrasts with the surface', () => {

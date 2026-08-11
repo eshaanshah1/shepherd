@@ -64,15 +64,25 @@ export const defaultScaleInputs: ScaleInputs = {
  * ratios are those values over 13. Read the comment column, not the decimal.
  */
 export const ratios = {
-  /** Type. Multiplies `baseFontSize` only — density is spacing, not size. */
+  /**
+   * Type. Multiplies `baseFontSize` only — density is spacing, not size.
+   *
+   * **These round to the nearest HALF pixel, not the nearest pixel**, because
+   * Shepherd UI §2 specifies 12.5 / 11.5 / 10.5 and means them. That is not a
+   * relaxation of the integer rule below it: the rule is about the 1px hairlines
+   * this language builds its hierarchy from, which blur off a subpixel boundary.
+   * A glyph is antialiased at every size already, so a half-pixel type step costs
+   * nothing and buys the step between a control's label (12.5) and a row (13).
+   */
   type: {
-    nano: 0.69, //   9px — the agent chip's uppercase micro-label
-    micro: 0.77, //  10px — section labels, plate cells (rule 5's instrument voice)
-    small: 0.85, //  11px — a path, a pane head, a secondary cell
-    medium: 0.92, // 12px — a control's label
-    body: 1, //      13px — a row, a field, prose
-    large: 1.15, //  15px — a composer's brief
-    title: 1.31, //  17px — a composer's title, the one type step in the app
+    nano: 0.81, //   10.5px — a path, an id (mono)
+    micro: 0.85, //  11px — a measurement, tabular (mono)
+    small: 0.88, //  11.5px — a section label. Sentence case, no tracking.
+    medium: 0.96, // 12.5px — a control's label
+    body: 1, //      13px — a row, a menu item
+    card: 1.08, //   14px — a card title
+    large: 1.23, //  16px — the brief
+    title: 1.46, //  19px — a panel's name, once per panel
   },
   /**
    * The chrome's line box. 20px at the defaults, which is also the default
@@ -85,53 +95,105 @@ export const ratios = {
    * enormous list row): chrome away from the grid has its own scale. Rows that
    * must line up with terminal rows use the published cell height instead.
    */
-  row: 2.15, //      28px
+  row: 2.62, //      34px
   /**
-   * Control heights. `md` shares the row ratio on purpose — Orca's rule is that a
-   * control matches the row height around it, and expressing that as one shared
-   * number is how the two cannot drift when the base moves.
+   * Control heights. `lg` shares the row ratio on purpose — a control matches the
+   * row height around it, and expressing that as one shared number is how the two
+   * cannot drift when the base moves.
    */
   control: {
-    sm: 1.69, //     22px
-    md: 2.15, //     28px, = row
-    lg: 2.62, //     34px
-  },
-  /** Padding and gap. Multiplies both inputs: density IS spacing. */
-  space: {
-    xs: 0.31, //      4px
-    sm: 0.46, //      6px
-    md: 0.62, //      8px
-    lg: 0.92, //     12px
-    xl: 1.08, //     14px
+    sm: 1.85, //     24px
+    md: 2.15, //     28px, = a tab
+    lg: 2.62, //     34px, = row
   },
   /**
-   * Radius. Two, per the spec's "terminal brutalism" — plus the one soft value.
+   * The chrome bands, which are fixed furniture rather than content: a titlebar
+   * is 44 because the traffic lights are, and a rail is 332 because that is how
+   * wide a task's title plus its metadata needs to be. Density-scaled like every
+   * other height, so a compact user gets a compact frame.
+   */
+  band: {
+    tab: 2.15, //      28px
+    paneHead: 2.92, // 38px
+    tabStrip: 3.08, // 40px
+    titlebar: 3.38, // 44px
+    skyStrip: 9.54, // 124px — the one decorative surface in the app
+    rail: 25.54, //    332px
+  },
+  /**
+   * Padding and gap: `2 4 6 7 9 10 12 14 16 20`. Multiplies both inputs, because
+   * density IS spacing.
+   *
+   * The five short names carry over from Flock so the stylesheets that read them
+   * keep resolving while §4's primitives are rewritten one at a time; the other
+   * five are the steps this language added.
+   */
+  space: {
+    hair: 0.15, //     2px
+    xs: 0.31, //       4px
+    sm: 0.46, //       6px
+    snug: 0.54, //     7px
+    md: 0.69, //       9px
+    mid: 0.77, //     10px
+    lg: 0.92, //      12px
+    xl: 1.08, //      14px
+    xxl: 1.23, //     16px
+    huge: 1.54, //    20px
+  },
+  /**
+   * Radius: `5 6 8 10 12 14 16`, plus `50%` on the send button — the only round
+   * thing in the app, and the only one not in this table.
+   *
    * Base-scaled but NOT density-scaled: a corner is a property of the box's own
    * size, and a denser layout does not want rounder boxes.
    */
   radius: {
-    sm: 0.31, //      4px — a keycap, a chip: machined, not rounded
-    md: 0.46, //      6px — a button, an icon button
-    soft: 1.23, //   16px — writing surfaces ONLY (the composer, the palette).
-    //                      Reference notes conflict 1: Flock's 16 stays, but it
-    //                      is a token here rather than a literal in the composer,
-    //                      so the fused-panel maths (`calc(radius - 1px)`) has
-    //                      one source.
+    sm: 0.38, //       5px — a chip
+    md: 0.46, //       6px — a control
+    row: 0.62, //      8px — a row
+    card: 0.77, //    10px — a card, a pane
+    window: 0.92, //  12px — the window
+    well: 1.08, //    14px — a well; the palette's card
+    soft: 1.23, //    16px — the composer's well, the widest radius in the app.
+    //                       Kept under Flock's name because the fused-panel maths
+    //                       (`calc(radius - 1px)`) reads it and has one source.
   },
 } as const;
 
-/** px, integer. Every metric goes through this — nothing here is fractional. */
+/**
+ * px, integer. Every LENGTH goes through this — a height, a gap, a radius and a
+ * hairline are all whole device pixels, because this language draws its entire
+ * hierarchy in 1px rules and a rule on a subpixel boundary is a blurred rule.
+ */
 function px(base: number, ratio: number, density = 1): number {
   return Math.round(base * ratio * density);
 }
 
+/**
+ * px, to the nearest HALF. Type only — see the note on `ratios.type`. A glyph is
+ * antialiased at every size, so the boundary argument that governs `px` above
+ * does not apply to it, and §2 asks for 12.5 / 11.5 / 10.5 by name.
+ */
+function pt(base: number, ratio: number): number {
+  return Math.round(base * ratio * 2) / 2;
+}
+
 export interface TypeScale {
+  /** 10.5 — a path, an id. Mono. */
   readonly nano: number;
+  /** 11 — a measurement, tabular. Mono. */
   readonly micro: number;
+  /** 11.5 — a section label. Sentence case, no tracking. */
   readonly small: number;
+  /** 12.5 — a control's label. */
   readonly medium: number;
+  /** 13 — a row, a menu item. */
   readonly body: number;
+  /** 14 — a card title. */
+  readonly card: number;
+  /** 16 — the brief. */
   readonly large: number;
+  /** 19 — a panel's name, once per panel. */
   readonly title: number;
 }
 
@@ -141,17 +203,36 @@ export interface ControlScale {
   readonly lg: number;
 }
 
+/** The fixed chrome furniture: `a task holds tabs; a tab holds panes`. */
+export interface BandScale {
+  readonly tab: number;
+  readonly paneHead: number;
+  readonly tabStrip: number;
+  readonly titlebar: number;
+  readonly skyStrip: number;
+  readonly rail: number;
+}
+
 export interface SpaceScale {
+  readonly hair: number;
   readonly xs: number;
   readonly sm: number;
+  readonly snug: number;
   readonly md: number;
+  readonly mid: number;
   readonly lg: number;
   readonly xl: number;
+  readonly xxl: number;
+  readonly huge: number;
 }
 
 export interface RadiusScale {
   readonly sm: number;
   readonly md: number;
+  readonly row: number;
+  readonly card: number;
+  readonly window: number;
+  readonly well: number;
   readonly soft: number;
 }
 
@@ -162,6 +243,7 @@ export interface Metrics {
 
   readonly type: TypeScale;
   readonly control: ControlScale;
+  readonly band: BandScale;
   readonly space: SpaceScale;
   readonly radius: RadiusScale;
 
@@ -170,9 +252,18 @@ export interface Metrics {
   readonly lineHeight: number;
   readonly rowHeight: number;
 
+  /**
+   * The ONE surviving uppercase label: a ⌘K palette group heading, 10.5/600 at
+   * `0.05em`. Everywhere else this language refuses uppercase micro-labels with
+   * tracking outright — a section label in the rail is 11.5/600 sentence case
+   * with no tracking at all. The two numbers are equal because there is now one
+   * value rather than a band; they are kept as a pair so the CSS contract
+   * (`--sh-micro-tracking`, `--sh-micro-tracking-wide`) does not change shape
+   * while §4's primitives are rewritten one at a time.
+   */
   readonly microLabel: {
     readonly fontSize: number;
-    /** em; the "WORKING · 3" instrument voice. Unitless, so it does not scale. */
+    /** em. Unitless, so it does not scale. */
     readonly trackingMin: number;
     readonly trackingMax: number;
   };
@@ -191,13 +282,14 @@ export interface Metrics {
 export function deriveMetrics(inputs: ScaleInputs = defaultScaleInputs): Metrics {
   const { baseFontSize: base, density } = inputs;
   const type: TypeScale = {
-    nano: px(base, ratios.type.nano),
-    micro: px(base, ratios.type.micro),
-    small: px(base, ratios.type.small),
-    medium: px(base, ratios.type.medium),
-    body: px(base, ratios.type.body),
-    large: px(base, ratios.type.large),
-    title: px(base, ratios.type.title),
+    nano: pt(base, ratios.type.nano),
+    micro: pt(base, ratios.type.micro),
+    small: pt(base, ratios.type.small),
+    medium: pt(base, ratios.type.medium),
+    body: pt(base, ratios.type.body),
+    card: pt(base, ratios.type.card),
+    large: pt(base, ratios.type.large),
+    title: pt(base, ratios.type.title),
   };
   return {
     baseFontSize: base,
@@ -208,25 +300,42 @@ export function deriveMetrics(inputs: ScaleInputs = defaultScaleInputs): Metrics
       md: px(base, ratios.control.md, density),
       lg: px(base, ratios.control.lg, density),
     },
+    band: {
+      tab: px(base, ratios.band.tab, density),
+      paneHead: px(base, ratios.band.paneHead, density),
+      tabStrip: px(base, ratios.band.tabStrip, density),
+      titlebar: px(base, ratios.band.titlebar, density),
+      skyStrip: px(base, ratios.band.skyStrip, density),
+      rail: px(base, ratios.band.rail, density),
+    },
     space: {
+      hair: px(base, ratios.space.hair, density),
       xs: px(base, ratios.space.xs, density),
       sm: px(base, ratios.space.sm, density),
+      snug: px(base, ratios.space.snug, density),
       md: px(base, ratios.space.md, density),
+      mid: px(base, ratios.space.mid, density),
       lg: px(base, ratios.space.lg, density),
       xl: px(base, ratios.space.xl, density),
+      xxl: px(base, ratios.space.xxl, density),
+      huge: px(base, ratios.space.huge, density),
     },
     radius: {
       sm: px(base, ratios.radius.sm),
       md: px(base, ratios.radius.md),
+      row: px(base, ratios.radius.row),
+      card: px(base, ratios.radius.card),
+      window: px(base, ratios.radius.window),
+      well: px(base, ratios.radius.well),
       soft: px(base, ratios.radius.soft),
     },
     fontSize: type.body,
     lineHeight: px(base, ratios.lineHeight),
     rowHeight: px(base, ratios.row, density),
     microLabel: {
-      fontSize: type.micro,
-      trackingMin: 0.1,
-      trackingMax: 0.16,
+      fontSize: type.nano,
+      trackingMin: 0.05,
+      trackingMax: 0.05,
     },
     hairline: 1,
   };
@@ -262,9 +371,24 @@ export const motion = {
   flockCycleMs: 500,
   /** Block cursor, steps() not ease. */
   cursorBlinkMs: 1100,
+  /**
+   * The working meter's cycle — `steps(1, end)`, on `opacity` (1 → 0.18 → 1), on
+   * the third bar only.
+   *
+   * `steps(1, end)` rather than a fade, so it repaints twice a second instead of
+   * every frame: twelve open panes of continuously-repainting indicators peg the
+   * GPU. Under `prefers-reduced-motion` the meter renders **complete and static**
+   * — a frozen partial ring reads as broken, a complete one reads as an
+   * intentional marker.
+   */
+  meterCycleMs: 1100,
   /** ScrambleText tick. */
   scrambleTickMs: 70,
-  /** Rule 7: 120–180ms, near-linear, and nothing bounces. */
+  /**
+   * 140ms linear, on `color`, `background` and `border-color` ONLY — never `all`.
+   * Nothing translates, scales, springs or bounces: a control that moves under
+   * the cursor is a control whose target moved mid-click.
+   */
   transitionMs: 140,
   /**
    * A row ARRIVING in a list. Longer than a state transition, and still short.
@@ -305,8 +429,12 @@ export const fonts = {
    * it is sans; if it is something the machine produced — a path, an id, a
    * command, the grid — it is mono.
    */
-  sans: "'DM Sans', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif",
+  sans: "'Geist', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif",
   mono: "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace",
-  /** Rule 6: serif only where the app speaks in sentences. */
+  /**
+   * Retained as a token, used by nothing. Shepherd UI is two faces split by job
+   * and has no third voice; this stays so a contributed view that reaches for a
+   * serif gets a themed one rather than typing a family name.
+   */
   serif: "'Iowan Old Style', Palatino, Georgia, serif",
 } as const;

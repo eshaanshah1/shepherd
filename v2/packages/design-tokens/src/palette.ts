@@ -1,48 +1,147 @@
-// The normative Flock palette — the "Token values" table of
-// docs/superpowers/specs/2026-08-06-ade-design-language.md, approved via the
-// 2026-08-06 mock. Dark is canonical; light is the derived override.
+// The normative **Shepherd UI** palette — §2 of the `shepherd-ui` skill, drawn in
+// full in `Shepherd Redesign.dc.html` (dark, canonical) and
+// `Shepherd Redesign Light.dc.html`.
 //
-// Rule 10: this file is the ONLY place a hex literal belongs. Chrome CSS, the
-// xterm theme and (later) extension views are all generated from it.
+// Supersedes **Flock**, whose warm ink, five saturated accents and thirteen
+// tokens this replaces outright rather than sitting beside. What Flock got right
+// and this keeps: tokens are the API, themes are a contribution, hairlines carry
+// hierarchy, no elevation theater.
+//
+// Rule 10 is unchanged and is the reason this file exists: **this is the ONLY
+// place a hex literal belongs.** Chrome CSS, the xterm theme and extension views
+// are all generated from it, and a hex outside this package is a defect.
+//
+// Three things to know before adding a value here:
+//
+//   - **Light is derived, not re-decided.** Same structure, same marks, same
+//     geometry, same five jobs. Two things change beyond inverting the ramp:
+//     `wool` becomes ink (`#141414` — on paper the loudest thing available is
+//     black), and the sky strip is at noon.
+//   - **Light does not preserve the dark ramp's ordering.** A dark hover fill is
+//     one step BRIGHTER than its canvas; a light one is one step DARKER. That is
+//     why these are named for the surface they are, not `ramp-0…n` — an index
+//     would assert an order that only one mode has.
+//   - **The five hues each have one job** (§2), and a sixth is not a decision
+//     this file gets to make. When you are tempted to add one, you are usually
+//     missing a luminance step — and the steps below are the ones the screens
+//     actually use, read off the prototypes rather than invented.
 
 export type ThemeMode = 'dark' | 'light';
 
 export type ColorToken =
-  | 'ink-deep'
+  // The neutral ramp — true neutral, no cast.
+  | 'sunken'
+  | 'canvas'
+  | 'pane'
+  | 'surface'
+  | 'well'
+  | 'wash'
+  | 'raised'
+  | 'active'
+  | 'fill'
+  | 'line'
+  | 'lineStrong'
+  | 'lineActive'
+  | 'edgeSelected'
+  | 'edgeRing'
+  // Ink.
   | 'ink'
-  | 'ink-raised'
-  | 'ink-line'
-  | 'ink-term'
-  | 'wool'
-  | 'wool-dim'
-  | 'wool-faint'
-  | 'cobalt'
-  | 'hay'
-  | 'pasture'
-  | 'ember'
-  | 'signal';
+  | 'inkQuiet'
+  | 'inkDim'
+  | 'inkFaint'
+  | 'inkMute'
+  | 'inkGhost'
+  // The four hues that carry a job. (`wool` is `ink`; see the type below.)
+  | 'sky'
+  | 'skyDim'
+  | 'grass'
+  | 'clay'
+  | 'red'
+  // Repo identity — a sixth axis with its own fixed marks.
+  | 'repoSky'
+  | 'repoStone'
+  | 'repoTaupe'
+  | 'repoSlate'
+  // What an overlay dims the app with.
+  | 'scrimBase'
+  // The sky strip: the one decorative surface in the app.
+  | 'scnHill'
+  | 'scnFlock'
+  | 'scnFlockShade'
+  | 'scnFlockRest';
 
 export interface TokenSpec {
   readonly dark: string;
   readonly light: string;
-  /** What the colour is *for*. Rule 3: saturated without a job is banned. */
+  /** What the colour is *for*. A saturated value without a job is banned. */
   readonly job: string;
 }
 
 export const palette: Readonly<Record<ColorToken, TokenSpec>> = {
-  'ink-deep': { dark: '#14120E', light: '#E6DFD0', job: 'window backdrop' },
-  ink: { dark: '#1B1915', light: '#F3EEE1', job: 'surfaces' },
-  'ink-raised': { dark: '#24211B', light: '#FAF6EA', job: 'hover / raised' },
-  'ink-line': { dark: '#343027', light: '#D3CAB6', job: 'hairlines' },
-  'ink-term': { dark: '#161410', light: '#FAF6EA', job: 'terminal background' },
-  wool: { dark: '#E9E2D2', light: '#2B2620', job: 'primary text; inverse-video fill' },
-  'wool-dim': { dark: '#A49B89', light: '#6E6759', job: 'secondary text' },
-  'wool-faint': { dark: '#6E6759', light: '#A49B89', job: 'tertiary / idle' },
-  cobalt: { dark: '#62A3FF', light: '#1F62D0', job: 'working / links / primary action' },
-  hay: { dark: '#E0A33E', light: '#96690E', job: 'blocked / attention' },
-  pasture: { dark: '#85BB64', light: '#47772C', job: 'done / success' },
-  ember: { dark: '#E85D43', light: '#C23A22', job: 'error / urgent / dev build' },
-  signal: { dark: '#F2762E', light: '#C85312', job: 'prompts / live affordances' },
+  // ── the neutral ramp ────────────────────────────────────────────────────────
+  sunken: { dark: '#070708', light: '#F4F4F4', job: 'behind everything; a field’s well' },
+  canvas: { dark: '#0A0A0A', light: '#EFEFEF', job: 'the window, the rail, the stage' },
+  pane: { dark: '#0D0D0D', light: '#FFFFFF', job: 'the grid’s own ground' },
+  surface: { dark: '#0F0F0F', light: '#FAFAFA', job: 'a resting card' },
+  well: { dark: '#121212', light: '#FFFFFF', job: 'the composer, a modal' },
+  // Not in §2's table; read off the screens, where it is the fill a row takes on
+  // hover and the ground of the titlebar's search affordance. In light it steps
+  // DOWN from canvas rather than up — see the ordering note at the head.
+  wash: { dark: '#141414', light: '#E6E6E6', job: 'a hover fill on a row or a ghost control' },
+  raised: { dark: '#161616', light: '#FFFFFF', job: 'a selected card, a menu' },
+  active: { dark: '#1A1A1A', light: '#E8E8E8', job: 'the active tab' },
+  fill: { dark: '#1B1B1B', light: '#E4E4E4', job: 'an active row' },
+  line: { dark: '#1C1C1C', light: '#E2E2E2', job: 'every seam' },
+  lineStrong: { dark: '#272727', light: '#D2D2D2', job: 'a well’s edge, a bordered control' },
+  lineActive: { dark: '#2A2A2A', light: '#C6C6C6', job: 'the focused pane’s edge; a pending suite cell' },
+  edgeSelected: { dark: '#333333', light: '#B6B6B6', job: 'a selected card’s edge' },
+  edgeRing: { dark: '#4A4A4A', light: '#ADADAD', job: 'the resting mark’s hollow ring' },
+
+  // ── ink ─────────────────────────────────────────────────────────────────────
+  //
+  // `ink` is also `wool`, the fifth job-carrying colour: white on black, black on
+  // paper. It is one token because "the loudest thing available against this
+  // surface" and "primary text" are the same answer in both modes, and two names
+  // for one value is how the two drift.
+  ink: { dark: '#EDEDED', light: '#141414', job: 'a title, a live value; the `wool` mark and the one action' },
+  inkQuiet: { dark: '#DCDCDC', light: '#2E2E2E', job: 'an identifier inside a question' },
+  inkDim: { dark: '#C4C4C4', light: '#3A3A3A', job: 'the terminal grid’s text; a resting card’s title' },
+  inkFaint: { dark: '#A8A8A8', light: '#565656', job: 'a control at rest' },
+  inkMute: { dark: '#8C8C8C', light: '#6E6E6E', job: 'a section label, a secondary row' },
+  inkGhost: { dark: '#5A5A5A', light: '#767676', job: 'a path, a timestamp' },
+
+  // ── the hues that mean something ────────────────────────────────────────────
+  sky: { dark: '#7FB6E8', light: '#2E6FB8', job: 'live · focus · send' },
+  skyDim: { dark: '#4E7492', light: '#8FB4D6', job: 'a working meter’s off-beat bar' },
+  grass: { dark: '#86C06A', light: '#3F7A50', job: 'passed · done · git added' },
+  clay: { dark: '#C4796B', light: '#A8483A', job: 'git removed' },
+  red: { dark: '#E05C4F', light: '#C4392C', job: 'a run that failed' },
+
+  // ── repo identity ───────────────────────────────────────────────────────────
+  //
+  // **Grass is deliberately not in this set**: a repo tinted green would read as
+  // something that passed.
+  repoSky: { dark: '#7FB6E8', light: '#2E6FB8', job: 'repo identity mark 1' },
+  repoStone: { dark: '#8C9AA8', light: '#5D6B7A', job: 'repo identity mark 2' },
+  repoTaupe: { dark: '#CFCBBE', light: '#8A8375', job: 'repo identity mark 3' },
+  repoSlate: { dark: '#6E7B8C', light: '#46586B', job: 'repo identity mark 4' },
+
+  // ── the scrim ───────────────────────────────────────────────────────────────
+  //
+  // The ink an overlay dims the app with, before its alpha. It is NOT `sunken`:
+  // in light the scrim stays near-black (`#181818` at 20%) rather than going
+  // pale, because a scrim's job is to take contrast OUT of what is behind it and
+  // a white veil over paper removes none.
+  scrimBase: { dark: '#060606', light: '#181818', job: 'the ink an overlay dims the app with' },
+
+  // ── the sky strip ───────────────────────────────────────────────────────────
+  //
+  // The only illustration in the product. It is a window, not a wallpaper: an
+  // earlier version spread the scene behind the whole app and was distracting.
+  scnHill: { dark: '#121D16', light: '#7FA95F', job: 'the meadow’s hills' },
+  scnFlock: { dark: '#D8D4C8', light: '#FFFFFF', job: 'the sheep’s body and fluff' },
+  scnFlockShade: { dark: '#8A8679', light: '#94907F', job: 'the sheep’s legs' },
+  scnFlockRest: { dark: '#3A3A38', light: '#DFDBCE', job: 'the empty state’s sheep, at rest' },
 };
 
 export const colorTokens = Object.keys(palette) as ColorToken[];
