@@ -149,3 +149,41 @@ describe('sessions.list', () => {
     if (!result.ok) expect(result.error.code).toBe('unknown-command');
   });
 });
+
+describe('sessions.capture', () => {
+  it('answers with the session’s screen as bytes', async () => {
+    // The same read a late viewer gets on attach, for a caller that will have to
+    // show this screen later having never seen it live.
+    const { host, registry } = build();
+    // A session that STAYS: the host reaps an exited one, and capturing a screen
+    // is a question about a session that is still there.
+    const created = host.create({
+      cwd: '/tmp',
+      command: '/bin/sh',
+      args: ['-c', 'echo archived-me; sleep 5'],
+    });
+    expect(isOk(created)).toBe(true);
+    if (!isOk(created)) return;
+
+    // Give the pty a moment to write and the mirror to parse it.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    const result = await registry.invoke(
+      SESSION_COMMANDS.capture,
+      { session: String(created.value.id) },
+      USER,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const { bytes } = result.value as { bytes: string };
+    expect(Buffer.from(bytes, 'base64').toString('utf8')).toContain('archived-me');
+  });
+
+  it('refuses a session that is not there, rather than answering empty', async () => {
+    // An empty screen and a missing session are different facts, and a caller
+    // archiving a pane has to be able to tell them apart.
+    const { registry } = build();
+    const result = await registry.invoke(SESSION_COMMANDS.capture, { session: 'ghost' }, USER);
+    expect(result.ok).toBe(false);
+  });
+});
