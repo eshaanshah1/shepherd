@@ -1,9 +1,12 @@
-import { CORE_NAMESPACE, type SettingsPage } from '@shepherd/sdk';
+import type { SettingsPage } from '@shepherd/sdk';
+import { THEME_KEY, type ThemeSetting } from '../shared/settings-keys.ts';
 
-/** The app's own theme choice. `shepherd.*` is readable by every extension. */
-export const THEME_KEY = `${CORE_NAMESPACE}.theme`;
-
-export type ThemeSetting = 'system' | 'dark' | 'light';
+/**
+ * The key lives in `shared` — the renderer reads it to paint with, and a renderer
+ * importing a main-process module for a string is one electron import away from a
+ * broken bundle.
+ */
+export { THEME_KEY, type ThemeSetting };
 
 /**
  * The app's own settings page, contributed by the kernel exactly the way an

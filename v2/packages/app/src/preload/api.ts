@@ -1,4 +1,3 @@
-import type { SettingValue } from '@shepherd/sdk';
 import {
   EMIT,
   INVOKE,
@@ -105,7 +104,10 @@ export function createBridge(ipc: IpcLike): ShepherdBridge {
       reset: (key) => invoke(INVOKE.settingsReset, key),
       setOpen: (open) => invoke(INVOKE.settingsOpen, open),
       invoke: (page, command, args) => invoke(INVOKE.settingsInvoke, page, command, args),
-      onChanged: (listener) => subscribe<{ key: string; value: SettingValue }>(EMIT.settingsChanged, listener),
+      // The payload's type comes from `SettingsApi`, which this object is checked
+      // against — never from an `@shepherd/sdk` import. The preload bundle is
+      // sandboxed, and a value imported here fails to load the whole script.
+      onChanged: (listener) => subscribe(EMIT.settingsChanged, listener),
       onVisibility: (listener) => subscribe<boolean>(EMIT.settingsVisibility, listener),
     },
     window: {

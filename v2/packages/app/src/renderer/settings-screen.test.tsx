@@ -145,7 +145,7 @@ describe('SettingsScreen', () => {
   it('re-reads its values when the bridge announces a change from somewhere else', async () => {
     let announce: ((change: { key: string; value: unknown }) => void) | undefined;
     const settings = fakeSettings({
-      onChanged: vi.fn((listener: (change: { key: string; value: never }) => void) => {
+      onChanged: vi.fn((listener: (change: { key: string; value: unknown }) => void) => {
         announce = listener;
         return () => {};
       }),
