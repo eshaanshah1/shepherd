@@ -1,0 +1,120 @@
+/*
+ * The settings screen — the takeover layer.
+ *
+ * `position: absolute; inset: 0` inside `.sh-app`, with an OPAQUE background: the
+ * panes behind it stay mounted and keep running (a torn-down pane is a released
+ * pty and then a second one on the way back), so this has to cover them rather
+ * than replace them.
+ *
+ * It starts below the plate, not at the top of the window: the traffic lights and
+ * the breadcrumb belong to the window, not to whatever is on the stage, and a
+ * layer that covered them would put the close button of the app underneath a
+ * screen of ours.
+ */
+
+.sh-settings {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  background: var(--sh-surface);
+}
+
+.sh-settings__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-sm);
+  padding: var(--sh-space-sm) var(--sh-space-md);
+  border-bottom: var(--sh-hairline) solid var(--sh-line);
+}
+
+.sh-settings__title {
+  margin: 0;
+  font-family: var(--sh-font-sans);
+  font-size: var(--sh-font-size-medium);
+  font-weight: 500;
+  color: var(--sh-text);
+}
+
+.sh-settings__spacer {
+  flex: 1 1 auto;
+}
+
+.sh-settings__body {
+  flex: 1 1 auto;
+  display: grid;
+  /* The nav is fixed and the page takes the rest. `minmax(0, 1fr)` rather than
+     `1fr`, or a long unbroken value in a field stretches the column past the
+     window and the whole screen scrolls sideways. */
+  grid-template-columns: calc(var(--sh-control-lg) * 4) minmax(0, 1fr);
+  min-height: 0;
+}
+
+.sh-settings__nav {
+  overflow-y: auto;
+  padding: var(--sh-space-sm);
+  border-right: var(--sh-hairline) solid var(--sh-line);
+}
+
+/* The page scrolls in ITS OWN box. A settings screen whose whole body scrolled
+   would take the nav off the top of the window, and "where am I" is the one thing
+   the nav is for. */
+.sh-settings__page {
+  overflow-y: auto;
+  padding: var(--sh-space-lg);
+}
+
+.sh-settings__group + .sh-settings__group {
+  margin-top: var(--sh-space-lg);
+}
+
+/*
+ * One row: text on the left, control on the right, aligned to the top rather than
+ * centred — a two-line description beside a switch reads as the switch drifting
+ * down the row when they are centred against each other.
+ */
+.sh-setting {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sh-space-lg);
+  padding: var(--sh-space-md) 0;
+}
+
+.sh-setting + .sh-setting {
+  border-top: var(--sh-hairline) solid var(--sh-line);
+}
+
+.sh-setting__text {
+  min-width: 0;
+}
+
+.sh-setting__label {
+  display: block;
+  font-family: var(--sh-font-sans);
+  font-size: var(--sh-font-size-body);
+  color: var(--sh-text);
+}
+
+.sh-setting__description {
+  margin: var(--sh-space-xs) 0 0;
+  font-size: var(--sh-font-size-small);
+  line-height: var(--sh-line-height);
+  color: var(--sh-text-dim);
+}
+
+/* A failed write, on the row that caused it. `danger`, which is the one role that
+   means "this did not happen". */
+.sh-setting__error {
+  margin: var(--sh-space-xs) 0 0;
+  font-size: var(--sh-font-size-small);
+  color: var(--sh-danger);
+}
+
+.sh-setting__control {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-sm);
+  flex: 0 0 auto;
+}

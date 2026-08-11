@@ -246,6 +246,13 @@ export interface SettingsApi {
   set(key: string, value: SettingValue): Promise<IpcResult<void>>;
   reset(key: string): Promise<IpcResult<void>>;
   setOpen(open: boolean): Promise<IpcResult<void>>;
+  /**
+   * A command run by a contributed page, as the extension that contributed it.
+   *
+   * The page names its own id, which main told it about, and the command id. It
+   * cannot name a caller — see `ViewsApi.invoke`, same rule (D14).
+   */
+  invoke(page: string, command: string, args?: unknown): Promise<IpcResult<unknown>>;
   onChanged(listener: (change: { readonly key: string; readonly value: SettingValue }) => void): () => void;
   onVisibility(listener: (open: boolean) => void): () => void;
 }
@@ -292,7 +299,7 @@ export const BRIDGE_SURFACE = {
    * protecting and what this generalizes without widening.
    */
   views: ['list', 'children', 'activate', 'invoke', 'present', 'onChanged'],
-  settings: ['list', 'set', 'reset', 'setOpen', 'onChanged', 'onVisibility'],
+  settings: ['list', 'set', 'reset', 'setOpen', 'invoke', 'onChanged', 'onVisibility'],
   window: ['close'],
 } as const satisfies Record<keyof ShepherdBridge, readonly string[]>;
 

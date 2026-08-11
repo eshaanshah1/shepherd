@@ -75,6 +75,17 @@ export const INVOKE = {
   settingsSet: 'settings:set',
   settingsReset: 'settings:reset',
   /**
+   * A contributed settings PAGE running a command, attributed to the extension
+   * that contributed the page.
+   *
+   * The same rule `viewsInvoke` follows (D14): the click is the user's, the
+   * command id is the extension's, and an extension's own UI must not borrow the
+   * user's unconditional trust. Its own channel rather than `viewsInvoke` because
+   * a settings page has no registered view TYPE to be attributed through — its
+   * owner comes off the page, which the registry already records.
+   */
+  settingsInvoke: 'settings:invoke',
+  /**
    * "Put the screen up / take it down."
    *
    * The page ASKS; it does not decide. Main owns whether the screen is open
