@@ -120,9 +120,16 @@ export function SettingsScreen({ settings, onClose }: SettingsScreenProps): Reac
               data-testid="settings-nav-item"
               data-page={candidate.id}
               selected={candidate.id === page?.id}
-              // The owner as metadata rather than a prefix on the title: the nav
-              // should read as a list of subjects, not a list of packages.
-              meta={ownerLabel(candidate.owner)}
+              /*
+                No `meta` here, and no owner.
+
+                `Row.meta` is mono (it is for machine-produced text) and shares the
+                trailing cell, so in a fixed-width nav it won the space and
+                ELLIPSISED the title away: the list read `General / agents-core /
+                worktree-hook` — two package names and one section. The nav is a
+                list of subjects; which extension owns a page belongs on the page,
+                beside its heading.
+              */
               onClick={() => setSelected(candidate.id)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' || event.key === ' ') setSelected(candidate.id);
@@ -134,6 +141,9 @@ export function SettingsScreen({ settings, onClose }: SettingsScreenProps): Reac
         </nav>
 
         <div className="sh-settings__page">
+          {/* The measure. See `settings.css` — a row is a label/control PAIR, and
+              at window width it stops reading as one. */}
+          <div className="sh-settings__measure">
           {page === undefined ? (
             <Empty hint="Try a different word, or clear the search.">Nothing matches that search.</Empty>
           ) : (
@@ -154,17 +164,35 @@ export function SettingsScreen({ settings, onClose }: SettingsScreenProps): Reac
             />
             )
           )}
+          </div>
         </div>
       </div>
     </section>
   );
 }
 
-/** `shepherd.agents-core` → `agents-core`; the kernel's own pages say nothing. */
+/**
+ * `shepherd.agents-core` → `agents-core`, and nothing for the kernel's own pages.
+ *
+ * Drawn beside the page HEADING rather than in the nav: see the nav row's comment.
+ */
 function ownerLabel(owner: string): string | undefined {
   if (owner === 'shepherd') return undefined;
   const at = owner.lastIndexOf('.');
   return at === -1 ? owner : owner.slice(at + 1);
+}
+
+/** The heading of a page, with the extension that contributed it. */
+function PageHeading({ page }: { readonly page: SettingsPageDTO }): ReactElement {
+  const owner = ownerLabel(page.owner);
+  return (
+    <div className="sh-settings__heading">
+      <SectionLabel role="heading" aria-level={2}>
+        {page.title}
+      </SectionLabel>
+      {owner !== undefined && <span className="sh-settings__owner">{owner}</span>}
+    </div>
+  );
 }
 
 /**
@@ -198,14 +226,12 @@ function SpecPage({
 
   return (
     <>
-      <SectionLabel role="heading" aria-level={2}>
-        {page.title}
-      </SectionLabel>
+      <PageHeading page={page} />
       {groups.map(([group, specs]) => (
         <div className="sh-settings__group" key={group ?? ''}>
           {group !== undefined && <SectionLabel>{group}</SectionLabel>}
           {specs.map((spec) => {
-            const resolved = spec.choicesFrom === undefined ? undefined : dynamic[spec.choicesFrom];
+            const resolved = spec.choicesFrom === undefined ? undefined : dynamic[spec.key];
             return (
               <SettingRow
                 key={spec.key}
@@ -262,25 +288,37 @@ function useDynamicChoices(
   settings: SettingsApi | null,
 ): Readonly<Record<string, DynamicChoices>> {
   const [state, setState] = useState<Readonly<Record<string, DynamicChoices>>>({});
-  const commands = useMemo(
-    () => [...new Set((page.settings ?? []).map((spec) => spec.choicesFrom).filter(isPresent))],
+  /**
+   * Keyed by SETTING, not by command — two rows on this page name the same command
+   * and must not share its answer. `agents.quickModelChoices` lists agent kinds for
+   * one row and model ids for the other, and it tells them apart by the `key` it is
+   * asked with; a per-command cache put the kinds in the model row.
+   */
+  const asks = useMemo(
+    () =>
+      (page.settings ?? [])
+        .filter((spec) => spec.choicesFrom !== undefined)
+        .map((spec) => ({ key: spec.key, command: spec.choicesFrom as string })),
     [page],
   );
 
   useEffect(() => {
-    if (settings === null || commands.length === 0) return;
+    if (settings === null || asks.length === 0) return;
     let live = true;
-    setState(Object.fromEntries(commands.map((command) => [command, { busy: true }])));
-    for (const command of commands) {
-      void settings.invoke(page.id, command).then((answer) => {
+    setState(Object.fromEntries(asks.map((ask) => [ask.key, { busy: true }])));
+    for (const ask of asks) {
+      // `{ key }`, always an object: a command's schema is `s.object`, and
+      // `s.object` on `undefined` is an `invalid-args` failure — which is what
+      // painted both of these rows red as free-text boxes.
+      void settings.invoke(page.id, ask.command, { key: ask.key }).then((answer) => {
         if (!live) return;
-        setState((was) => ({ ...was, [command]: readChoices(answer) }));
+        setState((was) => ({ ...was, [ask.key]: readChoices(answer) }));
       });
     }
     return () => {
       live = false;
     };
-  }, [commands, page.id, settings]);
+  }, [asks, page.id, settings]);
 
   return state;
 }
@@ -293,10 +331,6 @@ function readChoices(answer: { ok: boolean; value?: unknown; error?: { message: 
     return { busy: false, error: 'the extension answered something that is not a list of choices' };
   }
   return { busy: false, choices: parsed.value };
-}
-
-function isPresent(value: string | undefined): value is string {
-  return value !== undefined;
 }
 
 /**
@@ -336,9 +370,7 @@ function ComponentPage({
 
   return (
     <>
-      <SectionLabel role="heading" aria-level={2}>
-        {page.title}
-      </SectionLabel>
+      <PageHeading page={page} />
       {Component === undefined ? (
         <Empty hint={`${page.owner} contributed “${page.component ?? 'nothing'}”, which this build has no UI for`}>
           This page has no UI in this build.
