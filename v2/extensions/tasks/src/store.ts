@@ -80,6 +80,20 @@ export interface TaskSession {
    * where the work went. It is also what a later reconciliation would key on.
    */
   readonly pane?: string;
+  /**
+   * The layout root — the TAB — that pane was opened in.
+   *
+   * Recorded at spawn rather than derived later, so the sidebar can roll each
+   * tab's agent states up into that tab's own dot. Walking the layout per render
+   * to work it out would be the second copy of "what is on screen" that ADR 0035
+   * refuses, and it would have no answer at all for an archived task — whose
+   * roots are gone while its record is not.
+   *
+   * Optional because records written before tabs existed do not carry it. Absent
+   * means the task's anchor root, which is where every session of such a record
+   * was in fact opened.
+   */
+  readonly root?: string;
 }
 
 /** Where a repo's uncommitted work went when the task was archived. */
@@ -124,6 +138,8 @@ const sessionSchema = s.stored({
   role: s.enumOf(['orchestrator', 'workstream'] as const),
   resumeTarget: s.optional(s.string()),
   pane: s.optional(s.string()),
+  /** Which TAB the pane was opened in. Absent on records written before tabs. */
+  root: s.optional(s.string()),
 });
 
 const taskSchema = s.stored({
