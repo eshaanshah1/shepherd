@@ -1,0 +1,131 @@
+import { describe, expect, it } from 'vitest';
+import { readCardData } from './card-data.ts';
+
+/**
+ * This value crossed an IPC port and arrives as `unknown`. Every case here is a
+ * way a malformed contribution could otherwise throw inside React's render —
+ * and this renders in the rail, so the throw takes the whole window.
+ */
+describe('readCardData', () => {
+  it('reads a full card', () => {
+    expect(
+      readCardData({
+        mark: 'working',
+        elapsed: '4m',
+        summary: 'running the suite',
+        diff: { added: 142, removed: 38, files: 7 },
+        suite: { total: 4, passed: 3 },
+        repos: [{ name: 'api', mark: 'repo1' }],
+        tabs: ['working', 'resting'],
+      }),
+    ).toEqual({
+      mark: 'working',
+      elapsed: '4m',
+      summary: 'running the suite',
+      diff: { added: 142, removed: 38, files: 7 },
+      suite: { total: 4, passed: 3 },
+      repos: [{ name: 'api', mark: 'repo1' }],
+      tabs: ['working', 'resting'],
+      question: undefined,
+      exitCode: undefined,
+    });
+  });
+
+  it('refuses a card with no readable MARK', () => {
+    // The one field with no honest default: it is the whole point of the row,
+    // and guessing `resting` would say "nothing is happening" about a task that
+    // might be waiting on you.
+    for (const bad of [null, undefined, 42, 'working', {}, { mark: 'busy' }, { mark: 7 }]) {
+      expect(readCardData(bad), JSON.stringify(bad)).toBeNull();
+    }
+  });
+
+  it('drops a diff that is all zeroes rather than drawing `+0 −0`', () => {
+    expect(readCardData({ mark: 'resting', diff: { added: 0, removed: 0, files: 0 } })?.diff).toBeUndefined();
+  });
+
+  it('drops a partial diff rather than defaulting the missing half to zero', () => {
+    // A card that omits a fact is honest; one that invents a zero is not.
+    expect(readCardData({ mark: 'resting', diff: { added: 5 } })?.diff).toBeUndefined();
+    expect(readCardData({ mark: 'resting', diff: 'lots' })?.diff).toBeUndefined();
+  });
+
+  it('takes two answers or NONE, never one', () => {
+    // A card with one button is a card whose other option is invisible. The
+    // `check →` door is the honest shape for anything that is not a clean pair.
+    const one = readCardData({
+      mark: 'waiting',
+      question: { text: 'Allow?', answers: [{ label: 'Allow', command: 'a' }] },
+    });
+    expect(one?.question?.text).toBe('Allow?');
+    expect(one?.question?.answers).toBeUndefined();
+
+    const three = readCardData({
+      mark: 'waiting',
+      question: {
+        text: 'Which?',
+        answers: [
+          { label: 'A', command: 'a' },
+          { label: 'B', command: 'b' },
+          { label: 'C', command: 'c' },
+        ],
+      },
+    });
+    expect(three?.question?.answers).toBeUndefined();
+  });
+
+  it('drops an answer with no verb — a button that does nothing is worse than none', () => {
+    const data = readCardData({
+      mark: 'waiting',
+      question: { text: 'Allow?', answers: [{ label: 'Allow' }, { label: 'Deny', command: 'd' }] },
+    });
+    expect(data?.question?.answers).toBeUndefined();
+  });
+
+  it('keeps a clean pair, with its keys', () => {
+    const data = readCardData({
+      mark: 'waiting',
+      question: {
+        text: 'Allow',
+        subject: 'rm -rf build',
+        answers: [
+          { label: 'Allow', command: 'tasks.allow', key: 'y' },
+          { label: 'Deny', command: 'tasks.deny', key: 'n' },
+        ],
+      },
+    });
+    expect(data?.question?.subject).toBe('rm -rf build');
+    expect(data?.question?.answers?.map((a) => a.key)).toEqual(['y', 'n']);
+  });
+
+  it('skips junk inside a list instead of failing the whole card', () => {
+    const data = readCardData({
+      mark: 'resting',
+      repos: [{ name: 'api', mark: 'repo1' }, 'nonsense', { name: 'no-mark' }, null],
+      tabs: ['working', 'nope', 42, 'resting'],
+    });
+    expect(data?.repos).toEqual([{ name: 'api', mark: 'repo1' }]);
+    expect(data?.tabs).toEqual(['working', 'resting']);
+  });
+
+  it('treats an empty list as absent, so nothing renders an empty strip', () => {
+    const data = readCardData({ mark: 'resting', repos: [], tabs: [] });
+    expect(data?.repos).toBeUndefined();
+    expect(data?.tabs).toBeUndefined();
+  });
+
+  it('drops a suite with no tests — SuiteMeter would draw nothing anyway', () => {
+    expect(readCardData({ mark: 'resting', suite: { total: 0, passed: 0 } })?.suite).toBeUndefined();
+    expect(readCardData({ mark: 'resting', suite: { total: 4 } })?.suite).toBeUndefined();
+  });
+
+  it('never throws, whatever it is handed', () => {
+    const nasty: unknown[] = [
+      { mark: 'resting', repos: 'not a list', tabs: {}, question: 5, suite: [], diff: [] },
+      { mark: 'failed', exitCode: 'one', elapsed: 12, summary: '' },
+      { mark: 'waiting', question: { text: '' } },
+      { mark: 'waiting', question: { answers: [] } },
+    ];
+    for (const value of nasty) expect(() => readCardData(value)).not.toThrow();
+  });
+});

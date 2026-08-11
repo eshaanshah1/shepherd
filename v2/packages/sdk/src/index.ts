@@ -70,6 +70,7 @@ export type {
 export { REGIONS } from './api-sessions.ts';
 export type {
   FocusDirection,
+  ExtensionRowProps,
   ExtensionViewProps,
   LayoutAPI,
   LayoutLeaf,
