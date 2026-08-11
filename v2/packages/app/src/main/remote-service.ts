@@ -16,6 +16,7 @@ import {
   REMOTE_PROTOCOL_VERSION,
   foundNet,
   kvNetStore,
+  joinNet as joinAnotherNet,
   loadOrMintIdentity,
   pinOf,
   type Endpoint,
@@ -325,6 +326,34 @@ export function createRemoteService(options: RemoteServiceOptions): RemoteAPI & 
       store.putMembership(membership);
       log.info(`created net ${name} (${membership.netId.slice(0, 12)}…)`);
       return summarize(membership);
+    },
+
+    async joinNet(uri) {
+      /**
+       * The certificate pin THIS Mac serves on, carried into the credential the
+       * other Mac issues — so every other member can bind this member's
+       * credential to the certificate it presents. Empty until we have served
+       * once, which is honest rather than a placeholder: a Mac nobody can reach
+       * has no certificate to name.
+       */
+      const joined = await joinAnotherNet({
+        uri,
+        deviceId,
+        deviceName,
+        certPin: identityPin,
+        now: () => Date.now(),
+        // A Mac that is already in this net presents its membership instead of
+        // a code, which is how it is readmitted with no ceremony at all.
+        ...(() => {
+          const held = store.memberships().find((m) => uri.includes(m.netId));
+          return held === undefined ? {} : { membership: held };
+        })(),
+      });
+      if (!joined.ok) throw new Error(joined.error);
+      store.putMembership(joined.value);
+      store.setActiveNet(joined.value.netId);
+      log.info(`joined net ${joined.value.netName} as ${joined.value.memberId}`);
+      return summarize(joined.value);
     },
 
     leaveNet: (netId) => store.removeMembership(netId),
