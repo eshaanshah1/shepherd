@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { ROOT, issueCredential, type Credential } from './net.ts';
 import {
   issueTombstone,
+  rosterAddress,
   mergeEntries,
   mergeTombstones,
   revokedIds,
@@ -137,5 +138,25 @@ describe('tombstones', () => {
 
   it('reduces to the set the chain walk consults', () => {
     expect(revokedIds([tombstone])).toEqual(new Set(['phone']));
+  });
+});
+
+describe('rosterAddress', () => {
+  it('pairs the IP we saw with the port they told us', () => {
+    // Their source port (54321) is the connection's and dies with it; 8723 is
+    // what they actually listen on.
+    expect(rosterAddress('192.168.1.7:54321', 8723)).toEqual(['192.168.1.7:8723']);
+  });
+
+  it('records nothing for a member that serves nothing', () => {
+    // A phone. Listed in the roster by name, with nowhere to dial it.
+    expect(rosterAddress('192.168.1.7:54321', undefined)).toEqual([]);
+  });
+
+  it('records nothing for loopback', () => {
+    // It would hand every other member an address that resolves, on their own
+    // machine, to themselves.
+    expect(rosterAddress('127.0.0.1:54321', 8723)).toEqual([]);
+    expect(rosterAddress('::1:54321', 8723)).toEqual([]);
   });
 });

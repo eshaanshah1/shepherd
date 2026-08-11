@@ -51,8 +51,18 @@ import java.util.concurrent.atomic.AtomicInteger
 class HostLink(
     private val host: String,
     private val port: Int,
-    /** Lowercase hex SHA-256 of the host certificate's DER. */
-    private val expectedPin: String,
+    /**
+     * Lowercase hex SHA-256 of the host certificate's DER, when it is known.
+     *
+     * **Null is the ordinary case for a member dialled out of the roster**, and
+     * it is not a weaker check — it is a different one. A join link carries a pin
+     * because there is no membership yet to reason about. Afterwards the net
+     * answers the question: the Mac returns its own credential, that credential
+     * NAMES the certificate it serves on, and this phone compares it to the one
+     * actually presented. So the certificate is still bound; the binding is just
+     * signed by the net instead of copied off a QR.
+     */
+    private val expectedPin: String?,
     private val scope: CoroutineScope,
     /**
      * Whether this link carries the SESSION protocol (the data path), as opposed
@@ -79,6 +89,13 @@ class HostLink(
         data class Ready(
             val issued: Membership? = null,
             val dataPort: Int? = null,
+            /**
+             * Everyone else in the net, as this Mac knows them.
+             *
+             * Sent on EVERY connect, which is what makes "you never scan twice"
+             * true: a second Mac is a row in this list, not another QR.
+             */
+            val roster: List<RosterEntry> = emptyList(),
         ) : State
         data class Failed(val reason: String, val terminal: Boolean) : State
         data object Disconnected : State
@@ -109,6 +126,9 @@ class HostLink(
 
     /** `(netId, rootPublicKey)` for the net this attempt is about. */
     private var netContext: Pair<String, String>? = null
+
+    /** The certificate this connection actually presented, as a pin. */
+    private var observedPin: String = ""
 
     private var socket: Socket? = null
     private var out: OutputStream? = null
@@ -231,7 +251,7 @@ class HostLink(
                                         "signature",
                                         NetCrypto.sign(
                                             key.privateKey,
-                                            Net.proofBytes(membership.netId, expectedPin, at),
+                                            Net.proofBytes(membership.netId, observedPin, at),
                                         ),
                                     )
                                 })
@@ -304,7 +324,10 @@ class HostLink(
                     return
                 }
                 val issued = body?.let { adopt(it) }
-                SLog.i(SLog.CONN, "accepted by $host:$port (data port $dataPort)")
+                val roster = body?.get("roster")?.let {
+                    runCatching { RosterEntry.listFromJson(JSONArray(it.toString())) }.getOrNull()
+                } ?: emptyList()
+                SLog.i(SLog.CONN, "accepted by $host:$port (data port $dataPort, ${roster.size} members)")
                 // Before Ready, so nothing an observer sends can overtake it —
                 // writes on one socket are ordered, and the server answers
                 // `not-greeted` to anything that arrives first.
@@ -317,7 +340,7 @@ class HostLink(
                         },
                     )
                 }
-                _state.value = State.Ready(issued, dataPort)
+                _state.value = State.Ready(issued, dataPort, roster)
             }
             Frames.REMOTE_PENDING -> _state.value = State.PendingApproval
             Frames.REMOTE_REJECTED -> {
@@ -375,6 +398,19 @@ class HostLink(
         val leaf = hostChain.first()
         if (!NetCrypto.verify(leaf.publicKey, Net.hostProofBytes(netId, nonce), proof)) {
             return "the Mac could not prove it holds the key its membership names"
+        }
+
+        /**
+         * The credential names the certificate this member serves on, so it must
+         * be the one we just negotiated.
+         *
+         * This is what makes dialling out of the roster safe with no pin in hand:
+         * without it, anything that answered on that address and held a valid
+         * member chain could serve us under its own certificate. A member that
+         * serves nothing carries an empty pin and cannot be dialled anyway.
+         */
+        if (leaf.certPin.isNotEmpty() && !leaf.certPin.equals(observedPin, ignoreCase = true)) {
+            return "that Mac's certificate is not the one its membership names"
         }
         return null
     }
@@ -530,10 +566,14 @@ class HostLink(
             ?: throw PinMismatch("the host presented no certificate")
         val actual = MessageDigest.getInstance("SHA-256").digest(peer.encoded)
             .joinToString("") { "%02x".format(it) }
-        if (!actual.equals(expectedPin, ignoreCase = true)) {
+        val pinned = expectedPin
+        if (pinned != null && !actual.equals(pinned, ignoreCase = true)) {
             tls.close()
             throw PinMismatch("this is not the Mac we paired with")
         }
+        // Learned, not trusted: `checkHost` refuses unless the Mac's own
+        // credential names this very certificate.
+        observedPin = actual
         return tls
     }
 

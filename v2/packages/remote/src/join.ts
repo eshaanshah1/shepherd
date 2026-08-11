@@ -160,6 +160,16 @@ export interface Hello {
   readonly pinVerified?: boolean;
   /** Random from the client; the host signs it back so the client can check US. */
   readonly nonce?: string;
+  /**
+   * Where this member can be reached, when it serves at all.
+   *
+   * The PORT only, because a member is a poor judge of its own address — behind
+   * a NAT or on a multi-homed machine it will name one nobody else can use. The
+   * host pairs it with the IP it actually saw, so a roster entry is built from
+   * the half each side is right about. A member that serves nothing (a phone)
+   * sends nothing, and is listed with no address.
+   */
+  readonly advertise?: { readonly port: number; readonly dataPort?: number };
 }
 
 /** This Mac's net, as the decision needs it. */

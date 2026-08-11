@@ -144,6 +144,7 @@ const ENTRY = s.stored({
   memberId: s.string(),
   name: s.string(),
   addrs: s.array(s.string()),
+  dataPort: s.optional(s.number()),
   admittedBy: s.string(),
   admittedAt: s.number(),
   updatedAt: s.number(),

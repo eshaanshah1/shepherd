@@ -51,6 +51,48 @@ data class Membership(
 }
 
 /**
+ * One other member of the net, as somebody's roster describes it.
+ *
+ * A HINT, not authority: the name and address are what a Mac told us, and what
+ * makes a connection safe is the chain that member presents plus the certificate
+ * its credential names. What this buys is that a second Mac never has to be
+ * scanned — it arrives in the roster of the first.
+ */
+data class RosterEntry(
+    val memberId: String,
+    val name: String,
+    /** `host:port` for control, most recent first. Empty for a device that serves nothing. */
+    val addrs: List<String>,
+    /** Where that member's ptys are. 0 when it has none. */
+    val dataPort: Int,
+) {
+    val host: String? get() = addrs.firstOrNull()?.substringBeforeLast(':')
+    val port: Int? get() = addrs.firstOrNull()?.substringAfterLast(':')?.toIntOrNull()
+    val reachable: Boolean get() = host != null && port != null
+
+    fun toJson(): JSONObject = JSONObject()
+        .put("memberId", memberId)
+        .put("name", name)
+        .put("dataPort", dataPort)
+        .put("addrs", JSONArray().apply { addrs.forEach { put(it) } })
+
+    companion object {
+        fun fromJson(json: JSONObject): RosterEntry {
+            val list = json.optJSONArray("addrs") ?: JSONArray()
+            return RosterEntry(
+                memberId = json.getString("memberId"),
+                name = json.optString("name", ""),
+                addrs = (0 until list.length()).map { list.getString(it) },
+                dataPort = json.optInt("dataPort", 0),
+            )
+        }
+
+        fun listFromJson(array: JSONArray): List<RosterEntry> =
+            (0 until array.length()).mapNotNull { runCatching { fromJson(array.getJSONObject(it)) }.getOrNull() }
+    }
+}
+
+/**
  * Where memberships live, and where this phone's own identity comes from.
  *
  * **The device id is minted once and kept.** It is what a credential names and
@@ -102,7 +144,24 @@ class NetStore(context: Context) {
         if (prefs.getString(ACTIVE, null) == netId) prefs.edit().remove(ACTIVE).apply()
     }
 
-    fun forgetAll() = prefs.edit().remove(KEY).remove(ACTIVE).apply()
+    fun forgetAll() = prefs.edit().remove(KEY).remove(ACTIVE).remove(ROSTER).apply()
+
+    /**
+     * The other members of a net, as last heard.
+     *
+     * Kept because a phone that has been away needs somewhere to look BEFORE it
+     * has connected to anything — otherwise the device list is empty until you
+     * reach a Mac, which is exactly when you do not need it.
+     */
+    fun roster(netId: String): List<RosterEntry> = runCatching {
+        val raw = prefs.getString("$ROSTER.$netId", null) ?: return emptyList()
+        RosterEntry.listFromJson(JSONArray(raw))
+    }.getOrDefault(emptyList())
+
+    fun putRoster(netId: String, entries: List<RosterEntry>) {
+        val json = JSONArray().apply { entries.forEach { put(it.toJson()) } }
+        prefs.edit().putString("$ROSTER.$netId", json.toString()).apply()
+    }
 
     /** Minted once, kept forever. See the class comment. */
     fun deviceId(): String {
@@ -121,5 +180,6 @@ class NetStore(context: Context) {
         const val KEY = "nets.v1"
         const val ACTIVE = "nets.active"
         const val DEVICE = "device.id"
+        const val ROSTER = "nets.roster"
     }
 }

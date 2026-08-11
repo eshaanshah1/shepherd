@@ -32,6 +32,14 @@ export interface RosterEntry {
   readonly name: string;
   /** Last-known `host:port` pairs, most recent first. Hints — see above. */
   readonly addrs: readonly string[];
+  /**
+   * Where that member's DATA path listens, when it has one.
+   *
+   * Carried beside the addresses rather than inside them because it is the same
+   * host on a different port, and a client needs both to be useful: control
+   * gets it a view list, data gets it a terminal.
+   */
+  readonly dataPort?: number;
   readonly admittedBy: string;
   readonly admittedAt: number;
   /** Whose record is newer, when two members disagree about this one. */
@@ -134,4 +142,27 @@ export function mergeTombstones(
 /** The set `verifyChain` consults. */
 export function revokedIds(tombstones: readonly Tombstone[]): ReadonlySet<string> {
   return new Set(tombstones.map((tombstone) => tombstone.memberId));
+}
+
+/**
+ * A peer's address as a roster hint, built from the half each side is right
+ * about: the IP as the HOST saw it, and the port the member said it SERVES on.
+ *
+ * A member's source port is the connection's, not the member's — ephemeral, and
+ * gone the moment the socket closes. Recording that is what made the first
+ * roster useless: every entry named a port nobody could dial.
+ *
+ * Two cases yield nothing, and both are honest rather than defensive. A member
+ * that advertises no port serves nothing (a phone), so there is no address to
+ * hold. And loopback would hand every other member an address that resolves, on
+ * their own machine, to themselves.
+ */
+export function rosterAddress(
+  remoteAddress: string,
+  servingPort: number | undefined,
+): readonly string[] {
+  if (servingPort === undefined) return [];
+  const host = remoteAddress.split(':')[0] ?? '';
+  if (host === '' || host === '127.0.0.1' || host === '::1') return [];
+  return [`${host}:${servingPort}`];
 }

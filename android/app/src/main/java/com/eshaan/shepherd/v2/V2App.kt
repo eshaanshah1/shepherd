@@ -46,61 +46,82 @@ import java.util.UUID
  * has no idea what a task is either.
  */
 
+/**
+ * Where this phone is currently pointed.
+ *
+ * Not a stored record any more. A Mac is reached at an address that came either
+ * from a join link (first contact, so a pin travels with it) or from the NET'S
+ * ROSTER (every time after, where there is no pin and none is needed — the
+ * member's own credential names the certificate it serves on).
+ */
+private data class Target(
+    val host: String,
+    val port: Int,
+    val dataPort: Int,
+    /** Known only for a Mac reached by link. Null means "learn, then check the credential". */
+    val pin: String?,
+    val label: String,
+)
+
 @Composable
 fun V2App(context: Context, deviceName: String) {
-    val macs = remember { MacStore(context) }
     val nets = remember { NetStore(context) }
-    var mac by remember { mutableStateOf(macs.all().firstOrNull()) }
+    var membership by remember { mutableStateOf(nets.active()) }
     var session by remember { mutableStateOf<String?>(null) }
+    var target by remember { mutableStateOf<Target?>(null) }
 
-    val known = mac
-    if (known == null) {
+    /**
+     * The net's members, and the reason there is no second QR anywhere in this
+     * app: a Mac hands over the whole roster on every connect, so the second
+     * machine is a row in a list rather than another thing to scan.
+     */
+    var roster by remember(membership?.netId) {
+        mutableStateOf(membership?.let { nets.roster(it.netId) } ?: emptyList())
+    }
+
+    val held = membership
+    if (held == null) {
         JoinScreen { facts ->
             // The link is the whole first contact: it carries the net, the root
             // key, the address and the code. Kept until the accept, because the
             // membership is issued against the key minted for this attempt.
             joiningOnce = facts
-            val entered = KnownMac(
-                pin = facts.pin,
-                endpoints = listOf(Endpoint(facts.host, facts.port, facts.dataPort, via = "link")),
-                netId = facts.netId,
-            )
-            macs.put(entered)
-            mac = entered
+            target = Target(facts.host, facts.port, facts.dataPort, facts.pin, facts.netName)
         }
+        // A join is in flight the moment a link is taken, so fall through to the
+        // link below rather than returning: there is no membership YET.
+        if (target == null) return
+    }
+
+    val chosen = target
+    if (chosen == null) {
+        DeviceListScreen(
+            netName = held?.netName ?: "",
+            members = roster.filter { it.memberId != held?.memberId },
+            onPick = { entry ->
+                target = Target(
+                    host = entry.host ?: return@DeviceListScreen,
+                    port = entry.port ?: return@DeviceListScreen,
+                    dataPort = entry.dataPort,
+                    pin = null,
+                    label = entry.name,
+                )
+            },
+            onForget = {
+                held?.let { nets.forget(it.netId) }
+                membership = null
+                roster = emptyList()
+            },
+        )
         return
     }
 
-    /**
-     * The membership for this Mac's net — the phone's identity, shared by every
-     * Mac in it.
-     *
-     * Null while joining, which is exactly the state the code is for.
-     */
-    var membership by remember(known.netId) { mutableStateOf(nets.byNet(known.netId)) }
     val deviceId = remember { nets.deviceId() }
-
-    /**
-     * Which address we are currently trying.
-     *
-     * A Mac has several and they all point at the same machine — the pin says
-     * so. Walking to another network changes which one answers, and that must
-     * cost a retry rather than a re-pairing, which is what an address-keyed
-     * record made it cost.
-     */
-    var attempt by remember(known.pin) { mutableIntStateOf(0) }
-    val endpoint = known.candidates.getOrNull(attempt % known.candidates.size.coerceAtLeast(1))
-    if (endpoint == null) {
-        Message("No address for this Mac", "Pair again to give it one.") {
-            macs.forget(known.pin)
-            mac = null
-        }
-        return
-    }
+    val endpoint = Endpoint(chosen.host, chosen.port, chosen.dataPort, via = "net")
 
     val scope = remember { CoroutineScope(SupervisorJob() + Dispatchers.IO) }
-    val link = remember(known.pin, endpoint.host, endpoint.port) {
-        HostLink(endpoint.host, endpoint.port, known.pin, scope)
+    val link = remember(endpoint.host, endpoint.port) {
+        HostLink(endpoint.host, endpoint.port, chosen.pin, scope)
     }
     /**
      * The data link, to the daemon.
@@ -110,9 +131,9 @@ fun V2App(context: Context, deviceName: String) {
      * approved — which is exactly what makes serving ptys from a headless
      * process safe.
      */
-    val dataLink = remember(known.pin, endpoint.host, endpoint.dataPort) {
+    val dataLink = remember(endpoint.host, endpoint.dataPort) {
         if (endpoint.dataPort > 0) {
-            HostLink(endpoint.host, endpoint.dataPort, known.pin, scope, speaksSessions = true)
+            HostLink(endpoint.host, endpoint.dataPort, chosen.pin, scope, speaksSessions = true)
         } else {
             null
         }
@@ -156,7 +177,7 @@ fun V2App(context: Context, deviceName: String) {
      * had failed. And a port is the host's to choose, so a cached one dials a
      * daemon that moved.
      */
-    LaunchedEffect(state, known.pin) {
+    LaunchedEffect(state) {
         val ready = state as? HostLink.State.Ready ?: return@LaunchedEffect
         ready.issued?.let { joined ->
             nets.put(joined)
@@ -164,46 +185,34 @@ fun V2App(context: Context, deviceName: String) {
             // Spent: a code authorizes ONE first contact, and this phone is now
             // a member. Keeping it would be keeping a credential already used.
             joiningOnce = null
-            if (known.netId != joined.netId) {
-                val moved = known.copy(netId = joined.netId)
-                macs.put(moved)
-                mac = moved
-            }
         }
-        val reachedAt = endpoint.copy(dataPort = ready.dataPort ?: endpoint.dataPort)
-        // Promoted to the front: the address that just worked is overwhelmingly
-        // the one that will work next time.
-        val updated = (mac ?: known).reachableAt(reachedAt)
-        if (updated != mac) {
-            macs.put(updated)
-            mac = updated
+        /**
+         * The roster, kept.
+         *
+         * This is what makes the device list work before anything is connected:
+         * a phone that has been away opens on the list it was last handed rather
+         * than on an empty screen, which is exactly when a list is worth having.
+         */
+        val net = ready.issued?.netId ?: membership?.netId
+        if (net != null && ready.roster.isNotEmpty()) {
+            nets.putRoster(net, ready.roster)
+            roster = ready.roster
         }
-    }
-
-    /**
-     * A non-terminal failure moves to the NEXT address rather than retrying this
-     * one forever.
-     *
-     * `HostLink` already retries a single address with backoff, which is right
-     * for a socket that dropped. It is wrong for a Mac that moved: the address
-     * is simply gone, and the one that answers is another entry on this record.
-     */
-    LaunchedEffect(state, attempt) {
-        val failed = state as? HostLink.State.Failed ?: return@LaunchedEffect
-        if (failed.terminal) return@LaunchedEffect
-        if (known.candidates.size <= 1) return@LaunchedEffect
-        delay(ADDRESS_RETRY_MS)
-        SLog.i(SLog.CONN, "no answer at ${endpoint.host}:${endpoint.port} — trying the next address")
-        attempt += 1
+        if (ready.dataPort != null && ready.dataPort != chosen.dataPort) {
+            // A port is the host's to choose and it moves when the daemon
+            // restarts; a cached one dials a daemon that is no longer there.
+            target = chosen.copy(dataPort = ready.dataPort)
+        }
     }
 
     when (val current = state) {
         is HostLink.State.Failed -> Message(
-            "Cannot reach this Mac",
+            "Cannot reach ${chosen.label}",
             current.reason + if (current.terminal) "" else " — retrying",
-        ) { macs.forget(known.pin); mac = null }
+            forgetLabel = "Other devices",
+        ) { target = null; session = null }
         is HostLink.State.PendingApproval ->
-            Message("Waiting for approval", "Approve this phone on the Mac.", null)
+            Message("Waiting for approval", "Approve this phone on the Mac.", onForget = null)
         is HostLink.State.Ready -> {
             val open = session
             if (open == null) {
@@ -221,7 +230,7 @@ fun V2App(context: Context, deviceName: String) {
                 Message("No terminal path", "This Mac did not report a data port.") { session = null }
             }
         }
-        else -> Message("Connecting", endpoint.host, null)
+        else -> Message("Connecting to ${chosen.label}", "${endpoint.host}:${endpoint.port}", onForget = null)
     }
 }
 
@@ -327,8 +336,59 @@ private fun Field(label: String, value: String, numeric: Boolean = false, onChan
     )
 }
 
+/**
+ * Every device in the net, which is the whole point of a net.
+ *
+ * There is nothing to scan here. A Mac hands over the roster on every connect,
+ * so a second machine appears in this list by having joined the same net — the
+ * phone has never spoken to it and does not need to before dialling it.
+ *
+ * A member with no address is still SHOWN, greyed. That is another phone, or a
+ * Mac that is not serving: leaving it out would make a device you can see in the
+ * net on your Mac look like one your phone never heard of.
+ */
 @Composable
-private fun Message(title: String, detail: String, onForget: (() -> Unit)? = null) {
+private fun DeviceListScreen(
+    netName: String,
+    members: List<RosterEntry>,
+    onPick: (RosterEntry) -> Unit,
+    onForget: () -> Unit,
+) {
+    Column(
+        Modifier.fillMaxSize().background(Color(ShepherdPalette.ground)).padding(24.dp),
+    ) {
+        Text(netName, color = Color(ShepherdPalette.textPrimary), fontSize = 20.sp)
+        Text(
+            if (members.isEmpty()) "No other devices yet" else "Pick a device",
+            color = Color(ShepherdPalette.textDim),
+            fontSize = 12.sp,
+            modifier = Modifier.padding(top = 4.dp, bottom = 16.dp),
+        )
+        members.forEach { member ->
+            Button(
+                onClick = { onPick(member) },
+                enabled = member.reachable,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            ) {
+                Text(
+                    if (member.reachable) member.name else "${member.name} — not serving",
+                )
+            }
+        }
+        Button(
+            onClick = onForget,
+            modifier = Modifier.fillMaxWidth().padding(top = 24.dp),
+        ) { Text("Leave this net") }
+    }
+}
+
+@Composable
+private fun Message(
+    title: String,
+    detail: String,
+    forgetLabel: String = "Forget this Mac",
+    onForget: (() -> Unit)? = null,
+) {
     Box(
         Modifier.fillMaxSize().background(Color(ShepherdPalette.ground)),
         contentAlignment = Alignment.Center,
@@ -342,7 +402,7 @@ private fun Message(title: String, detail: String, onForget: (() -> Unit)? = nul
                 modifier = Modifier.padding(top = 6.dp),
             )
             onForget?.let {
-                Button(onClick = it, modifier = Modifier.padding(top = 16.dp)) { Text("Forget this Mac") }
+                Button(onClick = it, modifier = Modifier.padding(top = 16.dp)) { Text(forgetLabel) }
             }
         }
     }

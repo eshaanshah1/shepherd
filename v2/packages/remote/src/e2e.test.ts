@@ -330,6 +330,49 @@ describe('a paired device, over TLS, driving a real pty', () => {
   });
 
   /**
+   * A roster entry has to be DIALABLE, or the whole "you never scan twice" claim
+   * is false: a member reads the roster to find the others.
+   *
+   * The address is built from two halves on purpose — the IP as WE saw it, and
+   * the port as the member TOLD us. Its source port is ephemeral and belongs to
+   * the connection rather than to the member, and recording that is what made
+   * the first roster useless.
+   */
+  it('records what a member serves on, and hands the roster to the client', async () => {
+    const h = await host();
+    h.server.showCode();
+
+    const phone = device(h.port, h.identity.pin);
+    await phone.ready;
+    phone.send(hello({ pairingCode: '424242', advertise: { port: 9876, dataPort: 9877 } }));
+    await waitFor(() => phone.of(REMOTE.accepted).length > 0, 'the accept');
+    await waitFor(() => h.net.roster(h.netId).length > 0, 'the roster entry');
+
+    /**
+     * Over loopback there is deliberately no address to record — see
+     * `rosterAddress`, whose IP-and-advertised-port rule is unit-tested. What a
+     * real socket adds here is that the DATA port survives the trip, which is
+     * the half a client cannot derive on its own.
+     */
+    const entry = h.net.roster(h.netId).find((e) => e.memberId === 'phone-1');
+    expect(entry?.dataPort).toBe(9877);
+
+    /**
+     * The roster reaches the client, and it INCLUDES THE MAC SENDING IT.
+     *
+     * A member never records itself — a roster entry is written when somebody
+     * connects — so without this the phone would be handed a list of everyone
+     * except the machine it is talking to, and lose it the moment it looked at
+     * the list rather than the link it arrived by.
+     */
+    const answer = phone.of(REMOTE.accepted)[0]?.json as {
+      roster: Array<{ memberId: string; addrs: string[] }>;
+    };
+    expect(answer.roster.map((e) => e.memberId)).toContain('phone-1');
+    expect(answer.roster.map((e) => e.memberId)).toContain('this-mac');
+  });
+
+  /**
    * The case the whole design exists for: a device that joined SOMEWHERE ELSE
    * walks up to this Mac, which has never seen it, and is admitted with nothing
    * shown to anybody.
