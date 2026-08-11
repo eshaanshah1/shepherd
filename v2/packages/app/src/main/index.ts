@@ -89,6 +89,8 @@ import { registerCaptureCommand } from './capture-command.ts';
 import { registerReloadCommand } from './reload-command.ts';
 import { registerSettingsCommands } from './settings-commands.ts';
 import { GENERAL_PAGE } from './settings-general.ts';
+import { registerSettingsIpc } from './settings-ipc.ts';
+import { registerSettingsVisibility } from './settings-visibility.ts';
 
 /**
  * The Electron entry point (electron-vite builds this to `out/main`, and
@@ -452,13 +454,25 @@ const attention = new AttentionStore({ layout, viewing, bus, logger });
  */
 let appActive = true;
 
+/**
+ * Whether the settings screen covers the grid.
+ *
+ * One writer: the `window.settings` command. It is read by `syncPresence` below,
+ * which is what makes ADR 0020's predicate account for a takeover — and it is the
+ * clause `api-layout.ts` has promised since M1 ("not covered by a full-takeover
+ * overlay") with nothing implementing it.
+ */
+let settingsOpen = false;
+
 function syncPresence(): void {
   viewing.setPresence({
     appActive,
     // Not ours to be frontmost in: a switch driven from the CLI while the app is
     // in the background must not resurrect a focused root.
     focusedRoot: appActive ? activeRoot() : null,
-    overlay: false,
+    // An agent that blocks while the user is reading settings must still notify,
+    // and reading settings must not mark a pane as seen.
+    overlay: settingsOpen,
   });
 }
 
@@ -1071,6 +1085,24 @@ void app.whenReady().then(async () => {
    * table that has not been filled in yet is a refusal nobody asked for.
    */
   registerSettingsCommands({ registry, settings, bus });
+
+  /**
+   * The screen's own two halves: the channels the page reads it through, and the
+   * one command that moves it.
+   *
+   * Both effects of that command happen here, in one place — the page is told, and
+   * presence is recomputed — because a takeover the predicate did not hear about
+   * is a pane reported as seen while a settings screen covers it.
+   */
+  const settingsIpc = registerSettingsIpc({ registry, bus });
+  registerSettingsVisibility({
+    registry,
+    onChange: (open) => {
+      settingsOpen = open;
+      settingsIpc.pushVisibility(open);
+      syncPresence();
+    },
+  });
 
   // Extensions, after the command table exists and before the sockets open — so
   // a CLI client cannot arrive before `diagnostics.ping` is registered, and so a

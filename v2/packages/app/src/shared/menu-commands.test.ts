@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { LAYOUT_COMMANDS } from '@shepherd/core/layout';
-import { COMMANDS, commandIds } from './commands.ts';
+import { COMMANDS, SETTINGS_VISIBILITY_COMMAND, commandIds } from './commands.ts';
 import { MENU_INVOCATIONS, unmappedCommands } from './menu-commands.ts';
 
 /**
@@ -13,7 +13,16 @@ import { MENU_INVOCATIONS, unmappedCommands } from './menu-commands.ts';
  * values in the layout, and the one a screenshot cannot tell you is wrong.
  */
 
-const kernelCommands = new Set<string>(Object.values(LAYOUT_COMMANDS));
+/**
+ * Every verb a menu item is allowed to name.
+ *
+ * `LAYOUT_COMMANDS` is core's, read rather than restated so a renamed kernel verb
+ * fails here instead of at the first click. `SETTINGS_VISIBILITY_COMMAND` is
+ * main's — it is a window concern, like `window.reload`, so it is not in core's
+ * table — and it is read from the same constant `settings-visibility.ts`
+ * registers with, which is what keeps the two from drifting.
+ */
+const kernelCommands = new Set<string>([...Object.values(LAYOUT_COMMANDS), SETTINGS_VISIBILITY_COMMAND]);
 
 describe('MENU_INVOCATIONS', () => {
   it('maps every menu command, and nothing else', () => {

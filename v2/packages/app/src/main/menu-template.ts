@@ -41,6 +41,21 @@ export function menuTemplate({ appName, isDev }: MenuOptions): MenuItemSpec[] {
       submenu: [
         { role: 'about', label: `About ${appName}` },
         { type: 'separator' },
+        {
+          id: COMMANDS.openSettings,
+          label: 'Settings…',
+          /*
+           * The macOS-standard accelerator, and the one gesture in this app that
+           * belongs in the menu bar rather than in the page. ⌘F and ⌘K are bound
+           * in the renderer because AppKit resolving them first would make a find
+           * bar and a palette impossible to close with the key that opened them;
+           * ⌘, has no such second meaning, and Settings is the first place
+           * anybody looks in this menu.
+           */
+          accelerator: 'CmdOrCtrl+,',
+          command: COMMANDS.openSettings,
+        },
+        { type: 'separator' },
         { role: 'hide' },
         { role: 'hideOthers' },
         { role: 'unhide' },
