@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactElement } from 'react';
 import { IconArrowLeft } from '@tabler/icons-react';
-import { Empty, Field, IconButton, Row, SectionLabel, type SelectOption } from '@shepherd/ui';
+import { Empty, Field, IconButton, KeyCap, Row, SectionLabel, type SelectOption } from '@shepherd/ui';
 import { settingChoicesSchema, type SettingSpec, type SettingValue } from '@shepherd/sdk';
 import type { SettingsApi, SettingsPageDTO, SettingsSnapshotDTO } from '../shared/index.ts';
 import { resolveExtensionUi } from './extension-ui.ts';
@@ -101,42 +101,63 @@ export function SettingsScreen({ settings, onClose }: SettingsScreenProps): Reac
         />
         <h1 className="sh-settings__title">Settings</h1>
         <span className="sh-settings__spacer" />
-        <Field
-          value={query}
-          placeholder="Search settings"
-          data-testid="settings-search"
-          aria-label="Search settings"
-          onChange={(event) => setQuery(event.target.value)}
-        />
+        {/*
+          The frame is the WRAPPER's and the field is bare inside it — two bordered
+          boxes would be a double frame. The glyph and the cap are display-only:
+          `KeyCap` says which key focuses this without being a control that could
+          take the focus itself.
+        */}
+        <div className="sh-settings__search">
+          <span className="sh-settings__search-glyph" aria-hidden="true">
+            ⌕
+          </span>
+          <Field
+            variant="bare"
+            value={query}
+            placeholder="Search settings"
+            data-testid="settings-search"
+            aria-label="Search settings"
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          <KeyCap>⌘F</KeyCap>
+        </div>
       </header>
 
       <div className="sh-settings__body">
         <nav className="sh-settings__nav" aria-label="Settings sections">
-          {pages.map((candidate) => (
-            <Row
-              key={candidate.id}
-              role="button"
-              tabIndex={0}
-              data-testid="settings-nav-item"
-              data-page={candidate.id}
-              selected={candidate.id === page?.id}
-              /*
-                No `meta` here, and no owner.
+          {navGroups(pages).map(([label, group]) => (
+            <div className="sh-settings__nav-group" key={label}>
+              {/* Static labels, not collapsible: two groups of one to three rows
+                  have nothing to collapse, and a disclosure would be a control
+                  whose only effect is to hide two words. */}
+              <SectionLabel>{label}</SectionLabel>
+              {group.map((candidate) => (
+                <Row
+                  key={candidate.id}
+                  role="button"
+                  tabIndex={0}
+                  data-testid="settings-nav-item"
+                  data-page={candidate.id}
+                  selected={candidate.id === page?.id}
+                  /*
+                    No `meta` here, and no owner.
 
-                `Row.meta` is mono (it is for machine-produced text) and shares the
-                trailing cell, so in a fixed-width nav it won the space and
-                ELLIPSISED the title away: the list read `General / agents-core /
-                worktree-hook` — two package names and one section. The nav is a
-                list of subjects; which extension owns a page belongs on the page,
-                beside its heading.
-              */
-              onClick={() => setSelected(candidate.id)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' || event.key === ' ') setSelected(candidate.id);
-              }}
-            >
-              {candidate.title}
-            </Row>
+                    `Row.meta` is mono (it is for machine-produced text) and shares
+                    the trailing cell, so in a fixed-width nav it won the space and
+                    ELLIPSISED the title away: the list read `General / agents-core
+                    / worktree-hook` — two package names and one section. The nav is
+                    a list of subjects; which extension owns a page belongs on the
+                    page, beside its heading.
+                  */
+                  onClick={() => setSelected(candidate.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') setSelected(candidate.id);
+                  }}
+                >
+                  {candidate.title}
+                </Row>
+              ))}
+            </div>
           ))}
         </nav>
 
@@ -182,16 +203,46 @@ function ownerLabel(owner: string): string | undefined {
   return at === -1 ? owner : owner.slice(at + 1);
 }
 
-/** The heading of a page, with the extension that contributed it. */
+/**
+ * The nav, in two groups: what the APP is, and what an extension added.
+ *
+ * The split is `ownerLabel`'s own predicate, so "does this page belong to the app"
+ * has one answer in this file. Order inside each group is the registry's
+ * (`page.order`), which `filterPages` preserves — grouping must not reorder.
+ *
+ * A group with no pages is omitted rather than drawn empty: a fresh profile with no
+ * extensions should not be told there is an Extensions section with nothing in it.
+ */
+function navGroups(pages: readonly SettingsPageDTO[]): [string, readonly SettingsPageDTO[]][] {
+  const app = pages.filter((page) => ownerLabel(page.owner) === undefined);
+  const extensions = pages.filter((page) => ownerLabel(page.owner) !== undefined);
+  return [
+    ...(app.length > 0 ? ([['App', app]] as [string, readonly SettingsPageDTO[]][]) : []),
+    ...(extensions.length > 0 ? ([['Extensions', extensions]] as [string, readonly SettingsPageDTO[]][]) : []),
+  ];
+}
+
+/**
+ * The page's header: what this page is, who contributed it, and one sentence.
+ *
+ * The title is an `h2` at the `title` step — the one type step in the app — and not
+ * a `SectionLabel`. A 10px tracked micro-label is a GROUP voice, so using it here
+ * made the page heading and the card inside it speak at the same volume, and
+ * nothing said which contained which.
+ */
 function PageHeading({ page }: { readonly page: SettingsPageDTO }): ReactElement {
   const owner = ownerLabel(page.owner);
   return (
-    <div className="sh-settings__heading">
-      <SectionLabel role="heading" aria-level={2}>
-        {page.title}
-      </SectionLabel>
-      {owner !== undefined && <span className="sh-settings__owner">{owner}</span>}
-    </div>
+    <header className="sh-settings__header">
+      <div className="sh-settings__heading">
+        <h2 className="sh-settings__page-title">{page.title}</h2>
+        {owner !== undefined && <span className="sh-settings__owner">{owner}</span>}
+      </div>
+      {/* Nothing when the page supplied none — see `SettingsPage.description`. */}
+      {page.description !== undefined && (
+        <p className="sh-settings__page-description">{page.description}</p>
+      )}
+    </header>
   );
 }
 
@@ -221,34 +272,66 @@ function SpecPage({
   readonly onWrite: (key: string, value: SettingValue) => Promise<void>;
   readonly onReset: (key: string) => Promise<void>;
 }): ReactElement {
-  const dynamic = useDynamicChoices(page, settings);
+  const { choices: dynamic, retry } = useDynamicChoices(page, settings);
   const groups = groupSpecs(page.settings ?? []);
 
   return (
     <>
       <PageHeading page={page} />
-      {groups.map(([group, specs]) => (
-        <div className="sh-settings__group" key={group ?? ''}>
-          {group !== undefined && <SectionLabel>{group}</SectionLabel>}
-          {specs.map((spec) => {
-            const resolved = spec.choicesFrom === undefined ? undefined : dynamic[spec.key];
-            return (
-              <SettingRow
-                key={spec.key}
-                spec={spec}
-                value={values[spec.key] ?? spec.default}
-                isDefault={defaults.includes(spec.key)}
-                choices={resolved?.choices}
-                busy={resolved?.busy ?? spec.choicesFrom !== undefined}
-                choicesError={resolved?.error}
-                error={errors[spec.key]}
-                onChange={(next) => void onWrite(spec.key, next)}
-                onReset={() => void onReset(spec.key)}
-              />
-            );
-          })}
-        </div>
-      ))}
+      {groups.map(([group, specs]) => {
+        /**
+         * Ember appears exactly ONCE per card, in its band.
+         *
+         * Every row on a failed page has the same cause, so a row-level error was
+         * the same sentence repeated down the page in the loudest colour the
+         * palette has. The card owns the fact; the rows say what to do about it.
+         */
+        const unavailable = specs.some((spec) => dynamic[spec.key]?.error !== undefined);
+        return (
+          <div className="sh-settings__group" key={group ?? page.id}>
+            <div className="sh-settings__group-head">
+              {/* The band's label is the specs' own `group`, and the page's title
+                  when they declared none — a card with no name is the "unlabelled
+                  boxes" complaint one level up. */}
+              <span>{group ?? page.title}</span>
+              {unavailable && (
+                <span className="sh-settings__group-status">
+                  <span className="sh-settings__group-dot" aria-hidden="true" />
+                  choices unavailable
+                </span>
+              )}
+            </div>
+            {specs.map((spec, at) => {
+              const resolved = spec.choicesFrom === undefined ? undefined : dynamic[spec.key];
+              /**
+               * "Waiting on an agent above" — the SECOND row of an unresolved page.
+               *
+               * Not an error: the model a vendor offers depends on which vendor, so
+               * a model row under an unresolved agent row is waiting rather than
+               * broken, and repeating the failure there would say otherwise.
+               */
+              const waiting = at > 0 && specs.some((other, before) => before < at && dynamic[other.key]?.error !== undefined);
+              return (
+                <SettingRow
+                  key={spec.key}
+                  spec={spec}
+                  value={values[spec.key] ?? spec.default}
+                  isDefault={defaults.includes(spec.key)}
+                  choices={resolved?.choices}
+                  busy={resolved?.busy ?? spec.choicesFrom !== undefined}
+                  choicesError={resolved?.error}
+                  {...(waiting ? { waiting: true } : {})}
+                  owner={ownerLabel(page.owner) ?? page.title}
+                  error={errors[spec.key]}
+                  onChange={(next) => void onWrite(spec.key, next)}
+                  onReset={() => void onReset(spec.key)}
+                  onRetryChoices={() => retry(spec.key)}
+                />
+              );
+            })}
+          </div>
+        );
+      })}
     </>
   );
 }
@@ -286,7 +369,7 @@ interface DynamicChoices {
 function useDynamicChoices(
   page: SettingsPageDTO,
   settings: SettingsApi | null,
-): Readonly<Record<string, DynamicChoices>> {
+): { readonly choices: Readonly<Record<string, DynamicChoices>>; readonly retry: (key: string) => void } {
   const [state, setState] = useState<Readonly<Record<string, DynamicChoices>>>({});
   /**
    * Keyed by SETTING, not by command — two rows on this page name the same command
@@ -320,7 +403,28 @@ function useDynamicChoices(
     };
   }, [asks, page.id, settings]);
 
-  return state;
+  /**
+   * The USER's retry — the one the no-automatic-retry rule above leaves room for.
+   *
+   * Still no loop: an extension that is not there will not be there a second later
+   * either, and a spinner that never stops says less than a row that says why. But
+   * a person who has just fixed the cause (activated the extension, restarted the
+   * app) has no way to ask again, and "reopen the settings screen" is not an
+   * instruction anybody should have to discover.
+   */
+  const retry = useCallback(
+    (key: string) => {
+      const ask = asks.find((candidate) => candidate.key === key);
+      if (settings === null || ask === undefined) return;
+      setState((was) => ({ ...was, [key]: { busy: true } }));
+      void settings.invoke(page.id, ask.command, { key }).then((answer) => {
+        setState((was) => ({ ...was, [key]: readChoices(answer) }));
+      });
+    },
+    [asks, page.id, settings],
+  );
+
+  return { choices: state, retry };
 }
 
 /** The answer crossed a port, so it is parsed rather than cast. */

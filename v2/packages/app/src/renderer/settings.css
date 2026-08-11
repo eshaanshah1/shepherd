@@ -10,29 +10,76 @@
  * the breadcrumb belong to the window, not to whatever is on the stage, and a
  * layer that covered them would put the close button of the app underneath a
  * screen of ours.
+ *
+ * Every colour here is a tier-2 ROLE and every length a member of the derived
+ * scale. There is no hex in this file and there must never be: a colour typed into
+ * a stylesheet is a colour the terminal grid does not know about, which is the
+ * drift v1 had between `Theme.swift` and `writeBaseTheme()`.
  */
 
 .sh-settings {
+  /*
+   * Three tier-3 values, declared once because they are THIS screen's composition
+   * and no other component shares them (a value two components share is a role or
+   * a metric one tier up).
+   *
+   * The control track — `control-lg * 7` ≈ 238px — is the load-bearing one. The row
+   * used to be `justify-content: space-between` across the full window, so on a
+   * wide display the control travelled to the right edge and a label and its
+   * control were a screen apart. Fixed, they read as a pair, and every control on
+   * every page lines up in one column.
+   */
+  --sh-settings-control-track: calc(var(--sh-control-lg) * 7);
+  /* ~640px: wide enough for a sentence at the serif step, narrow enough that the
+     pair above can never separate. */
+  --sh-settings-measure: calc(var(--sh-control-lg) * 18.8);
+  /* 204px. At 136px "Worktree hooks" ellipsised to "Worktree …", which is a nav
+     that asks you to guess. */
+  --sh-settings-nav-width: calc(var(--sh-control-lg) * 6);
+
   position: absolute;
-  inset: 0;
+  /*
+   * BELOW the plate, not over it.
+   *
+   * The traffic lights are the window's, drawn by macOS over the page at top-left
+   * (`titleBarStyle: 'hiddenInset'`), and `.sh-plate` reserves their 84px. At
+   * `inset: 0` this layer covered that reservation, so the lights landed on top of
+   * the word "Settings" — and the drag region went with it. The plate stays
+   * visible: it says where you are, which is a fact about the window rather than
+   * about what is on the stage.
+   */
+  top: var(--sh-plate-height);
+  right: 0;
+  bottom: 0;
+  left: 0;
   z-index: 20;
   display: flex;
   flex-direction: column;
   background: var(--sh-surface);
 }
 
+/* ------------------------------------------------------------------------ bar */
+
+/*
+ * 44px, so the bar matches the plate above it instead of reading as a thinner
+ * strip stuck underneath it: `md lg` rather than `sm md`.
+ */
 .sh-settings__bar {
   display: flex;
   align-items: center;
-  gap: var(--sh-space-sm);
-  padding: var(--sh-space-sm) var(--sh-space-md);
+  gap: var(--sh-space-md);
+  padding: var(--sh-space-md) var(--sh-space-lg);
   border-bottom: var(--sh-hairline) solid var(--sh-line);
 }
 
+/*
+ * `body`, not `medium`. The bar names the whole surface, and at the control-label
+ * step it spoke more quietly than the section headings inside the page it holds.
+ */
 .sh-settings__title {
   margin: 0;
   font-family: var(--sh-font-sans);
-  font-size: var(--sh-font-size-medium);
+  font-size: var(--sh-font-size-body);
   font-weight: 500;
   color: var(--sh-text);
 }
@@ -41,103 +88,253 @@
   flex: 1 1 auto;
 }
 
+/*
+ * The search box: fixed at ~260px so it does not grow with the window, with a
+ * leading glyph and a trailing keycap inside its own frame.
+ *
+ * The frame is HERE and the field goes bare inside it. Two bordered boxes — one for
+ * the field, one for the group holding the cap — is a double frame, and `Field`'s
+ * own border is the one that gives way.
+ */
+.sh-settings__search {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-sm);
+  width: calc(var(--sh-control-lg) * 7.6);
+  height: var(--sh-control-md);
+  padding: 0 var(--sh-space-md);
+  border: var(--sh-hairline) solid var(--sh-line);
+  border-radius: var(--sh-radius-sm);
+  background: var(--sh-surface-sunken);
+}
+
+.sh-settings__search-glyph {
+  flex: 0 0 auto;
+  font-size: var(--sh-font-size-small);
+  line-height: 1;
+  color: var(--sh-text-faint);
+}
+
+.sh-settings__search .sh-ui-field {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Bare inside the frame above — see `.sh-settings__search`. */
+.sh-settings__search .sh-ui-field__control {
+  height: auto;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+/* ----------------------------------------------------------------------- body */
+
 .sh-settings__body {
   flex: 1 1 auto;
   display: grid;
-  /* The nav is fixed and the page takes the rest. `minmax(0, 1fr)` rather than
-     `1fr`, or a long unbroken value in a field stretches the column past the
-     window and the whole screen scrolls sideways. */
-  /* Wide enough for the longest section name a contributed page is likely to
-     have: "Worktree hooks" ellipsised to "Worktree …" at four, which makes the nav
-     ask you to guess. */
-  grid-template-columns: calc(var(--sh-control-lg) * 7) minmax(0, 1fr);
+  /* `minmax(0, 1fr)` rather than `1fr`: a long unbroken value in a field would
+     otherwise stretch the column past the window and scroll the whole screen
+     sideways. */
+  grid-template-columns: var(--sh-settings-nav-width) minmax(0, 1fr);
   min-height: 0;
 }
 
+/* ------------------------------------------------------------------------ nav */
+
 .sh-settings__nav {
   overflow-y: auto;
-  padding: var(--sh-space-sm);
+  padding: var(--sh-space-md) 0;
   border-right: var(--sh-hairline) solid var(--sh-line);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 /*
- * A nav entry is a NAME the app says, so it is sans.
+ * A nav entry is a NAME the app says, so it is sans — selected or not.
  *
- * `Row`'s label inherits, and the shell's own rules still set mono in the sections
- * nobody has been through — so a section title came out in the face reserved for
- * what the MACHINE produced (`styles.css` states that split). This is the shell
- * saying "General", not a path or an id.
+ * `Row`'s label inherits, and the shell's own stylesheet still sets mono in the
+ * sections nobody has been through, so an unselected entry came out in the face
+ * reserved for what the MACHINE produced (`styles.css` states that split). That is
+ * what made "Models" and "Worktree hooks" read as package names.
  */
 .sh-settings__nav .sh-ui-row__label {
   font-family: var(--sh-font-sans);
 }
 
-/* The page scrolls in ITS OWN box. A settings screen whose whole body scrolled
-   would take the nav off the top of the window, and "where am I" is the one thing
-   the nav is for. */
-.sh-settings__page {
-  overflow-y: auto;
-  padding: var(--sh-space-lg);
+/*
+ * The row's box is `Row`'s and stays `Row`'s — no height, no padding, no fill
+ * declared here. Only the horizontal inset is this screen's, so the selected fill
+ * stops short of the divider rather than running into it.
+ */
+.sh-settings__nav .sh-ui-row {
+  margin: 0 var(--sh-space-sm);
 }
+
+/* `md` between the two groups, so App and Extensions read as two things rather
+   than one list with labels in it. */
+.sh-settings__nav-group + .sh-settings__nav-group {
+  margin-top: var(--sh-space-md);
+}
+
+/* ----------------------------------------------------------------------- page */
 
 /*
- * The MEASURE, and it is the difference between a settings page and a spreadsheet.
+ * 26px — the composer's documented inset (`xl + lg`) rather than `lg`, because this
+ * is a reading surface and not a list.
  *
- * A row is label-left / control-right, so on a 2000px window the control ended up
- * a screen and a half from the label it belongs to and the page read as two
- * unrelated columns. Capped and left-aligned instead: the pair stays a pair at any
- * window size, and a contributed component written for a modal (worktree-hook's
- * editor was an overlay until this landed) is not stretched to a width nobody
- * designed it at.
+ * The page scrolls in ITS OWN box: a settings screen whose whole body scrolled
+ * would take the nav off the top of the window, and "where am I" is the one thing
+ * the nav is for.
  */
-.sh-settings__measure {
-  max-width: calc(var(--sh-control-lg) * 18);
+.sh-settings__page {
+  overflow-y: auto;
+  padding: calc(var(--sh-space-xl) + var(--sh-space-lg));
 }
 
-/* The heading, and who contributed the page — the nav cannot say it (see the nav
-   row's comment in settings-screen.tsx), so this is where it goes. */
+.sh-settings__measure {
+  max-width: var(--sh-settings-measure);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--sh-space-xl) + var(--sh-space-sm));
+}
+
+/* ---------------------------------------------------------------- page header */
+
+.sh-settings__header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sh-space-sm);
+}
+
 .sh-settings__heading {
   display: flex;
   align-items: baseline;
-  gap: var(--sh-space-sm);
-  margin-bottom: var(--sh-space-sm);
+  gap: var(--sh-space-md);
 }
 
+/*
+ * `title` (17px) — the one type step in the app, and a settings page is the right
+ * place for it.
+ *
+ * It was a `SectionLabel`: a 10px tracked micro-label is a GROUP voice, so the page
+ * title and the group inside it spoke at the same volume and nothing said which
+ * contained which.
+ */
+.sh-settings__page-title {
+  margin: 0;
+  font-family: var(--sh-font-sans);
+  font-size: var(--sh-font-size-title);
+  font-weight: 500;
+  color: var(--sh-text);
+}
+
+/* Which extension contributed this page. Mono, because it is an id. */
 .sh-settings__owner {
   font-family: var(--sh-font-mono);
   font-size: var(--sh-font-size-small);
   color: var(--sh-text-faint);
 }
 
-.sh-settings__group + .sh-settings__group {
-  margin-top: var(--sh-space-lg);
+/* Rule 6: serif only where the app speaks in sentences, and this is the one
+   sentence on the page. */
+.sh-settings__page-description {
+  margin: 0;
+  font-family: var(--sh-font-serif);
+  font-size: var(--sh-font-size-large);
+  line-height: var(--sh-line-height);
+  color: var(--sh-text-dim);
 }
 
+/* ----------------------------------------------------------------- group card */
+
 /*
- * A group is a BOX, not a run of rows.
+ * A group is a CARD that names itself.
  *
- * "I have no idea where things begin and where they end" — the hairline between
- * rows said "these are separated" without ever saying what they belonged to. A
- * surface plus a border says both, and it costs no height per row.
+ * The luminance step from `surface` to `surfaceRaised` IS the elevation — there is
+ * no shadow anywhere in this app (rule 2). `overflow: hidden` so the header band
+ * runs full-bleed inside the radius, and the card's own padding is 0 because the
+ * rows own theirs.
  */
 .sh-settings__group {
   border: var(--sh-hairline) solid var(--sh-line);
   border-radius: var(--sh-radius-md);
   background: var(--sh-surface-raised);
-  padding: 0 var(--sh-space-md);
+  /*
+   * NO `overflow: hidden`, however tempting.
+   *
+   * It was there to keep the header band full-bleed inside the radius, and it
+   * clipped every `Select`'s listbox — the options opened inside the card and were
+   * cut off at its edge, so the control looked like it had nothing to offer. The
+   * band rounds its own top corners instead (below), which costs one rule and
+   * leaves the popup free.
+   */
+}
+
+.sh-settings__group + .sh-settings__group {
+  /* Nothing: `.sh-settings__measure`'s gap owns the space between cards, so a
+     second opinion here would double it. */
+  margin-top: 0;
+}
+
+.sh-settings__group-head {
+  /* Its own top corners, since the card can no longer clip them — see above. */
+  border-radius: calc(var(--sh-radius-md) - var(--sh-hairline)) calc(var(--sh-radius-md) - var(--sh-hairline)) 0 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-md);
+  height: var(--sh-row-height);
+  padding: 0 var(--sh-space-lg);
+  border-bottom: var(--sh-hairline) solid var(--sh-line);
+  font-family: var(--sh-font-sans);
+  font-size: var(--sh-micro-font-size);
+  line-height: 1;
+  letter-spacing: var(--sh-micro-tracking-wide);
+  text-transform: uppercase;
+  color: var(--sh-text-faint);
+  white-space: nowrap;
+}
+
+/* The band's right-hand cell. Mono at nano, because what it reports is machine
+   vocabulary — an env var, a failed command. */
+.sh-settings__group-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sh-space-sm);
+  margin-left: auto;
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-nano);
+  letter-spacing: var(--sh-micro-tracking);
+  text-transform: none;
+  color: var(--sh-text-faint);
 }
 
 /*
- * One row: text on the left, control on the right, aligned to the top rather than
- * centred — a two-line description beside a switch reads as the switch drifting
- * down the row when they are centred against each other.
+ * Ember, exactly once per page: the CARD says its choices are unavailable and no
+ * row repeats it. `danger` is the role for "this did not happen".
+ */
+.sh-settings__group-dot {
+  width: var(--sh-space-xs);
+  height: var(--sh-space-xs);
+  border-radius: 50%;
+  background: var(--sh-danger);
+}
+
+/* ------------------------------------------------------------------------ row */
+
+/*
+ * Two tracks: the text takes what is left, the control takes the fixed track.
+ *
+ * `align-items: start`, not centre — a two-line description beside a select reads
+ * as the select drifting down the row when the two are centred against each other.
  */
 .sh-setting {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--sh-settings-control-track);
   gap: var(--sh-space-lg);
-  padding: var(--sh-space-md) 0;
+  align-items: start;
+  padding: var(--sh-space-lg);
 }
 
 .sh-setting + .sh-setting {
@@ -148,11 +345,38 @@
   min-width: 0;
 }
 
+.sh-setting__label-line {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-md);
+}
+
 .sh-setting__label {
-  display: block;
   font-family: var(--sh-font-sans);
   font-size: var(--sh-font-size-body);
   color: var(--sh-text);
+}
+
+/*
+ * `prompt` — the "here, now" role.
+ *
+ * A modified row was signalled only by the reset button appearing, which answers
+ * "can I undo this" rather than "is this value mine".
+ */
+.sh-setting__changed-dot {
+  flex: 0 0 auto;
+  width: var(--sh-space-xs);
+  height: var(--sh-space-xs);
+  border-radius: 50%;
+  background: var(--sh-prompt);
+}
+
+.sh-setting__changed {
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-nano);
+  letter-spacing: var(--sh-micro-tracking);
+  text-transform: uppercase;
+  color: var(--sh-text-faint);
 }
 
 .sh-setting__description {
@@ -162,17 +386,261 @@
   color: var(--sh-text-dim);
 }
 
-/* A failed write, on the row that caused it. `danger`, which is the one role that
-   means "this did not happen". */
-.sh-setting__error {
-  margin: var(--sh-space-xs) 0 0;
-  font-size: var(--sh-font-size-small);
-  color: var(--sh-danger);
+.sh-setting__control {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sh-space-sm);
+  min-width: 0;
 }
 
-.sh-setting__control {
+.sh-setting__control-line {
   display: flex;
   align-items: center;
   gap: var(--sh-space-sm);
-  flex: 0 0 auto;
+}
+
+/*
+ * The control fills the track.
+ *
+ * `Select` carries a `min-width` for standing on its own; inside a fixed track that
+ * minimum is the one thing that could push the grid open. Scoped here rather than
+ * changed in the primitive — a track is this screen's composition, not a fact about
+ * selects.
+ */
+.sh-setting__control-line > .sh-ui-select,
+.sh-setting__control-line > .sh-ui-field {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/*
+ * A disabled control in a settings row reads as unavailable rather than as broken:
+ * the ink drops to `textDim` (`Select`'s own disabled rule) and the caret to `line`,
+ * so the box is visibly not a thing to press. No ember — that is the card's, once.
+ */
+.sh-setting__control-line > .sh-ui-select .sh-ui-select__trigger:disabled .sh-ui-select__caret {
+  border-color: var(--sh-line);
+}
+
+/* ------------------------------------------------------- degraded choices row */
+
+/*
+ * When a `choicesFrom` command fails the row keeps its SHAPE: a disabled select
+ * reading "No choices", one plain sentence, a retry, and the raw string behind a
+ * closed disclosure.
+ *
+ * It used to become an ember-outlined empty text box with `invalid-args: expected
+ * object, got undefined` under it, twice on one page — loud, and about nothing the
+ * person reading it can act on.
+ */
+.sh-setting__degraded {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-md);
+  flex-wrap: wrap;
+}
+
+.sh-setting__degraded-text {
+  font-size: var(--sh-font-size-small);
+  color: var(--sh-text-dim);
+}
+
+/* Quieter still: waiting on the row above is an order of operations, not a
+   failure. */
+.sh-setting__waiting {
+  font-size: var(--sh-font-size-small);
+  color: var(--sh-text-faint);
+}
+
+/*
+ * The raw message, once, behind a closed disclosure — and never deleted. This is
+ * the only place the failing command's own words are visible, and a failure whose
+ * text nobody can reach is a failure nobody can report.
+ */
+.sh-setting__raw {
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-nano);
+  line-height: var(--sh-line-height);
+  color: var(--sh-text-faint);
+  word-break: break-word;
+}
+
+.sh-setting__raw > summary {
+  cursor: pointer;
+  list-style: none;
+  letter-spacing: var(--sh-micro-tracking);
+  text-transform: uppercase;
+}
+
+.sh-setting__raw > summary::-webkit-details-marker {
+  display: none;
+}
+
+.sh-setting__raw > p {
+  margin: var(--sh-space-xs) 0 0;
+}
+
+/* ------------------------------------------------- a contributed page's cards */
+
+/*
+ * `worktree-hook`'s editor, which is a COMPONENT page (ADR 0033).
+ *
+ * Its rules live here rather than in the extension for the reason `styles.css`
+ * already gives: the renderer owns the SLOTS around a contributed view, and an
+ * extension may import `@shepherd/ui` but ships no stylesheet of its own. It reuses
+ * `.sh-settings__group` and its header band directly, so a contributed page and a
+ * kernel page are the same card by construction rather than by resemblance — the
+ * alternative is a second set of rules that drifts the first time either moves.
+ */
+.sh-hook {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--sh-space-xl) + var(--sh-space-sm));
+}
+
+.sh-hook__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sh-space-md);
+  padding: var(--sh-space-lg);
+}
+
+/* What the scope DOES, in body copy — it describes a script, so it is prose rather
+   than a field's label. */
+.sh-hook__purpose {
+  margin: 0;
+  font-family: var(--sh-font-sans);
+  font-size: var(--sh-font-size-body);
+  line-height: var(--sh-line-height);
+  color: var(--sh-text);
+}
+
+/* The purpose and its one input, in the same two tracks a settings row uses, so the
+   path lines up with the selects on every other page. */
+.sh-hook__pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--sh-settings-control-track);
+  gap: var(--sh-space-lg);
+  align-items: center;
+}
+
+/* A path is machine vocabulary. */
+.sh-hook__path .sh-ui-field__control {
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-medium);
+}
+
+/*
+ * The script WELL.
+ *
+ * A hook is a script: mono, in a sunken box with its own edge. `TextArea` is bare on
+ * the card by default, which is what made these read as unlabelled boxes — the edge
+ * is re-declared here rather than in the primitive because a well is this page's
+ * composition, not a fact about textareas.
+ */
+.sh-hook__well .sh-ui-field__control {
+  padding: var(--sh-space-md);
+  border: var(--sh-hairline) solid var(--sh-line);
+  border-radius: var(--sh-radius-sm);
+  background: var(--sh-surface-sunken);
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-medium);
+  line-height: var(--sh-line-height);
+  color: var(--sh-text);
+}
+
+/* The members and the affordance that adds one, on a line together. */
+.sh-hook__members-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sh-space-sm);
+}
+
+/* The members of a set. A list, because a set is one — and it holds members only:
+   the `+ repo` field is its sibling, or it would count as one. */
+.sh-hook__members {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sh-space-sm);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sh-hook__members > li {
+  display: inline-flex;
+}
+
+/* The `×` inside a `Pill`. `Pill` takes no `onClick` by design — it is a token, not
+   a control — so the remove is its own button in the pill's children. */
+.sh-hook__member-remove {
+  margin-left: var(--sh-space-xs);
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--sh-text-faint);
+  font: inherit;
+  cursor: pointer;
+}
+
+.sh-hook__member-remove:hover {
+  color: var(--sh-text);
+}
+
+/* The `+ repo` affordance: dashed, because it is where a member would go rather
+   than a member. */
+.sh-hook__member-add {
+  display: inline-flex;
+  min-width: calc(var(--sh-control-lg) * 3);
+  height: var(--sh-control-sm);
+  padding: 0 var(--sh-space-md);
+  border: var(--sh-hairline) dashed var(--sh-line);
+  border-radius: var(--sh-radius-sm);
+  align-items: center;
+}
+
+.sh-hook__member-add .sh-ui-field__control {
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-small);
+}
+
+.sh-hook__footer {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-md);
+  padding: var(--sh-space-md) var(--sh-space-lg);
+  border-top: var(--sh-hairline) solid var(--sh-line);
+}
+
+.sh-hook__footer-spacer {
+  flex: 1 1 auto;
+}
+
+/*
+ * The status, in the footer of the card that CAUSED it.
+ *
+ * There was one `<output>` at the bottom of the page for all three scopes, so
+ * "saved" appeared a screen away from whatever had just been saved.
+ */
+.sh-hook__status {
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-nano);
+  letter-spacing: var(--sh-micro-tracking);
+  text-transform: uppercase;
+  color: var(--sh-text-faint);
+}
+
+.sh-hook__stored {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* A stored hook is named by its PATH. `Row` owns the box — height, hover wash and
+   inverse video are its own and are not restated here. */
+.sh-hook__stored-row .sh-ui-row__label {
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-medium);
 }

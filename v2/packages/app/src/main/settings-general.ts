@@ -24,6 +24,7 @@ export { THEME_KEY, type ThemeSetting };
 export const GENERAL_PAGE: SettingsPage = {
   id: 'shepherd.general',
   title: 'General',
+  description: 'How the app looks and behaves, everywhere.',
   // 0, so it is first in the nav. Every page that declared no `order` sorts at
   // Infinity behind it (`SettingsRegistry.pages`).
   order: 0,
@@ -32,6 +33,10 @@ export const GENERAL_PAGE: SettingsPage = {
       key: THEME_KEY,
       type: 'enum',
       label: 'Theme',
+      // The card's header band is `spec.group`. Named rather than left to the
+      // page's own title, so the band says what the rows have in common — the
+      // page already says which page it is, one line above.
+      group: 'Appearance',
       description: 'Follow the system, or pin the app to one palette.',
       default: 'system',
       choices: [

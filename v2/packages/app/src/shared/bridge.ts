@@ -220,6 +220,8 @@ export interface ViewsApi {
 export interface SettingsPageDTO {
   readonly id: string;
   readonly title: string;
+  /** The page's one serif sentence. Absent = the header draws none. */
+  readonly description?: string;
   readonly owner: string;
   readonly order?: number;
   readonly component?: string;

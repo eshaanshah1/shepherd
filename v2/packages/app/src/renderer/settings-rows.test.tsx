@@ -99,19 +99,57 @@ describe('SettingRow', () => {
     expect(onReset).toHaveBeenCalled();
   });
 
-  it('leaves a dynamic enum EDITABLE when its choices failed to load, and says why', () => {
-    // The vendor could not be asked. A stored value you can neither see nor change
-    // is a setting you cannot undo.
+  it('keeps a stored value VISIBLE when its choices failed to load, and says why', () => {
+    /**
+     * The vendor could not be asked. A stored value you can neither see nor change
+     * is a setting you cannot undo — the claim this test has always made.
+     *
+     * What changed is the CONTROL, not the claim: the row used to degrade to a
+     * free-text `Field` (hence the old `querySelector('input')`), and it now keeps
+     * its shape as a disabled `Select` showing the stored value. So the value is
+     * still visible and the reason still reachable; it is no longer editable
+     * in place, and the affordance for acting on it is `retry` — asserted below.
+     */
     const { container } = mount(
       <SettingRow
         {...base}
         spec={{ key: 'x.model', type: 'enum', label: 'Model', default: null, nullable: true, choicesFrom: 'x.models' }}
         value="opus"
         choicesError="x.models is not a registered command"
+        onRetryChoices={() => {}}
       />,
     );
-    expect(container.querySelector<HTMLInputElement>('input')?.value).toBe('opus');
+    expect(container.textContent).toContain('opus');
     expect(container.textContent).toContain('not a registered command');
+    expect(container.querySelector('[data-testid="setting-retry"]')).not.toBeNull();
+  });
+
+  it('says No choices only when there is no stored value to show', () => {
+    const { container } = mount(
+      <SettingRow
+        {...base}
+        spec={{ key: 'x.model', type: 'enum', label: 'Model', default: null, nullable: true, choicesFrom: 'x.models' }}
+        value={null}
+        choicesError="x.models is not a registered command"
+      />,
+    );
+    expect(container.textContent).toContain('No choices');
+  });
+
+  it('keeps the raw message reachable but CLOSED, so the page is not shouting', () => {
+    // It is the only place the failing command's own words are visible, and a
+    // failure whose text nobody can reach is a failure nobody can report.
+    const { container } = mount(
+      <SettingRow
+        {...base}
+        spec={{ key: 'x.model', type: 'enum', label: 'Model', default: null, nullable: true, choicesFrom: 'x.models' }}
+        value={null}
+        choicesError="x.models is not a registered command"
+      />,
+    );
+    const raw = container.querySelector<HTMLDetailsElement>('[data-testid="setting-raw"]');
+    expect(raw).not.toBeNull();
+    expect(raw?.open).toBe(false);
   });
 
   it('keeps a failed write visible on its own row', () => {
