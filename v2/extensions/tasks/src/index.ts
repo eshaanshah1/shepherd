@@ -4,7 +4,6 @@ import {
   s,
   sessionId,
   toDisposable,
-  type AttentionLevel,
   type ExtensionContext,
   type PresentEffect,
   type Shepherd,
@@ -32,6 +31,7 @@ import { taskRootId } from './model/root-id.ts';
 const AGENTS_RESUME_TARGET = 'agents.resumeTarget';
 const AGENTS_RESUME_COMMAND = 'agents.resumeCommand';
 import { displayState } from './model/lifecycle.ts';
+import { isTaskAgentState, tintFor } from './model/agent-rollup.ts';
 import { synthTaskRoot } from './model/root-synth.ts';
 import { planLaunch } from './model/launch.ts';
 import { writePastedImages, type PastedImage } from './images.ts';
@@ -130,20 +130,25 @@ const CORRELATE_ATTEMPTS = 10;
 const CORRELATE_INTERVAL_MS = 500;
 
 /**
- * Core's `ATTENTION_TOPIC` and its payload, as a literal and a local shape.
+ * `agents-core`'s state topic and its payload, as a literal and a local shape.
  *
- * Extension code may import `@shepherd/sdk` and nothing else, so it cannot
- * reach `@shepherd/core` for either — the same reason `ext-host/api.ts` keeps
- * its own copy of this string. A topic name is public vocabulary, like a command
- * id; the interface is a read of what the bus carries and is deliberately
- * narrower than core's (a `PaneID` is an opaque string out here).
+ * Extension code may import `@shepherd/sdk` and nothing else, so it cannot reach
+ * `@shepherd/ext-agents-core` for either — the same reason `ext-host/api.ts`
+ * keeps its own copy of a topic string. A topic name is public vocabulary, like
+ * a command id; the interface is a read of what the bus carries and is
+ * deliberately narrower than the emitter's, with every field optional at the
+ * type level because it crossed a port.
  */
-const ATTENTION_TOPIC = 'attention.changed';
+const AGENT_STATE_TOPIC = 'agents.stateChanged';
 
-interface AttentionChanged {
-  readonly pane: string;
-  readonly level: AttentionLevel;
-  readonly reason: string;
+interface AgentStateChanged {
+  readonly pane?: string;
+  readonly to?: string;
+}
+
+/** What `agents.list` answers, read for the two fields the mirror needs. */
+interface AgentListAnswer {
+  readonly agents?: readonly { readonly pane?: unknown; readonly state?: unknown }[];
 }
 
 /**
@@ -269,7 +274,21 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * when a pane closes, so a `none` always arrives for an entry that stops
    * mattering.
    */
-  const attention = new Map<string, AttentionLevel>();
+  /**
+   * `paneId → agent state`, and the only copy of it this extension holds.
+   *
+   * A MIRROR, because `tasks` cannot ask: reads do not cross the port
+   * (`attention.get` throws `ACROSS_A_PORT`), so an extension subscribes to an
+   * announcement and keeps its own map. This REPLACES the attention mirror
+   * rather than joining it — `needs-you` was always derived from state upstream,
+   * so deriving it here removes a copy instead of adding one, and two mirrors of
+   * one fact are two things that can disagree.
+   *
+   * Keyed by PANE, which is why `agents.stateChanged` carries one: a task's
+   * record holds a `pending-` session id for the first seconds after a spawn,
+   * and only its pane is true.
+   */
+  const agentState = new Map<string, string>();
 
   /*
    * There is deliberately NO mirror of the active root here.
@@ -284,47 +303,101 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    */
 
   /**
-   * D4, made real: `needs-you` is READ from the panes, never written anywhere.
+   * D4, made real: what a task's agents are doing is READ from the panes, never
+   * written anywhere.
    *
-   * A task's sessions may include ones whose pane never mounted (`pane`
-   * undefined); those contribute nothing rather than a guess.
+   * A session whose pane never mounted contributes nothing rather than a guess,
+   * and so does one the mirror has not heard from — both are "no signal", which
+   * `rollUp` folds to idle.
    */
-  const attentionOf = (task: TaskRecord): readonly AttentionLevel[] =>
+  const agentStatesOf = (task: TaskRecord): readonly string[] =>
     task.sessions.flatMap((session) => {
-      const level = session.pane === undefined ? undefined : attention.get(session.pane);
-      return level === undefined ? [] : [level];
+      const state = session.pane === undefined ? undefined : agentState.get(session.pane);
+      return state === undefined ? [] : [state];
     });
 
   /**
-   * Subscribing to the topic, WITHOUT declaring the permission.
+   * Subscribing to the topic, WITHOUT declaring any permission.
    *
    * `events.on` is membership-gated only — being a loaded extension is the whole
    * of the check — while `attention.set`/`clear` are what the `attention`
    * permission guards. So this is a read of a fact `agents-core` publishes, and
-   * ADR 0026's single-writer rule is untouched: nothing below writes attention,
-   * it only mirrors what was announced. See the manifest's comment for why
+   * ADR 0026's single-writer rule is untouched: nothing below writes state, it
+   * only mirrors what was announced. See the manifest's comment for why
    * declaring the permission would be the actual violation.
    */
   ctx.subscriptions.push(
-    events.on<AttentionChanged>(ATTENTION_TOPIC, (payload) => {
+    events.on<AgentStateChanged>(AGENT_STATE_TOPIC, (payload) => {
       // Structural, not schematic: the payload crossed a port, and a malformed
       // one must be dropped rather than keying the mirror on `undefined` — which
-      // would then never be cleared, since no `none` can name that key.
-      if (typeof payload?.pane !== 'string') return;
-      let delta: boolean;
-      if (payload.level === 'none') {
-        delta = attention.delete(payload.pane);
-      } else {
-        delta = attention.get(payload.pane) !== payload.level;
-        attention.set(payload.pane, payload.level);
-      }
+      // could then never be cleared, since no later change can name that key.
+      if (typeof payload?.pane !== 'string' || typeof payload.to !== 'string') return;
+      const delta = agentState.get(payload.pane) !== payload.to;
+      agentState.set(payload.pane, payload.to);
       // The tree is pull-based (ADR 0031): the host re-asks `children()` only
       // when nudged, so a mirror that changed and did not nudge is a sidebar
-      // still showing the old grouping. Nudged on a real delta only, because a
-      // level can be re-announced with a new reason and nothing here has moved.
+      // still showing the old state. Nudged on a real delta only, because a
+      // state can be re-announced with a new reason and nothing here has moved.
       if (delta) changed();
     }),
   );
+
+  /**
+   * Follow first, then pull, and merge the snapshot UNDER what has arrived.
+   *
+   * An extension that only subscribes misses everything published before it
+   * woke, and every row would read idle until its session's next transition. The
+   * renderer solved this the same way and for the same reason (`app.tsx`): a
+   * transition landing between the two is newer than the snapshot by
+   * construction, so the snapshot must never overwrite it.
+   *
+   * Failure is a warn, not a throw. A seed that did not land costs accuracy
+   * until the next transition, which is the state this extension has always
+   * started in — and the line is what tells that apart from a dead wire.
+   */
+  void commands
+    .invoke<AgentListAnswer>('agents.list')
+    .then((answer) => {
+      if (!answer.ok) {
+        /**
+         * `unknown-command` is not a failure. It means no agent extension is
+         * loaded — a legitimate configuration, and one `tasks` must not require:
+         * with nobody publishing agent state there is nothing to seed and nothing
+         * to seed it FROM, so rows read idle and stay right. Warning about it
+         * would put a line at every startup of a build that is behaving
+         * correctly, which is how a log stops being read.
+         *
+         * Anything else IS worth a line — that is a seam that exists and did not
+         * answer, and the difference between it and a dead wire is this message.
+         */
+        const level = answer.error.code === 'unknown-command' ? 'debug' : 'warn';
+        ctx.log[level](`agents.list did not seed the agent-state mirror (${answer.error.code}); rows read idle until the next change`);
+        return;
+      }
+      /**
+       * Nothing to seed is not a complaint — `agents-core`'s own `readSessionRows`
+       * draws the line in exactly this place. An absent or unreadable list means
+       * no agent is tracked yet, which is the ordinary state of a build that has
+       * just started. The line worth printing is the one where the answer HAD
+       * rows and none of them were usable: that is the shape changing under us,
+       * and it is what tells a schema drift apart from a quiet morning.
+       */
+      const rows = Array.isArray(answer.value?.agents) ? answer.value.agents : [];
+      let seeded = 0;
+      for (const row of rows) {
+        if (typeof row?.pane !== 'string' || typeof row.state !== 'string') continue;
+        if (agentState.has(row.pane)) continue;
+        agentState.set(row.pane, row.state);
+        seeded += 1;
+      }
+      if (rows.length > 0 && seeded === 0) {
+        ctx.log.warn(`agents.list answered ${rows.length} row(s) and none carried a pane and a state`);
+      }
+      if (seeded > 0) changed();
+    })
+    .catch((error: unknown) => {
+      ctx.log.warn(`agents.list threw while seeding the agent-state mirror — ${String(error)}`);
+    });
 
   const suggestions = points.define<RepoSuggestionProvider>(REPO_SUGGESTIONS_POINT, {
     order: 'priority',
@@ -1355,7 +1428,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           // Derived here, never stored (D4) — from the live attention of the
           // panes this task's sessions are running in, read at the moment the
           // question is asked.
-          displayState: displayState(task.lifecycle, attentionOf(task)),
+          displayState: displayState(task.lifecycle, agentStatesOf(task)),
           root: rootOf(task),
           repos: task.repos.map((repo) => ({
             ...repo,
@@ -1907,12 +1980,16 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
 
           const rows: TreeItemOut[] = [];
           const rowFor = (task: TaskRecord): TreeItemOut => {
-            const state = displayState(task.lifecycle, attentionOf(task));
+            const state = displayState(task.lifecycle, agentStatesOf(task));
             return {
               id: task.id,
               label: task.title,
               description: state,
-              tint: state,
+              // The word the shell resolves. `isTaskAgentState` rather than a
+              // cast: `displayState` still returns the lifecycle union too, and
+              // the branch above has only excluded `archived` — the type cannot
+              // see that `review`/`done`/`draft` are written by nothing.
+              tint: isTaskAgentState(state) ? tintFor(state) : state,
               /*
                * WHICH root this row is — an identity, written unconditionally.
                *

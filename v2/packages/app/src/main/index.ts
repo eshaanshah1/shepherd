@@ -78,6 +78,7 @@ import { createSystemAlerts } from './system-alerts.ts';
 import { clearAgentState } from './agent-relay.ts';
 import { correlationEnv } from './correlation-env.ts';
 import { publishViewingEdges } from './viewing-topic.ts';
+import { publishSessionBound } from './session-bound.ts';
 import { registerCaptureCommand } from './capture-command.ts';
 import { registerReloadCommand } from './reload-command.ts';
 
@@ -411,6 +412,12 @@ function syncPresence(): void {
 const viewingTopic = publishViewingEdges({ viewing, layout, bus, logger });
 
 /**
+ * `session.bound` — the pane a session landed in. See the module for why the
+ * reconciliation sweep cannot infer this one.
+ */
+const boundTopic = publishSessionBound({ bus, by: KERNEL });
+
+/**
  * `session.exit` — a session ended, on the bus.
  *
  * An agent extension holds per-session state a process away: a vendor's
@@ -541,6 +548,8 @@ const bridge = new SessionBridge(host, {
     bind: (pane, session) => {
       layout.bindSession(pane, session);
       publishLayout();
+      // The pane a session lives in, announced once, at the moment it is true.
+      boundTopic.announce(pane, session);
       // The pane was focused before it had a session, so its viewing edge has
       // already been and gone. Replay the current value or this session's mirror
       // starts empty and a turn finishing in front of you reads as unseen.

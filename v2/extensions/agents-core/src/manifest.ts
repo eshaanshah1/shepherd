@@ -64,6 +64,9 @@ export const SESSIONS_LIST_COMMAND = 'sessions.list';
 export const VIEWING_TOPIC = 'session.viewing';
 export const SESSION_EXIT_TOPIC = 'session.exit';
 
+/** A session's pane, announced once when it binds. Main publishes it. */
+export const SESSION_BOUND_TOPIC = 'session.bound';
+
 /** What it publishes, for the chrome and for other extensions. */
 export const AGENT_STATE_TOPIC = 'agents.stateChanged';
 

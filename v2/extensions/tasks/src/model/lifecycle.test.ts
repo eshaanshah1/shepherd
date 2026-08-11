@@ -28,33 +28,38 @@ describe('the stored vocabulary', () => {
 });
 
 describe('displayState', () => {
-  it('is the lifecycle itself when no session wants anything', () => {
-    expect(displayState('running', ['none', 'info'])).toBe('running');
+  it('is the agents rollup for a running task, not the lifecycle', () => {
+    // The whole point: `running` covered working AND idle, so both were blue.
+    expect(displayState('running', ['working'])).toBe('working');
+    expect(displayState('running', ['idle'])).toBe('idle');
   });
 
-  it('is needs-you when a running task has a session at attention', () => {
-    expect(displayState('running', ['none', 'attention'])).toBe('needs-you');
+  it('is loudest-wins across the task’s sessions', () => {
+    expect(displayState('running', ['working', 'blocked'])).toBe('blocked');
   });
 
-  it('is needs-you for urgent too', () => {
-    expect(displayState('running', ['urgent'])).toBe('needs-you');
+  it('is idle for a running task whose sessions report nothing', () => {
+    // A task whose panes have no plugin loaded is genuinely quiet, and saying so
+    // is the honest answer. This is the case that will look like a regression.
+    expect(displayState('running', [])).toBe('idle');
   });
 
-  it('treats info as not wanting you — it is the level that does not alert', () => {
-    expect(displayState('running', ['info'])).toBe('running');
+  it('is idle for a draft, which has no sessions yet', () => {
+    expect(displayState('draft', [])).toBe('idle');
   });
 
-  it('is running with no sessions at all', () => {
-    expect(displayState('running', [])).toBe('running');
+  it('is archived whatever the agents say, because archived is not an activity', () => {
+    // A stale live session must not make an archived task report as live. In
+    // practice they agree — an archived task's sessions are gone — and the
+    // carve-out is what makes that a guarantee rather than a coincidence.
+    expect(displayState('archived', ['working'])).toBe('archived');
+    expect(displayState('archived', [])).toBe('archived');
   });
 
-  it.each(['draft', 'review', 'done', 'archived'] as const)(
-    'never overrides %s, even with a session still asking for attention',
+  it.each(['draft', 'running', 'review', 'done'] as const)(
+    'yields to the rollup for %s',
     (lifecycle) => {
-      // A finished task with a straggling session is not a task that needs you;
-      // it is a task that needs cleaning up. Overriding here would put archived
-      // tasks in the needs-you group forever.
-      expect(displayState(lifecycle, ['urgent'])).toBe(lifecycle);
+      expect(displayState(lifecycle, ['blocked'])).toBe('blocked');
     },
   );
 });

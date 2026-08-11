@@ -620,64 +620,106 @@ describe('tasks.delete', () => {
  * agent is most likely to ask something. A mirror keyed by session id would
  * drop it.
  */
-describe('attention reaching the task tree', () => {
-  const attentive = task({ sessions: [{ id: 'pending-1', role: 'orchestrator', pane: 'p1' }] });
-  const ASKING = { pane: 'p1', level: 'attention', reason: 'answer needed' };
-
-  it('moves a task to needs-you, in tasks.list AND on its row', async () => {
-    const h = (live = harness({ tasks: [attentive] }));
-    expect(await listedState(h)).toBe('running');
-    expect((await rowOf(h, 't1'))?.tint).toBe('running');
-
-    h.emit('attention.changed', ASKING);
-
-    expect(await listedState(h)).toBe('needs-you');
-    // The command's answer AND the row: two separate `displayState` calls, and
-    // one being left behind is a sidebar that disagrees with the CLI.
-    const row = await rowOf(h, 't1');
-    expect(row?.tint).toBe('needs-you');
-    expect(row?.description).toBe('needs-you');
+describe('agent state reaching the task tree', () => {
+  const spawned = task({ sessions: [{ id: 'pending-1', role: 'orchestrator', pane: 'p1' }] });
+  const change = (to: string, over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    sessionId: 's1',
+    kindId: 'claude-code',
+    pane: 'p1',
+    from: 'idle',
+    to,
+    turnFinished: false,
+    level: 'none',
+    alertReason: '',
+    ...over,
   });
 
-  it('clears back on level "none", which is why the mirror needs no reconciliation', async () => {
-    // The store emits `none` on every clear it makes — viewing the pane, closing
-    // it, the purge — so an entry that stops mattering always announces itself
-    // and nothing here has to go looking.
-    const h = (live = harness({ tasks: [attentive] }));
-    h.emit('attention.changed', ASKING);
-    expect(await listedState(h)).toBe('needs-you');
+  it('is idle before anything reports, however alive the task is', async () => {
+    const h = (live = harness({ tasks: [spawned] }));
+    expect(await listedState(h)).toBe('idle');
+    expect((await rowOf(h, 't1'))?.tint).toBe('idle');
+  });
 
-    h.emit('attention.changed', { pane: 'p1', level: 'none', reason: 'viewed' });
+  it('goes blue while an agent works, in tasks.list AND on its row', async () => {
+    const h = (live = harness({ tasks: [spawned] }));
+    h.emit('agents.stateChanged', change('working'));
 
-    expect(await listedState(h)).toBe('running');
-    expect((await rowOf(h, 't1'))?.tint).toBe('running');
+    // The command's answer AND the row: two separate `displayState` calls, and
+    // one being left behind is a sidebar that disagrees with the CLI.
+    expect(await listedState(h)).toBe('working');
+    const row = await rowOf(h, 't1');
+    expect(row?.tint).toBe('working');
+    expect(row?.description).toBe('working');
+  });
+
+  it('turns a finished turn GREEN, and not the amber a blocked one gets', async () => {
+    // v1's behaviour, and the palette's own words: `pasture` is "done / success",
+    // `hay` is "blocked / attention". One amber for both would make "finished"
+    // and "waiting on you" the same dot.
+    const h = (live = harness({ tasks: [spawned] }));
+    h.emit('agents.stateChanged', change('needsCheck', { turnFinished: true, level: 'attention' }));
+
+    expect((await rowOf(h, 't1'))?.tint).toBe('needs-check');
+
+    h.emit('agents.stateChanged', change('blocked', { from: 'needsCheck' }));
+    expect((await rowOf(h, 't1'))?.tint).toBe('blocked');
+  });
+
+  it('goes back to idle when the agent is viewed, which rides the same topic', async () => {
+    // `registry.observeViewed` writes needsCheck -> idle and emits it, so the
+    // clear needs no second channel — which is what lets the attention mirror go.
+    const h = (live = harness({ tasks: [spawned] }));
+    h.emit('agents.stateChanged', change('needsCheck', { turnFinished: true }));
+    expect((await rowOf(h, 't1'))?.tint).toBe('needs-check');
+
+    h.emit('agents.stateChanged', change('idle', { from: 'needsCheck' }));
+
+    expect((await rowOf(h, 't1'))?.tint).toBe('idle');
+  });
+
+  it('goes grey when the agent quits back to a shell', async () => {
+    const h = (live = harness({ tasks: [spawned] }));
+    h.emit('agents.stateChanged', change('working'));
+    h.emit('agents.stateChanged', change('shell', { from: 'working' }));
+
+    expect((await rowOf(h, 't1'))?.tint).toBe('idle');
   });
 
   it('ignores a pane no task is running in, rather than colouring the nearest one', async () => {
-    const h = (live = harness({ tasks: [attentive] }));
-    h.emit('attention.changed', { pane: 'p9', level: 'urgent', reason: 'approve Bash' });
+    const h = (live = harness({ tasks: [spawned] }));
+    h.emit('agents.stateChanged', change('blocked', { pane: 'p9' }));
 
-    expect(await listedState(h)).toBe('running');
-    expect((await rowOf(h, 't1'))?.tint).toBe('running');
+    expect(await listedState(h)).toBe('idle');
+    expect((await rowOf(h, 't1'))?.tint).toBe('idle');
+  });
+
+  it('drops a change with no pane rather than keying the mirror on undefined', async () => {
+    // A payload that crossed a port. An entry keyed on `undefined` could never
+    // be cleared, because no later change can name that key.
+    const h = (live = harness({ tasks: [spawned] }));
+    const { pane: _dropped, ...noPane } = change('blocked');
+    h.emit('agents.stateChanged', noPane);
+
+    expect((await rowOf(h, 't1'))?.tint).toBe('idle');
   });
 
   it('nudges the tree on a delta, because the host only re-reads when asked', async () => {
     // The tree is pull-based: `children()` is re-run on an `onDidChange` and at
     // no other time, so a mirror that updates silently is a sidebar that keeps
     // showing the old state until something unrelated happens to change.
-    const h = (live = harness({ tasks: [attentive] }));
+    const h = (live = harness({ tasks: [spawned] }));
     let nudges = 0;
     const data = h.tree();
     data.onDidChange?.(() => {
       nudges += 1;
     });
 
-    h.emit('attention.changed', ASKING);
+    h.emit('agents.stateChanged', change('blocked'));
     expect(nudges).toBe(1);
 
-    // The same level again is not a delta — the store re-announces a level with
-    // a new reason, and rebuilding the tree for that is work with no change in it.
-    h.emit('attention.changed', { ...ASKING, reason: 'plan approval' });
+    // The same state again is not a delta — a state can be re-announced with a
+    // new reason, and rebuilding the tree for that is work with no change in it.
+    h.emit('agents.stateChanged', change('blocked', { reason: 'plan approval' }));
     expect(nudges).toBe(1);
   });
 });
@@ -1258,7 +1300,11 @@ describe('a task whose pane group empties', () => {
     const h = (live = harness({
       tasks: [task({ sessions: [{ id: 's1', role: 'orchestrator', pane: 'p1' }] })],
     }));
-    expect(await listedState(h)).toBe('running');
+    // The precondition is that it has not archived YET, which is all this test
+    // ever meant by it. It is no longer a statement about the dot: `displayState`
+    // answers from the agents now, and a task none of whose sessions have
+    // reported reads `idle`.
+    expect(await listedState(h)).not.toBe('archived');
 
     h.emit('layout.rootClosed', { root: 'task:t1' });
     await until(() => h.invoked.some((call) => call.id === 'tasks.archive'));
