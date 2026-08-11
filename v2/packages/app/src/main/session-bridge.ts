@@ -211,6 +211,18 @@ export class SessionBridge {
     return this.#host.resize(id, cols, rows);
   }
 
+  /**
+   * A viewer's opinion about the size. **This is what a pane sends**, and
+   * `resize` is what a programmatic caller sends — see `SessionApi.setViewport`.
+   */
+  setViewport(
+    id: SessionID,
+    viewerId: string,
+    viewport: Viewport | undefined,
+  ): Result<void, SessionError> {
+    return this.#host.setViewport(id, viewerId, viewport);
+  }
+
   kill(id: SessionID): Result<void, SessionError> {
     return this.#host.kill(id);
   }

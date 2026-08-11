@@ -282,8 +282,19 @@ export class PaneSessionRegistry implements PaneTerminals {
       if (id === null) return;
       this.#bySession.delete(id);
       if (entry.streaming) {
-        // Stop the fan-out, so main is not coalescing bytes into a dead view. NOT
-        // a kill: the pty is core's, and it is already gone or on its way.
+        /**
+         * Withdraw this pane's opinion about the size, then stop the fan-out.
+         *
+         * The withdrawal matters most exactly here, because this is the path a
+         * CLOSED pane takes: a viewport left behind by a pane that no longer
+         * exists would go on constraining the pty for every other viewer — a
+         * narrow window closed on this Mac keeping a wide one letterboxed on
+         * another, with nothing on either screen to explain it. `release`
+         * detaches outside `#sync`, so it needs its own withdrawal; a
+         * `session.detach` alone does not imply one.
+         */
+        await this.#session.setViewport(id, entry.paneId, null);
+        // NOT a kill: the pty is core's, and it is already gone or on its way.
         await this.#session.detach(id);
         entry.streaming = false;
       }
@@ -430,7 +441,19 @@ export class PaneSessionRegistry implements PaneTerminals {
         // The host's own answer, coming back through xterm's event. Reporting it
         // would be this pane telling the host what the host just said.
         if (entry.applyingHostSize) return;
-        void this.#session.resize(entry.sessionId, cols, rows);
+        /**
+         * An OPINION, not a command — `setViewport`, never `resize`.
+         *
+         * One pty can have several viewers (this pane, a phone, another member
+         * of the net watching the same session), and `resize` is
+         * last-writer-wins: reporting a window that way made this pane fight
+         * every other viewer for the pty, at the rate a `ResizeObserver` fires.
+         * Declared as a viewport, `core/session/viewport.ts` arbitrates —
+         * smallest of each dimension — so the big screen letterboxes instead of
+         * the small one losing lines. A sole viewer is trivially the smallest,
+         * so a pane nobody else is watching behaves exactly as before.
+         */
+        void this.#session.setViewport(entry.sessionId, entry.paneId, { cols, rows });
       }),
     );
   }
@@ -496,10 +519,24 @@ export class PaneSessionRegistry implements PaneTerminals {
           return;
         }
         entry.streaming = true;
-        // Size the pty to the view now that bytes are flowing.
+        // Declare what this view can show, now that bytes are flowing. An
+        // opinion the host arbitrates — see the `onResize` listener.
         const terminal = entry.terminal;
-        if (terminal !== null) await this.#session.resize(id, terminal.cols, terminal.rows);
+        if (terminal !== null) {
+          await this.#session.setViewport(id, entry.paneId, {
+            cols: terminal.cols,
+            rows: terminal.rows,
+          });
+        }
       } else if (!wantStream && entry.streaming) {
+        /**
+         * Withdrawn BEFORE the detach, and it is not merely tidy: a viewport
+         * left behind goes on constraining the pty for everybody else, so a
+         * narrow pane that was closed would keep a wide one letterboxed with
+         * nothing on screen to explain it. `undefined`/`null` is the withdrawal
+         * `host.setViewport` documents and that nothing used to send.
+         */
+        await this.#session.setViewport(id, entry.paneId, null);
         await this.#session.detach(id);
         entry.streaming = false;
       }

@@ -18,6 +18,13 @@ export const INVOKE = {
   sessionWrite: 'session:write',
   sessionPaste: 'session:paste',
   sessionResize: 'session:resize',
+  /**
+   * What a viewer can DISPLAY — an opinion the host arbitrates, not a command.
+   *
+   * Distinct from `session:resize` because the two mean different things and one
+   * of them is now the only thing a pane may say. See `SessionApi.setViewport`.
+   */
+  sessionViewport: 'session:viewport',
   sessionKill: 'session:kill',
   windowClose: 'window:close',
   layoutGet: 'layout:get',

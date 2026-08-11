@@ -63,6 +63,21 @@ export {
   type MemberClientOptions,
 } from './memberclient.ts';
 export {
+  REMOTE_KINDS,
+  certPinOf,
+  checkMemberAccept,
+  memberHelloFrame,
+  splitFrame,
+  type MemberHelloOptions,
+  type SplitFrame,
+} from './memberhandshake.ts';
+export {
+  HANDSHAKE_TIMEOUT_MS,
+  memberSessionSocket,
+  type MemberSocket,
+  type MemberSessionOptions,
+} from './membersession.ts';
+export {
   loadOrMintIdentity,
   resetIdentity,
   peerMatchesPin,

@@ -51,6 +51,10 @@ function remoteApi(over: Partial<RemoteAPI> = {}): RemoteAPI {
     createNet: () => net,
     joinNet: async () => net,
     invokeAt: async () => ({ views: [] }),
+    // No verb reaches the data path, which is what this default asserts: the
+    // command surface is control-only, and a test that needed a socket here
+    // would be a test that found one that shouldn't exist.
+    sessionSocket: () => Promise.reject(new Error('no data path in this test')),
     leaveNet: () => undefined,
     members: () => [],
     revoke: () => undefined,

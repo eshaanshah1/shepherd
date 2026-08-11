@@ -47,6 +47,8 @@ export function createBridge(ipc: IpcLike): ShepherdBridge {
       write: (id, data) => invoke(INVOKE.sessionWrite, id, data),
       paste: (id, text) => invoke(INVOKE.sessionPaste, id, text),
       resize: (id, cols, rows) => invoke(INVOKE.sessionResize, id, cols, rows),
+      setViewport: (id, viewerId, viewport) =>
+        invoke(INVOKE.sessionViewport, id, viewerId, viewport),
       kill: (id) => invoke(INVOKE.sessionKill, id),
       onData: (listener) => subscribe<SessionDataMessage>(EMIT.sessionData, listener),
       onExit: (listener) => subscribe<SessionExitMessage>(EMIT.sessionExit, listener),
