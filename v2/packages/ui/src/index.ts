@@ -100,6 +100,7 @@ export {
   type TooltipSide,
 } from './tooltip.tsx';
 export { StatusDot, statusWords, type StatusDotProps, type StatusRole } from './status-dot.tsx';
+export { TabStrip, type TabDescriptor, type TabStripProps } from './tab-strip.tsx';
 
 /**
  * The braille spinner's frames and its cadence.
