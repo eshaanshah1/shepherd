@@ -1,4 +1,5 @@
 import { s, type Schema } from './schema.ts';
+import { settingsPageSchema, type SettingsPage, type SettingsPageWire } from './api-settings.ts';
 import type { Permission } from './permission.ts';
 
 /**
@@ -65,6 +66,19 @@ export interface Manifest {
   readonly contributes?: {
     readonly commands?: readonly ContributedCommand[];
     readonly views?: readonly ContributedView[];
+    /**
+     * Settings pages, and they are STATIC data for one consequence worth the
+     * loss of dynamism: the settings screen lists every extension's settings
+     * with **no extension activated**. Values live in the kernel and defaults
+     * live here, so listing, reading and writing one needs nothing running —
+     * which is what keeps activation lazy by declaration (core-design §4). It
+     * would not be, if opening ⌘, meant activating everything installed to ask
+     * what it can be configured with.
+     *
+     * `SettingSpec.choicesFrom` is the one dynamic seam, and it activates
+     * exactly one extension, when its page is opened.
+     */
+    readonly settings?: readonly SettingsPage[];
   };
 }
 
@@ -89,6 +103,8 @@ export const manifestSchema: Schema<{
     /** `title` optional — absent means not user-facing. See `ContributedCommand`. */
     commands?: { id: string; title?: string; key?: string }[];
     views?: { id: string; type: string; title: string; region?: string }[];
+    /** Validated structurally here; its namespace rule is the host's (`pageIssues`). */
+    settings?: SettingsPageWire[];
   };
 }> = s.object({
   id: s.string(),
@@ -119,6 +135,7 @@ export const manifestSchema: Schema<{
           }),
         ),
       ),
+      settings: s.optional(s.array(settingsPageSchema)),
     }),
   ),
 });
