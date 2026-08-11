@@ -1,7 +1,8 @@
 # Design: this Mac as a second viewer of another member's session
 
 **Date:** 2026-08-11
-**Status:** approved, not yet implemented
+**Status:** implemented; the live two-Mac gate is the one thing still owed
+(see "What landed" at the foot of this file)
 **Builds on:** `2026-08-11-shep-nets-design.md` (membership),
 `2026-08-09-v2-attachment-and-remote-design.md` (R0–R3),
 `2026-08-11-t3code-remote-access-teardown.md` (what to steal, what to avoid)
@@ -275,3 +276,55 @@ launched with `--shepherd-remote=wifi`), open a task row belonging to the other,
 see its terminal here, type on both, and watch one pty take both — then resize
 the smaller window and watch the larger one letterbox rather than the smaller one
 clip.
+
+---
+
+## What landed (2026-08-11)
+
+All eight pieces are built, and every gate that can be run on one machine is
+green: `pnpm typecheck`, `pnpm lint`, `pnpm test` (app 436, remote 135, core 476,
+tasks 449, ui 171) and `pnpm smoke:m3` printing `OK m3`.
+
+Deviations from the design above, each because the code said so:
+
+- **`splitFrame` had to judge the frame CAP before waiting for bytes.** As first
+  written it answered "incomplete" for a length claiming more than
+  `MAX_FRAME_BYTES`, which means buffering forever toward a frame that can never
+  arrive — the denial-of-service that cap exists to close. Its own test found it.
+- **`PaneSeed.session` was needed, and is the load-bearing part of §4.** The
+  renderer decides to START a pty by looking for a binding in the snapshot it was
+  handed, so a pane announced unbound is a pane it opens a local shell in.
+  Binding after `layout.openRoot` returned lost that race and left a stray shell
+  beside the terminal you asked for. The binding therefore happens inside the
+  store, before `#changed` notifies.
+- **`ContributedCommand.title` is now optional**, which is what the SDK has always
+  said it means ("absent = not user-facing"). `tasks.presentation` and
+  `tasks.machines` are asked by a client, never picked by a person.
+- **Waiting for a member is split in two.** "Reached, and it has no such session"
+  is settled and becomes an announced exit. "Has not answered" is not settled: it
+  is retried for ~40s with the reason written into the pane's own stream, where
+  R0's snapshot repaints over it when the member comes back.
+- **The composer's machine picker is absent with one machine.** One machine is not
+  a decision, and the control would teach nothing while taking space in the row
+  that has to stay readable.
+
+Two stale-state bugs the tests caught, both worth knowing about:
+
+- The repo re-ask after picking a machine closed over the machine that had just
+  been LEFT, so the picker showed the wrong disk's checkouts — indistinguishable
+  from the ask not working.
+- The row-entrance effect depending on a freshly-built array re-ran its own
+  cleanup on every render, clearing the timer that ends the animation. A repaint
+  mid-entrance would have left the mark on permanently, and the row would replay
+  its arrival on the next remount.
+
+**Still owed: the live gate.** Two Macs in one net, `pnpm ship --dev` on both,
+launched with `--shepherd-remote=wifi`; open a task row belonging to the other,
+see its terminal here, type on both, then resize the smaller window and watch the
+larger letterbox. This Mac has LEFT the net for development (`remote.leaveNet`),
+so re-joining from the other machine is the first step.
+
+Also still open, and deliberately out of scope: a listener that binds one
+interface at startup and advertises it forever (the work Mac went on handing out
+its ethernet address after the cable was unplugged). It needs address
+re-resolution on a network change, which is its own piece of work.
