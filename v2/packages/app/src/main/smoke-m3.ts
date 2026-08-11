@@ -725,6 +725,93 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
   );
   say('ok — both repos provisioned and the set hook ran at the task root');
 
+  /**
+   * --- 12. the settings screen: a takeover that keeps every pty, and a theme
+   * that moves BOTH halves.
+   *
+   * Everything here is a claim no unit test can make. The renderer's own tests
+   * mount `SettingsScreen` against a fake bridge; this drives the real command
+   * through the real socket, reads the real DOM, and — the part that matters —
+   * asserts the panes underneath are the SAME sessions afterwards. A conditional
+   * mount around the stage would pass every renderer test and release a pty here.
+   */
+  const sessionsBefore = ((await invoke('sessions.list')) as { id: string }[]).map((row) => row.id).sort();
+  check(sessionsBefore.length > 0, `there are panes to cover: ${sessionsBefore.length}`);
+
+  await invoke('window.settings', { open: true });
+  const onScreen = await until(
+    'the settings screen to render',
+    () =>
+      win.webContents.executeJavaScript(
+        `Array.from(document.querySelectorAll('[data-testid="settings-nav-item"]')).map((el) => el.textContent)`,
+      ) as Promise<string[]>,
+    (found) => found.length > 0,
+  );
+  check(onScreen.some((item) => item.includes('General')), `the nav drew its sections: ${JSON.stringify(onScreen)}`);
+  // Both consumers are in the nav, which is what makes the seam real rather than
+  // a paragraph: one page of specs, one page that is an extension's component.
+  check(
+    onScreen.some((item) => item.includes('Models')) && onScreen.some((item) => item.includes('Worktree hooks')),
+    `both contributed pages are listed: ${JSON.stringify(onScreen)}`,
+  );
+  say('ok — the settings screen took over the window');
+
+  await invoke('settings.set', { key: 'shepherd.theme', value: 'light' });
+  const painted = await until(
+    'the light theme to reach the chrome AND the grid',
+    () =>
+      win.webContents.executeJavaScript(
+        `(() => {
+          const root = document.documentElement;
+          // The GRID's colour, read where the DOM actually carries it. NOT
+          // getComputedStyle on .xterm-screen: xterm paints its background on a
+          // canvas, so that element is transparent and computes to black whatever
+          // the palette is -- a probe that fails on a working app. The pane head
+          // publishes the grid's own colour as a custom property, and its whole
+          // point is that the head and the grid cannot differ.
+          // (No backticks in here: this is inside a template literal.)
+          const pane = document.querySelector('[data-pane-title-surface]');
+          return {
+            theme: root.dataset.theme ?? null,
+            surface: root.style.getPropertyValue('--sh-surface').trim(),
+            grid: pane === null ? null : getComputedStyle(pane).getPropertyValue('--sh-pane-title-bg').trim(),
+            // No TS cast here: this string is evaluated as plain JS in the page.
+            luminance: pane === null ? null : pane.dataset.paneTitleSurface ?? null,
+          };
+        })()`,
+      ) as Promise<{ theme: string | null; surface: string; grid: string | null; luminance: string | null }>,
+    (found) => found.theme === 'light',
+  );
+  check(painted.theme === 'light', `the chrome re-themed: ${JSON.stringify(painted)}`);
+  /**
+   * The grid too, and this is the assertion the feature is FOR: `theme.ts`'s
+   * one-token-map rule, and v1's drift between `Theme.swift` and
+   * `writeBaseTheme()`. A light chrome over a near-black grid is the failure.
+   */
+  check(
+    painted.luminance === 'light',
+    `the terminal grid re-themed too, and its head measured it: ${JSON.stringify(painted)}`,
+  );
+  say('ok — light mode reached the chrome and the grid, with no relaunch');
+
+  await invoke('settings.reset', { key: 'shepherd.theme' });
+  await invoke('window.settings', { open: false });
+  const gone = await until(
+    'the settings screen to close',
+    () =>
+      win.webContents.executeJavaScript(
+        `document.querySelector('[data-testid="settings-screen"]') === null`,
+      ) as Promise<boolean>,
+    (found) => found,
+  );
+  check(gone, 'the screen closed');
+  const sessionsAfter = ((await invoke('sessions.list')) as { id: string }[]).map((row) => row.id).sort();
+  check(
+    JSON.stringify(sessionsAfter) === JSON.stringify(sessionsBefore),
+    `every pty survived the takeover: ${JSON.stringify(sessionsBefore)} vs ${JSON.stringify(sessionsAfter)}`,
+  );
+  say('ok — the panes behind it were never torn down');
+
   say('smoke: OK m3');
   app.exit(0);
 }
