@@ -1,4 +1,5 @@
 import { s, type KV } from '@shepherd/sdk';
+import type { ArchivedTab } from './model/archive-tabs.ts';
 import { LIFECYCLE_STATES, type TaskLifecycle } from './model/lifecycle.ts';
 import { recordUse, type RepoUse } from './model/repo-history.ts';
 
@@ -121,6 +122,11 @@ export interface TaskRecord {
   /** Present only while archived. Added later; `s.stored` reads old records fine. */
   readonly archives?: readonly RepoArchive[];
   /**
+   * Its tabs, as they were when it was shelved — absent on a record written
+   * before tabs existed, and on a task that has never been archived.
+   */
+  readonly tabs?: readonly ArchivedTab[];
+  /**
    * When it was archived, so it can expire.
    *
    * Stored rather than derived from the snapshot commits' dates: a commit's
@@ -161,6 +167,37 @@ const taskSchema = s.stored({
         headSha: s.string(),
         commit: s.string(),
         stagedTree: s.string(),
+      }),
+    ),
+  ),
+  /**
+   * The task's TABS, as they were when it was shelved.
+   *
+   * Additive and absent on every record written before tabs existed — such a
+   * record restores exactly as it always did, into one root with one pane.
+   *
+   * `tree` is `s.unknown()` on purpose: it is the LAYOUT's persisted split
+   * shape, carried verbatim and handed straight back to it. Validating it here
+   * would be this extension holding a second opinion about a format that is not
+   * its own, and the two would drift the first time the layout's changed.
+   */
+  tabs: s.optional(
+    s.array(
+      s.stored({
+        root: s.string(),
+        tree: s.optional(s.unknown()),
+        focusedPane: s.union(s.string(), s.literal(null as unknown as string)),
+        panes: s.array(
+          s.stored({
+            pane: s.string(),
+            cwd: s.union(s.string(), s.literal(null as unknown as string)),
+            userTitle: s.union(s.string(), s.literal(null as unknown as string)),
+            sessionId: s.optional(s.string()),
+            kindId: s.optional(s.string()),
+            resumeTarget: s.optional(s.string()),
+            history: s.optional(s.string()),
+          }),
+        ),
       }),
     ),
   ),
