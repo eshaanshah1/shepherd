@@ -155,7 +155,12 @@ fresh one.
 
 ## Using it
 
-⌘⇧H raises the editor. From the CLI:
+**⌘, → Worktree hooks** opens the editor: it is a settings page (spec
+2026-08-11), contributed as `contributes.settings` in the manifest. It had a ⌘⇧H
+of its own until there was a settings screen to put it in; that key is gone, and
+so is the gear button beside the composer's `+`.
+
+From the CLI:
 
 ```sh
 shepherd worktree-hook get                                    # the global hook, plus every repo and set that has one
@@ -191,13 +196,8 @@ keeps out of an extension.
 
 ## Not done yet
 
-- **A settings page.** This extension contributes its own `worktree-hook.editor`
-  view for exactly one reason: v2 has no settings surface. The moment there is
-  one, this editor belongs inside it and the standalone overlay should go. **Do
-  not let it become the permanent home.**
-- **A Test run button in the editor.** The command exists and the CLI reaches
-  it; the button needs a throwaway directory the renderer cannot create, so it
-  waits for the settings page above.
+- **A Test run button in the editor.** The command exists and the CLI reaches it;
+  the button needs a throwaway directory the renderer cannot create.
 - **No migration from v1.** v1's hooks were per-workspace and there is no sound
   mapping to a repo. An existing workspace hook has to be entered once as a repo
   hook.
