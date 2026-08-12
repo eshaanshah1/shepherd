@@ -23,6 +23,15 @@ import './styles.css';
 // shell's comes after the primitives': it has to be able to win at equal
 // specificity over the frame it paints across.
 import './settings.css';
+/*
+ * A contributed view's styling lives with the SHELL, not with the extension —
+ * `.sh-hook__*` already does, and this follows it. The extension ships markup
+ * and role names; the renderer owns the stylesheet, which is what keeps a
+ * contributed surface re-theming for free and stops an extension shipping a
+ * second styling mechanism.
+ */
+import './task-card.css';
+import './sky-strip.css';
 
 /**
  * The composition root: the only file that knows the bridge is a global, that a

@@ -20,14 +20,14 @@ import { useBrailleFrame } from './spinner.ts';
  * (the `success` role's own `notFor`).
  */
 
-export type ButtonVariant = 'primary' | 'default' | 'ghost' | 'danger';
+export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
 export type ButtonSize = 'sm' | 'md' | 'lg';
 
 export const buttonVariants = cva('sh-ui-button sh-ui-focusable', {
   variants: {
     variant: {
       primary: 'sh-ui-button--primary',
-      default: 'sh-ui-button--default',
+      secondary: 'sh-ui-button--secondary',
       ghost: 'sh-ui-button--ghost',
       danger: 'sh-ui-button--danger',
     },
@@ -37,7 +37,7 @@ export const buttonVariants = cva('sh-ui-button sh-ui-focusable', {
       lg: 'sh-ui-button--lg',
     },
   },
-  defaultVariants: { variant: 'default', size: 'md' },
+  defaultVariants: { variant: 'secondary', size: 'md' },
 });
 
 export interface ButtonProps extends ComponentPropsWithRef<'button'> {
@@ -105,7 +105,7 @@ export function Button({
   const shared = {
     className: classes,
     onClick: handleClick,
-    'data-variant': variant ?? 'default',
+    'data-variant': variant ?? 'secondary',
     'data-size': size ?? 'md',
     'data-busy': busy ? ('true' as const) : undefined,
     'aria-busy': busy ? true : undefined,

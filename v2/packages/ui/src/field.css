@@ -64,7 +64,7 @@
  * it is recessed by LUMINANCE, not by an inset shadow (rule 2).
  */
 .sh-ui-field__control--bordered {
-  background: var(--sh-surface-sunken);
+  background: var(--sh-sunken);
   border-color: var(--sh-line);
   border-radius: var(--sh-radius-sm);
 }
@@ -104,13 +104,13 @@
  */
 
 .sh-ui-field[data-invalid='true'] .sh-ui-field__control--bordered {
-  border-color: var(--sh-danger);
+  border-color: var(--sh-red);
 }
 
 .sh-ui-field[data-invalid='true'] .sh-ui-field__control--bare {
   /* The bare variant's only edge: a rule under the text, which is the least a
      borderless surface can say without becoming a box. */
-  border-bottom-color: var(--sh-danger);
+  border-bottom-color: var(--sh-red);
 }
 
 .sh-ui-field__message {
@@ -121,5 +121,5 @@
 }
 
 .sh-ui-field[data-invalid='true'] .sh-ui-field__message {
-  color: var(--sh-danger);
+  color: var(--sh-red);
 }

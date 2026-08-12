@@ -159,10 +159,10 @@ describe('TerminalPane chrome surface', () => {
     // would draw near-white text on near-white ground — and silently, because
     // nothing else in the app changes.
     const spy = spyTerminals();
-    const view = render(spy, makePane({}), false, palette['ink-term'].light);
+    const view = render(spy, makePane({}), false, palette.pane.light);
     const root = paneRoot(view.container);
 
-    expect(root.style.getPropertyValue('--sh-pane-title-bg')).toBe(palette['ink-term'].light);
+    expect(root.style.getPropertyValue('--sh-pane-title-bg')).toBe(palette.pane.light);
     expect(root.dataset['paneTitleSurface']).toBe('light');
     view.unmount();
   });

@@ -41,7 +41,7 @@
   max-height: 76vh;
   overflow: auto;
 
-  background: var(--sh-surface-raised);
+  background: var(--sh-raised);
   color: var(--sh-text);
   border: var(--sh-hairline) solid var(--sh-line);
   /* Soft, like the composer: a modal in this app is a composition surface, and

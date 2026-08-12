@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mount } from './test-dom.ts';
 import { rulesMentioning } from './css-rules.ts';
 import { Row, rowClasses } from './row.tsx';
-import { StatusDot } from './status-dot.tsx';
+import { StateMark } from './state-mark.tsx';
 import { IconButton } from './icon-button.tsx';
 import { IconDots } from '@tabler/icons-react';
 import './styles.css';
@@ -16,13 +16,13 @@ const row = (container: HTMLElement): HTMLElement => {
 describe('Row', () => {
   it('renders the label, the leading slot and the trailing area', () => {
     const dom = mount(
-      <Row leading={<StatusDot role="working" />} meta="3" actions={<IconButton icon={IconDots} label="More" />}>
+      <Row leading={<StateMark state="working" />} meta="3" actions={<IconButton icon={IconDots} label="More" />}>
         shepherd/v2
       </Row>,
     );
     const el = row(dom.container);
     expect(el.querySelector(`.${rowClasses.label}`)?.textContent).toBe('shepherd/v2');
-    expect(el.querySelector(`.${rowClasses.leading} .sh-ui-status-dot`)).not.toBeNull();
+    expect(el.querySelector(`.${rowClasses.leading} .sh-ui-mark`)).not.toBeNull();
     expect(el.querySelector(`.${rowClasses.meta}`)?.textContent).toBe('3');
     expect(el.querySelector(`.${rowClasses.actions} .sh-ui-icon-button`)).not.toBeNull();
   });
@@ -142,7 +142,7 @@ describe('Row', () => {
     const selected = row(mount(<Row selected>a</Row>).container);
     const style = getComputedStyle(selected);
     expect(style.background).toBe('var(--sh-fill-selected)');
-    expect(style.color).toBe('var(--sh-text-selected)');
+    expect(style.color).toBe('var(--sh-text-on-wool)');
     expect(style.background).not.toContain('color-mix');
   });
 
@@ -205,7 +205,7 @@ describe('Row', () => {
 
   it('exports its class constants so an extension-s own markup can look native', () => {
     const dom = mount(
-      <Row selected meta="1" actions={<span>x</span>} leading={<StatusDot role="idle" />}>
+      <Row selected meta="1" actions={<span>x</span>} leading={<StateMark state="resting" />}>
         a
       </Row>,
     );

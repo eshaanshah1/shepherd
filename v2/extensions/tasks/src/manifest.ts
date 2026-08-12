@@ -75,6 +75,22 @@ export const TASK_COMMANDS = {
    */
   expandTabs: 'tasks.expandTabs',
   /**
+   * A test run's result, reported by whatever ran it.
+   *
+   * The card draws a suite meter — n cells, filled for what passed — and nothing
+   * in this app knows what a test run IS. That is deliberate rather than
+   * unfinished: a task's suite is whatever its repo calls a suite, and an
+   * extension that ran `pnpm test` knows the numbers where the task model never
+   * could. So the shape is declared here and the SOURCE is a verb anyone can
+   * call — an agent through the CLI, a future test-runner extension, a CI
+   * webhook.
+   *
+   * Transient by the same argument as the diff cache: a result is a fact about a
+   * moment, and one persisted into the store would outlive the code it was
+   * measuring.
+   */
+  reportSuite: 'tasks.reportSuite',
+  /**
    * Which machines a new task could start on — this Mac, and every member of the
    * net that can actually be reached.
    *

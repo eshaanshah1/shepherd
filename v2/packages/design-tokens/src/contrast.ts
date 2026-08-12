@@ -107,15 +107,20 @@ export const paneTitleAlphas: Readonly<Record<SurfaceKind, PaneTitleAlphas>> = {
 /**
  * The ink those alphas are applied to.
  *
- * Orca uses literal white / zinc-950; Flock has those two already, named, in the
- * palette — `wool` is "primary text", and its two mode values ARE "the ink that
- * reads on a dark surface" and "the ink that reads on a light one". A surface
- * kind and a theme mode are different questions with the same two answers, which
- * is why this indexes `palette.wool` directly instead of introducing a
- * fourteenth colour.
+ * Orca uses literal white / zinc-950; this palette has those two already, named:
+ * `ink` is "a title, a live value", and its two mode values ARE "the ink that
+ * reads on a dark surface" (`#EDEDED`) and "the ink that reads on a light one"
+ * (`#141414`). A surface kind and a theme mode are different questions with the
+ * same two answers, which is why this indexes `palette.ink` directly instead of
+ * introducing another colour.
+ *
+ * It is the same token §2 calls `wool` when it is carrying a state rather than
+ * being read — "the loudest thing available against this surface" and "primary
+ * text" are one answer in both modes, and two names for one value is how the two
+ * drift.
  */
 export function paneTitleInk(kind: SurfaceKind): string {
-  return palette.wool[kind];
+  return palette.ink[kind];
 }
 
 /**

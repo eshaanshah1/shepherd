@@ -1,18 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { colorTokens, palette, type ColorToken, type ThemeMode } from './palette.ts';
 import { cssVarName, cssVariableBlock, cssVariables } from './css.ts';
+import { roleVarName } from './roles.ts';
 import { xtermTheme, type XtermTheme } from './xterm.ts';
 import { metrics } from './metrics.ts';
 
 const HEX = /^#[0-9A-F]{6}$/;
 
 describe('palette', () => {
-  it('carries all 13 approved tokens', () => {
-    expect(colorTokens).toHaveLength(13);
-    expect(colorTokens).toContain('ink-deep');
-    expect(colorTokens).toContain('signal');
-  });
-
   it('gives every token a dark value, a light value and a job', () => {
     for (const token of colorTokens) {
       const spec = palette[token];
@@ -22,25 +17,77 @@ describe('palette', () => {
     }
   });
 
-  it('pins the canonical dark values from the approved mock', () => {
-    expect(palette['ink-deep'].dark).toBe('#14120E');
-    expect(palette['ink-term'].dark).toBe('#161410');
-    expect(palette.wool.dark).toBe('#E9E2D2');
-    expect(palette.cobalt.dark).toBe('#62A3FF');
-    expect(palette.hay.dark).toBe('#E0A33E');
-    expect(palette.pasture.dark).toBe('#85BB64');
-    expect(palette.ember.dark).toBe('#E85D43');
-    expect(palette.signal.dark).toBe('#F2762E');
+  it('pins the canonical dark values from §2', () => {
+    expect(palette.sunken.dark).toBe('#070708');
+    expect(palette.canvas.dark).toBe('#0A0A0A');
+    expect(palette.pane.dark).toBe('#0D0D0D');
+    expect(palette.surface.dark).toBe('#0F0F0F');
+    expect(palette.well.dark).toBe('#121212');
+    expect(palette.raised.dark).toBe('#161616');
+    expect(palette.fill.dark).toBe('#1B1B1B');
+    expect(palette.line.dark).toBe('#1C1C1C');
+    expect(palette.lineStrong.dark).toBe('#272727');
+    expect(palette.ink.dark).toBe('#EDEDED');
+    expect(palette.inkFaint.dark).toBe('#A8A8A8');
+    expect(palette.inkMute.dark).toBe('#8C8C8C');
+    expect(palette.inkGhost.dark).toBe('#5A5A5A');
+    expect(palette.sky.dark).toBe('#7FB6E8');
+    expect(palette.grass.dark).toBe('#86C06A');
+    expect(palette.clay.dark).toBe('#C4796B');
+    expect(palette.red.dark).toBe('#E05C4F');
   });
 
-  it('inverts wool-dim and wool-faint between modes, as the table specifies', () => {
-    expect(palette['wool-dim'].light).toBe(palette['wool-faint'].dark);
-    expect(palette['wool-faint'].light).toBe(palette['wool-dim'].dark);
+  it('pins the light ramp, which is derived rather than re-decided', () => {
+    expect(palette.sunken.light).toBe('#F4F4F4');
+    expect(palette.canvas.light).toBe('#EFEFEF');
+    expect(palette.pane.light).toBe('#FFFFFF');
+    expect(palette.surface.light).toBe('#FAFAFA');
+    expect(palette.fill.light).toBe('#E4E4E4');
+    expect(palette.line.light).toBe('#E2E2E2');
+    expect(palette.lineStrong.light).toBe('#D2D2D2');
+    expect(palette.inkFaint.light).toBe('#565656');
+    expect(palette.inkMute.light).toBe('#6E6E6E');
+    expect(palette.inkGhost.light).toBe('#767676');
+    expect(palette.sky.light).toBe('#2E6FB8');
+    expect(palette.grass.light).toBe('#3F7A50');
+    expect(palette.clay.light).toBe('#A8483A');
+    expect(palette.red.light).toBe('#C4392C');
   });
 
-  it('has no two tokens sharing a dark value (each step is a real step)', () => {
-    const inks = colorTokens.filter((t) => t.startsWith('ink')).map((t) => palette[t].dark);
-    expect(new Set(inks).size).toBe(inks.length);
+  it('turns `wool` into ink: on paper the loudest thing available is black', () => {
+    // The one substantive change light makes beyond inverting the ramp. Everything
+    // that carries "your move" in dark carries it in light for the same reason,
+    // and that reason is "loudest against this surface", not "white".
+    expect(palette.ink.dark).toBe('#EDEDED');
+    expect(palette.ink.light).toBe('#141414');
+  });
+
+  it('is true neutral in dark — no cast on any ramp step', () => {
+    // §2's first claim about the ramp, and the thing that separates it from
+    // Flock's warm ink. A step whose channels are not equal is a step with a hue,
+    // and a hue without a job is banned. `sunken` is the documented exception: one
+    // point of blue at the very bottom, which is the design's own value.
+    const ramp = ['canvas', 'pane', 'surface', 'well', 'wash', 'raised', 'active', 'fill', 'line', 'lineStrong'] as const;
+    for (const token of ramp) {
+      const [r, g, b] = [1, 3, 5].map((i) => palette[token].dark.slice(i, i + 2));
+      expect(new Set([r, g, b]).size, `${token} = ${palette[token].dark} has a cast`).toBe(1);
+    }
+  });
+
+  it('has no two ramp steps sharing a dark value — each step is a real step', () => {
+    const ramp = colorTokens.filter((t) => !t.startsWith('repo') && !t.startsWith('scn') && t !== 'scrimBase');
+    const inks = ramp.map((t) => palette[t].dark);
+    // Light legitimately collapses `pane`, `well` and `raised` onto #FFFFFF —
+    // paper has no room above white — so only dark is asserted to be all-distinct.
+    expect(new Set(inks).size, 'a duplicated dark value is a step that does nothing').toBe(inks.length);
+  });
+
+  it('keeps grass out of the repo-identity set', () => {
+    // Stated in §2: a repo tinted green would read as something that passed.
+    for (const mode of ['dark', 'light'] as const) {
+      const identity = (['repoSky', 'repoStone', 'repoTaupe', 'repoSlate'] as const).map((t) => palette[t][mode]);
+      expect(identity).not.toContain(palette.grass[mode]);
+    }
   });
 });
 
@@ -51,48 +98,37 @@ describe('cssVariables', () => {
     }
   });
 
-  it('emits one variable per colour token plus the metric/font set', () => {
+  it('emits the role set plus the metric/font set, and no palette name', () => {
     const vars = cssVariables('dark');
-    for (const token of colorTokens) {
-      expect(vars[cssVarName(token)]).toBe(palette[token].dark);
-    }
+    expect(vars['--sh-canvas']).toBe(palette.canvas.dark);
+    expect(vars['--sh-text']).toBe(palette.ink.dark);
     expect(vars['--sh-row-height']).toBe(`${metrics.rowHeight}px`);
     expect(vars['--sh-line-height']).toBe(`${metrics.lineHeight}px`);
+    // Tier 1 is private; `--sh-ink` is a luminance step's own name and a
+    // stylesheet may not reach it. See the roles suite for the full guarantee.
+    expect(vars['--sh-ink']).toBeUndefined();
+  });
+
+  it('carries the chrome bands the shell is built from', () => {
+    const vars = cssVariables('dark');
+    expect(vars['--sh-band-titlebar']).toBe('44px');
+    expect(vars['--sh-band-rail']).toBe('332px');
+    expect(vars['--sh-band-sky-strip']).toBe('124px');
+    expect(vars['--sh-band-tab-strip']).toBe('40px');
+    expect(vars['--sh-band-pane-head']).toBe('38px');
+    expect(vars['--sh-band-tab']).toBe('28px');
   });
 
   it('changes with the mode', () => {
-    expect(cssVariables('light')['--sh-ink']).toBe(palette.ink.light);
-    expect(cssVariables('dark')['--sh-ink']).toBe(palette.ink.dark);
+    expect(cssVariables('light')['--sh-canvas']).toBe(palette.canvas.light);
+    expect(cssVariables('dark')['--sh-canvas']).toBe(palette.canvas.dark);
   });
 
   it('renders a stylesheet block against the given selector', () => {
     const block = cssVariableBlock('dark', ':root[data-theme="dark"]');
     expect(block.startsWith(':root[data-theme="dark"] {\n')).toBe(true);
-    expect(block).toContain(`  --sh-cobalt: ${palette.cobalt.dark};`);
+    expect(block).toContain(`  --sh-sky: ${palette.sky.dark};`);
     expect(block.trimEnd().endsWith('}')).toBe(true);
-  });
-});
-
-describe('xtermTheme', () => {
-  it('paints the grid on the terminal ink, not the surface ink', () => {
-    expect(xtermTheme('dark').background).toBe(palette['ink-term'].dark);
-    expect(xtermTheme('dark').foreground).toBe(palette.wool.dark);
-  });
-
-  it('maps the ANSI slots onto named accents so the colour jobs survive', () => {
-    const theme = xtermTheme('dark');
-    expect(theme.red).toBe(palette.ember.dark);
-    expect(theme.green).toBe(palette.pasture.dark);
-    expect(theme.yellow).toBe(palette.hay.dark);
-    expect(theme.blue).toBe(palette.cobalt.dark);
-    expect(theme.cursor).toBe(palette.signal.dark);
-  });
-
-  it('uses no colour outside the palette', () => {
-    const allowed = new Set(colorTokens.flatMap((t) => [palette[t].dark, palette[t].light]));
-    for (const value of Object.values(xtermTheme('light'))) {
-      expect(allowed.has(value), value).toBe(true);
-    }
   });
 });
 
@@ -115,32 +151,49 @@ describe('one token map', () => {
 
   /** The colour jobs the chrome and the grid must agree on, by name. */
   const SHARED: ReadonlyArray<readonly [keyof XtermTheme, ColorToken]> = [
-    ['background', 'ink-term'],
-    ['foreground', 'wool'],
-    ['selectionBackground', 'ink-line'],
-    ['cursor', 'signal'],
-    ['blue', 'cobalt'],
-    ['yellow', 'hay'],
-    ['green', 'pasture'],
-    ['red', 'ember'],
-    ['brightWhite', 'wool'],
-    ['brightBlack', 'wool-faint'],
-    ['black', 'ink-deep'],
+    ['background', 'pane'],
+    ['foreground', 'inkDim'],
+    ['selectionBackground', 'line'],
+    ['cursor', 'ink'],
+    ['blue', 'sky'],
+    ['green', 'grass'],
+    ['red', 'red'],
+    ['yellow', 'clay'],
+    ['brightWhite', 'ink'],
+    ['brightBlack', 'inkGhost'],
+    ['black', 'canvas'],
   ];
 
   it.each(MODES)('gives chrome and grid the same value for every shared job (%s)', (mode) => {
+    // The chrome reaches these through their ROLE names, which is the whole
+    // point: the grid asks the palette, the chrome asks a role, and this asserts
+    // the two arrive at one value.
+    const ROLE_OF: Partial<Record<ColorToken, string>> = {
+      pane: 'pane',
+      inkDim: 'textDim',
+      line: 'line',
+      ink: 'text',
+      sky: 'sky',
+      grass: 'grass',
+      red: 'red',
+      clay: 'clay',
+      inkGhost: 'textGhost',
+      canvas: 'canvas',
+    };
     const css = cssVariables(mode);
     const term = xtermTheme(mode);
     for (const [slot, token] of SHARED) {
-      expect(term[slot], `${slot} vs --sh-${token}`).toBe(css[cssVarName(token)]);
+      const role = ROLE_OF[token];
+      expect(role, `${token} has no role`).toBeDefined();
+      expect(term[slot], `${slot} vs ${roleVarName(role as never)}`).toBe(css[`--sh-${role as string}`.replace(/[A-Z]/g, (u) => `-${u.toLowerCase()}`)]);
     }
   });
 
-  it('sets no terminal colour the chrome does not also carry', () => {
+  it('sets no terminal colour the palette does not carry', () => {
     for (const mode of MODES) {
-      const chrome = new Set(Object.values(cssVariables(mode)));
+      const known = new Set(colorTokens.map((t) => palette[t][mode]));
       for (const [slot, value] of Object.entries(xtermTheme(mode))) {
-        expect(chrome.has(value), `${mode}.${slot} = ${value} is not a --sh- variable`).toBe(true);
+        expect(known.has(value), `${mode}.${slot} = ${value} is not a palette value`).toBe(true);
       }
     }
   });
@@ -149,22 +202,33 @@ describe('one token map', () => {
     // Same values in one mode and different values in the other would mean one
     // generator is reading `palette` and the other a frozen copy of it.
     for (const [slot, token] of SHARED) {
-      const darkPair = [xtermTheme('dark')[slot], cssVariables('dark')[cssVarName(token)]];
-      const lightPair = [xtermTheme('light')[slot], cssVariables('light')[cssVarName(token)]];
-      expect(darkPair[0]).toBe(darkPair[1]);
-      expect(lightPair[0]).toBe(lightPair[1]);
-      expect(darkPair[0], `${slot} is the same in both modes`).not.toBe(lightPair[0]);
+      expect(xtermTheme('dark')[slot]).toBe(palette[token].dark);
+      expect(xtermTheme('light')[slot]).toBe(palette[token].light);
+      expect(xtermTheme('dark')[slot], `${slot} is the same in both modes`).not.toBe(xtermTheme('light')[slot]);
     }
   });
 
   it('leaves no colour token that only one generator knows about', () => {
-    // Every token reaches the chrome by construction; the grid uses a subset,
-    // and this pins WHICH subset — so a token that quietly stops being drawn
-    // (or a fourteenth that only the terminal knows) fails here.
+    // Every token reaches the chrome by construction; the grid uses a subset, and
+    // this pins WHICH subset — so a token that quietly stops being drawn (or one
+    // only the terminal knows) fails here.
     const inTerm = new Set(Object.values(xtermTheme('dark')));
     const drawn = colorTokens.filter((token) => inTerm.has(palette[token].dark));
     expect([...drawn].sort()).toEqual(
-      ['ember', 'hay', 'ink-deep', 'ink-line', 'ink-term', 'pasture', 'signal', 'wool', 'wool-dim', 'wool-faint', 'cobalt'].sort(),
+      // `repoSky` is here because it IS `sky` — §2 gives the first repo mark the
+      // same value, and this list is matched on values rather than names. That is
+      // the honest reading: the grid draws one colour, and two roles claim it.
+      ['canvas', 'clay', 'grass', 'ink', 'inkDim', 'inkFaint', 'inkGhost', 'line', 'pane', 'red', 'repoSky', 'sky'].sort(),
     );
+  });
+
+  it('spends no hue the five-colour language does not have', () => {
+    // §6 refuses a sixth hue outright, and a terminal theme is the easiest place
+    // to smuggle one in: yellow/magenta/cyan have no job here and must borrow.
+    const term = xtermTheme('dark');
+    const hues = new Set([palette.sky.dark, palette.grass.dark, palette.clay.dark, palette.red.dark]);
+    for (const slot of ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan'] as const) {
+      expect(hues.has(term[slot]), `${slot} = ${term[slot]} is a sixth hue`).toBe(true);
+    }
   });
 });

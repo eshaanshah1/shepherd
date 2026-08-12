@@ -37,7 +37,6 @@ import {
  *   - the ancestor-chain write and the exact restore, inline layer included;
  *   - the wash/alias reduction — that `fillHover` wins over `text` for a
  *     background painted by the wash, with `text` reported as `via`;
- *   - the palette fallback, naming the tier-1 token when no role explains it;
  *   - `declaringElement` naming a re-declaring ancestor rather than `:root`,
  *     which is the case the scoped-re-declaration design (§2) turns on;
  *   - `paintSite` widening from the element outward.
@@ -59,7 +58,8 @@ import {
  *     reads as `''` and every pseudo slot is (correctly, for jsdom) skipped —
  *     which means the pseudo path is exercised by real Chromium and by nothing
  *     here. It was added because a `StatusDot` is entirely its `::before`, and
- *     that is the shape the real audit confirmed.
+ *     that is the shape the real audit confirmed. (`StatusDot` is gone — its
+ *     replacement `StateMark` draws the same way, from a `::before`.)
  *
  * Two of the tests below exist ONLY because a real-Chromium run found the
  * behaviour they pin (`drawn`, and the pseudo skip). That order — measure the
@@ -130,14 +130,14 @@ describe('probeRoles', () => {
   });
 
   it('names the WASH, not the role the wash is built from', () => {
-    // `fillHover` is `color-mix(… var(--sh-text) 6% …)`, so a probe of `text`
-    // moves this background too. The answer is the wash; `text` is how it is
-    // built, and the reduction that decides so is read off `roles.ts`.
-    fixture(`#target { background-color: var(--sh-fill-hover); }`, `<div id="target">x</div>`);
+    // `scrim` is `color-mix(… var(--sh-scrim-ink) 76% …)`, so a probe of
+    // `scrimInk` moves this background too. The answer is the wash; `scrimInk` is
+    // how it is built, and the reduction that decides so is read off `roles.ts`.
+    fixture(`#target { background-color: var(--sh-scrim); }`, `<div id="target">x</div>`);
 
     const finding = find(must('target'), 'background-color');
-    expect(finding.role).toBe('fillHover');
-    expect(finding.via).toContain('text');
+    expect(finding.role).toBe('scrim');
+    expect(finding.via).toContain('scrimInk');
   });
 
   it('says NO ROLE for a hardcoded colour, and names no token either', () => {
@@ -145,7 +145,6 @@ describe('probeRoles', () => {
 
     const finding = find(must('target'), 'background-color');
     expect(finding.role).toBeNull();
-    expect(finding.paletteToken).toBeNull();
     expect(finding.value).toBe('rgb(12, 34, 56)');
   });
 
@@ -155,12 +154,18 @@ describe('probeRoles', () => {
     expect(find(must('target'), 'background-color').role).toBeNull();
   });
 
-  it('says NO ROLE but names the private token when a call site is on tier 1', () => {
-    fixture(`#target { background-color: var(--sh-ink-line); }`, `<div id="target">x</div>`);
+  it('answers NO ROLE for a name the token layer does not emit', () => {
+    // `--sh-ink-line` was a tier-1 variable and a call site on it was a real
+    // finding — `paletteToken` existed to name it. Shepherd UI stopped emitting
+    // tier 1 entirely, so a rule naming a luminance step now resolves to
+    // nothing, which is a stronger guarantee than a report about it. The field
+    // went with the finding; what is pinned here is that the ROLE path still
+    // works and the private name still buys nothing.
+    fixture(`#target { background-color: var(--sh-line); }`, `<div id="target">x</div>`);
+    expect(find(must('target'), 'background-color').role).toBe('line');
 
-    const finding = find(must('target'), 'background-color');
-    expect(finding.role).toBeNull();
-    expect(finding.paletteToken).toBe('ink-line');
+    fixture(`#target { background-color: var(--sh-ink-line); }`, `<div id="target">x</div>`);
+    expect(find(must('target'), 'background-color').role).toBeNull();
   });
 
   it('answers with the RE-DECLARING ancestor, not :root, inside a scoped subtree', () => {
@@ -269,7 +274,7 @@ describe('probeRoles', () => {
   it('honours a narrowed candidate list, so the answer cannot come from elsewhere', () => {
     fixture(`#target { background-color: var(--sh-surface); }`, `<div id="target">x</div>`);
 
-    const finding = probeRoles(must('target'), { read: substituting, roles: ['accent', 'danger'] }).find(
+    const finding = probeRoles(must('target'), { read: substituting, roles: ['sky', 'red'] }).find(
       (candidate) => candidate.property === 'background-color',
     );
     expect(finding?.role).toBeNull();
@@ -294,11 +299,11 @@ describe('roleDependencies', () => {
 
   it('follows an alias to the token it ends at', () => {
     // `focusRing` → `accent`, and `accent` is a token role, so the walk stops.
-    expect([...roleDependencies('focusRing')]).toEqual(['accent']);
+    expect([...roleDependencies('focusRing')]).toEqual(['sky']);
   });
 
   it('follows a wash to the role it is a wash OF', () => {
-    expect([...roleDependencies('fillHover')]).toEqual(['text']);
+    expect([...roleDependencies('scrim')]).toEqual(['scrimInk']);
   });
 });
 

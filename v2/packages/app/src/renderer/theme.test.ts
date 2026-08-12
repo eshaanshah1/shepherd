@@ -17,10 +17,10 @@ describe('applyThemeVariables', () => {
   it('re-applies over itself, which is what a live theme swap is', () => {
     const root = document.createElement('div');
     applyThemeVariables(root, 'dark');
-    expect(root.style.getPropertyValue('--sh-ink')).toBe(palette.ink.dark);
+    expect(root.style.getPropertyValue('--sh-text')).toBe(palette.ink.dark);
 
     applyThemeVariables(root, 'light');
-    expect(root.style.getPropertyValue('--sh-ink')).toBe(palette.ink.light);
+    expect(root.style.getPropertyValue('--sh-text')).toBe(palette.ink.light);
     expect(root.dataset['theme']).toBe('light');
   });
 });

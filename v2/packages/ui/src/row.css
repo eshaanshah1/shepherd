@@ -85,7 +85,7 @@
  * re-declared `--sh-text` gets a correct hover fill for free — which is the
  * difference between an extension that themes and an extension that is a
  * different colour from everything around it. The shipped `.sh-row:hover` uses
- * `--sh-ink-raised`, a fixed palette step, and that is precisely what would not
+ * `--sh-raised`, a fixed palette step, and that is precisely what would not
  * follow a contributed theme.
  */
 .sh-ui-row:hover {
@@ -104,7 +104,7 @@
 .sh-ui-row--selected,
 .sh-ui-row--selected:hover {
   background: var(--sh-fill-selected);
-  color: var(--sh-text-selected);
+  color: var(--sh-text-on-wool);
 }
 
 /* ----------------------------------------------------------- leading slot */

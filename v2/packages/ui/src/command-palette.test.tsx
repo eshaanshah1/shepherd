@@ -230,3 +230,69 @@ describe('CommandPalette', () => {
     }
   });
 });
+
+describe('CommandPalette groups', () => {
+  const GROUPED: PaletteCommand[] = [
+    { id: 'a', title: 'Split right', group: 'Layout' },
+    { id: 'b', title: 'Split down', group: 'Layout' },
+    { id: 'c', title: 'Go to api', group: 'Jump to' },
+    { id: 'd', title: 'Something else' },
+  ];
+
+  const heads = (): string[] =>
+    [...document.querySelectorAll('.sh-ui-palette__group')].map((el) => el.textContent ?? '');
+
+  it('draws a heading where the group CHANGES, and once each', () => {
+    open(() => {}, () => {}, GROUPED);
+    expect(heads()).toEqual(['Layout', 'Jump to']);
+  });
+
+  it('draws NO heading for an ungrouped command', () => {
+    // Not an invented "Other": a heading above a list of one is furniture
+    // pretending to be structure.
+    open(() => {}, () => {}, [{ id: 'd', title: 'Something else' }]);
+    expect(heads()).toEqual([]);
+  });
+
+  it('emits no heading for a group the QUERY filtered away', () => {
+    // The headings are a property of the FILTERED list, not the original one —
+    // otherwise a search leaves empty sections behind.
+    const palette = open(() => {}, () => {}, GROUPED);
+    palette.type('api');
+    expect(heads()).toEqual(['Jump to']);
+  });
+
+  it('keeps ArrowDown stepping one ROW at a time, past the headings', () => {
+    // The trap this whole shape exists to avoid: the keyboard index is a
+    // position in `matches`, so a heading that counted as an item would make
+    // ArrowDown skip a command every time it crossed a group boundary.
+    const palette = open(() => {}, () => {}, GROUPED);
+    expect(palette.active()).toBe('a');
+    palette.press('ArrowDown');
+    expect(palette.active()).toBe('b');
+    // …and this press crosses INTO `Jump to` without losing a row to the heading.
+    palette.press('ArrowDown');
+    expect(palette.active()).toBe('c');
+  });
+
+  it('hides the headings from the listbox, which contains options only', () => {
+    // A `role="listbox"` whose children include non-options is malformed, and a
+    // screen reader offering "Layout" as something you can run is worse than not
+    // hearing the structure at all.
+    open(() => {}, () => {}, GROUPED);
+    for (const head of document.querySelectorAll('.sh-ui-palette__group')) {
+      expect(head.getAttribute('aria-hidden')).toBe('true');
+    }
+  });
+
+  it('is the ONE place uppercase survives', () => {
+    // §6 refuses uppercase micro-labels with tracking, and `SectionLabel` gave
+    // its up for exactly that. This is the documented exception: a rail heading
+    // is SCANNED (uppercase costs word shape, which is what scanning uses) and a
+    // palette heading is peripheral furniture you are not reading while you type.
+    const rule = rulesMentioning('sh-ui-palette__group')[0];
+    expect(rule?.style.getPropertyValue('text-transform')).toBe('uppercase');
+    expect(rule?.style.getPropertyValue('letter-spacing')).toBe('var(--sh-micro-tracking)');
+    expect(rule?.style.getPropertyValue('font-size')).toBe('var(--sh-micro-font-size)');
+  });
+});

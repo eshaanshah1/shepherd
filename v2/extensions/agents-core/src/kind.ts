@@ -42,6 +42,21 @@ export interface HeadlessInput {
   readonly system?: string;
 }
 
+/**
+ * One model a vendor will run.
+ *
+ * `id` is what reaches the vendor's CLI and is the only place a model string may
+ * appear outside that vendor's own extension (D11). `label` is what a human
+ * picks from — usually the same word, sometimes friendlier — and `note` is where
+ * a vendor says "cheapest" or "pinned" without this file having an opinion about
+ * what those mean.
+ */
+export interface AgentModel {
+  readonly id: string;
+  readonly label: string;
+  readonly note?: string;
+}
+
 export interface HeadlessHalf {
   /**
    * This vendor's cheap tier, and the ONLY place a model id may appear. A
@@ -50,14 +65,12 @@ export interface HeadlessHalf {
    */
   readonly quickModel: string;
   /**
-   * Every model this vendor will accept for the quick tier, `quickModel` first.
+   * Which of `listModels` this vendor will accept for the QUICK tier, by id.
    *
-   * Optional, and absent means "just `quickModel`" — a kind that serves exactly
-   * one model says so by saying nothing. It exists because the SETTINGS screen has
-   * to offer a choice, and the only honest source for what a vendor can run is the
-   * vendor: `agents-core` reads this and never names a model, which is the same
-   * D11 rule `quickModel` itself follows. A free-text box was the alternative and
-   * it makes a typo indistinguishable from a retired model.
+   * Absent means "all of them". It is a filter over the kind's own model list
+   * rather than a second list, which is the whole point of the change: there was
+   * one place that knew what a vendor can run for quick answers and a different
+   * place would have had to know it for everything else.
    */
   readonly quickModels?: readonly string[];
   argv(input: HeadlessInput): readonly string[];
@@ -118,6 +131,30 @@ export interface AgentKind {
    * produce the format the caller is parsing for.
    */
   readonly headless?: HeadlessHalf;
+  /**
+   * **Every model this vendor will run** — the primitive, and the only honest
+   * source for the answer.
+   *
+   * Everything that offers a model choice reads this: the quick-tier setting,
+   * the composer's model select, and whatever asks next. Before it existed, the
+   * settings screen derived its list from `headless.quickModels`, which meant
+   * the one question "what can this vendor run" was answered by a field about
+   * the cheap tier — so a kind with no headless half could not be chosen for
+   * anything, and a kind that had one advertised its interactive models through
+   * a door marked "quick".
+   *
+   * **Synchronous, and a declaration rather than a probe.** A vendor CLI that
+   * could be asked would still have to be asked on a timer, cached, and given a
+   * behaviour for "the binary is not installed" — and Claude Code cannot be
+   * asked at all: it has no `model list` verb, only `--model` and a set of
+   * aliases. A kind that CAN discover its models does the discovery on its own
+   * schedule and answers from what it found; this stays the read.
+   *
+   * Absent means "this kind does not offer a choice", which is different from an
+   * empty list and is why it is optional. A consumer then offers only the
+   * default, and the default is the vendor's business (D11).
+   */
+  listModels?(): readonly AgentModel[];
   /**
    * Fold one event into a transition, or refuse it with a reason.
    *

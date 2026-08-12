@@ -3,60 +3,90 @@ import { palette, type ColorToken, type ThemeMode } from './palette.ts';
 /**
  * Tier 2 of the token layer: **roles are the public vocabulary.**
  *
- * `palette.ts` is tier 1 and it is PRIVATE — `ink-raised` is an internal name for
- * a step on a luminance ramp, and the moment an extension writes
- * `var(--sh-ink-raised)` that internal name is a public API by accident. It
- * already was one, which is the observation the design-system spec opens with.
- * A role says what a colour is FOR; a palette token says what it IS.
+ * `palette.ts` is tier 1 and it is PRIVATE — a component asks for `surface`,
+ * never for `#0F0F0F`, and never for the tier-1 step behind it either. A role
+ * says what a colour is FOR; a palette token says what it IS. An extension that
+ * uses roles is themed for free; a hardcoded hex is a review flag.
  *
- * Three consequences worth knowing before adding a role here:
+ * Four consequences worth knowing before adding a role here:
  *
- *   - **Two roles may resolve to the same palette token.** `canvas` and
- *     `surfaceSunken` are both `ink-deep` today. That is not a duplicate: they are
- *     different jobs, and a theme that wants a recessed field well one step off
- *     the window backdrop must be able to say so without inventing a token.
+ *   - **Two roles may resolve to the same palette token.** `raised` and `well`
+ *     are both `#FFFFFF` in light. That is not a duplicate: they are different
+ *     jobs, and a theme that wants a modal one step off a menu must be able to
+ *     say so without inventing a token.
  *   - **`alias` and `wash` emit `var(--sh-…)`, not a resolved colour.** That is
- *     the whole point of scoped re-declaration (spec §2): a surface that
- *     re-declares the generic `--sh-text` on its own subtree gets a selection
- *     fill and a hover wash that track it, with zero knowledge at the call site.
- *     Baking the hex in at generation time would freeze both to the built-in
- *     palette and quietly break every contributed theme.
- *   - **Every role carries the negative half.** Orca's styleguide has a
- *     "Don't use it for" column per token (reference notes §3), and it is the
- *     thing that stopped its token set from sprawling. Flock states the positive
- *     half in prose; `notFor` is where the other half lives.
+ *     the point of scoped re-declaration: a surface that re-declares the generic
+ *     `--sh-text` on its own subtree gets a selection fill and a hover wash that
+ *     track it, with zero knowledge at the call site. Baking the hex in at
+ *     generation time would freeze both to the built-in palette and quietly
+ *     break every contributed theme.
+ *   - **Every role carries the negative half.** `notFor` is where §2's "not for"
+ *     column lives, and it is the thing that stops a token set from sprawling.
+ *   - **A contributed surface supplies a role NAME, never a colour and never a
+ *     height.** A contributed view that hardcodes a colour is a visible bug the
+ *     moment a user swaps themes, which is a better enforcement mechanism than a
+ *     lint rule.
  */
 
 export type RoleName =
   // surfaces
+  | 'sunken'
   | 'canvas'
+  | 'pane'
   | 'surface'
-  | 'surfaceRaised'
-  | 'surfaceSunken'
-  | 'terminal'
+  | 'well'
+  | 'raised'
   // lines
   | 'line'
+  | 'lineStrong'
+  | 'lineActive'
+  | 'edgeSelected'
   // text
   | 'text'
+  | 'textQuiet'
   | 'textDim'
   | 'textFaint'
-  // accents (each one has a job; rule 3 bans a saturated colour without one)
-  | 'accent'
-  | 'accentText'
-  | 'attention'
-  | 'success'
-  | 'danger'
-  | 'prompt'
+  | 'textMute'
+  | 'textGhost'
+  // the five that mean something (§2)
+  | 'sky'
+  | 'grass'
+  | 'wool'
+  | 'clay'
+  | 'red'
+  // the state mark (§3)
+  | 'markWorking'
+  | 'markWorkingOff'
+  | 'markWaiting'
+  | 'markRest'
+  | 'markFailed'
+  | 'meterPass'
+  | 'meterPending'
+  // repo identity
+  | 'repo1'
+  | 'repo2'
+  | 'repo3'
+  | 'repo4'
+  // the sky strip
+  | 'sceneHill'
+  | 'sceneFlock'
+  | 'sceneFlockShade'
+  | 'sceneFlockRest'
+  // overlays
+  | 'scrimInk'
+  | 'scrim'
   // states
   | 'fillHover'
+  | 'fillActive'
+  | 'fillTab'
   | 'fillSelected'
-  | 'textSelected'
+  | 'textOnWool'
   | 'focusRing';
 
 interface RoleShared {
   /** What the role is for. */
   readonly job: string;
-  /** What it is NOT for. Orca's "Don't use it for" column. */
+  /** What it is NOT for. §2's "not for" column. */
   readonly notFor: string;
 }
 
@@ -83,149 +113,274 @@ export interface WashRole extends RoleShared {
 export type RoleSpec = TokenRole | AliasRole | WashRole;
 
 export const roles: Readonly<Record<RoleName, RoleSpec>> = {
+  // ── surfaces ────────────────────────────────────────────────────────────────
+  sunken: {
+    kind: 'token',
+    token: 'sunken',
+    job: 'behind everything; a field’s own well.',
+    notFor: 'a writing surface. A composer is a `well`, one step UP, not a recess.',
+  },
   canvas: {
     kind: 'token',
-    token: 'ink-deep',
-    job: 'the window backdrop — what is behind every surface.',
-    notFor: 'a panel or a card. Those are `surface`; canvas is what they sit on.',
+    token: 'canvas',
+    job: 'the window, the rail, the stage — what every surface sits on.',
+    notFor: 'a card or a panel. Those are `surface`; canvas is their ground.',
   },
-  surface: {
+  pane: {
     kind: 'token',
-    token: 'ink',
-    job: 'a panel: the app frame, the sidebar, the titlebar, a bar.',
-    notFor: 'a hover fill. That is `fillHover`, which is a wash and tracks a theme.',
-  },
-  surfaceRaised: {
-    kind: 'token',
-    token: 'ink-raised',
-    job: 'a surface one luminance step up — a modal card, a floating panel.',
-    notFor:
-      'elevation theater. Rule 2 has no shadows: the step IS the elevation, and there is no second one.',
-  },
-  surfaceSunken: {
-    kind: 'token',
-    token: 'ink-deep',
-    job: "an instrument's recessed well — a bordered field, an input.",
-    notFor:
-      'a writing surface. A composer is soft (spec §3): its fields sit ON the card with no well of their own.',
-  },
-  terminal: {
-    kind: 'token',
-    token: 'ink-term',
-    job: "the grid's own background, and the pane chrome painted to match it.",
+    token: 'pane',
+    job: 'the grid’s own ground, and the pane chrome painted to match it.',
     notFor:
       'app chrome away from a pane. And never read the app mode off it — pane chrome measures this colour (`paneTitleSurface`), because an extension may theme one terminal light inside a dark app.',
   },
-
-  line: {
+  surface: {
     kind: 'token',
-    token: 'ink-line',
-    job: 'every hairline. With no shadows, these carry the whole hierarchy.',
+    token: 'surface',
+    job: 'a resting card.',
+    notFor: 'a hover fill. That is `fillHover`, which is a wash and tracks a theme.',
+  },
+  well: {
+    kind: 'token',
+    token: 'well',
+    job: 'the composer, a modal — a surface you write on.',
     notFor:
-      'a fill. A 1px rule at this value reads as structure; a 28px block of it reads as a mistake.',
+      'a bordered box inside itself. Inside a well, space is the structure: a bordered box is the loudest thing on it.',
+  },
+  raised: {
+    kind: 'token',
+    token: 'raised',
+    job: 'a selected card, a menu.',
+    notFor:
+      'elevation theater. The luminance step IS the elevation, and there is exactly one documented shadow — a menu over an already-raised surface.',
   },
 
+  // ── lines ───────────────────────────────────────────────────────────────────
+  line: {
+    kind: 'token',
+    token: 'line',
+    job: 'every seam. With no shadows, these carry the whole hierarchy.',
+    notFor: 'a fill. A 1px rule at this value reads as structure; a 28px block of it reads as a mistake.',
+  },
+  lineStrong: {
+    kind: 'token',
+    token: 'lineStrong',
+    job: 'a well’s edge, a bordered control.',
+    notFor: 'a seam between two bands of chrome. That is `line`, and a heavier one reads as a box.',
+  },
+  lineActive: {
+    kind: 'token',
+    token: 'lineActive',
+    job: 'the focused pane’s edge — focus is ONE border step.',
+    notFor:
+      'dimming its neighbours. An unfocused pane is not dimmed by opacity: a dimmed pane is one whose live output you can no longer read.',
+  },
+  edgeSelected: {
+    kind: 'token',
+    token: 'edgeSelected',
+    job: 'a selected card’s edge, over its `raised` fill.',
+    notFor: 'inverse video. Selection is a fill plus an edge; the label stays legible.',
+  },
+
+  // ── text ────────────────────────────────────────────────────────────────────
   text: {
     kind: 'token',
-    token: 'wool',
-    job: 'primary text, and the solid block an inverse-video selection is painted with.',
+    token: 'ink',
+    job: 'a title, a live value.',
     notFor: 'a border. A hairline at text weight is a box, not a seam.',
+  },
+  textQuiet: {
+    kind: 'token',
+    token: 'inkQuiet',
+    job: 'an identifier inside a sentence — the one word of a question you must actually read.',
+    notFor: 'the sentence around it. That is `textDim`; this is the part being pointed at.',
   },
   textDim: {
     kind: 'token',
-    token: 'wool-dim',
-    job: 'secondary text — a value beside its label, a subtitle, a resting control.',
-    notFor: 'a disabled control. Disabled is 40% opacity on the live colour (spec §3), not a dimmer one.',
+    token: 'inkDim',
+    job: 'the terminal grid’s text, and a resting card’s title.',
+    notFor: 'chrome at rest. A control at rest is `textFaint`, a step quieter.',
   },
   textFaint: {
     kind: 'token',
-    token: 'wool-faint',
-    job: 'tertiary text — micro-labels, placeholders, an idle state.',
-    notFor: 'anything a user has to read to act. It is a step below secondary, not a quiet primary.',
+    token: 'inkFaint',
+    job: 'a control at rest.',
+    notFor: 'a disabled control. Disabled is 36% opacity on the LIVE colour, never a dimmer one.',
+  },
+  textMute: {
+    kind: 'token',
+    token: 'inkMute',
+    job: 'a section label, a secondary row.',
+    notFor: 'anything you must read to act.',
+  },
+  textGhost: {
+    kind: 'token',
+    token: 'inkGhost',
+    job: 'a path, a timestamp, an id — what the machine produced.',
+    notFor: 'prose.',
   },
 
-  accent: {
+  // ── the five that mean something ────────────────────────────────────────────
+  sky: {
     kind: 'token',
-    token: 'cobalt',
-    job: 'working, links, and the ONE loud action on a surface.',
-    notFor:
-      'more than one control in a view. Rule 3 is confident flat use: two primary buttons means neither is.',
+    token: 'sky',
+    job: 'live · focus · send.',
+    notFor: 'a status that is not "right now".',
   },
-  accentText: {
+  grass: {
+    kind: 'token',
+    token: 'grass',
+    job: 'passed · done · git added.',
+    notFor: 'a confirm button. A hue is never a button.',
+  },
+  wool: {
     kind: 'alias',
-    of: 'surface',
-    job: 'the ink that reads ON a solid accent fill.',
+    of: 'text',
+    job: 'waiting on you, and the ONE action on a surface — a white fill on black.',
     notFor:
-      'text on a TINT. Synara records this one (index.css:442-447): on-fill contrast ink is only ever legal over a solid fill — on a tint you use the role colour and let the tint carry the signal.',
+      'decoration. It is also `text`, which is the point: the loudest thing available against this surface, and there is only one of it per surface.',
   },
-  attention: {
+  clay: {
     kind: 'token',
-    token: 'hay',
-    job: 'blocked — an agent is waiting on you.',
-    notFor:
-      'warning text on a tint (reference notes, conflict 11). It is a state, and the state is either a solid chip or coloured text on the plain surface.',
+    token: 'clay',
+    job: 'git removed.',
+    notFor: 'failure. A run that failed is `red`, and the two must stay one glance apart.',
   },
-  success: {
+  red: {
     kind: 'token',
-    token: 'pasture',
-    job: 'done, and a turn that finished.',
-    notFor: 'a confirmation button. A button is `accent` or bordered; green means a state, not an action.',
-  },
-  danger: {
-    kind: 'token',
-    token: 'ember',
-    job: 'error, urgent, and the dev build identity.',
-    notFor:
-      'a back-out path. Cancel/Dismiss/Close are not destructive (Orca STYLEGUIDE:294-296) — they are ghost, uncoloured.',
-  },
-  prompt: {
-    kind: 'token',
-    token: 'signal',
-    job: 'a live affordance: the cursor, a hint that something is waiting for input.',
-    notFor:
-      'a status. It is the only accent that means "here, now" rather than "this is the case", and reusing it for a state would cost the distinction.',
+    token: 'red',
+    job: 'a run that failed.',
+    notFor: 'a back-out path. Cancel, Dismiss, Close and Discard are ghost — they are not destructive.',
   },
 
-  fillHover: {
+  // ── the state mark (§3) ─────────────────────────────────────────────────────
+  //
+  // A **square** always means *your move*. A **ring** means nothing is happening.
+  // A **meter** means something is. Every mark carries its word as a tooltip and
+  // as its accessible name — two states will eventually share a hue, and a fact
+  // encoded only in colour cannot be read out, searched or asserted on.
+  markWorking: {
+    kind: 'alias',
+    of: 'sky',
+    job: 'the working meter’s three bars.',
+    notFor: 'a bar that is mid-cycle. That is `markWorkingOff`, and it is a step, not an opacity.',
+  },
+  markWorkingOff: {
+    kind: 'token',
+    token: 'skyDim',
+    job: 'the working meter’s third bar on its off beat.',
+    notFor:
+      'a continuous fade. The cycle is `steps(1, end)` at 1.1s so it repaints twice a second rather than every frame — twelve panes of continuously repainting indicators peg the GPU.',
+  },
+  markWaiting: {
+    kind: 'alias',
+    of: 'wool',
+    job: 'the solid 8×8 square that means the agent is waiting on YOU.',
+    notFor: 'anything that is merely notable. This mark is the one that opens a row into a card.',
+  },
+  markRest: {
+    kind: 'token',
+    token: 'edgeRing',
+    job: 'the hollow 7×7 ring — nothing is happening.',
+    notFor: 'a fill. The ring is 1px and hollow; a filled circle at this value reads as a fifth state.',
+  },
+  markFailed: {
+    kind: 'alias',
+    of: 'red',
+    job: 'the solid 8×8 square of a run that failed.',
+    notFor: 'a warning. There is no warning state; a thing either needs you or it does not.',
+  },
+  meterPass: {
+    kind: 'alias',
+    of: 'grass',
+    job: 'a suite meter’s cell, green.',
+    notFor: 'a cell that has not run. That is `meterPending`, a neutral — not a dimmer green.',
+  },
+  meterPending: {
+    kind: 'token',
+    token: 'lineActive',
+    job: 'a suite meter’s cell that has not run yet.',
+    notFor: 'a failure. A failed suite is drawn with the failed mark, not a red cell.',
+  },
+
+  // ── repo identity ───────────────────────────────────────────────────────────
+  repo1: { kind: 'token', token: 'repoSky', job: 'a repo’s identity square.', notFor: 'a state. Identity is a sixth axis and shares no meaning with the five.' },
+  repo2: { kind: 'token', token: 'repoStone', job: 'a repo’s identity square.', notFor: 'a state.' },
+  repo3: { kind: 'token', token: 'repoTaupe', job: 'a repo’s identity square.', notFor: 'a state.' },
+  repo4: { kind: 'token', token: 'repoSlate', job: 'a repo’s identity square.', notFor: 'a state.' },
+
+  // ── the sky strip ───────────────────────────────────────────────────────────
+  sceneHill: {
+    kind: 'token',
+    token: 'scnHill',
+    job: 'the meadow’s hills, in the 124px strip at the head of the rail.',
+    notFor:
+      'anywhere but the strip. It is a window, not a wallpaper — an earlier version spread the scene behind the whole app and was rejected as distracting.',
+  },
+  sceneFlock: { kind: 'token', token: 'scnFlock', job: 'the sheep’s body and fluff.', notFor: 'an icon. The sheep is drawn in markup as 3px pixels; there is no image asset.' },
+  sceneFlockShade: { kind: 'token', token: 'scnFlockShade', job: 'the sheep’s legs.', notFor: 'a second illustration. There is exactly one.' },
+  sceneFlockRest: { kind: 'token', token: 'scnFlockRest', job: 'the empty state’s sheep, at rest and unlit.', notFor: 'the rail’s sheep, which is grazing in daylight.' },
+
+  // ── overlays ────────────────────────────────────────────────────────────────
+  scrimInk: {
+    kind: 'token',
+    token: 'scrimBase',
+    job: 'the ink `scrim` is a wash of. Exposed so a themed subtree can move both.',
+    notFor: 'painting anything directly. At full opacity this is a colour nothing in the app is.',
+  },
+  scrim: {
     kind: 'wash',
-    of: 'text',
-    // Superset's measured pair (globals.css:58-60, 103-104): 7% dark / 4% light,
-    // and the reason light is lower is that a wash on a bright surface reads
-    // heavier at the same alpha. Ours is 6/4 because Flock's `wool` is warmer and
-    // therefore already more present against `ink` than a neutral foreground is.
-    alpha: { dark: 0.06, light: 0.04 },
+    of: 'scrimInk',
+    // 76% dark, 20% light — README §2. The asymmetry is the same finding the pane
+    // chrome records one file over: 55% black over paper reads as soot, which is
+    // the dead grey this language refuses. A scrim takes contrast OUT of what is
+    // behind it, and paper has less to give.
+    alpha: { dark: 0.76, light: 0.2 },
+    job: 'what a ⌘T composer or a ⌘K palette dims the app with.',
+    notFor:
+      'a backdrop blur. Glass is refused outright — the scrim is flat, and what is behind it stays readable as itself.',
+  },
+
+  // ── states ──────────────────────────────────────────────────────────────────
+  fillHover: {
+    kind: 'token',
+    token: 'wash',
     job: 'the hover fill on a row or a ghost control.',
     notFor:
-      'selection. Rule 4 keeps inverse video for that, and a wash next to a solid block is the distinction that makes both readable at a glance.',
+      'a row that GROWS to reveal its actions. Hover actions share one grid cell with the metadata, so the track is already as wide as the wider of them.',
+  },
+  fillActive: {
+    kind: 'token',
+    token: 'fill',
+    job: 'an active row — the one the keyboard is on, in a menu or a palette.',
+    notFor: 'selection in the rail. A selected task is a card, and it is `raised` plus `edgeSelected`.',
+  },
+  fillTab: {
+    kind: 'token',
+    token: 'active',
+    job: 'the tab you are on — one luminance step, and the only mark it needs.',
+    notFor:
+      'a `sky` underline, which is what this replaced. That colour has one job — "live · focus · send" — and a tab that merely happens to be the one you are on is none of them. It also collided with the mark a tab carries for the agent inside it.',
   },
   fillSelected: {
     kind: 'alias',
-    of: 'text',
-    // NOT a wash, deliberately — and this is where the design-system spec's §2
-    // parenthetical ("roles that are washes: fillHover = text at 6%,
-    // fillSelected") disagrees with the design language it is implementing.
-    // Flock rule 4 is inverse video: a selected row is a SOLID block of `text`
-    // with `textSelected` on it, and the reference study reached the same
-    // conclusion explicitly (takeaway 2: "Flock's rule 4 uses inverse video for
-    // selection, which is stronger and should stay — but hover still needs an
-    // answer"). Shipped `.sh-row.is-sel` is already the solid form. An alias
-    // rather than a token so a re-declared `--sh-text` carries the block with it.
-    job: 'the selected fill — a solid block, inverse video (rule 4).',
+    of: 'raised',
+    job: 'a selected card’s fill, under `edgeSelected`.',
     notFor:
-      'a hover state, and not a tint. If it ever becomes a wash, hover and selection stop being one glance apart.',
+      'inverse video. Flock painted a solid block of `text` here; this language refuses it — a fill plus a 2px edge, and the label stays legible.',
   },
-  textSelected: {
+  textOnWool: {
     kind: 'alias',
-    of: 'surface',
-    job: 'the ink on a `fillSelected` block.',
-    notFor: 'anything not sitting on that block. Off it, this is the surface colour and invisible.',
+    of: 'canvas',
+    job: 'the ink that reads ON a solid `wool` fill — the one primary button.',
+    notFor:
+      'text on a tint. On-fill contrast ink is only ever legal over a solid fill; on a tint you use the role colour and let the tint carry the signal.',
   },
   focusRing: {
     kind: 'alias',
-    of: 'accent',
-    job: 'the keyboard focus indicator.',
+    of: 'sky',
+    job: 'the keyboard focus indicator — 2px at 2px offset, drawn as `outline`.',
     notFor:
-      'a hover or an active state. Focus is a keyboard fact; painting it on hover makes the one thing a keyboard user needs illegible.',
+      'a hover or an active state. Focus is a keyboard fact, and it is an outline rather than a border so a focused control is the same SIZE as an unfocused one.',
   },
 };
 
@@ -246,15 +401,15 @@ export function roleVarName(role: RoleName): string {
  * is the same one that made `--fill-hover` worth copying at all: `color-mix(in
  * srgb, var(--sh-text) 6%, transparent)` re-resolves wherever `--sh-text` is
  * re-declared, so a contributed theme (or a `[data-surface]` subtree) gets a
- * correct hover fill for free. An `rgb(233 226 210 / 6%)` baked at generation
+ * correct hover fill for free. An `rgb(237 237 237 / 6%)` baked at generation
  * time is the built-in palette, forever, on every surface. Electron's Chromium
  * has had `color-mix` since well before 43, so there is no support argument on
  * the other side.
  *
- * `srgb` and not `oklab` (which Superset uses): every value in this palette is an
- * sRGB hex and the second colour is `transparent`, so the interpolation space
- * only changes how the *alpha* ramp is computed — and sRGB is what the rest of
- * this file's contrast maths (`relativeLuminance`) is defined in. One space.
+ * `srgb` and not `oklab`: every value in this palette is an sRGB hex and the
+ * second colour is `transparent`, so the interpolation space only changes how the
+ * *alpha* ramp is computed — and sRGB is what this package's contrast maths
+ * (`relativeLuminance`) is defined in. One space.
  */
 export function roleValue(role: RoleName, mode: ThemeMode): string {
   const spec = roles[role];
@@ -273,11 +428,11 @@ export function roleValue(role: RoleName, mode: ThemeMode): string {
 /**
  * The palette token a role ultimately paints from, following aliases and washes.
  *
- * Nothing generates CSS from this — it exists so a test (and later the inspector,
- * spec §4) can answer "which colour is actually behind this name" without
- * re-implementing the walk. Throws on a cycle rather than recursing forever: two
- * roles aliasing each other is a mistake that must fail loudly at build time, not
- * hang a stylesheet generator.
+ * Nothing generates CSS from this — it exists so a test (and the inspector) can
+ * answer "which colour is actually behind this name" without re-implementing the
+ * walk. Throws on a cycle rather than recursing forever: two roles aliasing each
+ * other is a mistake that must fail loudly at build time, not hang a stylesheet
+ * generator.
  */
 export function roleToken(role: RoleName): ColorToken {
   const seen = new Set<RoleName>();

@@ -91,7 +91,12 @@ describe('TabStrip', () => {
       .flatMap((rule) => [...rule.style].map((property) => rule.style.getPropertyValue(property)))
       .join(' ');
     expect(values).not.toMatch(/#[0-9a-f]{3,8}\b|\brgb|\bhsl|\boklch/i);
-    expect(values).toContain('var(--sh-accent)');
+    expect(values).toContain('var(--sh-fill-tab)');
+    // And NOT `sky`. The active tab used to take a sky underline; that colour
+    // has one job — "live · focus · send" — which a tab that merely happens to
+    // be the one you are on is none of. It also collided with the mark a tab
+    // carries for the agent inside it: a blue rule under a blue working meter.
+    expect(values).not.toContain('var(--sh-sky)');
   });
 
   it('declares its height exactly once', () => {
@@ -105,6 +110,8 @@ describe('TabStrip', () => {
         rule.style.getPropertyValue('max-height') !== '',
     );
     expect(heights).toHaveLength(1);
-    expect(heights[0]?.style.getPropertyValue('height')).toBe('var(--sh-row-height)');
+    // A fixed BAND, not the row rhythm: the row grew to 34 with the task card,
+    // and the strip is furniture rather than a list.
+    expect(heights[0]?.style.getPropertyValue('height')).toBe('var(--sh-band-tab-strip)');
   });
 });

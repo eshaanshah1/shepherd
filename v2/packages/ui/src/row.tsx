@@ -68,7 +68,7 @@ export const rowClasses = {
 } as const;
 
 export interface RowProps extends ComponentPropsWithRef<'div'> {
-  /** The 12×12 slot's occupant. `StatusDot` is the default one. */
+  /** The 12×12 slot's occupant. `StateMark` is the default one. */
   readonly leading?: ReactNode;
   /** Resting metadata — a count, a branch, a time. Shares a cell with `actions`. */
   readonly meta?: ReactNode;

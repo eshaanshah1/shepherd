@@ -186,6 +186,36 @@ describe('quickChoices', () => {
     ]);
   });
 
+  it('reads listModels — the primitive — and narrows it by quickModels', () => {
+    // The direction that matters: `listModels` is what a vendor CAN run, and the
+    // quick tier is a subset of it. It used to be the other way round, which
+    // made a field about the cheap tier the only published answer to a question
+    // every surface asks.
+    const rich = {
+      ...kind('one', ['a', 'b']),
+      listModels: () => [
+        { id: 'a', label: 'A', note: 'cheapest' },
+        { id: 'b', label: 'B' },
+        { id: 'big', label: 'Big' },
+      ],
+    } as unknown as AgentKind;
+    expect(quickChoices([rich], 'agents-core.quickModel')).toEqual([
+      { value: 'a', label: 'A', description: 'one · cheapest' },
+      { value: 'b', label: 'B', description: 'one' },
+    ]);
+  });
+
+  it('offers every declared model when a kind narrows nothing', () => {
+    const open = {
+      id: 'one',
+      topics: [],
+      reduce: () => ({ kind: 'ignore', why: 'test' }),
+      headless: { quickModel: 'x', argv: () => [], parse: () => undefined },
+      listModels: () => [{ id: 'x', label: 'X' }, { id: 'y', label: 'Y' }],
+    } as unknown as AgentKind;
+    expect(quickChoices([open], 'agents-core.quickModel').map((c) => c.value)).toEqual(['x', 'y']);
+  });
+
   it('offers nothing from a kind that cannot answer a prompt at all', () => {
     const interactive = { id: 'gui', topics: [], reduce: () => ({ kind: 'ignore', why: 'test' }) } as unknown as AgentKind;
     expect(quickChoices([interactive], 'agents-core.quickModel')).toEqual([]);

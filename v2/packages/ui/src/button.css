@@ -50,9 +50,9 @@
 .sh-ui-button--sm {
   height: var(--sh-control-sm);
   padding: 0 var(--sh-space-md);
-  /* 4px: a small control gets the machined corner, not a scaled-down 6. A radius
-     is a property of the box's own size (metrics.ts says so where it declines to
-     density-scale them), and 6px on a 22px box reads as a pill. */
+  /* A small control gets the chip corner rather than a scaled-down control one.
+     A radius is a property of the box's own size — metrics.ts says so where it
+     declines to density-scale them. */
   border-radius: var(--sh-radius-sm);
   font-size: var(--sh-font-size-small);
 }
@@ -71,33 +71,46 @@
 /* ---------------------------------------------------------------- variants */
 
 /*
- * `primary` — the ONE loud thing on a surface (the `accent` role's own `notFor`
- * says two primary buttons means neither is). Solid fill, so the ink on it is
- * `accentText`, which is the only place on-fill contrast ink is legal.
+ * `primary` — the ONE loud thing on a surface, and it is `wool`: a white fill on
+ * black, black on paper.
+ *
+ * **A hue is never a button** (§4). Flock's primary was `accent`, a saturated
+ * blue, and that spent the one colour whose job is "live · focus · send" on
+ * something that is neither. `wool` is louder than any of the five against this
+ * ground anyway — which is the whole argument for it — and it leaves every hue
+ * free to keep meaning what it means.
+ *
+ * The ink on it is `textOnWool`, an alias of `canvas`: the only place on-fill
+ * contrast ink is legal is over a SOLID fill.
  */
 .sh-ui-button--primary {
-  background: var(--sh-accent);
-  color: var(--sh-accent-text);
-  border-color: var(--sh-accent);
+  background: var(--sh-wool);
+  color: var(--sh-text-on-wool);
+  border-color: var(--sh-wool);
 }
 
 .sh-ui-button--primary:hover:not([aria-disabled='true']) {
-  /* One luminance step, drawn by mixing the fill toward the ink that sits on it —
-     so it tracks a re-declared `--sh-accent` instead of being a second colour. */
-  background: color-mix(in srgb, var(--sh-accent) 88%, var(--sh-text));
-  border-color: color-mix(in srgb, var(--sh-accent) 88%, var(--sh-text));
+  /* One step DOWN, toward the ground it sits on — there is nothing above `wool`
+     to step toward. Mixed rather than named so it tracks a re-declared
+     `--sh-text` instead of being a second colour. */
+  background: color-mix(in srgb, var(--sh-wool) 88%, var(--sh-canvas));
+  border-color: color-mix(in srgb, var(--sh-wool) 88%, var(--sh-canvas));
 }
 
 /*
- * `default` — a key: flat, bordered, honest (rule 5). No fill at rest, because
- * the hairline IS the control; the fill is what hover adds.
+ * `secondary` — flat and bordered. No fill at rest, because the hairline IS the
+ * control; the fill is what hover adds.
+ *
+ * `lineStrong`, not `line`: a bordered CONTROL is a box with four edges, and at
+ * `line` it disappears into the seams around it. §2 splits those two values for
+ * exactly this.
  */
-.sh-ui-button--default {
-  border-color: var(--sh-line);
+.sh-ui-button--secondary {
+  border-color: var(--sh-line-strong);
   color: var(--sh-text-dim);
 }
 
-.sh-ui-button--default:hover:not([aria-disabled='true']) {
+.sh-ui-button--secondary:hover:not([aria-disabled='true']) {
   background: var(--sh-fill-hover);
   color: var(--sh-text);
 }
@@ -116,7 +129,7 @@
 }
 
 /*
- * `danger` — ember border and ember text, filled only on hover.
+ * `danger` — red border and red text, filled only on hover.
  *
  * Resting-filled would make the destructive action the loudest thing on the
  * surface, competing with `primary` for the one slot rule 3 allows. The fill on
@@ -124,16 +137,15 @@
  * looking dangerous.
  */
 .sh-ui-button--danger {
-  border-color: var(--sh-danger);
-  color: var(--sh-danger);
+  border-color: var(--sh-red);
+  color: var(--sh-red);
 }
 
 .sh-ui-button--danger:hover:not([aria-disabled='true']) {
-  background: var(--sh-danger);
-  /* On a solid fill, so on-fill ink. `accentText` is the role for "reads on a
-     solid accent block" whichever accent it is — the alias resolves to `surface`
-     and therefore tracks a re-declared subtree. */
-  color: var(--sh-accent-text);
+  background: var(--sh-red);
+  /* On a solid fill, so on-fill ink — the alias resolves to `canvas` and
+     therefore tracks a re-declared subtree. */
+  color: var(--sh-text-on-wool);
 }
 
 /* ------------------------------------------------------------------ states */
@@ -148,26 +160,25 @@
   background: color-mix(in srgb, var(--sh-text) 12%, transparent);
 }
 
-.sh-ui-button--primary:active:not([aria-disabled='true']),
-.sh-ui-button--danger:active:not([aria-disabled='true']) {
-  background: color-mix(in srgb, var(--sh-accent) 76%, var(--sh-text));
+.sh-ui-button--primary:active:not([aria-disabled='true']) {
+  background: color-mix(in srgb, var(--sh-wool) 76%, var(--sh-canvas));
 }
 
 .sh-ui-button--danger:active:not([aria-disabled='true']) {
-  background: color-mix(in srgb, var(--sh-danger) 76%, var(--sh-text));
+  background: color-mix(in srgb, var(--sh-red) 76%, var(--sh-canvas));
 }
 
 /*
- * Disabled: 40% opacity on the LIVE colour, per the spec and per the `textDim`
- * role's `notFor` — a dimmer text colour would make a disabled primary button
- * and a resting default button the same shade, which is two meanings on one
- * value. Opacity keeps every variant distinguishable while unavailable.
+ * Disabled: **36% opacity on the LIVE colour** (§4), never a dimmer colour — a
+ * dimmer colour would make a disabled primary and a resting secondary the same
+ * shade, which is two meanings on one value. Opacity keeps every variant
+ * distinguishable while unavailable.
  *
  * Keyed off `aria-disabled` rather than `:disabled` so it is identical for the
  * `asChild` case, where the element may be an anchor with no disabled state.
  */
 .sh-ui-button[aria-disabled='true'] {
-  opacity: 0.4;
+  opacity: 0.36;
   cursor: default;
   /* Belt and braces with the click guard in button.tsx: the guard stops the
      handler, this stops the hover states from ever suggesting there is one. */

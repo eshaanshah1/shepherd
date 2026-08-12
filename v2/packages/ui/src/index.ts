@@ -108,7 +108,11 @@ export {
   type TooltipProps,
   type TooltipSide,
 } from './tooltip.tsx';
-export { StatusDot, statusWords, type StatusDotProps, type StatusRole } from './status-dot.tsx';
+export { SendButton, type SendButtonProps } from './send-button.tsx';
+export { Chip, type ChipProps } from './chip.tsx';
+export { NAMED_GLYPHS, namedGlyph } from './glyphs.ts';
+export { StateMark, markWords, type MarkState, type StateMarkProps } from './state-mark.tsx';
+export { SuiteMeter, SUITE_METER_MAX_CELLS, type SuiteMeterProps } from './suite-meter.tsx';
 export { TabStrip, type TabDescriptor, type TabStripProps } from './tab-strip.tsx';
 
 /**

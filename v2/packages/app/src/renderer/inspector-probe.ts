@@ -1,12 +1,4 @@
-import {
-  colorTokens,
-  cssVarName,
-  roleNames,
-  roleVarName,
-  roles,
-  type ColorToken,
-  type RoleName,
-} from '@shepherd/design-tokens';
+import { roleNames, roleVarName, roles, type RoleName } from '@shepherd/design-tokens';
 
 /**
  * The token inspector's MEASUREMENT half — design-system spec §4.
@@ -134,12 +126,6 @@ export interface RoleFinding {
    * built from (`fillHover` → `text`), upstream-last.
    */
   readonly via: readonly RoleName[];
-  /**
-   * The tier-1 palette token painting it when no role does. Private by design,
-   * which is the finding: a call site on tier 1 is a call site an extension's
-   * theme cannot move.
-   */
-  readonly paletteToken: ColorToken | null;
   /**
    * Where the winning role's value is DECIDED — `documentElement` normally, and
    * the re-declaring ancestor inside a scoped subtree (spec §2). Null when
@@ -547,20 +533,19 @@ function measure(
     };
 
     if (role === null) {
-      // The honest failure, made actionable: name the private token if one
-      // explains it, so the report is "you are on tier 1" rather than "unknown".
-      const token =
-        colorTokens.find((candidate) =>
-          moves(element, chain, slots, cssVarName(candidate), read).has(key),
-        ) ?? null;
-      return {
-        ...shared,
-        role: null,
-        via: [],
-        paletteToken: token,
-        declaredOn: token === null ? null : declaringElement(element, cssVarName(token), read),
-        paintedOn: token === null ? null : paintSite(element, chain, cssVarName(token), slot, read),
-      };
+      /*
+       * The honest failure, and there is nothing left to add to it.
+       *
+       * This used to name the tier-1 palette token painting the slot, so the
+       * report read "you are on tier 1" rather than "unknown". Shepherd UI
+       * stopped emitting tier 1 at all: a stylesheet cannot name a luminance
+       * step because the variable does not exist, so the finding this reported
+       * is now unrepresentable and the field could only ever answer null.
+       *
+       * A field that is structurally always null is worse than no field — it
+       * reads as "we checked and there was none" when nothing was checked.
+       */
+      return { ...shared, role: null, via: [], declaredOn: null, paintedOn: null };
     }
 
     const varName = roleVarName(role);
@@ -568,7 +553,6 @@ function measure(
       ...shared,
       role,
       via,
-      paletteToken: null,
       declaredOn: declaringElement(element, varName, read),
       paintedOn: paintSite(element, chain, varName, slot, read),
     };

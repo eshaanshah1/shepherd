@@ -9,6 +9,7 @@ export {
   metrics,
   motion,
   ratios,
+  type BandScale,
   type ControlScale,
   type Density,
   type Metrics,

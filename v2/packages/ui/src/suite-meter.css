@@ -1,0 +1,45 @@
+/*
+ * The suite meter — §3: `n cells, 4×8, gap 1.5, grass when green, #2A2A2A
+ * pending`.
+ *
+ * Literal px for the same reason `state-mark.css` uses them: these are the
+ * dimensions of a MARK. A cell that scaled with the density mode would stop
+ * reading as a cell at exactly the density where the rows are tightest.
+ */
+
+.sh-ui-suite {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+
+.sh-ui-suite__cells {
+  display: flex;
+  align-items: center;
+  gap: 1.5px;
+}
+
+.sh-ui-suite__cells > i {
+  inline-size: 4px;
+  block-size: 8px;
+  /*
+   * Neutral, NOT a dimmed green. The difference between "has not run" and "ran
+   * and passed" is the whole reason this is drawn, and a dim green says
+   * "passed, a bit".
+   */
+  background: var(--sh-meter-pending);
+}
+
+.sh-ui-suite__cells > i[data-passed] {
+  background: var(--sh-meter-pass);
+}
+
+/*
+ * Nothing here animates, and that is not an omission.
+ *
+ * A suite meter changes when a run finishes — an event you were not watching for
+ * — so a transition on the fill would draw the eye to a cell that has already
+ * settled. §6 refuses continuous animation, and the working meter is the one
+ * indicator allowed to move because it is saying "right now" rather than
+ * "this is the case".
+ */
