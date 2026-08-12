@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, type ReactElement } from 'react';
 import type { ExtensionRowProps } from '@shepherd/sdk';
-import { Button, StateMark, SuiteMeter } from '@shepherd/ui';
+import { Button, IconButton, StateMark, SuiteMeter, namedGlyph } from '@shepherd/ui';
 import { readCardData, type CardAnswer, type CardData } from './card-data.ts';
 
 /**
@@ -63,6 +63,8 @@ export function TaskCard({ item, selected, invoke }: ExtensionRowProps): ReactEl
   );
   useAnswerKeys(data?.question?.answers, answer);
 
+  const action = item.primaryAction;
+
   const open = useCallback(() => {
     const command = item.command;
     if (command !== undefined) void invoke(command.id, command.args);
@@ -75,10 +77,37 @@ export function TaskCard({ item, selected, invoke }: ExtensionRowProps): ReactEl
   const question = card.question;
   const waiting = card.mark === 'waiting' && question !== undefined;
 
+  /*
+   * **A task is a ROW until it has something to show.**
+   *
+   * §5: "Everything else is a fixed-height row or a fixed-shape card." The
+   * first build made every task a card, and a rail of six resting tasks was
+   * six bordered boxes with a title in each — six times the height for the same
+   * six words, and the card treatment stopped meaning anything because
+   * everything had it.
+   *
+   * A card is earned by having a second line worth drawing, and there are
+   * exactly three ways to earn one:
+   *
+   *   - it is **waiting on you** — the question and its answers need the room;
+   *   - the run **failed** — the exit code and the way back need the room;
+   *   - it has **more than one tab** — the mark strip is the second line.
+   *
+   * An agent that is merely WORKING is a row. That is the correction that
+   * matters most: working is the common case, and a rail where the common case
+   * is tall is a rail you scroll to find the one thing that is not. The mark
+   * already says it is working, in the same 12px slot a resting one uses.
+   */
+  const dense =
+    !waiting &&
+    card.mark !== 'failed' &&
+    (card.tabs === undefined || card.tabs.length < 2);
+
   return (
     <div
       className="sh-task-card"
       data-mark={card.mark}
+      data-dense={dense ? 'true' : undefined}
       data-selected={selected ? 'true' : undefined}
       data-open={waiting ? 'true' : undefined}
     >
@@ -90,12 +119,42 @@ export function TaskCard({ item, selected, invoke }: ExtensionRowProps): ReactEl
       <button type="button" className="sh-task-card__head" onClick={open}>
         <StateMark state={card.mark} />
         <span className="sh-task-card__title">{item.label}</span>
-        {card.elapsed === undefined ? null : <span className="sh-task-card__elapsed">{card.elapsed}</span>}
+        {/*
+          The metadata and the hover action share ONE grid cell (§6: a row must
+          not GROW to reveal its actions). The track is therefore already as wide
+          as the wider of the two, and revealing the button moves nothing — where
+          swapping one for the other, or appending, would shift the title under
+          the cursor at the exact moment you are reaching for it.
+
+          `visibility`, not `display`, for the same reason: a hidden-but-laid-out
+          button is what keeps the cell that width when it is not shown.
+        */}
+        <span className="sh-task-card__trail">
+          {card.elapsed === undefined ? null : <span className="sh-task-card__elapsed">{card.elapsed}</span>}
+          {action === undefined ? null : (
+            <IconButton
+              className="sh-task-card__action"
+              icon={namedGlyph(action.icon)}
+              size="sm"
+              label={action.label}
+              title={action.label}
+              /*
+                This control sits INSIDE a button. Without the stop, archiving a
+                task would also reveal it — and the window would move to a task
+                on its way out of the list.
+              */
+              onClick={(event) => {
+                event.stopPropagation();
+                void invoke(action.id, action.args);
+              }}
+            />
+          )}
+        </span>
       </button>
 
       {card.summary === undefined ? null : <p className="sh-task-card__summary">{card.summary}</p>}
 
-      {card.diff === undefined && card.suite === undefined ? null : (
+      {dense || (card.diff === undefined && card.suite === undefined) ? null : (
         <div className="sh-task-card__diff">
           {card.diff === undefined ? null : (
             <>
@@ -121,11 +180,11 @@ export function TaskCard({ item, selected, invoke }: ExtensionRowProps): ReactEl
         </div>
       )}
 
-      {card.exitCode === undefined ? null : (
+      {dense || card.exitCode === undefined ? null : (
         <span className="sh-task-card__exit">exit {card.exitCode}</span>
       )}
 
-      {card.repos === undefined && card.tabs === undefined ? null : (
+      {dense || (card.repos === undefined && card.tabs === undefined) ? null : (
         <div className="sh-task-card__foot">
           {card.repos?.map((repo) => (
             <span key={repo.name} className="sh-task-card__repo">

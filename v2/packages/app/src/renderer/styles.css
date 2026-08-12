@@ -885,7 +885,24 @@ body.sh-dragging {
  * declaration, reading the metric that already exists.
  */
 
-.sh-composer-brief { font-size: var(--sh-font-size-large); }
+/*
+ * The brief — 16/26, and NO box of its own.
+ *
+ * The well re-declares `--sh-line: transparent`, which removes the border; what
+ * it cannot remove is a field's recessed FILL, and the shipped composer drew one
+ * around the brief and another around the control row. §5: "its fields sit ON
+ * the card with no well of their own" — a well inside a well is the thing that
+ * made this read as a form rather than a writing surface.
+ */
+.sh-composer-brief {
+  font-size: var(--sh-font-size-large);
+  line-height: 26px;
+  letter-spacing: -0.005em;
+  min-block-size: 96px;
+  background: none;
+  border: 0;
+  padding: 0;
+}
 
 /*
  * The action row: what the sentence scopes, then the one accent.
@@ -900,27 +917,30 @@ body.sh-dragging {
  * meaning "one step off the card", and a wash moves with a contributed theme's
  * `--sh-text` the way a fixed `--sh-ink-*` never did.
  */
+/*
+ * The control row lives INSIDE the well, and carries no rule above it.
+ *
+ * §5: "No inner hairlines above the controls: inside a well, space is the
+ * structure." It had a `border-top` and its own re-declared `--sh-line` to draw
+ * it with — which is the composer re-introducing, on itself, the exact hairline
+ * the surrounding `--sh-line: transparent` exists to remove.
+ */
 .sh-composer-controls {
-  --sh-line: color-mix(in oklab, var(--sh-text) 16%, transparent);
-
   display: flex;
   align-items: center;
   gap: var(--sh-space-lg);
   padding-top: var(--sh-space-lg);
-  border-top: var(--sh-hairline) solid var(--sh-line);
 }
 
 /*
- * The `#repo` button — the only thing on screen that says the gesture exists.
+ * The `#repo` and `@machine` controls — ghost selects, divided by a rule.
  *
- * A ghost control, not a `Button`: `Button`'s four variants are all louder than
- * this needs to be, and rule 3 gives the card exactly one accent, which
- * `create task` has. Bordered and quiet is what rule 5 calls a key.
- *
- * The radius is `md`, not the prototype's capsule 20 — `pill.css` argues that one
- * by name ("half the height was the first version and it read as an oval, which
- * is not the reference"), and a capsule here would be the one rounded thing on a
- * card of machined corners.
+ * **No bordered chips.** §5 states it outright: "inside a well a bordered box is
+ * the loudest thing on it", and the shipped version drew two of them on a
+ * surface whose entire idea is that space carries the structure. They are now
+ * what the design draws — bare labels at `textDim` with a chevron, separated by
+ * a `1px × 16` rule, which is the lightest possible way to say "these are two
+ * controls and not one sentence".
  */
 .sh-composer-hash {
   display: inline-flex;
@@ -929,20 +949,34 @@ body.sh-dragging {
   flex: 0 0 auto;
 
   background: none;
-  border: var(--sh-hairline) solid var(--sh-line);
+  border: 0;
   border-radius: var(--sh-radius-md);
-  padding: var(--sh-space-xs) var(--sh-space-md);
+  block-size: var(--sh-control-md);
+  padding: 0 var(--sh-space-sm);
 
   font: inherit;
   font-size: var(--sh-font-size-medium);
   color: var(--sh-text-dim);
   cursor: pointer;
-  transition: color var(--sh-motion) linear, border-color var(--sh-motion) linear;
+  transition: color var(--sh-motion) linear, background var(--sh-motion) linear;
 }
 
 .sh-composer-hash:hover {
+  background: var(--sh-fill-hover);
   color: var(--sh-text);
-  border-color: color-mix(in oklab, var(--sh-text) 34%, transparent);
+}
+
+/*
+ * The divider between the two selects — `1px × 16`, drawn on the second one so
+ * a row with only one control has no orphaned rule beside it.
+ */
+.sh-composer-hash + .sh-composer-hash::before,
+.sh-composer-scope + .sh-composer-hash::before {
+  content: '';
+  inline-size: var(--sh-hairline);
+  block-size: 16px;
+  margin-inline-end: var(--sh-space-md);
+  background: var(--sh-line-strong);
 }
 
 /* The glyph is machine vocabulary — it is a character you type, so it is set in

@@ -242,3 +242,86 @@
   justify-content: space-between;
   inline-size: 100%;
 }
+
+/*
+ * ── dense: a task with nothing to show is ONE ROW ──────────────────────────
+ *
+ * §5's other half. The card treatment is earned by having a second line worth
+ * drawing — an agent running, a failure, a question, more than one tab. A rail
+ * of six resting tasks as six bordered boxes is six times the height for the
+ * same six words, and at that point the card stops meaning anything because
+ * everything has it.
+ *
+ * No border and no fill at rest, so the row sits ON the rail rather than in a
+ * box of its own; the hover and selected fills still land, because those are
+ * about where the pointer and the window are and not about the task.
+ */
+.sh-task-card[data-dense] {
+  gap: 0;
+  padding: 0 var(--sh-space-md);
+  border-color: transparent;
+  background: none;
+  border-radius: var(--sh-radius-row);
+}
+
+.sh-task-card[data-dense]:hover {
+  background: var(--sh-fill-hover);
+}
+
+.sh-task-card[data-dense][data-selected] {
+  background: var(--sh-fill-selected);
+  border-color: var(--sh-edge-selected);
+}
+
+/* The fixed row height — 34 — and the title stops being a card title. */
+.sh-task-card[data-dense] .sh-task-card__head {
+  block-size: var(--sh-row-height);
+}
+
+.sh-task-card[data-dense] .sh-task-card__title {
+  font-size: var(--sh-font-size-body);
+  font-weight: 400;
+}
+
+.sh-task-card[data-dense][data-selected] .sh-task-card__title {
+  font-weight: 500;
+}
+
+/*
+ * ── the trailing cell: metadata and the hover action, in ONE track ─────────
+ *
+ * §6 refuses "a row that grows to reveal hover actions". Both occupants sit in
+ * the same grid area, so the track is already as wide as the wider of them and
+ * revealing the button moves nothing — where appending would shift the title
+ * under the cursor at the moment you are reaching for it.
+ */
+.sh-task-card__trail {
+  display: grid;
+  grid-template-areas: 'stack';
+  align-items: center;
+  justify-items: end;
+  flex: none;
+}
+
+.sh-task-card__trail > * {
+  grid-area: stack;
+}
+
+/*
+ * `visibility`, never `display: none` — a hidden-but-laid-out button is what
+ * keeps the cell at its width while it is not shown.
+ */
+.sh-task-card__action {
+  visibility: hidden;
+}
+
+.sh-task-card:hover .sh-task-card__action,
+.sh-task-card:focus-within .sh-task-card__action {
+  visibility: visible;
+}
+
+/* …and the metadata yields to it, rather than the two overlapping. */
+.sh-task-card:hover .sh-task-card__elapsed,
+.sh-task-card:focus-within .sh-task-card__elapsed {
+  visibility: hidden;
+}
