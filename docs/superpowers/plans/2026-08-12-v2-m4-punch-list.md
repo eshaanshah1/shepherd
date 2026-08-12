@@ -47,13 +47,26 @@ PATH", the loop that makes this thing agent-native is the largest hole in the ga
    **This is the first-party fast path's first customer.** Four verbs for one user:
    no manifest, no permission ceremony, no name resolution.
 
-3. **⌘T, and then Scratch (D9).** One item, not two. The handoff has Scratch as
-   "another `component` view plus a store, same shape as the composer", but both
-   need a keystroke and `contributes.commands[].key` **is read by nothing today**.
-   Read the key field. Do **not** open the `REGIONS` door — ADR 0031 names it as the
-   scope-creep door and it is not needed for a keystroke. Without Scratch, opening a
-   plain shell means creating a task, which is the friction that makes you close the
-   app.
+3. **Scratch (D9)'s persisted list — and ⌘T is already done.** The handoff's
+   keystroke problem was solved by a third route it did not consider. `⌘T` is
+   `COMMANDS.newTab` → `layout.newTab` (`main/menu-template.ts:99`) and the
+   `tasks` composer moved to `⌘N` to free the conventional key; a contributed
+   overlay declares its own accelerator through `registerViewType`
+   (`main/view-registry.ts:45`), so neither `REGIONS` nor
+   `contributes.commands[].key` was needed. That field is still read by nothing,
+   and is now moot rather than pending.
+
+   So the zero-ceremony shell exists: `⌘T` opens a loose tab without creating a
+   task. What D9 still wants is the **persisted Scratch list** — its own section,
+   cwd and title only, never a resumed agent — and that is a store plus a
+   contributed view, not a keybinding problem.
+
+   **Read `menu-template.ts`'s opening note before binding any key.** AppKit
+   resolves a menu key equivalent *before* the page sees the keystroke, so a menu
+   item on a key does not compete with a contributed overlay on that key — it
+   **deletes** it, silently. This is v1's workbench-keybinding lesson arriving in
+   a second form, and it is why a bare-letter accelerator is dropped rather than
+   honoured.
 
 4. **Plugin-install robustness.** `~/.claude/skills/shepherd-v2` is a hand-made
    symlink and `pnpm ship` replaces the bundle it may point into. v1's failure mode
