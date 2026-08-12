@@ -14,6 +14,13 @@ import type { TreeItem } from '@shepherd/sdk';
  * stable as members come and go — a machine waking up adds rows, it does not
  * reorder the list somebody is reading.
  *
+ * A `foot` row anchors a group the same way a heading does, and for the same
+ * reason: it is the one row per member that stands for the whole of their
+ * finished work, so two Macs must land on one of it with one count rather than
+ * on two rows a screen apart. It is not drawn as a heading — only grouped like
+ * one — and the rows a member sends after it (its expanded finished tasks) fall
+ * under it exactly as rows after a heading do.
+ *
  * What it deliberately does NOT do is understand any heading. "DONE" is a string
  * an extension chose; this matches on it and knows nothing about it, exactly as
  * the dock knows nothing about tasks (sketch §2b).
@@ -51,7 +58,7 @@ export function mergeRows(sources: readonly RowSource[]): readonly MergedRow[] {
   for (const source of sources) {
     let current = TOP;
     for (const row of source.rows) {
-      if (row.section === true) {
+      if (row.section === true || row.foot === true) {
         current = row.label;
         const target = group(current);
         // The first member to send a heading supplies the one that is drawn;

@@ -228,6 +228,20 @@ export interface TreeItem {
    * clickable.
    */
   readonly section?: boolean;
+  /**
+   * This row, and everything a contribution sends after it, sits at the physical
+   * FOOT of the list rather than merely last in it.
+   *
+   * Declared rather than inferred. The dock used to pin everything after the last
+   * heading, which reads as "the last group is the finished one" and is only true
+   * for a tree whose last group happens to be finished work — `tasks` ends on a
+   * `Resting` heading with a plain count row under it, so its LIVE work was the
+   * thing nailed to the bottom of the sidebar with empty space above it.
+   *
+   * It says a position, not a meaning: the dock still does not know what "done"
+   * is, and a contribution that never sets this simply flows from the top.
+   */
+  readonly foot?: boolean;
   readonly description?: string;
   /** A design-token name, resolved by the renderer. Never a raw colour. */
   readonly tint?: string;

@@ -222,8 +222,7 @@ function TreeView({
    * Every heading a contribution sends is drawn, including one that is the
    * first row. "DONE" over an all-finished list still says what the list IS,
    * and dropping it made the sidebar change shape the moment the last live
-   * task ended: the label vanished and the finished tasks jumped from the foot
-   * to the top, because with no heading left there was nothing to pin against.
+   * task ended — the label simply vanished from over the rows it named.
    *
    * The rule this replaces suppressed a heading with nothing above it, on the
    * theory that it divided nothing. It divides the list from the sidebar's
@@ -282,16 +281,22 @@ function TreeView({
   }, [fingerprint]);
 
   /**
-   * Everything after the LAST heading is pinned to the bottom of the sidebar.
+   * The foot is the row that SAYS it is the foot, and everything under it.
    *
    * Finished work belongs at the physical bottom, not merely last in the list —
    * with three tasks the difference is nothing, and it is the whole point when
-   * the list is short and the sidebar is tall. The split is on the last section
-   * rather than on a name, because the dock must not know what "done" means.
+   * the list is short and the sidebar is tall. The dock still does not know what
+   * "done" means; it reads `TreeItem.foot`, which is a position.
+   *
+   * The rule this replaces split on the LAST heading, which is the same sentence
+   * with a guess in place of the fact: it holds only while a tree's last group is
+   * its finished one. `tasks` ends on `Resting` with a plain count row beneath it,
+   * so the guess pinned the live resting tasks to the bottom of an otherwise
+   * empty sidebar and left `In flight` floating above the gap.
    */
-  const lastSection = shown.map((entry) => entry.row.section === true).lastIndexOf(true);
-  const top = lastSection === -1 ? shown : shown.slice(0, lastSection);
-  const bottom = lastSection === -1 ? [] : shown.slice(lastSection);
+  const footAt = shown.findIndex((entry) => entry.row.foot === true);
+  const top = footAt === -1 ? shown : shown.slice(0, footAt);
+  const bottom = footAt === -1 ? [] : shown.slice(footAt);
 
   const renderRow = (entry: { key: string; row: TreeItem }): React.JSX.Element => {
     {

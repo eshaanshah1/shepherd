@@ -19,6 +19,12 @@ const section = (id: string, label: string, description?: string): TreeItem => (
   ...(description === undefined ? {} : { description }),
 });
 const task = (id: string, label: string): TreeItem => ({ id, label });
+const foot = (id: string, label: string, description?: string): TreeItem => ({
+  id,
+  label,
+  foot: true,
+  ...(description === undefined ? {} : { description }),
+});
 
 describe('mergeRows', () => {
   it('puts every member’s rows under one copy of each heading', () => {
@@ -79,6 +85,20 @@ describe('mergeRows', () => {
   it('is a plain pass-through for a single member', () => {
     const only = rows(section('s', 'DONE'), task('a', 'A'));
     expect(mergeRows([{ key: 'here', rows: only }]).map((entry) => entry.row)).toEqual([...only]);
+  });
+
+  /**
+   * A foot row anchors a group the way a heading does — otherwise two Macs put
+   * two "Shipped this week" rows a screen apart, and the dock pins from the
+   * first one it sees, which would drop the other Mac's LIVE rows into the foot.
+   */
+  it('merges every member’s foot row into one, and keeps it last', () => {
+    const merged = mergeRows([
+      { key: 'here', rows: rows(section('s', 'Resting'), task('a', 'A'), foot('ship', 'Shipped', '2'), task('d1', 'D1')) },
+      { key: 'there', rows: rows(section('s', 'Resting'), task('b', 'B'), foot('ship', 'Shipped', '3'), task('d2', 'D2')) },
+    ]);
+    expect(merged.map((entry) => entry.row.label)).toEqual(['Resting', 'A', 'B', 'Shipped', 'D1', 'D2']);
+    expect(merged.find((entry) => entry.row.foot === true)?.row.description).toBe('5');
   });
 
   it('says which member each row came from, since the list no longer does', () => {
