@@ -4,7 +4,7 @@ import { Composer, Menu, PromptField, SendButton, type PromptFieldHandle } from 
 import { repoName } from "../src/model/repo-name.ts";
 import type { PastedImage } from "../src/images.ts";
 import { readPastedImage } from "./paste-image.ts";
-import { findTrigger, isUnwritten, scopeLine, type DisplaySegment } from "./mention.ts";
+import { findTrigger, isUnwritten, type DisplaySegment } from "./mention.ts";
 import {
   EDGE,
   PICKER_WIDTH,

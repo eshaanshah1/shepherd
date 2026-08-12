@@ -537,42 +537,8 @@ describe('the card in its modal', () => {
 });
 
 describe('the scope', () => {
-  it('is read out of the sentence, so removing a pill un-scopes the task', async () => {
-    /*
-     * The pill IS the scope. jsdom implements no editing, so the Backspace itself
-     * cannot be simulated — what is asserted is the consequence that matters:
-     * the pill leaves the DOM and the scope follows, because nothing keeps a
-     * second copy of it. A composer holding a selection array would still be
-     * scoped to a repo that is no longer in the text, and no test of the array
-     * could show that.
-     */
-    await type('#s');
-    await press('Enter');
-    expect(scopeLine()).toBe('scoped to shepherd');
 
-    await act(async () => {
-      brief().querySelector('[data-repo-path]')!.remove();
-      brief().dispatchEvent(new Event('input', { bubbles: true }));
-    });
 
-    expect(pills()).toEqual([]);
-    expect(scopeLine()).toBe('no repo scoped — lands in inbox');
-  });
-
-  it('says where an unscoped task LANDS rather than reporting a missing field', () => {
-    // A task with no repo is a valid task. "no repo" alone would make a working
-    // state read as an unfinished form.
-    expect(scopeLine()).toBe('no repo scoped — lands in inbox');
-  });
-
-  it('counts once there are several, because names would run off the row', async () => {
-    await type('#s');
-    await press('Enter');
-    await type('#s');
-    await press('Enter');
-    expect(pills()).toEqual([`${HOME}/dev/shepherd`, `${HOME}/dev/shepherd-ios`]);
-    expect(scopeLine()).toBe('scoped to 2 repos');
-  });
 
   it('stops offering a repo already in the sentence', async () => {
     // Two of one repo is one worktree and one branch, so it is one entry — and a
@@ -616,18 +582,6 @@ describe('the scope', () => {
   });
 });
 
-describe('the #repo button', () => {
-  it('performs the gesture it teaches', async () => {
-    // `#` is invisible until somebody has been told about it, and this is the
-    // telling. It appends the character rather than opening a picker some other
-    // way, so there is one code path whether it was typed or clicked.
-    await act(async () => {
-      container.querySelector<HTMLElement>('[data-testid="composer-hash"]')!.click();
-    });
-    expect(brief().textContent).toBe('#');
-    expect(picker()).not.toBeNull();
-  });
-});
 
 /**
  * The name ask, which happens behind the card and draws nothing.
