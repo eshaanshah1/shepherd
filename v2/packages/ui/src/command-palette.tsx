@@ -1,6 +1,10 @@
 import { Fragment, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent, ReactElement } from 'react';
+import { IconSearch } from '@tabler/icons-react';
 import { Composer } from './composer.tsx';
+import { Icon } from './icon.tsx';
+import { namedGlyph } from './glyphs.ts';
+import { StateMark, type MarkState } from './state-mark.tsx';
 import { Field } from './field.tsx';
 import { KeyCap } from './keycap.tsx';
 import { Modal } from './modal.tsx';
@@ -71,6 +75,23 @@ export interface PaletteCommand {
    * list of one.
    */
   readonly group?: string;
+  /**
+   * A glyph NAME from the allow-list, drawn in the row's leading slot.
+   *
+   * A command with neither `icon` nor `mark` draws an empty slot rather than
+   * nothing — the slot is fixed, so a list where only some rows have a glyph
+   * still reads as one column of labels.
+   */
+  readonly icon?: string;
+  /**
+   * A STATE, drawn in the leading slot instead of an icon.
+   *
+   * §1's `Jump to` rows carry marks rather than icons, and that is the whole
+   * distinction between the two groups: a `Layout` row is a verb and takes a
+   * picture of itself, while a `Jump to` row is a THING that is in some state,
+   * and its mark is the same one the rail draws for it.
+   */
+  readonly mark?: MarkState;
 }
 
 export interface CommandPaletteProps {
@@ -187,6 +208,14 @@ export function CommandPalette({
       className={cn('sh-ui-palette-modal', className)}
     >
       <Composer className="sh-ui-palette">
+        {/*
+          A row rather than a `leading` prop on `Field`: the magnifier is this
+          palette's furniture, not something every field in the app wants a slot
+          for — and a prop nobody else uses is API paid for once and carried
+          forever.
+        */}
+        <div className="sh-ui-palette__query">
+        <Icon icon={IconSearch} size="md" />
         <Field
           variant="bare"
           className="sh-ui-palette__input"
@@ -207,6 +236,7 @@ export function CommandPalette({
           aria-activedescendant={current === undefined ? undefined : `${listId}-${current.id}`}
           data-testid="palette-input"
         />
+        </div>
         <div
           className="sh-ui-palette__list"
           id={listId}
@@ -244,6 +274,15 @@ export function CommandPalette({
                 data-command-id={command.id}
                 data-testid="palette-item"
                 selected={position === index}
+                leading={
+                  <span className="sh-ui-palette__glyph">
+                    {command.mark === undefined ? (
+                      command.icon === undefined ? null : <Icon icon={namedGlyph(command.icon)} size="sm" />
+                    ) : (
+                      <StateMark state={command.mark} />
+                    )}
+                  </span>
+                }
                 className="sh-ui-palette__item"
                 meta={command.shortcut === undefined ? undefined : <KeyCap>{command.shortcut}</KeyCap>}
                 /*

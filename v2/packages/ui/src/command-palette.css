@@ -159,3 +159,37 @@
 .sh-ui-palette__group:first-child {
   padding-block-start: var(--sh-space-xs);
 }
+
+/*
+ * The query row — a magnifier and the field, on one line.
+ *
+ * The glyph says what the row IS. A placeholder does that too, right up until
+ * you type one character, after which the row has nothing identifying it at all.
+ */
+.sh-ui-palette__query {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-md);
+  padding-inline-start: var(--sh-space-md);
+  color: var(--sh-text-ghost);
+}
+
+.sh-ui-palette__query .sh-ui-field {
+  flex: 1;
+  min-inline-size: 0;
+}
+
+/*
+ * The leading slot — a fixed box whether or not it is filled.
+ *
+ * A list where only some rows have a glyph still has to read as ONE column of
+ * labels; an empty slot is what keeps the labels aligned, and it is the same
+ * argument `StateMark`'s fixed 12×12 box makes one file over.
+ */
+.sh-ui-palette__glyph {
+  display: inline-grid;
+  place-items: center;
+  inline-size: 16px;
+  flex: none;
+  color: var(--sh-text-mute);
+}

@@ -2887,17 +2887,53 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           }
 
           /**
-           * Live work, then DONE — the one division the list makes.
+           * **Attention routing is the rail's SHAPE** (§5) — sections ordered by
+           * what you must do.
            *
-           * It is not the state-grouping that was removed: that sorted live
-           * tasks into buckets they have no relationship through. This is the
-           * difference between work in flight and work you have finished with,
-           * which is the one thing you asked the sidebar for by closing a task.
-           * Archived tasks go under a heading at the bottom and nowhere else,
-           * so finished work stops competing with the rest for the eye.
+           * A state-grouping was removed from here once, on the argument that it
+           * "sorted live tasks into buckets they have no relationship through".
+           * That argument was about *categorising*; this is about ORDER. The
+           * sections are not kinds of task, they are distances from needing you,
+           * and they are read top-down: the thing that is blocked on you is
+           * first because it is the only thing you can act on, and everything
+           * below it is progressively less your problem.
+           *
+           * The bucket names are the design's and are not negotiable per-state:
+           * a fifth section is a fifth thing to scan, and the whole claim is
+           * that a glance is enough.
            */
           const live = all.filter((task) => task.lifecycle !== 'archived');
           const done = all.filter((task) => task.lifecycle === 'archived');
+          const stateOf = (task: TaskRecord): string =>
+            displayState(task.lifecycle, agentStatesOf(task));
+          const waiting = live.filter((task) => markOf(stateOf(task)) === 'waiting');
+          const failed = live.filter((task) => markOf(stateOf(task)) === 'failed');
+          const inFlight = live.filter((task) => markOf(stateOf(task)) === 'working');
+          const resting = live.filter((task) => {
+            const mark = markOf(stateOf(task));
+            return mark !== 'waiting' && mark !== 'failed' && mark !== 'working';
+          });
+
+          /**
+           * A heading, drawn only when it has something under it.
+           *
+           * An empty section is a heading that says "nothing is waiting on you"
+           * in the shape of a thing you might have to read — and the count would
+           * be `0`, which is the one number a count never needs to show.
+           */
+          const section = (id: string, label: string, of: readonly TaskRecord[], loud = false): void => {
+            if (of.length === 0) return;
+            rows.push({
+              id: `group:${id}`,
+              label,
+              description: String(of.length),
+              section: true,
+              // Only the first section's label is at full strength: it is the one
+              // you are meant to read, and the rest are structure.
+              tint: loud ? 'wool' : undefined,
+            });
+            for (const task of of) rows.push(rowFor(task));
+          };
 
           const rows: TreeItemOut[] = [];
           const rowFor = (task: TaskRecord): TreeItemOut => {
@@ -3046,18 +3082,18 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
             };
           };
 
-          for (const task of live) rows.push(rowFor(task));
-
-          if (done.length > 0) {
-            rows.push({
-              id: 'group:done',
-              label: 'DONE',
-              description: String(done.length),
-              section: true,
-              tint: 'wool-faint',
-            });
-            for (const task of done) rows.push(rowFor(task));
-          }
+          section('waiting', 'Waiting on you', waiting, true);
+          // Failed rides with `Waiting on you` rather than getting a section of
+          // its own: a run that failed IS your move, and §3 draws both as the
+          // same square for that reason. A fifth heading would split one
+          // question across two places to look.
+          section('failed', 'Failed', failed);
+          section('flight', 'In flight', inFlight);
+          section('resting', 'Resting', resting);
+          // Finished work leaves the list and becomes a count at the foot — it
+          // stops competing with the rest for the eye, which is the one thing
+          // you asked the sidebar for by closing a task.
+          section('shipped', 'Shipped', done);
 
           return Promise.resolve(rows);
         },

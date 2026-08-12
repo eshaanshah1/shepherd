@@ -128,6 +128,22 @@ function paletteGroup(id: string): string | undefined {
 }
 
 /**
+ * A layout verb's glyph, by id.
+ *
+ * Only the verbs that HAVE a picture of themselves get one — splitting and
+ * zooming are shapes, and a magnifying glass beside "Close the pane" would be a
+ * decoration standing in for a meaning. §1 gives `Jump to` rows state marks
+ * instead, which the extension supplies as `mark`.
+ */
+function paletteIcon(id: string): string | undefined {
+  if (id.includes('splitRight') || id.includes('split-right')) return 'split-right';
+  if (id.includes('splitDown') || id.includes('split-down')) return 'split-down';
+  if (id.includes('zoom')) return 'zoom';
+  if (id.includes('close')) return 'close';
+  return undefined;
+}
+
+/**
  * Grouped commands, in group order — headings are drawn where the group CHANGES,
  * so the list has to be sorted or a group appears twice.
  *
@@ -138,7 +154,11 @@ function paletteGroup(id: string): string | undefined {
  */
 function grouped(commands: readonly PaletteCommand[]): readonly PaletteCommand[] {
   const ORDER = ['Layout', 'Jump to', undefined];
-  const withGroup = commands.map((command) => ({ ...command, group: paletteGroup(command.id) }));
+  const withGroup = commands.map((command) => ({
+    ...command,
+    group: paletteGroup(command.id),
+    icon: command.icon ?? paletteIcon(command.id),
+  }));
   return withGroup
     .map((command, position) => ({ command, position }))
     .sort(
