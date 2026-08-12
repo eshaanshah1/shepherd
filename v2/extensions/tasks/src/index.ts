@@ -1062,6 +1062,9 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     }
   }
 
+  /** The foot row's own expansion key — not a task id, and never colliding. */
+  const SHIPPED_KEY = 'group:shipped';
+
   const nextId = (): string => `task-${ctx.clock.now()}-${store.list().length}`;
 
   /**
@@ -3106,16 +3109,23 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
            * whose foot appears and disappears as the week turns over is a rail
            * that moves under the cursor for no reason the reader can see.
            */
+          const shippedOpen = tabsExpanded.has(SHIPPED_KEY);
           rows.push({
-            id: 'group:shipped',
+            id: SHIPPED_KEY,
             label: 'Shipped this week',
             description: String(done.length),
             tint: 'done',
-            // The foot, and the shell pins it — the same `margin-top: auto`
-            // mechanism the sidebar already had for a view's own footer.
-            collapsed: true,
-            command: { id: TASK_COMMANDS.expandTabs, args: { task: 'group:shipped' } },
+            /*
+             * Collapsed by default and EXPANDABLE, which is the half a count
+             * alone would lose: finished work leaving the list must not mean
+             * finished work becoming unreachable. Clicking the foot opens it,
+             * and clicking it again closes it — the chevron in the drawing is
+             * this.
+             */
+            collapsed: !shippedOpen,
+            command: { id: TASK_COMMANDS.expandTabs, args: { task: SHIPPED_KEY } },
           });
+          if (shippedOpen) for (const task of done) rows.push(rowFor(task));
 
           return Promise.resolve(rows);
         },
