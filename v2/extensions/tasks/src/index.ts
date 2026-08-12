@@ -1241,6 +1241,8 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     const plan = planLaunch({
       promptFile: `${promptDir}/${stem}.txt`,
       prompt: written.brief,
+      // Off the record, not the call: every session a task opens uses the same one.
+      ...(task.model === undefined ? {} : { model: task.model }),
     });
     // Before the split: the renderer types the command as soon as the pane's
     // session exists, and a `cat` that loses the race reads an empty prompt.
@@ -2092,6 +2094,8 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           title,
           brief: args.brief ?? '',
           lifecycle: 'draft',
+          // Absent stays absent, so the vendor's default keeps deciding.
+          ...(args.model === undefined ? {} : { model: args.model }),
           // Expanded HERE rather than in the composer, so the CLI's `--repo`
           // gets it too — the field and the flag are two doors into one verb.
           repos: (args.repos ?? []).map((repo) => ({

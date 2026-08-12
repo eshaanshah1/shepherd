@@ -78,6 +78,20 @@ const ANSWERS: Record<string, readonly unknown[]> = {
 };
 
 /**
+ * `agents.listModels`, in the shape the real command answers — `SelectOption`
+ * rows, which is why the composer reshapes nothing.
+ *
+ * The ids are the fixture's, not this page's: whatever the agent layer advertises
+ * has to reach the select unchanged.
+ */
+const MODEL_ROWS = [
+  { value: 'fable', label: 'Fable', description: 'deepest reasoning' },
+  { value: 'opus', label: 'Opus', description: 'complex agentic work' },
+  { value: 'sonnet', label: 'Sonnet', description: 'balanced' },
+  { value: 'haiku', label: 'Haiku', description: 'fastest' },
+];
+
+/**
  * Typed through a factory, so the mock keeps the prop's signature.
  *
  * The answer is `unknown`, which is what a command's answer actually is — it
@@ -91,6 +105,8 @@ const makeInvoke = () =>
       const query = (args as { query?: string }).query ?? '';
       return { ok: true as const, value: ANSWERS[query] ?? [] };
     }
+    if (command === 'agents.listModels') return { ok: true as const, value: MODEL_ROWS };
+    if (command === 'agents.defaultModel') return { ok: true as const, value: { model: 'opus' } };
     return { ok: true as const, value: { slug: 'a-task' } };
   });
 const makeDone = () => vi.fn(() => undefined);
@@ -616,6 +632,8 @@ describe('the scope', () => {
       // agents its daemon's), so this rides the create rather than being applied
       // to the record afterwards.
       member: 'here',
+      // WHICH model its agents open on — pre-filled, and sent as shown.
+      model: 'opus',
     });
   });
 });
@@ -735,6 +753,105 @@ describe('the name ask', () => {
     const create = invoke.mock.calls.find((call) => call[0] === 'tasks.create');
     expect((create?.[1] as { name?: unknown }).name).toBeUndefined();
   });
+});
+
+/**
+ * WHICH model the task's agents open on.
+ *
+ * Asserted on the OPTIONS rather than on the ask: an empty select is
+ * indistinguishable from a machine that advertises no models.
+ */
+describe('the model picker', () => {
+  const model = (): HTMLElement | null =>
+    container.querySelector<HTMLElement>('.sh-composer-select--model');
+  const options = (): string[] => {
+    const list = model();
+    return [...(list?.querySelectorAll<HTMLElement>('[role="option"]') ?? [])].map(
+      (option) => option.textContent ?? '',
+    );
+  };
+  const open = async (): Promise<void> => {
+    await act(async () => {
+      model()?.querySelector<HTMLElement>('.sh-ui-select__trigger')?.click();
+    });
+  };
+
+  it('asks the agent layer for the list AND for which one it opens on', () => {
+    // `agents.listModels` — the primitive. `quickModelChoices` is this list
+    // narrowed to the CHEAP tier, and offering that to somebody starting real
+    // work is a menu chosen for being cheap.
+    expect(invoke).toHaveBeenCalledWith('agents.listModels', {});
+    // A second, different question: what exists, then which of them you get.
+    expect(invoke).toHaveBeenCalledWith('agents.defaultModel', {});
+  });
+
+  it('draws every model the answer carried, and NOTHING else', async () => {
+    await open();
+    // No *Default* row: there is no "default" model to pick, there is a model you
+    // get by default and it is the one showing on the trigger.
+    expect(options()).toEqual(MODEL_ROWS.map((row) => `${row.label}${row.description}`));
+  });
+
+  it('opens PRE-FILLED with the resolved default, and sends it', async () => {
+    expect(model()?.querySelector('.sh-ui-select__value')?.textContent).toBe('Opus');
+
+    await type('add a model picker to the composer');
+    await act(async () => {
+      container.querySelector<HTMLElement>('[data-testid="composer-create"]')!.click();
+    });
+
+    // Sent even though nobody touched the control: what the card SHOWED is what
+    // the task gets, rather than the extension resolving it again.
+    const [, args] = invoke.mock.calls.find(([command]) => command === 'tasks.create')!;
+    expect(args).toMatchObject({ model: 'opus' });
+  });
+
+  it('leaves the model out when the agent layer could not say', async () => {
+    // With no answer there is nothing true to send, so the key is absent and the
+    // extension's own default decides.
+    const spy = vi.fn(async (command: string, args?: unknown): Promise<{ ok: true; value: unknown }> => {
+      if (command === 'agents.listModels') return { ok: true as const, value: MODEL_ROWS };
+      if (command === 'agents.defaultModel') return { ok: true as const, value: null };
+      if (command === 'tasks.suggestRepos') {
+        const query = (args as { query?: string }).query ?? '';
+        return { ok: true as const, value: ANSWERS[query] ?? [] };
+      }
+      return { ok: true as const, value: { slug: 'a-task' } };
+    });
+    unmount();
+    mount(<TaskComposer invoke={spy as ReturnType<typeof makeInvoke>} done={makeDone()} />);
+    await act(async () => undefined);
+
+    await type('add a model picker to the composer');
+    await act(async () => {
+      container.querySelector<HTMLElement>('[data-testid="composer-create"]')!.click();
+    });
+
+    const [, args] = spy.mock.calls.find(([command]) => command === 'tasks.create')!;
+    expect(args).not.toHaveProperty('model');
+  });
+
+  it('sends a picked model instead of the default', async () => {
+    await open();
+    const item = [...(model()?.querySelectorAll<HTMLElement>('[role="option"]') ?? [])].find(
+      (element) => element.textContent?.startsWith('Fable'),
+    );
+    if (item === undefined) throw new Error('the model select did not open');
+    await act(async () => {
+      item.click();
+    });
+
+    expect(model()?.querySelector('.sh-ui-select__value')?.textContent).toBe('Fable');
+
+    await type('add a model picker to the composer');
+    await act(async () => {
+      container.querySelector<HTMLElement>('[data-testid="composer-create"]')!.click();
+    });
+
+    const [, args] = invoke.mock.calls.find(([command]) => command === 'tasks.create')!;
+    expect(args).toMatchObject({ model: 'fable' });
+  });
+
 });
 
 /**

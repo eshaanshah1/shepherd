@@ -18,11 +18,13 @@ import {
   resolveQuick,
   type QuickOverride,
 } from './quick-model.ts';
+import { modelChoices, resolveDefaultModel } from './models.ts';
 import { AgentRegistry, type AgentChange, type AgentRecord } from './registry.ts';
 import { attentionFor } from './attention-map.ts';
 import {
   AGENT_STATE_TOPIC,
   AGENTS_COMMANDS,
+  DEFAULT_MODEL_SETTING,
   QUICK_KIND_SETTING,
   QUICK_MODEL_SETTING,
   SESSION_BOUND_TOPIC,
@@ -523,14 +525,17 @@ export const activate: ActivateFn<AgentsAPI> = async (ctx: ExtensionContext, api
        * `listModels` is a declaration, so answering it cannot cost anything or
        * leak anything a manifest does not already say.
        */
-      handler: () =>
-        kinds.all().flatMap((kind) =>
-          (kind.listModels?.() ?? []).map((model) => ({
-            value: model.id,
-            label: model.label,
-            description: model.note === undefined ? kind.id : `${kind.id} · ${model.note}`,
-          })),
-        ),
+      handler: () => modelChoices(kinds.all()),
+    }),
+    commands.register(AGENTS_COMMANDS.defaultModel, {
+      title: 'Agents: Default Model',
+      schema: s.object({}),
+      /*
+       * Resolved here and nowhere else — every surface that starts an agent needs
+       * the same answer. No permission, like `listModels` beside it: it reads a
+       * declaration and a setting this extension owns.
+       */
+      handler: () => ({ model: resolveDefaultModel(kinds.all(), settings.get(DEFAULT_MODEL_SETTING, nullableString)) }),
     }),
   );
 

@@ -43,11 +43,28 @@ export function shellQuote(value: string): string {
  */
 export const AGENT_BINARY = 'claude';
 
-export function planLaunch(input: { readonly promptFile: string; readonly prompt: string }): LaunchPlan {
+export function planLaunch(input: {
+  readonly promptFile: string;
+  readonly prompt: string;
+  /**
+   * Which model the agent opens on. Absent leaves the flag off entirely, so the
+   * vendor's own default decides.
+   *
+   * Quoted like the prompt file: it arrives on a command's arguments and is
+   * spliced into a shell line, so it is not trusted to be an id we offered.
+   */
+  readonly model?: string;
+}): LaunchPlan {
   const file = shellQuote(input.promptFile);
+  const model = input.model === undefined || input.model.trim() === ''
+    ? ''
+    : ` --model ${shellQuote(input.model)}`;
   // An empty prompt starts the agent with no argument, which is the right
   // behaviour for "open an agent here" — and is why the prompt is not required.
-  const run = input.prompt.trim() === '' ? AGENT_BINARY : `${AGENT_BINARY} "$p"`;
+  const run =
+    input.prompt.trim() === ''
+      ? `${AGENT_BINARY}${model}`
+      : `${AGENT_BINARY}${model} "$p"`;
   return {
     promptFile: input.promptFile,
     command: `p=$(cat ${file}); rm -f ${file}; ${run}`,

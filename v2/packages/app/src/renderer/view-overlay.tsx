@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Modal } from '@shepherd/ui';
 import type { ViewContributionDTO, ViewsApi } from '../shared/index.ts';
 import { ComponentView } from './view-dock.tsx';
@@ -61,6 +61,13 @@ export function ViewOverlay({
 }): React.JSX.Element | null {
   const [open, setOpen] = useState<string | null>(null);
 
+  /**
+   * Stable, because `ComponentView` memoizes a contributed component's props on
+   * this identity — an inline arrow re-creates its `invoke` on every root render
+   * and cancels the asks a card makes on mount.
+   */
+  const close = useCallback(() => setOpen(null), []);
+
   const raisable = views.filter((view) => view.kind === 'component' && view.surface === 'overlay');
 
   useEffect(() => {
@@ -108,7 +115,7 @@ export function ViewOverlay({
     <Modal
       open
       onOpenChange={(next) => {
-        if (!next) setOpen(null);
+        if (!next) close();
       }}
       // The view's declared title IS the accessible name. `Modal` draws no
       // header — the composer proved a title bar over a form asking one question
@@ -121,7 +128,7 @@ export function ViewOverlay({
       data-testid="view-overlay"
       data-view-type={view.type}
     >
-      <ComponentView view={view} bridge={bridge} onDone={() => setOpen(null)} />
+      <ComponentView view={view} bridge={bridge} onDone={close} />
     </Modal>
   );
 }

@@ -840,6 +840,33 @@ describe('a task owns a layout root', () => {
     expect(h.invoked.filter((call) => call.id === 'layout.split')).toEqual([]);
   });
 
+  it('opens every agent on the model the RECORD carries', async () => {
+    // The second spawn names no model: a task outlives its first agent, so both
+    // have to open on the same one.
+    const h = (live = harness({ tasks: [task({ model: 'fable' })] }));
+    await h.run('tasks.spawn', { task: 't1', prompt: 'first' });
+    await h.run('tasks.spawn', { task: 't1', repo: 'api', prompt: 'second' });
+
+    // Every line that would start an agent, whichever verb carried it: `openRoot`
+    // is idempotent and carries one for both spawns, so a count is not the claim.
+    const lines = h.invoked
+      .map((call) => (call.args as { initialCommand?: string } | undefined)?.initialCommand ?? '')
+      .filter((line) => line.includes('claude'));
+    expect(lines.length).toBeGreaterThanOrEqual(2);
+    for (const line of lines) expect(line).toContain(`claude --model 'fable' "$p"`);
+  });
+
+  it('leaves the flag off for a task that never picked one', async () => {
+    // Every task written before the field existed. The vendor's default decides.
+    const h = (live = harness({ tasks: [task()] }));
+    await h.run('tasks.spawn', { task: 't1', prompt: 'go' });
+
+    const line = (h.invoked.find((call) => call.id === 'layout.openRoot')?.args as { initialCommand: string })
+      .initialCommand;
+    expect(line).not.toContain('--model');
+    expect(line).toContain('claude "$p"');
+  });
+
   it('splits into the SAME root for the second agent, rather than opening a second one', async () => {
     const h = (live = harness({ tasks: [task()] }));
     await h.run('tasks.spawn', { task: 't1', prompt: 'first' });
@@ -1861,6 +1888,35 @@ describe('the actions a task row declares', () => {
       if ('separator' in entry) continue;
       expect(h.registeredCommands().has(entry.id), entry.id).toBe(true);
     }
+  });
+});
+
+/**
+ * The composer's model, from the verb that takes it to the line that types it.
+ *
+ * The pieces are covered either side (`planLaunch`, and the spawn tests above);
+ * only this sees the two agreeing. A create that stored it under another name
+ * passes both and still reaches a pty with no flag.
+ */
+describe('the model a task was created with', () => {
+  it('reaches the line that starts the orchestrator', async () => {
+    const h = (live = harness());
+    await h.run('tasks.create', { title: 'Fix login', repos: [], model: 'haiku' });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    const line = (h.invoked.find((call) => call.id === 'layout.openRoot')?.args as { initialCommand: string })
+      .initialCommand;
+    expect(line).toContain(`claude --model 'haiku' "$p"`);
+  });
+
+  it('is absent when the composer was left on Default', async () => {
+    const h = (live = harness());
+    await h.run('tasks.create', { title: 'Fix login', repos: [] });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    const line = (h.invoked.find((call) => call.id === 'layout.openRoot')?.args as { initialCommand: string })
+      .initialCommand;
+    expect(line).not.toContain('--model');
   });
 });
 
