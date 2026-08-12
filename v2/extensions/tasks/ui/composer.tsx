@@ -5,14 +5,7 @@ import { repoName } from "../src/model/repo-name.ts";
 import type { PastedImage } from "../src/images.ts";
 import { readPastedImage } from "./paste-image.ts";
 import { findTrigger, isUnwritten, type DisplaySegment } from "./mention.ts";
-import {
-  EDGE,
-  PICKER_WIDTH,
-  RepoPicker,
-  placePicker,
-  rowId,
-  type PickerRow,
-} from "./repo-picker.tsx";
+import { RepoPicker, rowId, type PickerRow } from "./repo-picker.tsx";
 
 /**
  * The composer — a task, created from inside the app (sketch §4).
@@ -181,17 +174,6 @@ function titleOf(brief: string): string {
 }
 
 /**
- * The panel's own height, used only to decide whether it fits below the caret.
- *
- * A constant rather than a measurement, because the decision has to be made
- * BEFORE the panel exists — measuring it would mean rendering it somewhere first,
- * and a popover that appears and then jumps is worse than one placed from an
- * upper bound. It is the list's `max-height` plus the header and the padding, so
- * it is the tallest the panel ever gets and never under-reserves.
- */
-const PICKER_HEIGHT = 238 + 38 + 12;
-
-/**
  * Where a task's work is laid down.
  *
  * **One option today, and the control is drawn anyway.** `in-place` is the
@@ -226,7 +208,6 @@ export function TaskComposer({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
-  const [spot, setSpot] = useState({ x: EDGE, y: 0 });
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
   /**
@@ -553,16 +534,11 @@ export function TaskComposer({
 
     replaceBack.current = found.query.length + 1;
     /*
-     * VIEWPORT coordinates, because the panel is portalled to the body — see
-     * `RepoPicker`: the `Modal` around this composer clips and transforms, so an
-     * in-tree popover cannot hang past the card the way the design has it.
-     * `placePicker` owns every rule about where it lands.
+     * No placement, deliberately: the picker is FUSED to the bottom of the well
+     * (see `RepoPicker`), so it has no coordinates to compute. The caret rect
+     * this used to measure per keystroke, and the clamp/flip arithmetic it fed,
+     * went with the popover.
      */
-    const rect = caret.rectOf(found.at);
-    const box = card.current?.getBoundingClientRect();
-    if (rect !== null && box !== undefined) {
-      setSpot(placePicker(rect, box, window.innerHeight, PICKER_HEIGHT));
-    }
 
     /*
      * Ask when the picker OPENS or the query changes, and not merely because the
@@ -952,17 +928,16 @@ export function TaskComposer({
         </output>
 
         {/*
-          Last child, and inside the card: it is positioned against the card's box
-          and must paint over the footer, and with no shadow to lift it (rule 2)
-          the only thing separating it from what it covers is the stacking order.
+          Last child, and it IS the bottom of the card — the design fuses it under
+          the control row rather than floating it over one. So it covers nothing,
+          needs no stacking order and needs no shadow: it extends the well
+          downward, and the well's own bottom corners are the ones it takes.
         */}
         {open ? (
           <RepoPicker
             rows={rows}
             query={query}
             activeIndex={index}
-            x={spot.x}
-            y={spot.y}
             listId={listId}
             onHover={setActive}
             onPick={pick}

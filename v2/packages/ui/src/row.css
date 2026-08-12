@@ -93,10 +93,30 @@
 }
 
 /*
- * Selection: inverse video (rule 4). A SOLID block of `text` with `textSelected`
- * ink on it — never a tint, and never the hover wash at a higher alpha. The two
- * are one glance apart because one is a wash and the other is a fill; make them
- * both washes and the list stops telling you which row you are on.
+ * Selection: a solid FILL plus an edge, and the label stays legible.
+ *
+ * A fill rather than a wash, because that is what keeps selection and hover one
+ * glance apart (rule 4): make them both washes and the list stops telling you
+ * which row you are on. But `fillSelected` is a luminance STEP — an alias of
+ * `raised` — not the block of `text` Flock painted here, and its own `notFor`
+ * spells out the consequence: "a fill plus a 2px edge, and the label stays
+ * legible."
+ *
+ * That is why the ink is `text` and not `textOnWool`. `textOnWool` is `canvas`,
+ * the ink that reads on a solid WHITE fill, and it was still declared here after
+ * the fill stopped being white — so a selected row was `#0A0A0A` on `#161616`,
+ * near-black on near-black, and it took the leading mark (`currentColor`) down
+ * with it. On-fill contrast ink is only ever legal over a fill it was computed
+ * against.
+ *
+ * **A fill and nothing else — no ring.** An inset `edgeSelected` ring lived here
+ * briefly and it was wrong: `edgeSelected`'s job is "a selected CARD's edge", and
+ * on a row it drew the one thing §5 refuses ("inside a well a bordered box is the
+ * loudest thing on it"). Every list the design draws — the picker, the palette —
+ * marks its active row with a filled chip and no border. A surface that needs
+ * more separation than its own step gives re-declares `--sh-fill-selected` for
+ * its subtree, which is the mechanism, rather than adding an edge here for
+ * everybody.
  *
  * It wins over `:hover` by coming later at equal specificity, so a hovered
  * selected row stays selected rather than going one step paler under the cursor.
@@ -104,7 +124,7 @@
 .sh-ui-row--selected,
 .sh-ui-row--selected:hover {
   background: var(--sh-fill-selected);
-  color: var(--sh-text-on-wool);
+  color: var(--sh-text);
 }
 
 /* ----------------------------------------------------------- leading slot */
@@ -173,12 +193,17 @@
   color: var(--sh-text-faint);
 }
 
-/* On a selected row the metadata is ink on a solid block, so it cannot keep its
-   own faint colour — it would be one faint value against the opposite surface. */
-.sh-ui-row--selected .sh-ui-row__meta {
-  color: inherit;
-  opacity: 0.72;
-}
+/*
+ * The metadata keeps its own colour when the row is selected, and it used to be
+ * overridden to `inherit` at 72%.
+ *
+ * That override's reason was "the metadata is ink on a solid block … one faint
+ * value against the opposite surface" — inverse video again, and false since
+ * `fillSelected` became a luminance step. What it did instead was raise a path
+ * from `textGhost` to ~72% of `text` on exactly one row, so the selected row's
+ * path was the BRIGHTEST path in the list. A path is what the machine produced
+ * whichever row it is on.
+ */
 
 /*
  * Actions rest hidden and are revealed by hover OR by keyboard focus inside

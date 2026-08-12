@@ -17,8 +17,8 @@
  * precisely the drift v1 had between Theme.swift and writeBaseTheme().
  *
  * The same rule applies to the fonts, of which there are TWO and the split is a
- * job description, ported from v1 (`Theme.swift`: `Font.ui` = DM Sans for the
- * sidebar and every label, `Font.mono` = JetBrains Mono for the grid and code).
+ * job description, ported from v1 (`Theme.swift`: `Font.ui` for the sidebar and
+ * every label, `Font.mono` = JetBrains Mono for the grid and code).
  *
  *   `--sh-font-sans`  what the APP says: names, labels, prose, buttons.
  *   `--sh-font-mono`  what the MACHINE produced: the grid, paths, ids, commands.
@@ -60,10 +60,10 @@
  * widened policy, which is not a trade worth making for a font.
  */
 @font-face {
-  font-family: 'DM Sans';
+  font-family: 'Geist';
   /* One variable file covering the whole ramp, so a weight is a real weight and
      never a synthesised one. */
-  src: url('./fonts/DMSans.ttf') format('truetype-variations');
+  src: url('./fonts/Geist.ttf') format('truetype-variations');
   font-weight: 100 900;
   font-style: normal;
   font-display: block;
@@ -740,10 +740,17 @@ body.sh-dragging {
 .sh-side [data-tint='idle'] .sh-ui-row__label,
 .sh-side [data-tint='archived'] .sh-ui-row__label,
 .sh-side [data-tint='draft'] .sh-ui-row__label { color: var(--sh-text-dim); }
-/* Inverse video wins: on a solid block the dim step is a second faint value
-   against the wrong surface, which is the same argument `Row` makes for its own
-   metadata. */
-.sh-side .sh-ui-row--selected .sh-ui-row__label { color: inherit; }
+/*
+ * The tint SURVIVES selection, and it used to be cancelled by it.
+ *
+ * The rule here was `.sh-side .sh-ui-row--selected .sh-ui-row__label { color:
+ * inherit }`, and its reason was inverse video: on a solid block of `text` a dim
+ * step is a second faint value against the wrong surface. Since `fillSelected`
+ * became a luminance step that is no longer the surface it is against — `textDim`
+ * on `raised` is 8:1 — and cancelling it meant selecting an archived or draft
+ * task made it look live. Selecting a row says where you are; it does not change
+ * what the row IS.
+ */
 
 /*
  * The sidebar's own header: what this list is, and the one control that adds to
@@ -928,8 +935,16 @@ body.sh-dragging {
 .sh-composer-controls {
   display: flex;
   align-items: center;
-  gap: var(--sh-space-lg);
+  /* Tight: the row is ghost labels divided by rules, and the rule carries the
+     separation. A 12px gap on top of the rule's own margins spread three
+     controls across half the card. */
+  gap: var(--sh-space-hair);
   padding-top: var(--sh-space-lg);
+}
+
+/* Everything before it is a picker; the one weighted control sits hard right. */
+.sh-composer-spacer {
+  flex: 1 1 auto;
 }
 
 /*
@@ -1016,108 +1031,90 @@ body.sh-dragging {
  */
 
 /*
- * The picker, anchored to the `#` it belongs to.
+ * The picker — FUSED to the bottom of the well, not floating over it.
  *
- * `position: absolute` against the card, which is why the card is the element
- * holding the ref: the composer measures a Range over the `#` character and
- * writes `left`/`top` as inline style, already clamped to this box. Nothing here
- * knows where the caret is, and nothing here should.
+ * The design is explicit about this ("the picker is part of the well, not a
+ * popover over it"), and every property below follows from it rather than from a
+ * layer's needs. It was a portalled, caret-anchored, shadowed popover with a
+ * fixed 360px width and viewport coordinates; what it is now is the card's last
+ * band, and the deletions are the point:
+ *
+ *   - no `position`/`z-index`/`left`/`top` — it is in flow, at the bottom of the
+ *     card, so there is nothing to place and nothing to place it *over*;
+ *   - no `width` — it takes the card's, which is what makes it read as the same
+ *     object rather than a panel that happens to be nearby;
+ *   - no shadow, in either theme. The shadow was a reasoned departure from rule 2
+ *     on the grounds that a floating layer over an already-raised card has no
+ *     luminance step left to spend. A band that is *part* of the card is not
+ *     floating over anything, so the premise is gone and so is the exception;
+ *   - and no re-declared `--sh-line`. The composer zeroes that role for its whole
+ *     subtree because a well has no inner hairlines — but this band's top edge is
+ *     the ONE seam §5 draws inside the card, dividing the writing surface from
+ *     the list, so it is declared here as an explicit value on one edge rather
+ *     than by switching the role back on for everything below.
  */
 .sh-composer-picker {
-  --sh-composer-picker-width: 360px;
+  /*
+   * Out of the card's 26px inset and back to its edges. The well owns one
+   * uniform inset and this band is the one child that must ignore it — it is a
+   * full-bleed strip, and a 26px gutter either side would make it a box inside
+   * the box. Composed from the same sum `composer.css` uses, so the two cannot
+   * drift.
+   */
+  margin: 0 calc(-1 * (var(--sh-space-xl) + var(--sh-space-lg)))
+    calc(-1 * (var(--sh-space-xl) + var(--sh-space-lg)));
 
   /*
-   * `--sh-line` back ON, and this one is not optional.
-   *
-   * `composer.css` sets `--sh-line: transparent` for the WHOLE `.sh-ui-composer`
-   * subtree — that is what "no inner hairlines" means as a rule rather than a
-   * wish — and it documents the way out in the same breath: "a control that
-   * genuinely needs an edge in here re-declares `--sh-line` back on itself". A
-   * popover is the clearest case there is, and without this its border and its
-   * header rule both resolved to transparent: the panel had no edge at all, and
-   * with the fill below also wrong it was invisible on the card. Its bottom
-   * corner painting over the `create task` button read as a bite taken out of it.
-   *
-   * A WASH of `text`, so a contributed theme's `--sh-text` carries it — the same
-   * mechanism `fillHover` uses, and stronger than the footer's 16% because this
-   * edge is the whole boundary of a floating layer rather than a seam under a row.
+   * The one seam inside the well. `lineStrong` is the well's OWN edge value, so
+   * the divider reads as the same weight as the border it meets at both ends.
    */
-  --sh-line: color-mix(in oklab, var(--sh-text) 22%, transparent);
+  border-top: var(--sh-hairline) solid var(--sh-line-strong);
 
   /*
-   * `fixed`, and portalled to the body — see `repo-picker.tsx`.
-   *
-   * `.sh-ui-modal` carries `overflow: auto` AND `transform: translateX(-50%)`.
-   * The transform makes it the containing block for a fixed descendant and the
-   * overflow then clips it, so an in-tree panel is cut off as soon as the list is
-   * taller than the card. Its coordinates are viewport coordinates for that
-   * reason, and `z-index` clears the modal (21) and its scrim (20).
+   * `surface`, one step DOWN from the well's `well`. That is the direction the
+   * design takes it (`#0F0F0F` under a `#121212` card) and it is the right one:
+   * this band is a list you read, not a surface you write on, and a step down
+   * also puts the active row's `raised` fill a clear step ABOVE its ground —
+   * which is what the old wash-over-`raised` panel got backwards, leaving the
+   * highlighted row darker than the panel it sat in.
    */
-  position: fixed;
-  z-index: 30;
-  width: var(--sh-composer-picker-width);
+  background: var(--sh-surface);
 
   /*
-   * A LIFT off the card, not `surfaceRaised` — and this is a real gap in the role
-   * set, recorded rather than worked around quietly.
+   * The active row's fill, re-declared for this subtree — the mechanism §2 is
+   * about, used the way `composer.css` uses it for `--sh-line`.
    *
-   * The card is already `surfaceRaised`, and there is no role above it: the ladder
-   * is canvas → surface → surfaceRaised and stops. Painting a popover
-   * `surfaceRaised` over a `surfaceRaised` card is therefore painting it the same
-   * colour as the thing it floats over, which is exactly what shipped and exactly
-   * why it could not be seen. A wash of `text` over the card's own fill is the
-   * step the ladder does not have, and it moves with a theme the way a fourth
-   * hardcoded ink never would. FINDING: the roles need a `surfaceOverlay`.
+   * `fillSelected` is `raised`, and `raised` over this panel's `surface` is one
+   * luminance step — a real difference, and a small one, because those two roles
+   * are neighbours. The design's step here is bigger (#1B1B1B on #0F0F0F), and it
+   * has to be: this is the row ⏎ acts on, in a list you are steering blind while
+   * typing somewhere else. A wash of `text` over the panel's own ground lands on
+   * exactly that value and moves with a contributed theme, which a fourth
+   * hardcoded step would not. (FINDING, standing: the ladder needs a real
+   * `surfaceOverlay` and this is the third place to want one.)
    */
-  background: color-mix(in oklab, var(--sh-text) 7%, var(--sh-raised));
-  border: var(--sh-hairline) solid var(--sh-line);
-  border-radius: var(--sh-radius-soft);
+  --sh-fill-selected: color-mix(in oklab, var(--sh-text) 7%, var(--sh-surface));
+
+  /*
+   * The card's own bottom corners, less its 1px border — the fused-panel maths
+   * `composer.css` names when it explains why the radius is a token. Without
+   * this the band's square corners poke through the well's rounded ones.
+   */
+  border-radius: 0 0 calc(var(--sh-radius-soft) - var(--sh-hairline))
+    calc(var(--sh-radius-soft) - var(--sh-hairline));
   overflow: hidden;
-
-  /*
-   * A shadow, and it IS a deliberate departure from rule 2 — with the reason,
-   * because the rule's premise does not hold here.
-   *
-   * Rule 2 bans elevation theater on the grounds that "the luminance step from
-   * `surface` to `surfaceRaised` IS the elevation, and there is no second one".
-   * That argument is about a card lifting off a panel, and it is right about that.
-   * A popover over an already-raised card has no step left to spend: the wash
-   * above is a step invented for it, and one wash of separation is not enough to
-   * say "this layer is in front of that one and temporary" — which is the whole
-   * message a picker anchored to a caret has to send.
-   *
-   * Black at an alpha rather than a palette colour, because a shadow is the
-   * absence of light and not a surface: `--sh-canvas` would invert to a pale glow
-   * in the light theme, which is the opposite of a shadow.
-   */
-  box-shadow: 0 24px 60px rgb(0 0 0 / 55%);
 
   animation: sh-composer-picker-in 110ms ease-out;
 }
 
-/*
- * The same shadow, far weaker.
- *
- * `applyThemeVariables` stamps `data-theme` on the root, which is the one hook a
- * rule has for a value that cannot be expressed as a token. 55% black over a pale
- * surface reads as soot rather than as depth — the light set's whole problem, and
- * the same asymmetry `fillHover` records (6% dark / 4% light, "a wash on a bright
- * surface reads heavier at the same alpha").
- */
-:root[data-theme='light'] .sh-composer-picker {
-  box-shadow: 0 16px 40px rgb(0 0 0 / 16%);
-}
-
-/* Rising 4px as it fades is the popover saying which direction it came from —
-   the caret is above it. Motion-reduced users get the fade only. */
+/* It grows out of the card rather than arriving over it, so it fades in place —
+   the 4px rise belonged to a popover announcing which way it came from. */
 @keyframes sh-composer-picker-in {
   from {
     opacity: 0;
-    transform: translateY(4px);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
   }
 }
 
@@ -1133,7 +1130,16 @@ body.sh-dragging {
   align-items: center;
   gap: var(--sh-space-md);
   padding: var(--sh-space-md) var(--sh-space-lg);
-  border-bottom: var(--sh-hairline) solid var(--sh-line);
+  /*
+   * `lineStrong`, spelled out, and NOT `var(--sh-line)`.
+   *
+   * The composer zeroes `--sh-line` for its whole subtree, and the picker used to
+   * switch it back on for itself — which worked, and also silently re-enabled
+   * every other seam any rule in here might draw. Now that the panel is part of
+   * the well there are exactly two edges inside it, this one and the band's top,
+   * and both name their value where a reader can see it.
+   */
+  border-bottom: var(--sh-hairline) solid var(--sh-line-strong);
 
   font-family: var(--sh-font-mono);
   font-size: var(--sh-font-size-medium);
@@ -1159,14 +1165,20 @@ body.sh-dragging {
 /*
  * The characters the query hit.
  *
- * `accent` — the role for the thing you are acting on — and NOT `success`, whose
- * job is done/passed (rule 3: an accent has one job). A fuzzy hit is not an
- * outcome. Inside a selected row the fill is a solid block of `text`, so the hit
- * takes the row's own ink instead: accent-on-accent-block is unreadable, and the
- * row being selected is already the stronger signal.
+ * `sky` — the role for the thing you are acting on — and NOT `grass`, whose job
+ * is done/passed (rule 3: a hue has one job). A fuzzy hit is not an outcome.
+ *
+ * **It carries onto the ACTIVE row too, and it used to be cancelled there.** The
+ * override read `.sh-ui-row--selected … { color: inherit }` and gave its reason as
+ * "inside a selected row the fill is a solid block of `text`" — true when a
+ * selected row was inverse video, and false since `fillSelected` became a
+ * luminance step. So the row you are about to pick was the one row that showed no
+ * match at all: you arrow onto a candidate and the very characters you typed stop
+ * being marked, which is the opposite of what the highlight is for. `sky` on
+ * `raised` is 6.8:1 — this is the row the design draws in `sky` hardest (its
+ * folder glyph goes `sky` here too).
  */
 .sh-composer-picker-hit { color: var(--sh-sky); }
-.sh-ui-row--selected .sh-composer-picker-hit { color: inherit; }
 
 /*
  * Is this a repo, or a directory on the way to one?
@@ -1177,25 +1189,36 @@ body.sh-dragging {
  * same pairing `StatusDot` makes, for the same reason (a fact encoded only in
  * colour is a fact that cannot be read out, searched, or asserted on).
  *
- * A filled dot and a hollow ring, both in `text`, because this is not a status
- * and rule 3 bans a saturated colour with no job. The handoff's six per-repo
- * identity hues are the deviation this replaces: cobalt, hay, pasture and ember
- * already mean working, blocked, done and error, so a repo tinted pasture-green
- * would read as something that had passed.
+ * A FOLDER, filled or outline — `Icon` renders it and `glyphs.ts` names the pair.
+ * A dot and a ring were a legend you had to be taught; a folder says "directory"
+ * on sight, and full-versus-empty carries the same fact the dot's fill did.
+ *
+ * Neutral ink at rest, because this is not a status and rule 3 bans a saturated
+ * colour with no job. The handoff's six per-repo identity hues are the deviation
+ * that replaced: cobalt, hay, pasture and ember already mean working, blocked,
+ * done and error, so a repo tinted pasture-green would read as something that had
+ * passed.
  */
 .sh-composer-picker-mark {
-  /* A bare `<span>` is inline and would drop the size below entirely. */
-  display: block;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  border: var(--sh-hairline) solid currentColor;
+  /* A bare `<span>` is inline and would not size the glyph inside it. */
+  display: flex;
+  color: var(--sh-text-ghost);
+}
+
+/* A repo is the thing you can actually pick, so it reads a step brighter than a
+   directory on the way to one. */
+.sh-composer-picker-mark[data-repo='true'] {
   color: var(--sh-text-faint);
 }
 
-.sh-composer-picker-mark[data-repo='true'] {
-  background: currentColor;
-  color: var(--sh-text-dim);
+/*
+ * `sky` on the row ⏎ acts on — the design draws this glyph in it, and it is the
+ * one place rule 3 allows the colour here: sky is "live · focus · send", and an
+ * active row in a list you are steering from the keyboard is focus. It is not a
+ * status, which is what the hue would be banned for.
+ */
+.sh-ui-row--selected .sh-composer-picker-mark {
+  color: var(--sh-sky);
 }
 
 /* `.sh-composer-create` was the third of the shipped shell's three button
@@ -1267,12 +1290,35 @@ body.sh-dragging {
   background: none;
   border-radius: var(--sh-radius-md);
   font-size: var(--sh-font-size-medium);
-  color: var(--sh-text-dim);
+  /*
+   * `textFaint` is the role whose job IS "a control at rest", and §5 draws these
+   * at that step. `textDim` is a resting card's TITLE — one step brighter — and
+   * at 12.5px it made three pickers the second-loudest thing on the card after
+   * the send circle.
+   */
+  color: var(--sh-text-faint);
+  /*
+   * Hugs its label, chevron right beside it.
+   *
+   * `Select`'s own metrics are the settings screen's: three control widths of
+   * `min-width` so a one-word label and a model id are the same size down a
+   * column of rows, and `space-between` to put the chevron on that column's
+   * edge. On a row of ghost controls both are wrong — every picker became a
+   * 102px box with its chevron flung ~40px past the word it belongs to.
+   */
+  justify-content: flex-start;
+  gap: var(--sh-space-snug);
 }
 
 .sh-composer-select .sh-ui-select__trigger:hover {
   background: var(--sh-fill-hover);
   color: var(--sh-text);
+}
+
+/* Quieter than its label, as the design draws it: the chevron says a control is
+   a menu and is not part of reading the row. */
+.sh-composer-select .sh-ui-select__caret {
+  border-color: var(--sh-text-ghost);
 }
 
 /*
@@ -1283,13 +1329,15 @@ body.sh-dragging {
   content: '';
   inline-size: var(--sh-hairline);
   block-size: 16px;
-  margin-inline-end: var(--sh-space-md);
+  margin-inline: var(--sh-space-xs) var(--sh-space-sm);
   background: var(--sh-line-strong);
 }
 
 .sh-composer-select {
   display: inline-flex;
   align-items: center;
+  /* See the trigger above: the settings column's floor is not this row's. */
+  min-inline-size: 0;
 }
 
 /*

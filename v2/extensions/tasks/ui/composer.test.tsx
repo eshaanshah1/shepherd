@@ -329,6 +329,44 @@ describe('the rows', () => {
     expect(marks).toEqual(['true', 'false']);
     expect(rows()[1]?.querySelector('.sh-ui-sr-only')?.textContent).toBe('not a repo');
   });
+
+  it('draws a FILLED folder for a repo and an outline one for a plain directory', async () => {
+    /*
+     * Full versus empty, which is the distinction the filled dot and hollow ring
+     * this replaced were making — and it is carried by two different glyphs
+     * rather than by colour alone, because one step of ink is not a difference
+     * anybody notices at 13px.
+     *
+     * Asserted on the rendered glyph rather than in the stylesheet because it is
+     * markup, and asserted as filled-vs-outline rather than by icon name so it
+     * still holds if the pair is swapped for a better one: Tabler's filled
+     * variants paint `fill` and carry no stroke, and its outline variants do the
+     * opposite.
+     */
+    await type('#she');
+    const marks = rows().map((row) => row.querySelector('.sh-composer-picker-mark svg'));
+    const [repo, plain] = marks;
+    expect(repo?.getAttribute('fill')).toBe('currentColor');
+    expect(repo?.getAttribute('stroke')).toBe('none');
+    expect(plain?.getAttribute('stroke')).toBe('currentColor');
+    expect(plain?.getAttribute('fill')).toBe('none');
+  });
+
+  it('draws that mark through the design system, at its one stroke weight', async () => {
+    /*
+     * The mark was a hand-rolled `<svg>` with its own 1.8 stroke and its own
+     * 14px, which is the drift `Icon` exists to prevent — "do not hand-roll a
+     * control", and an extension cannot import Tabler for exactly this reason.
+     * Pinning the primitive's own class, so a future hand-rolled path fails here
+     * rather than shipping a fourth size and a second weight.
+     */
+    await type('#she');
+    for (const row of rows()) {
+      const glyph = row.querySelector('.sh-composer-picker-mark svg');
+      expect(glyph?.getAttribute('class')).toContain('sh-icon');
+      expect(glyph?.getAttribute('width')).toBe('13');
+    }
+  });
 });
 
 describe('the keyboard', () => {

@@ -10,14 +10,18 @@ import './styles.css';
  * **Bought by a shipped defect, and it was invisible in the only sense that
  * matters: the popover could not be seen.** `composer.css` re-declares
  * `--sh-line: transparent` for the whole `.sh-ui-composer` subtree — that is what
- * "no inner hairlines" means as a rule rather than a wish — and it documents the
- * way out in the same breath: "a control that genuinely needs an edge in here
- * re-declares `--sh-line` back on itself". The picker did not, so its border and
- * its header rule both resolved to transparent; and it was painted
- * `--sh-surface-raised`, which is the card's OWN fill, so it had no contrast
- * either. A floating panel with no edge and no fill difference is a panel that
- * renders and cannot be found, which is the one bug a screenshot catches and no
- * unit test did.
+ * "no inner hairlines" means as a rule rather than a wish — so a rule in here that
+ * draws an edge from that role draws nothing at all.
+ *
+ * **What changed:** the panel is no longer a floating popover. The design fuses it
+ * to the bottom of the well ("the picker is part of the well, not a popover over
+ * it"), so the assertions about a *layer* — a shadow lifting it off the card, a
+ * `color-mix` fill inventing a step above `raised`, a re-declared `--sh-line` for
+ * the whole subtree — describe a treatment this file used to pin and the app no
+ * longer has. They are replaced rather than deleted: the underlying invariant is
+ * the same one, and it is the one the defect was about. **Every seam inside this
+ * panel must name a value that is actually visible, and the panel must not be the
+ * same colour as the card it is part of.**
  *
  * Asserted against the RULES rather than a computed style, for the reason
  * `css-rules.ts` gives: jsdom lays nothing out, so a test may assert what a rule
@@ -54,57 +58,109 @@ describe('the picker draws a boundary', () => {
     expect(rulesMentioning('sh-ui-composer').length).toBeGreaterThan(0);
   });
 
-  it('re-declares `--sh-line`, because the composer set it to transparent', () => {
-    // The escape hatch, used. Without it the border below draws nothing.
-    const lines = declared('.sh-composer-picker', '--sh-line');
-    expect(lines).not.toHaveLength(0);
-    for (const value of lines) expect(value).not.toBe('transparent');
-  });
-
   it('confirms the composer really does zero `--sh-line` for its subtree', () => {
-    // The other half of the pair: if this ever stops being true the rule above
-    // becomes cargo, and a test that asserts a workaround without asserting the
-    // thing worked around is a test that outlives its own reason.
+    // The premise of every assertion below. If this stops being true they become
+    // cargo, and a test that guards a workaround without asserting the thing
+    // worked around is a test that outlives its own reason.
     expect(declared('.sh-ui-composer', '--sh-line')).toContain('transparent');
   });
 
-  it('draws a border that reads the re-declared role', () => {
-    const border = declared('.sh-composer-picker', 'border');
-    expect(border.join(' ')).toContain('var(--sh-line)');
+  it('draws no seam from the role the composer zeroed', () => {
+    /*
+     * THE defect, stated directly. Any edge in this panel painted from
+     * `var(--sh-line)` resolves to transparent, and the panel had two of them —
+     * its own border and its header rule — so it rendered with no boundary at
+     * all. The rule now covers the whole panel rather than just the two edges
+     * that were wrong at the time.
+     */
+    const seams = ['border', 'border-top', 'border-bottom', 'border-left', 'border-right'];
+    for (const rule of rulesMentioning('sh-composer-picker')) {
+      for (const seam of seams) {
+        const value = rule.style.getPropertyValue(seam).trim();
+        if (value === '') continue;
+        expect(`${rule.selectorText} { ${seam} }`, value).not.toContain('var(--sh-line)');
+      }
+    }
   });
 
-  it('is NOT painted the card‘s own fill, or it has no contrast with it', () => {
+  it('fuses to the well: a top seam, and no floating-layer machinery', () => {
+    // A band in flow at the bottom of the card. Each of these was a property the
+    // popover needed and a fused panel must not have — `position` and `z-index`
+    // placed it over the card, `width` made it a panel of its own size, and
+    // `box-shadow` lifted it off a surface it is now part of.
+    expect(declared('.sh-composer-picker', 'border-top')).not.toHaveLength(0);
+    for (const gone of ['position', 'z-index', 'width', 'box-shadow']) {
+      expect(declared('.sh-composer-picker', gone), gone).toHaveLength(0);
+    }
+  });
+
+  it('is NOT painted the card’s own fill, or it has no contrast with it', () => {
     /*
-     * The ladder is canvas → surface → surfaceRaised and stops, and the composer
-     * card is already `surfaceRaised` — so there is no role above it and a
-     * popover painted `surfaceRaised` is painted the colour of the thing it floats
-     * over. The fill must therefore be a step INVENTED for it (a wash over the
-     * card's own colour), which is the recorded `surfaceOverlay` finding.
+     * The card is `well`; this band is a step DOWN from it, which is the
+     * direction the design takes it and the one that leaves a selected row's
+     * fill above its ground rather than below it. Any value that resolves to the
+     * card's own surface would make the two one undifferentiated block again —
+     * which is what the first version of this panel did, one role higher up.
      */
     const background = declared('.sh-composer-picker', 'background');
     expect(background).not.toHaveLength(0);
     for (const value of background) {
-      expect(value).not.toBe('var(--sh-surface-raised)');
-      expect(value).toContain('color-mix');
+      expect(value).not.toBe('var(--sh-well)');
+      expect(value).not.toBe('var(--sh-raised)');
     }
   });
 
-  it('lifts off the card with a shadow, softened for the light theme', () => {
-    // A departure from rule 2, deliberate and reasoned in the stylesheet: the
-    // rule's premise is a step that does not exist above `surfaceRaised`. Both
-    // themes are declared, because one 55%-black shadow reads as soot on a pale
-    // surface.
-    expect(declared('.sh-composer-picker', 'box-shadow')).not.toHaveLength(0);
-    expect(rulesMentioning('sh-composer-picker').some((rule) => rule.selectorText.includes('light'))).toBe(
-      true,
-    );
+  it('takes the card’s bottom corners, less its border', () => {
+    // The fused-panel maths `composer.css` names when it explains why the radius
+    // is a token: a square-cornered band inside a 16px card pokes through it.
+    const radius = declared('.sh-composer-picker', 'border-radius').join(' ');
+    expect(radius).toContain('var(--sh-radius-soft)');
+    expect(radius).toContain('calc');
   });
 
-  it('paints its header rule from the same role, inherited from the panel', () => {
-    // One `--sh-line` declaration covers the panel edge and the header seam
-    // under it — custom properties inherit, so the header needs no opinion.
-    expect(declared('.sh-composer-picker-head', 'border-bottom').join(' ')).toContain(
-      'var(--sh-line)',
-    );
+  it('paints its header rule from a value that is visible', () => {
+    const seam = declared('.sh-composer-picker-head', 'border-bottom').join(' ');
+    expect(seam).not.toBe('');
+    expect(seam).not.toContain('var(--sh-line)');
+  });
+});
+
+/**
+ * MUTATION TARGET. Being the active row must not TAKE anything away.
+ *
+ * Three separate rules in this app cancelled something on a selected row —
+ * the fuzzy-match highlight, the row's label colour and its metadata colour —
+ * and all three gave the same reason: the fill is a solid block of `text`, so
+ * ordinary ink would be unreadable on it. That was true of inverse video and
+ * became false the day `fillSelected` was re-pointed at a luminance step. Nothing
+ * caught it, because each rule was locally sensible and the premise lived in a
+ * comment.
+ *
+ * The one that shipped visibly: you type `she`, arrow onto `shepherd`, and the
+ * `she` stops being blue on the one row you are about to act on.
+ *
+ * So this asserts the SHAPE of that mistake rather than the three instances. A
+ * rule may absolutely style a selected row — the fill is one — but a rule whose
+ * whole content is "on a selected row, this colour goes away" is the bug, and it
+ * now has to argue with a test.
+ */
+describe('selection adds, it does not subtract', () => {
+  it('never cancels a colour just because the row is selected', () => {
+    const cancels = rulesMentioning('sh-ui-row--selected')
+      .filter((rule) => {
+        const colour = rule.style.getPropertyValue('color').trim();
+        // `inherit` is the tell: it means "whatever the row is", which is only
+        // ever an improvement on a purpose-built colour when the row's own ink is
+        // fighting an inverse-video fill.
+        return colour === 'inherit';
+      })
+      .map((rule) => rule.selectorText);
+    expect(cancels).toEqual([]);
+  });
+
+  it('keeps the fuzzy-match highlight on the active row', () => {
+    // Positive half, so the rule above cannot be satisfied by deleting the
+    // highlight altogether.
+    expect(declared('.sh-composer-picker-hit', 'color')).toContain('var(--sh-sky)');
   });
 });

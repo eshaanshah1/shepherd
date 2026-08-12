@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { findTrigger, isUnwritten, rowText, scopeLine, splitSegments } from './mention.ts';
-import { CARET_GAP, EDGE, PICKER_WIDTH, placePicker } from './repo-picker.tsx';
 
 /**
  * The `#` rule, on its own.
@@ -181,53 +180,12 @@ describe('isUnwritten', () => {
     expect(isUnwritten('fix it in #')).toBe(false);
   });
 });
-
-describe('placePicker', () => {
-  /** A roomy window and a card wide enough that nothing clamps. */
-  const CARD = { left: 100, width: 820 };
-  const TALL = 900;
-  const PANEL = 288;
-
-  it('hangs from just under the `#`, in viewport coordinates', () => {
-    const at = placePicker({ left: 260, bottom: 200, top: 178 }, CARD, TALL, PANEL);
-    expect(at).toEqual({ x: 260, y: 200 + CARET_GAP });
-  });
-
-  it('clamps to the CARD, not the viewport, so it stays part of the composer', () => {
-    // A `#` typed at the end of a long line would otherwise hang the panel off
-    // the side of the card and read as belonging to nothing.
-    const at = placePicker({ left: 900, bottom: 200, top: 178 }, CARD, TALL, PANEL);
-    expect(at.x).toBe(CARD.left + CARD.width - PICKER_WIDTH - EDGE);
-  });
-
-  it('never leaves the card‘s left edge, however far left the caret is', () => {
-    const at = placePicker({ left: 0, bottom: 200, top: 178 }, CARD, TALL, PANEL);
-    expect(at.x).toBe(CARD.left + EDGE);
-  });
-
-  it('keeps the panel on the card when the card is NARROWER than the panel', () => {
-    // The clamp arithmetic goes negative here, and an unguarded `Math.min` would
-    // put the panel to the left of the card it is anchored to.
-    const at = placePicker({ left: 120, bottom: 200, top: 178 }, { left: 100, width: 300 }, TALL, PANEL);
-    expect(at.x).toBe(100 + EDGE);
-  });
-
-  it('FLIPS above the caret when there is no room below', () => {
-    // Clamping instead would slide the panel away from the caret it is anchored
-    // to, which is worse than putting it on the other side.
-    const at = placePicker({ left: 260, bottom: 800, top: 778 }, CARD, 820, PANEL);
-    expect(at.y).toBe(778 - CARET_GAP - PANEL);
-  });
-
-  it('stays on screen when it flips into a short window', () => {
-    const at = placePicker({ left: 260, bottom: 300, top: 278 }, CARD, 320, PANEL);
-    expect(at.y).toBeGreaterThanOrEqual(EDGE);
-  });
-
-  it('still opens downward when the list is short enough to fit', () => {
-    // The decision is about a USEFUL amount of list, not the panel's full height —
-    // otherwise a two-row picker flips for no reason anybody watching can see.
-    const at = placePicker({ left: 260, bottom: 600, top: 578 }, CARD, 800, PANEL);
-    expect(at.y).toBe(600 + CARET_GAP);
-  });
-});
+/*
+ * `placePicker` and its seven cases are GONE, with the popover they placed.
+ *
+ * The picker is fused to the bottom of the well now (see `repo-picker.tsx`), so
+ * there are no coordinates to compute: no caret to hang from, no clamp to the
+ * card, no flip when the room below runs out. Recording that here rather than
+ * leaving a silent deletion — the arithmetic was correct and well covered, and it
+ * was deleted because the thing it positioned stopped needing a position.
+ */
