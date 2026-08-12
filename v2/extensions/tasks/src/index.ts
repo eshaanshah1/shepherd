@@ -140,6 +140,8 @@ interface TreeItemOut {
   label: string;
   description?: string;
   section?: boolean;
+  /** This row sits at the physical foot of the list, and so does what follows it. */
+  foot?: boolean;
   tint?: string;
   busy?: boolean;
   /** The layout root this row stands for — the shell highlights from it. */
@@ -3137,6 +3139,15 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
             label: 'Shipped this week',
             description: String(done.length),
             tint: 'done',
+            /*
+             * The one row that asks to sit at the physical bottom — and it has to
+             * ASK. The dock used to pin everything after the last heading, and
+             * this row is not one, so `Resting` was the last heading and the live
+             * resting tasks were what got nailed to the foot: `In flight` above a
+             * gap, `Resting` at the bottom of the window, which is the reverse of
+             * the order §5 reads top-down.
+             */
+            foot: true,
             /*
              * Collapsed by default and EXPANDABLE, which is the half a count
              * alone would lose: finished work leaving the list must not mean

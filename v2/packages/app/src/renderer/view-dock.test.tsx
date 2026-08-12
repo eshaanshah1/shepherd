@@ -441,51 +441,72 @@ describe('a contributed row-s actions', () => {
 });
 
 /**
- * The foot: the group a contribution puts LAST, and where the dock puts it.
+ * The foot: the row a contribution DECLARES as the foot, and everything under it.
  *
- * Two rules, and both were reported from the running app rather than reasoned
- * about here. A heading that is the first row used to be dropped as "a label
- * for nothing", which made the sidebar change shape the moment the last live
- * task ended — DONE vanished and the finished tasks jumped to the top. And the
- * foot is capped, so finished work cannot push live work off the screen.
+ * The rule it replaces guessed — everything after the last heading — and the
+ * guess was reported from the running app: `tasks` ends on a `Resting` heading
+ * with a plain count row beneath it, so its LIVE resting tasks were the thing
+ * pinned to the bottom of the window while `In flight` floated above the gap.
+ * A position an extension states cannot be wrong about which group is finished.
+ *
+ * The cap is the second rule, and it is unchanged: finished work cannot push
+ * live work off the screen.
  */
 describe('the dock-s foot group', () => {
   const TREE: ViewContributionDTO[] = [
     { extension: 'shepherd.tasks', type: 'tasks.tree', kind: 'tree' },
   ];
 
-  const done = (n: number): readonly TreeItem[] => [
-    { id: 'group:done', label: 'DONE', section: true },
+  /** A live section, then the declared foot row and the finished tasks under it. */
+  const shipped = (n: number): readonly TreeItem[] => [
+    { id: 'group:resting', label: 'Resting', section: true },
+    { id: 'live', label: 'Still going' },
+    { id: 'tasks.shipped', label: 'Shipped this week', description: String(n), foot: true },
     ...Array.from({ length: n }, (_, i) => ({ id: `t${String(i)}`, label: `Task ${String(i)}` })),
   ];
 
   it('draws a heading that is the first row, rather than dropping it', async () => {
-    const view = mount(<ViewDock views={bridge(TREE, [], done(2))} />);
+    const view = mount(
+      <ViewDock views={bridge(TREE, [], [{ id: 'group:done', label: 'DONE', section: true }, { id: 't0', label: 'Task 0' }])} />,
+    );
     await settle();
     expect(all(view.container, 'view-group').map((el) => el.textContent)).toEqual(['DONE']);
     view.unmount();
   });
 
-  it('keeps a first-row heading pinned to the foot, not floated to the top', async () => {
-    // The two halves of the same report: with nothing above it there was no
-    // last section to split on, so every row landed in the top list.
-    const view = mount(<ViewDock views={bridge(TREE, [], done(2))} />);
+  it('pins the declared foot row and what follows it, and NOTHING above it', async () => {
+    const view = mount(<ViewDock views={bridge(TREE, [], shipped(2))} />);
     await settle();
     const foot = view.container.querySelector('.sh-rows-foot');
     expect(foot).not.toBeNull();
-    expect(foot?.contains(one(view.container, 'view-group'))).toBe(true);
-    expect(all(view.container, 'view-row').every((row) => foot?.contains(row) === true)).toBe(true);
+    // `textContent` carries the state mark's accessible word too (§3 — every
+    // mark says its state), so this reads the label rather than the whole row.
+    const inFoot = all(view.container, 'view-row')
+      .filter((row) => foot?.contains(row) === true)
+      .map((row) => row.querySelector('.sh-ui-row__label')?.textContent);
+    expect(inFoot).toEqual(['Shipped this week', 'Task 0', 'Task 1']);
+    // The live half stays where the list put it — this is the whole report.
+    expect(foot?.contains(one(view.container, 'view-group'))).toBe(false);
     view.unmount();
   });
 
-  it('scrolls the finished rows and leaves the heading outside the scroller', async () => {
-    // A DONE that scrolls away leaves a list of finished tasks with nothing
-    // saying what they are — so the cap is on the rows, not on the group.
-    const view = mount(<ViewDock views={bridge(TREE, [], done(9))} />);
+  it('leaves a tree that declares no foot entirely in the top list', async () => {
+    // A last heading is not a claim about being finished, so it pins nothing.
+    const view = mount(
+      <ViewDock views={bridge(TREE, [], [{ id: 'group:resting', label: 'Resting', section: true }, { id: 'live', label: 'Still going' }])} />,
+    );
+    await settle();
+    expect(view.container.querySelector('.sh-rows-foot')).toBeNull();
+    view.unmount();
+  });
+
+  it('scrolls the finished rows and leaves the foot row outside the scroller', async () => {
+    // A "Shipped this week" that scrolls away leaves a list of finished tasks
+    // with nothing saying what they are — so the cap is on the rows under it.
+    const view = mount(<ViewDock views={bridge(TREE, [], shipped(9))} />);
     await settle();
     const scroller = view.container.querySelector('.sh-rows-foot-scroll');
     expect(scroller).not.toBeNull();
-    expect(scroller?.contains(one(view.container, 'view-group'))).toBe(false);
     expect(scroller?.querySelectorAll('[data-testid="view-row"]')).toHaveLength(9);
     view.unmount();
   });
