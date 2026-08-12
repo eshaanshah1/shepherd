@@ -189,7 +189,10 @@
 .sh-ui-palette__glyph {
   display: inline-grid;
   place-items: center;
-  inline-size: 16px;
+  /* The slot is one `lg` icon wide, composed from the space scale rather than
+     typed — a literal would stop moving when the base size does, and the glyph
+     inside it would outgrow its own box. */
+  inline-size: var(--sh-space-xxl);
   flex: none;
   color: var(--sh-text-mute);
 }
