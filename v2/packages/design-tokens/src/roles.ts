@@ -68,6 +68,10 @@ export type RoleName =
   | 'repo3'
   | 'repo4'
   // the sky strip
+  | 'sceneSkyHigh'
+  | 'sceneSkyLow'
+  | 'sceneGlowInk'
+  | 'sceneGlow'
   | 'sceneHill'
   | 'sceneFlock'
   | 'sceneFlockShade'
@@ -309,6 +313,36 @@ export const roles: Readonly<Record<RoleName, RoleSpec>> = {
   repo4: { kind: 'token', token: 'repoSlate', job: 'a repo’s identity square.', notFor: 'a state.' },
 
   // ── the sky strip ───────────────────────────────────────────────────────────
+  sceneSkyHigh: {
+    kind: 'token',
+    token: 'scnSkyHigh',
+    job: 'the top of the strip’s vertical ramp, behind the hills.',
+    notFor: 'a surface anywhere else. The strip is a window, not a wallpaper.',
+  },
+  sceneSkyLow: {
+    kind: 'token',
+    token: 'scnSkyLow',
+    job: 'the ramp at the horizon, where it hands off to `canvas`.',
+    notFor:
+      'a third stop in the middle. Two stops and the canvas is the whole ramp — a stop between them is a band, and a band in a gradient is a seam.',
+  },
+  sceneGlowInk: {
+    kind: 'token',
+    token: 'scnGlow',
+    job: 'the ink `sceneGlow` is a wash of. Exposed so a themed subtree can move both.',
+    notFor: 'painting anything directly. At full opacity this is a colour the strip never shows.',
+  },
+  sceneGlow: {
+    kind: 'wash',
+    of: 'sceneGlowInk',
+    // 13% dark, 45% light, read off the shipped gradients rather than chosen. The
+    // asymmetry is the scrim's finding in the other direction: the dark glow is
+    // sky over near-black and 13% already reads, while the light one is white on
+    // a bright sky and has almost no contrast to spend.
+    alpha: { dark: 0.13, light: 0.45 },
+    job: 'the radial low on the right, so the one thing worth finding is the lit thing.',
+    notFor: 'a glow on anything else. There is exactly one illustration.',
+  },
   sceneHill: {
     kind: 'token',
     token: 'scnHill',

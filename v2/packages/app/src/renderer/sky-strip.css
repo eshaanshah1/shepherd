@@ -25,21 +25,32 @@
   background:
     /* The glow first, so it sits OVER the ramp — a radial low on the right,
        where the sheep is, so the one thing worth finding is the lit thing. */
-    radial-gradient(120% 90% at 74% 92%, rgb(127 182 232 / 13%), transparent 62%),
-    linear-gradient(180deg, #101c29 0%, #0d141c 46%, var(--sh-canvas) 100%);
+    radial-gradient(120% 90% at 74% 92%, var(--sh-scene-glow), transparent 62%),
+    linear-gradient(
+      180deg,
+      var(--sh-scene-sky-high) 0%,
+      var(--sh-scene-sky-low) 46%,
+      var(--sh-canvas) 100%
+    );
 }
 
 /*
  * Dark is canonical and light is a different time of day, not an inversion.
  *
  * Inverting the night sky gives a pale grey band, which is not "day" — it is the
- * same picture with the contrast removed. So light gets its own two gradients:
- * XP-blue, noon.
+ * same picture with the contrast removed. Light is XP-blue, noon, and the colours
+ * come from the same roles: the palette carries a value per mode, so what is left
+ * here is the one thing a token cannot say — at noon the horizon sits lower.
  */
 :root[data-theme='light'] .sh-sky__scene {
   background:
-    radial-gradient(120% 90% at 74% 92%, rgb(255 255 255 / 45%), transparent 62%),
-    linear-gradient(180deg, #6ba3d6 0%, #9cc4e4 52%, var(--sh-canvas) 100%);
+    radial-gradient(120% 90% at 74% 92%, var(--sh-scene-glow), transparent 62%),
+    linear-gradient(
+      180deg,
+      var(--sh-scene-sky-high) 0%,
+      var(--sh-scene-sky-low) 52%,
+      var(--sh-canvas) 100%
+    );
 }
 
 .sh-sky__star {

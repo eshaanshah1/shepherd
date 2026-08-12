@@ -65,6 +65,9 @@ export type ColorToken =
   // What an overlay dims the app with.
   | 'scrimBase'
   // The sky strip: the one decorative surface in the app.
+  | 'scnSkyHigh'
+  | 'scnSkyLow'
+  | 'scnGlow'
   | 'scnHill'
   | 'scnFlock'
   | 'scnFlockShade'
@@ -138,6 +141,11 @@ export const palette: Readonly<Record<ColorToken, TokenSpec>> = {
   //
   // The only illustration in the product. It is a window, not a wallpaper: an
   // earlier version spread the scene behind the whole app and was distracting.
+  // The ramp is two stops and then `canvas`, so the strip ends in the colour the
+  // rail already is and needs no seam to sit against it.
+  scnSkyHigh: { dark: '#101C29', light: '#6BA3D6', job: 'the strip’s ramp at the top' },
+  scnSkyLow: { dark: '#0D141C', light: '#9CC4E4', job: 'the strip’s ramp at the horizon' },
+  scnGlow: { dark: '#7FB6E8', light: '#FFFFFF', job: 'the light behind the sheep' },
   scnHill: { dark: '#121D16', light: '#7FA95F', job: 'the meadow’s hills' },
   scnFlock: { dark: '#D8D4C8', light: '#FFFFFF', job: 'the sheep’s body and fluff' },
   scnFlockShade: { dark: '#8A8679', light: '#94907F', job: 'the sheep’s legs' },

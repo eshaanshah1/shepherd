@@ -14,9 +14,9 @@ import { cn } from './cn.ts';
  * **What makes it a primitive rather than a class name is the scoped role
  * re-declaration** (spec §2, and `composer.css` is where it is written). A
  * `<Field>` dropped inside gets no well and no hairline *without being told it is
- * inside a composer* — because the composer re-declared `--sh-surface-sunken` and
- * `--sh-line` for its subtree, and the field is still just asking for the generic
- * roles. That is the mechanism the whole token tier exists for, and it is why
+ * inside a composer* — because the composer re-declared `--sh-surface`,
+ * `--sh-sunken` and `--sh-line` for its subtree, and the field is still just
+ * asking for the generic roles. That is the mechanism the whole token tier exists for, and it is why
  * this is not a parallel `--sh-composer-field-bg` family: the alternative is what
  * pane chrome does today, and it needs every component to know where it is.
  *

@@ -220,7 +220,13 @@ describe('one token map', () => {
       // `repoSky` is here because it IS `sky` — §2 gives the first repo mark the
       // same value, and this list is matched on values rather than names. That is
       // the honest reading: the grid draws one colour, and two roles claim it.
-      ['canvas', 'clay', 'grass', 'ink', 'inkDim', 'inkFaint', 'inkGhost', 'line', 'pane', 'red', 'repoSky', 'sky'].sort(),
+      //
+      // `scnGlow` is the third claim, and it only became visible when the sky
+      // strip's gradient stopped being four hex literals. The strip is the one
+      // sanctioned decorative surface, so a job-carrying hue appearing there at
+      // 13% is a question worth asking rather than a defect to assert on — but it
+      // is now asked here instead of hiding in a `rgb(127 182 232 / 13%)`.
+      ['canvas', 'clay', 'grass', 'ink', 'inkDim', 'inkFaint', 'inkGhost', 'line', 'pane', 'red', 'repoSky', 'scnGlow', 'sky'].sort(),
     );
   });
 

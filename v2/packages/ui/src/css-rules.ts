@@ -38,9 +38,21 @@ function collect(rules: CSSRuleList, into: CSSStyleRule[]): void {
   }
 }
 
-/** Every style rule in every loaded sheet whose selector mentions `needle`. */
-export function rulesMentioning(needle: string): CSSStyleRule[] {
+/**
+ * Every style rule in every loaded sheet, grouping rules flattened.
+ *
+ * The selector-first form below answers "what does this component declare".
+ * This one answers the opposite question — "does anything anywhere declare
+ * this" — which is the only shape a refusal can be asserted in: a rule that
+ * must not exist has no selector to look it up by.
+ */
+export function allRules(): CSSStyleRule[] {
   const all: CSSStyleRule[] = [];
   for (const sheet of Array.from(document.styleSheets)) collect(sheet.cssRules, all);
-  return all.filter((rule) => rule.selectorText.includes(needle));
+  return all;
+}
+
+/** Every style rule in every loaded sheet whose selector mentions `needle`. */
+export function rulesMentioning(needle: string): CSSStyleRule[] {
+  return allRules().filter((rule) => rule.selectorText.includes(needle));
 }
