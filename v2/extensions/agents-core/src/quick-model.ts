@@ -1,7 +1,7 @@
 import type { SettingChoice, SettingsAPI, KV, Schema } from '@shepherd/sdk';
 import { s } from '@shepherd/sdk';
 import { QUICK_KIND_SETTING, QUICK_MODEL_KEY, QUICK_MODEL_SETTING } from './manifest.ts';
-import type { AgentKind, HeadlessHalf } from './kind.ts';
+import type { AgentKind, AgentModel, HeadlessHalf } from './kind.ts';
 
 /**
  * Which kind and which model serve the quick tier.
@@ -138,15 +138,40 @@ export function quickChoices(kinds: readonly AgentKind[], key: string): readonly
   if (key === QUICK_KIND_SETTING) {
     return capable.map((kind) => ({ value: kind.id, label: kind.id }));
   }
-  // Every model every capable kind advertises. A kind that advertises none serves
-  // exactly one, and `quickModel` is it.
-  return capable.flatMap((kind) =>
-    (kind.headless.quickModels ?? [kind.headless.quickModel]).map((model) => ({
-      value: model,
-      label: model,
-      description: kind.id,
-    })),
-  );
+  /*
+   * Read off `listModels` — the kind's own answer to "what can you run" — and
+   * then FILTERED by `quickModels` where a kind narrows it.
+   *
+   * It used to be the other way round: this built the list out of
+   * `headless.quickModels`, which made a field about the cheap tier the only
+   * published answer to a question every surface asks. `listModels` is the
+   * primitive now, and the quick tier is a subset of it.
+   *
+   * A kind with no `listModels` still answers: it serves exactly one model and
+   * `quickModel` is it, which is the same fallback as before.
+   */
+  return capable.flatMap((kind) => {
+    const declared = kind.listModels?.();
+    /*
+     * `quickModels` narrows `listModels` — but ONLY when there is a `listModels`
+     * to narrow. A kind that predates the primitive publishes its quick list and
+     * nothing else, and filtering that list by itself is fine while filtering a
+     * one-model fallback by it yields NOTHING: `quickModel` need not appear in
+     * `quickModels`, and for the test kind it does not. Caught by that test,
+     * which is the case it was written for.
+     */
+    const all: readonly AgentModel[] =
+      declared ??
+      (kind.headless.quickModels ?? [kind.headless.quickModel]).map((id) => ({ id, label: id }));
+    const allowed = declared === undefined ? undefined : kind.headless.quickModels;
+    return all
+      .filter((model) => allowed === undefined || allowed.includes(model.id))
+      .map((model) => ({
+        value: model.id,
+        label: model.label,
+        description: model.note === undefined ? kind.id : `${kind.id} · ${model.note}`,
+      }));
+  });
 }
 
 const storedOverrideSchema: Schema<{ kind?: string; model?: string }> = s.stored({

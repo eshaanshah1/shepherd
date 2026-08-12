@@ -1247,3 +1247,92 @@ body.sh-dragging {
     transition: none !important;
   }
 }
+
+/*
+ * ── the composer's three selects ──────────────────────────────────────────
+ *
+ * §5: "Ghost `Select`s — model, then worktree — at `h28`, `r7`, 12.5px, chevron
+ * 11 at 2.2 stroke, separated by a `1px × 16` rule. **No bordered chips**;
+ * inside a well a bordered box is the loudest thing on it."
+ *
+ * `Select` ships with the settings screen's bordered treatment, which is right
+ * there and wrong here — so the ghost form is scoped to the composer rather than
+ * added as a variant. A variant would let any surface turn a select ghost, and
+ * the reason this one is ghost is that it sits on a WELL.
+ */
+.sh-composer-select .sh-ui-select__trigger {
+  block-size: var(--sh-control-md);
+  padding: 0 var(--sh-space-sm);
+  border: 0;
+  background: none;
+  border-radius: var(--sh-radius-md);
+  font-size: var(--sh-font-size-medium);
+  color: var(--sh-text-dim);
+}
+
+.sh-composer-select .sh-ui-select__trigger:hover {
+  background: var(--sh-fill-hover);
+  color: var(--sh-text);
+}
+
+/*
+ * The divider — `1px × 16`, drawn by the select that FOLLOWS another one, so a
+ * row with a single control has no orphaned rule beside it.
+ */
+.sh-composer-select + .sh-composer-select::before {
+  content: '';
+  inline-size: var(--sh-hairline);
+  block-size: 16px;
+  margin-inline-end: var(--sh-space-md);
+  background: var(--sh-line-strong);
+}
+
+.sh-composer-select {
+  display: inline-flex;
+  align-items: center;
+}
+
+/*
+ * ── the scope rail ────────────────────────────────────────────────────────
+ *
+ * **Detached**, 7px below the card and outside it. That gap is the whole idea:
+ * the card is what you are writing, and this is a statement about where the
+ * result will land — a consequence, not a field. Fused to the card it read as
+ * one more row of the form.
+ */
+.sh-composer-scope-rail {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-md);
+  margin-block-start: var(--sh-space-snug);
+  block-size: var(--sh-row-height);
+  padding: 0 var(--sh-space-lg);
+  border: var(--sh-hairline) solid var(--sh-line-strong);
+  border-radius: var(--sh-radius-card);
+  /* `pane`, not `well`: it is not part of the writing surface. */
+  background: var(--sh-pane);
+}
+
+.sh-composer-scope-rail__repo {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sh-space-sm);
+  font-size: var(--sh-font-size-medium);
+  color: var(--sh-text-dim);
+}
+
+.sh-composer-scope-rail__repo > i {
+  inline-size: 7px;
+  block-size: 7px;
+  border-radius: 2px;
+  flex: none;
+}
+
+/* Where the worktrees will be cut — the machine's own words, so mono. */
+.sh-composer-scope-rail__where {
+  margin-inline-start: auto;
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-nano);
+  font-variant-numeric: tabular-nums;
+  color: var(--sh-text-ghost);
+}

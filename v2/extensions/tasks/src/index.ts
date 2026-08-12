@@ -2000,6 +2000,28 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
          * result.
          */
         member: s.optional(s.string()),
+        /**
+         * Which model the task's agents open on. Absent means "whatever the
+         * kind advertises" — the app does not get an opinion about a vendor's
+         * default, and a hardcoded one goes stale the week they ship a tier.
+         *
+         * Stored on the record rather than passed straight through, because a
+         * task outlives its first spawn: a second agent joining it later, and a
+         * restored task reattaching, both have to open on the same model or the
+         * task quietly becomes two different things.
+         */
+        model: s.optional(s.string()),
+        /**
+         * Where the work is laid down — `worktree` (the default, and the only
+         * behaviour until now) or `in-place`.
+         *
+         * `worktree` cuts one per repo, which is what makes several agents on
+         * one repo safe. `in-place` runs in the checkout itself, which is right
+         * for a task you want landing on the branch you are already on and
+         * wrong the moment a second task picks the same repo — hence not the
+         * default.
+         */
+        placement: s.optional(s.string()),
         brief: s.optional(s.string()),
         /**
          * A name the caller already has — the composer's speculative ask, landed

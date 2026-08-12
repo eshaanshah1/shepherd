@@ -513,7 +513,27 @@ export const activate: ActivateFn<AgentsAPI> = async (ctx: ExtensionContext, api
         return describeQuick(kinds.all(), next);
       },
     }),
+  );  ctx.subscriptions.push(
+    commands.register(AGENTS_COMMANDS.listModels, {
+      title: 'Agents: List models',
+      schema: s.object({}),
+      /*
+       * No permission: it is a read of what kinds ADVERTISE, exactly like
+       * `agents.kinds` beside it. Nothing here touches a session or a process —
+       * `listModels` is a declaration, so answering it cannot cost anything or
+       * leak anything a manifest does not already say.
+       */
+      handler: () =>
+        kinds.all().flatMap((kind) =>
+          (kind.listModels?.() ?? []).map((model) => ({
+            value: model.id,
+            label: model.label,
+            description: model.note === undefined ? kind.id : `${kind.id} · ${model.note}`,
+          })),
+        ),
+    }),
   );
+
 
   // Deliberately does not count topics: a kind subscribes them when it registers,
   // which happens after this line, so any number here would read as a fault

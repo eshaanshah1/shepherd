@@ -709,7 +709,7 @@ describe('the name ask', () => {
  */
 describe('the machine picker', () => {
   const machine = (): HTMLElement | null =>
-    container.querySelector<HTMLElement>('[data-testid="composer-machine"]');
+    container.querySelector<HTMLElement>('.sh-composer-select--machine');
 
   function withMachines(machines: unknown): ReturnType<typeof makeInvoke> {
     const spy = vi.fn(async (command: string, args?: unknown): Promise<{ ok: true; value: unknown }> => {
@@ -746,8 +746,12 @@ describe('the machine picker', () => {
 
     // The default is never "wherever it was last": a composer that quietly opens
     // on another machine creates work in a place nobody looked at.
-    expect(machine()?.dataset.machine).toBe('here');
-    expect(machine()?.textContent).toContain('This Mac');
+    //
+    // Read off the TRIGGER's text now rather than a `data-machine` attribute:
+    // the picker is a `Select` like the model and placement controls beside it,
+    // because three dropdowns on one row that are three different components is
+    // three things to keep in step.
+    expect(machine()?.querySelector('.sh-ui-select__value')?.textContent).toContain('This Mac');
   });
 
   it('asks the CHOSEN machine for its repos, and creates the task there', async () => {
@@ -761,12 +765,14 @@ describe('the machine picker', () => {
     await act(async () => undefined);
 
     await act(async () => {
-      machine()?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      // The TRIGGER, not the Select's root: the root is a positioning box and a
+      // click on it opens nothing.
+      machine()?.querySelector<HTMLElement>('.sh-ui-select__trigger')?.click();
     });
-    const item = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+    const item = [...(machine()?.querySelectorAll<HTMLElement>('[role="option"]') ?? [])].find(
       (element) => element.textContent?.includes('Work Mac'),
     );
-    if (item === undefined) throw new Error('the machine menu did not open');
+    if (item === undefined) throw new Error('the machine select did not open');
     /*
      * `element.click()`, not a dispatched `MouseEvent('click')`: Radix's item
      * reads properties the synthetic one leaves at zero and ignores it entirely,
@@ -777,7 +783,7 @@ describe('the machine picker', () => {
       item.click();
     });
 
-    expect(machine()?.dataset.machine).toBe('mac-b');
+    expect(machine()?.querySelector('.sh-ui-select__value')?.textContent).toContain('Work Mac');
 
     // The repos are re-asked OF THAT MACHINE. Not merely cleared: the zero-query
     // answer is the history of repos actually used over there, which is exactly
