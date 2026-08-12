@@ -1,9 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentType } from 'react';
-import { IconArchive, IconCheck, IconEye, IconPlus, IconSettings, IconTrash } from '@tabler/icons-react';
+import {
+  IconArchive,
+  IconCheck,
+  IconChevronDown,
+  IconChevronRight,
+  IconEye,
+  IconPlus,
+  IconSettings,
+  IconTrash,
+} from '@tabler/icons-react';
 import type { IconProps as TablerIconProps } from '@tabler/icons-react';
 import type { TreeItem, TreeItemAction, TreeItemSeparator } from '@shepherd/sdk';
 import {
+  Icon,
   IconButton,
   Menu,
   Row,
@@ -28,12 +38,12 @@ import { unqualify } from '../shared/index.ts';
  * file (sketch §2b: if a task view needs a special case in the core, the model
  * is wrong).
  *
- * What it *does* own is the **discipline**, which is the Flock language's and
- * v1's before it: one fixed row height whatever a row says, an uppercase
- * micro-label for a section, inverse video for selection (never a tinted wash),
- * the state's meaning carried by a coloured dot, and the status word in the
- * text ramp at the end of the row. An extension supplies data and a token name;
- * it cannot make its row taller, louder or a different colour than the palette.
+ * What it *does* own is the **discipline**: one fixed row height whatever a row
+ * says, a sentence-case section label with no tracking, one luminance step and
+ * one border step for selection, and the state's meaning carried by a MARK whose
+ * word travels as a tooltip rather than as a second column. An extension supplies
+ * data and a token name; it cannot make its row taller, louder or a different
+ * colour than the palette.
  *
  * Two things it deliberately does not do. It does not subscribe to a bus topic —
  * it cannot name one, which is what the agent relay's allow-list was protecting.
@@ -361,6 +371,34 @@ function TreeView({
           const isSelected =
             row.root !== undefined && activeRoot !== null && groupOfRoot(row.root) === groupOfRoot(activeRoot);
 
+          /**
+           * **The foot row is a drawer handle, not an entry.**
+           *
+           * The dock already treats `foot` structurally — it splits the list on
+           * it, pins it to the bottom and scrolls what sits under it — so
+           * "and it is the handle for that" is the same fact drawn rather than a
+           * new thing the shell knows. `collapsed` says which way the chevron
+           * points; a foot row that declares no `collapsed` opens nothing and
+           * stays an ordinary row.
+           *
+           * What this replaces was the whole of the goof: the row drew a shipped
+           * MARK — a check, in the 12px state slot, on something that is not a
+           * task — at full `text` ink, in body type, at the same inset as the
+           * tasks below it. It read as a sixth task, and the count the extension
+           * calls "the content" was never drawn at all, because `description`
+           * reaches an ordinary row as a tooltip and nothing else.
+           */
+          const isFoot = row.foot === true;
+          /*
+           * The chevron is the narrower claim, and the two are separate on
+           * purpose: the foot is a HEADING whatever it does, and it is a DRAWER
+           * only if it declares `collapsed`. A foot that opens nothing still
+           * says its count and still refuses the state slot; it just has no
+           * position to point at.
+           */
+          const disclosure = isFoot && row.collapsed !== undefined;
+          const open = disclosure && row.collapsed !== true;
+
           /*
            * A row that draws ITSELF, by name (ADR 0033's seam, one level down).
            *
@@ -439,7 +477,11 @@ function TreeView({
                 // A token name, resolved here. An extension never sends a raw
                 // colour, so a contribution cannot break the theme.
                 data-tint={row.tint ?? 'none'}
-                title={row.description ?? row.label}
+                data-foot={isFoot ? 'true' : undefined}
+                {...(disclosure ? { 'aria-expanded': open } : {})}
+                // A drawn count is not also a tooltip. Everywhere else the
+                // description is the half of the row that did not fit.
+                title={isFoot ? row.label : (row.description ?? row.label)}
                 onClick={activate}
                 onKeyDown={(event) => {
                   // What `<button>` gave for free. Space is `preventDefault`ed
@@ -475,7 +517,26 @@ function TreeView({
                     />
                   )
                 }
+                /*
+                  The count, DRAWN — in the resting-metadata cell `Row` already
+                  has for it, mono and tabular. "Finished work leaves the list and
+                  becomes a count at the foot" is the whole of what the foot says,
+                  and a count that only exists as a `title` attribute is a count
+                  nobody reads.
+                */
+                {...(isFoot && row.description !== undefined ? { meta: row.description } : {})}
                 leading={
+                  isFoot ? (
+                    /*
+                      A chevron, not a mark — and nothing at all when there is
+                      nothing to open. The 12px slot holds a STATE for a row that
+                      has one; a heading has none, and the check that used to sit
+                      here was a shipped mark on a thing that is not a task.
+                      Direction only: the glyph never rotates, because §8 bans
+                      motion that moves a control.
+                    */
+                    disclosure ? <Icon icon={open ? IconChevronDown : IconChevronRight} size="sm" /> : null
+                  ) : (
                   /*
                     The mark IS the state, and it takes a STATE — never a colour
                     and never the extension's own tint spelling. A coloured dot
@@ -491,7 +552,8 @@ function TreeView({
                     answer: a task being archived is resting, and the archiving is
                     not a state of the task.
                   */
-                  <StateMark state={markState(row.tint)} />
+                    <StateMark state={markState(row.tint)} />
+                  )
                 }
               >
                 {row.label}
@@ -664,6 +726,14 @@ const TINT_STATES: Readonly<Record<string, MarkState>> = {
   // state that leaves the list.
   'needs-check': 'waiting',
   done: 'shipped',
+  /*
+   * `archived` is the word `tasks` actually writes for finished work —
+   * `displayState` returns the LIFECYCLE value there, not `done`, which is
+   * written by nothing. Missing from this table, every shipped task fell to the
+   * default and drew a hollow ring: the drawer of finished work said that
+   * nothing in it had finished.
+   */
+  archived: 'shipped',
   pasture: 'shipped',
   grass: 'shipped',
   error: 'failed',

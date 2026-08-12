@@ -17,15 +17,24 @@ import { cssVariables } from './css.ts';
  * and the fixed bands 28 / 38 / 40 / 44 / 124 / 332 — asserted against
  * `round(base * ratio)` rather than against a literal. Change a ratio and the
  * named case below says which value moved.
+ *
+ * **Those integers are the language's numbers, which is `comfortable`, and the
+ * app now ships `compact`** — so they are asserted against a scale derived at
+ * that density explicitly. The shipped scale gets its own case underneath. The
+ * two must be able to disagree: bending these to whatever the default currently
+ * produces would turn the approved values into a description of the code.
  */
-describe('the derived scale at the approved defaults', () => {
+describe('the derived scale at the approved density', () => {
+  const approved = deriveMetrics({ baseFontSize: 13, density: densities.comfortable });
+
   it('takes exactly two inputs', () => {
     expect(defaultScaleInputs.baseFontSize).toBe(13);
-    expect(defaultScaleInputs.density).toBe(densities.comfortable);
     expect(densities.comfortable).toBe(1);
   });
 
-  it('produces the approved type scale', () => {
+  it('produces the approved type scale — and type does NOT move with density', () => {
+    // Density is spacing, not size. This one case reads the shipped `metrics`
+    // deliberately: at `compact` the labels must still be the approved sizes.
     expect(metrics.type).toEqual({
       nano: 10.5,
       micro: 11,
@@ -36,14 +45,15 @@ describe('the derived scale at the approved defaults', () => {
       large: 16,
       title: 19,
     });
+    expect(approved.type).toEqual(metrics.type);
   });
 
   it('produces the approved control heights, 24 / 28 / 34', () => {
-    expect(metrics.control).toEqual({ sm: 24, md: 28, lg: 34 });
+    expect(approved.control).toEqual({ sm: 24, md: 28, lg: 34 });
   });
 
   it('produces the approved space scale', () => {
-    expect(metrics.space).toEqual({
+    expect(approved.space).toEqual({
       hair: 2,
       xs: 4,
       sm: 6,
@@ -62,13 +72,14 @@ describe('the derived scale at the approved defaults', () => {
   });
 
   it('produces the 20px line box and the 34px row', () => {
+    // The line box is base-scaled only, so it is the same at every density.
     expect(metrics.lineHeight).toBe(20);
-    expect(metrics.rowHeight).toBe(34);
+    expect(approved.rowHeight).toBe(34);
   });
 
   it('produces the fixed chrome bands the shell is built from', () => {
     // `a task holds tabs; a tab holds panes` — §5's hierarchy, as furniture.
-    expect(metrics.band).toEqual({
+    expect(approved.band).toEqual({
       tab: 28,
       paneHead: 38,
       tabStrip: 40,
@@ -85,6 +96,53 @@ describe('the derived scale at the approved defaults', () => {
     expect(metrics.microLabel.fontSize).toBe(metrics.type.nano);
     expect(metrics.microLabel.trackingMin).toBe(0.05);
     expect(metrics.microLabel.trackingMax).toBe(0.05);
+  });
+
+  /**
+   * What actually ships, which is `compact`.
+   *
+   * The rail read loose at `comfortable` even with the row gap at zero — the
+   * pitch is one 34px box holding one 13px line, and a drawer of finished tasks
+   * is nothing but those. Density is the knob for that: heights and spacing
+   * tighten, type does not move.
+   */
+  it('ships at compact, and the type scale is untouched by it', () => {
+    expect(defaultScaleInputs.density).toBe(densities.compact);
+    expect(metrics.rowHeight).toBe(29);
+    expect(metrics.control).toEqual({ sm: 20, md: 24, lg: 29 });
+    expect(metrics.type.body).toBe(13);
+  });
+
+  /**
+   * THREE BANDS DO NOT MOVE, and each has a reason that is not a preference.
+   *
+   * The ratio table said as much long before anything read it — "a titlebar is
+   * 44 because the traffic lights are, and a rail is 332 because that is how
+   * wide a task's title plus its metadata needs to be" — and then scaled both
+   * anyway, which nothing noticed while the only density in use was 1. The sky
+   * strip is the one that would have shown first: it is a DRAWING with literal
+   * px coordinates (`sky-strip.tsx`), so a 105px box would have held a scene
+   * built for 124 and the sheep would have grazed off the bottom of it.
+   */
+  it('holds the OS constant, the drawing and the content measurement still', () => {
+    expect(metrics.band.titlebar).toBe(44);
+    expect(metrics.band.skyStrip).toBe(124);
+    expect(metrics.band.rail).toBe(332);
+    for (const density of Object.values(densities)) {
+      const at = deriveMetrics({ baseFontSize: 13, density });
+      expect(at.band.titlebar, `titlebar moved at ${String(density)}`).toBe(44);
+      expect(at.band.skyStrip, `sky strip moved at ${String(density)}`).toBe(124);
+      expect(at.band.rail, `rail moved at ${String(density)}`).toBe(332);
+    }
+  });
+
+  it('still scales the bands that ARE rhythm', () => {
+    // A tab, a pane head and a tab strip are chrome the eye reads as spacing, so
+    // they follow the density the rows do. The exemption is three names, not the
+    // whole record.
+    expect(metrics.band.tab).toBe(24);
+    expect(metrics.band.paneHead).toBe(32);
+    expect(metrics.band.tabStrip).toBe(34);
   });
 
   it('matches a LARGE control to the row height, by sharing the ratio', () => {
@@ -138,9 +196,15 @@ describe('the derivation under other inputs', () => {
     });
   });
 
-  it('scales the chrome bands too — a compact user gets a compact frame', () => {
-    expect(spacious.band.titlebar).toBe(51);
-    expect(spacious.band.rail).toBe(382);
+  it('scales the bands that are rhythm, and only those', () => {
+    // A roomier user gets a roomier tab strip. They do not get a taller
+    // titlebar than the traffic lights need or a wider rail than the title
+    // measured — see the exemption case above for why those three are fixed.
+    expect(spacious.band.tab).toBe(32);
+    expect(spacious.band.paneHead).toBe(44);
+    expect(spacious.band.tabStrip).toBe(46);
+    expect(spacious.band.titlebar).toBe(44);
+    expect(spacious.band.rail).toBe(332);
   });
 
   it('leaves TYPE alone when only density moves', () => {
@@ -198,17 +262,20 @@ describe('the scale in the emitted variable set', () => {
   it('emits every derived member', () => {
     const vars = cssVariables('dark');
     expect(vars['--sh-base-font-size']).toBe('13px');
-    expect(vars['--sh-density']).toBe('1');
+    // The shipped density, so the lengths below are the compact ones. Type is
+    // not: it takes the base size and nothing else.
+    expect(vars['--sh-density']).toBe('0.85');
     expect(vars['--sh-font-size']).toBe('13px');
     expect(vars['--sh-font-size-title']).toBe('19px');
     expect(vars['--sh-font-size-nano']).toBe('10.5px');
-    expect(vars['--sh-control-sm']).toBe('24px');
-    expect(vars['--sh-control-lg']).toBe('34px');
-    expect(vars['--sh-space-md']).toBe('9px');
+    expect(vars['--sh-control-sm']).toBe('20px');
+    expect(vars['--sh-control-lg']).toBe('29px');
+    expect(vars['--sh-space-md']).toBe('8px');
     expect(vars['--sh-radius-soft']).toBe('16px');
     expect(vars['--sh-radius-card']).toBe('10px');
+    // Exempt, then scaled — one of each, so the emitter is shown doing both.
     expect(vars['--sh-band-titlebar']).toBe('44px');
-    expect(vars['--sh-band-pane-head']).toBe('38px');
+    expect(vars['--sh-band-pane-head']).toBe('32px');
     expect(vars['--sh-micro-font-size']).toBe('10.5px');
     expect(vars['--sh-micro-tracking']).toBe('0.05em');
     expect(vars['--sh-micro-tracking-wide']).toBe('0.05em');

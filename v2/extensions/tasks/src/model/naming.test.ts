@@ -145,6 +145,46 @@ describe('heuristicName', () => {
     expect(heuristicName('   \n  ')).toBeUndefined();
   });
 
+  /**
+   * The two shapes that were on screen in the rail, both taken verbatim.
+   *
+   * Neither is hypothetical: they are the labels a screenshot of the Shipped
+   * drawer showed, and the second appeared TWICE and was byte-identical both
+   * times — a link eats the whole word budget and truncates mid-host, so two
+   * unrelated tasks became one unreadable row repeated.
+   */
+  it('drops the repo the brief opens on — the card already carries it as a chip', () => {
+    expect(heuristicName('in shepherd , I just created a new task and it looks wrong')).toBe(
+      'I just created a new task',
+    );
+    expect(heuristicName('in ai-harness-pulse check the stack:desktop dimension')).toBe(
+      'check the stack:desktop dimension',
+    );
+  });
+
+  it('leaves a brief that merely opens on a place alone', () => {
+    // The greedy version of the rule above ate the subject of this one, and the
+    // subject is the whole name: `in the` and `in production` are not repo
+    // names. A comma after it or a hyphen inside it is the tell.
+    expect(heuristicName('in production the retry loop hangs')).toBe(
+      'in production the retry loop hangs',
+    );
+  });
+
+  it('drops a URL rather than spending the name on half a hostname', () => {
+    // The link was the whole budget: this brief truncated to
+    // `can you handle this please: https://brow…` in the rail, and the SECOND
+    // task written the same way was byte-identical to it. What is left says
+    // little, because the brief said little — but it says it in three words and
+    // it is no longer indistinguishable from its neighbour.
+    expect(
+      heuristicName('can you handle this please: https://browserstack.atlassian.net/browse/ABC-1'),
+    ).toBe('handle this please');
+    expect(heuristicName('fix the retry loop https://example.com/a/b/c please')).toBe(
+      'fix the retry loop please',
+    );
+  });
+
   it('has no answer for a brief that is nothing but filler', () => {
     // Stripping everything must not leave an empty name for `slugify` to turn
     // into the literal fallback `task`; `undefined` sends the caller back to its

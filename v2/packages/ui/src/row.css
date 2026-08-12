@@ -60,8 +60,8 @@
    * `g p y j ,` outside the label's content box, and the label is the one part
    * of the row that must clip (`overflow: hidden` is what the ellipsis needs) —
    * so `line-height: 1` shears the bottom off every task title with a `g` in it.
-   * The row is 28px and this is 20px, still flex-centred and still one glyph
-   * box; the leading is the only thing that changed.
+   * The leading is the only thing this changes: the line box is still shorter
+   * than `--sh-row-height`, still flex-centred, still one glyph box.
    */
   line-height: var(--sh-line-height);
   color: var(--sh-text);

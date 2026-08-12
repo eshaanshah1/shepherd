@@ -111,12 +111,14 @@ describe('cssVariables', () => {
 
   it('carries the chrome bands the shell is built from', () => {
     const vars = cssVariables('dark');
+    // The three that never move: an OS constant, a drawing, and a content
+    // measurement. The rest follow the shipped density (`compact`).
     expect(vars['--sh-band-titlebar']).toBe('44px');
     expect(vars['--sh-band-rail']).toBe('332px');
     expect(vars['--sh-band-sky-strip']).toBe('124px');
-    expect(vars['--sh-band-tab-strip']).toBe('40px');
-    expect(vars['--sh-band-pane-head']).toBe('38px');
-    expect(vars['--sh-band-tab']).toBe('28px');
+    expect(vars['--sh-band-tab-strip']).toBe('34px');
+    expect(vars['--sh-band-pane-head']).toBe('32px');
+    expect(vars['--sh-band-tab']).toBe('24px');
   });
 
   it('changes with the mode', () => {

@@ -1771,6 +1771,57 @@ describe('archives that have run out', () => {
  * of them is a command id this extension registered, run attributed to this
  * extension (D14) rather than to the user.
  */
+/**
+ * The row label, when the model does not answer.
+ *
+ * The composer sends the brief's first line capped at 72 as the title, so with
+ * no `name` the rail drew the opening of the paragraph — the screenshot that
+ * started this had `can you handle this please: https://brow…` in it twice,
+ * byte-identical, because two links to the same host truncate the same way. §6
+ * says a label is 1–3 words; §5 says a task is named once, in the rail.
+ */
+describe('naming a task the quick model did not name', () => {
+  it('cleans a title that is a slice of the brief', async () => {
+    const h = (live = harness());
+    const created = await h.run<{ title: string }>('tasks.create', {
+      // Verbatim from `titleOf`, ellipsis and all.
+      title: 'can you handle this please: https://browserstack.atlassian.net/browse/AB…',
+      brief: 'can you handle this please: https://browserstack.atlassian.net/browse/ABC-1',
+      repos: [],
+    });
+    expect(created.title).toBe('handle this please');
+  });
+
+  it('leaves a title somebody actually authored alone', async () => {
+    /*
+     * `shepherd task new --title 'Fix login' --brief '…'` is a name a person
+     * typed, and the brief underneath it is a different string on purpose. This
+     * is why the heuristic reads the TITLE and not the brief: reading the brief
+     * would overwrite the name with a guess about the paragraph beneath it.
+     */
+    const h = (live = harness());
+    const created = await h.run<{ title: string }>('tasks.create', {
+      title: 'Fix login',
+      brief: 'The redirect loop only reproduces on a real device.',
+      repos: [],
+    });
+    expect(created.title).toBe('Fix login');
+  });
+
+  it('keeps the brief as the slug-s source, which is a different question', async () => {
+    // A branch name wants the fuller string; the row wants the shorter one. They
+    // are allowed to differ, and the slug's behaviour here is unchanged.
+    const h = (live = harness());
+    const created = await h.run<{ slug: string; title: string }>('tasks.create', {
+      title: 'Fix login',
+      brief: 'i wanna fix the login redirect loop on Safari',
+      repos: [],
+    });
+    expect(created.title).toBe('Fix login');
+    expect(created.slug).toBe('fix-the-login-redirect-loop');
+  });
+});
+
 describe('the actions a task row declares', () => {
   it('offers reveal, archive and delete, each naming its own task', async () => {
     const h = await harness();
@@ -1936,6 +1987,26 @@ describe('finished work', () => {
       );
     expect(labels('old')).toEqual(['Restore', '—', 'Delete']);
     expect(labels('now')).toEqual(['Reveal', '—', 'Archive', 'Delete']);
+  });
+
+  it('marks what shipped as SHIPPED, in the row and in the card', async () => {
+    /*
+     * Both halves of the mapping, because both fell to the same default and the
+     * duplication is deliberate (see `markOf`). `displayState` answers
+     * `archived` for finished work — `done` is a lifecycle value nothing writes
+     * — so neither table matched and every task in the Shipped drawer drew a
+     * hollow ring: the one place a check is the whole point said that nothing in
+     * it had finished.
+     */
+    const h = (live = harness({ tasks: [archived('old')] }));
+    await h.run('tasks.expandTabs', { task: 'group:shipped' });
+    const row = (await h.tree().children(undefined)).find((entry) => entry.id === 'old');
+
+    // The word this side writes, and the mark the card draws from it. The
+    // renderer's half — `markState('archived')` — is pinned in `view-dock`'s own
+    // suite, because a boundary is not something a test gets to cross.
+    expect(row?.tint).toBe('archived');
+    expect((row?.data as { mark?: string } | undefined)?.mark).toBe('shipped');
   });
 
   it('orders the live sections by what you must do', async () => {

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { act } from 'react';
 import type { TreeItem } from '@shepherd/sdk';
 import type { ViewContributionDTO, ViewsApi } from '../shared/index.ts';
-import { ViewDock } from './view-dock.tsx';
+import { ViewDock, markState } from './view-dock.tsx';
 import { EXTENSION_UI, resolveExtensionUi } from './extension-ui.ts';
 import { all, mount, one } from './test-dom.ts';
 
@@ -452,6 +452,26 @@ describe('a contributed row-s actions', () => {
  * The cap is the second rule, and it is unchanged: finished work cannot push
  * live work off the screen.
  */
+describe('a contribution-s tint word, resolved to a mark', () => {
+  it('knows the word tasks actually writes for finished work', () => {
+    /*
+     * `archived`, not `done`. `displayState` returns the LIFECYCLE value for a
+     * finished task and `done` is written by nothing — so this table missed, the
+     * row fell to the default, and every task in the Shipped drawer drew a
+     * hollow RING: the drawer of finished work said nothing in it had finished.
+     */
+    expect(markState('archived')).toBe('shipped');
+    expect(markState('done')).toBe('shipped');
+  });
+
+  it('still answers resting for a word it does not know', () => {
+    // A tint the shell has never seen is not an emergency, and a ring is the
+    // mark that claims nothing.
+    expect(markState('whatever-the-next-extension-says')).toBe('resting');
+    expect(markState(undefined)).toBe('resting');
+  });
+});
+
 describe('the dock-s foot group', () => {
   const TREE: ViewContributionDTO[] = [
     { extension: 'shepherd.tasks', type: 'tasks.tree', kind: 'tree' },
@@ -498,6 +518,55 @@ describe('the dock-s foot group', () => {
     await settle();
     expect(view.container.querySelector('.sh-rows-foot')).toBeNull();
     view.unmount();
+  });
+
+  /**
+   * The foot is a DRAWER HANDLE, and the count is what it says.
+   *
+   * Both halves shipped wrong together: the row drew a state mark (a check, in
+   * the 12px slot, on a thing that is not a task) and its `description` reached
+   * the DOM as a `title` attribute — so the count the extension calls "the
+   * content" was invisible, and the row read as a sixth task in the list.
+   */
+  it('draws the foot-s count and a chevron rather than a state mark', async () => {
+    const view = mount(<ViewDock views={bridge(TREE, [], shipped(2))} />);
+    await settle();
+    const foot = view.container.querySelector('[data-row-id="tasks.shipped"]');
+    expect(foot?.querySelector('.sh-ui-row__meta')?.textContent).toBe('2');
+    // No mark in the leading slot — `StateMark` is the only thing that draws
+    // `.sh-ui-mark`, so asking for one asks whether that slot holds a STATE.
+    expect(foot?.querySelector('.sh-ui-mark')).toBeNull();
+    // …and an ordinary row still has one, which is what makes the foot's
+    // absence a treatment rather than a regression.
+    expect(
+      view.container.querySelector('[data-row-id="t0"] .sh-ui-mark'),
+    ).not.toBeNull();
+    view.unmount();
+  });
+
+  it('reports whether the drawer is open, and only when it opens something', async () => {
+    const shut = mount(<ViewDock views={bridge(TREE, [], shipped(2))} />);
+    await settle();
+    // No `collapsed` on the row: a foot that opens nothing is an ordinary row,
+    // and promising an expansion nothing performs is the affordance lie.
+    const plain = shut.container.querySelector('[data-row-id="tasks.shipped"]');
+    expect(plain).not.toBeNull();
+    expect(plain?.getAttribute('aria-expanded')).toBeNull();
+    // No chevron either — but the count and the quiet treatment stay, because
+    // those are what being the FOOT means and neither depends on opening.
+    expect(plain?.querySelector('.sh-ui-row__leading svg')).toBeNull();
+    expect(plain?.querySelector('.sh-ui-row__meta')?.textContent).toBe('2');
+    shut.unmount();
+
+    const rows = shipped(2).map((row) =>
+      row.id === 'tasks.shipped' ? { ...row, collapsed: false } : row,
+    );
+    const open = mount(<ViewDock views={bridge(TREE, [], rows)} />);
+    await settle();
+    const drawer = open.container.querySelector('[data-row-id="tasks.shipped"]');
+    expect(drawer?.getAttribute('aria-expanded')).toBe('true');
+    expect(drawer?.querySelector('.sh-ui-row__leading svg')).not.toBeNull();
+    open.unmount();
   });
 
   it('scrolls the finished rows and leaves the foot row outside the scroller', async () => {

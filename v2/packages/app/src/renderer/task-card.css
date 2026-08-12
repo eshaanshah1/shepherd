@@ -36,6 +36,19 @@
 }
 
 /*
+ * A card carries its own gutter; a row does not.
+ *
+ * `.sh-rows` has no gap — the row height is the list's rhythm — so the two
+ * variants would otherwise be separated identically, and they should not be: a
+ * bordered box needs a hairline of space or its edge reads as the next box's,
+ * while a dense row wants to sit flush against its neighbour. The card is the
+ * one that changes shape, so the card is the one that pays for it.
+ */
+.sh-task-card:not([data-dense]) {
+  margin-block: var(--sh-space-xs);
+}
+
+/*
  * Waiting on you. The border is the only thing that changes besides the height,
  * because the MARK is already carrying the state and a coloured card would say
  * it twice.
@@ -281,6 +294,19 @@
 .sh-task-card[data-dense] .sh-task-card__title {
   font-size: var(--sh-font-size-body);
   font-weight: 400;
+}
+
+/*
+ * Finished work sits a step under live work.
+ *
+ * `textDim` is the ramp's "a resting card's title", and a RESTING task is live —
+ * it is one you might pick up. A shipped one is in a drawer under a heading, and
+ * at the same value it out-shouted that heading and read as the more important
+ * of the two. The mark and the stamp were already at `textGhost`; this is the
+ * title catching up with them.
+ */
+.sh-task-card[data-mark='shipped'] .sh-task-card__title {
+  color: var(--sh-text-mute);
 }
 
 .sh-task-card[data-dense][data-selected] .sh-task-card__title {
