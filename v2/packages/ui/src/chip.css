@@ -1,0 +1,39 @@
+/*
+ * Chip — a fact about something, in the smallest box that can hold one.
+ *
+ * No border, deliberately: §6 refuses a badge pill on every count, and a
+ * bordered box beside a 13px row is louder than the row. The fill is the whole
+ * treatment, and it is one luminance step.
+ */
+
+.sh-ui-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sh-space-sm);
+  flex: none;
+
+  block-size: var(--sh-control-sm);
+  padding: 0 var(--sh-space-md);
+  border-radius: var(--sh-radius-sm);
+  background: var(--sh-fill-hover);
+
+  font-family: var(--sh-font-sans);
+  font-size: var(--sh-font-size-nano);
+  line-height: 1;
+  color: var(--sh-text-ghost);
+  white-space: nowrap;
+}
+
+/*
+ * The identity square — 7×7, `r2`.
+ *
+ * A square rather than a dot, and that is the same vocabulary the state marks
+ * use: a circle in this language means the resting RING, and an identity is not
+ * a state. Two shapes, two questions.
+ */
+.sh-ui-chip__mark {
+  inline-size: 7px;
+  block-size: 7px;
+  border-radius: 2px;
+  flex: none;
+}

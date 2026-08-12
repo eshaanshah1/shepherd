@@ -44,6 +44,9 @@ const AGENTS_RESUME_TARGET = 'agents.resumeTarget';
 const AGENTS_RESUME_COMMAND = 'agents.resumeCommand';
 import { displayState } from './model/lifecycle.ts';
 import { isTaskAgentState, rollUp, tintFor } from './model/agent-rollup.ts';
+import { collectTaskDiff } from './model/diff-collect.ts';
+import type { DiffStats } from './model/diff-stats.ts';
+import { formatElapsed } from './model/elapsed.ts';
 import { capTabRows } from './model/tab-rows.ts';
 import {
   archiveTabsFrom,
@@ -142,6 +145,15 @@ interface TreeItemOut {
   /** The layout root this row stands for — the shell highlights from it. */
   root?: string;
   collapsed?: boolean;
+  /**
+   * The component this row draws itself as, by NAME, and its props.
+   *
+   * Structural like the rest of this interface: the SDK's `TreeItem` is the
+   * contract and this is the shape that satisfies it, so the extension keeps
+   * compiling against types it does not import.
+   */
+  component?: string;
+  data?: unknown;
   command?: { id: string; args?: unknown };
   /**
    * The verb that answers what this row stands for, without doing anything —
@@ -954,6 +966,104 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     }
     if (stale.length > 0) changed();
   };
+
+  /**
+   * What each task has CHANGED — read from git, cached, never per render.
+   *
+   * Transient like `busy` above and for a stronger reason: this is a fact about
+   * a WORKTREE, and a worktree can be edited by anything on the machine. A value
+   * persisted into the store would be a claim about disk that survives the disk
+   * changing, and it would be wrong from the first commit made in a terminal.
+   *
+   * **Refreshed on a beat, not on a render.** `rowFor` runs on every tree
+   * change, and a `git diff` per row per change is a subprocess storm — v1 spent
+   * a third of a core learning that lesson with `RepoSignals`. So the tree reads
+   * whatever is in this map (drawing no diff line when there is nothing yet) and
+   * the refresh below fills it and nudges the tree once, which is the same
+   * shape v1 landed on for PR status.
+   */
+  const diffs = new Map<string, DiffStats>();
+
+  /**
+   * The last suite result reported for a task — see `TASK_COMMANDS.reportSuite`.
+   *
+   * Transient for the same reason `diffs` is: a result describes a moment, and
+   * one persisted into the store would outlive the code it measured. A restart
+   * showing no meter is correct — nothing has run yet in this session.
+   */
+  const suites = new Map<string, { readonly total: number; readonly passed: number }>();
+
+  /**
+   * One task's diff, re-read.
+   *
+   * `inFlight` exists because the triggers overlap: a turn finishing, a pane
+   * being focused and the periodic refresh can all fire within a second of each
+   * other, and without it that is three `git diff` processes racing to write the
+   * same key. One read per task at a time; the later callers get the earlier
+   * read's answer on the next beat, which is soon enough for a number that
+   * changes when a human types.
+   */
+  const inFlight = new Set<string>();
+
+  async function refreshDiff(task: TaskRecord): Promise<void> {
+    if (inFlight.has(task.id)) return;
+    inFlight.add(task.id);
+    try {
+      const stats = await collectTaskDiff(api.proposed.process, task.repos.map((repo) => repo.path));
+      const before = diffs.get(task.id);
+      if (stats === null) {
+        // UNKNOWN, not zero — and an unreadable repo does not erase the last
+        // number we did read. A worktree mid-`git worktree remove` would
+        // otherwise blank a card and then restore it a second later.
+        return;
+      }
+      diffs.set(task.id, stats);
+      // Only nudge the tree when the ANSWER moved. The refresh runs on a timer,
+      // and a tree change per tick would re-render the rail twice a minute for
+      // nothing.
+      if (
+        before === undefined ||
+        before.added !== stats.added ||
+        before.removed !== stats.removed ||
+        before.files !== stats.files
+      ) {
+        changed();
+      }
+    } catch (error) {
+      // A git failure is not a reason to take the sidebar down. The card simply
+      // draws no diff line, which is the honest rendering of "we do not know".
+      ctx.log.warn(`diff read failed for ${task.id} — ${String(error)}`);
+    } finally {
+      inFlight.delete(task.id);
+    }
+  }
+
+  /**
+   * Every live task. Archived ones have no worktree to read.
+   *
+   * **Demand-driven, not fired at activate.** Two reasons, and the second is the
+   * one that matters:
+   *
+   *   - Startup is already provisioning worktrees, which is git work the user is
+   *     actually waiting on. Racing it with reads for a number nobody has looked
+   *     at yet spends the same subprocess budget on the wrong thing.
+   *   - A rail that is never drawn should do no git AT ALL. Hanging this off the
+   *     tree read means the cost is paid by the surface that wants it, which is
+   *     also why an app with the sidebar closed is silent.
+   *
+   * It is safe to call from `getChildren`: `inFlight` bounds it to one read per
+   * task, and the nudge below only fires when the ANSWER moved — so read →
+   * refresh → changed → read settles after one round instead of spinning.
+   */
+  function refreshDiffs(): void {
+    for (const task of store.list()) {
+      if (task.lifecycle === 'archived') continue;
+      void refreshDiff(task);
+    }
+  }
+
+  /** The foot row's own expansion key — not a task id, and never colliding. */
+  const SHIPPED_KEY = 'group:shipped';
 
   const nextId = (): string => `task-${ctx.clock.now()}-${store.list().length}`;
 
@@ -1890,6 +2000,28 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
          * result.
          */
         member: s.optional(s.string()),
+        /**
+         * Which model the task's agents open on. Absent means "whatever the
+         * kind advertises" — the app does not get an opinion about a vendor's
+         * default, and a hardcoded one goes stale the week they ship a tier.
+         *
+         * Stored on the record rather than passed straight through, because a
+         * task outlives its first spawn: a second agent joining it later, and a
+         * restored task reattaching, both have to open on the same model or the
+         * task quietly becomes two different things.
+         */
+        model: s.optional(s.string()),
+        /**
+         * Where the work is laid down — `worktree` (the default, and the only
+         * behaviour until now) or `in-place`.
+         *
+         * `worktree` cuts one per repo, which is what makes several agents on
+         * one repo safe. `in-place` runs in the checkout itself, which is right
+         * for a task you want landing on the branch you are already on and
+         * wrong the moment a second task picks the same repo — hence not the
+         * default.
+         */
+        placement: s.optional(s.string()),
         brief: s.optional(s.string()),
         /**
          * A name the caller already has — the composer's speculative ask, landed
@@ -2496,6 +2628,27 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     }),
   );
   ctx.subscriptions.push(
+    commands.register(TASK_COMMANDS.reportSuite, {
+      title: 'Tasks: Report a suite result',
+      schema: s.object({ task: s.string(), total: s.int(), passed: s.int() }),
+      handler: (args) => {
+        const task = store.get(args.task);
+        // A result for a task that does not exist is a caller's mistake worth
+        // hearing about, not a silently-kept number keyed on nothing.
+        if (task === undefined) return { ok: false, reason: 'no such task' };
+
+        // Clamped rather than refused: `4 of 3 passed` is a caller bug, and
+        // drawing four full cells is a better answer than drawing none.
+        const total = Math.max(0, Math.trunc(args.total));
+        const passed = Math.min(Math.max(0, Math.trunc(args.passed)), total);
+        if (total === 0) suites.delete(args.task);
+        else suites.set(args.task, { total, passed });
+        changed();
+        return { ok: true, total, passed };
+      },
+    }),
+  );
+  ctx.subscriptions.push(
     commands.register(TASK_COMMANDS.delete, {
       title: 'Tasks: Delete',
       schema: s.object({ task: s.string() }),
@@ -2719,6 +2872,38 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
             );
           }
 
+          /**
+           * What the card is handed — every field optional, and absent whenever
+           * we do not actually know.
+           *
+           * A card that omits a fact is honest; one that invents a zero is not.
+           * The diff is whatever the last read put in `diffs`, which is nothing
+           * at all until the first refresh lands — so a freshly-opened app draws
+           * cards with no diff line for a beat rather than a row of `+0 −0`.
+           */
+          const cardFor = (task: TaskRecord, state: string): unknown => ({
+            mark: markOf(state),
+            elapsed: formatElapsed(task.createdAt, ctx.clock.now()),
+            diff: diffs.get(task.id),
+            suite: suites.get(task.id),
+            repos: task.repos.map((repo, index) => ({
+              name: repo.name,
+              /*
+               * A ROLE name, and the assignment is by POSITION within the task
+               * rather than by a hash of the path.
+               *
+               * A hash would be stable across tasks, which sounds better and is
+               * worse: two repos in one task could collide onto one mark, and
+               * the mark's only job is telling THIS task's repos apart. Position
+               * cannot collide, and §2 gives exactly four.
+               */
+              mark: `repo${(index % 4) + 1}`,
+            })),
+          });
+
+          // The surface that wants the numbers pays for them — see `refreshDiffs`.
+          refreshDiffs();
+
           const all = [...store.list()].sort((a, b) => b.createdAt - a.createdAt);
           if (all.length === 0) {
             // The empty state is the SHELL's, not a fake row: a list saying
@@ -2727,17 +2912,60 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           }
 
           /**
-           * Live work, then DONE — the one division the list makes.
+           * **Attention routing is the rail's SHAPE** (§5) — sections ordered by
+           * what you must do.
            *
-           * It is not the state-grouping that was removed: that sorted live
-           * tasks into buckets they have no relationship through. This is the
-           * difference between work in flight and work you have finished with,
-           * which is the one thing you asked the sidebar for by closing a task.
-           * Archived tasks go under a heading at the bottom and nowhere else,
-           * so finished work stops competing with the rest for the eye.
+           * A state-grouping was removed from here once, on the argument that it
+           * "sorted live tasks into buckets they have no relationship through".
+           * That argument was about *categorising*; this is about ORDER. The
+           * sections are not kinds of task, they are distances from needing you,
+           * and they are read top-down: the thing that is blocked on you is
+           * first because it is the only thing you can act on, and everything
+           * below it is progressively less your problem.
+           *
+           * The bucket names are the design's and are not negotiable per-state:
+           * a fifth section is a fifth thing to scan, and the whole claim is
+           * that a glance is enough.
            */
           const live = all.filter((task) => task.lifecycle !== 'archived');
           const done = all.filter((task) => task.lifecycle === 'archived');
+          const stateOf = (task: TaskRecord): string =>
+            displayState(task.lifecycle, agentStatesOf(task));
+          const waiting = live.filter((task) => markOf(stateOf(task)) === 'waiting');
+          const inFlight = live.filter((task) => markOf(stateOf(task)) === 'working');
+          /*
+           * **Failed sits in `Resting`**, not in a section of its own.
+           *
+           * A run that failed is not doing anything — which is what `Resting`
+           * means — and its `red` square already says the rest. A `Failed`
+           * heading would split "nothing is happening here" across two places
+           * to look, for a state whose whole signal is one mark.
+           */
+          const resting = live.filter((task) => {
+            const mark = markOf(stateOf(task));
+            return mark !== 'waiting' && mark !== 'working';
+          });
+
+          /**
+           * A heading, drawn only when it has something under it.
+           *
+           * An empty section is a heading that says "nothing is waiting on you"
+           * in the shape of a thing you might have to read — and the count would
+           * be `0`, which is the one number a count never needs to show.
+           */
+          const section = (id: string, label: string, of: readonly TaskRecord[], loud = false): void => {
+            if (of.length === 0) return;
+            rows.push({
+              id: `group:${id}`,
+              label,
+              description: String(of.length),
+              section: true,
+              // Only the first section's label is at full strength: it is the one
+              // you are meant to read, and the rest are structure.
+              tint: loud ? 'wool' : undefined,
+            });
+            for (const task of of) rows.push(rowFor(task));
+          };
 
           const rows: TreeItemOut[] = [];
           const rowFor = (task: TaskRecord): TreeItemOut => {
@@ -2788,6 +3016,17 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
                */
               root: taskRootId(task.id),
               collapsed: true,
+              /*
+               * The row draws itself as a CARD (ADR 0033's seam, one level
+               * down). `label`, `tint` and `command` above stay honest and stay
+               * required-shaped: they are what a remote member draws in its own
+               * sidebar, what the row is announced as, and what happens when it
+               * is clicked — and none of those may depend on a renderer this
+               * client might not be. A build with no `tasks.card` draws the
+               * ordinary row and loses nothing but the richer form.
+               */
+              component: 'tasks.card',
+              data: cardFor(task, state),
               // Something is happening to it right now — a snapshot being taken,
               // worktrees being rebuilt. The row says so where its status mark
               // is, rather than looking idle for the seconds git takes.
@@ -2875,18 +3114,40 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
             };
           };
 
-          for (const task of live) rows.push(rowFor(task));
+          section('waiting', 'Waiting on you', waiting, true);
+          section('flight', 'In flight', inFlight);
+          section('resting', 'Resting', resting);
 
-          if (done.length > 0) {
-            rows.push({
-              id: 'group:done',
-              label: 'DONE',
-              description: String(done.length),
-              section: true,
-              tint: 'wool-faint',
-            });
-            for (const task of done) rows.push(rowFor(task));
-          }
+          /*
+           * **Shipped is ONE ROW pinned to the foot, not a section.**
+           *
+           * §1: "a Shipped this week footer row pinned to the bottom with
+           * `margin-top: auto`". Finished work LEAVES the list and becomes a
+           * count — drawing it as a heading with fourteen task rows under it
+           * puts the work you are done with back in the list you are reading,
+           * which is the one thing closing a task was supposed to stop.
+           *
+           * The count is the content, so the row is drawn even at zero: a rail
+           * whose foot appears and disappears as the week turns over is a rail
+           * that moves under the cursor for no reason the reader can see.
+           */
+          const shippedOpen = tabsExpanded.has(SHIPPED_KEY);
+          rows.push({
+            id: SHIPPED_KEY,
+            label: 'Shipped this week',
+            description: String(done.length),
+            tint: 'done',
+            /*
+             * Collapsed by default and EXPANDABLE, which is the half a count
+             * alone would lose: finished work leaving the list must not mean
+             * finished work becoming unreachable. Clicking the foot opens it,
+             * and clicking it again closes it — the chevron in the drawing is
+             * this.
+             */
+            collapsed: !shippedOpen,
+            command: { id: TASK_COMMANDS.expandTabs, args: { task: SHIPPED_KEY } },
+          });
+          if (shippedOpen) for (const task of done) rows.push(rowFor(task));
 
           return Promise.resolve(rows);
         },
@@ -2905,9 +3166,49 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * which is the argument for having written the test.
    */
   sweep();
+  /*
+   * A beat under the demand-driven read, so a rail left open still tracks work
+   * an agent is doing while nobody is clicking.
+   *
+   * 20s rather than something tighter: a diff moves when a human or an agent
+   * writes a file, and neither does it four times a second. v1's nudge watcher
+   * shipped without a ceiling and spent a third of a core at idle — the lesson
+   * there was that a debounce only cancels PENDING work, so the bound has to be
+   * on the rate itself.
+   */
+  const diffTimer = setInterval(refreshDiffs, 20_000);
+  ctx.subscriptions.push(toDisposable(() => clearInterval(diffTimer)));
 
   ctx.log.info(`ready — ${store.list().length} task(s), data in ${ctx.dataDir}`);
   return { list: () => store.list(), get: (id) => store.get(id) };
+}
+
+/**
+ * A task's displayed state → the mark the card draws.
+ *
+ * The same translation `view-dock` does for `tint`, and it is duplicated on
+ * purpose rather than shared: that one maps the whole vocabulary of every
+ * extension, and this one maps the words THIS extension writes. A shared table
+ * would make either side's new word a change to the other's file.
+ */
+function markOf(state: string): string {
+  switch (state) {
+    case 'working':
+    case 'running':
+      return 'working';
+    case 'blocked':
+    case 'needs-you':
+    case 'needsCheck':
+    case 'needs-check':
+      return 'waiting';
+    case 'error':
+    case 'failed':
+      return 'failed';
+    case 'done':
+      return 'shipped';
+    default:
+      return 'resting';
+  }
 }
 
 /** Which task owns a session, or none. The scoping predicate, in one place. */

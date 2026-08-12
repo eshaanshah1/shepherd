@@ -35,14 +35,14 @@
  */
 .sh-insp-box {
   position: fixed;
-  outline: var(--sh-hairline) solid var(--sh-accent);
-  background: color-mix(in srgb, var(--sh-accent) 12%, transparent);
+  outline: var(--sh-hairline) solid var(--sh-sky);
+  background: color-mix(in srgb, var(--sh-sky) 12%, transparent);
   pointer-events: none;
 }
 
 .sh-insp-box[data-pinned='true'] {
-  outline-color: var(--sh-prompt);
-  background: color-mix(in srgb, var(--sh-prompt) 12%, transparent);
+  outline-color: var(--sh-sky);
+  background: color-mix(in srgb, var(--sh-sky) 12%, transparent);
 }
 
 /*
@@ -56,7 +56,7 @@
   bottom: var(--sh-space-xl);
   width: 400px;
   max-width: calc(100vw - var(--sh-space-xl) * 2);
-  background: var(--sh-surface-raised);
+  background: var(--sh-raised);
 }
 
 /* An element with two painting pseudos reports twelve rows, not four. Bounded so
@@ -115,7 +115,7 @@
 .sh-insp-pseudo {
   font-family: var(--sh-font-mono);
   font-size: var(--sh-font-size-nano);
-  color: var(--sh-prompt);
+  color: var(--sh-sky);
 }
 
 .sh-insp-role {
@@ -124,7 +124,7 @@
 }
 
 /* The verdict this tool exists to produce, and it is painted like one. */
-.sh-insp-role[data-missing='true'] { color: var(--sh-danger); }
+.sh-insp-role[data-missing='true'] { color: var(--sh-red); }
 
 /* A property that reaches no pixel is still reported — the rhythm is four rows,
    always — but it is not a finding, so it does not read as one. */

@@ -58,7 +58,7 @@ export function rollUp(states: readonly string[]): TaskAgentState {
  *     Green still clears to grey the moment you look at the pane, so it reads as
  *     "done, unread" rather than "resolved, ignore me".
  *   - `idle` emits `idle`, which `TINT_ROLES` does NOT contain. It resolves by
- *     falling through `statusRole`'s default, which is the behaviour any
+ *     falling through `markState`'s default, which is the behaviour any
  *     unrecognised word gets — so this is also the only real exercise that
  *     fallback has.
  */

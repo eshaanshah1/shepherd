@@ -1,0 +1,57 @@
+/*
+ * SendButton — a 34px `sky` circle, and the only round thing in the app.
+ *
+ * `50%` is the one radius not in the scale (§2 says so where it lists the set),
+ * because it is not a corner treatment: it is a shape, and it is the shape that
+ * makes this control unmistakable on a surface whose every other element is a
+ * rectangle.
+ */
+
+.sh-ui-send {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+
+  inline-size: var(--sh-control-lg);
+  block-size: var(--sh-control-lg);
+  border: 0;
+  border-radius: 50%;
+
+  background: var(--sh-sky);
+  /*
+   * The ink is a DARK step of the fill rather than `canvas`.
+   *
+   * `textOnWool` is the on-fill ink for a white block; on a mid-blue circle it
+   * is near-black and reads as a hole. Mixing the fill toward the ground keeps
+   * the arrow tied to the circle in both themes and moves with a re-declared
+   * `--sh-sky` instead of being a second colour that has to be remembered.
+   */
+  color: color-mix(in srgb, var(--sh-sky) 22%, var(--sh-canvas));
+  cursor: pointer;
+
+  transition:
+    background var(--sh-motion) linear,
+    color var(--sh-motion) linear;
+}
+
+.sh-ui-send:hover:not([aria-disabled='true']) {
+  background: color-mix(in srgb, var(--sh-sky) 88%, var(--sh-text));
+}
+
+.sh-ui-send:active:not([aria-disabled='true']) {
+  background: color-mix(in srgb, var(--sh-sky) 76%, var(--sh-canvas));
+}
+
+.sh-ui-send:focus-visible {
+  outline: 2px solid var(--sh-focus-ring);
+  outline-offset: 2px;
+}
+
+/* 36% on the LIVE colour, like every other disabled control. */
+.sh-ui-send[aria-disabled='true'] {
+  opacity: 0.36;
+  cursor: default;
+  pointer-events: none;
+}

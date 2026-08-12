@@ -22,11 +22,11 @@ describe('Empty', () => {
           </>
         }
       >
-        Nothing grazing here yet.
+        The flock is quiet.
       </Empty>,
     );
     const el = empty(dom.container);
-    expect(el.querySelector('.sh-ui-empty__say')?.textContent).toBe('Nothing grazing here yet.');
+    expect(el.querySelector('.sh-ui-empty__say')?.textContent).toBe('The flock is quiet.');
     expect(el.querySelector('.sh-ui-empty__art [data-testid="ewe"]')).not.toBeNull();
     expect(el.querySelector('.sh-ui-empty__hint .sh-ui-keycap')?.textContent).toBe('⌘T');
     dom.unmount();
@@ -60,15 +60,36 @@ describe('Empty', () => {
    * here by name. Rule 6 is that serif appears exactly where the app speaks in
    * sentences, and this is the clearest instance of that in the product.
    */
-  it('sets the sentence in serif, which is the rule this component enforces', () => {
+  it('sets the sentence in SANS — the language has two faces, split by job', () => {
+    // Flock kept a third face for "where the app speaks in sentences". §2 has
+    // two: what the app SAYS is sans, what the machine produced is mono. An
+    // empty state is the app talking, so it carries by size and weight rather
+    // than by changing voice — a different typeface claims "this is a different
+    // kind of thing", and it is not.
     const say = rulesMentioning('sh-ui-empty__say')[0];
-    expect(say?.style.fontFamily).toBe('var(--sh-font-serif)');
+    expect(say?.style.fontFamily).toBe('var(--sh-font-sans)');
+    expect(say?.style.getPropertyValue('font-weight')).toBe('500');
 
-    // And the hint is NOT: it is the instrument voice, micro and tracked, so the
-    // two lines read as a sentence and a legend rather than two sentences.
+    // And the hint is a LEGEND, not a second sentence — a step smaller and a
+    // step darker. It was uppercase micro type at tracking, which §6 refuses;
+    // a legend that shouts under a quiet sentence is what that refusal is about.
     const hint = rulesMentioning('sh-ui-empty__hint')[0];
     expect(hint?.style.fontFamily).toBe('var(--sh-font-sans)');
-    expect(hint?.style.getPropertyValue('text-transform')).toBe('uppercase');
+    expect(hint?.style.getPropertyValue('text-transform')).toBe('none');
+    expect(hint?.style.getPropertyValue('letter-spacing')).toBe('0px');
+  });
+
+  it('carries the ONE way out of the emptiness, apart from the legend', () => {
+    // §7: if you added a way in, add the way out and the way to see it. On an
+    // empty stage the way in IS the way out — and Flock's version had only a
+    // pressable keycap, which teaches a shortcut instead of offering a control.
+    const dom = mount(
+      <Empty action={<button type="button">New task</button>} hint="Press ⌘T">
+        The flock is quiet.
+      </Empty>,
+    );
+    expect(dom.container.querySelector('.sh-ui-empty__act button')?.textContent).toBe('New task');
+    expect(dom.container.querySelector('.sh-ui-empty__hint')?.textContent).toBe('Press ⌘T');
   });
 
   it('paints no surface of its own', () => {

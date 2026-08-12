@@ -656,7 +656,7 @@ export function createWindow(): BrowserWindow {
     windowOptions({
       // `.cjs`, because a sandboxed renderer's preload is not an ES module.
       preloadPath: join(import.meta.dirname, '../preload/index.cjs'),
-      backgroundColor: color('ink-deep', 'dark'),
+      backgroundColor: color('canvas', 'dark'),
     }),
   );
 

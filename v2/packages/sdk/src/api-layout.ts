@@ -194,6 +194,27 @@ export interface ViewInvokeError {
   readonly message: string;
 }
 
+/**
+ * What a row component is handed — deliberately NOT `ExtensionViewProps`.
+ *
+ * A view owns a panel and decides when it is finished; a row owns one entry in
+ * somebody else's list and never is. Handing a row `done()` would offer it a
+ * gesture with no meaning here, and sharing one props type would make the two
+ * contracts drift toward each other until neither said anything.
+ *
+ * `selected` is passed rather than derived because selection is the SHELL's
+ * answer, taken from the same snapshot value it draws the stage from (ADR 0035).
+ * A row that kept its own copy of "am I the one on screen" is the second copy
+ * that ADR exists to prevent, and it has been written twice already.
+ */
+export interface ExtensionRowProps {
+  /** The item as contributed, `data` included and still `unknown`. */
+  readonly item: TreeItem;
+  /** True when the shell is currently showing what this row stands for. */
+  readonly selected: boolean;
+  invoke(command: string, args?: unknown): Promise<Result<unknown, ViewInvokeError>>;
+}
+
 export interface TreeItem {
   readonly id: string;
   readonly label: string;
@@ -262,6 +283,43 @@ export interface TreeItem {
    * the permission for it, like everywhere else.
    */
   readonly command?: { readonly id: string; readonly args?: unknown };
+  /**
+   * The row DRAWS ITSELF, by name — the same seam a contributed view uses
+   * (§7b, ADR 0033), one level down.
+   *
+   * The row grammar carries a label, a description, a mark and a count, and that
+   * is deliberately most of what a rail row should ever be. But Shepherd UI's
+   * waiting-on-you card carries a question, two answers, a diff line, a suite
+   * meter and a set of repo chips — and §5 is explicit that this one case is
+   * allowed to change size while everything else stays a fixed-height row.
+   *
+   * The alternative was a typed `card` field on this interface carrying all of
+   * it. That was rejected: every future card shape would widen the kernel's own
+   * vocabulary, and the kernel would end up knowing what a suite meter is. A
+   * NAME keeps the shape where the shape belongs — in the extension that has the
+   * data — and keeps this interface the size it is.
+   *
+   * What it does NOT buy is freedom. The name resolves against a static table in
+   * the renderer build, exactly as a view's does, so an extension can ask for a
+   * component and cannot supply one. An unknown name draws the ordinary row,
+   * which is the correct failure: the row still says what it stands for and is
+   * still clickable, it just does not have its richer form.
+   *
+   * `label`, `tint` and `command` stay required-shaped and stay honest even with
+   * a component set. They are what a remote member draws in its own sidebar,
+   * what the row is announced as, and what happens when it is clicked — and none
+   * of those may depend on a renderer this client might not be.
+   */
+  readonly component?: string;
+  /**
+   * The component's props, opaque to the shell.
+   *
+   * It crosses an IPC port, so it is `unknown` on arrival and the component
+   * reads it defensively — `ok` says a call succeeded, never that a value has a
+   * shape. A component that casts this is one bad extension away from a renderer
+   * crash, and the renderer is the whole window.
+   */
+  readonly data?: unknown;
   /**
    * The verb that ANSWERS what this row stands for, and does nothing else.
    *

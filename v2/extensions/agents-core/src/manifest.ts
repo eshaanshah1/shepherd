@@ -55,6 +55,15 @@ export const AGENTS_COMMANDS = {
    * asks it when that page is opened, which is what keeps activation lazy.
    */
   quickChoices: 'agents.quickModelChoices',
+  /**
+   * **Every model every agent kind will run** — the primitive.
+   *
+   * Distinct from `quickChoices`, which is this narrowed to the cheap tier. A
+   * consumer that wants "what can I pick for a task" asks this; one that wants
+   * "what may answer a background question" asks that. They were the same list
+   * once and it made the composer offer a menu of models chosen for being cheap.
+   */
+  listModels: 'agents.listModels',
 } as const;
 
 /**

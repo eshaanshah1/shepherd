@@ -9,19 +9,37 @@
   display: flex;
   align-items: center;
   gap: var(--sh-space-md);
-  height: var(--sh-row-height);
-  padding: 0 var(--sh-space-xl);
+  /*
+   * A control's height, not a row's. The row grew to 34 with the task card, and
+   * a section heading that grew with it would put more space above each group
+   * than between the cards inside it — which reads as the heading belonging to
+   * the gap rather than to the list under it.
+   */
+  height: var(--sh-control-md);
+  /* No inline padding: the rail already gutters its own list, and a heading that
+     padded too would sit inset from the cards it names. */
+  padding: 0;
   margin: 0;
 
   font-family: var(--sh-font-sans);
-  font-size: var(--sh-micro-font-size);
-  /* The WIDE tracking, not the narrow one: this is the instrument voice at its
-     most deliberate, and it is the shortest string on the surface. */
-  letter-spacing: var(--sh-micro-tracking-wide);
-  font-weight: 400;
+  /*
+   * 11.5 / 600, **sentence case, no tracking** — §2.
+   *
+   * This was `micro` size at the WIDE tracking in uppercase, which is precisely
+   * the treatment §6 refuses: "uppercase micro-labels with tracking". Flock read
+   * it as an instrument voice; the argument against is that it is the one string
+   * on the surface a reader scans rather than reads, and uppercase costs word
+   * shape — the thing scanning actually uses. Weight carries it instead.
+   *
+   * The one place uppercase survives is a ⌘K palette group label, which is a
+   * different component on a different surface.
+   */
+  font-size: var(--sh-font-size-small);
+  letter-spacing: 0;
+  font-weight: 600;
   line-height: 1;
-  text-transform: uppercase;
-  color: var(--sh-text-faint);
+  text-transform: none;
+  color: var(--sh-text-mute);
   white-space: nowrap;
 }
 
@@ -30,10 +48,22 @@
   flex: 0 0 auto;
 }
 
-/* Drawn, not typed — so a heading with no count has no orphaned separator, and
-   nobody has to remember which side it goes on. */
-.sh-ui-section-label__count::before {
-  content: '· ';
+/*
+ * The count sits at the FAR end, past the rule — so a column of headings has its
+ * numbers in one place and the eye can run down them.
+ *
+ * `order` rather than markup order because the rule is a pseudo-element and
+ * therefore always last in the box; flex ordering is what lets a drawn separator
+ * sit between two real children without either of them knowing it exists.
+ */
+.sh-ui-section-label__count {
+  order: 2;
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-nano);
+  /* Tabular, so `1` and `12` occupy the same width and the headings do not
+     shuffle as work moves between sections. */
+  font-variant-numeric: tabular-nums;
+  color: var(--sh-text-ghost);
 }
 
 /*
@@ -47,6 +77,7 @@
  */
 .sh-ui-section-label::after {
   content: '';
+  order: 1;
   flex: 1 1 auto;
   border-top: var(--sh-hairline) solid var(--sh-line);
 }

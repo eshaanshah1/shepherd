@@ -8,13 +8,13 @@ import {
   Menu,
   Row,
   SectionLabel,
-  StatusDot,
+  StateMark,
   rowEnterMs,
   type MenuEntry,
-  type StatusRole,
+  type MarkState,
 } from '@shepherd/ui';
 import type { ViewContributionDTO, ViewsApi } from '../shared/index.ts';
-import { resolveExtensionUi } from './extension-ui.ts';
+import { resolveExtensionRowUi, resolveExtensionUi } from './extension-ui.ts';
 import { mergeRows } from './merge-rows.ts';
 import { unqualify } from '../shared/index.ts';
 
@@ -353,6 +353,63 @@ function TreeView({
             });
           };
 
+          const isSelected =
+            row.root !== undefined && activeRoot !== null && groupOfRoot(row.root) === groupOfRoot(activeRoot);
+
+          /*
+           * A row that draws ITSELF, by name (ADR 0033's seam, one level down).
+           *
+           * Resolved here rather than in `Row`, because a component that
+           * replaces the row replaces its keyboard semantics too — and a `Row`
+           * that sometimes rendered somebody else's markup would have to
+           * describe two contracts in one primitive.
+           *
+           * An unknown name falls through to the ordinary row. That is the
+           * correct failure and it is gentler than a view's: the row still says
+           * what it stands for and is still clickable, it is only missing its
+           * richer form. A rail that dropped rows on a version skew would lose
+           * the list the app exists to show.
+           */
+          const RowComponent = resolveExtensionRowUi(row.component);
+          if (RowComponent !== undefined && view !== undefined) {
+            const contributed = (
+              <li
+                key={key}
+                className="sh-side-row-host"
+                data-testid="view-row"
+                data-row-id={row.id}
+                /*
+                  The SHELL's answer about what is on screen, on the host rather
+                  than inside the component (ADR 0035). A contributed card styles
+                  itself from its own `data-selected`, but the machine-readable
+                  fact has to sit where every row carries it — otherwise "which
+                  row is highlighted" means one thing for an ordinary row and
+                  another for a card, and the smoke that asks the question gets
+                  no answer for half the rail.
+                */
+                data-selected={isSelected ? 'true' : undefined}
+              >
+                <RowComponent
+                  item={row}
+                  selected={isSelected}
+                  invoke={async (command, args) =>
+                    /*
+                      No bridge is not an error the CARD should render — it is
+                      the window still wiring itself up. Answering with a
+                      `ViewInvokeError` keeps the component's contract total
+                      without teaching it what a bridge is.
+                    */
+                    (await bridge?.activate(view.type, { id: command, args })) ?? {
+                      ok: false,
+                      error: { code: 'unavailable', message: 'the extension host is not connected' },
+                    }
+                  }
+                />
+              </li>
+            );
+            return contributed;
+          }
+
           /*
            * `Row`'s root is a `<div>`, not the `<button>` this used to be, and
            * the keyboard semantics come back here rather than from the element.
@@ -370,11 +427,7 @@ function TreeView({
                 entering={arriving.has(key)}
                 // `row.root !== undefined` first, so a row that is about no
                 // root is never lit by the shell also not knowing its own.
-                selected={
-                row.root !== undefined &&
-                activeRoot !== null &&
-                groupOfRoot(row.root) === groupOfRoot(activeRoot)
-              }
+                selected={isSelected}
                 data-testid="view-row"
                 data-row-id={row.id}
                 data-host={view?.remote?.memberId}
@@ -419,16 +472,21 @@ function TreeView({
                 }
                 leading={
                   /*
-                    The dot IS the status, and it takes a ROLE — never a colour
+                    The mark IS the state, and it takes a STATE — never a colour
                     and never the extension's own tint spelling. A coloured dot
                     beside the word RUNNING says one thing twice and gives the row
-                    a third column to align; v1 signalled state with the dot's
-                    colour alone, deliberately. The description stays as the row's
-                    tooltip, so the word is a hover away rather than gone — and
-                    `StatusDot` also carries it for a screen reader, which the
-                    bare `aria-hidden` span never did.
+                    a third column to align.
+
+                    `busy` is deliberately not passed on. It used to swap the dot
+                    for a braille spinner, which was a second way of looking busy
+                    beside the dot's own colour; §3 has exactly one — the working
+                    meter — and a row that is busy is a row whose mark is
+                    `working`. Rows that set `busy` without a working tint now
+                    read as whatever they actually are, which is the honest
+                    answer: a task being archived is resting, and the archiving is
+                    not a state of the task.
                   */
-                  <StatusDot role={statusRole(row.tint)} busy={row.busy === true} />
+                  <StateMark state={markState(row.tint)} />
                 }
               >
                 {row.label}
@@ -508,7 +566,7 @@ const isSeparator = (
  * A contributed action → a `Menu` entry.
  *
  * The one translation this file performs, and it is the same shape as
- * `statusRole` below: an extension writes a NAME and the shell resolves it
+ * `markState` below: an extension writes a NAME and the shell resolves it
  * against its own set. An unknown glyph name renders no glyph rather than a
  * placeholder — the label is the thing to read, and a "missing icon" box would
  * make an extension's typo louder than its verb.
@@ -565,38 +623,51 @@ export function raiseIcon(name: string | undefined): ComponentType<TablerIconPro
 }
 
 /**
- * A contribution's tint word → one of `StatusDot`'s five roles.
+ * A contribution's tint word → one of `StateMark`'s five states.
  *
  * The translation lives HERE, at the boundary, and that is the point of it. An
  * extension writes whatever vocabulary its own model uses (`tasks` says
  * `needs-you`, an agent says `blocked`, a future PR view will say `review`), and
  * the shipped `.sh-dot` accepted all of those as separate CSS selectors — four
  * spellings of one colour, which is how a rename became impossible. Reducing
- * them to a role once, in a function, means the primitive never learns any of
+ * them to a state once, in a function, means the primitive never learns any of
  * these words and a new spelling costs one line here.
  *
- * Anything unrecognised is `idle` rather than an invented sixth state: a tint the
- * shell does not know is not an emergency, and rule 3 says a saturated colour
- * always means something specific.
+ * The word `tint` is now a misnomer and stays anyway: it is the SDK's published
+ * field name (`TreeItem.tint`), and renaming a public field to match an internal
+ * mapping is a breaking change to every extension for a spelling nobody sees.
+ * What changed underneath is that it no longer selects a colour at all — it
+ * selects a SHAPE, and the colour follows from that.
+ *
+ * Anything unrecognised is `resting` rather than an invented sixth state: a tint
+ * the shell does not know is not an emergency, and a hollow ring is the mark that
+ * claims nothing.
  */
-const TINT_ROLES: Readonly<Record<string, StatusRole>> = {
+const TINT_STATES: Readonly<Record<string, MarkState>> = {
   working: 'working',
   running: 'working',
   cobalt: 'working',
   accent: 'working',
-  'needs-you': 'attention',
-  blocked: 'attention',
-  review: 'attention',
-  hay: 'attention',
-  done: 'success',
-  'needs-check': 'success',
-  pasture: 'success',
-  error: 'danger',
-  ember: 'danger',
+  sky: 'working',
+  'needs-you': 'waiting',
+  blocked: 'waiting',
+  review: 'waiting',
+  hay: 'waiting',
+  wool: 'waiting',
+  // `needs-check` is a finished turn nobody has looked at, so it is YOUR MOVE —
+  // a square, not a tick. `done` is the task itself finishing, which is the one
+  // state that leaves the list.
+  'needs-check': 'waiting',
+  done: 'shipped',
+  pasture: 'shipped',
+  grass: 'shipped',
+  error: 'failed',
+  ember: 'failed',
+  red: 'failed',
 };
 
-export function statusRole(tint: string | undefined): StatusRole {
-  return (tint === undefined ? undefined : TINT_ROLES[tint]) ?? 'idle';
+export function markState(tint: string | undefined): MarkState {
+  return (tint === undefined ? undefined : TINT_STATES[tint]) ?? 'resting';
 }
 
 /**

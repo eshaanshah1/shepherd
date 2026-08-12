@@ -143,14 +143,14 @@ describe('Menu', () => {
     const resting = rulesMentioning('sh-ui-menu__item--danger').find(
       (rule) => rule.selectorText === '.sh-ui-menu__item--danger',
     );
-    expect(resting?.style.color).toBe('var(--sh-danger)');
+    expect(resting?.style.color).toBe('var(--sh-red)');
 
     const highlighted = rulesMentioning('sh-ui-menu__item--danger').find((rule) =>
       rule.selectorText.includes('[data-highlighted]'),
     );
-    expect(highlighted?.style.background).toBe('var(--sh-danger)');
+    expect(highlighted?.style.background).toBe('var(--sh-red)');
     // Ink on a solid fill, never the danger colour on the danger colour.
-    expect(highlighted?.style.color).toBe('var(--sh-accent-text)');
+    expect(highlighted?.style.color).toBe('var(--sh-text-on-wool)');
   });
 
   it('styles every value from a role or a metric — no literal colour, no literal px', () => {

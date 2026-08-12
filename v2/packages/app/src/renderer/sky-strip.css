@@ -1,0 +1,214 @@
+/*
+ * The sky strip — README §1, drawn.
+ *
+ * Literal px throughout, and deliberately: these are the coordinates of a
+ * DRAWING. A scene that reflowed with the density mode would not be the same
+ * scene, and the sheep's 3px grid is the character of it.
+ *
+ * The two gradients ARE the exception to "no gradient fills" in §6, and they are
+ * the exception because this is the one decorative surface. Nothing else in the
+ * app may have one.
+ */
+
+.sh-sky {
+  position: relative;
+  block-size: var(--sh-band-sky-strip);
+  /* The whole point: the scene is clipped to the strip. Without this the hills,
+     which are 400px wide ellipses, would paint over the task list. */
+  overflow: hidden;
+  flex: none;
+}
+
+.sh-sky__scene {
+  position: absolute;
+  inset: 0;
+  background:
+    /* The glow first, so it sits OVER the ramp — a radial low on the right,
+       where the sheep is, so the one thing worth finding is the lit thing. */
+    radial-gradient(120% 90% at 74% 92%, rgb(127 182 232 / 13%), transparent 62%),
+    linear-gradient(180deg, #101c29 0%, #0d141c 46%, var(--sh-canvas) 100%);
+}
+
+/*
+ * Dark is canonical and light is a different time of day, not an inversion.
+ *
+ * Inverting the night sky gives a pale grey band, which is not "day" — it is the
+ * same picture with the contrast removed. So light gets its own two gradients:
+ * XP-blue, noon.
+ */
+:root[data-theme='light'] .sh-sky__scene {
+  background:
+    radial-gradient(120% 90% at 74% 92%, rgb(255 255 255 / 45%), transparent 62%),
+    linear-gradient(180deg, #6ba3d6 0%, #9cc4e4 52%, var(--sh-canvas) 100%);
+}
+
+.sh-sky__star {
+  position: absolute;
+  background: var(--sh-text);
+  /* Square, not round. A 1px circle is a 1px square that cost a repaint, and at
+     this size a border-radius only softens it into a smudge. */
+}
+
+/* Stars are a night thing. At noon the sky keeps its clouds instead. */
+:root[data-theme='light'] .sh-sky__star {
+  background: #ffffff;
+  border-radius: 1px;
+}
+
+.sh-sky__hill {
+  position: absolute;
+  bottom: 0;
+  background: var(--sh-scene-hill);
+}
+
+/*
+ * Two further hills, each a step off the first, so the range has depth without
+ * a third colour. Mixed rather than named for the same reason a hover fill is:
+ * they track a re-declared `--sh-scene-hill`.
+ *
+ * **Both step toward `canvas`, never toward `text`.** The near hill mixed toward
+ * the ink and the result was a pale band across the rail, brighter than any
+ * surface in the app and sitting directly under the panel's name — a decorative
+ * surface outshouting the heading it exists to hold. Depth in a dark scene is
+ * made by receding, and the ground is what things recede into.
+ */
+.sh-sky__hill--far {
+  background: color-mix(in srgb, var(--sh-scene-hill) 82%, var(--sh-canvas));
+}
+
+.sh-sky__hill--near {
+  background: color-mix(in srgb, var(--sh-scene-hill) 62%, var(--sh-canvas));
+}
+
+/* ── the flock ─────────────────────────────────────────────────────────────── */
+
+.sh-sky__sheep {
+  position: absolute;
+  right: 96px;
+  bottom: 48px;
+  inline-size: 27px;
+  block-size: 21px;
+}
+
+.sh-sky__sheep > i {
+  position: absolute;
+  background: var(--sh-scene-flock);
+}
+
+.sh-sky__sheep > i[data-part='shade'] {
+  background: var(--sh-scene-flock-shade);
+}
+
+.sh-sky__sheep > i[data-part='eye'] {
+  /* The ground colour, so the eye is a hole rather than a dot — which is what
+     makes a 3px square read as an eye at all. */
+  background: var(--sh-canvas);
+}
+
+/* ── the panel's name, at the strip's foot ─────────────────────────────────── */
+
+.sh-sky__head {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-md);
+  padding: 0 var(--sh-space-xl) var(--sh-space-lg);
+}
+
+.sh-sky__title {
+  margin: 0;
+  /* 19/600/-0.022em — a panel's name, ONCE per panel. The one type step this
+     size in the app, which is why it is safe for it to be this loud. */
+  font-size: var(--sh-font-size-title);
+  font-weight: 600;
+  letter-spacing: -0.022em;
+  color: var(--sh-text);
+}
+
+.sh-sky__count {
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-micro);
+  font-variant-numeric: tabular-nums;
+  color: var(--sh-text-ghost);
+}
+
+.sh-sky__spacer {
+  flex: 1;
+}
+
+/*
+ * Nothing here animates.
+ *
+ * v1 had a sheep that cycled through activity frames, and metrics.ts still
+ * carries `flockCycleMs` from it. §6 refuses continuous animation, and this is
+ * the surface where the refusal matters most: a moving thing in the corner of
+ * the eye is exactly what the strip must not be while you are reading a pane.
+ */
+
+/* ── the meadow: the empty state's version of the same scene ───────────────── */
+
+/*
+ * 180×56, one hill and one sheep. Quieter than the strip by construction — no
+ * sky, no stars, no glow — because an empty state's picture has to sit under the
+ * button it is inviting you to press.
+ */
+.sh-meadow {
+  position: relative;
+  display: block;
+  inline-size: 180px;
+  block-size: 56px;
+  overflow: hidden;
+}
+
+.sh-meadow__hill {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  /*
+   * Far WIDER than the frame that clips it — 420 in a 180 box.
+   *
+   * A hill the width of its own container is a rounded rectangle: you see both
+   * flanks turn down, and two visible corners read as a box. Overflowing the
+   * frame means only the shallow crown is on screen and the slope runs off both
+   * edges, which is what a hill looks like. Same trick the rail's strip uses,
+   * where the 400px ellipse is clipped by a 332px rail.
+   */
+  inline-size: 420px;
+  block-size: 40px;
+  border-radius: 100% 100% 0 0 / 34px 34px;
+  background: var(--sh-scene-hill);
+}
+
+.sh-meadow .sh-sky__sheep {
+  /* Standing ON the hill's crown rather than at a fixed inset from the box: the
+     meadow is shorter than the strip, so the strip's `bottom: 48px` would put
+     the sheep in the air. */
+  right: auto;
+  left: 50%;
+  /* On the crown: the hill peaks ~26px up in this frame, and the sheep's feet
+     sit at its own box's bottom edge. */
+  bottom: 22px;
+  margin-inline-start: -13px;
+}
+
+/*
+ * At rest, and unlit.
+ *
+ * The neutral ramp rather than `wool`, because nothing is grazing here — a lit
+ * sheep on an empty stage would be the brightest thing in a view whose whole
+ * message is that there is nothing to look at.
+ */
+.sh-sky__sheep[data-resting] > i {
+  background: var(--sh-scene-flock-rest);
+}
+
+.sh-sky__sheep[data-resting] > i[data-part='shade'] {
+  background: color-mix(in srgb, var(--sh-scene-flock-rest) 78%, var(--sh-canvas));
+}
+
+.sh-sky__sheep[data-resting] > i[data-part='eye'] {
+  background: var(--sh-canvas);
+}

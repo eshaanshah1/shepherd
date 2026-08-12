@@ -43,7 +43,7 @@ describe('Field', () => {
     // scoped re-declaration reach it.
     const bordered = mount(<Field variant="bordered" />);
     expect(getComputedStyle(control(bordered.container)).background).toBe(
-      'var(--sh-surface-sunken)',
+      'var(--sh-sunken)',
     );
 
     const bare = mount(<Field variant="bare" />);

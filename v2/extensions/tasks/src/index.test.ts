@@ -1230,7 +1230,9 @@ describe('a long operation', () => {
     }));
 
     await h.run('tasks.create', { title: 'Ship it', repos: [{ path: '/src/app', name: 'app' }] });
-    const during = (await h.tree().children(undefined))[0];
+    // The first ROW, not the first entry: the rail leads with a section heading
+    // now (§5's attention routing), and a heading is not a task.
+    const during = (await h.tree().children(undefined)).find((row) => row.section !== true);
     expect(during?.busy).toBe(true);
 
     finish();
@@ -1297,6 +1299,8 @@ describe('a task row', () => {
     // Withholding it while archived would blank the highlight for the first
     // moments after a restore — exactly when the window has just moved there.
     const h = (live = harness({ tasks: [task({ id: 't1', lifecycle: 'archived' })] }));
+    // Finished work is behind the foot row now, so open it to see the row at all.
+    await h.run('tasks.expandTabs', { task: 'group:shipped' });
 
     expect((await rowOf(h, 't1'))?.root).toBe(taskRootId('t1'));
   });
@@ -1895,31 +1899,53 @@ describe('finished work', () => {
   const archived = (id: string): TaskRecord =>
     task({ id, title: `T ${id}`, lifecycle: 'archived', archivedAt: 5, sessions: [] });
 
-  it('puts archived tasks under a DONE heading at the bottom, not among live work', async () => {
+  it('keeps finished work OUT of the list, as a count at the foot', async () => {
+    // §1: "a Shipped this week footer row pinned to the bottom". Finished work
+    // LEAVES the list — a heading with the archived tasks under it puts the work
+    // you are done with back into the list you are reading, which is the one
+    // thing closing a task was supposed to stop.
     const h = (live = harness({ tasks: [archived('old'), task({ id: 'now', title: 'T now' })] }));
     const rows = await h.tree().children(undefined);
 
     const ids = rows.map((row) => row.id);
-    expect(ids).toEqual(['now', 'group:done', 'old']);
-    expect(rows.find((row) => row.id === 'group:done')?.section).toBe(true);
+    expect(ids).not.toContain('old');
+    const foot = rows.find((row) => row.id === 'group:shipped');
+    expect(foot?.label).toBe('Shipped this week');
+    expect(foot?.description).toBe('1');
+    // Last, so the shell can pin it.
+    expect(ids[ids.length - 1]).toBe('group:shipped');
   });
 
-  it('draws no DONE heading when nothing is finished', async () => {
+  it('draws the foot even at zero, so the rail does not move as the week turns', async () => {
     const h = (live = harness({ tasks: [task({ id: 'now' })] }));
     const rows = await h.tree().children(undefined);
-    expect(rows.some((row) => row.section === true)).toBe(false);
+    expect(rows.find((row) => row.id === 'group:shipped')?.description).toBe('0');
   });
 
-  it('offers Restore where a live task offers Archive', async () => {
+  it('opens the foot to reach what shipped — a count must not mean unreachable', async () => {
     const h = (live = harness({ tasks: [archived('old'), task({ id: 'now' })] }));
+    expect((await h.tree().children(undefined)).map((row) => row.id)).not.toContain('old');
+
+    await h.run('tasks.expandTabs', { task: 'group:shipped' });
     const rows = await h.tree().children(undefined);
+    expect(rows.map((row) => row.id)).toContain('old');
+
     const labels = (id: string): unknown[] =>
       (rows.find((row) => row.id === id)?.actions ?? []).map((a) =>
         'separator' in a ? '—' : a.label,
       );
-
     expect(labels('old')).toEqual(['Restore', '—', 'Delete']);
     expect(labels('now')).toEqual(['Reveal', '—', 'Archive', 'Delete']);
+  });
+
+  it('orders the live sections by what you must do', async () => {
+    // §5: attention routing IS the rail's shape. The sections are not kinds of
+    // task, they are distances from needing you, read top-down.
+    const h = (live = harness({ tasks: [task({ id: 'a' })] }));
+    const ids = (await h.tree().children(undefined))
+      .filter((row) => row.section === true)
+      .map((row) => row.id);
+    expect(ids).toEqual(['group:resting']);
   });
 
   it('brings an archived task BACK when it is revealed, before opening its root', async () => {

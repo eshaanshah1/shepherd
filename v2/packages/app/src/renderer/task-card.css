@@ -1,0 +1,327 @@
+/*
+ * The task card — README §1's rail, drawn.
+ *
+ * Every colour is a ROLE and every length a scale step, with one documented
+ * class of exception: the marks' own dimensions, which live in `@shepherd/ui`
+ * and are not repeated here.
+ *
+ * The shape rule this file exists to hold: **only the waiting-on-you variant may
+ * change height.** Everything else is `surface` + a hairline and the same four
+ * lines, so a rail of ten tasks reads as one column rather than ten cards.
+ */
+
+.sh-task-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sh-space-md);
+  padding: var(--sh-space-lg) var(--sh-space-lg);
+  border: var(--sh-hairline) solid var(--sh-line);
+  border-radius: var(--sh-radius-card);
+  background: var(--sh-surface);
+  /* Colour only, and never `all` — a card that animated its height would move
+     the row under the cursor every time an agent finished a turn. */
+  transition:
+    color var(--sh-motion) linear,
+    background var(--sh-motion) linear,
+    border-color var(--sh-motion) linear;
+}
+
+/*
+ * Selected, and in flight: one luminance step and one border step. NOT inverse
+ * video, and not a hue — §6 refuses both.
+ */
+.sh-task-card[data-selected] {
+  background: var(--sh-fill-selected);
+  border-color: var(--sh-edge-selected);
+}
+
+/*
+ * Waiting on you. The border is the only thing that changes besides the height,
+ * because the MARK is already carrying the state and a coloured card would say
+ * it twice.
+ */
+.sh-task-card[data-open] {
+  border-color: var(--sh-line-active);
+}
+
+/* ── the title line ────────────────────────────────────────────────────────── */
+
+.sh-task-card__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-md);
+  /* A bare button: the card supplies the surface, and a nested button with its
+     own background would be a box inside a box. */
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: start;
+  cursor: default;
+}
+
+.sh-task-card__head:focus-visible {
+  /* An outline, not a border, so a focused card is the same SIZE as an
+     unfocused one. */
+  outline: 2px solid var(--sh-focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--sh-radius-sm);
+}
+
+.sh-task-card__title {
+  flex: 1;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--sh-font-size-card);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--sh-text-dim);
+}
+
+.sh-task-card[data-selected] .sh-task-card__title,
+.sh-task-card[data-open] .sh-task-card__title {
+  font-weight: 600;
+  color: var(--sh-text);
+}
+
+.sh-task-card__elapsed {
+  flex: none;
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-nano);
+  /* Tabular, so a column of cards reads DOWN — the whole reason the elapsed
+     stamp is mono at all. */
+  font-variant-numeric: tabular-nums;
+  color: var(--sh-text-ghost);
+}
+
+/* ── the sentence ──────────────────────────────────────────────────────────── */
+
+.sh-task-card__summary {
+  margin: 0;
+  font-size: var(--sh-font-size-body);
+  line-height: var(--sh-line-height);
+  color: var(--sh-text-mute);
+  /* Two lines, then ellipsis. One sentence of what is happening is the brief;
+     a card that grew with its summary would break the one-height rule through
+     a side door. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ── the diff line: NUMBERS, not a bar ─────────────────────────────────────── */
+
+.sh-task-card__diff {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-sm);
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-nano);
+  font-variant-numeric: tabular-nums;
+}
+
+.sh-task-card__added {
+  color: var(--sh-grass);
+}
+
+.sh-task-card__removed {
+  /* `clay`, not `red`. A diff full of removals is not a failure, and §2 lists
+     failure under clay's "not for" precisely so the two stay one glance apart. */
+  color: var(--sh-clay);
+}
+
+.sh-task-card__sep {
+  color: var(--sh-text-ghost);
+}
+
+.sh-task-card__files {
+  color: var(--sh-text-ghost);
+}
+
+.sh-task-card__suite {
+  /* Pushed right, so the meter is in the same place on every card and the eye
+     can run down the column without re-finding it. */
+  margin-inline-start: auto;
+}
+
+.sh-task-card__exit {
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-nano);
+  color: var(--sh-clay);
+}
+
+/* ── repo chips and the tab marks ──────────────────────────────────────────── */
+
+.sh-task-card__foot {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-sm);
+  flex-wrap: wrap;
+}
+
+.sh-task-card__repo {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sh-space-sm);
+  font-size: var(--sh-font-size-nano);
+  color: var(--sh-text-ghost);
+}
+
+.sh-task-card__repo > i {
+  inline-size: 7px;
+  block-size: 7px;
+  border-radius: 2px;
+  flex: none;
+}
+
+/*
+ * The tab marks — what the nested tab rows became.
+ *
+ * Marks and nothing else: three shapes tell you there are three tabs and that
+ * one of them wants you, and the labelled list lives in the stage's tab strip
+ * where a tab is actually named. §6 refuses repeating a name down the
+ * hierarchy, and the old nested rows did exactly that.
+ */
+.sh-task-card__tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sh-space-hair);
+  margin-inline-start: auto;
+}
+
+/* ── the question, and the two answers ─────────────────────────────────────── */
+
+.sh-task-card__ask {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sh-space-md);
+}
+
+.sh-task-card__question {
+  margin: 0;
+  font-size: var(--sh-font-size-body);
+  line-height: var(--sh-line-height);
+  color: var(--sh-text-mute);
+}
+
+.sh-task-card__question code {
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-medium);
+  /* The one word you must actually read, a step brighter than the sentence
+     around it. */
+  color: var(--sh-text-quiet);
+}
+
+.sh-task-card__answers {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-sm);
+}
+
+.sh-task-card__key {
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-micro);
+  /* On the primary's own ink at half strength — a key hint is a reminder, not a
+     second label, and a fully opaque one competes with the word beside it. */
+  opacity: 0.5;
+  margin-inline-start: var(--sh-space-sm);
+}
+
+/*
+ * The door.
+ *
+ * Full width so it reads as the bottom of the card rather than as a third
+ * button, and ghost because it is not an answer — it is the way to where the
+ * answer is.
+ */
+.sh-task-card__door {
+  justify-content: space-between;
+  inline-size: 100%;
+}
+
+/*
+ * ── dense: a task with nothing to show is ONE ROW ──────────────────────────
+ *
+ * §5's other half. The card treatment is earned by having a second line worth
+ * drawing — an agent running, a failure, a question, more than one tab. A rail
+ * of six resting tasks as six bordered boxes is six times the height for the
+ * same six words, and at that point the card stops meaning anything because
+ * everything has it.
+ *
+ * No border and no fill at rest, so the row sits ON the rail rather than in a
+ * box of its own; the hover and selected fills still land, because those are
+ * about where the pointer and the window are and not about the task.
+ */
+.sh-task-card[data-dense] {
+  gap: 0;
+  padding: 0 var(--sh-space-md);
+  border-color: transparent;
+  background: none;
+  border-radius: var(--sh-radius-row);
+}
+
+.sh-task-card[data-dense]:hover {
+  background: var(--sh-fill-hover);
+}
+
+.sh-task-card[data-dense][data-selected] {
+  background: var(--sh-fill-selected);
+  border-color: var(--sh-edge-selected);
+}
+
+/* The fixed row height — 34 — and the title stops being a card title. */
+.sh-task-card[data-dense] .sh-task-card__head {
+  block-size: var(--sh-row-height);
+}
+
+.sh-task-card[data-dense] .sh-task-card__title {
+  font-size: var(--sh-font-size-body);
+  font-weight: 400;
+}
+
+.sh-task-card[data-dense][data-selected] .sh-task-card__title {
+  font-weight: 500;
+}
+
+/*
+ * ── the trailing cell: metadata and the hover action, in ONE track ─────────
+ *
+ * §6 refuses "a row that grows to reveal hover actions". Both occupants sit in
+ * the same grid area, so the track is already as wide as the wider of them and
+ * revealing the button moves nothing — where appending would shift the title
+ * under the cursor at the moment you are reaching for it.
+ */
+.sh-task-card__trail {
+  display: grid;
+  grid-template-areas: 'stack';
+  align-items: center;
+  justify-items: end;
+  flex: none;
+}
+
+.sh-task-card__trail > * {
+  grid-area: stack;
+}
+
+/*
+ * `visibility`, never `display: none` — a hidden-but-laid-out button is what
+ * keeps the cell at its width while it is not shown.
+ */
+.sh-task-card__action {
+  visibility: hidden;
+}
+
+.sh-task-card:hover .sh-task-card__action,
+.sh-task-card:focus-within .sh-task-card__action {
+  visibility: visible;
+}
+
+/* …and the metadata yields to it, rather than the two overlapping. */
+.sh-task-card:hover .sh-task-card__elapsed,
+.sh-task-card:focus-within .sh-task-card__elapsed {
+  visibility: hidden;
+}

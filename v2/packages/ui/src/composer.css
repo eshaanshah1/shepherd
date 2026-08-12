@@ -32,8 +32,8 @@
    * rule a property of this container instead of a list of components that
    * remembered to opt out.
    */
-  --sh-surface: var(--sh-surface-raised);
-  --sh-surface-sunken: transparent;
+  --sh-surface: var(--sh-well);
+  --sh-sunken: transparent;
   --sh-line: transparent;
 
   display: flex;
@@ -42,7 +42,17 @@
      thing separating one field from the next. */
   gap: var(--sh-space-lg);
 
-  background: var(--sh-surface-raised);
+  /*
+   * `well`, and a real edge on it.
+   *
+   * The card used to be `raised` with no border — a menu's treatment, which is
+   * right for something that floats over a surface and wrong for something you
+   * WRITE on. §2 gives the composer its own step and §4 gives a well its own
+   * edge: `lineStrong`, because a well is a box with four corners and at `line`
+   * it disappears into the seams of the chrome behind the scrim.
+   */
+  background: var(--sh-well);
+  border: var(--sh-hairline) solid var(--sh-line-strong);
   color: var(--sh-text);
 
   /*

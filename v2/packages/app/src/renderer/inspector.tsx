@@ -225,7 +225,7 @@ function FindingRow({ finding }: { readonly finding: RoleFinding }): ReactElemen
   const name = !finding.drawn
     ? 'not drawn'
     : (finding.role ??
-      (finding.paletteToken === null ? 'no role' : `no role · --sh-${finding.paletteToken}`));
+      'no role');
   const where = describeElement(finding.declaredOn);
   const painted = describeElement(finding.paintedOn);
 

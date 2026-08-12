@@ -44,11 +44,21 @@ export interface EmptyProps extends ComponentPropsWithRef<'div'> {
    * empty state with nothing to suggest should say nothing rather than pad.
    */
   readonly hint?: ReactNode;
+  /**
+   * The ONE thing to do about the emptiness.
+   *
+   * Separate from `hint` because they are opposites: the action is a control and
+   * the hint is a legend. Flock's empty state had only a hint, and the hint was a
+   * pressable keycap — which taught a shortcut instead of offering a way out.
+   * §7's rule is that if you added a way in, add the way out and the way to see
+   * it; on an empty stage the way in IS the way out.
+   */
+  readonly action?: ReactNode;
   /** The sentence. Set in serif, and it should be one sentence. */
   readonly children?: ReactNode;
 }
 
-export function Empty({ illustration, hint, className, children, ...rest }: EmptyProps): ReactElement {
+export function Empty({ illustration, hint, action, className, children, ...rest }: EmptyProps): ReactElement {
   return (
     <div className={cn('sh-ui-empty', className)} {...rest}>
       {illustration === undefined ? null : (
@@ -63,6 +73,7 @@ export function Empty({ illustration, hint, className, children, ...rest }: Empt
        * nothing to say has no business drawing this.
        */}
       <p className="sh-ui-empty__say">{children}</p>
+      {action === undefined ? null : <div className="sh-ui-empty__act">{action}</div>}
       {hint === undefined ? null : <p className="sh-ui-empty__hint">{hint}</p>}
     </div>
   );

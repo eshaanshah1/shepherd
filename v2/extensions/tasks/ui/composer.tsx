@@ -1,10 +1,10 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { ExtensionViewProps } from "@shepherd/sdk";
-import { Button, Composer, Menu, PromptField, type PromptFieldHandle } from "@shepherd/ui";
+import { Composer, PromptField, SendButton, Select, type PromptFieldHandle } from "@shepherd/ui";
 import { repoName } from "../src/model/repo-name.ts";
 import type { PastedImage } from "../src/images.ts";
 import { readPastedImage } from "./paste-image.ts";
-import { findTrigger, isUnwritten, scopeLine, type DisplaySegment } from "./mention.ts";
+import { findTrigger, isUnwritten, type DisplaySegment } from "./mention.ts";
 import {
   EDGE,
   PICKER_WIDTH,
@@ -191,6 +191,23 @@ function titleOf(brief: string): string {
  */
 const PICKER_HEIGHT = 238 + 38 + 12;
 
+/**
+ * Where a task's work is laid down.
+ *
+ * **One option today, and the control is drawn anyway.** `in-place` is the
+ * obvious second and it is deliberately not here yet: it changes what lands on
+ * disk, and a task running in the checkout you are on is unsafe the moment a
+ * second task picks the same repo. Shipping the menu with one entry puts the
+ * seam in the UI, the schema and the record now, so adding the mode later is a
+ * line in this list rather than a change to the composer's shape.
+ *
+ * A literal list rather than a query: these are not a capability something
+ * advertises, they are the shapes `provision` knows how to make.
+ */
+const PLACEMENTS = [
+  { value: 'worktree', label: 'worktree', description: 'a cut of its own, per repo' },
+] as const;
+
 export function TaskComposer({
   invoke,
   done,
@@ -234,6 +251,26 @@ export function TaskComposer({
    */
   const [machines, setMachines] = useState<readonly Machine[]>([LOCAL_MACHINE]);
   const [machine, setMachine] = useState<string>(LOCAL_MACHINE.id);
+  /**
+   * Which model the task's agent opens on — `null` is "whatever the kind
+   * advertises", which is the honest default: the app does not get to have an
+   * opinion about a vendor's default, and a hardcoded one goes stale the week
+   * the vendor ships a new tier.
+   */
+  const [model, setModel] = useState<string | null>(null);
+  const [models, setModels] = useState<readonly { value: string; label: string; description?: string }[]>([]);
+
+  /**
+   * Where the work happens.
+   *
+   * `worktree` is the default and was the only behaviour until now: every repo
+   * a task scopes gets a cut of its own, which is what makes several agents on
+   * one repo safe. `in-place` runs in the checkout itself — right for a task you
+   * want landing on the branch you are already on, and wrong the moment a second
+   * task picks the same repo, which is why it is not the default.
+   */
+  const [placement, setPlacement] = useState<string>('worktree');
+
   const [pickingMachine, setPickingMachine] = useState(false);
   const listId = useId();
   const card = useRef<HTMLDivElement | null>(null);
@@ -272,6 +309,41 @@ export function TaskComposer({
    * composer opens. A member that has gone away since is caught where it matters
    * — `tasks.create` forwards to it and reports what it said.
    */
+  /*
+   * The model list, asked once when the composer mounts.
+   *
+   * `agents.listModels` — the primitive, not `quickModelChoices`. That one is
+   * this list narrowed to the CHEAP tier, and asking it here would offer a menu
+   * of models chosen for being cheap to a person starting real work.
+   *
+   * It already answers in `SelectOption`'s shape, so nothing is reshaped. A
+   * failure leaves the list empty and the select shows only the default, which
+   * is honest: we could not find out what else there is, and the kind's own
+   * default still works.
+   */
+  useEffect(() => {
+    let alive = true;
+    void invoke('agents.listModels', {}).then((result) => {
+      if (!alive || !result.ok) return;
+      const value = result.value;
+      if (!Array.isArray(value)) return;
+      setModels(
+        value.flatMap((entry) => {
+          if (typeof entry !== 'object' || entry === null) return [];
+          const record = entry as Record<string, unknown>;
+          const id = record['value'];
+          const label = record['label'];
+          if (typeof id !== 'string' || typeof label !== 'string') return [];
+          const kind = record['description'];
+          return [{ value: id, label, ...(typeof kind === 'string' ? { description: kind } : {}) }];
+        }),
+      );
+    });
+    return () => {
+      alive = false;
+    };
+  }, [invoke]);
+
   useEffect(() => {
     let live = true;
     void (async () => {
@@ -613,6 +685,10 @@ export function TaskComposer({
       // for a brief typed and submitted in one go, and the extension names it from
       // the brief instead — nothing here waits for a model.
       ...(suggested === null ? {} : { name: suggested }),
+      // Absent when the user left the default alone, so the extension's own
+      // default is not overwritten by a value the composer invented.
+      ...(model === null ? {} : { model }),
+      ...(placement === 'worktree' ? {} : { placement }),
       ...(pasted.current.length === 0 ? {} : { images: pasted.current }),
       repos: scope.map((repo) => ({ path: repo.path, name: repo.name })),
       member: machine,
@@ -763,32 +839,12 @@ export function TaskComposer({
         */}
         <div className="sh-composer-controls">
           {/*
-            The button exists because `#` is invisible until somebody has been
-            told about it, and this is the telling — it appends a `#` at the end
-            of the brief, focuses the editor and opens the picker, so the gesture
-            it teaches is the gesture it performs. Same rule as the CLI's
-            discoverability: an affordance nobody can find is not an affordance.
+            The scope is expressed by the PILLS in the brief and by the scope
+            rail below — a `#repo` button and a mono "no repo scoped" line said
+            the same thing a third and fourth time, in the one row that has to
+            stay readable. §5: the controls inside a well are ghost text divided
+            by rules, and everything else is somewhere it already was.
           */}
-          <button
-            type="button"
-            className="sh-composer-hash"
-            data-testid="composer-hash"
-            onClick={() => promptRef.current?.appendText("#")}
-          >
-            <span className="sh-composer-hash-glyph" aria-hidden="true">
-              #
-            </span>
-            repo
-          </button>
-          {/*
-            What the sentence currently scopes, in words. It reads the derived
-            scope, so it cannot disagree with the pills — and its zero case says
-            where an unscoped task LANDS rather than reporting a missing field.
-          */}
-          <span className="sh-composer-scope" data-testid="composer-scope">
-            {scopeLine(scope.map((repo) => repo.name))}
-          </span>
-          <span className="sh-composer-spacer" />
           {/*
             WHERE this task will be made — and drawn only when there is a choice.
 
@@ -804,17 +860,56 @@ export function TaskComposer({
             button's own class so the row keeps one visual language rather than
             gaining a second kind of small button.
           */}
+          {/*
+            The three ghost selects, on one line, divided by `1px × 16` rules —
+            §5's control row.
+
+            All three are `Select` rather than three different shapes: the
+            machine picker was a `Menu` behind a bare button, which is a second
+            way of being a dropdown on a row whose whole job is looking like one
+            row. `Select` is the primitive; a control comes from the design
+            system.
+          */}
+          <Select
+            className="sh-composer-select sh-composer-select--model"
+            label="Model"
+            value={model}
+            options={models}
+            nullable
+            onChange={setModel}
+          />
+          <Select
+            className="sh-composer-select sh-composer-select--placement"
+            label="Where the work happens"
+            value={placement}
+            options={PLACEMENTS}
+            onChange={(next) => setPlacement(next ?? 'worktree')}
+          />
+          {/*
+            Drawn only when there is a choice. One machine is not a decision, and
+            a picker that always says "This Mac" is a control that teaches nothing
+            and takes room in the one row that has to stay readable.
+
+            This is where the PROFILE picker will land too — same row, same
+            shape, once profiles exist.
+          */}
           {machines.length < 2 ? null : (
-            <Menu
-              items={machines.map((entry) => ({
-                id: entry.id,
+            <Select
+              /*
+                `Select` forwards no arbitrary props, so the hook a test reaches
+                for is a CLASS rather than a `data-testid` — which is the honest
+                seam anyway: the stylesheet needs one of these per control too.
+              */
+              className="sh-composer-select sh-composer-select--machine"
+              label="Which machine"
+              value={machine}
+              options={machines.map((entry) => ({
+                value: entry.id,
                 label: entry.here ? `${entry.name} (here)` : entry.name,
               }))}
-              open={pickingMachine}
-              onOpenChange={setPickingMachine}
-              onSelect={(id) => {
+              onChange={(next) => {
+                const id = next ?? LOCAL_MACHINE.id;
                 setMachine(id);
-                setPickingMachine(false);
                 /*
                  * The repo list belongs to the machine, so it is asked again the
                  * moment the machine changes. Not merely cleared: the picker's
@@ -824,36 +919,32 @@ export function TaskComposer({
                 setSuggestions([]);
                 void askForSuggestions(titleOf(brief), brief, "", id);
               }}
-            >
-              <button
-                type="button"
-                className="sh-composer-hash"
-                data-testid="composer-machine"
-                data-machine={machine}
-                onClick={() => setPickingMachine(true)}
-              >
-                <span className="sh-composer-hash-glyph" aria-hidden="true">
-                  @
-                </span>
-                {machines.find((entry) => entry.id === machine)?.name ?? LOCAL_MACHINE.name}
-              </button>
-            </Menu>
+            />
           )}
           {/*
-            The ONE loud thing on the card (rule 3: two primary buttons means
-            neither is). `busy` is the primitive's: the label is replaced by a
-            braille spinner with the width pinned, so the control does not narrow
-            mid-click and take the row with it.
+            The ONE weighted control on the card, and the only round element in
+            the product.
+
+            It was a `create task` primary — a `wool` block, the same treatment
+            §4 gives the one action on every other surface. On a WELL that is
+            wrong twice over: a filled rectangle beside ghost selects is the
+            loudest thing on a surface whose whole idea is that space carries the
+            structure, and the composer's action is not "one of the things here"
+            but the terminus of the sentence you just wrote. A circle says that
+            and nothing else does.
+
+            No `busy` state: `SendButton` has no label to replace with a spinner,
+            and the disabled-while-in-flight guard below is what stops a double
+            send. Feedback matched to duration (§4) puts a local action under
+            100ms in the "show nothing" band anyway.
           */}
-          <Button
-            variant="primary"
+          <span className="sh-composer-spacer" />
+          <SendButton
             type="submit"
+            label="Start this task"
             data-testid="composer-create"
-            disabled={titleOf(brief) === ""}
-            busy={busy}
-          >
-            create task
-          </Button>
+            disabled={titleOf(brief) === "" || busy}
+          />
         </div>
 
         <output className="sh-ext-answer" data-testid="composer-status">
@@ -878,6 +969,39 @@ export function TaskComposer({
           />
         ) : null}
       </Composer>
+
+      {/*
+        The scope rail — DETACHED, below the card and outside it.
+
+        The 7px gap is the idea: the card is what you are writing, and this is a
+        statement about where the result will land. Fused to the card it read as
+        one more row of the form; separated, it reads as the consequence of the
+        sentence above it.
+
+        Drawn only when the brief actually scopes something. An empty bar saying
+        nothing is scoped is a row you have to read to learn there is nothing to
+        read — the composer already says where an unscoped task lands, by landing
+        it there.
+      */}
+      {scope.length === 0 ? null : (
+        <div className="sh-composer-scope-rail" data-testid="composer-scope-rail">
+          {scope.map((repo, index) => (
+            <span key={repo.path} className="sh-composer-scope-rail__repo">
+              {/*
+                The same identity marks the task card draws, assigned the same
+                way — by POSITION within the task, because the mark's only job is
+                telling THIS task's repos apart and four positions cannot collide
+                where a hash of the path can.
+              */}
+              <i style={{ background: `var(--sh-repo${(index % 4) + 1})` }} aria-hidden="true" />
+              {repo.name}
+            </span>
+          ))}
+          <span className="sh-composer-scope-rail__where">
+            {scope.length === 1 ? '1 worktree' : `${scope.length} worktrees`} off main
+          </span>
+        </div>
+      )}
     </form>
   );
 }
