@@ -71,21 +71,27 @@
 }
 
 /*
- * A modal that IS a composer needs no second card. When one is nested, it drops
- * its own surface, radius and padding and keeps only its role re-declaration —
- * which is the part that was never about the box.
+ * A modal that IS a composer needs no second card, and the MODAL is the half
+ * that goes.
  *
- * A DESCENDANT selector, not a child one, and the shell port is what measured
- * it: the host puts a slot element between the two (the shell wraps every
- * contributed view in a section, and the composer wraps itself in a `<form>`).
- * A child combinator made this reset depend on the consumer's tree shape, so
- * the composer kept its own 26px inset inside the modal's 26px inset and the
- * card grew a double border of empty space — a rule that silently does nothing
- * as soon as somebody adds a wrapper. There is exactly one composer in a modal
- * by construction, so there is nothing for the looser selector to over-reach.
+ * The well is the surface the design draws: `well`, one step under this card's
+ * `raised`, with its own `lineStrong` edge and its own soft radius. Stripping
+ * those and keeping the modal's box is the other way round, and it painted the
+ * one thing §5 refuses — the composer's border survived the reset with its
+ * radius zeroed, so a square-cornered `lineStrong` rectangle sat on a `raised`
+ * panel, two boxes deep, and neither of them was `well`.
+ *
+ * `:has()`, so the card answers the question about itself. A DESCENDANT
+ * selector, not a child one, and the shell port is what measured it: the host
+ * puts a slot element between the two (the shell wraps every contributed view in
+ * a section, and the composer wraps itself in a `<form>`), so a child combinator
+ * would depend on the consumer's tree shape. There is exactly one composer in a
+ * modal by construction, so there is nothing for the looser selector to
+ * over-reach.
  */
-.sh-ui-modal .sh-ui-composer {
+.sh-ui-modal:has(.sh-ui-composer) {
   background: transparent;
+  border: 0;
   border-radius: 0;
   padding: 0;
 }

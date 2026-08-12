@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { palette, relativeLuminance, roleToken, type RoleName } from '@shepherd/design-tokens';
 import { mount } from './test-dom.ts';
 import { rulesMentioning } from './css-rules.ts';
 import { Row, rowClasses } from './row.tsx';
@@ -135,15 +136,45 @@ describe('Row', () => {
     });
   });
 
-  it('selection is a solid fill with inverse ink, not a wash', () => {
-    // Rule 4. `fillSelected` is an ALIAS of `text` (a solid block); if it ever
-    // becomes a `color-mix` wash, hover and selection stop being one glance
-    // apart — which is the argument recorded on the role itself.
+  it('selection is a solid fill, not a wash', () => {
+    // Rule 4: if the fill ever becomes a `color-mix` wash, hover and selection
+    // stop being one glance apart — the argument recorded on the role itself.
     const selected = row(mount(<Row selected>a</Row>).container);
     const style = getComputedStyle(selected);
     expect(style.background).toBe('var(--sh-fill-selected)');
-    expect(style.color).toBe('var(--sh-text-on-wool)');
     expect(style.background).not.toContain('color-mix');
+  });
+
+  /**
+   * MUTATION TARGET #3. The ink on a selected row must be READABLE on it.
+   *
+   * This replaces an assertion that pinned the two token NAMES —
+   * `fillSelected` and `textOnWool` — and passed happily while the pair stopped
+   * meaning anything. `fillSelected` was re-pointed from `wool` (white) to
+   * `raised` (a dark luminance step) and the on-white ink was left beside it, so
+   * every selected row in the app rendered `#0A0A0A` on `#161616`: the label,
+   * the metadata and the leading mark all went black on black, and no test
+   * noticed because both names were still exactly what was expected.
+   *
+   * So the assertion is about the COLOURS, resolved through the role chain, and
+   * it is a contrast ratio rather than an identity — that is the property the
+   * design language actually promises ("the label stays legible"), and it holds
+   * whichever roles a later wave decides to point at each other.
+   */
+  it.each(['dark', 'light'] as const)('keeps a selected row’s label legible in %s', (mode) => {
+    const ratio = (a: string, b: string): number => {
+      const [light, dark] = [relativeLuminance(a), relativeLuminance(b)].sort((x, y) => y - x) as [
+        number,
+        number,
+      ];
+      return (light + 0.05) / (dark + 0.05);
+    };
+    const hex = (role: RoleName): string => palette[roleToken(role)][mode];
+
+    // 4.5:1 is WCAG AA for body text, and a row's label is body text. The
+    // shipped pair scored 1.09:1 dark and 1.15:1 light — indistinguishable in
+    // both modes, which is what "black on black" looks like as a number.
+    expect(ratio(hex('fillSelected'), hex('text'))).toBeGreaterThan(4.5);
   });
 
   /**

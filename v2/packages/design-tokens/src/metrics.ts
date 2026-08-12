@@ -417,7 +417,7 @@ export const motion = {
  */
 export const fonts = {
   /**
-   * The CHROME's face — v1's, ported.
+   * The CHROME's face.
    *
    * v1 bundled two faces and split them by job (`Theme.swift`: DM Sans for the
    * sidebar and every label, JetBrains Mono for the grid and for code), and v2
@@ -428,6 +428,15 @@ export const fonts = {
    * A face is a JOB here, not a preference: if it is something the app SAYS,
    * it is sans; if it is something the machine produced — a path, an id, a
    * command, the grid — it is mono.
+   *
+   * **The first name must be a face the app SHIPS**, and for a while this one
+   * was not: the redesign settled on Geist, the renderer went on bundling v1's
+   * DM Sans (which no rule and no token ever named again), and the fallback
+   * chain quietly took over. On a machine with Geist installed that is
+   * invisible; everywhere else the whole app was drawn in the system face, and
+   * the difference reads as "the fonts are wrong" long before anyone thinks to
+   * check what actually loaded. `styles.css` bundles `Geist.ttf` — everything
+   * after it here is a genuine fallback again.
    */
   sans: "'Geist', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif",
   mono: "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace",

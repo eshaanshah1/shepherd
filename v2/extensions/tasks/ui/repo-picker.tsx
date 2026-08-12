@@ -1,14 +1,13 @@
 import { useEffect, useRef } from 'react';
-import { createPortal } from 'react-dom';
-import { Row } from '@shepherd/ui';
+import { Icon, Row, namedGlyph } from '@shepherd/ui';
 import { rowText, type DisplaySegment } from './mention.ts';
 
 /**
- * The caret-anchored repo picker.
+ * The repo picker — the bottom of the well, not a layer over it.
  *
  * Presentation and nothing else: it holds no query, no active index and no
  * knowledge of how a `#` is found. The composer owns all of that, because the
- * query lives in the editor's text — the popover is a projection of it, and a
+ * query lives in the editor's text — the list is a projection of it, and a
  * component that kept its own copy would be the second source of truth ADR 0035
  * is about.
  *
@@ -17,15 +16,22 @@ import { rowText, type DisplaySegment } from './mention.ts';
  * time, because you are typing. Moving real focus to a row is what makes a picker
  * lose the text it is filtering on the first arrow press.
  *
- * **It PORTALS to the body, and that is not a stylistic choice.** The composer is
- * mounted inside `Modal`, and `.sh-ui-modal` carries `overflow: auto` together
- * with `transform: translateX(-50%)`. The transform makes that element the
- * containing block for even a `position: fixed` descendant, and the overflow then
- * clips it — so an in-tree popover is cut off the moment the list is taller than
- * the card, which with four rows it always is. The design has it hanging past the
- * card's bottom edge, and a portal is the only way a child of a clipping,
- * transformed ancestor can do that. Its coordinates are therefore VIEWPORT
- * coordinates, measured by the caller.
+ * **It is FUSED, and it used to be a portalled popover.** The design draws it as
+ * part of the well — "the picker is part of the well, not a popover over it" —
+ * one hairline under the control row, a step darker than the card, sharing the
+ * card's own bottom corners. It grows the card downward rather than floating
+ * anywhere, so there is no caret to anchor to, no viewport arithmetic, no flip
+ * when the space below runs out, and no shadow: every one of those existed to
+ * make a free-floating layer behave, and a panel that is structurally part of the
+ * card needs none of them.
+ *
+ * What that deleted, and why it is not a loss: `placePicker` and its clamp/flip
+ * rules, the caret rect measured per keystroke, `PICKER_WIDTH`/`PICKER_HEIGHT`
+ * (a *constant* upper bound the old code needed because it had to decide where
+ * the panel went before the panel existed), and the portal itself — which was
+ * there only because `.sh-ui-modal`'s `overflow: auto` and `translateX(-50%)`
+ * clip and contain a fixed child. Nothing in the card has to escape the card any
+ * more.
  */
 
 export interface PickerRow {
@@ -42,9 +48,6 @@ export interface RepoPickerProps {
   readonly rows: readonly PickerRow[];
   readonly query: string;
   readonly activeIndex: number;
-  /** VIEWPORT coordinates, already clamped by the caller that measured the caret. */
-  readonly x: number;
-  readonly y: number;
   readonly listId: string;
   readonly onHover: (index: number) => void;
   readonly onPick: (row: PickerRow) => void;
@@ -76,8 +79,6 @@ export function RepoPicker({
   rows,
   query,
   activeIndex,
-  x,
-  y,
   listId,
   onHover,
   onPick,
@@ -93,12 +94,8 @@ export function RepoPicker({
     if (node && typeof node.scrollIntoView === 'function') node.scrollIntoView({ block: 'nearest' });
   }, [activeIndex, rows]);
 
-  return createPortal(
-    <div
-      className="sh-composer-picker"
-      data-testid="composer-picker"
-      style={{ left: `${x}px`, top: `${y}px` }}
-    >
+  return (
+    <div className="sh-composer-picker" data-testid="composer-picker">
       <div className="sh-composer-picker-head">
         {/* The live query, echoed. It is the one place the `#` is visible as the
             thing that opened this rather than as a character in a sentence. */}
@@ -138,6 +135,22 @@ export function RepoPicker({
                     className="sh-composer-picker-mark"
                     data-repo={row.isRepo ? 'true' : 'false'}
                   >
+                    {/*
+                      A FOLDER, filled or outline — the same full-versus-empty
+                      language the filled dot and hollow ring this replaced were
+                      speaking, in a mark that reads without being taught.
+
+                      `Icon` and `namedGlyph`, NOT a hand-rolled path. The
+                      primitive owns the one stroke weight and the three sizes,
+                      and `sm` is 13px, whose own comment in `icon.tsx` reads "a
+                      folder glyph in a pill" — this is the case it was written
+                      for. An extension cannot import Tabler directly (the
+                      boundaries forbid it, so nobody can ship a glyph at a fourth
+                      size and a second weight), which is exactly what the
+                      `NAMED_GLYPHS` allow-list is for: it grew by the two lines
+                      this needed.
+                    */}
+                    <Icon icon={namedGlyph(row.isRepo ? 'folder-filled' : 'folder')} size="sm" />
                     <span className="sh-ui-sr-only">{row.isRepo ? 'repo' : 'not a repo'}</span>
                   </span>
                 }
@@ -159,54 +172,6 @@ export function RepoPicker({
           })
         )}
       </div>
-    </div>,
-    document.body,
+    </div>
   );
 }
-
-/** How far below the caret the panel sits, and its inset from the card's edges. */
-export const CARET_GAP = 8;
-export const EDGE = 14;
-/** Enough of the list to be worth showing; below this it flips above the caret. */
-export const MIN_ROOM = 180;
-
-/**
- * Where the panel goes, in VIEWPORT coordinates.
- *
- * Pure, and separated from the component for the reason the rest of this feature
- * is: it is arithmetic with edge cases, and every one of them is a state somebody
- * has to be able to reproduce without a window. The rules, in order:
- *
- *   - it hangs from just under the `#` itself, so the panel is visibly about the
- *     thing being typed rather than about the card;
- *   - it is clamped to the CARD horizontally, not the viewport, because a popover
- *     that wanders off the side of the composer stops reading as part of it;
- *   - and it FLIPS above the caret when the space below is too small to show a
- *     useful amount of list. Clamping instead would slide the panel away from the
- *     caret it is anchored to, which is worse than moving it to the other side.
- */
-export function placePicker(
-  hash: { readonly left: number; readonly bottom: number; readonly top: number },
-  card: { readonly left: number; readonly width: number },
-  viewportHeight: number,
-  panelHeight: number,
-): { readonly x: number; readonly y: number } {
-  const room = card.width - PICKER_WIDTH - EDGE;
-  const x = card.left + Math.max(EDGE, Math.min(hash.left - card.left, Math.max(room, EDGE)));
-  const below = viewportHeight - (hash.bottom + CARET_GAP);
-  const y =
-    below >= Math.min(panelHeight, MIN_ROOM)
-      ? hash.bottom + CARET_GAP
-      : Math.max(EDGE, hash.top - CARET_GAP - panelHeight);
-  return { x, y };
-}
-
-/**
- * Exported for the composer's clamp — one width, declared once.
- *
- * A pixel literal rather than a token because it IS one: the no-hex rule is
- * about colour, and there is no width scale to read this off. It is here rather
- * than in the stylesheet because the clamp arithmetic needs the number, and the
- * stylesheet reads it back through a custom property.
- */
-export const PICKER_WIDTH = 360;

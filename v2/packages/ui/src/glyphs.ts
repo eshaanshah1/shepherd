@@ -3,6 +3,8 @@ import {
   IconChevronDown,
   IconDots,
   IconEye,
+  IconFolder,
+  IconFolderFilled,
   IconLayoutColumns,
   IconLayoutRows,
   IconMaximize,
@@ -40,6 +42,14 @@ export const NAMED_GLYPHS: Readonly<Record<string, ComponentType<TablerIconProps
   close: IconX,
   dots: IconDots,
   eye: IconEye,
+  /*
+   * Two folders, and the pair IS the fact a repo picker has to state: filled =
+   * this directory is a repo you can pick, outline = a directory on the way to
+   * one. Tabler ships both, so the distinction costs no hand-rolled path and
+   * keeps one stroke weight.
+   */
+  folder: IconFolder,
+  'folder-filled': IconFolderFilled,
   plus: IconPlus,
   trash: IconTrash,
   search: IconSearch,
