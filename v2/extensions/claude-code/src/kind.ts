@@ -41,11 +41,15 @@ export const QUICK_MODELS: readonly string[] = [QUICK_MODEL, 'haiku', 'sonnet', 
  * **Every model this vendor will run** — `AgentKind.listModels`, and the only
  * place these strings may live (D11).
  *
- * Aliases rather than dated ids, for `QUICK_MODELS`' reason: `--model sonnet`
- * resolves to whatever the current Sonnet is, so a user's choice does not go
- * stale the day a point release lands. The one pinned id is the quick-tier
- * default, because a DEFAULT should not change under anybody without a release
- * saying so.
+ * Aliases ONLY, and no dated ids. `--model sonnet` resolves to whatever the
+ * current Sonnet is, so a user's choice does not go stale the day a point
+ * release lands — and a list of three tiers is a choice somebody can make,
+ * where a list that also carries `claude-haiku-4-5` asks them to know what the
+ * difference is between that and `haiku`.
+ *
+ * `QUICK_MODEL` is deliberately NOT here. It is the quick tier's pinned default
+ * — a default should not change under anybody without a release saying so — and
+ * a default is not a menu entry: it is what you get by not choosing.
  *
  * Declared rather than discovered because Claude Code cannot be asked: there is
  * no `model list` verb, only `--model` and this set of aliases. Growing the list
@@ -56,7 +60,6 @@ export const MODELS: readonly { id: string; label: string; note?: string }[] = [
   { id: 'opus', label: 'Opus', note: 'most capable' },
   { id: 'sonnet', label: 'Sonnet', note: 'balanced' },
   { id: 'haiku', label: 'Haiku', note: 'fastest' },
-  { id: QUICK_MODEL, label: 'Haiku 4.5', note: 'pinned' },
 ];
 
 /**
