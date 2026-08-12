@@ -2907,11 +2907,18 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           const stateOf = (task: TaskRecord): string =>
             displayState(task.lifecycle, agentStatesOf(task));
           const waiting = live.filter((task) => markOf(stateOf(task)) === 'waiting');
-          const failed = live.filter((task) => markOf(stateOf(task)) === 'failed');
           const inFlight = live.filter((task) => markOf(stateOf(task)) === 'working');
+          /*
+           * **Failed sits in `Resting`**, not in a section of its own.
+           *
+           * A run that failed is not doing anything — which is what `Resting`
+           * means — and its `red` square already says the rest. A `Failed`
+           * heading would split "nothing is happening here" across two places
+           * to look, for a state whose whole signal is one mark.
+           */
           const resting = live.filter((task) => {
             const mark = markOf(stateOf(task));
-            return mark !== 'waiting' && mark !== 'failed' && mark !== 'working';
+            return mark !== 'waiting' && mark !== 'working';
           });
 
           /**
@@ -3083,17 +3090,32 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           };
 
           section('waiting', 'Waiting on you', waiting, true);
-          // Failed rides with `Waiting on you` rather than getting a section of
-          // its own: a run that failed IS your move, and §3 draws both as the
-          // same square for that reason. A fifth heading would split one
-          // question across two places to look.
-          section('failed', 'Failed', failed);
           section('flight', 'In flight', inFlight);
           section('resting', 'Resting', resting);
-          // Finished work leaves the list and becomes a count at the foot — it
-          // stops competing with the rest for the eye, which is the one thing
-          // you asked the sidebar for by closing a task.
-          section('shipped', 'Shipped', done);
+
+          /*
+           * **Shipped is ONE ROW pinned to the foot, not a section.**
+           *
+           * §1: "a Shipped this week footer row pinned to the bottom with
+           * `margin-top: auto`". Finished work LEAVES the list and becomes a
+           * count — drawing it as a heading with fourteen task rows under it
+           * puts the work you are done with back in the list you are reading,
+           * which is the one thing closing a task was supposed to stop.
+           *
+           * The count is the content, so the row is drawn even at zero: a rail
+           * whose foot appears and disappears as the week turns over is a rail
+           * that moves under the cursor for no reason the reader can see.
+           */
+          rows.push({
+            id: 'group:shipped',
+            label: 'Shipped this week',
+            description: String(done.length),
+            tint: 'done',
+            // The foot, and the shell pins it — the same `margin-top: auto`
+            // mechanism the sidebar already had for a view's own footer.
+            collapsed: true,
+            command: { id: TASK_COMMANDS.expandTabs, args: { task: 'group:shipped' } },
+          });
 
           return Promise.resolve(rows);
         },
