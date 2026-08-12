@@ -31,9 +31,26 @@ const MAX_HEURISTIC_WORDS = 6;
  * "#shepherd I wanna…"). Each alternative ends at a word boundary followed by
  * whitespace *or the end of the string*, so a brief that is nothing but filler
  * strips to nothing rather than keeping its last word.
+ *
+ * `in <repo>` is the newest of them and the narrowest on purpose. It matches only
+ * the two shapes that are unmistakably a repo — one with a comma after it
+ * (`in shepherd , check…`) or a hyphenated name (`in ai-harness-pulse check…`) —
+ * because the greedy version eats the subject of any brief that opens on a place
+ * (`in production the retry loop hangs`). Naming the repo in the name is
+ * redundant either way: the card already carries it as a chip.
  */
 const FILLER =
-  /^(?:#\w+(?:\s+|$)|(?:hey|hi|ok|okay|so|please|lets|let's)(?:\s+|$)|(?:can|could|would)\s+you(?:\s+|$)|i\s+(?:wanna|want\s+to|need\s+to)(?:\s+|$)|i'?d\s+like\s+to(?:\s+|$)|we\s+(?:should|need\s+to)(?:\s+|$)|help\s+me(?:\s+|$))+/i;
+  /^(?:#\w+(?:\s+|$)|in\s+(?:[\w.]+-[\w.-]+|[\w.-]+\s*,)(?:\s+|$)|(?:hey|hi|ok|okay|so|please|lets|let's)(?:\s+|$)|(?:can|could|would)\s+you(?:\s+|$)|i\s+(?:wanna|want\s+to|need\s+to)(?:\s+|$)|i'?d\s+like\s+to(?:\s+|$)|we\s+(?:should|need\s+to)(?:\s+|$)|help\s+me(?:\s+|$))+/i;
+
+/**
+ * A URL is not a word.
+ *
+ * `can you handle this please: https://browserstack…` spends the whole word
+ * budget on a link and then truncates it mid-host, which is how two unrelated
+ * tasks ended up with byte-identical rows. The repo is already a chip on the
+ * card and the link is in the brief; neither belongs in a name a person scans.
+ */
+const URL_WORD = /\bhttps?:\/\/\S+/gi;
 
 /**
  * Words a name must not END on.
@@ -138,6 +155,10 @@ export function heuristicName(brief: string): string | undefined {
 
   const sentence = firstLine.split(/(?<=[.!?])\s/)[0] ?? firstLine;
   const words = sentence
+    // Links go before the filler strip, so a brief that is only a link and an
+    // opening (`can you handle this: https://…`) strips to nothing and the
+    // caller keeps what the user typed rather than getting half a hostname.
+    .replace(URL_WORD, '')
     .replace(FILLER, '')
     .replace(/[.!?]+$/, '')
     .replace(/\s+/g, ' ')
@@ -152,5 +173,11 @@ export function heuristicName(brief: string): string | undefined {
   while (kept.length > 1 && words.length > MAX_HEURISTIC_WORDS && DANGLING.test(kept.at(-1) ?? '')) {
     kept.pop();
   }
-  return kept.join(' ');
+  // A name is not a sentence fragment. Stripping the filler off `can you handle
+  // this please: …` leaves the colon that was pointing at the rest of the brief,
+  // and a cut at six words lands on a comma often enough to be worth one line.
+  // `…` is in the class because the composer's own `titleOf` appends one when it
+  // caps the brief's first line, and that title is an input here.
+  const name = kept.join(' ').replace(/[\s.,:;!?…-]+$/, '');
+  return name === '' ? undefined : name;
 }

@@ -681,11 +681,34 @@ body.sh-dragging {
   padding: 0;
   display: flex;
   flex-direction: column;
-  /* 7 — §1's section gap. Tighter than the app's other stacks on purpose: these
-     are siblings in one list, and a wider gap makes each card read as its own
-     region rather than as one entry among several. */
-  gap: var(--sh-space-snug);
+  /*
+   * NO gap. **The row height is the rhythm** — that is what "one fixed row
+   * height whatever a row says" buys, and a gap spends it.
+   *
+   * This was 7, on the argument that siblings in one list want a little air. The
+   * air was the problem: at 34 + 7 the pitch is 41 and a rail of six resting
+   * tasks reads as six regions rather than one column, which is the same
+   * complaint that made the card earn its treatment in the first place. It also
+   * put the arithmetic out of step with itself — `.sh-rows-foot-scroll` caps the
+   * drawer at `7 * row-height`, a ceiling that showed five and a half rows for
+   * as long as the gap existed.
+   *
+   * A card that is NOT dense keeps its own gutter (`task-card.css`), which is
+   * the honest place for it: a bordered box needs separating from the next box,
+   * and a row does not.
+   */
+  gap: 0;
 }
+
+/*
+ * A heading still needs air above it, and it is the ONE thing that does.
+ *
+ * With no gap in the list, a section label lands directly on the last row of the
+ * section before it and the rule reads as that row's underline. Only above, and
+ * only when something precedes it: the first heading in a view sits against the
+ * sky strip, which already resolves into the canvas.
+ */
+.sh-rows li + li > .sh-ui-section-label { margin-top: var(--sh-space-md); }
 
 /*
  * A contributed row draws its own surface, so the host is a bare box.
@@ -710,7 +733,28 @@ body.sh-dragging {
  * the grower had its `flex-grow: 1` and 468px of room the entire time, which is
  * why three plausible rewrites of the SELECTOR changed nothing.
  */
-.sh-rows-foot { margin-top: auto; display: flex; flex-direction: column; min-height: 0; }
+.sh-rows-foot {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  /*
+   * The seam that says the live list ended.
+   *
+   * A real `border-top`, on the container rather than on the row: `Row` forbids
+   * a border on itself (a 1px edge eats a pixel of the content box and knocks
+   * everything flex-centred half a pixel out), and this box has no such
+   * constraint. It also spans the rail, where the row is inset by its own
+   * margin — so the hairline reads as structure rather than as an underline
+   * belonging to whichever row happens to sit above it.
+   *
+   * It replaces the trailing rule a `SectionLabel` draws. The foot cannot have
+   * that one: a rule running through a box that fills on hover reads as a
+   * mis-paint, and the fill is what says the handle is a control.
+   */
+  border-top: var(--sh-hairline) solid var(--sh-line);
+  padding-top: var(--sh-space-sm);
+}
 
 /*
  * Seven finished tasks, then a scroller — the same shape (and the same
@@ -718,6 +762,10 @@ body.sh-dragging {
  * reason: a list that is allowed to grow without limit stops being a footer.
  * `flex-shrink` lets it give the space back when the sidebar is short, so the
  * cap is a ceiling rather than a reserved block.
+ *
+ * The multiplication is exact now that `.sh-rows` has no gap. It was not before:
+ * the pitch was `row-height + 7`, so "seven then scroll" showed five and a half
+ * and clipped the sixth mid-row.
  */
 .sh-rows-foot-scroll {
   max-height: calc(7 * var(--sh-row-height));
@@ -751,6 +799,45 @@ body.sh-dragging {
  * task made it look live. Selecting a row says where you are; it does not change
  * what the row IS.
  */
+
+/*
+ * The drawer handle — a heading that happens to be clickable.
+ *
+ * **It is a ROW, so it takes the row's type size**, and the hierarchy is carried
+ * by weight and by one luminance step rather than by shrinking it. The first
+ * attempt borrowed `SectionLabel`'s 11.5 and produced the exact inversion this
+ * language is supposed to prevent: a label at 11.5 / `textMute` sitting over the
+ * titles it names at 13 / `textDim` — smaller AND dimmer than its own contents,
+ * which reads as a caption belonging to the row above it. A heading may be quiet
+ * or it may be small; it may not be both while the thing it heads is neither.
+ *
+ * So: same 13px, 600 against the rows' 400, and `textFaint` one step over the
+ * `textMute` the shipped titles drop to. The order down the drawer is now
+ * name → titles → counts and stamps, and no step is skipped.
+ *
+ * `color` is set on the ROW, not on the label, because the chevron is an `Icon`
+ * and every icon paints in `currentColor` — styling only the label left the
+ * glyph inheriting `Row`'s own `--sh-text`, which measured `#EDEDED` and made
+ * the disclosure arrow the brightest thing in the rail.
+ *
+ * Kept HERE and keyed off `data-foot` for the reason the dim rule above is: a
+ * primitive does not learn what a foot is, and `Row` already exports the class
+ * names for exactly this (`rowClasses`).
+ */
+.sh-side .sh-ui-row[data-foot] {
+  color: var(--sh-text-faint);
+}
+
+.sh-side .sh-ui-row[data-foot] .sh-ui-row__label {
+  font-weight: 600;
+}
+
+/* The count, at the far end and two steps under the name it counts — the same
+   relationship `SectionLabel` draws between its label and its own count. */
+.sh-side .sh-ui-row[data-foot] .sh-ui-row__meta {
+  font-size: var(--sh-font-size-nano);
+  color: var(--sh-text-ghost);
+}
 
 /*
  * The sidebar's own header: what this list is, and the one control that adds to

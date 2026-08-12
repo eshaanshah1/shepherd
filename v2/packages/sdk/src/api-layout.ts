@@ -284,6 +284,18 @@ export interface TreeItem {
    */
   readonly root?: string;
   readonly icon?: string;
+  /**
+   * This row opens something, and right now it is shut.
+   *
+   * Drawn today on a `foot` row only, where the dock turns it into a chevron in
+   * the leading slot and reads `description` as the count beside it — the shape
+   * "finished work leaves the list and becomes a count at the foot" asks for.
+   * Elsewhere it is still declaration-only: the dock draws no nested children,
+   * so a chevron on an ordinary row would promise an expansion nothing performs.
+   *
+   * Absent means the row opens nothing. That is not the same as `false`, which
+   * means it opens something and is currently open.
+   */
   readonly collapsed?: boolean;
   /**
    * Invoked when the row is clicked, attributed to the **contributing

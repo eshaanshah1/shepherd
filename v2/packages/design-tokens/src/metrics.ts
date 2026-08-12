@@ -30,10 +30,18 @@
 // (design-system spec §7, answer 1).
 
 /**
- * The density modes, Synara's (`lib/appDensity.ts:6-71`). Only `comfortable`
- * ships; the other two exist so the derivation is exercised at a factor that is
- * not 1 — a scale that has only ever been evaluated at its identity is a scale
- * nobody has tested.
+ * The density modes, Synara's (`lib/appDensity.ts:6-71`).
+ *
+ * **`compact` ships.** The rail spent a while at `comfortable`, where the pitch
+ * is one 34px row with no gap between rows — correct by the language and still
+ * loose to read, because a rail of finished tasks is one short line per 34px
+ * box. Density is the knob built for exactly that: it moves heights and spacing
+ * together and leaves type alone, so the rows tighten without the labels
+ * shrinking.
+ *
+ * The other two are kept because a scale evaluated only at the factor it ships
+ * at is a scale nobody has tested — and `comfortable` is still the one the
+ * design language's stated numbers (34 / 28 / 24) describe.
  */
 export const densities = {
   compact: 0.85,
@@ -53,7 +61,7 @@ export interface ScaleInputs {
 
 export const defaultScaleInputs: ScaleInputs = {
   baseFontSize: 13,
-  density: densities.comfortable,
+  density: densities.compact,
 };
 
 /**
@@ -107,10 +115,21 @@ export const ratios = {
     lg: 2.62, //     34px, = row
   },
   /**
-   * The chrome bands, which are fixed furniture rather than content: a titlebar
-   * is 44 because the traffic lights are, and a rail is 332 because that is how
-   * wide a task's title plus its metadata needs to be. Density-scaled like every
-   * other height, so a compact user gets a compact frame.
+   * The chrome bands, which are fixed furniture rather than content.
+   *
+   * **Three of them are density-EXEMPT, and the old comment said why without
+   * acting on it**: "a titlebar is 44 because the traffic lights are, and a rail
+   * is 332 because that is how wide a task's title plus its metadata needs to
+   * be" — an OS constant and a content measurement. Neither is a spacing
+   * preference, so neither follows one. The sky strip joins them because it is a
+   * DRAWING: `sky-strip.tsx` places its stars, hills and sheep at literal px in
+   * a 124px box and says in as many words that "a scene that reflowed with the
+   * density mode would not be the same scene" — at 0.85 the box became 105 and
+   * the scene did not move with it.
+   *
+   * The exemption follows `radius`, which is base-scaled and not density-scaled
+   * for the same shape of reason. What still scales is what is genuinely rhythm:
+   * a tab, a pane head, a tab strip.
    */
   band: {
     tab: 2.15, //      28px
@@ -304,9 +323,11 @@ export function deriveMetrics(inputs: ScaleInputs = defaultScaleInputs): Metrics
       tab: px(base, ratios.band.tab, density),
       paneHead: px(base, ratios.band.paneHead, density),
       tabStrip: px(base, ratios.band.tabStrip, density),
-      titlebar: px(base, ratios.band.titlebar, density),
-      skyStrip: px(base, ratios.band.skyStrip, density),
-      rail: px(base, ratios.band.rail, density),
+      // Density-exempt — see the `band` ratios. An OS constant, a drawing, and a
+      // content measurement; none of the three is a spacing preference.
+      titlebar: px(base, ratios.band.titlebar),
+      skyStrip: px(base, ratios.band.skyStrip),
+      rail: px(base, ratios.band.rail),
     },
     space: {
       hair: px(base, ratios.space.hair, density),

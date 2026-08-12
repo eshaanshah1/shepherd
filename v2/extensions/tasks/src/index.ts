@@ -2054,12 +2054,42 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           slugify(named ?? heuristicName(args.brief ?? '') ?? args.title),
           store.takenSlugs(),
         );
+        /**
+         * The ROW LABEL gets the heuristic too — read off the proposed TITLE,
+         * not off the brief.
+         *
+         * It used to reach only the slug, so a create with no `name` — the model
+         * off, signed out, or simply slower than the composer's speculative ask
+         * — got a sane branch and a row label that was the whole opening of the
+         * brief. That is how the rail filled with
+         * `can you handle this please: https://brow…`, twice, byte-identical:
+         * the composer's `titleOf` is the brief's first line capped at 72, so
+         * the ellipsis was the title's own and two links to the same host made
+         * one unreadable row repeated. §6 says a label is 1–3 words and §5 says
+         * a task is named once, in the rail; a label that is the paragraph fails
+         * the only job the rail has.
+         *
+         * **The title rather than the brief**, because the heuristic is a
+         * cleanup of a proposed NAME and the two callers propose different
+         * things. It leaves a real one alone — `--title 'Fix login'` is already
+         * three words with no filler and comes back unchanged — while stripping
+         * the opening, the link and the truncation mark off one that is a slice
+         * of a brief. Reading the brief instead would overwrite the name a CLI
+         * caller typed with a guess about the paragraph underneath it. The slug
+         * keeps reading the brief: it has always read it, it is tested against
+         * it, and a branch name wants the fuller source.
+         *
+         * `settleName` may still improve on this; it is what the row says in the
+         * meantime, and for good when the ask comes back empty.
+         */
+        const title = named ?? heuristicName(args.title) ?? args.title;
         const task: TaskRecord = {
           schemaVersion: 1,
           id: nextId(),
           slug,
-          // One call answers both the branch and the row label (D18).
-          title: named ?? args.title,
+          // One call answers both the branch and the row label (D18) — and when
+          // it does not answer at all, the heuristic still answers both.
+          title,
           brief: args.brief ?? '',
           lifecycle: 'draft',
           // Expanded HERE rather than in the composer, so the CLI's `--repo`
@@ -3215,6 +3245,14 @@ function markOf(state: string): string {
     case 'error':
     case 'failed':
       return 'failed';
+    /*
+     * `archived` is what `displayState` returns for finished work — `done` is a
+     * lifecycle value nothing writes. Without it the card drew a resting ring on
+     * every task in the Shipped drawer, which is the one place a check is the
+     * whole point: §3 gives shipped its own mark precisely because the row has
+     * left the live list and the mark is all that says why.
+     */
+    case 'archived':
     case 'done':
       return 'shipped';
     default:

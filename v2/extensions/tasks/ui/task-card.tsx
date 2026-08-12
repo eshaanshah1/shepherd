@@ -152,7 +152,15 @@ export function TaskCard({ item, selected, invoke }: ExtensionRowProps): ReactEl
         </span>
       </button>
 
-      {card.summary === undefined ? null : <p className="sh-task-card__summary">{card.summary}</p>}
+      {/*
+        Guarded by `dense` like every block below it, and the guard is the point
+        rather than symmetry: a dense card IS the fixed-height row, and a summary
+        under one would add two lines to it — rule 9 broken through a side door,
+        by a field nothing populates today and something will.
+      */}
+      {dense || card.summary === undefined ? null : (
+        <p className="sh-task-card__summary">{card.summary}</p>
+      )}
 
       {dense || (card.diff === undefined && card.suite === undefined) ? null : (
         <div className="sh-task-card__diff">

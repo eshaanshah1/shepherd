@@ -2,14 +2,15 @@ import type { ComponentPropsWithRef, ReactElement, ReactNode } from 'react';
 import { cn } from './cn.ts';
 
 /**
- * `NEEDS YOU · 2 ────────────` — the micro-label that heads a list.
+ * `Waiting on you ──────────── 2` — the label that heads a list.
  *
- * Rule 5's instrument voice: uppercase, 10px, tracked, with the count as part of
- * the label rather than as a badge pill (which the anti-tells ban by name). It
- * survived the reference comparison deliberately — both reference apps went
- * sentence-case for their section headings and both are duller for it, and this
- * is the one place the language is allowed to sound like an instrument panel
- * rather than a document.
+ * **Sentence case, 11.5 / 600, no tracking.** §10 refuses uppercase micro-labels
+ * with tracking by name: this is the one string on the surface a reader scans
+ * rather than reads, and uppercase costs word shape, which is the thing scanning
+ * uses. Weight carries it instead. (This docstring argued the opposite for a
+ * while after the stylesheet had already been changed — the CSS is the one that
+ * was right.) The count is part of the label rather than a badge pill, which the
+ * refusals also ban.
  *
  * It is a HEADING, not a row: no hover, no selection, no fixed 12px slot. It
  * happens to be one row tall so the list has a single vertical rhythm, and that
