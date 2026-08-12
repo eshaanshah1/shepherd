@@ -38,6 +38,28 @@ export const QUICK_MODEL = 'claude-haiku-4-5';
 export const QUICK_MODELS: readonly string[] = [QUICK_MODEL, 'haiku', 'sonnet', 'opus'];
 
 /**
+ * **Every model this vendor will run** — `AgentKind.listModels`, and the only
+ * place these strings may live (D11).
+ *
+ * Aliases rather than dated ids, for `QUICK_MODELS`' reason: `--model sonnet`
+ * resolves to whatever the current Sonnet is, so a user's choice does not go
+ * stale the day a point release lands. The one pinned id is the quick-tier
+ * default, because a DEFAULT should not change under anybody without a release
+ * saying so.
+ *
+ * Declared rather than discovered because Claude Code cannot be asked: there is
+ * no `model list` verb, only `--model` and this set of aliases. Growing the list
+ * is one line here and reaches every surface that offers a model, which is what
+ * having the primitive buys.
+ */
+export const MODELS: readonly { id: string; label: string; note?: string }[] = [
+  { id: 'opus', label: 'Opus', note: 'most capable' },
+  { id: 'sonnet', label: 'Sonnet', note: 'balanced' },
+  { id: 'haiku', label: 'Haiku', note: 'fastest' },
+  { id: QUICK_MODEL, label: 'Haiku 4.5', note: 'pinned' },
+];
+
+/**
  * One non-interactive call, and why there are exactly two flags beyond the model.
  * All measured 2026-08-10 against a subscription login; the spec carries the
  * table.
@@ -187,6 +209,7 @@ export function claudeKind(): AgentKind {
      * them differently.
      */
     headless: { quickModel: QUICK_MODEL, quickModels: QUICK_MODELS, argv: quickArgv, parse: parseQuick },
+    listModels: () => MODELS,
   };
 }
 
