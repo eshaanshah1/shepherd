@@ -29,6 +29,24 @@ directories:
   output: release
   buildResources: build
 
+# The Electron the app is BUILT against is the Electron it is packaged with — the
+# copy `pnpm install` already unpacked, not a second one off the network.
+#
+# Without this electron-builder fetches its own via `@electron/get`, and that
+# fetch is two requests: the 122MB zip, then `SHASUMS256.txt` to verify it. A
+# zip that fails verification is never written to the cache, so a dropped
+# connection on the SECOND request throws away the first — and the next ship
+# downloads all 122MB again. That is the "why is it downloading every time",
+# and it is not a cache that needs warming: it is a cache that only fills on a
+# fully clean run.
+#
+# `node_modules/electron/dist` is resolved against this projectDir and holds
+# `Electron.app` at the exact version the `electron` devDependency pins, so the
+# packaged binary cannot drift from the one `pnpm dev` and the tests run. Ship
+# now works offline; a version bump is picked up by `pnpm install`, which is
+# where it should be.
+electronDist: node_modules/electron/dist
+
 # `out/` is what electron-vite produced; package.json's `main` names
 # `out/main/index.js` literally, so both must ship. node_modules is filtered by
 # electron-builder itself from the production dependency graph.
