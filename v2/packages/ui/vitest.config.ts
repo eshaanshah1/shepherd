@@ -22,9 +22,9 @@ export default defineConfig({
      * Measured before relying on it: jsdom runs the cascade for rules in a
      * `<style>` element (so `getComputedStyle(el).height` reflects which rule
      * won) and preserves custom-property declarations unresolved (so
-     * `getPropertyValue('--sh-surface')` returns `var(--sh-surface-raised)`
-     * rather than ''), and vite inlines the `@import` chain so one import of
-     * `styles.css` brings every component's rules with it. It does NOT lay
+     * `getPropertyValue('--sh-surface')` inside a composer returns
+     * `var(--sh-well)` rather than ''), and vite inlines the `@import` chain so
+     * one import of `styles.css` brings every component's rules with it. It does NOT lay
      * anything out — every element is 0×0 — so a test may assert what a rule
      * SAYS and never what it renders.
      */

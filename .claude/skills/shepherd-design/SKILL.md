@@ -58,8 +58,9 @@ Ask these in order. Most new UI never gets past question 3.
    sixth state because your feature feels different.
 2. **Can this go in an existing surface?** A rail section and a stage tab cost
    the user nothing to learn. A new panel costs them a new place to look.
-3. **Does it need a new primitive?** Almost certainly not — there are 22, and a
-   23rd is a conversation, not a commit. Compose first.
+3. **Does it need a new primitive?** Almost certainly not. Read
+   `packages/ui/src/` for the current set — one more is a conversation, not a
+   commit. Compose first.
 4. **What does it look like empty, loading, failed, and with one item?** If you
    cannot answer all four, you are not ready to build it.
 
@@ -141,10 +142,21 @@ A pane head names the **tree**, not the task. Focused is one border step
 dimmed pane is one whose live output you can no longer read while it is still
 running.
 
-### A settings surface
+### A settings page
 
-Not designed yet. When you need one, build it as `Field`s inside a `Modal` and
-raise the information architecture as a question rather than inventing it.
+**Read [ADR 0040](../../adr/0040-v2-settings-are-declared-in-a-manifest-and-held-by-the-kernel.md)
+before building one** — it is the normative account and this is only the shape.
+
+⌘, takes over the window. The frame is the shell's; the pages are contributed,
+declared as `contributes.settings` in a manifest and held by the kernel, so the
+screen lists every extension's settings with zero extensions activated. Keys sit
+in the declaring extension's own namespace, derived by the host from the manifest
+id — a key outside it is refused and the refusal fails the whole activation.
+Only values that differ from a declared default are stored.
+
+`Field`s cover a row. Anything a row cannot express is a **component page**,
+which is what proves the escape hatch is a mechanism rather than a paragraph
+(`worktree-hook` is the worked example).
 
 ---
 
@@ -251,6 +263,13 @@ slow one still answers.
 ---
 
 ## 9. Before you open the PR
+
+Some of this is machine-checked and the rest is yours to check by eye. Know which:
+`packages/ui/src/refusals.css.test.ts` asserts §10's stylesheet-level refusals over
+the whole primitive sheet, and the per-component tests assert each one's own rules
+through `@shepherd/ui/css-rules`. **A claim you cannot assert is a claim to verify
+manually, not one to skip** — the composer shipped three defects that 2,000 green
+tests could not see, all three properties of the CSS rather than of the markup.
 
 - Every colour and length is a token.
 - Every mark has a tooltip and an accessible name.
