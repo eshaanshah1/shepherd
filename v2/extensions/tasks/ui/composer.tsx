@@ -763,32 +763,12 @@ export function TaskComposer({
         */}
         <div className="sh-composer-controls">
           {/*
-            The button exists because `#` is invisible until somebody has been
-            told about it, and this is the telling — it appends a `#` at the end
-            of the brief, focuses the editor and opens the picker, so the gesture
-            it teaches is the gesture it performs. Same rule as the CLI's
-            discoverability: an affordance nobody can find is not an affordance.
+            The scope is expressed by the PILLS in the brief and by the scope
+            rail below — a `#repo` button and a mono "no repo scoped" line said
+            the same thing a third and fourth time, in the one row that has to
+            stay readable. §5: the controls inside a well are ghost text divided
+            by rules, and everything else is somewhere it already was.
           */}
-          <button
-            type="button"
-            className="sh-composer-hash"
-            data-testid="composer-hash"
-            onClick={() => promptRef.current?.appendText("#")}
-          >
-            <span className="sh-composer-hash-glyph" aria-hidden="true">
-              #
-            </span>
-            repo
-          </button>
-          {/*
-            What the sentence currently scopes, in words. It reads the derived
-            scope, so it cannot disagree with the pills — and its zero case says
-            where an unscoped task LANDS rather than reporting a missing field.
-          */}
-          <span className="sh-composer-scope" data-testid="composer-scope">
-            {scopeLine(scope.map((repo) => repo.name))}
-          </span>
-          <span className="sh-composer-spacer" />
           {/*
             WHERE this task will be made — and drawn only when there is a choice.
 
@@ -856,6 +836,7 @@ export function TaskComposer({
             send. Feedback matched to duration (§4) puts a local action under
             100ms in the "show nothing" band anyway.
           */}
+          <span className="sh-composer-spacer" />
           <SendButton
             type="submit"
             label="Start this task"

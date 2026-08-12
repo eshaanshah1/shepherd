@@ -970,8 +970,7 @@ body.sh-dragging {
  * The divider between the two selects — `1px × 16`, drawn on the second one so
  * a row with only one control has no orphaned rule beside it.
  */
-.sh-composer-hash + .sh-composer-hash::before,
-.sh-composer-scope + .sh-composer-hash::before {
+.sh-composer-hash + .sh-composer-hash::before {
   content: '';
   inline-size: var(--sh-hairline);
   block-size: 16px;
