@@ -233,10 +233,11 @@ export function TaskComposer({
   const [machines, setMachines] = useState<readonly Machine[]>([LOCAL_MACHINE]);
   const [machine, setMachine] = useState<string>(LOCAL_MACHINE.id);
   /**
-   * Which model the task's agent opens on — `null` is "whatever the kind
-   * advertises", which is the honest default: the app does not get to have an
-   * opinion about a vendor's default, and a hardcoded one goes stale the week
-   * the vendor ships a new tier.
+   * Which model the task's agents open on, pre-filled with the resolved default.
+   *
+   * `null` means "not asked yet", never a choice — the select is not nullable, so
+   * it cannot become one. Which model that is stays the agent layer's answer: an
+   * id hardcoded here would go stale the week the vendor ships a tier (D11).
    */
   const [model, setModel] = useState<string | null>(null);
   const [models, setModels] = useState<readonly { value: string; label: string; description?: string }[]>([]);
@@ -319,6 +320,15 @@ export function TaskComposer({
           return [{ value: id, label, ...(typeof kind === 'string' ? { description: kind } : {}) }];
         }),
       );
+    });
+    // A second ask, because it is a different question: the list is what exists,
+    // this is the user's setting resolved against it.
+    void invoke('agents.defaultModel', {}).then((result) => {
+      if (!alive || !result.ok) return;
+      const chosen = (result.value as { model?: unknown } | null)?.model;
+      if (typeof chosen !== 'string' || chosen === '') return;
+      // A pre-fill only — never over a choice already made.
+      setModel((was) => was ?? chosen);
     });
     return () => {
       alive = false;
@@ -846,13 +856,22 @@ export function TaskComposer({
             row. `Select` is the primitive; a control comes from the design
             system.
           */}
+          {/*
+            NOT `nullable`: there is no "default" model to pick, there is a model
+            you get by default and it is shown selected. `busy` covers the beat
+            before the asks land.
+          */}
           <Select
             className="sh-composer-select sh-composer-select--model"
             label="Model"
             value={model}
             options={models}
-            nullable
-            onChange={setModel}
+            busy={models.length === 0}
+            // A non-nullable select cannot answer null; ignoring one is the only
+            // reading that does not silently unset the model.
+            onChange={(next) => {
+              if (next !== null) setModel(next);
+            }}
           />
           <Select
             className="sh-composer-select sh-composer-select--placement"

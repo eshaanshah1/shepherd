@@ -64,6 +64,14 @@ export const AGENTS_COMMANDS = {
    * once and it made the composer offer a menu of models chosen for being cheap.
    */
   listModels: 'agents.listModels',
+  /**
+   * Which model a NEW interactive agent opens on — resolved, never null.
+   *
+   * `listModels` says what exists; this says which you get without choosing. A
+   * surface reading the raw setting would have to render "unset" as an option,
+   * and "unset" is not a model — it is this extension's question to answer.
+   */
+  defaultModel: 'agents.defaultModel',
 } as const;
 
 /**
@@ -82,6 +90,14 @@ export const QUICK_KIND_SETTING = 'agents-core.quickKind';
 export const QUICK_MODEL_SETTING = 'agents-core.quickModel';
 
 /**
+ * Which model a new interactive agent opens on. Null = the kind's own default.
+ *
+ * Stored nullable and read resolved (`agents.defaultModel`): a concrete id here
+ * would name a vendor's model and freeze today's answer into every install.
+ */
+export const DEFAULT_MODEL_SETTING = 'agents-core.defaultModel';
+
+/**
  * The quick tier, as settings.
  *
  * Both enums resolve their options through a COMMAND rather than a static list,
@@ -98,9 +114,26 @@ export const QUICK_MODEL_SETTING = 'agents-core.quickModel';
 export const AGENTS_MODELS_PAGE: SettingsPage = {
   id: 'agents.models',
   title: 'Models',
-  description: 'Which agent and model answer the short questions the app asks on your behalf.',
+  description: 'Which model new agents open on, and which one answers the short questions the app asks on your behalf.',
   order: 100,
   settings: [
+    {
+      // First and in its own group: the two rows under it are about a tier
+      // nobody interacts with.
+      key: DEFAULT_MODEL_SETTING,
+      type: 'enum',
+      label: 'Default model',
+      group: 'New agents',
+      /*
+       * "Default" survives on this row and nowhere else: a settings page is static
+       * data (ADR 0040), so it cannot compute one, and a concrete id here would
+       * name a vendor's model. Hence the description spelling out what it means.
+       */
+      description: 'What a new agent opens on. Default lets the agent choose, which is Opus for Claude Code. The composer starts here and can be changed per task.',
+      default: null,
+      nullable: true,
+      choicesFrom: AGENTS_COMMANDS.listModels,
+    },
     {
       key: QUICK_KIND_SETTING,
       type: 'enum',
@@ -181,9 +214,12 @@ export const agentsCoreManifest: Manifest = {
       { id: AGENTS_COMMANDS.resumeCommand, title: 'Agents: Resume Command' },
       { id: AGENTS_COMMANDS.complete, title: 'Agents: Ask the Quick Model' },
       { id: AGENTS_COMMANDS.quickModel, title: 'Agents: Quick Model' },
-      // No title: it is a verb to be ASKED, by the settings screen, and a palette
-      // entry for it would run a command whose entire effect is a return value.
+      // No title: they are verbs to be ASKED — by the settings screen and by the
+      // composer — and a palette entry for one would run a command whose entire
+      // effect is a return value.
       { id: AGENTS_COMMANDS.quickChoices },
+      { id: AGENTS_COMMANDS.listModels },
+      { id: AGENTS_COMMANDS.defaultModel },
     ],
     settings: [AGENTS_MODELS_PAGE],
   },

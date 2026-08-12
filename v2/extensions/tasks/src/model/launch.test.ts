@@ -20,6 +20,32 @@ describe('planLaunch', () => {
     expect(planLaunch({ promptFile: '/tmp/p.txt', prompt: '   ' }).command).toMatch(/; claude$/);
   });
 
+  it('passes the picked model as --model, before the prompt argument', () => {
+    const plan = planLaunch({ promptFile: '/tmp/p.txt', prompt: 'hi', model: 'fable' });
+    expect(plan.command).toMatch(/; claude --model 'fable' "\$p"$/);
+  });
+
+  it('passes the model with no prompt too', () => {
+    const plan = planLaunch({ promptFile: '/tmp/p.txt', prompt: '', model: 'haiku' });
+    expect(plan.command).toMatch(/; claude --model 'haiku'$/);
+  });
+
+  it('omits the flag entirely when no model was picked', () => {
+    // Absent is the DEFAULT entry and every task created before models were
+    // pickable. Passing `--model ''` would ask the vendor to resolve an empty
+    // alias, which is a launch failure rather than a default.
+    for (const model of [undefined, '', '   ']) {
+      const plan = planLaunch({ promptFile: '/tmp/p.txt', prompt: 'hi', ...(model === undefined ? {} : { model }) });
+      expect(plan.command).not.toContain('--model');
+    }
+  });
+
+  it('quotes a model that is not one of the ids the picker offers', () => {
+    // It crossed a command boundary as a string and lands in a shell line.
+    const plan = planLaunch({ promptFile: '/tmp/p.txt', prompt: 'hi', model: "x'; rm -rf /" });
+    expect(plan.command).toContain(`--model 'x'\\''; rm -rf /'`);
+  });
+
   it('quotes a path containing a single quote instead of ending the argument', () => {
     // A repo called `it's` is not exotic, and unescaped it turns the rest of the
     // line into shell commands.

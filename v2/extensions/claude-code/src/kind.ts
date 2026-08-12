@@ -43,7 +43,7 @@ export const QUICK_MODELS: readonly string[] = [QUICK_MODEL, 'haiku', 'sonnet', 
  *
  * Aliases ONLY, and no dated ids. `--model sonnet` resolves to whatever the
  * current Sonnet is, so a user's choice does not go stale the day a point
- * release lands — and a list of three tiers is a choice somebody can make,
+ * release lands — and a list of four tiers is a choice somebody can make,
  * where a list that also carries `claude-haiku-4-5` asks them to know what the
  * difference is between that and `haiku`.
  *
@@ -57,10 +57,21 @@ export const QUICK_MODELS: readonly string[] = [QUICK_MODEL, 'haiku', 'sonnet', 
  * having the primitive buys.
  */
 export const MODELS: readonly { id: string; label: string; note?: string }[] = [
-  { id: 'opus', label: 'Opus', note: 'most capable' },
+  { id: 'fable', label: 'Fable', note: 'deepest reasoning' },
+  { id: 'opus', label: 'Opus', note: 'complex agentic work' },
   { id: 'sonnet', label: 'Sonnet', note: 'balanced' },
   { id: 'haiku', label: 'Haiku', note: 'fastest' },
 ];
+
+/**
+ * What a new agent opens on when nobody has chosen, and the only place that
+ * decision may be made (D11).
+ *
+ * Opus rather than the top of the list: Fable is the most capable tier and prices
+ * accordingly, and a default is what you get without asking. Stated rather than
+ * `MODELS[0]`, so reordering the menu cannot silently re-point every new agent.
+ */
+export const DEFAULT_MODEL = 'opus';
 
 /**
  * One non-interactive call, and why there are exactly two flags beyond the model.
@@ -213,6 +224,7 @@ export function claudeKind(): AgentKind {
      */
     headless: { quickModel: QUICK_MODEL, quickModels: QUICK_MODELS, argv: quickArgv, parse: parseQuick },
     listModels: () => MODELS,
+    defaultModel: DEFAULT_MODEL,
   };
 }
 

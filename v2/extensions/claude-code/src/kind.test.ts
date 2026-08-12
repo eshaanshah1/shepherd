@@ -3,6 +3,8 @@ import type { AgentEventInput, AgentState } from '@shepherd/ext-agents-core';
 import {
   CLAUDE_HOOK_TOPIC,
   claudeKind,
+  DEFAULT_MODEL,
+  MODELS,
   parseQuick,
   QUICK_MODEL,
   QUICK_MODELS,
@@ -233,6 +235,41 @@ describe('the quick tier default', () => {
 
   it('offers the cheaper tiers first, so the list reads as a ramp', () => {
     expect([...QUICK_MODELS]).toEqual(['claude-haiku-4-5', 'haiku', 'sonnet', 'opus']);
+  });
+});
+
+describe('the models this kind will run', () => {
+  it('is the four tiers, most capable first', () => {
+    expect(MODELS.map((model) => model.id)).toEqual(['fable', 'opus', 'sonnet', 'haiku']);
+  });
+
+  it('carries aliases only, so a choice does not go stale on a point release', () => {
+    // `--model sonnet` resolves to whatever the current Sonnet is.
+    for (const model of MODELS) {
+      expect(model.id).not.toMatch(/\d/);
+      expect(model.label).not.toBe('');
+    }
+  });
+
+  it('does not offer the quick tier default, which is a default and not a menu entry', () => {
+    expect(MODELS.map((model) => model.id)).not.toContain(QUICK_MODEL);
+  });
+
+  it('is what the kind advertises, so a surface that asks gets all four', () => {
+    expect(claudeKind().listModels?.()).toEqual(MODELS);
+  });
+
+  it('opens a new agent on Opus, which is a tier this vendor lists', () => {
+    // The membership check is the load-bearing half: a default outside the menu is
+    // a `--model` nobody can see, select, or change back to.
+    expect(DEFAULT_MODEL).toBe('opus');
+    expect(claudeKind().defaultModel).toBe(DEFAULT_MODEL);
+    expect(MODELS.map((model) => model.id)).toContain(DEFAULT_MODEL);
+  });
+
+  it('keeps the interactive default and the quick tier apart', () => {
+    // One field for both is how a task starts on the model chosen for being cheap.
+    expect(DEFAULT_MODEL).not.toBe(QUICK_MODEL);
   });
 });
 

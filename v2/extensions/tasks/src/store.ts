@@ -119,6 +119,14 @@ export interface TaskRecord {
   readonly repos: readonly RepoRef[];
   readonly sessions: readonly TaskSession[];
   readonly createdAt: number;
+  /**
+   * Which model this task's agents open on — absent means the kind's own default.
+   *
+   * On the record rather than passed to the first spawn, because a task outlives
+   * it: a workstream joining later and a restored task reattaching have to open
+   * on the same model. Absent on records written before it existed.
+   */
+  readonly model?: string;
   /** Present only while archived. Added later; `s.stored` reads old records fine. */
   readonly archives?: readonly RepoArchive[];
   /**
@@ -158,6 +166,7 @@ const taskSchema = s.stored({
   repos: s.array(repoSchema),
   sessions: s.array(sessionSchema),
   createdAt: s.int(),
+  model: s.optional(s.string()),
   archivedAt: s.optional(s.int()),
   archives: s.optional(
     s.array(

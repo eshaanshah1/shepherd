@@ -76,7 +76,11 @@
   position: absolute;
   top: calc(100% + var(--sh-space-xs));
   left: 0;
-  right: 0;
+  /* Sized to its widest option, never to the trigger: `Row`'s trailing area does
+     not shrink, so a list narrower than a row starves the label to nothing. */
+  inline-size: max-content;
+  min-inline-size: 100%;
+  max-inline-size: min(22rem, 80vw);
   z-index: 10;
   max-height: calc(var(--sh-row-height) * 8);
   overflow-y: auto;

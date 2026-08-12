@@ -70,15 +70,31 @@
         },
         {
           "id": "agents.quickModelChoices"
+        },
+        {
+          "id": "agents.listModels"
+        },
+        {
+          "id": "agents.defaultModel"
         }
       ],
       "settings": [
         {
           "id": "agents.models",
           "title": "Models",
-          "description": "Which agent and model answer the short questions the app asks on your behalf.",
+          "description": "Which model new agents open on, and which one answers the short questions the app asks on your behalf.",
           "order": 100,
           "settings": [
+            {
+              "key": "agents-core.defaultModel",
+              "type": "enum",
+              "label": "Default model",
+              "group": "New agents",
+              "description": "What a new agent opens on. Default lets the agent choose, which is Opus for Claude Code. The composer starts here and can be changed per task.",
+              "default": null,
+              "nullable": true,
+              "choicesFrom": "agents.listModels"
+            },
             {
               "key": "agents-core.quickKind",
               "type": "enum",

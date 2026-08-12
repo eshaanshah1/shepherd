@@ -156,6 +156,18 @@ export interface AgentKind {
    */
   listModels?(): readonly AgentModel[];
   /**
+   * Which of `listModels` a new INTERACTIVE agent opens on, unless the user has
+   * said otherwise. The vendor declares it, because a model id is the vendor's
+   * (D11).
+   *
+   * Not `headless.quickModel`: that one is chosen for costing nothing on a
+   * question nobody reads, this one for doing the work.
+   *
+   * Absent falls back to the first entry `listModels` returns — which is why that
+   * list is ordered rather than a set.
+   */
+  readonly defaultModel?: string;
+  /**
    * Fold one event into a transition, or refuse it with a reason.
    *
    * Called for sessions this kind has already adopted **and** for ones nothing
