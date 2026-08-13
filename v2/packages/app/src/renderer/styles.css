@@ -110,6 +110,9 @@ body.sh-dragging {
   flex-direction: column;
   height: 100%;
   background: var(--sh-surface);
+  /* The containing block for the titlebar, which floats over the body rather
+     than sitting above it in the column. */
+  position: relative;
 }
 
 /* --------------------------------------------------------------- titlebar */
@@ -121,10 +124,13 @@ body.sh-dragging {
  * that it was a second 38px band below a native titlebar — two headers stacked,
  * one of them saying only the app's own name back to you.
  *
- * What it carries is where you ARE (the task, then the pane), because that is
- * the only thing a titlebar owes you and it is the one fact the sidebar cannot
- * show while it is scrolled elsewhere. 44px is the height at which the lights
- * are centred with room for a real breadcrumb beside them.
+ * It draws NOTHING now. It reserves the lights' 84px, it is the drag region, and
+ * it floats over `.sh-body` so the app reaches the window's top edge underneath
+ * it — the rail's sky strip runs the whole way up and the lights sit on the
+ * scene. An opaque band here was a 44px lid over the one decorative surface in
+ * the app, and the only thing paying for it was the wordmark, which is gone.
+ *
+ * 44px is the height at which the lights are centred.
  */
 
 /*
@@ -137,8 +143,8 @@ body.sh-dragging {
    * 44 — a FIXED band, not a derived one.
    *
    * It used to be `control-md + 2 × space-md`, which described the bar as "a
-   * control with padding". That was true when the bar held cells; it holds a
-   * wordmark and the traffic lights now, and the traffic lights are 44 tall
+   * control with padding". That was true when the bar held cells; it holds the
+   * traffic lights and nothing else now, and they are 44 tall
    * whatever this app thinks its control scale is. Reading it from `band`
    * keeps the one number that must match macOS in the place every other fixed
    * band lives.
@@ -147,44 +153,34 @@ body.sh-dragging {
 }
 
 .sh-plate {
+  /*
+   * Over the body, not above it. No `z-index`: it is the first positioned child
+   * of `.sh-app`, so it paints over the unpositioned body and under every layer
+   * that comes after it in the tree — the settings takeover, a modal, the
+   * palette. A z-index here would put the drag region on top of a dialog.
+   */
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  height: var(--sh-plate-height);
   display: flex;
   align-items: center;
   gap: 10px;
-  height: var(--sh-plate-height);
-  flex: 0 0 auto;
   /* Clears the traffic lights, which the window keeps. */
   padding: 0 14px 0 84px;
-  /* `canvas`, not `surface`: the titlebar, the rail and the stage are ONE
-     ground, and the seams between them carry the hierarchy. */
-  background: var(--sh-canvas);
   /*
-   * Inset rather than `border-bottom`, and the reason is measured: with
-   * `border-box` a 1px border eats a pixel of the CONTENT box, and everything
-   * flex-centred in the band then lands half a pixel off the traffic lights.
-   * A box — a card, a chip, a field — uses a real border; it has four edges and
-   * nothing to line up with.
+   * No background and no bottom rule. Both existed to separate a band that said
+   * something from the app underneath it; with nothing drawn here, a fill is a
+   * lid and a hairline is a seam across a picture. The ground is whatever the
+   * body puts at the top of the window — the sky strip over the rail, the
+   * stage's own canvas over the rest.
    */
-  box-shadow: inset 0 calc(-1 * var(--sh-hairline)) 0 var(--sh-line);
   color: var(--sh-text-ghost);
   font-size: var(--sh-font-size-medium);
   /* No tracking. §6 refuses uppercase micro-labels with tracking, and the bar
      inherited both from Flock. */
   letter-spacing: 0;
   -webkit-app-region: drag;
-}
-
-/*
- * The app's name, and nothing else on the left.
- *
- * §1: the titlebar says the app's name and nothing else. What was here was a
- * `task / pane` breadcrumb, which restated the rail and the pane head at once.
- */
-.sh-wordmark {
-  font-size: 13.5px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: var(--sh-text);
-  white-space: nowrap;
 }
 
 .sh-plate-cell {
@@ -235,6 +231,14 @@ body.sh-dragging {
    * every one of them into a 2px trench.
    */
 
+  /*
+   * The titlebar's band, reserved. The plate floats over the whole width of the
+   * window, so without this the tab strip would sit under a drag region and a
+   * tab would not take a click. The rail deliberately does NOT reserve it — the
+   * sky strip is what the lights are meant to sit on.
+   */
+  padding-block-start: var(--sh-band-titlebar);
+
   /* The containing block for the find bar, which is the only thing that floats
      over the grid. Nothing else here is positioned. */
   position: relative;
@@ -255,7 +259,14 @@ body.sh-dragging {
  */
 .sh-find {
   position: absolute;
-  top: var(--sh-space-md);
+  /*
+   * An absolute offset is measured from the stage's padding EDGE, which the
+   * stage's own top padding does not move — so the titlebar band has to be added
+   * here or the fallback corner lands under the drag region. The measured anchor
+   * (`usePaneAnchor`) needs no such thing: it reads a real pane's top, and that
+   * is already below the padding.
+   */
+  top: calc(var(--sh-band-titlebar) + var(--sh-space-md));
   right: var(--sh-space-md);
   z-index: 20;
 

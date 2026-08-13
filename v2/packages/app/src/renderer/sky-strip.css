@@ -5,13 +5,25 @@
  * DRAWING. A scene that reflowed with the density mode would not be the same
  * scene, and the sheep's 3px grid is the character of it.
  *
- * The two gradients ARE the exception to "no gradient fills" in §6, and they are
- * the exception because this is the one decorative surface. Nothing else in the
- * app may have one.
+ * The three gradients ARE the exception to "no gradient fills" in §6, and they
+ * are the exception because this is the one decorative surface. Nothing else in
+ * the app may have one.
  */
 
 .sh-sky {
   position: relative;
+  /*
+   * 124, unchanged — and it starts at the WINDOW'S TOP EDGE now, because the
+   * plate floats over it and reserves nothing here. Nothing was added and
+   * nothing inside moved: the same drawing, one titlebar band higher, so the
+   * task list begins 44px sooner than it ever has.
+   *
+   * The temptation is to pad the top back out so the lights get their own clear
+   * sky. Don't: a strip of 124 + 44 is the bar this change deleted, drawn as a
+   * picture instead of a fill, with the list at exactly the height it was. The
+   * lights land in the scene's own top band, where the two stars nearest them
+   * fall in the gap between the first two lights and just under the third.
+   */
   block-size: var(--sh-band-sky-strip);
   /* The whole point: the scene is clipped to the strip. Without this the hills,
      which are 400px wide ellipses, would paint over the task list. */
@@ -51,6 +63,31 @@
       var(--sh-scene-sky-low) 52%,
       var(--sh-canvas) 100%
     );
+}
+
+/*
+ * The foot, dissolved.
+ *
+ * The sky already resolves into `canvas` on its own — its last stop IS the
+ * ground the list sits on — but the hills are flat fills that `overflow: hidden`
+ * cuts off square, so the strip ended on a hard rule the width of the rail with
+ * a lit band above it and nothing below. A picture with a ruled edge is a
+ * banner; the strip is meant to be a window.
+ *
+ * On the SCENE rather than on `.sh-sky`, so it paints over the hills (an
+ * `::after` is the last child) and under `.sh-sky__head` — a fade over the
+ * panel's name would wash out the one type step this size in the app.
+ *
+ * 40 ≈ the near hill's own height, which is what has to disappear; the two
+ * behind it are already most of the way to `canvas` where they cross it.
+ */
+.sh-sky__scene::after {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  block-size: calc(var(--sh-space-huge) * 2);
+  background: linear-gradient(180deg, transparent 0%, var(--sh-canvas) 100%);
 }
 
 .sh-sky__star {
