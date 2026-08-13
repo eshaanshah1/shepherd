@@ -3895,3 +3895,78 @@ describe('tasks.restore is the one verb that puts the work back', () => {
     expect(h.invoked.filter((call) => call.id === 'layout.split')).toEqual([]);
   });
 });
+
+/**
+ * The resume line survives shelving — which it did not, for as long as tabs have
+ * existed.
+ *
+ * `shelve` drops each session's `pane` in the same write that captures its resume
+ * target, and `captureTabs` joins the two BY PANE. Reading the record after that
+ * write found the panes already gone, so every archived pane came back with no
+ * `resumeTarget` and a restored tab sat at a bare shell — with the agent's
+ * transcript on screen above it and no way back to it.
+ *
+ * It was silent because both halves looked right: the screen replayed, the pane
+ * opened, and "nothing to resume" is a legitimate answer for a session that never
+ * adopted an agent.
+ */
+describe('an archived pane keeps the line that would resume its agent', () => {
+  const withAgent = () =>
+    harness({
+      tasks: [task({ sessions: [{ id: 's1', role: 'orchestrator', pane: 'p-1' }] })],
+      git: archivable,
+      invoke: (id) => {
+        if (id === 'layout.listRoots') {
+          return {
+            ok: true,
+            value: [
+              {
+                root: 'task:t1',
+                group: 'task:t1',
+                tree: { kind: 'leaf', pane: { id: 'p-1', cwd: '/w' } },
+                focusedPane: 'p-1',
+                panes: [{ pane: 'p-1', cwd: '/w', userTitle: null, session: 's1' }],
+              },
+            ],
+          } as never;
+        }
+        if (id === 'agents.resumeTarget') {
+          return { ok: true, value: { resumeTarget: 'opaque-target' } } as never;
+        }
+        if (id === 'agents.resumeCommand') {
+          return { ok: true, value: { command: 'agent --resume opaque-target' } } as never;
+        }
+        if (id === 'sessions.capture') return { ok: true, value: { bytes: btoa('screen') } } as never;
+        return undefined;
+      },
+    });
+
+  it('carries the resumeTarget onto the archived pane, keyed by the pane it belongs to', async () => {
+    const h = (live = withAgent());
+    await h.run('tasks.archive', { task: 't1' });
+
+    const record = await recordOf(h);
+    const tabs = record?.['tabs'] as { panes: { pane: string; resumeTarget?: string }[] }[];
+    expect(tabs[0]?.panes[0]).toMatchObject({ pane: 'p-1', resumeTarget: 'opaque-target' });
+  });
+
+  it('stages that line on restore, typed and left sitting at the prompt', async () => {
+    const h = (live = withAgent());
+    await h.run('tasks.archive', { task: 't1' });
+    await h.run('tasks.restore', { task: 't1' });
+    await until(() =>
+      h.invoked.some((call) => call.id === 'layout.seedPane' || call.id === 'layout.openRoot'),
+    );
+
+    const staged = h.invoked.filter(
+      (call) => call.id === 'layout.seedPane' || call.id === 'layout.openRoot',
+    );
+    const line = staged
+      .map((call) => (call.args as { initialCommand?: string }).initialCommand)
+      .find((command) => command !== undefined);
+    expect(line).toBeDefined();
+    // No trailing newline: a newline is an Enter press, and restoring five tabs
+    // must not start five agents.
+    expect(line).not.toContain('\n');
+  });
+});

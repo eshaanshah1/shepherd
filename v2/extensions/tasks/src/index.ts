@@ -64,6 +64,7 @@ import {
   historyPath,
   liveTreeFor,
   snapshotTreeFor,
+  type SessionReading,
   type ArchivedTab,
   type RootReading,
 } from './model/archive-tabs.ts';
@@ -1665,7 +1666,10 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * a worse outcome than a tab that comes back blank. Each failure is warned
    * about and the pane is archived without a `history`.
    */
-  async function captureTabs(task: TaskRecord): Promise<readonly ArchivedTab[]> {
+  async function captureTabs(
+    task: TaskRecord,
+    sessions: readonly SessionReading[],
+  ): Promise<readonly ArchivedTab[]> {
     const listed = await commands.invoke<readonly unknown[]>('layout.listRoots', {
       group: taskRootId(task.id),
     });
@@ -1747,20 +1751,28 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
 
     return archiveTabsFrom({
       roots,
-      // `resumeTarget` is the only session field restore needs, and it is opaque
-      // (D11) — it names the agent's own way back without this extension ever
-      // learning which agent that is.
-      sessions: task.sessions.flatMap((session) =>
-        session.pane === undefined
-          ? []
-          : [
-              {
-                pane: session.pane,
-                sessionId: session.id,
-                ...(session.resumeTarget === undefined ? {} : { resumeTarget: session.resumeTarget }),
-              },
-            ],
-      ),
+      /*
+       * Passed IN, not read off the record — and that is the bug this argument
+       * exists to make unrepresentable.
+       *
+       * `shelve` drops each session's `pane` in the same write that captures its
+       * resume target, deliberately: the pane closes with the root, and a record
+       * naming one that does not exist is what made the archive trigger
+       * unreliable. But this join is BY PANE, so reading `task.sessions` here
+       * found the panes already gone and produced an empty list — every archived
+       * pane came back with no `resumeTarget`, `stagedResumeLine` answered
+       * `undefined`, and a restored tab sat at a bare shell with the agent's
+       * transcript on screen above it and no way back to it.
+       *
+       * Silent, because both halves looked right: the screen replayed, the pane
+       * opened, and "nothing to resume" is a legitimate answer for a session that
+       * never adopted an agent.
+       *
+       * `resumeTarget` is the only field restore needs, and it is opaque (D11) —
+       * it names the agent's own way back without this extension ever learning
+       * which agent that is.
+       */
+      sessions,
       history,
     });
   }
@@ -2456,10 +2468,29 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
             ctx.log.info(`task ${task.id}: session ${session.id} has nothing to resume`);
           }
           const { pane: _closed, ...rest } = session;
-          return { ...rest, ...(target === null ? {} : { resumeTarget: target }) };
+          return {
+            stored: { ...rest, ...(target === null ? {} : { resumeTarget: target }) },
+            /*
+             * The same fact, keyed by the pane it is about — kept because the
+             * write above is what destroys that key.
+             *
+             * `captureTabs` joins a resume target to a pane BY PANE, and the
+             * record it would have read no longer has one. Building the reading
+             * here, from the session as it still is, is what makes the two
+             * writes independent of each other's order.
+             */
+            reading: {
+              ...(session.pane === undefined ? {} : { pane: session.pane }),
+              sessionId: session.id,
+              ...(target === null ? {} : { resumeTarget: target }),
+            },
+          };
         }),
       );
-      let current: TaskRecord = { ...task, sessions };
+      const paneReadings: SessionReading[] = sessions.flatMap((entry) =>
+        entry.reading.pane === undefined ? [] : [entry.reading as SessionReading],
+      );
+      let current: TaskRecord = { ...task, sessions: sessions.map((entry) => entry.stored) };
       store.put(current);
 
       const warnings: string[] = [];
@@ -2490,7 +2521,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
        * does not leave a directory of `.term` files behind for a task that still
        * has its worktrees.
        */
-      const tabs = await captureTabs(current);
+      const tabs = await captureTabs(current, paneReadings);
       current = { ...current, ...(tabs.length === 0 ? {} : { tabs }) };
       store.put(current);
 
