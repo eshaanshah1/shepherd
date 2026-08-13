@@ -653,6 +653,25 @@ const bridge = new SessionBridge(host, {
   },
 });
 
+/**
+ * A program's own name for its pane, and the directory it is sitting in.
+ *
+ * Read from the mirror rather than from a terminal, and that is the whole
+ * reason this is in main: a suspended pane has no terminal at all, so a
+ * renderer-side listener would freeze the label of every tab you are not
+ * looking at. `observe` ignores a patch that changes nothing, and `layout-ipc`
+ * republishes on `onDidChange` — so the renderer follows with no push from here.
+ */
+const observed = host.onObserved((patch) => {
+  const pane = layout.paneForSession(patch.sessionId);
+  if (pane === undefined) return;
+  const written = layout.observe(pane, {
+    ...(patch.title === undefined ? {} : { title: patch.title }),
+    ...(patch.cwd === undefined ? {} : { cwd: patch.cwd }),
+  });
+  if (!written.ok) logger.warn('layout', `pane ${pane} kept its name: ${written.error}`);
+});
+
 export function createWindow(): BrowserWindow {
   const win = new BrowserWindow(
     windowOptions({
@@ -1329,6 +1348,7 @@ app.on('will-quit', () => {
   // quitting is the one that never lands.
   layout.flush();
   stopRootsAnnouncer();
+  observed.dispose();
   layout.dispose();
   bridge.dispose();
   host.dispose();
