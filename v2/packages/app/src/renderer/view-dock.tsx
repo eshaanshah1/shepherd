@@ -669,6 +669,16 @@ function TreeView({
                     disclosure ? <Icon icon={open ? IconChevronDown : IconChevronRight} size="sm" /> : null
                   ) : (
                   /*
+                    **No tint, no mark.** A row that declares no state has none to
+                    draw, and the 12px slot is for a state. This defaulted to the
+                    resting ring, which put "nothing is happening here" on things
+                    that are not tasks at all — a `Show all 27` control, and the
+                    diagnostics demo's `click me` row. It is the same category
+                    error the foot branch above already records having fixed once,
+                    arriving one row along. `markState`'s own default is unchanged:
+                    an unrecognised tint is still `resting`, because a word this
+                    shell does not know is still a claim that there IS a state.
+
                     The mark IS the state, and it takes a STATE — never a colour
                     and never the extension's own tint spelling. A coloured dot
                     beside the word RUNNING says one thing twice and gives the row
@@ -683,7 +693,7 @@ function TreeView({
                     answer: a task being archived is resting, and the archiving is
                     not a state of the task.
                   */
-                    <StateMark state={markState(row.tint)} />
+                    row.tint === undefined ? null : <StateMark state={markState(row.tint)} />
                   )
                 }
               >
