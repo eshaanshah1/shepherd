@@ -1,11 +1,23 @@
-import { s, sessionId, type Logger, type Result, type Schema } from '@shepherd/sdk';
-import type { EventBus } from '../events/bus.ts';
+import { s, type Logger, type Result, type Schema } from '@shepherd/sdk';
+import type { HookEnvelope } from '../session/hook-journal.ts';
 import { UnixHttpServer, type Route } from './unix-http.ts';
 
 /**
- * The external event ingress — `hooks.sock`, wherever main opens it. Hooks are
- * its first client, not a special case: anything that can POST JSON can publish
- * an event.
+ * The external event ingress — `hooks.sock`, which **the daemon** opens. Hooks
+ * are its first client, not a special case: anything that can POST JSON can
+ * publish an event.
+ *
+ * It moved out of the app, and that is the fix for a whole class of loss rather
+ * than a tidy-up. An agent keeps firing hooks into a pty the daemon owns while
+ * the app is being replaced, and `report.sh` finds no socket and exits 0 —
+ * deliberately, because a wedged listener must never stall the agent observing
+ * it. So every event during a restart vanished, and the app came back believing
+ * nothing had happened. The process that outlives the app holds the socket now,
+ * exactly as it holds the ptys (D4).
+ *
+ * Which is why this takes a `deliver` rather than an `EventBus`: there is no bus
+ * in the daemon. The sink decides whether an envelope is forwarded to a connected
+ * app or journalled for the next one — see `SessionServer.recordHook`.
  *
  * The wire shape, from bash:
  *
@@ -57,7 +69,12 @@ const eventPostSchema: Schema<EventPost> = s.object({
 
 export interface EventsIngressOptions {
   readonly path: string;
-  readonly bus: EventBus;
+  /**
+   * Where a well-formed envelope goes. Called synchronously, before the ack —
+   * the hook is a synchronous shell command waiting on this response, so an ack
+   * that outran the delivery would let a turn proceed on a state nobody has.
+   */
+  deliver(envelope: HookEnvelope): void;
   readonly logger: Logger;
 }
 
@@ -85,12 +102,12 @@ export class EventsIngress {
         }
 
         const event = parsed.value;
-        options.bus.emit(
-          event.topic,
-          event.payload ?? {},
-          { kind: 'agent', sessionId: sessionId(event.session_id) },
-          event.seq,
-        );
+        options.deliver({
+          topic: event.topic,
+          sessionId: event.session_id,
+          payload: event.payload ?? {},
+          ...(event.seq === undefined ? {} : { seq: event.seq }),
+        });
 
         // A real ack. The hook is synchronous, so this is what lets it return
         // knowing the event landed — and `seq` echoes back so a client can see

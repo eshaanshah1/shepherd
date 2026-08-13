@@ -53,7 +53,7 @@ function fakeConnection() {
   };
 }
 
-function harness() {
+function harness(options: { journalLimit?: number } = {}) {
   const records: LogRecord[] = [];
   const host = new SessionHost();
   const server = new SessionServer({
@@ -63,6 +63,7 @@ function harness() {
       level: 'debug',
       sink: (_line, record) => records.push(record),
     }),
+    ...(options.journalLimit === undefined ? {} : { journalLimit: options.journalLimit }),
   });
   hosts.push(host);
   servers.push(server);
@@ -428,5 +429,143 @@ describe('SessionServer refusals', () => {
       sessionId: created.value.id,
       title: 'named',
     });
+  });
+});
+
+/**
+ * Hooks, held for an app that is not there.
+ *
+ * The daemon serves the hook socket because it is the process that outlives the
+ * app, and an agent keeps firing hooks into a pty the daemon owns while the app
+ * is being replaced. Every one of those used to be lost: `report.sh` finds no
+ * socket and exits 0 — deliberately, so the observer can never stall the
+ * observed — and the app came back believing nothing had happened.
+ */
+describe('the hook journal', () => {
+  const hook = (event: string, session = 'session-1') => ({
+    topic: 'claude.hook',
+    sessionId: session,
+    payload: { event },
+  });
+
+  const hooksSeenBy = (client: ReturnType<typeof fakeConnection>): string[] =>
+    client.frames
+      .filter((f) => f.kind === RESPONSE.hooked)
+      .map((f) => ((f.json as { payload: { event: string } }).payload.event));
+
+  /** Greets as the APP — the one client kind that consumes agent state. */
+  const greetApp = (server: SessionServer, connection: Connection, seq = 0): number => {
+    const id = server.accept(connection);
+    send(server, id, REQUEST.hello, { seq, version: PROTOCOL_VERSION, role: 'app' });
+    return id;
+  };
+
+  it('replays what arrived with no app connected', () => {
+    // THE case: `pnpm ship`. The pty and its `claude` are untouched, so there is
+    // no second SessionStart to re-adopt the session — the only truth about what
+    // happened in between is what the daemon held.
+    const { server } = harness();
+    server.recordHook(hook('PreToolUse'));
+    server.recordHook(hook('Stop'));
+
+    const app = fakeConnection();
+    greetApp(server, app.connection);
+
+    expect(hooksSeenBy(app)).toEqual(['PreToolUse', 'Stop']);
+  });
+
+  it('forwards live to a connected app instead of holding', () => {
+    const { server } = harness();
+    const app = fakeConnection();
+    greetApp(server, app.connection);
+
+    server.recordHook(hook('UserPromptSubmit'));
+
+    expect(hooksSeenBy(app)).toEqual(['UserPromptSubmit']);
+    // Held nothing, so a reconnect cannot re-deliver what was already applied.
+    const second = fakeConnection();
+    greetApp(server, second.connection);
+    expect(hooksSeenBy(second)).toEqual([]);
+  });
+
+  it('hands a replay to exactly one app', () => {
+    const { server } = harness();
+    server.recordHook(hook('Stop'));
+
+    const first = fakeConnection();
+    greetApp(server, first.connection);
+    const second = fakeConnection();
+    greetApp(server, second.connection);
+
+    expect(hooksSeenBy(first)).toEqual(['Stop']);
+    expect(hooksSeenBy(second)).toEqual([]);
+  });
+
+  it('keeps holding while only a DEVICE is connected', () => {
+    // A phone is a full session client — `remote/server.ts` accepts it into this
+    // same table — but agent state lives in the app's extension host, so a
+    // connected phone must neither consume the replay nor suppress the journal.
+    // Without the role, plugging in a phone would silently discard the states of
+    // every agent that ran while the Mac's app was closed.
+    const { server } = harness();
+    const phone = fakeConnection();
+    greet(server, phone.connection);
+
+    server.recordHook(hook('Stop'));
+
+    expect(hooksSeenBy(phone)).toEqual([]);
+    const app = fakeConnection();
+    greetApp(server, app.connection);
+    expect(hooksSeenBy(app)).toEqual(['Stop']);
+  });
+
+  it('reports what it had to drop', () => {
+    const { server, records } = harness({ journalLimit: 2 });
+    for (const event of ['a', 'b', 'c']) server.recordHook(hook(event));
+
+    const app = fakeConnection();
+    greetApp(server, app.connection);
+
+    expect(hooksSeenBy(app)).toEqual(['b', 'c']);
+    // A partial replay lands a state that may be wrong. Saying so is the whole
+    // difference between that and a replay that was complete.
+    expect(records.some((r) => r.level === 'warn' && r.message.includes('1'))).toBe(true);
+  });
+});
+
+/**
+ * Whether the DAEMON is the one serving the hook socket, said in the handshake.
+ *
+ * The alternative was a protocol bump, and it is worse. A new app against an old
+ * daemon would be refused the handshake and its terminals would not work at all —
+ * and the app cannot fix that by replacing the daemon, because doing so kills
+ * every agent the user has running, which is the thing the daemon exists to
+ * prevent. So the capability is ADVERTISED and the app keeps its own ingress as
+ * the fallback: against an old daemon it serves hooks itself, exactly as it
+ * always did.
+ */
+describe('the hook capability', () => {
+  const helloValue = (client: ReturnType<typeof fakeConnection>) =>
+    (client.replies()[0]?.json as { value: { hooks?: boolean } }).value;
+
+  it('says nothing is served until the socket is actually bound', () => {
+    // Not a constant: it reflects a socket this process really holds. A daemon
+    // whose bind FAILED that advertised the capability anyway would silence the
+    // app's fallback and lose every hook, with both sides believing the other
+    // had it.
+    const { server } = harness();
+    const client = fakeConnection();
+    greet(server, client.connection);
+
+    expect(helloValue(client).hooks).toBe(false);
+  });
+
+  it('advertises the capability once the daemon has the socket', () => {
+    const { server } = harness();
+    server.setServesHooks(true);
+    const client = fakeConnection();
+    greet(server, client.connection);
+
+    expect(helloValue(client).hooks).toBe(true);
   });
 });

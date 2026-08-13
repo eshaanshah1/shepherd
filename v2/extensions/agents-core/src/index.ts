@@ -21,6 +21,7 @@ import {
 import { modelChoices, resolveDefaultModel } from './models.ts';
 import { AgentRegistry, type AgentChange, type AgentRecord } from './registry.ts';
 import { attentionFor } from './attention-map.ts';
+import { AGENT_STATE_KEY, readStored, restorable } from './persist.ts';
 import {
   AGENT_STATE_TOPIC,
   AGENTS_COMMANDS,
@@ -221,6 +222,22 @@ export const activate: ActivateFn<AgentsAPI> = async (ctx: ExtensionContext, api
   };
   ctx.subscriptions.push(toDisposable(registry.onDidChange(publish)));
 
+  /**
+   * The snapshot, rewritten whole on every transition.
+   *
+   * Whole rather than per-key because the *set* of tracked sessions is the fact
+   * being stored — a session that exited has to disappear, and a per-key write
+   * would leave it behind with nothing to remove it.
+   *
+   * On every change, with no debounce of its own: `KV.set` is a fire-and-forget
+   * message plus one row upsert, and the alternative is a timer whose window is
+   * exactly how much state a crash loses. There is nothing to gain by holding a
+   * handful of writes per turn.
+   */
+  ctx.subscriptions.push(
+    toDisposable(registry.onDidChange(() => void ctx.storage.set(AGENT_STATE_KEY, registry.snapshot()))),
+  );
+
   // ------------------------------------------------------------------- inputs
 
   const subscribedTopics = new Set<string>();
@@ -307,10 +324,39 @@ export const activate: ActivateFn<AgentsAPI> = async (ctx: ExtensionContext, api
   // Seeds the viewing mirror from the same read the sweep uses. Deliberately not
   // a mechanism of its own: nothing in main knows when a child subscribes to a
   // topic, and this extension has to read the inventory anyway.
-  for (const row of await readSessions()) {
+  const inventory = await readSessions();
+  for (const row of inventory) {
     if (row.viewing !== null) registry.setViewing(row.id, row.viewing);
     if (row.paneId !== undefined) panes.set(row.id, row.paneId);
   }
+
+  /**
+   * The states the previous run left behind — read here, against this inventory.
+   *
+   * The daemon outlives the app and keeps every pty, so `pnpm ship` leaves a
+   * window full of `claude` processes that will never restart and therefore never
+   * fire another `SessionStart`. Nothing adopted them, so every row read idle
+   * with a live agent in it, and the ordering guard then discarded the running
+   * turn's own events for as long as it lasted (ADR 0004).
+   *
+   * Three properties of the ordering here, each load-bearing:
+   *
+   *   - **After the inventory**, because a row naming a session the kernel no
+   *     longer has is a pty that went with the last run, and the sweep would
+   *     never correct it — it only looks at sessions `sessions.list` names.
+   *   - **After the `panes` seed**, so the change this publishes carries a pane.
+   *     `tasks` can only key by pane, and its rows are the ones that read idle.
+   *   - **Before the drain**, so a hook that landed while the inventory was in
+   *     flight wins: it is newer than the snapshot by construction, and
+   *     `registry.restore` refuses a session anything has already adopted.
+   */
+  const live = new Set(inventory.map((row) => row.id));
+  let restored = 0;
+  for (const entry of restorable(readStored(ctx.storage), live)) {
+    if (registry.restore(entry) !== undefined) restored += 1;
+  }
+  if (restored > 0) ctx.log.info(`restored ${restored} agent state(s) from the previous run`);
+
   const queued = buffered ?? [];
   buffered = undefined;
   for (const apply of queued) apply();

@@ -55,4 +55,10 @@ export {
   type RequestKind,
   type ResponseKind,
 } from './protocol.ts';
-export { SessionServer, type Connection, type SessionServerOptions } from './server.ts';
+export {
+  SessionServer,
+  type ClientRole,
+  type Connection,
+  type SessionServerOptions,
+} from './server.ts';
+export { HookJournal, DEFAULT_JOURNAL_LIMIT, type HookEnvelope } from './hook-journal.ts';

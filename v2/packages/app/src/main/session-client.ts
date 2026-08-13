@@ -7,6 +7,7 @@ import {
   encodeJsonFrame,
   newSessionId,
   type Frame,
+  type HookEnvelope,
   type SessionError,
   type SessionExit,
   type SessionObserved,
@@ -105,6 +106,7 @@ export class SessionClient {
   readonly #exitListeners = new Set<(exit: SessionExit) => void>();
   readonly #resizeListeners = new Set<(resize: SessionResize) => void>();
   readonly #observedListeners = new Set<(observed: SessionObserved) => void>();
+  readonly #hookedListeners = new Set<(envelope: HookEnvelope) => void>();
   #socket: ClientSocket | undefined;
   #connecting: Promise<void> | undefined;
   #nextAttachment = 1;
@@ -113,6 +115,7 @@ export class SessionClient {
   /** Frames issued before the socket came up. See `#send`. */
   readonly #outbox: Uint8Array[] = [];
   #everConnected = false;
+  #servesHooks = false;
   readonly #willCreate: WillCreateHook[] = [];
 
   constructor(options: SessionClientOptions) {
@@ -122,6 +125,35 @@ export class SessionClient {
 
   get connected(): boolean {
     return this.#socket !== undefined;
+  }
+
+  /**
+   * Whether the DAEMON holds `hooks.sock`, as it said in the handshake.
+   *
+   * False against a daemon from before it did — which is every `pnpm ship`, since
+   * the old process outlives the app and `reclaimSocketPath` refuses to take over
+   * a live socket. Main reads this to decide whether to open the socket itself,
+   * and that fallback is why this is advertised rather than settled by a
+   * `PROTOCOL_VERSION` bump: a mismatch is refused outright, so a new app would
+   * find its terminals dead against the old daemon and could only fix it by
+   * killing every agent the user has running.
+   */
+  get daemonServesHooks(): boolean {
+    return this.#servesHooks;
+  }
+
+  /**
+   * One agent hook, forwarded by the daemon — live, or replayed from the journal
+   * it held while no app was connected.
+   *
+   * Main re-emits these onto its own bus with the ingress's attribution, which is
+   * the same thing its own `EventsIngress` did when it owned the socket. The
+   * replay arrives before anything else, in order, because the daemon flushes it
+   * inside the handshake.
+   */
+  onHooked(fn: (envelope: HookEnvelope) => void): Disposable {
+    this.#hookedListeners.add(fn);
+    return toDisposable(() => void this.#hookedListeners.delete(fn));
   }
 
   /**
@@ -505,6 +537,10 @@ export class SessionClient {
         const seq = this.#seq();
         this.#pending.set(seq, (result) => {
           if (result.ok) {
+            // Read off the greeting rather than assumed: it decides whether main
+            // stands its own hook ingress down. Absent means an older daemon.
+            const value = result.value as { hooks?: unknown } | undefined;
+            this.#servesHooks = value?.hooks === true;
             resolve();
             return;
           }
@@ -517,7 +553,15 @@ export class SessionClient {
             ),
           );
         });
-        socket.write(encodeJsonFrame(REQUEST.hello, { seq, version: PROTOCOL_VERSION }));
+        /*
+         * `role: 'app'` — the one client kind that reduces agent state.
+         *
+         * A paired phone is a full session client in the daemon's same table, so
+         * without this a connected phone would consume the hook replay the Mac was
+         * waiting for and silently discard the state of every agent that ran while
+         * the app was closed.
+         */
+        socket.write(encodeJsonFrame(REQUEST.hello, { seq, version: PROTOCOL_VERSION, role: 'app' }));
       });
       await hello;
       // Read BEFORE it is set: a first connection is `start`'s job and it lists
@@ -685,6 +729,25 @@ export class SessionClient {
           listener(observed);
         } catch (error) {
           this.#log.warn(`an onObserved listener threw: ${String(error)}`);
+        }
+      }
+      return;
+    }
+
+    /**
+     * An agent hook the daemon received — for the whole app, not for a viewer.
+     *
+     * Ungated, like `observed` above and for a stronger version of the same
+     * reason: the pane whose agent is working may be suspended and detached, and
+     * that is exactly the row whose state would otherwise freeze.
+     */
+    if (frame.kind === RESPONSE.hooked) {
+      const envelope = frame.json as HookEnvelope;
+      for (const listener of [...this.#hookedListeners]) {
+        try {
+          listener(envelope);
+        } catch (error) {
+          this.#log.warn(`an onHooked listener threw: ${String(error)}`);
         }
       }
       return;

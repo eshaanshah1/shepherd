@@ -1,4 +1,5 @@
 import { FrameDecoder, PROTOCOL_VERSION, REQUEST, RESPONSE, encodeByteFrame, encodeJsonFrame, type Frame } from './protocol.ts';
+import { HookJournal, type HookEnvelope } from './hook-journal.ts';
 import type { SessionHost, SessionSpec } from './host.ts';
 import {
   sessionId as toSessionId,
@@ -47,7 +48,24 @@ export interface Connection {
 export interface SessionServerOptions {
   readonly host: SessionHost;
   readonly log: Logger;
+  /** Overrides `DEFAULT_JOURNAL_LIMIT`. Exists so a test can overflow it. */
+  readonly journalLimit?: number;
 }
+
+/**
+ * What a client says it IS, in its `hello`.
+ *
+ * Only `app` receives agent hooks, and the distinction is load-bearing rather
+ * than descriptive: a paired phone is a full session client in this same table,
+ * and if it counted as a listener, plugging one in would consume the replay the
+ * Mac's app was waiting for — silently discarding the state of every agent that
+ * ran while the app was closed.
+ *
+ * Absent means `device`, which is the safe direction: an older app that does not
+ * send a role gets today's behaviour (no replay) rather than a phone quietly
+ * swallowing one.
+ */
+export type ClientRole = 'app' | 'device';
 
 interface ClientState {
   /** Minted by `accept`; see `Connection`. */
@@ -66,6 +84,7 @@ interface ClientState {
    */
   readonly viewports: Map<SessionID, string>;
   greeted: boolean;
+  role: ClientRole;
 }
 
 export class SessionServer {
@@ -75,11 +94,16 @@ export class SessionServer {
   readonly #hostExit: Disposable;
   readonly #hostResize: Disposable;
   readonly #hostObserved: Disposable;
+  readonly #journal: HookJournal;
   #nextClientId = 1;
+  #servesHooks = false;
 
   constructor(options: SessionServerOptions) {
     this.#host = options.host;
     this.#log = options.log.child('session');
+    this.#journal = new HookJournal(
+      options.journalLimit === undefined ? {} : { limit: options.journalLimit },
+    );
     // Every client watching a session learns it ended, whether or not it was
     // the one that asked for the kill.
     this.#hostExit = this.#host.onExit((exit) => {
@@ -132,6 +156,53 @@ export class SessionServer {
     return this.#clients.size;
   }
 
+  /**
+   * One agent hook arrived. Forward it, or hold it for an app that will come.
+   *
+   * Called by whoever serves the hook socket — `packages/daemon`'s `main.ts`,
+   * through `EventsIngress`. This is the whole reason the socket moved into the
+   * daemon: an agent goes on firing hooks into a pty this process owns while the
+   * app is being replaced, and the app has no way to learn afterwards what it
+   * missed. A `claude` that did not restart never fires another `SessionStart`.
+   *
+   * Forward OR hold, never both: a replay of something already applied would fold
+   * a second `Stop` into a reopened turn, which is a wrong state rather than a
+   * no-op.
+   */
+  recordHook(envelope: HookEnvelope): void {
+    const apps = [...this.#clients.values()].filter((c) => c.greeted && c.role === 'app');
+    if (apps.length === 0) {
+      this.#journal.record(envelope);
+      return;
+    }
+    for (const app of apps) this.#send(app, encodeJsonFrame(RESPONSE.hooked, { ...envelope }));
+  }
+
+  /** What the journal is holding, for a log line or a diagnostic. */
+  get journalSize(): number {
+    return this.#journal.size;
+  }
+
+  /**
+   * Declare that this process really holds the hook socket.
+   *
+   * Called by the daemon **after a successful bind**, never as a constant — the
+   * handshake advertises it, and an app that is told the daemon has the socket
+   * stands its own ingress down. A daemon whose bind failed but claimed the
+   * capability anyway would silence the fallback and lose every hook, with each
+   * side believing the other had it.
+   *
+   * This is advertised rather than settled by a `PROTOCOL_VERSION` bump, and the
+   * reason is the daemon's whole purpose: a mismatch is refused, so a new app
+   * would find its terminals dead against the old daemon — and it cannot replace
+   * that daemon without killing every agent the user is running. So the app keeps
+   * its own ingress for exactly that case and serves hooks itself, as it always
+   * did.
+   */
+  setServesHooks(serves: boolean): void {
+    this.#servesHooks = serves;
+  }
+
   /** Registers a client and returns the id to use for `feed` and `disconnect`. */
   accept(connection: Connection): number {
     const id = this.#nextClientId;
@@ -143,6 +214,7 @@ export class SessionServer {
       attachments: new Map(),
       viewports: new Map(),
       greeted: false,
+      role: 'device',
     });
     this.#log.info(`client ${id} connected (${this.#clients.size} total)`);
     return id;
@@ -195,6 +267,22 @@ export class SessionServer {
 
   // ------------------------------------------------------------------ internals
 
+  #replayHooks(client: ClientState): void {
+    const { events, dropped } = this.#journal.drain();
+    for (const envelope of events) {
+      this.#send(client, encodeJsonFrame(RESPONSE.hooked, { ...envelope }));
+    }
+    if (events.length > 0) {
+      this.#log.info(`replayed ${events.length} agent hook(s) held while no app was connected`);
+    }
+    if (dropped > 0) {
+      // A partial replay lands a state that may be wrong, and the whole point of
+      // counting is that this is the only thing telling it apart from a complete
+      // one.
+      this.#log.warn(`dropped ${dropped} agent hook(s) before this replay — the journal was full`);
+    }
+  }
+
   #handle(client: ClientState, frame: Frame): void {
     const body = (frame.json ?? {}) as Record<string, unknown>;
     const seq = typeof body['seq'] === 'number' ? body['seq'] : -1;
@@ -214,7 +302,25 @@ export class SessionServer {
         return;
       }
       client.greeted = true;
-      this.#reply(client, seq, true, { version: PROTOCOL_VERSION, pid: process.pid });
+      client.role = body['role'] === 'app' ? 'app' : 'device';
+      this.#reply(client, seq, true, {
+        version: PROTOCOL_VERSION,
+        pid: process.pid,
+        // Whether the APP may stand its own hook ingress down. See `setServesHooks`.
+        hooks: this.#servesHooks,
+      });
+      /*
+       * Reply, then replay, in one synchronous step.
+       *
+       * `PtyFanout` states the contract this borrows: snapshot, register and
+       * replay are ONE step, or bytes arriving in between are either lost or
+       * delivered twice. The same holds here and for the same reason — the drain
+       * empties the journal, so anything recorded between the reply and the flush
+       * would be held for a client that has already gone live. Nothing can arrive
+       * in between because this path is synchronous, which is what makes the
+       * ordering free rather than lucky.
+       */
+      if (client.role === 'app') this.#replayHooks(client);
       return;
     }
 

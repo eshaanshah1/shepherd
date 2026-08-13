@@ -412,3 +412,97 @@ describe('a daemon that restarted underneath us', () => {
     client.dispose();
   });
 });
+
+/**
+ * Agent hooks, arriving from the daemon rather than from a socket this process
+ * opened.
+ *
+ * The daemon serves `hooks.sock` because it is the process that outlives the app:
+ * an agent goes on firing hooks into a pty it owns while the app is being
+ * replaced, and `report.sh` finds no socket and exits 0 by design. Those events
+ * reach main as frames now, and main re-emits them onto its own bus.
+ */
+describe('agent hooks over the session protocol', () => {
+  const clientFor = (socket: FakeSocket) => {
+    const { log, lines } = recordingLog();
+    const client = new SessionClient({
+      connect: () => Promise.resolve(socket),
+      log,
+      retryMs: 60_000,
+    });
+    return { client, lines };
+  };
+
+  /** Greets and answers, carrying whatever capability the daemon claims. */
+  const handshake = async (socket: FakeSocket, value: Record<string, unknown>): Promise<void> => {
+    socket.send(
+      encodeJsonFrame(RESPONSE.ok, {
+        seq: helloSeq(socket),
+        value: { version: PROTOCOL_VERSION, pid: 1, ...value },
+      }),
+    );
+    await settle();
+  };
+
+  it('says it is the APP, so a phone cannot swallow its replay', async () => {
+    // A device is a full session client in the daemon's same table. Without this
+    // field, plugging in a phone would consume the journal the Mac was waiting
+    // for and discard every state earned while the app was closed.
+    const socket = new FakeSocket();
+    const { client } = clientFor(socket);
+    void client.start();
+    await settle();
+
+    expect(socket.sent()[0]?.json['role']).toBe('app');
+    client.dispose();
+  });
+
+  it('hands a hooked frame to its listener', async () => {
+    const socket = new FakeSocket();
+    const { client } = clientFor(socket);
+    const seen: { topic: string; sessionId: string; payload: unknown }[] = [];
+    client.onHooked((envelope) => void seen.push(envelope));
+    void client.start();
+    await settle();
+    await handshake(socket, { hooks: true });
+
+    socket.send(
+      encodeJsonFrame(RESPONSE.hooked, {
+        topic: 'claude.hook',
+        sessionId: 'session-1',
+        payload: { event: 'Stop' },
+      }),
+    );
+
+    expect(seen).toEqual([
+      { topic: 'claude.hook', sessionId: 'session-1', payload: { event: 'Stop' } },
+    ]);
+    client.dispose();
+  });
+
+  it('reports a daemon that serves the hook socket', async () => {
+    const socket = new FakeSocket();
+    const { client } = clientFor(socket);
+    void client.start();
+    await settle();
+    await handshake(socket, { hooks: true });
+
+    expect(client.daemonServesHooks).toBe(true);
+    client.dispose();
+  });
+
+  it('reports an OLD daemon that does not, so main serves hooks itself', async () => {
+    // THE upgrade case, and why this is advertised rather than settled by a
+    // protocol bump: a mismatch is refused, so a new app would find its terminals
+    // dead against the old daemon — and it cannot replace that daemon without
+    // killing every agent the user is running.
+    const socket = new FakeSocket();
+    const { client } = clientFor(socket);
+    void client.start();
+    await settle();
+    await handshake(socket, {});
+
+    expect(client.daemonServesHooks).toBe(false);
+    client.dispose();
+  });
+});

@@ -73,7 +73,20 @@ function get(path: string, route: string): Promise<{ status: number; body: unkno
 
 async function eventsAt(name = 'events.sock'): Promise<string> {
   const path = join(dir, name);
-  const ingress = new EventsIngress({ path, bus, logger });
+  // Deliberately the SAME emit main performs on a forwarded envelope: the
+  // ingress no longer knows about a bus (there is none in the daemon), so the
+  // attribution is the caller's and this test asserts the caller's version of it.
+  const ingress = new EventsIngress({
+    path,
+    deliver: (envelope) =>
+      bus.emit(
+        envelope.topic,
+        envelope.payload,
+        { kind: 'agent', sessionId: sessionId(envelope.sessionId) },
+        envelope.seq,
+      ),
+    logger,
+  });
   stopping.push(ingress);
   const started = await ingress.start();
   if (!started.ok) throw new Error(started.error);

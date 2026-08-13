@@ -267,6 +267,114 @@ describe('lifecycle', () => {
   });
 });
 
+describe('surviving a restart', () => {
+  const adopted = (state: AgentState, reason?: string): AgentRegistry => {
+    const registry = new AgentRegistry();
+    const kind = fakeKind('claude-code', (input) => {
+      (input.slot as { ownerLock?: string }).ownerLock = 'claude-abc';
+      return transition(state, reason === undefined ? {} : { reason });
+    });
+    registry.handle(S, 'test.hook', {}, [kind]);
+    return registry;
+  };
+
+  it('snapshots what an entry cannot be rebuilt without', () => {
+    expect(adopted('blocked', 'approve Bash').snapshot()).toEqual([
+      {
+        sessionId: S,
+        kindId: 'claude-code',
+        state: 'blocked',
+        reason: 'approve Bash',
+        // The vendor's ownership lock and resume id live in here. Without it a
+        // restored session is tracked but cannot be reattached to.
+        slot: { ownerLock: 'claude-abc' },
+      },
+    ]);
+  });
+
+  it('omits a session that has dropped back to a shell', () => {
+    expect(adopted('shell').snapshot()).toEqual([]);
+  });
+
+  it('restores the state, the reason and the kind’s slot', () => {
+    const registry = new AgentRegistry();
+
+    registry.restore({
+      sessionId: S,
+      kindId: 'claude-code',
+      state: 'blocked',
+      reason: 'approve Bash',
+      slot: { ownerLock: 'claude-abc' },
+    });
+
+    expect(registry.get(S)).toEqual({
+      sessionId: S,
+      kindId: 'claude-code',
+      state: 'blocked',
+      reason: 'approve Bash',
+    });
+    expect(registry.slotOf(S)).toEqual({ ownerLock: 'claude-abc' });
+  });
+
+  it('announces a restore, so attention and every mirror hear about it', () => {
+    // A fresh process has published nothing. Without an announcement the dock
+    // badge and every extension's mirror would stay empty while the registry
+    // knew better.
+    const registry = new AgentRegistry();
+    const seen: AgentChange[] = [];
+    registry.onDidChange((change) => void seen.push(change));
+
+    registry.restore({ sessionId: S, kindId: 'claude-code', state: 'blocked', slot: {} });
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.from).toBe('shell');
+    expect(seen[0]?.to).toBe('blocked');
+    // Nothing ended here — a restore is this process learning a state, not a
+    // turn finishing. Reporting otherwise would fire an alert per agent at
+    // every launch.
+    expect(seen[0]?.turnFinished).toBe(false);
+  });
+
+  it('lets the restored kind read the restored state as current', () => {
+    // THE bug this exists to fix. The ordering guard applies a mid-turn event
+    // only while the session is working or blocked (ADR 0004), so a session
+    // restored as untracked reads `shell` and every hook of the turn in flight
+    // is discarded — the agent stays grey until the user types the next prompt.
+    const registry = new AgentRegistry();
+    registry.restore({ sessionId: S, kindId: 'claude-code', state: 'working', slot: {} });
+    const kind = fakeKind('claude-code', () => transition('needsCheck'));
+
+    registry.handle(S, 'test.hook', {}, [kind]);
+
+    expect(kind.seen[0]?.current).toBe('working');
+    expect(registry.get(S)?.state).toBe('needsCheck');
+  });
+
+  it('refuses a session a live event has already adopted', () => {
+    // Replay-then-live: an event that landed while the snapshot was being read
+    // is newer than the snapshot by construction, so it must not be overwritten.
+    const registry = adopted('needsCheck');
+
+    const change = registry.restore({ sessionId: S, kindId: 'claude-code', state: 'working', slot: {} });
+
+    expect(change).toBeUndefined();
+    expect(registry.get(S)?.state).toBe('needsCheck');
+  });
+
+  it('leaves a restored session open to the sweep', () => {
+    // What makes a stale snapshot safe: an agent that finished while the app was
+    // down is restored as working and then corrected, rather than believed
+    // forever.
+    const registry = new AgentRegistry();
+    registry.restore({ sessionId: S, kindId: 'claude-code', state: 'working', slot: {} });
+
+    for (let i = 0; i < SWEEP_QUIET_TICKS - 1; i += 1) {
+      expect(registry.observe(S, false)).toBeUndefined();
+    }
+    expect(registry.observe(S, false)?.to).toBe('needsCheck');
+  });
+});
+
 describe('change notification', () => {
   it('reports every write once, and survives a throwing listener', () => {
     const registry = new AgentRegistry();

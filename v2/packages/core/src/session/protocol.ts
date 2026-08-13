@@ -97,6 +97,21 @@ export const RESPONSE = {
    * otherwise freeze at whatever it said when you last looked at it.
    */
   observed: 70,
+  /**
+   * One agent hook, on its way to the app's bus. A JSON frame:
+   * `{ topic, sessionId, payload }`.
+   *
+   * The daemon serves the hook socket, so this frame is how an event reaches the
+   * process that reduces it. It carries the ingress's own attribution rather than
+   * anything from the payload — a payload that named its own session is v1's
+   * `tab_id` lie, and the ingress already knows who posted.
+   *
+   * **Sent only to a client that greeted as `app`, and replayed once.** A device
+   * is a full session client here (`remote/server.ts` accepts it into the same
+   * table) but nothing on a phone reduces agent state, so a phone must neither
+   * receive these nor consume the replay somebody else is waiting for.
+   */
+  hooked: 71,
 } as const;
 
 export type RequestKind = (typeof REQUEST)[keyof typeof REQUEST];
