@@ -56,6 +56,15 @@ export interface CardData {
   readonly mark: CardMark;
   /** `4m` / `2h` / `3d`, already formatted — the service half owns the clock. */
   readonly elapsed?: string;
+  /*
+   * There is deliberately no `stage` field.
+   *
+   * The step a task is on reaches the rail as the row's own LABEL (`stepLabel`,
+   * service half), because until the model answers there is no name for the
+   * label to hold — only `heuristicName`'s slice of the brief, which reads as a
+   * broken name rather than an unfinished one. A card field carrying the step as
+   * well would draw the same word twice on one line.
+   */
   /** One sentence of what is happening. */
   readonly summary?: string;
   readonly diff?: CardDiff;
