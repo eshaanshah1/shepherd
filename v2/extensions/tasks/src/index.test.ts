@@ -3913,7 +3913,13 @@ describe('tasks.restore is the one verb that puts the work back', () => {
 describe('an archived pane keeps the line that would resume its agent', () => {
   const withAgent = () =>
     harness({
-      tasks: [task({ sessions: [{ id: 's1', role: 'orchestrator', pane: 'p-1' }] })],
+      /*
+       * The session carries NO `pane`, which is the state every task is in after
+       * its first shelve — `shelve` strips it and nothing puts it back. A
+       * fixture that supplied one would be testing a shape the app only ever has
+       * on a task that has never been archived.
+       */
+      tasks: [task({ sessions: [{ id: 's1', role: 'orchestrator' }] })],
       git: archivable,
       invoke: (id) => {
         if (id === 'layout.listRoots') {
