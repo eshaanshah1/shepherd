@@ -1666,11 +1666,54 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * a worse outcome than a tab that comes back blank. Each failure is warned
    * about and the pane is archived without a `history`.
    */
-  async function captureTabs(
-    task: TaskRecord,
-    /** What would reattach to each SESSION — keyed by session id, never by pane. */
-    targets: ReadonlyMap<string, string>,
-  ): Promise<readonly ArchivedTab[]> {
+  /**
+   * What would reattach to the agent in this session, or null.
+   *
+   * Opaque (D11): asked of the agent kind through `agents.resumeTarget`, stored
+   * unread, and handed back through the same seam. Read defensively — it crossed
+   * a port and came from an extension this one has never seen, and an agent kind
+   * that answers `undefined` must not take the whole shelve down with it.
+   */
+  async function resumeTargetOf(session: string): Promise<string | null> {
+    const answer = await commands.invoke<unknown>(AGENTS_RESUME_TARGET, { sessionId: session });
+    const value =
+      answer.ok && typeof answer.value === 'object' && answer.value !== null
+        ? (answer.value as { resumeTarget?: unknown }).resumeTarget
+        : undefined;
+    return typeof value === 'string' && value !== '' ? value : null;
+  }
+
+  /**
+   * The conversation this task recorded, when no agent is running to name it.
+   *
+   * Reached only after the live ask comes back empty, which after a restore is
+   * the ORDINARY case: the resume line is typed and left at the prompt, so until
+   * the user presses Enter there is no agent in that pty at all.
+   *
+   * By session id first. That misses whenever a restore has replaced the
+   * session — the record's ids go stale there, which is its own debt — so it
+   * falls back to the task's single recorded target. **Single**, deliberately:
+   * with two, nothing here can say which pane's conversation is which, and
+   * guessing would stage one agent's transcript into another's pane. That is a
+   * worse outcome than a blank prompt, so it declines and says so.
+   */
+  function storedTargetFor(task: TaskRecord, session: string): string | null {
+    const byId = task.sessions.find((candidate) => candidate.id === session)?.resumeTarget;
+    if (byId !== undefined && byId !== '') return byId;
+
+    const recorded = task.sessions.flatMap((candidate) =>
+      candidate.resumeTarget === undefined || candidate.resumeTarget === '' ? [] : [candidate.resumeTarget],
+    );
+    if (recorded.length === 1) return recorded[0] ?? null;
+    if (recorded.length > 1) {
+      ctx.log.warn(
+        `task ${task.id}: session ${session} is not running an agent and this task recorded ${recorded.length} conversations — none can be matched to it`,
+      );
+    }
+    return null;
+  }
+
+  async function captureTabs(task: TaskRecord): Promise<readonly ArchivedTab[]> {
     const listed = await commands.invoke<readonly unknown[]>('layout.listRoots', {
       group: taskRootId(task.id),
     });
@@ -1725,24 +1768,30 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         if (capturable === null) continue;
 
         /*
-         * The pane→agent join, made HERE from the layout's own binding.
+         * What would reattach to the agent ON THIS PANE — asked about the
+         * session the LAYOUT says is there, right now.
          *
-         * It used to read `task.sessions[].pane`, and that field is gone by the
-         * time this runs: `shelve` strips it in the same write that captures the
-         * resume targets, and NOTHING puts it back — `materialize` restores
-         * panes but not the record's memory of which pane a session was in. So
-         * from the second shelve onward the record has no pane at all, and a
-         * join through it produced nothing for every task that had ever been
-         * archived once.
+         * Nothing about this question goes through the task record, and two
+         * rounds of this bug are why. The record's `pane` is stripped by
+         * `shelve` and never restored, so a join through it worked exactly once
+         * per task. And the record's `session.id` is **stale from the first
+         * restore onward**: `rebuildTabs` opens panes that create new sessions
+         * and never writes the new ids back, so asking the agent extension about
+         * a recorded id asks about a session that no longer exists — measured
+         * on a live install, where every task's recorded session was already
+         * dead.
          *
-         * The layout is the authority on what is on screen (it is why this
-         * function asks `listRoots` rather than the record in the first place),
-         * and `panes[].session` is the live binding. Joining on it needs no
-         * field the archive is about to destroy.
+         * The layout is the authority on what is on screen. Its binding is the
+         * only correlation here that cannot go stale, because it is read in the
+         * same breath as the screen it describes.
          */
-        const target = targets.get(capturable);
-        if (target !== undefined) {
+        const target = (await resumeTargetOf(capturable)) ?? storedTargetFor(task, capturable);
+        if (target !== null) {
           sessions.push({ pane: p.pane, sessionId: capturable, resumeTarget: target });
+        } else {
+          // Not a failure: a pane with no agent, and none ever recorded. Its
+          // screen is still captured; it just comes back with nothing staged.
+          ctx.log.info(`task ${task.id}: pane ${p.pane} has nothing to resume`);
         }
 
         const relative = historyPath(task.id, row.root, p.pane);
@@ -1984,6 +2033,78 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       }
     }
     ctx.log.info(`task ${task.id}: restored ${(task.tabs ?? []).length} tab(s), agents staged but not resumed`);
+  }
+
+  /**
+   * Put the record's session list back in step with the panes now on screen.
+   *
+   * **This is the rot the resume bug grew out of.** `correlate` re-points a
+   * record's session id at the live one, and it ran on SPAWN only — never on
+   * restore. So from the first restore onward every task named sessions that had
+   * been dead for weeks (measured on a live install: `live? False` on every
+   * session of every task), and `shelve` then asked the agent extension about
+   * ids that addressed nothing.
+   *
+   * The join is by **resume target**, not by session id or by pane:
+   *   - the session id is exactly the thing that has gone stale;
+   *   - the record's `pane` was stripped by the shelve that made this archive.
+   * The target is the one value that survived both, and it is what the archived
+   * pane carries — so it identifies which recorded session this pane IS, and
+   * carries its `role` and `repo` across with it.
+   *
+   * Best-effort and quiet: a pane whose session never appears keeps whatever the
+   * record said. The bargain `correlate` already strikes, and for the same
+   * reason — the pane is real either way.
+   */
+  async function recorrelate(task: TaskRecord): Promise<void> {
+    const archived = (task.tabs ?? []).flatMap((tab) =>
+      tab.panes.flatMap((pane) =>
+        pane.resumeTarget === undefined ? [] : [{ pane: pane.pane, target: pane.resumeTarget, root: tab.root }],
+      ),
+    );
+    if (archived.length === 0) return;
+
+    for (let attempt = 0; attempt < CORRELATE_ATTEMPTS; attempt += 1) {
+      await new Promise<void>((resolve) => ctx.clock.setTimeout(() => resolve(), CORRELATE_INTERVAL_MS));
+      const listed = await commands.invoke<{ id: string; paneId?: string }[]>('sessions.list');
+      if (!listed.ok) continue;
+      const livePane = new Map(
+        listed.value.flatMap((row) => (row.paneId === undefined ? [] : [[row.paneId, row.id] as const])),
+      );
+      const found = archived.flatMap((entry) => {
+        const live = livePane.get(entry.pane);
+        return live === undefined ? [] : [{ ...entry, live }];
+      });
+      if (found.length < archived.length) continue;
+
+      // Re-read: `materialize` and a spawn may both have written since.
+      const current = store.get(task.id);
+      if (current === undefined) return;
+      const byTarget = new Map(current.sessions.map((session) => [session.resumeTarget, session]));
+      store.put({
+        ...current,
+        sessions: found.map((entry) => {
+          const previous = byTarget.get(entry.target);
+          return {
+            // `role` and `repo` come from the session this pane WAS. A default
+            // would quietly demote an orchestrator, and `provision` branches on
+            // a task having one.
+            role: previous?.role ?? 'orchestrator',
+            ...(previous?.repo === undefined ? {} : { repo: previous.repo }),
+            id: entry.live,
+            pane: entry.pane,
+            root: entry.root,
+            resumeTarget: entry.target,
+          };
+        }),
+      });
+      changed();
+      ctx.log.info(`task ${task.id}: re-correlated ${found.length} restored session(s)`);
+      return;
+    }
+    ctx.log.warn(
+      `task ${task.id}: a restored pane never reported a session — the record keeps its old ids`,
+    );
   }
 
   /** A captured screen off disk, base64 for the command envelope. Absent if unreadable. */
@@ -2461,38 +2582,42 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
        */
       const sessions = await Promise.all(
         task.sessions.map(async (session) => {
-          // `ok` says the call succeeded, not that the value has a shape — it
-          // crossed a port and came from an extension this one has never seen.
-          // Read defensively or an agent extension that answers `undefined`
-          // takes the whole shelve down with a TypeError.
-          const answer = await commands.invoke<unknown>(AGENTS_RESUME_TARGET, { sessionId: session.id });
-          const value =
-            answer.ok && typeof answer.value === 'object' && answer.value !== null
-              ? (answer.value as { resumeTarget?: unknown }).resumeTarget
-              : undefined;
-          const target = typeof value === 'string' && value !== '' ? value : null;
-          if (target === null) {
-            // Not a failure: a session that never adopted an agent, or one whose
-            // agent cannot reattach. It stays in the record so the task still
-            // knows it ran, and materializing leaves it alone.
+          const fresh = await resumeTargetOf(session.id);
+          /*
+           * A target that was captured once is KEPT when it cannot be re-derived.
+           *
+           * This unconditionally overwrote it, and that is what made the archive
+           * lose the agent on the second lap. The two ids in play are different
+           * kinds of thing:
+           *
+           *   - a **Shepherd session** is a live pty. Shelving kills it, and
+           *     restoring cannot revive it — a dead id names nothing (ADR 0036),
+           *     so a restored pane always gets a NEW session.
+           *   - a **resume target** is the agent's own conversation, a transcript
+           *     on disk. That is what survives, and what `claude --resume` replays
+           *     into a fresh process.
+           *
+           * `agents.resumeTarget` maps the first to the second, and only while
+           * the agent is actually running in that pty. After a restore it is not
+           * — the resume line has not been pressed yet — so the ask comes back
+           * empty and overwriting on that answer erased the only copy of the
+           * transcript id. Which then guaranteed the next restore had nothing to
+           * stage: a loop that fed itself.
+           *
+           * So: a fresh answer wins, and silence changes nothing.
+           */
+          const target = fresh ?? session.resumeTarget ?? null;
+          if (fresh === null && target !== null) {
+            ctx.log.info(
+              `task ${task.id}: session ${session.id} is not running an agent; keeping the target it was archived with`,
+            );
+          } else if (target === null) {
+            // Genuinely nothing: a session that never adopted an agent at all.
             ctx.log.info(`task ${task.id}: session ${session.id} has nothing to resume`);
           }
           const { pane: _closed, ...rest } = session;
           return { ...rest, ...(target === null ? {} : { resumeTarget: target }) };
         }),
-      );
-      /*
-       * What would reattach to each session, keyed by SESSION ID.
-       *
-       * Handed to `captureTabs` rather than left for it to read back, because it
-       * is about to be written into a record whose `pane` this same write
-       * removes — and `pane` is what the archive used to join on. A session id
-       * is a key nothing here destroys.
-       */
-      const targets = new Map<string, string>(
-        sessions.flatMap((session) =>
-          session.resumeTarget === undefined ? [] : [[session.id, session.resumeTarget] as const],
-        ),
       );
       let current: TaskRecord = { ...task, sessions };
       store.put(current);
@@ -2525,7 +2650,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
        * does not leave a directory of `.term` files behind for a task that still
        * has its worktrees.
        */
-      const tabs = await captureTabs(current, targets);
+      const tabs = await captureTabs(current);
       current = { ...current, ...(tabs.length === 0 ? {} : { tabs }) };
       store.put(current);
 
@@ -2618,6 +2743,15 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     if ((back?.tabs ?? []).length > 0) {
       await rebuildTabs(back as TaskRecord);
       changed();
+      /*
+       * Not awaited: the panes are on screen and the record catching up with
+       * them is bookkeeping, while `recorrelate` polls `sessions.list` for up to
+       * a second. Making a restore wait on it would put that second in front of
+       * the user for a write they cannot see.
+       */
+      void recorrelate(back as TaskRecord).catch((error: unknown) => {
+        ctx.log.warn(`task ${task.id}: restored sessions were not re-correlated — ${String(error)}`);
+      });
       return;
     }
     for (const session of back?.sessions ?? []) {

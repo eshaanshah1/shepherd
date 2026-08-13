@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   extensionId,
   manualClock,
+  type ManualClock,
   nullLogger,
   toDisposable,
   type Caller,
@@ -111,6 +112,14 @@ interface Harness {
    * that was renamed should fail by name here, not by a silent no-op later.
    */
   point<T>(id: string): ExtensionPoint<T>;
+  /**
+   * The manual clock the extension is wired to.
+   *
+   * Exposed so a test can drive a POLL — `correlate` and `recorrelate` both wait
+   * on `ctx.clock.setTimeout`, which never fires on its own here, so `until`
+   * alone spins until it gives up.
+   */
+  readonly clock: ManualClock;
   readonly dataDir: string;
   /** A throwaway home — where the Claude Code trust store is read and written. */
   readonly homeDir: string;
@@ -152,6 +161,7 @@ function harness(
     onWarn?: (line: string) => void;
   } = {},
 ): Harness {
+  const clock = manualClock(opts.now ?? 1);
   const dataDir = mkdtempSync(join(tmpdir(), 'shepherd-tasks-'));
   // A home of its own, so the trust seeding in `provision` reads and writes a
   // throwaway `.claude.json` and can never reach the developer's real one.
@@ -380,7 +390,7 @@ function harness(
       opts.onWarn === undefined
         ? nullLogger.child('extension')
         : { ...nullLogger.child('extension'), warn: opts.onWarn },
-    clock: manualClock(opts.now ?? 1),
+    clock,
     permissions: [],
     isDev: false,
   };
@@ -416,6 +426,7 @@ function harness(
       if (provider?.kind !== 'tree') throw new Error('no tree view type was registered');
       return provider.data;
     },
+    clock,
     registeredCommands: () => new Set(registered.keys()),
     point: <T>(id: string): ExtensionPoint<T> => {
       const found = defined.get(id);
@@ -3974,5 +3985,143 @@ describe('an archived pane keeps the line that would resume its agent', () => {
     // No trailing newline: a newline is an Enter press, and restoring five tabs
     // must not start five agents.
     expect(line).not.toContain('\n');
+  });
+});
+
+/**
+ * The second lap, which is the one that was broken.
+ *
+ * A restored pane's resume line is TYPED, not run — pressing Enter is the
+ * user's. So until they do, no agent is running in it, and `agents.resumeTarget`
+ * correctly answers nothing. Overwriting the stored target on that answer erased
+ * the only record of the conversation, which guaranteed the NEXT restore had
+ * nothing to stage. A loop that fed itself, and the reason two earlier fixes
+ * both looked right and changed nothing.
+ */
+describe('a resume target survives a shelve that cannot re-derive it', () => {
+  const withStoredTarget = (answers: boolean) =>
+    harness({
+      tasks: [
+        task({
+          sessions: [{ id: 's1', role: 'orchestrator', resumeTarget: 'the-conversation' }],
+        }),
+      ],
+      git: archivable,
+      invoke: (id) => {
+        if (id === 'layout.listRoots') {
+          return {
+            ok: true,
+            value: [
+              {
+                root: 'task:t1',
+                group: 'task:t1',
+                tree: { kind: 'leaf', pane: { id: 'p-1', cwd: '/w' } },
+                focusedPane: 'p-1',
+                panes: [{ pane: 'p-1', cwd: '/w', userTitle: null, session: 's1' }],
+              },
+            ],
+          } as never;
+        }
+        if (id === 'agents.resumeTarget') {
+          // `answers: false` is the post-restore state: a real pane, a real
+          // session, and no agent in it yet.
+          return { ok: true, value: answers ? { resumeTarget: 'the-conversation' } : {} } as never;
+        }
+        if (id === 'sessions.capture') return { ok: true, value: { bytes: btoa('screen') } } as never;
+        return undefined;
+      },
+    });
+
+  it('keeps the stored target when no agent is running to re-derive it', async () => {
+    const h = (live = withStoredTarget(false));
+    await h.run('tasks.archive', { task: 't1' });
+
+    const record = await recordOf(h);
+    const sessions = record?.['sessions'] as { resumeTarget?: string }[];
+    expect(sessions[0]?.resumeTarget).toBe('the-conversation');
+  });
+
+  it('still puts it on the archived pane, so the restore has a line to stage', async () => {
+    const h = (live = withStoredTarget(false));
+    await h.run('tasks.archive', { task: 't1' });
+
+    const record = await recordOf(h);
+    const tabs = record?.['tabs'] as { panes: { resumeTarget?: string }[] }[];
+    expect(tabs[0]?.panes[0]?.resumeTarget).toBe('the-conversation');
+  });
+
+  it('a fresh answer still wins — this is a fallback, not a freeze', async () => {
+    const h = (live = withStoredTarget(true));
+    await h.run('tasks.archive', { task: 't1' });
+    const record = await recordOf(h);
+    const tabs = record?.['tabs'] as { panes: { resumeTarget?: string }[] }[];
+    expect(tabs[0]?.panes[0]?.resumeTarget).toBe('the-conversation');
+  });
+});
+
+/**
+ * A restored task's record catches up with the panes it just got.
+ *
+ * `correlate` ran on spawn and never on restore, so from the first restore
+ * onward every task named sessions that had been dead for weeks — measured on a
+ * live install, where `sessions.list` knew none of them. `shelve` then asked the
+ * agent extension about ids that addressed nothing, which is the rot the whole
+ * resume bug grew out of.
+ */
+describe('restoring re-correlates the record with the live panes', () => {
+  const archivedTab = {
+    root: 'task:t1',
+    tree: { kind: 'leaf', pane: { id: 'p-1', cwd: '/w' } },
+    focusedPane: 'p-1',
+    panes: [
+      { pane: 'p-1', cwd: '/w', userTitle: null, resumeTarget: 'the-conversation', history: 't1/r/p-1.term' },
+    ],
+  };
+
+  it('re-points the stale session id at the live one, keeping role and target', async () => {
+    const h = (live = harness({
+      tasks: [
+        task({
+          lifecycle: 'archived',
+          shelvedAt: 1,
+          tabs: [archivedTab],
+          // The id the record has carried since some earlier restore killed it.
+          sessions: [{ id: 'dead-session', role: 'orchestrator', resumeTarget: 'the-conversation' }],
+        }),
+      ],
+      invoke: (id) => {
+        if (id === 'sessions.list') {
+          return { ok: true, value: [{ id: 'live-session', paneId: 'p-1' }] } as never;
+        }
+        if (id === 'agents.resumeCommand') {
+          return { ok: true, value: { command: 'agent --resume the-conversation' } } as never;
+        }
+        return undefined;
+      },
+    }));
+
+    await h.run('tasks.restore', { task: 't1' });
+    // The poll waits on the extension's own clock, which is manual here.
+    await until(async () => {
+      h.clock.advance(500);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const record = await recordOf(h);
+      return (record?.['sessions'] as { id: string }[])[0]?.id === 'live-session';
+    });
+
+    const sessions = (await recordOf(h))?.['sessions'] as {
+      id: string;
+      pane?: string;
+      role: string;
+      resumeTarget?: string;
+    }[];
+    expect(sessions[0]).toMatchObject({
+      id: 'live-session',
+      pane: 'p-1',
+      // Carried across from the session this pane WAS — a default would quietly
+      // demote an orchestrator, and `provision` branches on a task having one.
+      role: 'orchestrator',
+      resumeTarget: 'the-conversation',
+    });
   });
 });
