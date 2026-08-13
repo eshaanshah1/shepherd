@@ -130,25 +130,7 @@ export function TaskCard({ item, selected, invoke }: ExtensionRowProps): ReactEl
           button is what keeps the cell that width when it is not shown.
         */}
         <span className="sh-task-card__trail">
-          {/*
-            The stage word WINS the cell when there is one.
-
-            §8's ladder ends at "beyond three seconds, a stage label", and
-            creating a task is the wait that ladder was written for: a model
-            naming it, then ~2.5s of network per repo, then a root to write. The
-            elapsed stamp reads `0m` for the whole of it, so the trade is a
-            number nobody needs for the only fact anybody wants.
-
-            In the trail rather than on a line of its own because the trail is a
-            grid stack — one cell, three possible occupants, no height change and
-            no new element. A card that grew a line for fifteen seconds and lost
-            it again would be motion that moves a control, which §8 refuses.
-          */}
-          {card.stage !== undefined ? (
-            <span className="sh-task-card__stage">{card.stage}</span>
-          ) : card.elapsed === undefined ? null : (
-            <span className="sh-task-card__elapsed">{card.elapsed}</span>
-          )}
+          {card.elapsed === undefined ? null : <span className="sh-task-card__elapsed">{card.elapsed}</span>}
           {action === undefined ? null : (
             <IconButton
               className="sh-task-card__action"

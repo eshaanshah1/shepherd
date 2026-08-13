@@ -56,20 +56,15 @@ export interface CardData {
   readonly mark: CardMark;
   /** `4m` / `2h` / `3d`, already formatted — the service half owns the clock. */
   readonly elapsed?: string;
-  /**
-   * Which STEP of a long operation the task is on — `naming`, `worktrees`,
-   * `linking`, `starting`, `archiving`, `restoring`.
+  /*
+   * There is deliberately no `stage` field.
    *
-   * Drawn in the elapsed stamp's own cell and never beside it. A task that is
-   * four seconds into being created reads `0m`, so there is nothing to lose by
-   * taking the slot, and the alternative — a line of its own — is the one thing
-   * a card may not do (§5: only the waiting variant changes height).
-   *
-   * Not the same fact as `mark`, which is why both are here and why this is not
-   * "a status word beside a status mark". The mark says something is happening;
-   * this says which part, and no mark can carry that.
+   * The step a task is on reaches the rail as the row's own LABEL (`stepLabel`,
+   * service half), because until the model answers there is no name for the
+   * label to hold — only `heuristicName`'s slice of the brief, which reads as a
+   * broken name rather than an unfinished one. A card field carrying the step as
+   * well would draw the same word twice on one line.
    */
-  readonly stage?: string;
   /** One sentence of what is happening. */
   readonly summary?: string;
   readonly diff?: CardDiff;
@@ -182,7 +177,6 @@ export function readCardData(value: unknown): CardData | null {
   return {
     mark: state,
     elapsed: str(value['elapsed']),
-    stage: str(value['stage']),
     summary: str(value['summary']),
     diff: readDiff(value['diff']),
     suite,
