@@ -9,7 +9,7 @@ export {
   type ScreenState,
   type TerminalMirrorOptions,
 } from './mirror.ts';
-export { cwdFromOsc7 } from './osc.ts';
+export { cwdFromOsc7, isShellPromptTitle } from './osc.ts';
 export { arbitrate, type Viewport } from './viewport.ts';
 export { PtyFanout, type PtySink } from './fanout.ts';
 export {

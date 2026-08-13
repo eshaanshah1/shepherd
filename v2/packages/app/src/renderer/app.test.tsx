@@ -881,7 +881,8 @@ describe('the tab strip', () => {
 
   it('labels a tab with its focused pane, exactly as the sidebar does', () => {
     // `displayTitle`, whose own doc comment says it is what the sidebar and the
-    // tab strip show. A pane nobody named falls through to its cwd.
+    // tab strip show. A pane nobody named reads `term` — NOT its cwd, which the
+    // pane head prints beside the name rather than as it.
     const { view } = render({
       snapshot: snapshotsOf(
         'task:t1',
@@ -889,7 +890,7 @@ describe('the tab strip', () => {
         rootOf(leaf(makePane({ cwd: '/src/api' })), undefined, 'task:t1/tab-2', 'task:t1'),
       ),
     });
-    expect(tabLabels(view.container)).toEqual(['vim', 'src/api']);
+    expect(tabLabels(view.container)).toEqual(['vim', 'term']);
     view.unmount();
   });
 });

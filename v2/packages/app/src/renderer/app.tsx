@@ -513,7 +513,7 @@ export function App({
       // A root with no panes is a real state (its last pane was closed), and it
       // is still a tab you can switch to. It says so — a raw root id is an
       // internal name, and `window-1` on a tab teaches nothing.
-      return { id: root.root, label: pane === null ? 'Empty' : displayTitle(pane, '') };
+      return { id: root.root, label: pane === null ? 'Empty' : displayTitle(pane) };
     });
   }, [snapshots, active]);
 
@@ -701,7 +701,6 @@ export function App({
                 {...(terminals === null
                   ? {}
                   : { renderPane: makeRenderPane(root.root === snapshots?.active) })}
-                home=""
               />
               )}
             </div>

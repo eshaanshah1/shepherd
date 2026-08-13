@@ -13,7 +13,7 @@
 // no clock, no OS. `grep` for those in this directory should stay empty.
 
 export type { Pane, PaneInit } from './pane.ts';
-export { makePane, displayTitle } from './pane.ts';
+export { makePane, displayTitle, DEFAULT_PANE_TITLE } from './pane.ts';
 
 export type { SplitAxis, FocusDirection, Rect, SplitNode, SplitDivider, TreeEdit } from './tree.ts';
 export {

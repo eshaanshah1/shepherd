@@ -1,5 +1,35 @@
 import { describe, expect, it } from 'vitest';
-import { cwdFromOsc7 } from './osc.ts';
+import { cwdFromOsc7, isShellPromptTitle } from './osc.ts';
+
+describe('isShellPromptTitle', () => {
+  /** What oh-my-zsh's `%n@%m:%~` and `%n@%m` actually produce. */
+  it('recognises a shell sitting at its prompt', () => {
+    expect(isShellPromptTitle('eshaannileshshah@eshaannileshshah-W9002T4YV1:~')).toBe(true);
+    expect(isShellPromptTitle('eshaannileshshah@eshaannileshshah-W9002T4YV1')).toBe(true);
+    expect(isShellPromptTitle('me@box:/var/log')).toBe(true);
+    expect(isShellPromptTitle('me@box:~/code/thing')).toBe(true);
+  });
+
+  /** Everything a program calls itself keeps its name. */
+  it('leaves a program’s own title alone', () => {
+    expect(isShellPromptTitle('vim')).toBe(false);
+    expect(isShellPromptTitle('claude')).toBe(false);
+    expect(isShellPromptTitle('git commit')).toBe(false);
+    expect(isShellPromptTitle('ssh me@box')).toBe(false);
+    expect(isShellPromptTitle('npm run dev')).toBe(false);
+    expect(isShellPromptTitle('')).toBe(false);
+  });
+
+  /**
+   * Two `@`s is not the prompt form. Narrowness is the point: this drops a name
+   * the user would otherwise see, so it must not guess.
+   */
+  it('does not overreach', () => {
+    expect(isShellPromptTitle('a@b@c')).toBe(false);
+    expect(isShellPromptTitle('@box')).toBe(false); // no user: not the prompt form
+    expect(isShellPromptTitle('deploy staging@eu')).toBe(false);
+  });
+});
 
 describe('cwdFromOsc7', () => {
   it('reads a path off a payload with no host', () => {

@@ -78,6 +78,7 @@ export type {
 export {
   makePane,
   displayTitle,
+  DEFAULT_PANE_TITLE,
   leaf,
   split,
   leafIds,

@@ -449,7 +449,7 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
              * getting bitten by. The home is empty because a caller that wants
              * `~` for it can say so; core does not read the environment.
              */
-            label: found === null ? '' : displayTitle(found, ''),
+            label: found === null ? '' : displayTitle(found),
             focusedPane: pane === null ? null : String(pane),
             focusedSession: pane === null ? null : (store.sessionFor(pane) ?? null),
             /*

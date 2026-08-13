@@ -106,12 +106,11 @@ export function TerminalPane({
     return () => observer.disconnect();
   }, [pane.id, terminals]);
 
-  const name = displayTitle(pane, '');
-  // The dim tail, only when it would say something the name does not. A pane
-  // with no title of its own already *is* its cwd (see `displayTitle`), and
-  // printing the path twice is noise dressed as detail.
-  const named = (pane.userTitle ?? '') !== '' || pane.title !== '';
-  const where = named ? pathTail(pane.cwd) : null;
+  const name = displayTitle(pane);
+  // Always, now that the name can no longer BE the cwd — `displayTitle` ends at
+  // `term` rather than at a path. The condition this replaces existed to stop
+  // the head printing the same path twice.
+  const where = pathTail(pane.cwd);
 
   /*
    * The pane head is painted on the GRID's background, not on `--sh-ink`, so the

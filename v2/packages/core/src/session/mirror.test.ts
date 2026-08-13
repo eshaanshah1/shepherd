@@ -237,6 +237,30 @@ describe('TerminalMirror', () => {
     mirror.dispose();
   });
 
+  /**
+   * The shell re-sets its prompt title after EVERY command, so this has to clear
+   * the name rather than be ignored — ignoring it would leave the tab reading
+   * `vim` for the rest of the session.
+   */
+  it('clears the name when a shell goes back to its prompt', async () => {
+    const mirror = new TerminalMirror();
+    const seen: ObservedPatch[] = [];
+    mirror.onObserved((patch) => seen.push(patch));
+
+    // BEL-terminated, as a shell sends them: a bare ESC starting the next
+    // sequence ABORTS the one in progress, so an unterminated run dispatches
+    // nothing at all.
+    mirror.feed(encode('\x1b]2;me@box:~\x07'));
+    mirror.feed(encode('\x1b]2;vim\x07'));
+    mirror.feed(encode('\x1b]2;me@box:~/code\x07'));
+    await captured(mirror);
+
+    // The first prompt title says nothing (the name was already empty); the
+    // second has to undo `vim`.
+    expect(seen).toEqual([{ title: 'vim' }, { title: '' }]);
+    mirror.dispose();
+  });
+
   it('stops reporting once disposed', async () => {
     const mirror = new TerminalMirror();
     const seen: ObservedPatch[] = [];
