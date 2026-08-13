@@ -1,29 +1,27 @@
 /**
- * How the Shipped region is partitioned and stamped — day buckets, clock times,
- * and the one row that stands for more than one task.
+ * How the Shipped region is partitioned — day buckets, and the one row that stands
+ * for more than one task.
  *
  * Pure, and separate from `order.ts` for the same reason that file is separate
  * from the tree: `order.ts` answers "which row sits where", and this answers
- * "which rows are one group and what does each say about when". A reader asking
- * why finished work is grouped at all reads this file rather than 300 lines of
- * `getChildren`.
+ * "which rows are one group". A reader asking why finished work is grouped at all
+ * reads this file rather than 300 lines of `getChildren`.
  *
  * **Everything here takes `now` rather than reading a clock**, so a test can state
- * the case instead of mocking one — the same shape as `elapsed.ts`.
+ * the case instead of mocking one.
  *
- * ── why a day header and a clock, when `formatElapsed` exists ────────────────
+ * ── why a day header, and why NO time on the row ─────────────────────────────
  *
- * The live list stamps duration: a task has been going `8m`, and the number
- * climbing is the point. The archive stamps an EVENT — a thing finished, at a
- * moment, and the moment does not move afterwards. Drawn identically, the two read
- * as one scale, and `2h` under `Shipped` invites the arithmetic the reader was
- * trying to avoid: "shipped two hours ago" is not the question, "what did I finish
- * today" is.
+ * A task row used to carry an age (`2h`), which under `Shipped` reported how old
+ * the TASK was rather than when it shipped — work begun three weeks ago and
+ * finished ten minutes ago read `21d`. The obvious repair was a ship clock, and it
+ * was tried: `16:40`, off `archivedAt`, correct about the right event.
  *
- * A clock time answers that in four characters and never changes again. It is only
- * unambiguous under a header naming the day, so the two arrive together or not at
- * all — which is why they are one function's output here rather than two calls a
- * caller could get half of.
+ * It came out again, and that is the position this file now holds. The question the
+ * archive is asked is "what did I finish today", and a day header answers it once
+ * for a whole group — where a per-row minute stamp answers a question nobody asked
+ * and puts a number beside every title you are trying to read. So the grouping is
+ * all that survives, and the row says only what it is.
  */
 
 /**
@@ -58,8 +56,6 @@ export const shippedAt = (task: Shippable): number => task.archivedAt ?? task.cr
 export interface ShippedRow<T extends Shippable = Shippable> {
   readonly task: T;
   readonly count: number;
-  /** `16:40` — the ship time of `task`, tabular and four characters wide. */
-  readonly clock: string;
 }
 
 /** A day's worth of shipped rows, under the label that names the day. */
@@ -68,9 +64,7 @@ export interface ShippedDay<T extends Shippable = Shippable> {
   readonly rows: readonly ShippedRow<T>[];
 }
 
-const MINUTE = 60_000;
-const HOUR = 60 * MINUTE;
-const DAY = 24 * HOUR;
+const HOUR = 60 * 60_000;
 
 /**
  * Midnight at the start of the local day containing `at`.
@@ -84,14 +78,6 @@ function startOfDay(at: number): number {
   const d = new Date(at);
   d.setHours(0, 0, 0, 0);
   return d.getTime();
-}
-
-const pad = (n: number): string => String(n).padStart(2, '0');
-
-/** `16:40`, local, 24-hour — the format that stays four characters all day. */
-export function formatClock(at: number): string {
-  const d = new Date(at);
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const;
@@ -146,7 +132,7 @@ export function collapseByTitle<T extends Shippable>(tasks: readonly T[]): reado
   return order.map((title) => {
     // Non-null by construction: `order` only holds keys just written to the map.
     const group = byTitle.get(title) as { task: T; count: number };
-    return { task: group.task, count: group.count, clock: formatClock(shippedAt(group.task)) };
+    return { task: group.task, count: group.count };
   });
 }
 

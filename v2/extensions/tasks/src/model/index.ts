@@ -26,5 +26,5 @@ export { planArchive, planRestore } from './archive.ts';
 export type { WorktreeState, ArchiveRecord, ArchivePlan } from './archive.ts';
 export { SHIPPED_CAP, activeOrder, capShipped, shippedOrder } from './order.ts';
 export type { Ordered } from './order.ts';
-export { collapseByTitle, dayLabel, formatClock, groupByDay, shippedAt } from './shipped-days.ts';
+export { collapseByTitle, dayLabel, groupByDay, shippedAt } from './shipped-days.ts';
 export type { Shippable, ShippedDay, ShippedRow } from './shipped-days.ts';

@@ -100,15 +100,6 @@
   color: var(--sh-text);
 }
 
-.sh-task-card__elapsed {
-  flex: none;
-  font-family: var(--sh-font-mono);
-  font-size: var(--sh-font-size-nano);
-  /* Tabular, so a column of cards reads DOWN — the whole reason the elapsed
-     stamp is mono at all. */
-  font-variant-numeric: tabular-nums;
-  color: var(--sh-text-ghost);
-}
 
 /* ── the sentence ──────────────────────────────────────────────────────────── */
 
@@ -374,12 +365,18 @@
 }
 
 /*
- * ── the trailing cell: metadata and the hover action, in ONE track ─────────
+ * ── the trailing cell: the row's one verb, in a track it cannot resize ─────
  *
- * §6 refuses "a row that grows to reveal hover actions". Both occupants sit in
- * the same grid area, so the track is already as wide as the wider of them and
- * revealing the button moves nothing — where appending would shift the title
- * under the cursor at the moment you are reaching for it.
+ * §6 refuses "a row that grows to reveal hover actions", so the button sits in a
+ * grid area that is laid out whether or not it is drawn — revealing it moves
+ * nothing, where appending would shift the title under the cursor at the moment
+ * you are reaching for it.
+ *
+ * It used to share this track with the elapsed stamp, each hiding the other. The
+ * stamp is gone from both regions (it reported task age on finished work, and a
+ * corrected ship clock was true without being worth a column), so the cell now
+ * holds one occupant — and still reserves its width, because the reflow this
+ * prevents was the BUTTON appearing from nothing, not the swap.
  */
 .sh-task-card__trail {
   display: grid;
@@ -406,8 +403,3 @@
   visibility: visible;
 }
 
-/* …and the metadata yields to it, rather than the two overlapping. */
-.sh-task-card:hover .sh-task-card__elapsed,
-.sh-task-card:focus-within .sh-task-card__elapsed {
-  visibility: hidden;
-}

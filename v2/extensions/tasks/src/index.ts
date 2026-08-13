@@ -47,7 +47,6 @@ import { isTaskAgentState, rollUp, tintFor } from './model/agent-rollup.ts';
 import { collectTaskDiff } from './model/diff-collect.ts';
 import type { DiffStats } from './model/diff-stats.ts';
 import { fuzzyFilter } from '@shepherd/sdk';
-import { formatElapsed } from './model/elapsed.ts';
 import { SHIPPED_CAP, activeOrder, capShipped, shippedOrder } from './model/order.ts';
 import { groupByDay } from './model/shipped-days.ts';
 import { capTabRows } from './model/tab-rows.ts';
@@ -137,24 +136,6 @@ export const LOCAL_MACHINE = 'here';
  * has a reason — no window, a renderer that never mounted it — and asking
  * forever would keep a timer alive for the life of the app to learn nothing.
  */
-/**
- * What a SHIPPED row knows that a live one does not.
- *
- * Two facts, and both are decided by the grouping rather than by the task: the
- * clock time belongs with the day header that makes it unambiguous, and the count
- * is a property of the group the row collapsed. Passing them in — rather than
- * having the row work them out — is what keeps a row that stands for two tasks
- * from being a thing `rowFor` could produce by accident.
- *
- * Absent means "this is live work", which is the only other kind of row there is.
- */
-interface ShipInfo {
-  /** `16:40` — when it shipped, in the format the day header disambiguates. */
-  readonly clock: string;
-  /** How many tasks share this row's title within its day. `1` for almost all. */
-  readonly count: number;
-}
-
 /** What this extension puts in a tree. Structural, so the SDK type stays the SDK's. */
 interface TreeItemOut {
   id: string;
@@ -3376,29 +3357,33 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
            * at all until the first refresh lands — so a freshly-opened app draws
            * cards with no diff line for a beat rather than a row of `+0 −0`.
            */
-          const cardFor = (task: TaskRecord, state: string, ship?: ShipInfo): unknown => ({
+          const cardFor = (task: TaskRecord, state: string, count?: number): unknown => ({
             mark: markFor(task, state),
             // No stage field: the step is the row's LABEL now (`stepLabel`), and
             // a card that also carried it in the trailing cell would say the same
             // word twice on one line.
             /*
-             * **The live list stamps a DURATION, the archive stamps an EVENT.**
+             * **There is no time stamp on a task row, and that is the third answer
+             * rather than an omission.**
              *
-             * This was `formatElapsed(task.createdAt)` for every row, live and
-             * shipped alike, and on finished work that reads as task AGE: work
-             * begun three weeks ago and shipped ten minutes ago said `21d`. The
-             * question a permanent archive is asked is "what did I finish today",
-             * and no formatting of the start time answers it.
+             * It was `formatElapsed(task.createdAt)` on every row, live and shipped
+             * alike, which on finished work reported task AGE: begun three weeks
+             * ago, shipped ten minutes ago, and the row said `21d`. It became a
+             * `16:40` clock off `archivedAt` on shipped rows, which was at least
+             * true of the right event. It is now gone from both regions, because
+             * true is not the same as worth a column.
              *
-             * A shipped row therefore carries the clock time it was shipped at,
-             * computed at the grouping site because that is where the day header
-             * making `16:40` unambiguous is decided — the two are one treatment,
-             * and a card that formatted its own clock could be handed a time with
-             * no header above it.
+             * What the trailing cell holds instead is the row's ONE verb — `Ship`
+             * on live work, `Unship` on finished — revealed on hover. That cell was
+             * always shared (§6: a row must not grow to reveal its actions), so the
+             * stamp and the button were never on screen together anyway: the stamp
+             * hid the moment you reached for the thing you could actually do.
              *
-             * Live rows are untouched: a duration climbing IS the fact there.
+             * What time it is remains answerable where it is cheap. The Shipped
+             * region carries a day header, which says "when" once for a whole group
+             * instead of once per row; a live task's own panes and its agent say
+             * what is happening far better than a minute counter does.
              */
-            elapsed: ship === undefined ? formatElapsed(task.createdAt, ctx.clock.now()) : ship.clock,
             /*
              * How many tasks this row stands for, when it is more than one.
              *
@@ -3407,7 +3392,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
              * two things you are separately doing and collapsing them would hide
              * one you might need to answer.
              */
-            ...(ship !== undefined && ship.count > 1 ? { dupe: ship.count } : {}),
+            ...(count !== undefined && count > 1 ? { dupe: count } : {}),
             /*
              * Shipped rows are DIMMED and one line — the whole reason finished
              * work can sit permanently in the rail without costing attention.
@@ -3493,7 +3478,15 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           const done = shippedOrder(shown.filter((task) => task.lifecycle === 'archived'));
 
           const rows: TreeItemOut[] = [];
-          const rowFor = (task: TaskRecord, ship?: ShipInfo): TreeItemOut => {
+          /**
+           * A row, and for a shipped one how many tasks it stands for.
+           *
+           * `count` is decided by the GROUPING rather than by the task — it is a
+           * property of the day-bucket the row collapsed within — so it is passed
+           * in. That is what keeps a row standing for two tasks from being
+           * something this function could produce by accident.
+           */
+          const rowFor = (task: TaskRecord, count?: number): TreeItemOut => {
             const state = displayState(task.lifecycle, agentStatesOf(task));
             const busyWhat = busy.get(task.id);
             // Said on the row rather than in a log nobody has open — and
@@ -3576,7 +3569,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
                  * renderer. Clicking still opens the most recent of them, which is
                  * what the count is there to disclose.
                  */
-                ...(ship !== undefined && ship.count > 1 ? [`${ship.count} tasks`] : []),
+                ...(count !== undefined && count > 1 ? [`${count} tasks`] : []),
               ].join(' · '),
               // The word the shell resolves. `isTaskAgentState` rather than a
               // cast: `displayState` still returns the lifecycle union too, and
@@ -3615,7 +3608,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
                * ordinary row and loses nothing but the richer form.
                */
               component: 'tasks.card',
-              data: cardFor(task, state, ship),
+              data: cardFor(task, state, count),
               /*
                * Something is happening to it right now — a snapshot being taken,
                * worktrees being rebuilt. The row says so where its status mark is,
@@ -3822,7 +3815,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
                 subsection: true,
               });
               for (const row of day.rows) {
-                rows.push(rowFor(row.task, { clock: row.clock, count: row.count }));
+                rows.push(rowFor(row.task, row.count));
               }
             }
             /*

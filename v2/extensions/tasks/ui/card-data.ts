@@ -9,7 +9,7 @@
  * — and this renders in the rail, so the throw takes the whole window.
  *
  * The defaults are all "say less", never "make something up": an unreadable diff
- * draws no diff line, an unreadable elapsed draws no stamp. A card that omits a
+ * draws no diff line, an unreadable count draws no badge. A card that omits a
  * fact is honest; one that invents a zero is not.
  */
 
@@ -54,16 +54,15 @@ export interface CardAnswer {
 
 export interface CardData {
   readonly mark: CardMark;
-  /**
-   * The trailing stamp, already formatted — the service half owns the clock.
+  /*
+   * There is deliberately no `elapsed` field.
    *
-   * `4m` / `2h` / `3d` on live work, where a climbing duration is the fact. On a
-   * shipped row it is a `16:40` clock time instead, because the archive stamps the
-   * moment a thing finished rather than how long ago that was. One field either
-   * way: the card draws a stamp and does not need to know which question it
-   * answers, and a second field would be two things to keep in step.
+   * A task row carried one — `4m` / `2h` / `3d` — and it was removed from both
+   * regions rather than reformatted. On finished work it reported the wrong
+   * subject (task age, not ship time); corrected to a ship clock it was true and
+   * still not worth a column, because the Shipped region already answers "when"
+   * once per DAY in its headers. The trailing cell holds the row's one verb.
    */
-  readonly elapsed?: string;
   /**
    * How many tasks this ONE row stands for, when it is more than one.
    *
@@ -224,7 +223,6 @@ export function readCardData(value: unknown): CardData | null {
 
   return {
     mark: state,
-    elapsed: str(value['elapsed']),
     ...(shipped && dupe !== undefined && dupe > 1 ? { dupe } : {}),
     summary: str(value['summary']),
     diff: readDiff(value['diff']),
