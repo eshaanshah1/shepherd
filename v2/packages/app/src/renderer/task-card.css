@@ -63,6 +63,10 @@
   display: flex;
   align-items: center;
   gap: var(--sh-space-md);
+  /* The containing block for the trailing action, which is taken OUT of this
+     flex line so it stops charging the title for space it does not use at rest —
+     see the trailing cell below. */
+  position: relative;
   /* A bare button: the card supplies the surface, and a nested button with its
      own background would be a box inside a box. */
   padding: 0;
@@ -365,29 +369,55 @@
 }
 
 /*
- * ── the trailing cell: the row's one verb, in a track it cannot resize ─────
+ * ── the trailing action: over the title, never beside it ──────────────────
  *
- * §6 refuses "a row that grows to reveal hover actions", so the button sits in a
- * grid area that is laid out whether or not it is drawn — revealing it moves
- * nothing, where appending would shift the title under the cursor at the moment
- * you are reaching for it.
+ * §6 refuses "a row that grows to reveal hover actions", and the mechanism that
+ * bought that was a shared grid cell: the elapsed stamp and the button sat in one
+ * track, so the track was already as wide as the wider of them and revealing the
+ * button moved nothing.
  *
- * It used to share this track with the elapsed stamp, each hiding the other. The
- * stamp is gone from both regions (it reported task age on finished work, and a
- * corrected ship clock was true without being worth a column), so the cell now
- * holds one occupant — and still reserves its width, because the reflow this
- * prevents was the BUTTON appearing from nothing, not the swap.
+ * **The stamp paid for that track, and the stamp is gone.** Left in the flow, the
+ * cell went on reserving the button's width plus its gap on every row — 33px of
+ * title track, on every title, for something invisible until you point at it. The
+ * region had just won 21px back by dropping the state column; this quietly spent
+ * more than that on the other edge.
+ *
+ * So the action leaves the flow. The title gets the whole line, and the button
+ * paints OVER its tail when revealed — which is precisely what it already did to
+ * the stamp when there was one. Nothing reflows, because nothing in the flow
+ * changed: no width is reserved and none is taken.
+ *
+ * The backing is what makes occlusion legible rather than a button dropped on
+ * text, and it is the row's OWN fill rather than a new colour — `fillHover` and
+ * `fillSelected` are opaque tokens (`wash` and a luminance step, not color-mixes),
+ * so the chip under the button is the same value as the row it sits on and reads
+ * as the row ending early rather than as something laid on top.
  */
 .sh-task-card__trail {
-  display: grid;
-  grid-template-areas: 'stack';
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  display: flex;
   align-items: center;
-  justify-items: end;
-  flex: none;
+  /* A gap of backing before the glyph, so the covered text ends at a margin
+     rather than against the button's edge. */
+  padding-inline-start: var(--sh-space-md);
 }
 
-.sh-task-card__trail > * {
-  grid-area: stack;
+/*
+ * The chip, in the row's own fill and ONLY while the button is drawn.
+ *
+ * At rest the button is `visibility: hidden` and this must be transparent, or
+ * every row would carry a rectangle of hover colour at its right edge.
+ */
+.sh-task-card:hover .sh-task-card__trail,
+.sh-task-card:focus-within .sh-task-card__trail {
+  background: var(--sh-fill-hover);
+}
+
+.sh-task-card[data-selected]:hover .sh-task-card__trail,
+.sh-task-card[data-selected]:focus-within .sh-task-card__trail {
+  background: var(--sh-fill-selected);
 }
 
 /*

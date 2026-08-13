@@ -95,6 +95,50 @@ describe('Row', () => {
     }
   });
 
+  /**
+   * MUTATION TARGET #4. A hover action must not tax the label for space it does
+   * not occupy at rest.
+   *
+   * The shared grid cell is paid for by `meta`: the track is as wide as the wider
+   * of the two, so the button is free because the metadata already held that space.
+   * With no metadata it is not free — it reserves its own width on every row for
+   * something invisible until you point at it, and the label pays. That shipped:
+   * removing the task card's elapsed stamp left the reservation behind and every
+   * title in the rail started truncating ~33px early.
+   *
+   * Asserted on the DECLARATIONS, because the state that reveals the difference is
+   * `:hover` and jsdom cannot enter it.
+   */
+  it('takes the trailing cell out of the flow when there is no metadata', () => {
+    const outOfFlow = rulesMentioning('sh-ui-row__trailing').find(
+      (rule) => rule.selectorText === '.sh-ui-row__trailing:has(> .sh-ui-row__meta:empty)',
+    );
+    expect(outOfFlow?.style.position).toBe('absolute');
+    // …against a row that is its containing block, or it would escape to the page.
+    expect(
+      rulesMentioning('sh-ui-row').find((rule) => rule.selectorText === '.sh-ui-row')?.style.position,
+    ).toBe('relative');
+    // And the cell WITH metadata stays in the flow, where the stacking is correct.
+    const inFlow = rulesMentioning('sh-ui-row__trailing').find(
+      (rule) => rule.selectorText === '.sh-ui-row__trailing',
+    );
+    expect(inFlow?.style.position).toBe('');
+    expect(inFlow?.style.display).toBe('grid');
+  });
+
+  it('backs the overlaid action with the row’s own fill, never a new colour', () => {
+    // Opaque tokens, so the chip under the button is the same value as the row it
+    // sits on — it reads as the row ending early, not as something dropped on the
+    // text. A colour of its own here would be a fifth hue used for decoration.
+    const fills = rulesMentioning('sh-ui-row__trailing')
+      .filter((rule) => rule.style.background !== '')
+      .map((rule) => rule.style.background);
+    expect(fills.length).toBeGreaterThan(0);
+    for (const fill of fills) {
+      expect(['var(--sh-fill-hover)', 'var(--sh-fill-selected)']).toContain(fill);
+    }
+  });
+
   it('drops the leading slot only when the list has no state column', () => {
     /*
      * The bound on rule 2, and the reason it is a prop rather than an inference:

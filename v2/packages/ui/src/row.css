@@ -48,6 +48,9 @@
    * fills what is left after the margins.
    */
   width: auto;
+  /* The containing block for a trailing cell with no metadata to hold it open,
+     which leaves the flow rather than charging every label for a hidden button. */
+  position: relative;
   margin-inline: var(--sh-space-sm);
   padding: 0 calc(var(--sh-space-lg) - var(--sh-space-sm)) 0
     calc(var(--sh-space-xl) - var(--sh-space-sm));
@@ -204,6 +207,42 @@
   align-items: center;
   justify-items: end;
   flex: 0 0 auto;
+}
+
+/*
+ * …and when there is NO metadata, the cell leaves the flow entirely.
+ *
+ * The mechanism above is paid for by `meta`: the track is as wide as the wider of
+ * the two, so the button is free because the metadata was already holding that
+ * space. With no metadata there is nothing to be free beside — the cell reserves
+ * the button's width on every row for something invisible until you point at it,
+ * and the label is what pays.
+ *
+ * So the actions overlay the label's tail instead, which is exactly what they
+ * already do to the metadata when there is some. Nothing reflows either way: the
+ * flow does not change when the button appears, because the button is not in it.
+ *
+ * The backing is the row's own fill, not a new colour — `fillHover` and
+ * `fillSelected` are opaque, so the chip reads as the row ending early rather than
+ * as something dropped on top of the text. Only while the button is DRAWN, or every
+ * row would carry a rectangle of hover colour at its right edge.
+ */
+.sh-ui-row__trailing:has(> .sh-ui-row__meta:empty) {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  display: flex;
+  padding-inline-start: var(--sh-space-md);
+}
+
+.sh-ui-row:hover .sh-ui-row__trailing:has(> .sh-ui-row__meta:empty),
+.sh-ui-row:focus-within .sh-ui-row__trailing:has(> .sh-ui-row__meta:empty) {
+  background: var(--sh-fill-hover);
+}
+
+.sh-ui-row--selected:hover .sh-ui-row__trailing:has(> .sh-ui-row__meta:empty),
+.sh-ui-row--selected:focus-within .sh-ui-row__trailing:has(> .sh-ui-row__meta:empty) {
+  background: var(--sh-fill-selected);
 }
 
 .sh-ui-row__meta,
