@@ -311,6 +311,45 @@ export async function runM3Smoke(
   );
   say('ok — a task shelved from the sidebar keeps its tabs and what was on them');
 
+  /*
+   * --- 4b. LOOKING at shelved work costs nothing.
+   *
+   * The claim the snapshot view exists for, and one no unit test can make: a
+   * unit test supplies both halves of the correlation, which is exactly how the
+   * archive-on-close bug shipped green. Here the app is real, the worktree is a
+   * real directory, and a session is a real pty.
+   *
+   * Both halves are needed. "No new session" alone would pass if the tabs never
+   * opened at all; "the tab is on screen" alone would pass if it opened live.
+   */
+  /*
+   * The session IDS, not a count.
+   *
+   * A count is not stable here: archiving has just killed this task's pty, and
+   * whether the reap has landed by the time the sample is taken is a race — the
+   * first version of this assertion compared `1` against `0` and called a
+   * session's death a session's birth. What must not happen is a NEW id
+   * appearing, and that is what an id set says.
+   */
+  const idsOf = async (): Promise<Set<string>> =>
+    new Set(((await invoke('sessions.list')) as { id: string }[]).map((row) => row.id));
+  const sessionsBeforeReveal = await idsOf();
+  await invoke('tasks.reveal', { task: created.id });
+
+  const readOnlyPanes = await until(
+    'the archived tab to be drawn read-only',
+    () =>
+      win.webContents.executeJavaScript(
+        `document.querySelectorAll('[data-readonly="true"]').length`,
+      ) as Promise<number>,
+    (found) => found > 0,
+  );
+  check(readOnlyPanes > 0, `the revealed tab is drawn as captured screens: ${readOnlyPanes} pane(s)`);
+  check(!existsSync(worktree), 'revealing a shelved task did NOT put its worktree back');
+  const started = [...(await idsOf())].filter((id) => !sessionsBeforeReveal.has(id));
+  check(started.length === 0, `revealing started no session: ${JSON.stringify(started)}`);
+  say('ok — a shelved task is shown from its snapshot, with no worktree and no pty');
+
   await invoke('tasks.restore', { task: created.id });
 
   /*
@@ -335,6 +374,15 @@ export async function runM3Smoke(
     foregroundProcess?: string;
   }[]).filter((session) => (session.foregroundProcess ?? '').includes('claude'));
   check(running.length === 0, `restoring ran no agent: ${JSON.stringify(running)}`);
+  // …and it is LIVE now: the panes have ptys and nothing on screen is a
+  // captured screen any more. The inverse of the reveal assertions above, which
+  // is what makes the pair discriminating rather than two ways of passing.
+  const stillReadOnly = (await win.webContents.executeJavaScript(
+    `document.querySelectorAll('[data-readonly="true"]').length`,
+  )) as number;
+  check(stillReadOnly === 0, `restoring replaced every captured screen: ${stillReadOnly} left`);
+  const relaunched = [...(await idsOf())].filter((id) => !sessionsBeforeReveal.has(id));
+  check(relaunched.length > 0, `restoring brought the panes back live: ${JSON.stringify(relaunched)}`);
   say('ok — a restored task is rebuilt, not relaunched');
 
   const after = await until(

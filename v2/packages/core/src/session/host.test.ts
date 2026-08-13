@@ -128,6 +128,47 @@ describe('SessionHost lifecycle', () => {
     expect(all.slice(2)).toEqual([0xff, 0xfe, 0x01]);
   });
 
+  /**
+   * The screen outlives the pty, and dies with the PANE.
+   *
+   * A tab whose agent has finished is still on screen, still showing what it
+   * did — and before this, archiving it captured nothing: `#reap` disposed the
+   * emulator, so the only copy of that screen was the renderer's. The tab came
+   * back blank for exactly the pane you most wanted to read.
+   */
+  it('keeps a dead session capturable until somebody says they are done with it', async () => {
+    const host = makeHost();
+    const done: SessionExit[] = [];
+    host.onExit((e) => done.push(e));
+
+    const created = host.create({
+      cwd: '/tmp',
+      command: '/bin/sh',
+      args: ['-c', 'printf "the agent finished"'],
+    });
+    if (!isOk(created)) throw new Error('create failed');
+    const id = created.value.id;
+    await waitFor(() => done.length > 0, 'exit');
+
+    // Gone from every liveness answer — a pane must not reattach to this.
+    expect(host.has(id)).toBe(false);
+    expect(host.get(id)).toBeUndefined();
+    expect(host.list().map((s) => s.id)).not.toContain(id);
+
+    // …and its screen is still there to capture.
+    const chunks: Uint8Array[] = [];
+    expect(isOk(host.snapshot(id, (bytes) => chunks.push(bytes)))).toBe(true);
+    await waitFor(() => chunks.length > 0, 'snapshot');
+    expect(decoder.decode(Buffer.concat(chunks.map((c) => Buffer.from(c))))).toContain(
+      'the agent finished',
+    );
+
+    // `kill` is what a closing pane calls. It still reports the session is gone
+    // — that contract is unchanged — and releases the screen on the way.
+    expect(isErr(host.kill(id))).toBe(true);
+    expect(isErr(host.snapshot(id, () => undefined))).toBe(true);
+  });
+
   it('kill() fires onExit once and removes the id from list()', async () => {
     const host = makeHost();
     const exits: SessionExit[] = [];

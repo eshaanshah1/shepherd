@@ -65,6 +65,7 @@ export function createBridge(ipc: IpcLike): ShepherdBridge {
       get: () => invoke(INVOKE.layoutGet),
       onChanged: (listener) => subscribe<LayoutSnapshots>(EMIT.layoutChanged, listener),
       setViewport: (rect) => invoke(INVOKE.layoutViewport, rect),
+      snapshot: (paneId) => invoke(INVOKE.layoutSnapshot, paneId),
     },
     agents: {
       get: () => invoke(INVOKE.agentsGet),

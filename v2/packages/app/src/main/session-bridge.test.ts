@@ -430,9 +430,24 @@ describe('SessionBridge → layout binding', () => {
     h.host.exit(created.value.id, 0);
 
     expect(h.store.sessionFor(pane)).toBeUndefined();
-    // …and closing the pane now kills nothing, rather than a stale id.
+    // …but the pane REMEMBERS what it was showing, which is not the same fact.
+    // The binding has to go — it is what decides whether to attach — while the
+    // screen that session left behind is the only copy of what the agent did,
+    // and archiving the tab needs to be able to name it.
+    expect(h.store.lastSessionFor(pane)).toBe(created.value.id);
+
+    /*
+     * Closing the pane names it once more, and that is deliberate.
+     *
+     * It ends nothing: the pty is already gone and the host answers
+     * `unknown-session`. What it does is release the SCREEN the host retained
+     * for that session — nothing else was showing it, so the pane closing is
+     * exactly when it stops being wanted. A close that stayed silent here leaked
+     * half a megabyte per finished agent for the life of the process.
+     */
     h.store.close(pane);
-    expect(h.killed).toEqual([]);
+    expect(h.killed).toEqual([created.value.id]);
+    expect(h.store.lastSessionFor(pane)).toBeUndefined();
   });
 
   it('works with no layout at all — the session smoke has none', () => {

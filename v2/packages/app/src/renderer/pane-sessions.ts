@@ -176,6 +176,15 @@ export interface PaneSessionRegistryOptions {
   readonly createTerminal: TerminalFactory;
   readonly spec: SessionSpecFactory;
   readonly onError?: (error: unknown, context: string) => void;
+  /**
+   * The captured screen a read-only pane shows, or null when it cannot be read.
+   *
+   * Injected rather than reached for, exactly like `session` and
+   * `createTerminal`: this file is what makes the lifecycle tests runnable in
+   * jsdom, and a direct bridge call here would need an IPC channel to exist for
+   * a test about attach ordering.
+   */
+  readonly snapshotBytes?: (paneId: string) => Promise<Uint8Array | null>;
 }
 
 interface Entry {
@@ -238,12 +247,14 @@ export class PaneSessionRegistry implements PaneTerminals {
   readonly #bySession = new Map<string, Entry>();
   readonly #inflight = new Set<Promise<void>>();
   readonly #unsubscribe: Array<() => void> = [];
+  readonly #snapshotBytes: ((paneId: string) => Promise<Uint8Array | null>) | undefined;
 
   constructor(options: PaneSessionRegistryOptions) {
     this.#session = options.session;
     this.#createTerminal = options.createTerminal;
     this.#spec = options.spec;
     this.#onError = options.onError ?? (() => undefined);
+    this.#snapshotBytes = options.snapshotBytes;
 
     // One subscription for every pane. `session:data` is already coalesced in
     // main (8ms / 32KB), so this is the only listener on the hot path.
@@ -276,7 +287,11 @@ export class PaneSessionRegistry implements PaneTerminals {
     const wrapper = entry.wrapper;
     if (wrapper !== null && wrapper.parentNode !== host) host.append(wrapper);
     entry.host = host;
-    entry.wantSession = true;
+    // A read-only pane shows a FILE and must never reach `#sync`'s create
+    // branch. This flag is the whole enforcement — the entry is otherwise
+    // ordinary, which is what keeps focus, fit, find and suspend working for it
+    // with no second code path through this class.
+    entry.wantSession = !pane.readOnly;
     entry.wantStream = true;
     entry.terminal?.fit();
 
@@ -360,8 +375,10 @@ export class PaneSessionRegistry implements PaneTerminals {
 
     if (entry.suspended) return;
     entry.suspended = true;
-    // The session is still wanted; only its bytes are not.
-    entry.wantSession = true;
+    // The session is still wanted; only its bytes are not. Unless there is no
+    // session to want: a read-only pane suspended before it was ever attached
+    // must not spawn one on the way to being hidden.
+    entry.wantSession = !pane.readOnly;
     entry.wantStream = false;
     this.#teardownView(entry);
     this.#sync(entry, 'suspend');
@@ -493,6 +510,38 @@ export class PaneSessionRegistry implements PaneTerminals {
         void this.#session.setViewport(entry.sessionId, entry.paneId, { cols, rows });
       }),
     );
+
+    /*
+     * A read-only pane is born showing its file.
+     *
+     * Here rather than in `#sync` because this is the moment the emulator
+     * exists — and because a suspended pane that wakes gets a FRESH terminal, so
+     * the screen has to be written again then too. Hanging it off the build is
+     * what makes that automatic rather than a case somebody has to remember.
+     *
+     * `entry.terminal` in the callback and not the local `terminal`: the pane
+     * may have been suspended or released while the read was in flight, and
+     * writing into a disposed emulator is a crash on a path nobody watches.
+     */
+    const file = entry.pane.snapshotFile;
+    if (entry.pane.readOnly && file !== null && file !== '' && this.#snapshotBytes !== undefined) {
+      void this.#enqueueSnapshot(entry);
+    }
+  }
+
+  /**
+   * Read this pane's captured screen and write it in — queued behind whatever
+   * else the entry is doing, so `settled()` covers it and a test does not have
+   * to know that a build is asynchronous.
+   */
+  #enqueueSnapshot(entry: Entry): void {
+    const read = this.#snapshotBytes;
+    if (read === undefined) return;
+    this.#enqueue(entry, 'snapshot', async () => {
+      if (entry.closed) return;
+      const bytes = await read(entry.paneId);
+      if (bytes !== null && bytes.length > 0) entry.terminal?.write(bytes);
+    });
   }
 
   #teardownView(entry: Entry): void {

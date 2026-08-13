@@ -92,12 +92,13 @@ describe('the preload bridge surface', () => {
     void bridge.commands.list();
     void bridge.layout.get();
     void bridge.layout.setViewport({ x: 0, y: 0, width: 10, height: 10 });
+    void bridge.layout.snapshot('p1');
     void bridge.window.close();
     bridge.session.onData(() => undefined);
     bridge.session.onExit(() => undefined);
     bridge.layout.onChanged(() => undefined);
 
-    expect(ipc.log).toHaveLength(15);
+    expect(ipc.log).toHaveLength(16);
     for (const entry of ipc.log) expect(known, entry.channel).toContain(entry.channel);
   });
 

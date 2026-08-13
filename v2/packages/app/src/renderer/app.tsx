@@ -26,6 +26,7 @@ import {
   type LayoutSnapshots,
 } from '../shared/index.ts';
 import { MENU_INVOCATIONS } from '../shared/menu-commands.ts';
+import { ArchivedBanner } from './archived-banner.tsx';
 import { EmptyState } from './empty-state.tsx';
 import { FindBar } from './find-bar.tsx';
 import { SkyStrip } from './sky-strip.tsx';
@@ -716,6 +717,19 @@ export function App({
               next envelope.
             */
             <EmptyState {...(active?.placeholder === undefined ? {} : { placeholder: active.placeholder })} />
+          )}
+          {/*
+            …and the other root a placeholder can describe: one that HAS panes,
+            all of them showing captured screens.
+
+            Core answers with a placeholder there and refuses over any root with
+            a live pane, so this condition is the whole of the decision — the
+            page never asks whether a root is archived, it draws what the root
+            said about itself. Outside the `.sh-root` map, because it belongs to
+            the active root rather than to any pane in it.
+          */}
+          {active?.tree != null && active.placeholder !== undefined && (
+            <ArchivedBanner placeholder={active.placeholder} onAction={invoke} />
           )}
           {(snapshots?.roots ?? []).map((root) => (
             <div

@@ -254,6 +254,13 @@ interface SessionRecord {
 export class SessionHost {
   readonly #sessions = new Map<SessionID, SessionRecord>();
   readonly #willCreate: WillCreateHook[] = [];
+  /**
+   * Dead sessions whose SCREEN is still wanted — see `#reap`.
+   *
+   * Deliberately not `#sessions`: that map answers "is this alive", and every
+   * `isLive` in the layout's restore path reads it.
+   */
+  readonly #exited = new Map<SessionID, SessionRecord>();
   readonly #exitListeners = new Set<(exit: SessionExit) => void>();
   readonly #resizeListeners = new Set<(resize: SessionResize) => void>();
   readonly #observedListeners = new Set<(observed: SessionObserved) => void>();
@@ -353,7 +360,23 @@ export class SessionHost {
    */
   kill(id: SessionID, signal?: string): Result<void, SessionError> {
     const record = this.#sessions.get(id);
-    if (!record) return err(unknownSession(id));
+    /*
+     * A session that has already exited: nothing to kill, and its retained
+     * SCREEN is now free to go.
+     *
+     * `kill` means "I am done with this session", and the only caller is a pane
+     * closing (ADR 0022). That is exactly when the screen `#reap` kept stops
+     * being wanted — nothing else was ever showing it. Doing it here rather than
+     * through a verb of its own is also what keeps the daemon out of it: `kill`
+     * already crosses the socket, and a second one would have to.
+     */
+    // Still `unknown-session`, and deliberately: the contract is that killing a
+    // dead id is an error, and a caller that kills twice must be told. The
+    // release is a side effect of being told nobody wants it any more.
+    if (!record) {
+      this.forget(id);
+      return err(unknownSession(id));
+    }
     try {
       record.pty.kill(signal);
     } catch (error) {
@@ -365,10 +388,25 @@ export class SessionHost {
     return ok(undefined);
   }
 
+  /**
+   * Drop a dead session's retained screen.
+   *
+   * Reached through `kill`, which is what a closing pane already calls — the
+   * host has no idea what a pane is, and the one thing that does says when. A
+   * live session is untouched: this is not a second way to end one (ADR 0022).
+   */
+  forget(id: SessionID): void {
+    const record = this.#exited.get(id);
+    if (record === undefined) return;
+    record.fanout.clear();
+    this.#exited.delete(id);
+  }
+
   /** Kills every session. For app teardown; leaves the host reusable. */
   dispose(): void {
     for (const id of [...this.#sessions.keys()]) this.kill(id);
     this.#sessions.clear();
+    for (const id of [...this.#exited.keys()]) this.forget(id);
     this.#exitListeners.clear();
     this.#observedListeners.clear();
     this.#willCreate.length = 0;
@@ -400,7 +438,9 @@ export class SessionHost {
    * exactly the bug probe p4 found.
    */
   snapshot(id: SessionID, sink: (bytes: Uint8Array) => void, lines?: number): Result<void, SessionError> {
-    const record = this.#sessions.get(id);
+    // `#exited` too: the whole reason a dead session's mirror is retained is
+    // that something will want this screen later, having never seen it live.
+    const record = this.#sessions.get(id) ?? this.#exited.get(id);
     if (!record) return err(unknownSession(id));
     record.fanout.snapshot(sink, lines);
     return ok(undefined);
@@ -693,12 +733,28 @@ export class SessionHost {
         this.#onError?.(error, `onExit listener for ${id}`);
       }
     }
-    // After the exit has been announced: a sink still attached would otherwise
-    // hold the mirror (and the window's IPC channel) alive for a dead session.
-    // `clear` disposes the emulator too — ~0.5 MB per session that would
-    // otherwise outlive its pty.
+    /*
+     * The viewers go; the SCREEN stays.
+     *
+     * A sink still attached would hold the window's IPC channel open for a dead
+     * session, so `viewports.clear()` still runs. What no longer runs here is
+     * `fanout.clear()`, which disposed the emulator with it — and the emulator
+     * is the only remaining copy of what that pane last showed. Discarding it
+     * meant a tab whose agent had exited archived BLANK: the pane is still on
+     * screen, still says what the agent finished doing, and the snapshot of it
+     * was empty.
+     *
+     * The record moves to `#exited` rather than staying in `#sessions`, because
+     * liveness is what that map answers — `list`, `get`, `has` and every
+     * `isLive` check in the layout's restore path read it, and a corpse in there
+     * would be a pane reattaching to a pty that does not exist (ADR 0036).
+     *
+     * ~0.5 MB, held until `forget` — which main calls when the PANE goes. The
+     * bound is therefore panes you have left open with dead processes in them,
+     * not sessions you have ever run.
+     */
     record.viewports.clear();
-    record.fanout.clear();
+    this.#exited.set(id, record);
   }
 }
 

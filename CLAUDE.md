@@ -36,8 +36,10 @@ fight it.
    through a contributed React component (ADR 0033), and `tasks.spawn` now opens a
    real agent in the task's worktree (ADR 0034). The app **ships as `Shep.app`**
    with a design system (`@shepherd/ui`), and a task's full circle is live:
-   closing its panes archives it, clicking it restores the worktrees and
-   **reattaches its agents** rather than re-prompting them. **Settings** landed
+   closing its panes shelves it, clicking it renders the **screens it was
+   shelved with** (ADR 0042 — no worktree, no pty), and pressing Restore brings
+   the worktrees back and **reattaches its agents** rather than re-prompting
+   them. **Settings** landed
    after that (ADR 0040): ⌘, takes over the window with a screen the app and every
    extension contribute pages to, declared in a manifest and held by the kernel —
    which is also how **light mode** finally reached the palette
@@ -49,7 +51,7 @@ fight it.
    — the API and the M0–M4 milestones.
 4. [`docs/superpowers/specs/2026-08-06-architecture-review.md`](docs/superpowers/specs/2026-08-06-architecture-review.md)
    — what v1 got wrong; **its Rebuild checklist is normative for v2**.
-5. ADRs [0021](.claude/adr/0021-v2-store-is-node-sqlite.md)–[0040](.claude/adr/0040-v2-settings-are-declared-in-a-manifest-and-held-by-the-kernel.md).
+5. ADRs [0021](.claude/adr/0021-v2-store-is-node-sqlite.md)–[0043](.claude/adr/0043-v2-a-placeholder-may-cover-a-root-of-captured-screens.md).
    **0040** is settings: a page is STATIC data in a manifest, so the screen opens
    with zero extensions activated and activation stays lazy; only non-default
    values are stored, so reset is real and a changed default reaches an existing
@@ -74,6 +76,16 @@ fight it.
    them, and the renderer may import `@shepherd/ext-*/ui` and nothing else.
    **0034** is why a spawned agent is a pane rather than a headless session, and
    why its prompt travels as a file — a typed newline is an Enter press.
+   **0042–0043 are the archived tab's**: a pane may be READ-ONLY, carrying a
+   file instead of a session, so looking at shelved work costs neither a git
+   restore nor a pty — the enforcement is `wantSession` in the renderer's
+   `#sync`, not a branch in the store's restore path, and `layout.openRoot`'s
+   new `tree` beats a persisted record because a shape handed over by the caller
+   is more recent than one the debounced write has not yet erased. 0043 is why
+   `placeholderOf`'s guard narrowed from "no panes" to "no LIVE pane": the lie it
+   prevents is a stale line over a running agent, and a root of captured screens
+   has none. Read both before making a pane's absence of a session mean
+   something.
    **0035** is the rule for any contributed row that stands for a root: the row
    names the root, the shell derives the highlight from the same snapshot value
    it draws the stage from, and nobody keeps a second copy of "what is on

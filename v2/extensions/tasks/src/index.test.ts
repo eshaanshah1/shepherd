@@ -470,6 +470,10 @@ interface DeleteResult {
   readonly failed: readonly string[];
 }
 
+/** The stored record, as `tasks.list` hands it back — it spreads the whole thing. */
+const recordOf = async (h: Harness): Promise<Record<string, unknown> | undefined> =>
+  (await h.run<Record<string, unknown>[]>('tasks.list'))[0];
+
 /** A task's state as `tasks.list` answers it — the derived one, not the stored one. */
 const listedState = async (h: Harness): Promise<string> =>
   (await h.run<{ displayState: string }[]>('tasks.list'))[0]?.displayState ?? 'no such task';
@@ -3731,5 +3735,163 @@ describe('searching the rail', () => {
     expect(nudges).toBe(1);
     await h.run('tasks.filter', { query: 'a' });
     expect(nudges).toBe(1);
+  });
+});
+
+/**
+ * Looking at shelved work is free; putting it back is the button.
+ *
+ * The whole point of the change these cover: `tasks.reveal` used to call
+ * `materialize`, so clicking a row from three weeks ago re-provisioned git and
+ * reinstalled its dependencies. A live worktree measured 838 MB on the machine
+ * that was written for.
+ */
+describe('a shelved task is shown, not materialized', () => {
+  const shelvedTab = {
+    root: 'task:t1/tab-2',
+    tree: {
+      kind: 'split',
+      axis: 'row',
+      ratio: 0.3,
+      first: { kind: 'leaf', pane: { id: 'p-1', cwd: '/w/a' } },
+      second: { kind: 'leaf', pane: { id: 'p-2', cwd: '/w/b' } },
+    },
+    focusedPane: 'p-1',
+    panes: [
+      { pane: 'p-1', cwd: '/w/a', userTitle: null, history: 't1/r/p-1.term' },
+      { pane: 'p-2', cwd: '/w/b', userTitle: null },
+    ],
+  };
+
+  const shelved = (over: Partial<TaskRecord> = {}): TaskRecord =>
+    task({ lifecycle: 'archived', shelvedAt: 1, tabs: [shelvedTab], ...over });
+
+  const openRoots = (h: Harness) => h.invoked.filter((call) => call.id === 'layout.openRoot');
+
+  it('reveals it WITHOUT running git, and opens its tabs with the shape they had', async () => {
+    const h = (live = harness({ tasks: [shelved()] }));
+
+    await h.run('tasks.reveal', { task: 't1' });
+
+    expect(h.git).toEqual([]);
+    const tab = openRoots(h).find((call) => (call.args as { root: string }).root === 'task:t1/tab-2');
+    expect((tab?.args as { tree?: { ratio?: number } }).tree).toMatchObject({
+      kind: 'split',
+      ratio: 0.3,
+    });
+  });
+
+  it('marks every pane of a revealed tab read-only, so none of them starts a shell', async () => {
+    const h = (live = harness({ tasks: [shelved()] }));
+    await h.run('tasks.reveal', { task: 't1' });
+
+    const tab = openRoots(h).find((call) => (call.args as { root: string }).root === 'task:t1/tab-2');
+    const tree = (tab?.args as { tree: { first: { pane: Record<string, unknown> }; second: { pane: Record<string, unknown> } } }).tree;
+    // The captured pane shows its file; the uncaptured one is read-only anyway,
+    // which is what stops it opening a shell in a deleted worktree.
+    expect(tree.first.pane['readOnly']).toBe(true);
+    expect(tree.first.pane['snapshotFile']).toContain('t1/r/p-1.term');
+    expect(tree.second.pane['readOnly']).toBe(true);
+    expect(tree.second.pane['snapshotFile']).toBeUndefined();
+  });
+
+  it('says the root is archived, and offers the verb that undoes it', async () => {
+    const h = (live = harness({ tasks: [shelved()] }));
+    await h.run('tasks.reveal', { task: 't1' });
+
+    const said = h.invoked.find((call) => call.id === 'layout.setPlaceholder');
+    expect(said?.args).toMatchObject({
+      root: 'task:t1/tab-2',
+      placeholder: {
+        action: { command: 'tasks.restore', label: 'Restore', args: { task: 't1' } },
+      },
+    });
+  });
+
+  it('opens an EMPTY root for a shelved task with no captured tabs, rather than a shell in a deleted directory', async () => {
+    const h = (live = harness({ tasks: [shelved({ tabs: [] })] }));
+    await h.run('tasks.reveal', { task: 't1' });
+
+    const anchor = openRoots(h).find((call) => (call.args as { root: string }).root === 'task:t1');
+    expect(anchor?.args).toMatchObject({
+      empty: true,
+      placeholder: { action: { command: 'tasks.restore' } },
+    });
+  });
+
+  it('does not move the row: looking at shipped work must not un-ship it', async () => {
+    const h = (live = harness({ tasks: [shelved()] }));
+    await h.run('tasks.reveal', { task: 't1' });
+    expect(await recordOf(h)).toMatchObject({ lifecycle: 'archived' });
+  });
+});
+
+describe('tasks.restore is the one verb that puts the work back', () => {
+  const shelvedTab = {
+    root: 'task:t1/tab-2',
+    tree: {
+      kind: 'split',
+      axis: 'row',
+      ratio: 0.3,
+      first: { kind: 'leaf', pane: { id: 'p-1', cwd: '/w/a' } },
+      second: { kind: 'leaf', pane: { id: 'p-2', cwd: '/w/b' } },
+    },
+    focusedPane: 'p-1',
+    panes: [
+      { pane: 'p-1', cwd: '/w/a', userTitle: null, history: 't1/r/p-1.term' },
+      { pane: 'p-2', cwd: '/w/b', userTitle: null },
+    ],
+  };
+
+  it('un-ships a shipped task and dates it, so it lands at the bottom of the active list', async () => {
+    const h = (live = harness({ tasks: [task({ lifecycle: 'archived', shelvedAt: 1 })] }));
+    await h.run('tasks.restore', { task: 't1' });
+    const record = await recordOf(h);
+    expect(record).toMatchObject({ lifecycle: 'running' });
+    expect(record?.['activatedAt']).toBeDefined();
+  });
+
+  it('leaves the lifecycle of a shelved-but-ACTIVE task alone — it never left the list', async () => {
+    const h = (live = harness({ tasks: [task({ lifecycle: 'running', shelvedAt: 1 })] }));
+    await h.run('tasks.restore', { task: 't1' });
+    const record = await recordOf(h);
+    expect(record).toMatchObject({ lifecycle: 'running' });
+    expect(record?.['activatedAt']).toBeUndefined();
+  });
+
+  it('closes the snapshot roots before rebuilding, or the rebuild finds read-only panes already there', async () => {
+    const h = (live = harness({
+      tasks: [task({ lifecycle: 'archived', shelvedAt: 1, tabs: [shelvedTab] })],
+    }));
+
+    await h.run('tasks.restore', { task: 't1' });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    const order = h.invoked
+      .filter((call) => call.id === 'layout.closeRoot' || call.id === 'layout.openRoot')
+      .map((call) => `${call.id} ${(call.args as { root?: string }).root ?? ''}`);
+    expect(order.indexOf('layout.closeRoot task:t1/tab-2')).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf('layout.closeRoot task:t1/tab-2')).toBeLessThan(
+      order.indexOf('layout.openRoot task:t1/tab-2'),
+    );
+  });
+
+  it('rebuilds a tab with the shape it was archived with, and seeds each pane by id', async () => {
+    const h = (live = harness({
+      tasks: [task({ lifecycle: 'archived', shelvedAt: 1, tabs: [shelvedTab] })],
+    }));
+
+    await h.run('tasks.restore', { task: 't1' });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    const opened = h.invoked.find(
+      (call) => call.id === 'layout.openRoot' && (call.args as { root: string }).root === 'task:t1/tab-2',
+    );
+    expect((opened?.args as { tree?: unknown }).tree).toMatchObject({ kind: 'split', ratio: 0.3 });
+    // …and NOT read-only: these panes are about to be real.
+    const tree = (opened?.args as { tree: { first: { pane: Record<string, unknown> } } }).tree;
+    expect(tree.first.pane['readOnly']).toBeUndefined();
+    // The flat fallback is not used for a tab that carried a shape.
+    expect(h.invoked.filter((call) => call.id === 'layout.split')).toEqual([]);
   });
 });

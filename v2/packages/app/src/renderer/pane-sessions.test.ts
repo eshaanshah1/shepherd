@@ -34,7 +34,7 @@ interface Harness {
   host(): HTMLElement;
 }
 
-function harness(): Harness {
+function harness(options: { snapshotBytes?: (paneId: string) => Promise<Uint8Array | null> } = {}): Harness {
   const session = new SpySession();
   const terminals: FakeTerminal[] = [];
   const errors: Array<{ error: unknown; context: string }> = [];
@@ -47,6 +47,7 @@ function harness(): Harness {
     },
     spec: (pane) => ({ paneId: pane.id }),
     onError: (error, context) => errors.push({ error, context }),
+    ...(options.snapshotBytes === undefined ? {} : { snapshotBytes: options.snapshotBytes }),
   });
   return {
     session,
@@ -564,3 +565,79 @@ describe('retheme', () => {
   });
 });
 
+
+/**
+ * A pane that shows a FILE, not a session.
+ *
+ * The claim these make is the one the whole archived-tab change rests on:
+ * mounting such a pane must not reach `#sync`'s create branch, however many
+ * times it is attached, suspended and woken. `session.names` is the evidence —
+ * a `create` in it is a pty spawned in a worktree the archive deleted.
+ */
+describe('a read-only pane', () => {
+  const readOnlyPane = (id: string, file = `/${id}.term`): Pane =>
+    makePane({ id: makePaneId(id), readOnly: true, snapshotFile: file });
+
+  it('creates no session, however many times it is attached', async () => {
+    const h = harness({ snapshotBytes: () => Promise.resolve(new Uint8Array([0x68, 0x69])) });
+    const pane = readOnlyPane('p-1');
+
+    h.registry.attach(pane, h.host());
+    await h.registry.settled();
+    h.registry.detach(pane.id);
+    h.registry.attach(pane, h.host());
+    await h.registry.settled();
+
+    expect(h.session.names).not.toContain('create');
+    expect(h.registry.inspect(pane.id)?.sessionId).toBeNull();
+  });
+
+  it('is born showing the bytes main answers with', async () => {
+    const h = harness({ snapshotBytes: () => Promise.resolve(new TextEncoder().encode('old work')) });
+    const pane = readOnlyPane('p-2');
+
+    h.registry.attach(pane, h.host());
+    await h.registry.settled();
+
+    expect((h.terminals[0]?.written ?? []).map(decode).join('')).toContain('old work');
+  });
+
+  it('comes back blank rather than refusing when the file has gone', async () => {
+    const h = harness({ snapshotBytes: () => Promise.resolve(null) });
+    const pane = readOnlyPane('p-3', '/gone.term');
+
+    h.registry.attach(pane, h.host());
+    await h.registry.settled();
+
+    // A terminal exists and it is empty. An expired archive costs a screen, not
+    // a tab — and above all it must not fall back to starting a shell.
+    expect(h.terminals).toHaveLength(1);
+    expect(h.session.names).not.toContain('create');
+  });
+
+  it('writes its screen again after being suspended and woken', async () => {
+    // Suspending disposes the terminal, so waking builds a FRESH one — and a
+    // pane whose bytes were written only on the first build would wake blank.
+    const h = harness({ snapshotBytes: () => Promise.resolve(new TextEncoder().encode('old work')) });
+    const pane = readOnlyPane('p-4');
+
+    h.registry.attach(pane, h.host());
+    await h.registry.settled();
+    h.registry.suspend(pane);
+    await h.registry.settled();
+    h.registry.attach(pane, h.host());
+    await h.registry.settled();
+
+    expect(h.terminals).toHaveLength(2);
+    expect((h.terminals[1]?.written ?? []).map(decode).join('')).toContain('old work');
+  });
+
+  it('still creates a session for an ordinary pane', async () => {
+    // The negative control. "Never creates" is a claim a registry that does
+    // nothing would also satisfy.
+    const h = harness();
+    h.registry.attach(makePane({ id: makePaneId('p-5') }), h.host());
+    await h.registry.settled();
+    expect(h.session.names).toContain('create');
+  });
+});

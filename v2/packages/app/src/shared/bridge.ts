@@ -121,6 +121,15 @@ export interface LayoutApi {
    * `layout.focusDirection` answers `null` for every direction, silently.
    */
   setViewport(rect: ViewportRect): Promise<IpcResult<void>>;
+  /**
+   * The captured screen a read-only pane was archived with.
+   *
+   * The page cannot read a file and must not be handed a path it could. It names
+   * a PANE; main resolves that pane's `snapshotFile` from the tree it owns and
+   * answers bytes — so a compromised renderer can ask for the screen of a pane
+   * that exists and nothing else.
+   */
+  snapshot(paneId: string): Promise<IpcResult<{ readonly bytes: Uint8Array }>>;
 }
 
 /**
@@ -299,7 +308,7 @@ export const BRIDGE_SURFACE = {
     'onResize',
   ],
   commands: ['invoke', 'list'],
-  layout: ['get', 'onChanged', 'setViewport'],
+  layout: ['get', 'onChanged', 'setViewport', 'snapshot'],
   agents: ['get', 'onChanged'],
   /**
    * Contributed views (M3). The page may ask which views exist, for a named

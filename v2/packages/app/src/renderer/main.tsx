@@ -114,6 +114,15 @@ const terminals =
         session: bridge.session,
         createTerminal: () => createXtermTerminal(DEFAULT_THEME_MODE),
         spec: isSmoke ? smokeSessionSpec : defaultSessionSpec,
+        /*
+         * A read-only pane's screen, read by main from the path the pane
+         * carries. Null on any failure — an archive that was expired or
+         * hand-cleaned costs a screen, never a tab.
+         */
+        snapshotBytes: async (paneId) => {
+          const answer = await bridge.layout.snapshot(paneId);
+          return answer.ok ? answer.value.bytes : null;
+        },
         onError: (error, context) => {
           // Rule carried from v1: every branch that ends in "and then nothing
           // happens" says why. A pane that silently never starts is the exact

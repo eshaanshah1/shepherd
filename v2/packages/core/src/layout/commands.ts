@@ -11,7 +11,7 @@ import {
 import type { CommandRegistry } from '../commands/registry.ts';
 import { displayTitle } from './pane.ts';
 import { panes as panesOf } from './tree.ts';
-import { serializeNode } from './serialize.ts';
+import { serializeNode, type PersistedNode } from './serialize.ts';
 import type { LayoutStore } from './store.ts';
 
 /**
@@ -78,7 +78,12 @@ const DIRECTION = s.enumOf(['left', 'right', 'up', 'down'] as const);
  * work moves) and a caller writing against one must not find the other's shape
  * different.
  */
-const PLACEHOLDER = s.object({ line: s.string(), names: s.optional(s.array(s.string())) });
+const PLACEHOLDER = s.object({
+  line: s.string(),
+  names: s.optional(s.array(s.string())),
+  /** The one verb the shell offers with it. `RootPlaceholder.action` documents it. */
+  action: s.optional(s.object({ command: s.string(), label: s.string(), args: s.optional(s.unknown()) })),
+});
 
 /** `row` = ⌘D = panes SIDE BY SIDE. `column` = ⌘⇧D = stacked. Read it here. */
 export const LAYOUT_COMMANDS = {
@@ -96,6 +101,7 @@ export const LAYOUT_COMMANDS = {
   newTab: 'layout.newTab',
   closeGroup: 'layout.closeGroup',
   listRoots: 'layout.listRoots',
+  seedPane: 'layout.seedPane',
 } as const;
 
 export function registerLayoutCommands(options: LayoutCommandsOptions): Disposable {
@@ -330,6 +336,27 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
         empty: s.optional(s.boolean()),
         /** The line an empty root shows. `layout.setPlaceholder` documents it. */
         placeholder: s.optional(PLACEHOLDER),
+        /**
+         * The shape to mint this root with, in `serialize.ts`'s own vocabulary —
+         * what `layout.listRoots` hands out as `tree`.
+         *
+         * `s.unknown()` rather than a schema of its own: `deserializeNode` is
+         * already the validator for this format, and a second one here is a
+         * second thing to keep in step with it. It runs inside `store.open`.
+         *
+         * Ignored when the root already has panes, like every other
+         * pane-shaping argument on this verb.
+         */
+        tree: s.optional(s.unknown()),
+        /**
+         * Mint the pane showing a FILE rather than a session (`Pane.readOnly`).
+         *
+         * For the flat fallback alone — a caller with a `tree` puts these on the
+         * leaves. Without it, a tab archived before shapes were stored would
+         * come back as a live shell in a directory the archive deleted.
+         */
+        readOnly: s.optional(s.boolean()),
+        snapshotFile: s.optional(s.string()),
       }),
       handler: (args) => {
         const root = toRootId(args.root);
@@ -377,6 +404,8 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
           ...(args.cwd === undefined ? {} : { cwd: args.cwd }),
           ...(args.initialCommand === undefined ? {} : { initialCommand: args.initialCommand }),
           ...(args.session === undefined ? {} : { session: toSessionId(args.session) }),
+          ...(args.readOnly === undefined ? {} : { readOnly: args.readOnly }),
+          ...(args.snapshotFile === undefined ? {} : { snapshotFile: args.snapshotFile }),
           // A title given here is the USER's name for the pane, not an OSC one:
           // the caller is naming the thing it just made, and a program's own
           // title must still be able to lose to it.
@@ -389,7 +418,10 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
           return { root: args.root, pane: store.focused(root), created: true };
         }
 
-        store.open(args.root, init, args.group === undefined ? {} : { group: args.group });
+        store.open(args.root, init, {
+          ...(args.group === undefined ? {} : { group: args.group }),
+          ...(args.tree === undefined ? {} : { tree: args.tree as PersistedNode }),
+        });
         stageSeed(root, args.seed);
         return { root: args.root, pane: store.focused(root), created: true };
       },
@@ -513,6 +545,42 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
       },
     }),
 
+    registry.register(LAYOUT_COMMANDS.seedPane, {
+      // No title: not a palette verb. Its whole effect is on a pane that has not
+      // started yet.
+      permission: 'layout',
+      schema: s.object({
+        pane: s.string(),
+        seed: s.optional(s.string()),
+        initialCommand: s.optional(s.string()),
+      }),
+      /**
+       * Hand a pane that ALREADY EXISTS the screen and the line it should be born
+       * with — the tree-shaped counterpart of `openRoot`'s `seed`.
+       *
+       * `openRoot` can seed one pane, the focused one, because that is the pane
+       * it just minted. A tree-shaped open mints SEVERAL at once and there is no
+       * moment at which each of them is the focused one, so a restore that
+       * rebuilt a five-pane tab could seed exactly one of its panes.
+       *
+       * Both stagings are still one-shot at the store (`takeInitialSeed` /
+       * `takeInitialInput`), so this adds a caller rather than a second
+       * mechanism — and the "exactly one initial input per pane" invariant is
+       * untouched.
+       */
+      handler: (args) => {
+        const pane = toPaneId(args.pane);
+        if (store.rootOf(pane) === undefined) throw new Error(`no pane ${args.pane}`);
+        if (args.seed !== undefined && args.seed !== '') {
+          store.setInitialSeed(pane, new Uint8Array(Buffer.from(args.seed, 'base64')));
+        }
+        if (args.initialCommand !== undefined && args.initialCommand !== '') {
+          store.setInitialInput(pane, args.initialCommand);
+        }
+        return { pane: args.pane };
+      },
+    }),
+
     registry.register(LAYOUT_COMMANDS.listRoots, {
       // No title: not a palette verb. It is the read an extension makes because
       // `LayoutAPI`'s synchronous getters cannot cross a port.
@@ -554,6 +622,17 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
               cwd: leafPane.cwd,
               userTitle: leafPane.userTitle,
               session: store.sessionFor(leafPane.id) ?? null,
+              /*
+               * …and what it was showing if that session has since EXITED.
+               *
+               * A separate field rather than a fallback inside `session`,
+               * because the two answer different questions: `session` is what to
+               * attach to, and a caller handed a dead id there would open a
+               * stream to nothing. This one is what to CAPTURE — an agent that
+               * finished leaves a pane full of what it did, and a tab archived
+               * off `session` alone came back blank for exactly that pane.
+               */
+              lastSession: store.lastSessionFor(leafPane.id) ?? null,
             })),
           };
         });
