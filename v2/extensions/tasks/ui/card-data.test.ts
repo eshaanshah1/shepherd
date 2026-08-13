@@ -40,6 +40,15 @@ describe('readCardData', () => {
     }
   });
 
+  it('reads the stage word, and treats an empty one as absent', () => {
+    // Absent is the ordinary case — a task is only mid-step for seconds — so the
+    // reader must not turn `''` into a stamp-shaped blank in the trailing cell.
+    expect(readCardData({ mark: 'working', stage: 'worktrees' })?.stage).toBe('worktrees');
+    expect(readCardData({ mark: 'working', stage: '' })?.stage).toBeUndefined();
+    expect(readCardData({ mark: 'working', stage: 42 })?.stage).toBeUndefined();
+    expect(readCardData({ mark: 'resting' })?.stage).toBeUndefined();
+  });
+
   it('drops a diff that is all zeroes rather than drawing `+0 −0`', () => {
     expect(readCardData({ mark: 'resting', diff: { added: 0, removed: 0, files: 0 } })?.diff).toBeUndefined();
   });
