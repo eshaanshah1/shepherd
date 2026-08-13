@@ -1,5 +1,7 @@
 import headless from '@xterm/headless';
 import serialize from '@xterm/addon-serialize';
+import { toDisposable, type Disposable } from '@shepherd/sdk';
+import { cwdFromOsc7 } from './osc.ts';
 
 /**
  * The host's authoritative view of what a session's screen IS.
@@ -54,10 +56,22 @@ export interface ScreenState {
   readonly altScreen: boolean;
 }
 
+/** What the running program said about itself. Only the fields that changed. */
+export interface ObservedPatch {
+  readonly title?: string;
+  readonly cwd?: string;
+}
+
 export interface TerminalMirrorOptions {
   readonly cols?: number;
   readonly rows?: number;
   readonly scrollback?: number;
+  /**
+   * This machine's name, for the OSC 7 host check — a parameter and never an
+   * `os.hostname()` call, because core does not touch the platform. Absent
+   * means only a host-less OSC 7 is accepted.
+   */
+  readonly hostname?: string;
 }
 
 export class TerminalMirror {
@@ -66,6 +80,10 @@ export class TerminalMirror {
   readonly #scrollback: number;
   readonly #encoder = new TextEncoder();
   readonly #decoder = new TextDecoder();
+  readonly #observed = new Set<(patch: ObservedPatch) => void>();
+  readonly #hostname: string | undefined;
+  #title = '';
+  #cwd: string | undefined;
   #disposed = false;
 
   constructor(options: TerminalMirrorOptions = {}) {
@@ -79,6 +97,37 @@ export class TerminalMirror {
     });
     this.#serializer = new SerializeAddon();
     this.#terminal.loadAddon(this.#serializer);
+    this.#hostname = options.hostname;
+
+    /*
+     * Both are deduped here rather than downstream: oh-my-zsh re-emits an
+     * unchanged title and cwd on every prompt, and a frame not sent is cheaper
+     * than six layers each deciding to ignore one.
+     */
+    this.#terminal.onTitleChange((title) => {
+      if (title === this.#title) return;
+      this.#title = title;
+      this.#announce({ title });
+    });
+
+    this.#terminal.parser.registerOscHandler(7, (payload) => {
+      const cwd = cwdFromOsc7(payload, this.#hostname);
+      if (cwd !== undefined && cwd !== this.#cwd) {
+        this.#cwd = cwd;
+        this.#announce({ cwd });
+      }
+      // Handled either way: an OSC 7 we refuse is still an OSC 7, and reporting
+      // it unhandled only invites xterm to log it once per prompt.
+      return true;
+    });
+  }
+
+  /** The running program named itself, or changed directory. */
+  onObserved(listener: (patch: ObservedPatch) => void): Disposable {
+    this.#observed.add(listener);
+    return toDisposable(() => {
+      this.#observed.delete(listener);
+    });
   }
 
   get cols(): number {
@@ -175,9 +224,16 @@ export class TerminalMirror {
     };
   }
 
+  #announce(patch: ObservedPatch): void {
+    // A copy: a listener may unsubscribe from inside its own callback, which is
+    // what `PtyFanout` already does one layer up.
+    for (const listener of [...this.#observed]) listener(patch);
+  }
+
   dispose(): void {
     if (this.#disposed) return;
     this.#disposed = true;
     this.#terminal.dispose();
+    this.#observed.clear();
   }
 }
