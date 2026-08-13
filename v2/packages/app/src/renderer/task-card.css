@@ -387,11 +387,15 @@
  * the stamp when there was one. Nothing reflows, because nothing in the flow
  * changed: no width is reserved and none is taken.
  *
- * The backing is what makes occlusion legible rather than a button dropped on
+ * The backing is what makes the overlap legible rather than a button dropped on
  * text, and it is the row's OWN fill rather than a new colour — `fillHover` and
- * `fillSelected` are opaque tokens (`wash` and a luminance step, not color-mixes),
- * so the chip under the button is the same value as the row it sits on and reads
- * as the row ending early rather than as something laid on top.
+ * `fillSelected` are opaque tokens (a `wash` and a luminance step, not
+ * color-mixes), so the chip is the same value as the row it sits on and reads as
+ * the row ending early rather than as something laid on top.
+ *
+ * It fades at the card's own rate. `.sh-task-card` transitions its background over
+ * `--sh-motion`, and a chip that switched instantly over a fill still easing read
+ * as a second surface arriving rather than as one row waking up.
  */
 .sh-task-card__trail {
   position: absolute;
@@ -399,16 +403,17 @@
   inset-inline-end: 0;
   display: flex;
   align-items: center;
-  /* A gap of backing before the glyph, so the covered text ends at a margin
+  /* A margin of backing before the glyph, so the text it covers ends at a gap
      rather than against the button's edge. */
   padding-inline-start: var(--sh-space-md);
+  transition: background var(--sh-motion) linear;
 }
 
 /*
  * The chip, in the row's own fill and ONLY while the button is drawn.
  *
- * At rest the button is `visibility: hidden` and this must be transparent, or
- * every row would carry a rectangle of hover colour at its right edge.
+ * At rest the button is `visibility: hidden`, and this must be transparent or every
+ * row would carry a rectangle of hover colour at its right edge.
  */
 .sh-task-card:hover .sh-task-card__trail,
 .sh-task-card:focus-within .sh-task-card__trail {
@@ -420,16 +425,66 @@
   background: var(--sh-fill-selected);
 }
 
+
 /*
- * `visibility`, never `display: none` — a hidden-but-laid-out button is what
- * keeps the cell at its width while it is not shown.
+ * `visibility`, never `display: none` — the button must stay out of the tab order
+ * and out of hit-testing while it is not shown, which `opacity: 0` alone does not
+ * do. A control you cannot see but can click is worse than no control.
+ *
+ * **It FADES, over the same 140ms the row's own fill takes.** Toggling visibility
+ * alone made the verb and its chip snap in over a background that was still
+ * arriving — one element instant, the one behind it easing, which reads as two
+ * unrelated events rather than one row waking up.
+ *
+ * `visibility` is in the transition on purpose, and it is what makes the fade work
+ * in both directions: a discrete property whose endpoints include `visible` stays
+ * visible for the whole duration, so the button is hit-testable the moment it
+ * starts appearing and stays painted while it fades out.
+ *
+ * **It slides in from the right as it fades**, 4px over the same 140ms.
+ *
+ * §8 refuses motion that translates a control, and the reason is real: a control
+ * that moves under the cursor is a control whose target moved mid-click. Two things
+ * bound it here. The distance and duration are the row ENTRANCE's own — `row.css`
+ * already animates an arriving row by opacity and a 4px slide — so this is that
+ * precedent applied to a control that is also arriving, not a new exception. And
+ * 4px is inside the button's own hit target, so the target does not meaningfully
+ * move: the glyph settles before a pointer that has just entered the row can reach
+ * it.
  */
 .sh-task-card__action {
   visibility: hidden;
+  opacity: 0;
+  /* From the right, which is where it comes from — the row's own edge. */
+  transform: translateX(var(--sh-space-xs));
+  transition:
+    opacity var(--sh-motion) linear,
+    transform var(--sh-motion) linear,
+    visibility var(--sh-motion) linear;
 }
 
 .sh-task-card:hover .sh-task-card__action,
 .sh-task-card:focus-within .sh-task-card__action {
   visibility: visible;
+  opacity: 1;
+  transform: none;
+}
+
+/*
+ * Reduced motion removes the fade rather than shortening it, exactly as the row's
+ * entrance does: there is no information in a cross-fade, so the honest
+ * accommodation is that the verb is simply there.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .sh-task-card__trail,
+  .sh-task-card__action {
+    transition: none;
+  }
+
+  /* And it does not travel at all, rather than travelling instantly — the slide is
+     decoration, so the honest accommodation is that the verb is simply there. */
+  .sh-task-card__action {
+    transform: none;
+  }
 }
 

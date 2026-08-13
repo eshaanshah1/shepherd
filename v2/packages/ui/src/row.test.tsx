@@ -126,10 +126,40 @@ describe('Row', () => {
     expect(inFlow?.style.display).toBe('grid');
   });
 
+  it('cross-fades the trailing cell instead of switching it', () => {
+    /*
+     * The row's fill eases over `--sh-motion`. The actions toggled `visibility` and
+     * nothing else, so the verb snapped in over a background that was still
+     * arriving — and the metadata it replaces vanished on the same frame, leaving
+     * the shared cell empty for the length of the fade.
+     *
+     * Both sides transition now, and `visibility` stays in the transition on
+     * purpose: it is discrete, and an endpoint of `visible` holds for the whole
+     * duration — so the control is hit-testable as it appears and painted as it
+     * leaves, without `opacity: 0` ever leaving something clickable and invisible.
+     */
+    // The REST rule, not whichever rule with this selector the sheet lists first —
+    // the reduced-motion block re-uses the selector to switch the transition off,
+    // and matching on the selector alone picks it up.
+    const actions = rulesMentioning('sh-ui-row__actions').find(
+      (rule) => rule.selectorText === '.sh-ui-row__actions' && rule.style.visibility === 'hidden',
+    );
+    expect(actions?.style.visibility).toBe('hidden');
+    expect(actions?.style.opacity).toBe('0');
+    expect(actions?.style.transition).toContain('opacity var(--sh-motion)');
+    expect(actions?.style.transition).toContain('visibility var(--sh-motion)');
+
+    // The metadata fades WITH them rather than blinking out first.
+    const meta = rulesMentioning('sh-ui-row__meta').find(
+      (rule) => rule.selectorText === '.sh-ui-row__meta' && rule.style.transition !== '',
+    );
+    expect(meta?.style.transition).toContain('opacity var(--sh-motion)');
+  });
+
   it('backs the overlaid action with the row’s own fill, never a new colour', () => {
     // Opaque tokens, so the chip under the button is the same value as the row it
     // sits on — it reads as the row ending early, not as something dropped on the
-    // text. A colour of its own here would be a fifth hue used for decoration.
+    // text. A colour of its own here would be a hue used for decoration.
     const fills = rulesMentioning('sh-ui-row__trailing')
       .filter((rule) => rule.style.background !== '')
       .map((rule) => rule.style.background);
@@ -137,6 +167,37 @@ describe('Row', () => {
     for (const fill of fills) {
       expect(['var(--sh-fill-hover)', 'var(--sh-fill-selected)']).toContain(fill);
     }
+  });
+
+  it('slides the actions in from the right, at the entrance’s own distance', () => {
+    /*
+     * §8 refuses motion that translates a control, because a control that moves
+     * under the cursor is a control whose target moved mid-click. The bound is that
+     * the distance and duration are the row ENTRANCE's own — `sh-ui-row-enter` is
+     * opacity plus a 4px slide — so this is that precedent applied to a control that
+     * is also arriving, rather than a new exception. 4px also sits inside the
+     * button's hit target, so the target does not meaningfully move.
+     */
+    // The REST rule — see the note above about the reduced-motion block sharing
+    // this selector.
+    const actions = rulesMentioning('sh-ui-row__actions').find(
+      (rule) => rule.selectorText === '.sh-ui-row__actions' && rule.style.visibility === 'hidden',
+    );
+    expect(actions?.style.transform).toBe('translateX(var(--sh-space-xs))');
+    expect(actions?.style.transition).toContain('transform var(--sh-motion)');
+
+    // …and it lands, rather than resting anywhere but home.
+    const revealed = rulesMentioning('sh-ui-row__actions').find((rule) =>
+      rule.selectorText.includes(':hover'),
+    );
+    expect(revealed?.style.transform).toBe('none');
+  });
+
+  it('does not travel at all under reduced motion, rather than travelling instantly', () => {
+    const reduced = rulesMentioning('sh-ui-row__actions').filter(
+      (rule) => rule.style.transition === 'none' || rule.style.transform === 'none',
+    );
+    expect(reduced.some((rule) => rule.style.transition === 'none')).toBe(true);
   });
 
   it('drops the leading slot only when the list has no state column', () => {
