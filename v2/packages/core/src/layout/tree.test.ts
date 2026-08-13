@@ -283,24 +283,27 @@ describe('SplitAxis vocabulary (ADR 0012)', () => {
 });
 
 describe('Pane.displayTitle', () => {
-  it('prefers the user name, then the program title, then the cwd', () => {
-    const home = '/Users/x';
+  it('prefers the user name, then the program title, then `term`', () => {
     const base = makePane({ id: paneId('a') });
-    expect(displayTitleOf({ ...base }, home)).toBe('Terminal');
-    expect(displayTitleOf({ ...base, cwd: home }, home)).toBe('~');
-    expect(displayTitleOf({ ...base, cwd: `${home}/code` }, home)).toBe('~/code');
-    expect(displayTitleOf({ ...base, cwd: '/a/b/c' }, home)).toBe('b/c');
-    expect(displayTitleOf({ ...base, cwd: '/a/b/c', title: 'vim' }, home)).toBe('vim');
-    expect(displayTitleOf({ ...base, cwd: '/a/b/c', title: 'vim', userTitle: 'api' }, home)).toBe(
-      'api',
-    );
+    expect(displayTitleOf({ ...base })).toBe('term');
+    expect(displayTitleOf({ ...base, title: 'vim' })).toBe('vim');
+    expect(displayTitleOf({ ...base, title: 'vim', userTitle: 'api' })).toBe('api');
   });
 
-  it('takes home as an argument so the model stays platform-free', () => {
-    // v1 read NSHomeDirectory() inside the model; that is the one line of
-    // SplitTree.swift that touched the platform, and it is now a parameter.
-    const pane = makePane({ cwd: '/Users/someone-else/code' });
-    expect(displayTitleOf(pane, '/Users/x')).toBe('someone-else/code');
-    expect(displayTitleOf(pane, '/Users/someone-else')).toBe('~/code');
+  /**
+   * The cwd is drawn BESIDE the name, never as it. A label that is a path says
+   * where you are twice — the pane head already prints the directory — and says
+   * what is running nowhere.
+   */
+  it('never answers with the cwd, however deep it is', () => {
+    expect(displayTitleOf(makePane({ cwd: '/Users/x' }))).toBe('term');
+    expect(displayTitleOf(makePane({ cwd: '/Users/someone-else/code' }))).toBe('term');
+    expect(displayTitleOf(makePane({ cwd: '/a/b/c', title: 'vim' }))).toBe('vim');
+  });
+
+  it('treats an empty name as no name, so a cleared title falls through', () => {
+    // The mirror reports `title: ''` when a shell goes back to its prompt, and
+    // that has to read as "nothing is running" rather than as a name.
+    expect(displayTitleOf(makePane({ title: '', userTitle: '' }))).toBe('term');
   });
 });

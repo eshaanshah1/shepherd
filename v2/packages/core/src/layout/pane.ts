@@ -46,41 +46,25 @@ export function makePane(init: PaneInit = {}, random?: RandomId): Pane {
   };
 }
 
+/** What a pane with nothing to say for itself is called. */
+export const DEFAULT_PANE_TITLE = 'term';
+
 /**
  * What the sidebar and the tab strip show: the user's name, else the program's
- * own title, else a two-component tail of the cwd.
+ * own title, else `term`.
  *
- * `home` is a parameter, not `os.homedir()`. That single call was the only line
- * of v1's SplitTree.swift that touched the platform, and the reason the file
- * could not be tested without Foundation.
+ * **The cwd is deliberately not in this chain**, and it used to be its last
+ * link. It is drawn *beside* the name now rather than as it, because a label
+ * that is a path says where you are twice — the pane head already prints the
+ * directory — and says what is running nowhere. A shell's own idle title
+ * (`%n@%m:%~`) is dropped one layer down for the same reason, in
+ * `isShellPromptTitle`, which is what leaves a plain shell landing here.
+ *
+ * It took no `home` argument in the end. Three of its four callers were already
+ * passing `''`, which is what said the cwd did not belong here.
  */
-export function displayTitle(pane: Pane, home: string): string {
+export function displayTitle(pane: Pane): string {
   if (pane.userTitle !== null && pane.userTitle !== '') return pane.userTitle;
   if (pane.title !== '') return pane.title;
-  return cwdName(pane.cwd, home) ?? 'Terminal';
-}
-
-function cwdName(cwd: string | null, home: string): string | null {
-  if (cwd === null || cwd === '') return null;
-  if (cwd === home) return '~';
-  const last = basename(cwd);
-  const parent = dirname(cwd);
-  if (parent === home) return `~/${last}`;
-  const parentName = basename(parent);
-  return parentName === '' || parentName === '/' ? last : `${parentName}/${last}`;
-}
-
-// Path splitting by hand rather than through node:path — core is process- and
-// platform-agnostic, and these are posix paths from a posix pty either way.
-function basename(path: string): string {
-  const trimmed = path.endsWith('/') && path.length > 1 ? path.slice(0, -1) : path;
-  const cut = trimmed.lastIndexOf('/');
-  return cut < 0 ? trimmed : trimmed.slice(cut + 1);
-}
-
-function dirname(path: string): string {
-  const trimmed = path.endsWith('/') && path.length > 1 ? path.slice(0, -1) : path;
-  const cut = trimmed.lastIndexOf('/');
-  if (cut < 0) return '';
-  return cut === 0 ? '/' : trimmed.slice(0, cut);
+  return DEFAULT_PANE_TITLE;
 }

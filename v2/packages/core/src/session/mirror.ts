@@ -1,7 +1,7 @@
 import headless from '@xterm/headless';
 import serialize from '@xterm/addon-serialize';
 import { toDisposable, type Disposable } from '@shepherd/sdk';
-import { cwdFromOsc7 } from './osc.ts';
+import { cwdFromOsc7, isShellPromptTitle } from './osc.ts';
 
 /**
  * The host's authoritative view of what a session's screen IS.
@@ -104,7 +104,13 @@ export class TerminalMirror {
      * unchanged title and cwd on every prompt, and a frame not sent is cheaper
      * than six layers each deciding to ignore one.
      */
-    this.#terminal.onTitleChange((title) => {
+    this.#terminal.onTitleChange((raw) => {
+      /*
+       * A prompt-shaped title CLEARS the name rather than being ignored. The
+       * shell re-sets it after every command, so ignoring it would leave the tab
+       * reading `vim` for the rest of the session.
+       */
+      const title = isShellPromptTitle(raw) ? '' : raw;
       if (title === this.#title) return;
       this.#title = title;
       this.#announce({ title });

@@ -3,11 +3,29 @@
  * can actually open, or to nothing.
  *
  * Pure, and the hostname is a PARAMETER rather than an `os.hostname()` call:
- * core is process- and platform-agnostic, which is the same rule that keeps
- * `displayTitle` taking `home` instead of reading it.
+ * core is process- and platform-agnostic, and nothing here may reach the machine
+ * it happens to be running on.
  */
 
 const FILE_SCHEME = 'file://';
+
+/**
+ * `user@host`, or `user@host:/some/path` — what a shell sets its title to when it
+ * is sitting at a prompt with nothing running (zsh's `%n@%m:%~`, bash's
+ * `\u@\h:\w`).
+ *
+ * Neither half is a name for a tab: the machine is the one you are on and the
+ * directory is already `Pane.cwd`. One `@`, no whitespace before the colon —
+ * narrow on purpose, so a program that genuinely titles itself `deploy@staging`
+ * keeps its name while `git commit` and `ssh box` (both of which contain a
+ * space) never match in the first place.
+ */
+const SHELL_PROMPT_TITLE = /^[^\s@]+@[^\s@:]+(?::.*)?$/;
+
+/** Whether an OSC title is a shell's idle prompt rather than a program's name. */
+export function isShellPromptTitle(title: string): boolean {
+  return SHELL_PROMPT_TITLE.test(title);
+}
 
 /**
  * The path, when the payload names THIS machine. Otherwise nothing.

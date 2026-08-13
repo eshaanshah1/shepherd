@@ -50,8 +50,6 @@ export interface SplitViewProps {
   readonly focusedPaneId?: string | null;
   readonly onFocusPane?: (id: PaneID) => void;
   readonly renderPane?: (pane: Pane, focused: boolean) => ReactNode;
-  /** For `displayTitle`'s `~` shortening; the renderer has no `os.homedir()`. */
-  readonly home?: string;
 }
 
 /** Which divider is mid-drag, and where the user has dragged it to. */
@@ -67,7 +65,6 @@ interface Ctx {
   readonly preview: Preview | null;
   readonly onPreview: (path: readonly number[], ratio: number) => void;
   readonly onCommit: (path: readonly number[], ratio: number) => void;
-  readonly home: string;
 }
 
 const ROOT_PATH: readonly number[] = [];
@@ -105,7 +102,6 @@ export function SplitView(props: SplitViewProps): ReactNode {
     preview,
     onPreview,
     onCommit,
-    home: props.home ?? '',
   };
 
   return (
@@ -300,7 +296,7 @@ function PaneLeaf({ pane, ctx }: { pane: Pane; ctx: Ctx }): ReactNode {
       onMouseDown={() => ctx.onFocusPane?.(pane.id)}
     >
       {ctx.renderPane === undefined ? (
-        <PanePlaceholder pane={pane} home={ctx.home} />
+        <PanePlaceholder pane={pane} />
       ) : (
         ctx.renderPane(pane, focused)
       )}
@@ -313,10 +309,10 @@ function PaneLeaf({ pane, ctx }: { pane: Pane; ctx: Ctx }): ReactNode {
  * box: an empty box cannot show you that the pane it is in has the right size or
  * the right identity, which is exactly what a layout test needs to see.
  */
-function PanePlaceholder({ pane, home }: { pane: Pane; home: string }): ReactNode {
+function PanePlaceholder({ pane }: { pane: Pane }): ReactNode {
   return (
     <div className="sh-pane-body">
-      <div className="sh-pane-title">{displayTitle(pane, home)}</div>
+      <div className="sh-pane-title">{displayTitle(pane)}</div>
       <div className="sh-pane-meta">{pane.id.slice(0, 8)}</div>
       <div className="sh-pane-hint">no session attached</div>
     </div>
