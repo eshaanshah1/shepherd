@@ -67,8 +67,10 @@
      flex line so it stops charging the title for space it does not use at rest —
      see the trailing cell below. */
   position: relative;
-  /* A bare button: the card supplies the surface, and a nested button with its
-     own background would be a box inside a box. */
+  /* A bare control: the card supplies the surface, and a nested box with its own
+     background would be a box inside a box. (It is a div with `role="button"` —
+     see the component — so these resets are belt-and-braces rather than the
+     UA-stylesheet undo they were.) */
   padding: 0;
   border: 0;
   background: none;

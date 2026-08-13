@@ -128,11 +128,32 @@ export function TaskCard({ item, selected, invoke }: ExtensionRowProps): ReactEl
       data-open={waiting ? 'true' : undefined}
     >
       {/*
-        The card is a button only where it is not already carrying buttons. A
-        <button> wrapping Allow/Deny would nest interactive elements, which is
-        invalid and makes the inner ones unreachable by keyboard in some AT.
+        A DIV with `role="button"`, not a `<button>` — `Row`'s trade, for exactly
+        `Row`'s reason, and this file already stated the rule while breaking it.
+
+        The head carries the row's one hover verb (the trailing `IconButton`
+        below), and a control inside a `<button>` is invalid HTML: React says so
+        at runtime, and the inner control is unreachable by keyboard in some AT.
+        The element cannot be a button while it holds one, so the role, the tab
+        stop and the keyboard activation are supplied by hand — which is all a
+        `<button>` was giving us here.
       */}
-      <button type="button" className="sh-task-card__head" onClick={open}>
+      <div
+        role="button"
+        tabIndex={0}
+        className="sh-task-card__head"
+        onClick={open}
+        /*
+          Enter and Space, because a div's role does not come with them. Space is
+          `preventDefault`ed on keydown or the rail scrolls under the card the
+          gesture is meant to open.
+        */
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          open();
+        }}
+      >
         {/*
           **A mark whose value the region already states is not information — and
           neither is the space it was drawn in.**
@@ -205,7 +226,7 @@ export function TaskCard({ item, selected, invoke }: ExtensionRowProps): ReactEl
             />
           )}
         </span>
-      </button>
+      </div>
 
       {/*
         Guarded by `dense` like every block below it, and the guard is the point

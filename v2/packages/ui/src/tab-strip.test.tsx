@@ -99,6 +99,46 @@ describe('TabStrip', () => {
     expect(values).not.toContain('var(--sh-sky)');
   });
 
+  it('draws a dot only for a tab with something to say', () => {
+    // The whole vocabulary: absence IS the resting state. A slot on every tab
+    // would put a mark on four healthy ones so the fifth could be found.
+    const view = mount(
+      <TabStrip
+        tabs={[
+          { id: 'a', label: 'api' },
+          { id: 'b', label: 'logs', mark: 'attention' },
+        ]}
+        activeId="a"
+        onSelect={() => {}}
+      />,
+    );
+    const dots = tabs(view.container).map((tab) => tab.querySelector('.sh-ui-tab__dot'));
+    expect(dots[0]).toBeNull();
+    expect(dots[1]?.getAttribute('data-mark')).toBe('attention');
+    view.unmount();
+  });
+
+  it('puts every dot’s word in the DOM', () => {
+    // Two of the three are a hue apart and nothing else. A fact encoded only in
+    // colour cannot be read out, searched, or asserted on — `StateMark`'s rule,
+    // and it does not stop applying because the mark got smaller.
+    const view = mount(
+      <TabStrip
+        tabs={[
+          { id: 'a', label: 'api', mark: 'failed' },
+          { id: 'b', label: 'logs', mark: 'unread' },
+        ]}
+        activeId="a"
+        onSelect={() => {}}
+      />,
+    );
+    expect(tabs(view.container).map((tab) => tab.textContent)).toEqual([
+      'Failedapi',
+      'Unread outputlogs',
+    ]);
+    view.unmount();
+  });
+
   it('declares its height exactly once', () => {
     // `Row`'s invariant, for the same reason: a strip that grew a taller state
     // would move the panes under it, and one rule is what keeps the band on the

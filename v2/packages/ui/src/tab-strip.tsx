@@ -27,9 +27,34 @@ import { IconButton } from './icon-button.tsx';
  * instant after a tab closes and before the next snapshot lands.
  */
 
+/**
+ * What a tab has to SAY, if anything.
+ *
+ * Absent is the common case and the point of the whole vocabulary: a tab that is
+ * fine draws nothing, so the row stays even and a dot anywhere in it is worth
+ * looking at. There is deliberately no `working` member — a run in progress is
+ * not news, and a strip where every busy tab lights up is a strip you stop
+ * reading.
+ *
+ * The MARK's vocabulary, not the agent lifecycle's, for `StateMark`'s reason: a
+ * primitive does not know what a session is. `unread` / `attention` / `failed`
+ * are things a set of anything can be; `needsCheck` and `blocked` are Claude
+ * Code's words and stay on the app's side of the boundary.
+ */
+export type TabMark = 'unread' | 'attention' | 'failed';
+
+/** The word each mark says — the dot's accessible name, since colour cannot be read out. */
+export const tabMarkWords: Readonly<Record<TabMark, string>> = {
+  unread: 'Unread output',
+  attention: 'Waiting on you',
+  failed: 'Failed',
+};
+
 export interface TabDescriptor {
   readonly id: string;
   readonly label: string;
+  /** Absent = nothing to say = no dot. See `TabMark`. */
+  readonly mark?: TabMark;
 }
 
 export interface TabStripProps {
@@ -74,6 +99,11 @@ export function TabStrip({
           data-tab-id={tab.id}
           onClick={() => onSelect(tab.id)}
         >
+          {tab.mark === undefined ? null : (
+            <span className="sh-ui-tab__dot" data-mark={tab.mark} title={tabMarkWords[tab.mark]}>
+              <span className="sh-ui-sr-only">{tabMarkWords[tab.mark]}</span>
+            </span>
+          )}
           <span className="sh-ui-tab__label">{tab.label}</span>
         </button>
       ))}
