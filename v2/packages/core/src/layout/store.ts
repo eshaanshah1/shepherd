@@ -795,13 +795,24 @@ export class LayoutStore {
     return this.#editPane(pane, (current) => ({ ...current, userTitle }));
   }
 
-  /** The pty reported a new cwd or OSC title. */
-  observe(pane: PaneID, patch: { readonly title?: string; readonly cwd?: string }): Result<void, string> {
-    return this.#editPane(pane, (current) => ({
-      ...current,
-      ...(patch.title === undefined ? {} : { title: patch.title }),
-      ...(patch.cwd === undefined ? {} : { cwd: patch.cwd }),
-    }));
+  /**
+   * The pty reported a new cwd or OSC title.
+   *
+   * A no-op patch returns without touching the tree: a shell re-emits both on
+   * every prompt, and `#editPane` would push a full snapshot to the renderer and
+   * schedule a write to say nothing had happened. The "no pane" refusal still
+   * comes first — a miss is not the same answer as a no-op.
+   */
+  observe(
+    pane: PaneID,
+    patch: { readonly title?: string; readonly cwd?: string },
+  ): Result<void, string> {
+    const current = this.pane(pane);
+    if (current === null) return err(`no pane ${pane}`);
+    const title = patch.title ?? current.title;
+    const cwd = patch.cwd ?? current.cwd;
+    if (title === current.title && cwd === current.cwd) return ok(undefined);
+    return this.#editPane(pane, (live) => ({ ...live, title, cwd }));
   }
 
   // --------------------------------------------------------------------- events

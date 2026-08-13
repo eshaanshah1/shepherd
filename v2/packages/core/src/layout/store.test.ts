@@ -354,6 +354,56 @@ describe('persistence', () => {
     expect(second.sessionFor(paneId('p2'))).toBe('s-2');
   });
 
+  it('observes a title and a cwd onto the pane', () => {
+    const store = build();
+    store.open();
+
+    expect(store.observe(paneId('p1'), { title: 'vim', cwd: '/w/api' }).ok).toBe(true);
+
+    expect(store.pane(paneId('p1'))?.title).toBe('vim');
+    expect(store.pane(paneId('p1'))?.cwd).toBe('/w/api');
+  });
+
+  /**
+   * A shell re-emits its title and cwd on every prompt. Rewriting the pane for
+   * an unchanged value pushes a full snapshot to the renderer and schedules a
+   * write, to say nothing happened.
+   */
+  it('says nothing when an observation changes nothing', () => {
+    const store = build();
+    store.open();
+    store.observe(paneId('p1'), { title: 'vim', cwd: '/w/api' });
+
+    let notifications = 0;
+    store.onDidChange(() => {
+      notifications += 1;
+    });
+
+    expect(store.observe(paneId('p1'), { title: 'vim', cwd: '/w/api' }).ok).toBe(true);
+    expect(notifications).toBe(0);
+
+    // …and a real change still gets through.
+    store.observe(paneId('p1'), { title: 'zsh' });
+    expect(notifications).toBe(1);
+  });
+
+  /** A partial patch leaves the other field alone rather than clearing it. */
+  it('keeps the field an observation does not mention', () => {
+    const store = build();
+    store.open();
+    store.observe(paneId('p1'), { title: 'vim', cwd: '/w/api' });
+
+    store.observe(paneId('p1'), { title: 'zsh' });
+
+    expect(store.pane(paneId('p1'))?.cwd).toBe('/w/api');
+  });
+
+  it('still refuses a pane it does not have', () => {
+    const store = build();
+    store.open();
+    expect(store.observe(paneId('nope'), { title: 'x' }).ok).toBe(false);
+  });
+
   it('restores cwd and userTitle, but not the live title', () => {
     const kv = fakeKV();
     const first = build(kv);
