@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TerminalMirror } from './mirror.ts';
+import { TerminalMirror, type ObservedPatch } from './mirror.ts';
 
 const encode = (s: string) => new TextEncoder().encode(s);
 const decode = (b: Uint8Array) => new TextDecoder().decode(b);
@@ -164,5 +164,89 @@ describe('TerminalMirror', () => {
     expect(() => {
       mirror.capture(() => undefined);
     }).not.toThrow();
+  });
+
+  /** OSC 2 (window title). xterm fires `onTitleChange` for OSC 0 and 2. */
+  it('reports an OSC 2 title', async () => {
+    const mirror = new TerminalMirror();
+    const seen: ObservedPatch[] = [];
+    mirror.onObserved((patch) => seen.push(patch));
+
+    mirror.feed(encode(']2;building'));
+    await captured(mirror);
+
+    expect(seen).toEqual([{ title: 'building' }]);
+    mirror.dispose();
+  });
+
+  it('reports an OSC 7 cwd for this machine, decoded', async () => {
+    const mirror = new TerminalMirror({ hostname: 'mac-b.local' });
+    const seen: ObservedPatch[] = [];
+    mirror.onObserved((patch) => seen.push(patch));
+
+    mirror.feed(encode(']7;file://mac-b/Users/me/my%20code\\'));
+    await captured(mirror);
+
+    expect(seen).toEqual([{ cwd: '/Users/me/my code' }]);
+    mirror.dispose();
+  });
+
+  it('says nothing about an OSC 7 from another machine', async () => {
+    const mirror = new TerminalMirror({ hostname: 'mac-b' });
+    const seen: ObservedPatch[] = [];
+    mirror.onObserved((patch) => seen.push(patch));
+
+    mirror.feed(encode(']7;file://build-box/srv/app\\'));
+    await captured(mirror);
+
+    expect(seen).toEqual([]);
+    mirror.dispose();
+  });
+
+  /**
+   * oh-my-zsh re-emits the same cwd on every prompt. Suppressed HERE, so the
+   * frame never crosses the socket rather than being ignored six layers along.
+   */
+  it('says nothing when a value repeats', async () => {
+    const mirror = new TerminalMirror({ hostname: 'mac-b' });
+    const seen: ObservedPatch[] = [];
+    mirror.onObserved((patch) => seen.push(patch));
+
+    mirror.feed(encode(']2;same]2;same]2;other'));
+    await captured(mirror);
+
+    expect(seen).toEqual([{ title: 'same' }, { title: 'other' }]);
+    mirror.dispose();
+  });
+
+  /**
+   * A pty chunk boundary lands wherever it lands. xterm's parser holds state
+   * across writes; this pins that we have not put a decode in front of it that
+   * does not.
+   */
+  it('reads a sequence split across two feeds', async () => {
+    const mirror = new TerminalMirror();
+    const seen: ObservedPatch[] = [];
+    mirror.onObserved((patch) => seen.push(patch));
+
+    mirror.feed(encode(']2;spl'));
+    mirror.feed(encode('it'));
+    await captured(mirror);
+
+    expect(seen).toEqual([{ title: 'split' }]);
+    mirror.dispose();
+  });
+
+  it('stops reporting once disposed', async () => {
+    const mirror = new TerminalMirror();
+    const seen: ObservedPatch[] = [];
+    const subscription = mirror.onObserved((patch) => seen.push(patch));
+
+    subscription.dispose();
+    mirror.feed(encode(']2;ignored'));
+    await captured(mirror);
+
+    expect(seen).toEqual([]);
+    mirror.dispose();
   });
 });
