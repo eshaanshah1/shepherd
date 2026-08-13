@@ -79,6 +79,63 @@ describe('the task card’s trailing action', () => {
     }
   });
 
+  it('slides the verb in from the right, at the row entrance’s own distance', () => {
+    /*
+     * §8 refuses motion that translates a control, because a control that moves
+     * under the cursor is a control whose target moved mid-click. Two things bound
+     * it: the distance and duration are the row ENTRANCE's own (`row.css` animates
+     * an arriving row by opacity and a 4px slide), so this is that precedent applied
+     * to a control that is also arriving; and 4px sits inside the button's own hit
+     * target, so the target does not meaningfully move.
+     */
+    const action = ruleFor('.sh-task-card__action');
+    expect(action?.style.transform).toBe('translateX(var(--sh-space-xs))');
+    expect(action?.style.transition).toContain('transform var(--sh-motion)');
+
+    const revealed = rulesMentioning('sh-task-card__action').find((rule) =>
+      rule.selectorText.includes(':hover'),
+    );
+    expect(revealed?.style.transform).toBe('none');
+  });
+
+  /**
+   * MUTATION TARGET. The verb and its backing must arrive at the same speed as the
+   * row they arrive on.
+   *
+   * The card fades its own fill over `--sh-motion`. The button toggled
+   * `visibility` and the chip switched `background` with no transition, so both
+   * snapped in over a background that was still easing — one element instant, the
+   * one behind it moving, which reads as two unrelated events rather than as one
+   * row waking up.
+   */
+  it('fades the verb and its backing over the row’s own duration', () => {
+    expect(ruleFor('.sh-task-card__action')?.style.transition).toContain('opacity var(--sh-motion)');
+    expect(ruleFor('.sh-task-card__trail')?.style.transition).toContain('background var(--sh-motion)');
+  });
+
+  it('keeps visibility in the transition, so the fade works in both directions', () => {
+    /*
+     * `visibility` is discrete, and a transition whose endpoints include `visible`
+     * holds `visible` for the whole duration. That is what makes the button
+     * hit-testable the moment it starts to appear, and keeps it painted while it
+     * fades out — `opacity` alone would leave a control you cannot see but CAN
+     * click and tab to, which is worse than no control.
+     */
+    const action = ruleFor('.sh-task-card__action');
+    expect(action?.style.visibility).toBe('hidden');
+    expect(action?.style.opacity).toBe('0');
+    expect(action?.style.transition).toContain('visibility var(--sh-motion)');
+  });
+
+  it('removes the fade under reduced motion rather than shortening it', () => {
+    // The same accommodation the row's entrance makes: there is no information in a
+    // cross-fade, so the honest answer is that the verb is simply there.
+    const reduced = rulesMentioning('sh-task-card__action').filter(
+      (rule) => rule.style.transition === 'none',
+    );
+    expect(reduced.length).toBeGreaterThan(0);
+  });
+
   it('draws no elapsed stamp, because there is no longer one to draw', () => {
     // Deleted rather than left unused: it reported task AGE on finished work, and a
     // corrected ship clock was true without earning a column beside every title.

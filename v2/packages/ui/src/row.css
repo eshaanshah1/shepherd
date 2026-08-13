@@ -224,15 +224,18 @@
  *
  * The backing is the row's own fill, not a new colour — `fillHover` and
  * `fillSelected` are opaque, so the chip reads as the row ending early rather than
- * as something dropped on top of the text. Only while the button is DRAWN, or every
- * row would carry a rectangle of hover colour at its right edge.
+ * as something dropped on top of the text. It fades at the row's own rate, and only
+ * while the button is DRAWN: a backing that did not wait for hover would put a
+ * rectangle of hover colour at the right edge of every row.
  */
 .sh-ui-row__trailing:has(> .sh-ui-row__meta:empty) {
   position: absolute;
   inset-block: 0;
   inset-inline-end: 0;
   display: flex;
+  align-items: center;
   padding-inline-start: var(--sh-space-md);
+  transition: background var(--sh-motion) linear;
 }
 
 .sh-ui-row:hover .sh-ui-row__trailing:has(> .sh-ui-row__meta:empty),
@@ -278,15 +281,44 @@
  *
  * `visibility`, not `display: none`. The hidden child must keep occupying its
  * grid cell — that is what makes the track wide enough for it before it appears,
- * which is the entire point of stacking the two.
+ * which is the entire point of stacking the two. `opacity: 0` alone would not do
+ * it either: a control you cannot see but CAN click and tab to is worse than no
+ * control.
+ *
+ * **They fade, over the same 140ms the row's own fill takes.** Toggling visibility
+ * alone made the verb snap in over a background that was still arriving — one
+ * element instant, the one behind it easing, which reads as two unrelated events
+ * rather than as one row waking up.
+ *
+ * `visibility` is inside the transition, and that is what makes the fade work in
+ * both directions: a discrete property whose endpoints include `visible` stays
+ * visible for the whole duration, so the actions are hit-testable the moment they
+ * begin to appear and stay painted while they fade out.
+ *
+ * **They slide in from the right as they fade**, 4px over the same 140ms. §8
+ * refuses motion that translates a control, and the reason is real — a control that
+ * moves under the cursor is a control whose target moved mid-click. The distance
+ * and the duration are the row ENTRANCE's own, a few rules down, so this is that
+ * precedent applied to a control that is also arriving rather than a new exception;
+ * and 4px sits inside the button's own hit target, so the target does not
+ * meaningfully move.
  */
 .sh-ui-row__actions {
   visibility: hidden;
+  opacity: 0;
+  /* From the right, which is where they come from — the row's own edge. */
+  transform: translateX(var(--sh-space-xs));
+  transition:
+    opacity var(--sh-motion) linear,
+    transform var(--sh-motion) linear,
+    visibility var(--sh-motion) linear;
 }
 
 .sh-ui-row:hover .sh-ui-row__actions,
 .sh-ui-row:focus-within .sh-ui-row__actions {
   visibility: visible;
+  opacity: 1;
+  transform: none;
 }
 
 /* The metadata gives way to the actions in the shared cell rather than moving. */
@@ -296,9 +328,39 @@
   background: inherit;
 }
 
+/*
+ * …and it CROSS-fades with them rather than blinking out first. The two share one
+ * cell, so a metadata that vanished on the same frame the actions began to arrive
+ * left the cell empty for the length of the fade.
+ */
+.sh-ui-row__meta {
+  transition:
+    opacity var(--sh-motion) linear,
+    visibility var(--sh-motion) linear;
+}
+
 .sh-ui-row:hover .sh-ui-row__meta:has(+ .sh-ui-row__actions:not(:empty)),
 .sh-ui-row:focus-within .sh-ui-row__meta:has(+ .sh-ui-row__actions:not(:empty)) {
   visibility: hidden;
+  opacity: 0;
+}
+
+/*
+ * Reduced motion removes the fade rather than shortening it, exactly as the
+ * entrance below does: there is no information in a cross-fade, so the honest
+ * accommodation is that the control is simply there.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .sh-ui-row__actions,
+  .sh-ui-row__meta,
+  .sh-ui-row__trailing {
+    transition: none;
+  }
+
+  /* And they do not travel at all, rather than travelling instantly. */
+  .sh-ui-row__actions {
+    transform: none;
+  }
 }
 
 /* ---------------------------------------------------------------- entrance */

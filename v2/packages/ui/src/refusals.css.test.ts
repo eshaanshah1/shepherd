@@ -86,12 +86,24 @@ describe('§10 — the refusals, over the whole sheet', () => {
     expect(declaring('backdrop-filter').map((r) => describeRule(r, 'backdrop-filter'))).toEqual([]);
   });
 
-  it('transitions no transform but the switch knob', () => {
+  it('transitions no transform but the switch knob and an arriving row action', () => {
     // §10 refuses motion that moves a control, because a control that moves under
     // the cursor is one whose target moved mid-click. A Switch's knob travelling
     // between its two ends is not that — the knob IS the state, and the control
     // it belongs to has not moved.
-    expect(offenders('transition', /transform/, ['.sh-ui-switch'])).toEqual([]);
+    //
+    // A row's hover action is the second exception, and it earns it on the same
+    // terms rather than on taste. It ARRIVES: a frame earlier there was nothing to
+    // aim at, so no target moved out from under a pointer that was tracking one.
+    // And the travel is bounded BELOW the size of the thing travelling — 4px
+    // (`space-xs`) inside a 24px (`control-sm`) button — so the button's hit area
+    // contains its own final position for every frame of the animation. A click
+    // aimed where the button will be lands on the button the whole way in.
+    //
+    // Both halves of that are load-bearing. Widen the distance past the control's
+    // own width and the guarantee is gone; put it on a control that is merely
+    // moving rather than arriving and it is the refusal itself.
+    expect(offenders('transition', /transform/, ['.sh-ui-switch', '.sh-ui-row__actions'])).toEqual([]);
   });
 
   it('puts no emoji in generated content', () => {
