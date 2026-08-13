@@ -604,8 +604,8 @@ body.sh-dragging {
 
 .sh-side {
   /*
-   * 222 — a third of the window's width is more than a list of tasks is worth,
-   * so a long title truncates rather than the grid giving up the space.
+   * 264 — a list of tasks is worth this much of the window and no more, so a
+   * long title truncates rather than the grid giving up the space.
    */
   width: var(--sh-band-rail);
   flex: 0 0 var(--sh-band-rail);
