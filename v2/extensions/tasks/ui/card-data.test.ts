@@ -11,7 +11,6 @@ describe('readCardData', () => {
     expect(
       readCardData({
         mark: 'working',
-        elapsed: '4m',
         summary: 'running the suite',
         diff: { added: 142, removed: 38, files: 7 },
         suite: { total: 4, passed: 3 },
@@ -20,7 +19,6 @@ describe('readCardData', () => {
       }),
     ).toEqual({
       mark: 'working',
-      elapsed: '4m',
       summary: 'running the suite',
       diff: { added: 142, removed: 38, files: 7 },
       suite: { total: 4, passed: 3 },
@@ -138,7 +136,7 @@ describe('readCardData', () => {
   it('never throws, whatever it is handed', () => {
     const nasty: unknown[] = [
       { mark: 'resting', repos: 'not a list', tabs: {}, question: 5, suite: [], diff: [] },
-      { mark: 'failed', exitCode: 'one', elapsed: 12, summary: '' },
+      { mark: 'failed', exitCode: 'one', summary: '' },
       { mark: 'waiting', question: { text: '' } },
       { mark: 'waiting', question: { answers: [] } },
     ];

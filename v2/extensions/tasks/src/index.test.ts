@@ -1721,7 +1721,10 @@ describe('a long operation', () => {
 
       const row = await rowOf(h, created.id);
       expect(row?.label).toBe('ship-it');
-      expect((row?.data as { elapsed?: unknown } | undefined)?.elapsed).toBeDefined();
+      // And it carries no time stamp. A task row had one on both sides of the
+      // divider; it reported task age on finished work, and a corrected ship clock
+      // was true without earning a column. The trailing cell holds the row's verb.
+      expect((row?.data as { elapsed?: unknown } | undefined)?.elapsed).toBeUndefined();
     });
 
   });
@@ -2648,28 +2651,29 @@ describe('finished work', () => {
     expect(rows.find((row) => row.id === 'group:shipped:more')?.label).toBe('Show fewer');
   });
 
-  it('stamps a shipped row with when it SHIPPED, not how old the task is', async () => {
+  it('puts no time on a shipped row at all — the day header answers when', async () => {
     /*
-     * The defect this fixes, stated as the fixture: work begun at the epoch and
-     * shipped four hours later read `0d` — its AGE — because `elapsed` was
-     * `formatElapsed(createdAt)` for every row, live and shipped alike. On a
-     * three-week-old task shipped ten minutes ago it said `21d`, which is true
-     * about the wrong subject: the archive is asked what you finished, not what you
-     * started.
-     */
-    /*
-     * The instant is built from a LOCAL `Date` rather than from epoch arithmetic,
-     * so the expectation holds in any zone. An epoch offset asserts a UTC wall
-     * clock, and a half-hour zone (this was found on UTC+5:30) shifts the MINUTES
-     * as well as the hour — so even `/^\d\d:35$/` fails there.
+     * Three answers, and this is the third. `elapsed` was
+     * `formatElapsed(createdAt)` for every row, so a shipped one reported task AGE:
+     * begun at the epoch and shipped four hours later, this fixture read `0d`, and a
+     * three-week-old task shipped ten minutes ago read `21d` — true about the wrong
+     * subject. Corrected to a `16:40` clock off `archivedAt`, it was true about the
+     * right one and still a number beside every title you are trying to read.
+     *
+     * So the row carries nothing, and the region answers "when" once per day in its
+     * header. `archivedAt` is still load-bearing — it is what buckets the row — which
+     * is why this fixture keeps a `createdAt` and an `archivedAt` that disagree.
      */
     const at = new Date(1970, 0, 1, 14, 35).getTime();
     const h = (live = harness({
       tasks: [task({ id: 'old', title: 'T old', lifecycle: 'archived', createdAt: 1, archivedAt: at, sessions: [] })],
     }));
-    const row = (await h.tree().children(undefined)).find((entry) => entry.id === 'old');
-    // A clock, not a duration. `0d` — the task's age — is what this said before.
-    expect((row?.data as { elapsed?: string } | undefined)?.elapsed).toBe('14:35');
+    const rows = await h.tree().children(undefined);
+    const row = rows.find((entry) => entry.id === 'old');
+    expect((row?.data as { elapsed?: unknown } | undefined)?.elapsed).toBeUndefined();
+    // …and the header that replaced it is drawn from the SHIP time, not the
+    // creation time — the two are a day apart in this fixture on purpose.
+    expect(rows.filter((entry) => entry.subsection === true)).toHaveLength(1);
   });
 
   it('collapses same-day shipped tasks that share a title, and counts them', async () => {

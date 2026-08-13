@@ -49,26 +49,31 @@ const draw = (row: TreeItem): void => {
 
 const title = (): string | undefined => host.querySelector('.sh-task-card__title')?.textContent ?? undefined;
 const shippedRow = (over: Record<string, unknown> = {}): TreeItem =>
-  item('Fix the login redirect', { mark: 'shipped', shipped: true, elapsed: '3d', ...over });
-const elapsed = (): HTMLElement | null => host.querySelector('.sh-task-card__elapsed');
+  item('Fix the login redirect', { mark: 'shipped', shipped: true, ...over });
 
 describe('a task card mid-build', () => {
   it('draws the step as the row’s name, so a provisioning task is not a silent row', () => {
-    draw(item('Creating the worktree', { mark: 'working', elapsed: '0m' }));
+    draw(item('Creating the worktree', { mark: 'working' }));
     expect(title()).toBe('Creating the worktree');
   });
 
   it('draws the real name once the work is done, which IS the ready signal', () => {
-    draw(item('Fix the login redirect', { mark: 'resting', elapsed: '4m' }));
+    draw(item('Fix the login redirect', { mark: 'resting' }));
     expect(title()).toBe('Fix the login redirect');
   });
 
-  it('keeps the elapsed stamp, because the step no longer wants that cell', () => {
-    // An earlier build put the step in the trail and the stamp lost its slot for
-    // the duration. The step is the label now, so the trailing cell goes back to
-    // being one thing.
+  it('draws no time stamp, on either side of the divider', () => {
+    /*
+     * A task row carried `4m` / `2h` / `3d`, and it is gone from live work as well as
+     * from the archive. On finished work it reported the wrong subject; corrected to a
+     * ship clock it was true and still a number beside every title. The trailing cell
+     * holds the row's one verb, which is the thing you can actually do to it.
+     *
+     * Asserted for a WORKING card, because that is where a duration had the strongest
+     * case — the number climbing is real there, and it still did not earn the column.
+     */
     draw(item('Linking agent files', { mark: 'working', elapsed: '0m' }));
-    expect(elapsed()?.textContent).toBe('0m');
+    expect(host.querySelector('.sh-task-card__elapsed')).toBeNull();
   });
 
   it('does NOT grow the card, because only a waiting one may change height', () => {
@@ -104,16 +109,15 @@ describe('a shipped task card', () => {
   const shipped = (over: Record<string, unknown> = {}): unknown => ({
     mark: 'shipped',
     shipped: true,
-    elapsed: '3d',
     ...over,
   });
 
-  it('keeps its title and its stamp — you shipped this, and when', () => {
-    draw(item('Fix the login redirect', shipped({ elapsed: '16:40' })));
+  it('keeps its title, and carries no time at all', () => {
+    draw(item('Fix the login redirect', shipped()));
     expect(title()).toBe('Fix the login redirect');
-    // A clock, because the archive stamps the moment a thing finished rather than
-    // how long ago that was. The card does not know which it is handed.
-    expect(elapsed()?.textContent).toBe('16:40');
+    // The day header above it answers "when" once for the whole group; a per-row
+    // stamp answered a question nobody asked the archive.
+    expect(host.querySelector('.sh-task-card__elapsed')).toBeNull();
     // The state still travels on the host, for the stylesheet and for a test — it
     // is only the drawn MARK below that goes.
     expect(host.querySelector('.sh-task-card')?.getAttribute('data-mark')).toBe('shipped');
@@ -170,7 +174,7 @@ describe('a shipped task card', () => {
     // Two live tasks of the same name are two things you are separately doing, and
     // collapsing them would hide one that might be waiting on you. The reader drops
     // the field rather than the card ignoring it, so this holds for every consumer.
-    draw(item('Fix the login redirect', { mark: 'working', elapsed: '8m', dupe: 2 }));
+    draw(item('Fix the login redirect', { mark: 'working', dupe: 2 }));
     expect(host.querySelector('.sh-task-card__dupe')).toBeNull();
   });
 

@@ -14,7 +14,7 @@ import { readCardData, type CardAnswer, type CardData } from './card-data.ts';
  *
  * What it draws, in order, and none of it is optional-by-accident:
  *
- *   mark + title + elapsed
+ *   mark + title + the one verb
  *   one sentence of what is happening
  *   the diff line — NUMBERS, never a bar
  *   repo chips, and the tab marks
@@ -161,23 +161,12 @@ export function TaskCard({ item, selected, invoke }: ExtensionRowProps): ReactEl
         {card.shipped === true && card.mark !== 'failed' ? null : <StateMark state={card.mark} />}
         <span className="sh-task-card__title">{item.label}</span>
         {/*
-          The metadata and the hover action share ONE grid cell (§6: a row must
-          not GROW to reveal its actions). The track is therefore already as wide
-          as the wider of the two, and revealing the button moves nothing — where
-          swapping one for the other, or appending, would shift the title under
-          the cursor at the exact moment you are reaching for it.
-
-          `visibility`, not `display`, for the same reason: a hidden-but-laid-out
-          button is what keeps the cell that width when it is not shown.
-        */}
-        {/*
           The count of what this row stands for, OUTSIDE the trailing cell.
 
-          It sits between the title and the stamp rather than in the stack with
-          them, because it is not metadata that yields to a hover action — it is
-          part of what the row says, and a badge that vanished under the pointer
-          would take the disclosure with it. It is `flex: none`, so the title
-          truncates around it instead of the row growing.
+          It is not metadata that yields to a hover action — it is part of what the
+          row says, and a badge that vanished under the pointer would take the
+          disclosure with it. `flex: none`, so the title truncates around it rather
+          than the row growing.
         */}
         {card.dupe === undefined ? null : (
           <span className="sh-task-card__dupe" title={`${card.dupe} tasks with this name`}>
@@ -185,8 +174,18 @@ export function TaskCard({ item, selected, invoke }: ExtensionRowProps): ReactEl
             <span className="sh-ui-sr-only">{card.dupe} tasks with this name</span>
           </span>
         )}
+        {/*
+          The row's ONE verb, revealed on hover, in the cell that used to share
+          itself with the elapsed stamp.
+
+          It stays a grid cell with a hidden-but-laid-out button rather than
+          becoming a plain conditional child: §6 refuses a row that GROWS to reveal
+          its actions, and `visibility` is what keeps the track at the button's
+          width while it is not shown. With the stamp gone there is nothing left to
+          swap WITH — but the reflow the cell prevents was never about the stamp, it
+          was about the button appearing from nothing.
+        */}
         <span className="sh-task-card__trail">
-          {card.elapsed === undefined ? null : <span className="sh-task-card__elapsed">{card.elapsed}</span>}
           {action === undefined ? null : (
             <IconButton
               className="sh-task-card__action"

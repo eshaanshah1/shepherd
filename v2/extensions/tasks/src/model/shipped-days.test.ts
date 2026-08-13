@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { collapseByTitle, dayLabel, formatClock, groupByDay, shippedAt } from './shipped-days.ts';
+import { collapseByTitle, dayLabel, groupByDay, shippedAt } from './shipped-days.ts';
 import type { Shippable } from './shipped-days.ts';
 
 /**
@@ -37,17 +37,6 @@ describe('shippedAt', () => {
   });
 });
 
-describe('formatClock', () => {
-  it('is 24-hour and zero-padded, so every stamp is the same width', () => {
-    // The whole reason it is a clock: four characters, tabular, and it never
-    // changes again once written.
-    expect(formatClock(at(2026, 8, 13, 16, 40))).toBe('16:40');
-    expect(formatClock(at(2026, 8, 13, 9, 5))).toBe('09:05');
-    expect(formatClock(at(2026, 8, 13, 0, 0))).toBe('00:00');
-    expect(formatClock(at(2026, 8, 13, 23, 59))).toBe('23:59');
-  });
-});
-
 describe('dayLabel', () => {
   const now = at(2026, 8, 13, 18, 0);
 
@@ -72,9 +61,8 @@ describe('dayLabel', () => {
   it('treats work shipped later today as today rather than as the future', () => {
     /*
      * A clock that went backwards — an NTP correction, a record written on another
-     * machine. `elapsed.ts` takes the same position: the honest answer is the one
-     * that does not invent a category, and there is no `Tomorrow` in this
-     * vocabulary.
+     * machine. The honest answer is the one that does not invent a category, and
+     * there is no `Tomorrow` in this vocabulary.
      */
     expect(dayLabel(at(2026, 8, 13, 23, 0), at(2026, 8, 13, 9, 0))).toBe('Today');
   });
@@ -83,9 +71,9 @@ describe('dayLabel', () => {
 describe('collapseByTitle', () => {
   it('leaves distinct titles alone, each counting one', () => {
     const rows = collapseByTitle([shipped('a', at(2026, 8, 13, 16, 0)), shipped('b', at(2026, 8, 13, 15, 0))]);
-    expect(rows.map((row) => [row.task.id, row.count, row.clock])).toEqual([
-      ['a', 1, '16:00'],
-      ['b', 1, '15:00'],
+    expect(rows.map((row) => [row.task.id, row.count])).toEqual([
+      ['a', 1],
+      ['b', 1],
     ]);
   });
 
@@ -104,8 +92,9 @@ describe('collapseByTitle', () => {
       ['newer', 2],
       ['other', 1],
     ]);
-    // The stamp is the one it opens, not the one it absorbed.
-    expect(rows[0]?.clock).toBe('16:00');
+    // …and it is the newest that survives, which given a newest-first input is
+    // what "opens the most recent of them" means.
+    expect(rows[0]?.task.archivedAt).toBe(at(2026, 8, 13, 16, 0));
   });
 
   it('counts three of a kind as three', () => {
