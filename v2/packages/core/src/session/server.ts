@@ -74,6 +74,7 @@ export class SessionServer {
   readonly #clients = new Map<number, ClientState>();
   readonly #hostExit: Disposable;
   readonly #hostResize: Disposable;
+  readonly #hostObserved: Disposable;
   #nextClientId = 1;
 
   constructor(options: SessionServerOptions) {
@@ -109,6 +110,20 @@ export class SessionServer {
         this.#host.snapshot(resize.sessionId, (bytes) => {
           this.#send(client, encodeByteFrame(RESPONSE.snapshot, resize.sessionId, bytes));
         });
+      }
+    });
+
+    /**
+     * …and every client learns what a session CALLS itself — attached or not.
+     *
+     * The one broadcast here that is not gated on `attachments`, and the gate is
+     * exactly what it must not have: a suspended pane detaches, so the tab whose
+     * label would go stale is the tab an attachment check would skip. A client
+     * with no interest drops a small JSON frame.
+     */
+    this.#hostObserved = this.#host.onObserved((observed) => {
+      for (const client of this.#clients.values()) {
+        this.#send(client, encodeJsonFrame(RESPONSE.observed, { ...observed }));
       }
     });
   }
@@ -174,6 +189,7 @@ export class SessionServer {
   dispose(): void {
     this.#hostExit.dispose();
     this.#hostResize.dispose();
+    this.#hostObserved.dispose();
     for (const id of [...this.#clients.keys()]) this.disconnect(id);
   }
 
