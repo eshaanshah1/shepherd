@@ -1,5 +1,6 @@
-import { isBusy, type AgentState, type StateTransition } from './state.ts';
+import { isAgent, isBusy, type AgentState, type StateTransition } from './state.ts';
 import type { AgentDecision, AgentKind, AgentSlot } from './kind.ts';
+import type { PersistedAgent } from './persist.ts';
 
 /**
  * Every tracked agent session, and the ONE place any of their states is written.
@@ -230,6 +231,70 @@ export class AgentRegistry {
     this.#entries.delete(sessionId);
     this.#emit(change);
     return change;
+  }
+
+  // --------------------------------------------------------------- the restart
+
+  /**
+   * Everything an entry cannot be rebuilt from evidence.
+   *
+   * The `slot` is in here because it has to be: it holds the vendor's ownership
+   * lock and its resume id, and a session restored without one is tracked but
+   * cannot be reattached to — `agents.resumeTarget` answers `null` for it, which
+   * reads as "this agent was never resumable".
+   *
+   * `quietTicks` is deliberately absent. It counts consecutive readings of ONE
+   * sweep and means nothing across a process that has not swept yet; carrying it
+   * would let a run interrupted at its last tick demote on the first reading of
+   * the next launch.
+   */
+  snapshot(): readonly PersistedAgent[] {
+    const rows: PersistedAgent[] = [];
+    for (const [sessionId, entry] of this.#entries) {
+      // A shell is not an agent, and the registry's own way of saying so is to
+      // hold no entry. One that got there through `SessionEnd` says the same.
+      if (!isAgent(entry.state)) continue;
+      rows.push({
+        sessionId,
+        kindId: entry.kindId,
+        state: entry.state,
+        ...(entry.reason === undefined ? {} : { reason: entry.reason }),
+        slot: entry.slot,
+      });
+    }
+    return rows;
+  }
+
+  /**
+   * Install a stored entry, as the third caller of the one writer.
+   *
+   * It goes through `#write` rather than beside it, so a restore announces itself
+   * exactly like any other transition: a fresh process has published nothing, and
+   * attention, the dock badge and every extension's mirror learn what is running
+   * from this event. `from` is honestly `shell` — this process did not know a
+   * moment ago — and `turnFinished` is honestly false, since nothing ended here.
+   * Reporting a finished turn would fire an alert per agent at every launch.
+   *
+   * **Refuses a session that is already tracked.** An event that landed while the
+   * snapshot was being read is newer than the snapshot by construction; this is
+   * the replay-then-live rule the pty ring and the viewing seed both follow.
+   */
+  restore(entry: PersistedAgent): AgentChange | undefined {
+    if (this.#entries.has(entry.sessionId)) return undefined;
+    this.#entries.set(entry.sessionId, {
+      kindId: entry.kindId,
+      state: 'shell',
+      slot: { ...entry.slot },
+      quietTicks: 0,
+    });
+    return this.#write(entry.sessionId, {
+      state: entry.state,
+      ...(entry.reason === undefined ? {} : { reason: entry.reason }),
+      clearTitle: false,
+      applied: true,
+      heldForBackground: false,
+      turnFinished: false,
+    });
   }
 
   /**

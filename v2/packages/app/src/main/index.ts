@@ -38,6 +38,7 @@ import {
   extensionId,
   paneId,
   rootId,
+  sessionId,
   systemClock,
   type Permission,
   type RootID,
@@ -80,6 +81,7 @@ import {
 } from './ingress.ts';
 import { menuDispatcher } from './menu-dispatch.ts';
 import { registerAgentIpc, type AgentIpc } from './agent-ipc.ts';
+import { hookRelay } from './hook-relay.ts';
 import { EMIT, INVOKE } from '../shared/index.ts';
 import { agentPrincipals } from './agent-principals.ts';
 import { ViewRegistry } from './view-registry.ts';
@@ -359,6 +361,36 @@ const registry = new CommandRegistry({
  * nothing that comes and goes with a window may own it.
  */
 const bus = new EventBus({ clock: systemClock, logger });
+
+/**
+ * Agent hooks from the daemon, onto this bus.
+ *
+ * The daemon serves `hooks.sock` now, because it is the process that outlives the
+ * app: an agent keeps firing hooks into a pty the daemon owns while the app is
+ * being replaced, and `report.sh` finds no socket and exits 0 by design. What used
+ * to be lost is journalled there and replayed here, so a turn that ended during a
+ * restart is FOLDED rather than guessed at.
+ *
+ * The attribution is re-applied here rather than trusted from the payload — the
+ * ingress already knows who posted, and a payload naming its own session is v1's
+ * `tab_id` lie. It is exactly what this app's own `EventsIngress` did when it held
+ * the socket, which is what makes the fallback below equivalent rather than
+ * merely similar.
+ *
+ * **Registered at this level, before `local.start()`, and that is load-bearing.**
+ * The daemon flushes its journal INSIDE the handshake — snapshot, register and
+ * replay are one step, the rule `PtyFanout` states — so a listener attached after
+ * `start()` would miss precisely the events this whole path exists to deliver.
+ */
+const hooks = hookRelay((envelope) => {
+  bus.emit(
+    envelope.topic,
+    envelope.payload,
+    { kind: 'agent', sessionId: sessionId(envelope.sessionId) },
+    envelope.seq,
+  );
+});
+if (local instanceof SessionClient) local.onHooked((envelope) => hooks.receive(envelope));
 
 /**
  * The layout. Its `SessionSink` is the `SessionHost`, which is the entire reason
@@ -1233,6 +1265,21 @@ void app.whenReady().then(async () => {
     await extensions.activate(extensionId(manifest.id));
   }
 
+  /*
+   * Now, and not before: the journal the daemon replayed at handshake time has
+   * been held in `hooks` since `whenReady` started, because the bus had no
+   * subscriber yet and an emit with no subscriber is gone.
+   *
+   * This line is the app's half of "snapshot, register and replay are one step".
+   * It sits after the activation loop because that is the moment main can honestly
+   * claim a consumer exists — `agents-core` declares `onStartup` for exactly this
+   * — and nothing in main can know when a child subscribed to a topic.
+   */
+  if (hooks.buffered > 0) {
+    logger.info('ingress', `replaying ${hooks.buffered} agent hook(s) the daemon held while the app was down`);
+  }
+  hooks.goLive();
+
   // The tree exists before the page can ask for it: `layout:get` is the first
   // thing the renderer does, and a root that is not open yet would answer
   // `no-root` and leave a blank window with nothing anywhere saying why.
@@ -1266,7 +1313,16 @@ void app.whenReady().then(async () => {
     logger,
     support,
     controlSocket: CONTROL_SOCKET,
-    hookSocket: HOOK_SOCKET,
+    /*
+     * Only when the daemon is NOT serving them. It advertises the capability in
+     * the handshake, which `local.start()` above has already completed — so this
+     * reads a fact rather than racing for the socket, and an old daemon (every
+     * `pnpm ship` leaves one running, holding your agents' ptys) falls back to the
+     * app serving hooks itself.
+     */
+    ...(local instanceof SessionClient && local.daemonServesHooks
+      ? {}
+      : { hookSocket: HOOK_SOCKET }),
   });
 
   installMenu({

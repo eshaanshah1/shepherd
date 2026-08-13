@@ -1,7 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import { ControlIngress, EventsIngress, type CommandRegistry, type EventBus } from '@shepherd/core';
 import type { Logger, Permission } from '@shepherd/sdk';
-import { PERMISSIONS } from '@shepherd/sdk';
+import { PERMISSIONS, sessionId } from '@shepherd/sdk';
 import { flagValue } from './bootstrap.ts';
 
 /**
@@ -90,7 +90,19 @@ export interface IngressOptions {
   readonly logger: Logger;
   readonly support: string;
   readonly controlSocket: string;
-  readonly hookSocket: string;
+  /**
+   * Where to serve agent hooks — **absent means the daemon is already serving
+   * them**, which is the normal case.
+   *
+   * The socket moved to the daemon so an event fired while the app is being
+   * replaced is journalled rather than lost. This path stays for the daemon that
+   * predates that: `pnpm ship` leaves the old process running (deliberately — it
+   * is holding your agents' ptys), and it advertises no hook capability, so the
+   * app serves them itself exactly as it always did. Dropping this fallback would
+   * mean nobody served hooks at all for the life of that daemon, which is a worse
+   * failure than the one the journal fixes.
+   */
+  readonly hookSocket?: string;
 }
 
 export interface RunningIngress {
@@ -107,21 +119,34 @@ export async function startIngress(options: IngressOptions): Promise<RunningIngr
   const log = options.logger.child('ingress');
   await mkdir(options.support, { recursive: true, mode: 0o700 });
 
-  const events = new EventsIngress({
-    path: options.hookSocket,
-    bus: options.bus,
-    logger: options.logger,
-  });
+  const hookSocket = options.hookSocket;
+  const events =
+    hookSocket === undefined
+      ? undefined
+      : new EventsIngress({
+          path: hookSocket,
+          // The same attribution `session-client` re-applies to a forwarded
+          // envelope, so the two paths are equivalent rather than merely similar.
+          deliver: (envelope) =>
+            options.bus.emit(
+              envelope.topic,
+              envelope.payload,
+              { kind: 'agent', sessionId: sessionId(envelope.sessionId) },
+              envelope.seq,
+            ),
+          logger: options.logger,
+        });
   const control = new ControlIngress({
     path: options.controlSocket,
     commands: options.registry,
     bus: options.bus,
     logger: options.logger,
   });
+  if (events === undefined) log.info('the daemon is serving agent hooks; not opening our own socket');
 
   const started: { stop(): Promise<void> }[] = [];
   for (const [name, server] of [
-    ['events', events],
+    ...(events === undefined ? [] : ([['events', events]] as const)),
     ['control', control],
   ] as const) {
     const result = await server.start();

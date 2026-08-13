@@ -1,7 +1,7 @@
 import { createServer, type Socket } from 'node:net';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { SessionHost, SessionServer, SqliteStore, reclaimSocketPath } from '@shepherd/core';
+import { EventsIngress, SessionHost, SessionServer, SqliteStore, reclaimSocketPath } from '@shepherd/core';
 import {
   RemoteServer,
   kvNetStore,
@@ -125,6 +125,42 @@ export async function main(argv: readonly string[]): Promise<number> {
     onError: (error, context) => daemon.warn(`${context}: ${String(error)}`),
   });
   const server = new SessionServer({ host, log });
+
+  /**
+   * `hooks.sock`, served HERE rather than in the app.
+   *
+   * The whole reason: an agent keeps firing hooks into a pty this process owns
+   * while the app is being replaced, and `report.sh` finds no socket and exits 0
+   * — deliberately, so an observer can never stall the agent it observes. Every
+   * one of those events used to be lost, and a `claude` that did not restart never
+   * fires another `SessionStart` to say what happened. So the process that
+   * outlives the app holds them, exactly as it holds the ptys (D4).
+   *
+   * The path is derived from `--socket` rather than from `--support`: the two must
+   * land in the same directory as the value `SHEPHERD_EVENTS_SOCK` carries, and
+   * deriving it from the one argument that is always present is what makes that a
+   * guarantee rather than a convention. `--support` is optional here.
+   *
+   * A bind that FAILS is logged and left: the app keeps its own ingress for
+   * exactly this case, and `setServesHooks` is what tells it which of the two is
+   * live. That is also the upgrade path — a new app against this old daemon finds
+   * the capability absent and serves hooks itself.
+   */
+  const hookSocketPath = `${dirname(socketPath)}/hooks.sock`;
+  const hooks = new EventsIngress({
+    path: hookSocketPath,
+    deliver: (envelope) => server.recordHook(envelope),
+    logger: log,
+  });
+  const hooksStarted = await hooks.start();
+  if (hooksStarted.ok) {
+    server.setServesHooks(true);
+    daemon.info(`serving agent hooks on ${hookSocketPath}`);
+  } else {
+    // Not fatal, and not silent: the app falls back to serving them itself, which
+    // costs only the events fired while it is down — today's behaviour.
+    daemon.warn(`not serving agent hooks (${hooksStarted.error}); the app will serve them itself`);
+  }
 
   const net = createServer((socket: Socket) => {
     // The id is the SERVER's, not ours. This process feeds it from two
@@ -279,6 +315,9 @@ export async function main(argv: readonly string[]): Promise<number> {
     // whole process is built around.
     host.dispose();
     net.close();
+    // Unlinks the socket file, so a replacement daemon can bind it rather than
+    // finding a corpse `reclaimSocketPath` has to reason about.
+    void hooks.stop();
     process.exit(code);
   }
 

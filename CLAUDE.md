@@ -88,6 +88,7 @@ Everything below runs from `v2/`, and **every command takes `env -u NODE_OPTIONS
 ```sh
 env -u NODE_OPTIONS pnpm typecheck && env -u NODE_OPTIONS pnpm lint && env -u NODE_OPTIONS pnpm test
 env -u NODE_OPTIONS pnpm smoke:m3     # the end-to-end gate — see below
+env -u NODE_OPTIONS pnpm smoke:daemon # the restart gate: ptys AND states survive
 env -u NODE_OPTIONS pnpm dev          # a throwaway instance, Vite HMR, ~/.shepherd/v2-dev
 env -u NODE_OPTIONS pnpm ship         # → /Applications/Shep.app, and relaunch it
 env -u NODE_OPTIONS pnpm ship --dev   # → /Applications/Shep Night.app, daily app untouched
@@ -99,8 +100,28 @@ env -u NODE_OPTIONS pnpm ship --dev   # → /Applications/Shep Night.app, daily 
   `/Applications` and relaunches. It **survives killing the app it runs inside** —
   a session is a `node-pty` child of main, so shipping from an agent's pane kills
   the process running the script; the swap-and-relaunch is a detached shell script
-  that waits for the app to exit. Your agents do not survive it: main's code is in
-  the bundle being replaced. Use `--dev` while iterating.
+  that waits for the app to exit. The pane running the script does not survive it,
+  but **your agents and their states do** — the daemon holds every pty (ADR 0036)
+  and, since ADR 0041, `hooks.sock` and a journal of what they reported while no
+  app was connected. Use `--dev` while iterating.
+- **Agent state survives a restart in two halves, and neither works alone**
+  ([ADR 0041](.claude/adr/0041-v2-agent-state-outlives-the-app-so-the-daemon-holds-the-hook-socket.md)).
+  `agents-core` snapshots its registry to KV and restores it against the live
+  `sessions.list`; the **daemon** journals hooks fired while the app was down and
+  replays them in the handshake, so a turn that ended mid-ship is folded from the
+  real event. The snapshot is not optional: a mid-turn event arriving at an
+  unrestored session reads `shell` and the ordering guard discards it (ADR 0004).
+  Nor is the replay: **the sweep detects "claude exited", not "the turn ended"** —
+  its input is `basename(foreground) !== basename(shell)`, and an interactive
+  `claude` at its own prompt satisfies that whether it is working or idle. Do not
+  reach for it as a corrector. `pnpm smoke:daemon` is the gate; the runner POSTs a
+  hook between its two passes with no app running at all, which is the only place
+  that case can be reached.
+- **`agents-core` is in the app's process by inheritance, not by design**, and the
+  machinery above is compensation for it. §7b put extension services in a utility
+  process for fault isolation, when the app's lifetime was the only lifetime;
+  R1 then gave the ptys a second one and nothing moved. Read ADR 0041's last
+  section before adding to that machinery — the alternative is the daemon seam.
 - **There is no hot reload for the installed app.** It loads its renderer from
   inside the `app.asar` being swapped. `window.reload` (⌘K, or `shepherd raw
   window.reload`) throws the renderer away and keeps the ptys — real, and only

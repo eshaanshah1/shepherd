@@ -44,7 +44,9 @@ export async function runSmoke(
     case 'daemon-1':
     case 'daemon-2': {
       const { runDaemonSmoke } = await import('./smoke-daemon.ts');
-      return runDaemonSmoke(win, host, name === 'daemon-1' ? 1 : 2);
+      // It carries agent state across the restart now, so it needs the two
+      // sockets: the hook wire to make an agent, and control to read one back.
+      return runDaemonSmoke(win, host, name === 'daemon-1' ? 1 : 2, kernel);
     }
     case 'mirror': {
       const { runMirrorSmoke } = await import('./smoke-mirror.ts');
