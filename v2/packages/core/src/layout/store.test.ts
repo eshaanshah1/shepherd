@@ -468,6 +468,83 @@ describe('a root can hold no panes', () => {
     expect(store.panes(root)).toEqual(['p1']);
   });
 
+  describe('and it can say why', () => {
+    it('carries the line and the names it was given', () => {
+      const store = build();
+      const root = store.open('window-1', undefined, { empty: true });
+      expect(store.placeholderOf(root)).toBeUndefined();
+
+      expect(store.setPlaceholder(root, { line: 'Creating the worktree', names: ['shepherd'] })).toEqual({
+        ok: true,
+        value: undefined,
+      });
+      expect(store.placeholderOf(root)).toEqual({ line: 'Creating the worktree', names: ['shepherd'] });
+    });
+
+    /**
+     * MUTATION TARGET. This is the one way the feature can LIE — a wait drawn
+     * over a running agent — so it is guarded by the read rather than by every
+     * writer remembering to clear.
+     */
+    it('says nothing once the root holds a pane, whatever was set', () => {
+      const store = build();
+      const root = store.open('window-1', undefined, { empty: true });
+      store.setPlaceholder(root, { line: 'Starting the agent' });
+
+      store.split(root, 'row');
+
+      expect(store.panes(root)).toHaveLength(1);
+      expect(store.placeholderOf(root)).toBeUndefined();
+    });
+
+    it('is not read back after the pane is closed again either', () => {
+      // Seeding CLEARS it, so emptying the root a second time cannot resurrect
+      // a line about work that finished long ago.
+      const store = build();
+      const root = store.open('window-1', undefined, { empty: true });
+      store.setPlaceholder(root, { line: 'Starting the agent' });
+      store.split(root, 'row');
+
+      store.close(store.focused(root)!);
+
+      expect(store.tree(root)).toBeUndefined();
+      expect(store.placeholderOf(root)).toBeUndefined();
+    });
+
+    it('accepts a write on a root that has since been filled, rather than failing', () => {
+      // The caller is a slow job reporting progress; by the time it reports, the
+      // thing it waited for may have landed. That is the success case.
+      const store = build();
+      const root = store.open();
+      expect(store.setPlaceholder(root, { line: 'Linking agent files' })).toEqual({ ok: true, value: undefined });
+    });
+
+    it('refuses a root that does not exist', () => {
+      const store = build();
+      expect(store.setPlaceholder(rootId('ghost'), { line: 'Naming the task' })).toEqual({
+        ok: false,
+        error: 'no root ghost',
+      });
+    });
+
+    it('announces a change once, and an identical re-set not at all', () => {
+      // Provisioning re-reports its step; the renderer re-renders every mounted
+      // root on a push.
+      const store = build();
+      const root = store.open('window-1', undefined, { empty: true });
+      const seen: string[] = [];
+      store.onDidChange((changed) => seen.push(String(changed)));
+
+      store.setPlaceholder(root, { line: 'Naming the task', names: ['shepherd'] });
+      store.setPlaceholder(root, { line: 'Naming the task', names: ['shepherd'] });
+      expect(seen).toEqual(['window-1']);
+
+      // …but a change to the NAMES alone is a change, not just the line.
+      store.setPlaceholder(root, { line: 'Naming the task', names: ['shepherd', 'relay'] });
+      expect(seen).toEqual(['window-1', 'window-1']);
+    });
+  });
+
   /**
    * MUTATION TARGET. Reverting `close` to leave the tree intact (its behaviour
    * before this change) must fail HERE and nowhere else in the old suite —
@@ -956,6 +1033,108 @@ describe('the root-level commands', () => {
     expect(pane?.cwd).toBe('/w/api');
     expect(pane?.userTitle).toBe('api');
     expect(pane?.initialCommand).toBe('claude\n');
+  });
+
+  /**
+   * MUTATION TARGET for the whole feature. Dropping `empty` — or letting it fall
+   * through to the seeding paths below it — puts a shell back in the root, which
+   * is the pane the agent then splits beside and nothing reclaims.
+   */
+  it('openRoot mints a root with NO pane when asked, and says why', async () => {
+    const { registry, store } = wiredRoots();
+    const result = await registry.invoke(
+      LAYOUT_COMMANDS.openRoot,
+      {
+        root: 'task:t9',
+        group: 'task:t9',
+        // Passed and ignored: there is no pane to shape. A caller that stopped
+        // needing a first pane must not have to strip its old arguments.
+        cwd: '/w/api',
+        title: 'api',
+        empty: true,
+        placeholder: { line: 'Creating the worktree', names: ['shepherd'] },
+      },
+      USER,
+    );
+
+    expect(result).toEqual({ ok: true, value: { root: 'task:t9', pane: null, created: false } });
+    expect(store.hasRoot(rootId('task:t9'))).toBe(true);
+    expect(store.panes(rootId('task:t9'))).toEqual([]);
+    expect(store.groupOf(rootId('task:t9'))).toBe('task:t9');
+    expect(store.placeholderOf(rootId('task:t9'))).toEqual({
+      line: 'Creating the worktree',
+      names: ['shepherd'],
+    });
+  });
+
+  it('openRoot then FILLS that same root with one pane, never a split', async () => {
+    // The whole point of the paneless mint: what lands later is the root's
+    // first pane and fills the stage, rather than a sibling of a shell.
+    const { registry, store } = wiredRoots();
+    await registry.invoke(LAYOUT_COMMANDS.openRoot, { root: 'task:t9', empty: true }, USER);
+
+    const filled = await registry.invoke(
+      LAYOUT_COMMANDS.openRoot,
+      { root: 'task:t9', cwd: '/w/api', initialCommand: 'claude\n' },
+      USER,
+    );
+
+    expect(filled).toMatchObject({ ok: true, value: { root: 'task:t9', created: true } });
+    expect(store.panes(rootId('task:t9'))).toHaveLength(1);
+    expect(store.placeholderOf(rootId('task:t9'))).toBeUndefined();
+  });
+
+  it('setPlaceholder updates the line while the wait is still on', async () => {
+    const { registry, store } = wiredRoots();
+    await registry.invoke(
+      LAYOUT_COMMANDS.openRoot,
+      { root: 'task:t9', empty: true, placeholder: { line: 'Naming the task' } },
+      USER,
+    );
+
+    const moved = await registry.invoke(
+      LAYOUT_COMMANDS.setPlaceholder,
+      { root: 'task:t9', placeholder: { line: 'Starting the agent' } },
+      USER,
+    );
+
+    expect(moved).toEqual({ ok: true, value: { root: 'task:t9', placed: true } });
+    expect(store.placeholderOf(rootId('task:t9'))).toEqual({ line: 'Starting the agent' });
+  });
+
+  /**
+   * MUTATION TARGET, and it was found by `smoke:m3` rather than by any unit test.
+   *
+   * The caller is a slow job reporting progress against a root the user has not
+   * opened — the ORDINARY case for most of a task's provisioning. As a refusal
+   * it logged a dispatcher warning per step for work that was going fine.
+   */
+  it('setPlaceholder is a quiet no-op for a root nobody has opened', async () => {
+    const { registry } = wiredRoots();
+    const result = await registry.invoke(
+      LAYOUT_COMMANDS.setPlaceholder,
+      { root: 'task:never-opened', placeholder: { line: 'Naming the task' } },
+      USER,
+    );
+
+    // …but not SILENT: `placed` is in the answer, so a genuinely wrong root id
+    // is still findable.
+    expect(result).toEqual({ ok: true, value: { root: 'task:never-opened', placed: false } });
+  });
+
+  it('setPlaceholder with no placeholder stops the root saying anything', async () => {
+    const { registry, store } = wiredRoots();
+    await registry.invoke(
+      LAYOUT_COMMANDS.openRoot,
+      { root: 'task:t9', empty: true, placeholder: { line: 'Naming the task' } },
+      USER,
+    );
+
+    await registry.invoke(LAYOUT_COMMANDS.setPlaceholder, { root: 'task:t9' }, USER);
+
+    expect(store.placeholderOf(rootId('task:t9'))).toBeUndefined();
+    // …and the root is still there, empty. Clearing a line is not closing a tab.
+    expect(store.hasRoot(rootId('task:t9'))).toBe(true);
   });
 
   it('openRoot on a root that is already open is not a second root', async () => {

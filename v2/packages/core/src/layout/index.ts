@@ -41,5 +41,12 @@ export {
 export type { PersistedPane, PersistedNode } from './serialize.ts';
 export { serializePane, serializeNode, deserializeNode, LayoutDecodeError } from './serialize.ts';
 
-export { LayoutStore, type CloseOutcome, type LayoutStoreOptions, type PersistedLayout, type SessionSink } from './store.ts';
+export {
+  LayoutStore,
+  type CloseOutcome,
+  type LayoutStoreOptions,
+  type PersistedLayout,
+  type RootPlaceholder,
+  type SessionSink,
+} from './store.ts';
 export { registerLayoutCommands, LAYOUT_COMMANDS, type LayoutCommandsOptions } from './commands.ts';

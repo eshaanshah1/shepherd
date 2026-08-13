@@ -34,6 +34,11 @@ export function layoutSnapshot(store: LayoutStore, root: RootID): LayoutSnapshot
     if (session !== undefined) sessions[pane] = session;
   }
 
+  // Answers `undefined` for a root that holds panes, which is why the key can be
+  // spread in unconditionally: the "wait is over" case is decided in core, once,
+  // rather than by every projection remembering to check the tree.
+  const placeholder = store.placeholderOf(root);
+
   return {
     root,
     // Its own id when nothing grouped it — the same default the store applies,
@@ -43,6 +48,7 @@ export function layoutSnapshot(store: LayoutStore, root: RootID): LayoutSnapshot
     focusedPaneId: store.focused(root),
     zoomedPaneId: store.zoomed(root),
     sessions,
+    ...(placeholder === undefined ? {} : { placeholder }),
   };
 }
 

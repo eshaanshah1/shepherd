@@ -36,6 +36,41 @@ describe('layoutSnapshot', () => {
     expect(snapshot?.sessions).toEqual({});
   });
 
+  it('carries an empty root and the line it says about itself', () => {
+    const { store: s } = store();
+    const empty = s.open('task:t1', undefined, { empty: true });
+    s.setPlaceholder(empty, { line: 'Creating the worktree', names: ['shepherd', 'fix-login'] });
+
+    const snapshot = layoutSnapshot(s, empty);
+
+    expect(snapshot?.tree).toBeNull();
+    expect(snapshot?.placeholder).toEqual({ line: 'Creating the worktree', names: ['shepherd', 'fix-login'] });
+  });
+
+  it('omits the key entirely for an empty root nobody explained', () => {
+    // The home root at launch. Two reasons to be empty and only one has
+    // anything to say — absent is how the page tells them apart.
+    const { store: s } = store();
+    const empty = s.open('window-2', undefined, { empty: true });
+
+    expect(layoutSnapshot(s, empty)).not.toHaveProperty('placeholder');
+  });
+
+  /**
+   * MUTATION TARGET. Projecting `state.placeholder` directly instead of asking
+   * `placeholderOf` would ship `Creating the worktree` over a running agent —
+   * the one way this feature can draw something untrue.
+   */
+  it('drops the line once the root holds a pane', () => {
+    const { store: s } = store();
+    const empty = s.open('task:t1', undefined, { empty: true });
+    s.setPlaceholder(empty, { line: 'Starting the agent' });
+
+    s.split(empty, 'row');
+
+    expect(layoutSnapshot(s, empty)).not.toHaveProperty('placeholder');
+  });
+
   it('reports a root it has never heard of as null rather than a blank tree', () => {
     const { store: s } = store();
     // The failure this prevents: an empty projection renders a window with no

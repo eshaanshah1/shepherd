@@ -128,8 +128,17 @@ function harness(
     /**
      * Answer a command the extension does not own. `undefined` falls through to
      * the defaults below, so a test overrides one verb without restating them.
+     *
+     * A PROMISE holds the call open, which is how `git` above already lets a test
+     * stop provisioning inside a chosen phase. Without it the only phases a test
+     * could observe were the ones that shell out — so `naming`, the one step that
+     * happens before a single git call, could be asserted after the fact but
+     * never DURING, which is when anything about the row or the stage is read.
      */
-    invoke?: (id: string, args: unknown) => Result<unknown, CommandError> | undefined;
+    invoke?: (
+      id: string,
+      args: unknown,
+    ) => Result<unknown, CommandError> | Promise<Result<unknown, CommandError>> | undefined;
     /** What `ctx.clock.now()` answers — the archive sweep reads it at activate. */
     now?: number;
     /**
@@ -174,6 +183,19 @@ function harness(
    * a task's first and the split path would never run in a test.
    */
   const roots = new Set<string>();
+  /**
+   * Which of those roots HOLD A PANE — the question `openRoot` actually branches
+   * on, which is not the same as whether the root exists.
+   *
+   * The two parted company when a root became able to hold none, and the fake
+   * collapsing them is not a modelling nicety: `openRoot` reports `created` off
+   * `store.panes(root).length > 0`, so a root that was opened EMPTY is one it
+   * still fills — with a first pane, not a split. A fake keyed on existence
+   * answers `created: false` for that root and sends the caller down the split
+   * path, which is precisely the behaviour a paneless mint exists to avoid. It
+   * would have agreed with itself while disagreeing with the kernel.
+   */
+  const filled = new Set<string>();
   const commands: CommandAPI = {
     register: (id, spec) => {
       registered.set(id, spec as unknown as CommandSpec<unknown, unknown>);
@@ -186,14 +208,20 @@ function harness(
       if (spec !== undefined) return { ok: true, value: (await spec.handler(args, CALLER)) as never };
       const override = opts.invoke?.(id, args);
       if (override !== undefined) return override as never;
-      // A task owns a ROOT, and `openRoot` mints it once: the first call for a
-      // given id creates it and hands back its first pane, every later call
-      // answers `created: false` with no side effect — which is exactly what the
-      // real command does, and what tells a first spawn from a second.
+      // A task owns a ROOT, and `openRoot` PUTS A PANE IN IT once: the first call
+      // that is allowed to seeds one and hands it back, every later call answers
+      // `created: false` with no side effect — which is exactly what the real
+      // command does, and what tells a first spawn from a second.
       if (id === 'layout.openRoot') {
-        const root = String((args as { root?: unknown }).root);
-        if (roots.has(root)) return { ok: true, value: { root, pane: null, created: false } as never };
+        const { root: rawRoot, empty } = args as { root?: unknown; empty?: unknown };
+        const root = String(rawRoot);
+        if (filled.has(root)) return { ok: true, value: { root, pane: null, created: false } as never };
         roots.add(root);
+        // `empty: true` mints the root and stops there. `created` is false
+        // because it reports whether this call put a PANE in the root, and this
+        // one never does — the next `openRoot` is the one that fills it.
+        if (empty === true) return { ok: true, value: { root, pane: null, created: false } as never };
+        filled.add(root);
         return { ok: true, value: { root, pane: `p${(panes += 1)}`, created: true } as never };
       }
       // A root that was never opened fails the way the real one does — the
@@ -203,6 +231,7 @@ function harness(
       // the classifier rot untested.
       if (id === 'layout.closeGroup') {
         const group = String((args as { group?: unknown }).group);
+        filled.delete(group);
         if (!roots.delete(group)) {
           return {
             ok: false,
@@ -221,7 +250,12 @@ function harness(
       // and the tests would agree with each other about nothing. The counter is
       // shared with `openRoot` above, so a pane id names one pane whichever verb
       // opened it.
-      if (id === 'layout.split') return { ok: true, value: `p${(panes += 1)}` as never };
+      if (id === 'layout.split') {
+        // A split leaves the root holding panes whichever way it got there —
+        // including the seeding case, where the root had none.
+        filled.add(String((args as { root?: unknown }).root));
+        return { ok: true, value: `p${(panes += 1)}` as never };
+      }
       /**
        * The AGENT extension answers this, not `tasks` (ADR 0036 §3).
        *
@@ -983,6 +1017,206 @@ describe('a task owns a layout root', () => {
       const h = (live = harness({ tasks: [task()] }));
       await expect(h.run('tasks.reveal', { task: 'ghost' })).rejects.toThrow('ghost');
       expect(h.invoked.filter((call) => call.id === 'layout.switchRoot')).toEqual([]);
+    });
+
+    /**
+     * Revealing a task that is still being BUILT.
+     *
+     * The shell above is right for a task that exists. For one whose worktrees
+     * are still being cut it mounts in a directory that may not be there, under a
+     * slug that may still change — and, the part that outlives the wait, it is
+     * the pane `openAgentPane` then splits beside. Nothing reclaims it, so the
+     * fix is upstream of the split: do not mint it.
+     */
+    describe('while the task is still being built', () => {
+      const REPO = { path: '/src/app', name: 'app' };
+
+      /** A harness whose `git worktree add` never returns until you say so. */
+      const heldAtWorktrees = (): { h: Harness; finish: () => void } => {
+        let finish = (): void => undefined;
+        const held = new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+        const h = (live = harness({
+          git: (call) => (call.args[0] === 'worktree' && call.args[1] === 'add' ? held.then(() => OK) : OK),
+        }));
+        return { h, finish };
+      };
+
+      const openRootCalls = (h: Harness): { root: string; empty?: boolean; placeholder?: unknown }[] =>
+        h.invoked
+          .filter((call) => call.id === 'layout.openRoot')
+          .map((call) => call.args as { root: string; empty?: boolean; placeholder?: unknown });
+
+      /**
+       * MUTATION TARGET for the whole feature. Dropping the `empty` argument
+       * restores the shipped behaviour — and every other test in this file still
+       * passes, including the reveal ones above, because they reveal a task that
+       * is not being built.
+       */
+      it('opens its root with NO pane, and says what it is waiting on', async () => {
+        const { h, finish } = heldAtWorktrees();
+        const created = await h.run<{ id: string }>('tasks.create', {
+          title: 'Ship it',
+          name: 'ship-it',
+          repos: [REPO],
+        });
+        await until(async () => (await rowOf(h, created.id))?.label === 'Creating the worktree');
+
+        const before = openRootCalls(h).length;
+        await h.run('tasks.reveal', { task: created.id });
+
+        const opened = openRootCalls(h).slice(before);
+        expect(opened).toHaveLength(1);
+        expect(opened[0]).toMatchObject({
+          root: `task:${created.id}`,
+          empty: true,
+          // The rail's own words, not a second vocabulary for the same fact.
+          placeholder: { line: 'Creating the worktree', names: ['app'] },
+        });
+
+        finish();
+      });
+
+      it('still switches to it — a task you clicked has to be somewhere', async () => {
+        // The root exists, it just holds nothing. The sidebar highlight is
+        // derived from which root is active (ADR 0035), so skipping the open
+        // would leave the row you clicked unselected.
+        const { h, finish } = heldAtWorktrees();
+        const created = await h.run<{ id: string }>('tasks.create', {
+          title: 'Ship it',
+          name: 'ship-it',
+          repos: [REPO],
+        });
+        await until(async () => (await rowOf(h, created.id))?.label === 'Creating the worktree');
+
+        await h.run('tasks.reveal', { task: created.id });
+
+        expect(h.invoked.filter((call) => call.id === 'layout.switchRoot')).toContainEqual({
+          id: 'layout.switchRoot',
+          args: { root: `task:${created.id}` },
+        });
+
+        finish();
+      });
+
+      /**
+       * The defect this whole change is about, asserted end to end: the agent
+       * arriving must FILL the revealed root, never appear beside something.
+       */
+      it('and the agent then fills that root instead of splitting beside a shell', async () => {
+        const { h, finish } = heldAtWorktrees();
+        const created = await h.run<{ id: string }>('tasks.create', {
+          title: 'Ship it',
+          name: 'ship-it',
+          repos: [REPO],
+        });
+        await until(async () => (await rowOf(h, created.id))?.label === 'Creating the worktree');
+        await h.run('tasks.reveal', { task: created.id });
+
+        finish();
+        await until(async () => (await rowOf(h, created.id))?.busy !== true);
+
+        expect(h.invoked.filter((call) => call.id === 'layout.split')).toEqual([]);
+      });
+
+      it('tells the open tab when the build stopped without ever starting', async () => {
+        // `whileBusy` clears in a `finally`, so a provisioning that threw leaves
+        // the revealed root empty. Falling through to the shell's own quiet state
+        // would draw `The flock is quiet` over a task that exists.
+        const h = (live = harness({
+          // The AGENT's open, not the reveal's: the one carrying a line to type.
+          // A failed `worktree add` is not a stall — provisioning steps over it
+          // and still starts the orchestrator at the task root.
+          invoke: (id, args) =>
+            id === 'layout.openRoot' && (args as { initialCommand?: unknown }).initialCommand !== undefined
+              ? { ok: false as const, error: { code: 'handler-failed', message: 'no window', commandId: id } }
+              : undefined,
+        }));
+        const created = await h.run<{ id: string }>('tasks.create', {
+          title: 'Ship it',
+          name: 'ship-it',
+          repos: [REPO],
+        });
+        await until(async () => (await rowOf(h, created.id))?.busy !== true);
+
+        const lines = h.invoked
+          .filter((call) => call.id === 'layout.setPlaceholder')
+          .map((call) => (call.args as { placeholder?: { line?: string } }).placeholder?.line);
+
+        expect(lines.at(-1)).toBe('Setting up this task did not finish.');
+      });
+
+      /**
+       * MUTATION TARGET for the copy. The branch is the SLUG, and the slug is
+       * derived from the brief — so shipping it as a chip put the user's own
+       * prompt back on screen, slugified. Reported on the first live run.
+       */
+      it('names the repos and never the branch, whatever phase it is in', async () => {
+        let finish = (): void => undefined;
+        const held = new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+        const h = (live = harness({
+          invoke: (id) =>
+            id === 'agents.complete'
+              ? held.then(() => ({ ok: true as const, value: { ok: true, text: 'ship it' } }))
+              : undefined,
+        }));
+
+        const created = await h.run<{ id: string }>('tasks.create', {
+          title: 'Show pending state for initializing tasks',
+          brief: 'Show a pending state for tasks that are still initializing, please.',
+          repos: [REPO],
+        });
+        await until(async () => (await rowOf(h, created.id))?.label === 'Naming the task');
+
+        const before = openRootCalls(h).length;
+        await h.run('tasks.reveal', { task: created.id });
+
+        const opened = openRootCalls(h).slice(before)[0];
+        // The repos are fixed from creation, so there is no phase they cannot be
+        // shown in — including this one, before the slug has settled.
+        expect(opened).toMatchObject({
+          empty: true,
+          placeholder: { line: 'Naming the task', names: ['app'] },
+        });
+        const names = (opened?.placeholder as { names: string[] }).names;
+        expect(names.some((name) => name.includes('-'))).toBe(false);
+
+        finish();
+      });
+
+      it('says the line alone for a task with no repos to name', async () => {
+        let finish = (): void => undefined;
+        const held = new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+        const h = (live = harness({
+          invoke: (id) =>
+            id === 'agents.complete'
+              ? held.then(() => ({ ok: true as const, value: { ok: true, text: 'ship it' } }))
+              : undefined,
+        }));
+
+        const created = await h.run<{ id: string }>('tasks.create', {
+          title: 'Ship it',
+          brief: 'Ship the thing that has been sitting in review for a fortnight now.',
+          repos: [],
+        });
+        await until(async () => (await rowOf(h, created.id))?.label === 'Naming the task');
+
+        const before = openRootCalls(h).length;
+        await h.run('tasks.reveal', { task: created.id });
+
+        const opened = openRootCalls(h).slice(before)[0];
+        // The key is absent, not an empty array: §6 says an empty state with
+        // nothing to add says nothing rather than padding.
+        expect(opened).toMatchObject({ empty: true, placeholder: { line: 'Naming the task' } });
+        expect((opened?.placeholder as { names?: unknown })?.names).toBeUndefined();
+
+        finish();
+      });
     });
   });
 

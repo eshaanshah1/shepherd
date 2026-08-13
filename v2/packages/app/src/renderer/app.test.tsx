@@ -688,6 +688,64 @@ describe('the empty state', () => {
     expect(all(view.container, 'pane')).toHaveLength(3);
     view.unmount();
   });
+
+  /**
+   * The stage while a task is being BUILT — the same hole, saying why.
+   *
+   * The shell learns nothing about tasks to draw this (ADR 0031): the root
+   * carries a line and some names, and whoever opened the root wrote them.
+   */
+  describe('and when the root says why it is empty', () => {
+    const waiting = (): LayoutSnapshot => ({
+      ...paneless('task:t1'),
+      placeholder: { line: 'Creating the worktree', names: ['shepherd', 'fix-login'] },
+    });
+
+    it('says the line instead of the quiet sentence, and offers no action', () => {
+      const { view } = render({ snapshot: { active: 'task:t1', roots: [waiting()] } });
+      const stage = view.container.textContent ?? '';
+
+      expect(stage).toContain('Creating the worktree');
+      expect(stage).not.toContain('The flock is quiet.');
+      // §4: the one thing to do here is already happening. `New task` under a
+      // task being created offers to start a SECOND one.
+      expect(all(view.container, 'empty-compose')).toHaveLength(0);
+      view.unmount();
+    });
+
+    it('draws the names it was given', () => {
+      const { view } = render({ snapshot: { active: 'task:t1', roots: [waiting()] } });
+      const stage = view.container.textContent ?? '';
+      expect(stage).toContain('shepherd');
+      expect(stage).toContain('fix-login');
+      view.unmount();
+    });
+
+    it('falls back to the quiet stage when there is no line', () => {
+      // The home root: empty because nothing was asked of it, not because
+      // something is on its way.
+      const { view } = render({ snapshot: { active: 'window-1', roots: [paneless()] } });
+      expect(view.container.textContent ?? '').toContain('The flock is quiet.');
+      expect(all(view.container, 'empty-compose')).toHaveLength(1);
+      view.unmount();
+    });
+
+    /**
+     * MUTATION TARGET for "the UI retires itself". Nothing tears this down — the
+     * pane arriving is what stops it rendering, so a stale wait is impossible by
+     * construction rather than by a cleanup somebody has to remember.
+     */
+    it('is gone the moment the root has a pane, with no teardown anywhere', () => {
+      const { view, layout } = render({ snapshot: { active: 'task:t1', roots: [waiting()] } });
+      expect(all(view.container, 'empty-state')).toHaveLength(1);
+
+      layout.push(snapshotsOf('task:t1', rootOf(leaf(makePane({})), undefined, 'task:t1')));
+
+      expect(all(view.container, 'empty-state')).toHaveLength(0);
+      expect(all(view.container, 'pane')).toHaveLength(1);
+      view.unmount();
+    });
+  });
 });
 
 /**

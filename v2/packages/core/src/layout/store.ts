@@ -226,6 +226,48 @@ interface RootState {
    * command takes no rect argument, so the CLI and an extension can invoke it.
    */
   viewport: Rect;
+  /**
+   * Why this root has no panes yet — the empty state's line, set by whoever is
+   * filling it.
+   *
+   * A root can be empty for two unrelated reasons and the shell has to draw them
+   * differently: nothing has been asked of it (the home root at launch), or
+   * something is on its way (a task whose worktrees are still being cut). Only
+   * the second has anything to say, and only its owner knows what — so the owner
+   * says it and the shell renders it, rather than the shell learning what a task
+   * is (ADR 0031).
+   *
+   * **Transient, never persisted**, for the same reason `zoomedPaneId` and
+   * `#initialInput` are: it describes work in flight, and no work is in flight
+   * across a relaunch. A persisted one would draw `Creating the worktree` over a
+   * root nothing is provisioning, forever.
+   */
+  placeholder: RootPlaceholder | undefined;
+}
+
+/**
+ * What an empty root says about itself.
+ *
+ * Two fields because §6 gives an empty state one sentence plus one aside, and
+ * because the aside here is a different KIND of fact: `line` is the app talking
+ * (`Creating the worktree`) and `names` are things that exist (`shepherd`,
+ * `retry-loop`), which the shell draws as chips.
+ *
+ * The kernel never reads either. It is a string and some strings, carried from
+ * whoever opened the root to whoever draws it — the same shape every other
+ * contributed label has.
+ */
+export interface RootPlaceholder {
+  readonly line: string;
+  readonly names?: readonly string[];
+}
+
+function samePlaceholder(a: RootPlaceholder | undefined, b: RootPlaceholder | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  if (a.line !== b.line) return false;
+  const left = a.names ?? [];
+  const right = b.names ?? [];
+  return left.length === right.length && left.every((name, i) => name === right[i]);
 }
 
 export class LayoutStore {
@@ -312,6 +354,7 @@ export class LayoutStore {
         focusedPaneId: null,
         zoomedPaneId: null,
         viewport: { x: 0, y: 0, width: 0, height: 0 },
+        placeholder: undefined,
       };
       this.#roots.set(state.id, state);
       this.#changed(state.id);
@@ -326,6 +369,7 @@ export class LayoutStore {
       focusedPaneId: pane.id,
       zoomedPaneId: null,
       viewport: { x: 0, y: 0, width: 0, height: 0 },
+      placeholder: undefined,
     };
     this.#roots.set(state.id, state);
     // BEFORE `#changed`: see `PaneSeed.session`. A pane announced unbound is a
@@ -487,6 +531,40 @@ export class LayoutStore {
 
   zoomed(root: RootID): PaneID | null {
     return this.#roots.get(root)?.zoomedPaneId ?? null;
+  }
+
+  /**
+   * What this root says about being empty — and **nothing at all once it holds a
+   * pane**.
+   *
+   * The tree is checked here rather than trusted to be cleared, because a stale
+   * line is the one way this feature can lie: `Creating the worktree` drawn over
+   * a running agent. `#seed` clears it too, so the state does not accumulate
+   * falsehoods; this is what makes drawing one impossible rather than unlikely.
+   */
+  placeholderOf(root: RootID): RootPlaceholder | undefined {
+    const state = this.#roots.get(root);
+    if (!state || state.tree !== null) return undefined;
+    return state.placeholder;
+  }
+
+  /**
+   * Say why this root is empty, or stop saying it (`undefined`).
+   *
+   * Settable on a root that HAS panes, deliberately: the caller filling a root
+   * does not control when the pane lands, and refusing the write would make the
+   * ordering of two async things load-bearing. It simply cannot be read back
+   * while a pane is there — see `placeholderOf`.
+   */
+  setPlaceholder(root: RootID, placeholder: RootPlaceholder | undefined): Result<void, string> {
+    const state = this.#roots.get(root);
+    if (!state) return err(`no root ${root}`);
+    // Announcing an unchanged placeholder would push a snapshot per provisioning
+    // tick, and the renderer re-renders every mounted root on one.
+    if (samePlaceholder(state.placeholder, placeholder)) return ok(undefined);
+    state.placeholder = placeholder;
+    this.#changed(root);
+    return ok(undefined);
   }
 
   viewport(root: RootID): Rect | undefined {
@@ -893,6 +971,10 @@ export class LayoutStore {
     state.tree = leaf(pane);
     state.focusedPaneId = pane.id;
     state.zoomedPaneId = null;
+    // The wait it described is over. `placeholderOf` would refuse to answer with
+    // it anyway; dropping it here is so the state never HOLDS a line that is no
+    // longer true, which is what someone reading a snapshot in a log would see.
+    state.placeholder = undefined;
     // BEFORE `#changed`: see `PaneSeed.session`.
     if (init.session !== undefined) this.bindSession(pane.id, init.session);
     this.#changed(state.id);
@@ -1004,6 +1086,7 @@ export class LayoutStore {
       focusedPaneId: tree === null ? null : firstLeafId(tree),
       zoomedPaneId: null,
       viewport: { x: 0, y: 0, width: 0, height: 0 },
+      placeholder: undefined,
     };
     this.#roots.set(id, state);
     this.#log.info(`restored ${tree === null ? 0 : leafIds(tree).length} pane(s) for ${id}`);

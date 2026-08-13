@@ -70,6 +70,16 @@ export interface LayoutCommandsOptions {
 const AXIS = s.enumOf(['row', 'column'] as const);
 const DIRECTION = s.enumOf(['left', 'right', 'up', 'down'] as const);
 
+/**
+ * What an empty root says about itself — see `RootPlaceholder`.
+ *
+ * Declared once and used by both `openRoot` and `setPlaceholder`, because those
+ * two are the same fact arriving at two moments (at the mint, and again as the
+ * work moves) and a caller writing against one must not find the other's shape
+ * different.
+ */
+const PLACEHOLDER = s.object({ line: s.string(), names: s.optional(s.array(s.string())) });
+
 /** `row` = ⌘D = panes SIDE BY SIDE. `column` = ⌘⇧D = stacked. Read it here. */
 export const LAYOUT_COMMANDS = {
   split: 'layout.split',
@@ -81,6 +91,7 @@ export const LAYOUT_COMMANDS = {
   rename: 'layout.rename',
   switchRoot: 'layout.switchRoot',
   openRoot: 'layout.openRoot',
+  setPlaceholder: 'layout.setPlaceholder',
   closeRoot: 'layout.closeRoot',
   newTab: 'layout.newTab',
   closeGroup: 'layout.closeGroup',
@@ -295,6 +306,30 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
          * before the task was shelved.
          */
         seed: s.optional(s.string()),
+        /**
+         * Mint it with NO PANE, and say why it is empty.
+         *
+         * For a caller that wants the root to EXIST — so the window can be
+         * switched to it and the sidebar row can highlight — while what belongs
+         * in it is still being built. Without this the only way to make a root
+         * was to put a shell in it, and a shell nobody asked for is one that
+         * outlives the wait: whatever fills the root later finds a pane already
+         * there and splits beside it.
+         *
+         * `created` is **always false** here, and that is the honest answer
+         * rather than a quirk: it reports whether this call put a PANE in the
+         * root, every caller branches on it to decide whether it still has to,
+         * and this call never does. The root itself is created if it was
+         * missing, idempotently, exactly as the ordinary path is.
+         *
+         * `cwd`, `initialCommand`, `title` and `session` shape a pane, so they
+         * are ignored here for the reason `OpenOptions.empty` documents: there
+         * is no pane to shape, and failing instead would break a caller that
+         * simply stopped needing a first pane.
+         */
+        empty: s.optional(s.boolean()),
+        /** The line an empty root shows. `layout.setPlaceholder` documents it. */
+        placeholder: s.optional(PLACEHOLDER),
       }),
       handler: (args) => {
         const root = toRootId(args.root);
@@ -323,6 +358,21 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
           return { root: args.root, pane: store.focused(root), created: false };
         }
 
+        /*
+         * The paneless mint, BEFORE the seeding paths below — this is the branch
+         * that must not fall through to them, since every one of them ends in a
+         * pane. `store.open` is idempotent, so a root that is already here and
+         * already empty is returned untouched and only its line is refreshed.
+         */
+        if (args.empty === true) {
+          store.open(args.root, undefined, {
+            empty: true,
+            ...(args.group === undefined ? {} : { group: args.group }),
+          });
+          if (args.placeholder !== undefined) unwrap(store.setPlaceholder(root, args.placeholder));
+          return { root: args.root, pane: null, created: false };
+        }
+
         const init = {
           ...(args.cwd === undefined ? {} : { cwd: args.cwd }),
           ...(args.initialCommand === undefined ? {} : { initialCommand: args.initialCommand }),
@@ -342,6 +392,43 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
         store.open(args.root, init, args.group === undefined ? {} : { group: args.group });
         stageSeed(root, args.seed);
         return { root: args.root, pane: store.focused(root), created: true };
+      },
+    }),
+
+    registry.register(LAYOUT_COMMANDS.setPlaceholder, {
+      title: 'Set Root Placeholder',
+      permission: 'layout',
+      schema: s.object({
+        root: s.optional(s.string()),
+        /** Absent stops the root saying anything, which is how a wait ENDS. */
+        placeholder: s.optional(PLACEHOLDER),
+      }),
+      /**
+       * Say why an empty root is empty, while it still is.
+       *
+       * A separate verb from `openRoot` rather than a field on it, because the
+       * two answer different questions and only one of them repeats: `openRoot`
+       * is idempotent and returns early for a root that exists, so a caller
+       * updating its line every few seconds could not reach it through that door.
+       *
+       * **A root that is not open is a no-op, not a failure**, and `placed` is how
+       * you tell the two apart. The caller is a slow job reporting its own
+       * progress against a root that may not exist yet, may never exist, or may
+       * have been filled while the message was in flight — none of which is
+       * something it did wrong, and all of which the store answers `no root` to.
+       * Left as a refusal, the ordinary case logged a dispatcher WARNING per
+       * provisioning step: a task nobody clicked on produced a wall of failures
+       * for work that succeeded. Measured in `smoke:m3`, which is the only place
+       * it could have been seen.
+       *
+       * Not silence, though — `placed: false` is in the answer, so a caller with
+       * a genuinely wrong root id can still find out, and a test can assert it.
+       */
+      handler: (args) => {
+        const root = resolveRoot(args.root);
+        if (!store.hasRoot(root)) return { root: String(root), placed: false };
+        unwrap(store.setPlaceholder(root, args.placeholder));
+        return { root: String(root), placed: true };
       },
     }),
 

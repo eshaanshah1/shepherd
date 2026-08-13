@@ -472,6 +472,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     const displaced = busy.get(taskId);
     busy.set(taskId, what);
     changed();
+    pushPlaceholder(taskId);
     try {
       return await run();
     } finally {
@@ -481,6 +482,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       if (displaced === undefined) busy.delete(taskId);
       else busy.set(taskId, displaced);
       changed();
+      pushPlaceholder(taskId);
     }
   }
 
@@ -530,6 +532,86 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     const what = busy.get(task.id);
     return mark === 'resting' && what !== undefined && BUILDING_PHASES.has(what) ? 'working' : mark;
   };
+
+  /**
+   * What the STAGE says while a task is being built — the rail's step, one
+   * surface along.
+   *
+   * `stepLabel` again rather than a second vocabulary: the row and the stage are
+   * answering the same question ("what is happening to this task"), and two sets
+   * of words for it would drift the first time one of them was edited. §5's rule
+   * that a fact is drawn in one place is about the fact, not the pixels.
+   *
+   * `undefined` for anything that is not a BUILDING phase, which is the same
+   * carve-out `markFor` makes and for the same reason: archiving and restoring
+   * happen to a task that already has panes, so there is no empty stage to
+   * explain and a line here would be written for a surface nobody is looking at.
+   *
+   * **The repos, and NOT the branch.** The branch is the slug, and the slug is
+   * derived from the brief — so on screen it reads as the user's own prompt run
+   * through a slugifier (`show-pending-state-for-initializing-tasks`), which is
+   * their words handed back to them worse. The repos are the useful half: they
+   * are what is being cut, they are what the wait is FOR, and unlike the slug
+   * they are fixed from the moment the task is created — so there is no phase
+   * they cannot be shown in.
+   */
+  const placeholderFor = (task: TaskRecord): { line: string; names?: readonly string[] } | undefined => {
+    const what = busy.get(task.id);
+    if (what === undefined || !BUILDING_PHASES.has(what)) return undefined;
+    const line = stepLabel(what, task);
+    if (line === undefined) return undefined;
+    const names = task.repos.map((repo) => repo.name);
+    return names.length === 0 ? { line } : { line, names };
+  };
+
+  /**
+   * Tell the task's root what to say, if it has one.
+   *
+   * Fire-and-forget, and quiet by construction rather than by a swallowed error:
+   * most of a task's provisioning happens before anyone clicks its row, so the
+   * root usually does not exist — which `layout.setPlaceholder` answers as
+   * `placed: false` rather than a refusal, precisely so this call does not log a
+   * failure per step for work that is going fine. Nothing depends on it landing;
+   * it is what an empty stage draws, and an empty stage nobody opened draws
+   * nothing.
+   */
+  /**
+   * The line for a task that STOPPED being built without ever starting.
+   *
+   * `whileBusy` clears in a `finally`, so a provisioning that threw ends with no
+   * phase and no agent — and the root somebody opened is still empty. Left to
+   * fall through, the stage would draw the shell's own quiet state: `The flock is
+   * quiet` over a task that exists, offering to start another one. That is the
+   * same class of wrong as the shell this whole change removes — a surface
+   * describing something other than what you are looking at.
+   *
+   * `draft` with no sessions is the whole definition: a task that got as far as
+   * an agent has `running` and a session, and one being archived or restored has
+   * neither of those things wrong with it.
+   *
+   * It says the wait ENDED, not what broke — the row carries the complaint
+   * (`hookIssue`/`taskIssue`) and repeating it here would be the same fact drawn
+   * twice, in two places that can disagree.
+   */
+  const stalledLine = (task: TaskRecord): { line: string } | undefined =>
+    busy.get(task.id) === undefined && task.lifecycle === 'draft' && task.sessions.length === 0
+      ? { line: 'Setting up this task did not finish.' }
+      : undefined;
+
+  function pushPlaceholder(taskId: string): void {
+    const task = store.get(taskId);
+    if (task === undefined) return;
+    const placeholder = placeholderFor(task) ?? stalledLine(task);
+    void commands
+      .invoke('layout.setPlaceholder', {
+        root: taskRootId(taskId),
+        ...(placeholder === undefined ? {} : { placeholder }),
+      })
+      .then((answer) => {
+        // A real failure is still a failure. `placed: false` is not one.
+        if (!answer.ok) ctx.log.warn(`task ${taskId}: could not place its line — ${answer.error.message}`);
+      });
+  }
 
   /**
    * What shipping this task right now would cost — the question the row hands the
@@ -2797,10 +2879,31 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           ctx.log.info(`task ${task.id}: work materialized by being revealed`);
         }
 
+        /**
+         * A task that is still being BUILT opens with no pane at all.
+         *
+         * The shell below is right for a task that exists — you clicked it, here
+         * is its directory. It is wrong for one whose directory is still being
+         * cut: the pane mounts in a folder that may not be there yet, under a
+         * slug that may still change, and — the part that outlives the wait —
+         * **it is the pane the agent then splits beside.** `openAgentPane` asks
+         * `layout.openRoot` and branches on whether the root already has one;
+         * finding this shell, it appends the agent next to it and nothing ever
+         * reclaims it. So the fix is upstream of the split: do not mint the shell.
+         *
+         * The root is still opened, and that matters — the window switches to it
+         * below and the rail highlight is derived from which root is active (ADR
+         * 0035), so a task you clicked has to BE somewhere. It is simply
+         * somewhere with nothing in it, which the stage already knows how to draw.
+         * When provisioning finishes, `openRoot` sees a root with no panes, seeds
+         * the agent as its first, and the wait retires itself.
+         */
+        const placeholder = placeholderFor(task);
         const opened = await commands.invoke<{ created: boolean; pane: string | null }>('layout.openRoot', {
           root,
           cwd: rootOf(task),
           title: task.title,
+          ...(placeholder === undefined ? {} : { empty: true, placeholder }),
         });
         if (!opened.ok) {
           throw new Error(`could not open the task's root: ${opened.error.code}: ${opened.error.message}`);
