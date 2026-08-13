@@ -4,7 +4,9 @@ import { request } from 'node:http';
 import { join } from 'node:path';
 import { runGit } from '@shepherd/platform-darwin';
 import { flagValue } from './bootstrap.ts';
+import { sessionId as toSessionId } from '@shepherd/sdk';
 import { check, die, say, waiter } from './smoke-support.ts';
+import type { SessionHostLike } from './session-bridge.ts';
 import type { M1SmokeOptions } from './smoke-m1.ts';
 
 /** A task's session, as `tasks.list` reports it. */
@@ -44,7 +46,11 @@ export function isM3Options(options: Partial<M3SmokeOptions>): options is M3Smok
   return typeof options.controlSocket === 'string' && typeof options.alerts === 'function';
 }
 
-export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): Promise<void> {
+export async function runM3Smoke(
+  win: BrowserWindow,
+  host: SessionHostLike,
+  options: M3SmokeOptions,
+): Promise<void> {
   const repo = flagValue(process.argv, '--shepherd-m3-repo');
   if (repo === undefined) die('no --shepherd-m3-repo');
   const repo2 = flagValue(process.argv, '--shepherd-m3-repo2');
@@ -753,6 +759,52 @@ export async function runM3Smoke(win: BrowserWindow, options: M3SmokeOptions): P
     `switching tabs kept both tabs on the SAME ptys (${JSON.stringify(beforeSwitch)} -> ${JSON.stringify(afterSwitch)})`,
   );
   say('ok — a hidden tab keeps its ptys');
+
+  /**
+   * --- the OSC title reaches a tab NOBODY is looking at.
+   *
+   * Here rather than in a unit test because a suspended pane DETACHES from its
+   * session, so every layer between the pty and the tab strip has to carry this
+   * without an attachment. A test that fed the store directly would pass with
+   * the whole transport missing, which is the shape that hid the
+   * archive-on-close bug.
+   *
+   * Switched AWAY first, deliberately: the claim is about a background tab.
+   */
+  const secondSession = (
+    (await invoke('layout.listRoots', { group: `task:${composed.id}` })) as {
+      root: string;
+      focusedSession: string | null;
+    }[]
+  ).find((root) => root.root === secondTab)?.focusedSession;
+  check(typeof secondSession === 'string', `the second tab has a session: ${String(secondSession)}`);
+
+  await invoke('layout.switchRoot', { root: `task:${composed.id}` });
+
+  const labelOf = async (root: string): Promise<string> =>
+    (
+      (await invoke('layout.listRoots', { group: `task:${composed.id}` })) as {
+        root: string;
+        label: string;
+      }[]
+    ).find((each) => each.root === root)?.label ?? '';
+
+  /*
+   * Typed as INPUT: the shell runs it and the OSC arrives as output, which is
+   * the road a real program's title travels. Retried by `until` rather than
+   * written once, because the write races the renderer finishing its suspend
+   * and a line typed into a pane mid-teardown reaches a shell that is not
+   * reading yet.
+   */
+  await until(
+    "the background tab's label to follow its OSC title",
+    async () => {
+      host.write(toSessionId(String(secondSession)), `printf '\\033]2;osc-smoke\\007'\n`);
+      return await labelOf(secondTab);
+    },
+    (label) => label === 'osc-smoke',
+  );
+  say('ok — a background tab follows its OSC title');
 
   for (;;) {
     const closed = (await invoke('layout.close', { root: secondTab }).catch(() => null)) as {

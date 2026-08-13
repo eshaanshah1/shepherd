@@ -67,7 +67,7 @@ export async function runSmoke(
     case 'm3': {
       const { isM3Options, runM3Smoke } = await import('./smoke-m3.ts');
       if (!isM3Options(kernel)) return die('the m3 smoke needs the alerts handle');
-      return runM3Smoke(win, kernel);
+      return runM3Smoke(win, host, kernel);
     }
 
     default:
