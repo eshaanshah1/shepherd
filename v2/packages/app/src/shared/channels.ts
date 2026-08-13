@@ -244,6 +244,15 @@ export interface LayoutSnapshot {
   readonly zoomedPaneId: string | null;
   /** paneId -> sessionId, for panes showing a live session. */
   readonly sessions: Readonly<Record<string, string>>;
+  /**
+   * Why this root is empty, when somebody filling it said so.
+   *
+   * Present ONLY alongside `tree: null` — core refuses to answer with one for a
+   * root that holds panes, so the page cannot draw a wait that is over. Absent
+   * on an empty root is the other real case: nothing has been asked of it, which
+   * is the home root at launch and after the last task is closed.
+   */
+  readonly placeholder?: { readonly line: string; readonly names?: readonly string[] };
 }
 
 /**

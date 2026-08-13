@@ -673,7 +673,16 @@ export function App({
             instead of them, because the hidden roots must stay mounted — a torn
             -down pane comes back as a second pty.
           */}
-          {(snapshots === null || active?.tree == null) && <EmptyState />}
+          {(snapshots === null || active?.tree == null) && (
+            /*
+              …and WHY it is empty, when the root says. Read off the active
+              snapshot rather than held here: the same rule the tab strip and the
+              sidebar highlight follow (ADR 0035), and the reason a wait cannot
+              outlive the pane that ends it — the field is simply gone from the
+              next envelope.
+            */
+            <EmptyState {...(active?.placeholder === undefined ? {} : { placeholder: active.placeholder })} />
+          )}
           {(snapshots?.roots ?? []).map((root) => (
             <div
               className="sh-root"
