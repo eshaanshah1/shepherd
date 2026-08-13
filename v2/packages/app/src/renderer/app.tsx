@@ -567,21 +567,19 @@ export function App({
   return (
     <div className="sh-app">
       {/*
-        The window's OWN titlebar (`titleBarStyle: 'hiddenInset'`), carrying the
-        traffic lights and the app's name — and NOTHING else on the left.
+        The window's OWN titlebar (`titleBarStyle: 'hiddenInset'`) — the traffic
+        lights' clearance and the drag region, and nothing drawn of its own.
 
-        The breadcrumb that used to live here is deleted. It read `task / pane`,
-        which is a restatement of the rail and the pane head: §1's rule is that
-        nothing repeats itself down the hierarchy, and the breadcrumb repeated
-        two levels of it at once. What it was FOR — knowing where you are while
-        the rail is scrolled elsewhere — is answered by the rail's own selection
-        and by the pane head naming its tree.
+        It carries no name. An app's own name told back to you is the one fact
+        you already have, and while it was there the band had to be opaque to
+        hold it — which cut the rail's sky strip off at a seam 44px down and made
+        the window open on a dead black bar. The strip runs to the top edge now
+        and this layer floats over it, so the lights sit on the scene.
 
         The one cell that survives is the one no other surface can show: a
         renderer with no bridge looks exactly like an app with no panes.
       */}
       <header className="sh-plate">
-        <span className="sh-wordmark">Shepherd</span>
         <span className="sh-plate-spacer" />
         {terminals === null && <span className="sh-plate-cell is-ember">NO BRIDGE</span>}
       </header>

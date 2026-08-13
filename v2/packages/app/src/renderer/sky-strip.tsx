@@ -10,8 +10,10 @@ import type { ReactElement } from 'react';
  * **It is a window, not a wallpaper.** An earlier version spread the scene
  * behind the whole app and it was distracting — the app hosts other people's
  * programs, and a decorative ground competes with the one thing that changed.
- * Keeping it to a 124px strip is the entire discipline here; anything that makes
- * this reusable somewhere else is a change to the design, not a refactor.
+ * Keeping it to one strip at the head of the rail is the entire discipline here;
+ * anything that makes this reusable somewhere else is a change to the design,
+ * not a refactor. It reaches the window's top edge, so the traffic lights sit on
+ * it, and that is the whole of what it gained.
  *
  * **No image asset.** The sheep is drawn as 3px `<span>` pixels, which is why it
  * is pixel-exact at 1× and integer-scaled above it — a PNG at 27×21 would be
@@ -25,7 +27,14 @@ import type { ReactElement } from 'react';
  * density mode would not be the same scene.
  */
 
-/** The stars: `[left%, top, size, opacity]`, scattered in the top 55px. */
+/**
+ * The stars: `[left%, top, size, opacity]`, scattered in the top 55px.
+ *
+ * That band is where the traffic lights sit now, and the two nearest them clear
+ * them by construction rather than by luck being tested: the 12% one falls in
+ * the gap between the first and second light, the 26% one sits under the third.
+ * Moving a light-side star up or left is what breaks it.
+ */
 const STARS: ReadonlyArray<readonly [number, number, number, number]> = [
   [12, 14, 2, 0.55],
   [26, 31, 1, 0.32],
@@ -97,7 +106,13 @@ export function SkyStrip({ title, count, action }: SkyStripProps): ReactElement 
           <i
             key={index}
             className="sh-sky__star"
-            style={{ left: `${left}%`, top: `${top}px`, inlineSize: `${size}px`, blockSize: `${size}px`, opacity }}
+            style={{
+              left: `${left}%`,
+              top: `${top}px`,
+              inlineSize: `${size}px`,
+              blockSize: `${size}px`,
+              opacity,
+            }}
           />
         ))}
         {/*

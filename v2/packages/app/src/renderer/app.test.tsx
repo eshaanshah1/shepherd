@@ -230,9 +230,9 @@ describe('App as a projection of main’s layout', () => {
     // zero-pane projection never arrives.
     const { view } = render({ snapshot: null });
     expect(all(view.container, 'pane')).toHaveLength(0);
-    // The titlebar says the app's name in the one moment that is honest — there
-    // is nothing to be in yet.
-    expect(view.container.textContent).toContain('Shepherd');
+    // The chrome is still up: the titlebar is drawn whatever main has answered,
+    // because it is the window's, not the stage's.
+    expect(view.container.querySelector('.sh-plate')).not.toBeNull();
     view.unmount();
   });
 });
@@ -562,13 +562,14 @@ describe('roots the window switches between', () => {
     view.unmount();
   });
 
-  it('says the APP\'s name in the titlebar, and nothing about where you are', () => {
-    // This used to assert a `task / pane` breadcrumb read off the active root.
-    // §1 deletes it: the titlebar says the app's name and nothing else, because
-    // the crumb restated the rail and the pane head at once — and §6 refuses
-    // repeating a name down the hierarchy.
+  it('draws nothing in the titlebar — not a name, not where you are', () => {
+    // This used to assert a `task / pane` breadcrumb read off the active root,
+    // and then the app's own name. Both are gone: the crumb restated the rail
+    // and the pane head at once (§6 refuses repeating a name down the
+    // hierarchy), and the wordmark told you the one thing you already knew while
+    // forcing the band to be opaque over the rail's sky strip.
     //
-    // The claim worth pinning now is the REFUSAL. A titlebar that quietly grew a
+    // The claim worth pinning is the REFUSAL. A titlebar that quietly grew a
     // pane name back would pass every other test in this file.
     const home = makePane({ userTitle: 'home' });
     const task = makePane({ userTitle: 'task' });
@@ -582,7 +583,7 @@ describe('roots the window switches between', () => {
     // The TITLEBAR's text, not the document's: every root stays mounted by
     // design, so a pane's name is legitimately in the DOM elsewhere.
     const plate = view.container.querySelector('.sh-plate')?.textContent ?? '';
-    expect(plate).toContain('Shepherd');
+    expect(plate).toBe('');
     expect(plate).not.toContain('home');
     expect(plate).not.toContain('task');
     expect(view.container.querySelector('.sh-crumb')).toBeNull();
