@@ -843,16 +843,49 @@ export async function runM3Smoke(
     } | null;
     if (closed === null || closed.wasLastPane === true) break;
   }
-  const finished = await until(
-    'the composed task to archive itself',
-    async () => ((await invoke('tasks.list')) as { id: string; lifecycle: string }[]).find((t) => t.id === composed.id),
-    (task) => task?.lifecycle === 'archived',
+  /**
+   * Closing every pane **shelves the work and leaves the task active.**
+   *
+   * This asserted `lifecycle === 'archived'` and had to change with the design:
+   * closing your last pane used to ship the task, which is the app deciding you
+   * were finished. Shipping is a button now. What the gesture still does is free
+   * the disk — a live worktree measured 838 MB against 16 KB for every shipped
+   * task combined — so `shelvedAt` and the snapshot are what to wait for.
+   *
+   * Worth having in the SMOKE rather than only in units: this trigger is the one
+   * that shipped broken with a green unit suite, because every unit test supplied
+   * both halves of the pane correlation it got wrong.
+   */
+  const finished = (await until(
+    'the composed task to shelve its work',
+    async () =>
+      ((await invoke('tasks.list')) as { id: string; lifecycle: string; shelvedAt?: number }[]).find(
+        (t) => t.id === composed.id,
+      ),
+    (task) => task?.shelvedAt !== undefined,
+  )) as { lifecycle: string; shelvedAt?: number; archives?: unknown[] };
+  check(
+    finished.shelvedAt !== undefined,
+    `closing the task's panes shelved its work: ${JSON.stringify(finished)}`,
   );
   check(
-    (finished as { lifecycle: string }).lifecycle === 'archived',
-    `closing the task's panes archived it: ${JSON.stringify(finished)}`,
+    finished.lifecycle === 'running',
+    `and left it ACTIVE rather than shipping it: ${JSON.stringify(finished.lifecycle)}`,
   );
-  say('ok — closing a task finishes it');
+  say('ok — closing a task frees its disk without shipping it');
+
+  /*
+   * And shipping IS available, as the deliberate gesture — the verb the row's
+   * hover button runs. Its work is already shelved, so this is the lifecycle half
+   * on its own, which is exactly the split being tested.
+   */
+  await invoke('tasks.archive', { task: composed.id });
+  const shipped = (await invoke('tasks.list')) as { id: string; lifecycle: string }[];
+  check(
+    shipped.find((t) => t.id === composed.id)?.lifecycle === 'archived',
+    `shipping it explicitly moved it: ${JSON.stringify(shipped.find((t) => t.id === composed.id))}`,
+  );
+  say('ok — shipping is a gesture, not a side effect');
 
   /**
    * --- 9. two repos, provisioned concurrently, wired by one set hook.

@@ -56,6 +56,8 @@ export interface ViewDeclaration {
   readonly key?: string;
   readonly title?: string;
   readonly icon?: string;
+  /** A tree that wants a search field, and the verb its query goes to. */
+  readonly search?: { readonly command: string; readonly placeholder?: string };
 }
 
 const MODIFIERS = new Set(['command','cmd','control','ctrl','commandorcontrol','cmdorctrl','alt','option','altgr','shift','super','meta']);
@@ -112,6 +114,7 @@ export class ViewRegistry {
       // — the same rule a row's action glyph gets: a typo must not be louder
       // than the label beside it.
       ...(declaration.icon === undefined ? {} : { icon: declaration.icon }),
+      ...(declaration.search === undefined ? {} : { search: declaration.search }),
     });
     this.#options.publish(type);
   }

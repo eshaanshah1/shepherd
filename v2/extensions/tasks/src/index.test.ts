@@ -659,6 +659,46 @@ describe('agent state reaching the task tree', () => {
     expect(row?.description).toBe('working');
   });
 
+  /**
+   * The ship guard: instant when nothing is running, a question when something is.
+   *
+   * The button is hover-discoverable on every row and shipping closes the task's
+   * panes, so the one case worth interrupting for is the misclick that kills a
+   * mid-turn agent. Everything else has to stay one click — a confirm on the
+   * gesture made most is a dialog nobody reads by the third time.
+   */
+  describe('the ship guard', () => {
+    it('asks nothing while the task is idle', async () => {
+      const h = (live = harness({ tasks: [spawned] }));
+      expect((await rowOf(h, 't1'))?.primaryAction?.confirm).toBeUndefined();
+    });
+
+    it('asks before shipping a working agent, and names what it costs', async () => {
+      const h = (live = harness({ tasks: [spawned] }));
+      h.emit('agents.stateChanged', change('working'));
+
+      const confirm = (await rowOf(h, 't1'))?.primaryAction?.confirm;
+      expect(confirm).toContain('still working');
+      // The consequence, and the way back — a confirm that only asked "are you
+      // sure" would be one nobody can answer.
+      expect(confirm).toContain('closes its panes');
+      expect(confirm).toContain('un-shipping brings it all back');
+    });
+
+    it('asks before shipping an agent that is waiting on you', async () => {
+      // One turn from continuing, and shipping discards the answer you were
+      // about to give — so `waiting` counts as live.
+      const h = (live = harness({ tasks: [spawned] }));
+      h.emit('agents.stateChanged', change('blocked'));
+      expect((await rowOf(h, 't1'))?.primaryAction?.confirm).toContain('waiting on an answer');
+    });
+
+    it('never asks on the Unship button', async () => {
+      const h = (live = harness({ tasks: [task({ lifecycle: 'archived', archivedAt: 1 })] }));
+      expect((await rowOf(h, 't1'))?.primaryAction?.confirm).toBeUndefined();
+    });
+  });
+
   it('turns a finished turn GREEN, and not the amber a blocked one gets', async () => {
     // v1's behaviour, and the palette's own words: `pasture` is "done / success",
     // `hay` is "blocked / attention". One amber for both would make "finished"
@@ -1250,8 +1290,11 @@ describe('a long operation', () => {
      * of the list, under the cursor of the person who just clicked it.
      */
     expect((during?.data as { mark?: unknown } | undefined)?.mark).not.toBe('working');
+    // And no state-named heading appears anywhere: the rail's only section is
+    // Shipped, and a busy task on its way out must not sprout one.
     const sections = (await h.tree().children(undefined)).filter((entry) => entry.section === true);
     expect(sections.map((entry) => entry.label)).not.toContain('In flight');
+    expect(sections.map((entry) => entry.label)).not.toContain('Resting');
 
     finish();
     await archiving;
@@ -1405,10 +1448,13 @@ describe('a long operation', () => {
      *
      * A provisioning task has lifecycle `draft` and no sessions, so the rollup
      * answers `idle` and the card drew the hollow resting ring — "nothing is
-     * happening here" — through the whole wait. The row was literally filed under
-     * `Resting` while git ran.
+     * happening here" — through the whole wait.
+     *
+     * The mark is now the WHOLE signal: there are no state-named sections to be
+     * filed under, so a task that reads resting while git runs has nothing else
+     * to correct the impression.
      */
-    it('marks it working, and files it under In flight rather than Resting', async () => {
+    it('marks a provisioning task working rather than resting', async () => {
       let finish = (): void => undefined;
       const held = new Promise<void>((resolve) => {
         finish = resolve;
@@ -1422,7 +1468,8 @@ describe('a long operation', () => {
       const row = rows.find((entry) => entry.section !== true);
 
       expect((row?.data as { mark?: unknown } | undefined)?.mark).toBe('working');
-      expect(rows.find((entry) => entry.section === true)?.label).toBe('In flight');
+      // No heading at all above the active list.
+      expect(rows.find((entry) => entry.section === true)).toBeUndefined();
 
       finish();
     });
@@ -1729,18 +1776,28 @@ describe('archiving keeps the tabs and their screens', () => {
   });
 });
 
-describe('mark done', () => {
-  it('offers Mark done on a live task and nothing on an archived one', async () => {
+describe('the ship button', () => {
+  /*
+   * One slot, two verbs, and they undo one another — so both are one hover and
+   * one click. An un-ship buried in a context menu while shipping had a button
+   * would read as a one-way door.
+   */
+  it('offers Ship on an active task and Unship on a shipped one', async () => {
     const h = (live = harness({
       tasks: [task(), task({ id: 't2', lifecycle: 'archived', archivedAt: 1 })],
     }));
     expect((await rowOf(h, 't1'))?.primaryAction).toMatchObject({
       id: 'tasks.archive',
-      label: 'Mark done',
-      icon: 'check',
+      label: 'Ship',
+      icon: 'ship',
       args: { task: 't1' },
     });
-    expect((await rowOf(h, 't2'))?.primaryAction).toBeUndefined();
+    expect((await rowOf(h, 't2'))?.primaryAction).toMatchObject({
+      id: 'tasks.restore',
+      label: 'Unship',
+      icon: 'unship',
+      args: { task: 't2' },
+    });
   });
 });
 
@@ -1844,63 +1901,108 @@ describe('restoring a task with tabs rebuilds the SCREEN', () => {
 });
 
 describe('a task whose pane group empties', () => {
-  it('archives it — closing every pane on a task is finishing it', async () => {
+  /**
+   * **It frees the disk. It does NOT ship the task.**
+   *
+   * This used to invoke `tasks.archive`, so closing your last pane declared the
+   * work finished — an automatic transition in a rail whose whole point is that
+   * the transition is yours to make. The halves are separate now and only the
+   * disk half runs here.
+   *
+   * Keeping that half is the measurement, not a compromise: a live worktree came
+   * to 838 MB on the machine this was written for, most of it the dependencies
+   * provisioning installs, against 16 KB for every shipped task combined. With
+   * nothing reclaiming it, a task opened and drifted away from would hold most of
+   * a gigabyte forever.
+   */
+  const shelved = async (h: ReturnType<typeof harness>): Promise<TaskRecord | undefined> =>
+    (await h.run<TaskRecord[]>('tasks.list'))[0];
+
+  it('shelves the work and leaves the task exactly where it was', async () => {
     const h = (live = harness({
       tasks: [task({ sessions: [{ id: 's1', role: 'orchestrator', pane: 'p1' }] })],
+      git: archivable,
     }));
-    // The precondition is that it has not archived YET, which is all this test
-    // ever meant by it. It is no longer a statement about the dot: `displayState`
-    // answers from the agents now, and a task none of whose sessions have
-    // reported reads `idle`.
     expect(await listedState(h)).not.toBe('archived');
 
     h.emit('layout.rootClosed', { root: 'task:t1' });
-    await until(() => h.invoked.some((call) => call.id === 'tasks.archive'));
+    await until(async () => (await shelved(h))?.shelvedAt !== undefined);
 
-    // Archive, not delete: the worktrees are snapshotted first, so every
-    // uncommitted line survives a gesture that looks like throwing work away.
-    expect(h.invoked.find((call) => call.id === 'tasks.archive')?.args).toEqual({ task: 't1' });
-  });
-
-  it('does NOT archive while another tab of the task still has panes', async () => {
-    /*
-     * The sharpest edge in the whole tabs change. A task's tabs are separate
-     * roots, so closing the first one announces a closed root while the second
-     * is still running an agent — and archiving there snapshots and removes the
-     * worktrees out from under work that is very much in flight.
-     */
-    const h = (live = harness({
-      tasks: [task({ sessions: [{ id: 's1', role: 'orchestrator', pane: 'p1' }] })],
-    }));
-
-    h.emit('layout.rootClosed', { root: 'task:t1', group: 'task:t1', groupEmpty: false });
-    // Given every chance to archive, and it must not have.
-    for (let tick = 0; tick < 20; tick += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+    // Still active — the row has not moved to the Shipped region.
+    expect((await shelved(h))?.lifecycle).toBe('running');
+    // And nothing shipped it on the way past.
     expect(h.invoked.some((call) => call.id === 'tasks.archive')).toBe(false);
   });
 
-  it('archives when the LAST tab of the task empties, whichever tab that is', async () => {
+  it('can still be SHIPPED once shelved, without shelving twice', async () => {
+    /*
+     * The ordinary path: you close a task's panes, then press Ship on that row
+     * later. Shelving twice fails inside git — the worktree directory is gone, so
+     * `write-tree` has nothing to run against — so shipping an already-shelved
+     * task is the lifecycle flip alone.
+     */
+    const h = (live = harness({
+      tasks: [task({ sessions: [{ id: 's1', role: 'orchestrator', pane: 'p1' }] })],
+      git: archivable,
+    }));
+    h.emit('layout.rootClosed', { root: 'task:t1' });
+    await until(async () => (await shelved(h))?.shelvedAt !== undefined);
+
+    await h.run('tasks.archive', { task: 't1' });
+    const after = await shelved(h);
+    expect(after?.lifecycle).toBe('archived');
+    expect(after?.archivedAt).toBeDefined();
+  });
+
+  it('says so on the row, because a colour cannot carry it', async () => {
+    const h = (live = harness({
+      tasks: [task({ sessions: [{ id: 's1', role: 'orchestrator', pane: 'p1' }] })],
+      git: archivable,
+    }));
+    h.emit('layout.rootClosed', { root: 'task:t1' });
+    await until(async () => (await shelved(h))?.shelvedAt !== undefined);
+
+    expect((await rowOf(h, 't1'))?.description).toContain('shelved');
+  });
+
+  it('does NOT shelve while another tab of the task still has panes', async () => {
+    /*
+     * The sharpest edge in the whole tabs change. A task's tabs are separate
+     * roots, so closing the first one announces a closed root while the second
+     * is still running an agent — and snapshotting there removes the worktrees
+     * out from under work that is very much in flight.
+     */
+    const h = (live = harness({
+      tasks: [task({ sessions: [{ id: 's1', role: 'orchestrator', pane: 'p1' }] })],
+      git: archivable,
+    }));
+
+    h.emit('layout.rootClosed', { root: 'task:t1', group: 'task:t1', groupEmpty: false });
+    for (let tick = 0; tick < 20; tick += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+    expect((await shelved(h))?.shelvedAt).toBeUndefined();
+  });
+
+  it('shelves when the LAST tab of the task empties, whichever tab that is', async () => {
     // The announcement names the tab that closed — `task:t1/tab-2`, which
     // matches no task — and the GROUP, which is what the task is known by.
     const h = (live = harness({
       tasks: [task({ sessions: [{ id: 's1', role: 'orchestrator', pane: 'p1' }] })],
+      git: archivable,
     }));
 
     h.emit('layout.rootClosed', { root: 'task:t1/tab-2', group: 'task:t1', groupEmpty: true });
-    await until(() => h.invoked.some((call) => call.id === 'tasks.archive'));
-    expect(h.invoked.find((call) => call.id === 'tasks.archive')?.args).toEqual({ task: 't1' });
+    await until(async () => (await shelved(h))?.shelvedAt !== undefined);
+    expect((await shelved(h))?.lifecycle).toBe('running');
   });
 
   it('KEEPS the sessions in the record, minus their dead panes', async () => {
     /*
-     * They are what restore reattaches to. An empty list would also make
-     * `provision` treat the restored task as one that has never run and start a
-     * fresh agent on the original brief — the same words with none of the
-     * transcript, which is the bug this pairs with.
+     * They are what materializing reattaches to. An empty list would also make
+     * `provision` treat the task as one that has never run and start a fresh
+     * agent on the original brief — the same words with none of the transcript.
      *
      * The pane goes, because it closed with the root: a record naming a pane
-     * that does not exist is what made the archive trigger unreliable to begin
-     * with.
+     * that does not exist is what made this trigger unreliable to begin with.
      */
     const h = (live = harness({
       tasks: [task({ sessions: [{ id: 's1', role: 'orchestrator', pane: 'p1' }] })],
@@ -1908,63 +2010,71 @@ describe('a task whose pane group empties', () => {
     }));
 
     h.emit('layout.rootClosed', { root: 'task:t1' });
-    await until(async () => {
-      const [listed] = await h.run<{ lifecycle: string }[]>('tasks.list');
-      return listed?.lifecycle === 'archived';
-    });
+    await until(async () => (await shelved(h))?.shelvedAt !== undefined);
 
     expect((await h.run<{ sessions: TaskSession[] }[]>('tasks.list'))[0]?.sessions).toEqual([
       { id: 's1', role: 'orchestrator' },
     ]);
   });
 
-  it('archives it whatever the record says its panes were', async () => {
+  it('shelves it whatever the record says its panes were', async () => {
     // The restart case, which is the one that was broken: the layout restored
     // and minted new pane ids, so the record names panes that do not exist —
     // and it makes no difference, because nothing counts them any more.
     const h = (live = harness({
       tasks: [task({ sessions: [{ id: 's1', role: 'orchestrator', pane: 'a-pane-from-last-run' }] })],
+      git: archivable,
     }));
 
     h.emit('layout.rootClosed', { root: 'task:t1' });
-    await until(() => h.invoked.some((call) => call.id === 'tasks.archive'));
-    expect(h.invoked.find((call) => call.id === 'tasks.archive')?.args).toEqual({ task: 't1' });
+    await until(async () => (await shelved(h))?.shelvedAt !== undefined);
+    expect((await shelved(h))?.lifecycle).toBe('running');
   });
 
-  it('ignores a root that is not a task, and one already archived', async () => {
-    const h = (live = harness({ tasks: [task({ lifecycle: 'archived' })] }));
+  it('ignores a root that is not a task, and one whose work is already shelved', async () => {
+    // A shipped task has nothing left to snapshot, and `archiveWorktree` on an
+    // absent directory fails per repo.
+    const h = (live = harness({ tasks: [task({ lifecycle: 'archived', archivedAt: 1 })] }));
 
     h.emit('layout.rootClosed', { root: 'home' });
     h.emit('layout.rootClosed', { root: 'task:t1' });
-    await Promise.resolve();
+    for (let tick = 0; tick < 10; tick += 1) await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(h.invoked.some((call) => call.id === 'tasks.archive')).toBe(false);
   });
 });
 
-describe('archives that have run out', () => {
-  // Thirty days, swept at startup. The record is written by `tasks.archive`
-  // with `archivedAt`, so what this pins is the sweep firing the same delete a
-  // human would — no second removal path to keep in step.
+describe('shipped work that is old', () => {
+  /*
+   * It used to be deleted after seven days, and this block asserted that. Shipped
+   * is a permanent region of the rail now rather than a weekly recap behind a
+   * chevron, so the sweep is gone — and what needs pinning is the opposite claim,
+   * because "old rows disappear" is the kind of behaviour somebody reinstates as
+   * a tidy-up.
+   *
+   * The disk argument that justified it does not hold either: shipping already
+   * removes the worktrees and the task root, so shipped tasks measured 16 KB in
+   * total against 838 MB for one live worktree.
+   */
   const DAY = 86_400_000;
 
-  it('deletes an archive older than thirty days, through the ordinary verb', async () => {
+  it('is never deleted, however long ago it shipped', async () => {
     const h = (live = harness({
-      tasks: [task({ id: 'old', lifecycle: 'archived', archivedAt: 1_000, sessions: [] })],
-      now: 1_000 + 31 * DAY,
+      tasks: [task({ id: 'ancient', lifecycle: 'archived', archivedAt: 1_000, sessions: [] })],
+      now: 1_000 + 400 * DAY,
     }));
-    await until(() => h.invoked.some((call) => call.id === 'tasks.delete'));
-    expect(h.invoked.find((call) => call.id === 'tasks.delete')?.args).toEqual({ task: 'old' });
-  });
-
-  it('leaves one archived yesterday alone', async () => {
-    const h = (live = harness({
-      tasks: [task({ id: 'fresh', lifecycle: 'archived', archivedAt: 1_000, sessions: [] })],
-      now: 1_000 + DAY,
-    }));
-    // A tick is enough: the sweep runs synchronously inside activate.
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(h.invoked.some((call) => call.id === 'tasks.delete')).toBe(false);
+  });
+
+  it('is still drawn in the rail', async () => {
+    const h = (live = harness({
+      tasks: [task({ id: 'ancient', lifecycle: 'archived', archivedAt: 1_000, sessions: [] })],
+      now: 1_000 + 400 * DAY,
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const rows = await h.tree().children(undefined);
+    expect(rows.some((row) => row.id === 'ancient')).toBe(true);
   });
 });
 
@@ -2029,7 +2139,7 @@ describe('naming a task the quick model did not name', () => {
 });
 
 describe('the actions a task row declares', () => {
-  it('offers reveal, archive and delete, each naming its own task', async () => {
+  it('offers reveal, ship and delete, each naming its own task', async () => {
     const h = await harness();
     const created = await h.run<{ id: string }>('tasks.create', { title: 'Ship the login fix' });
     const row = await rowOf(h, created.id);
@@ -2037,12 +2147,29 @@ describe('the actions a task row declares', () => {
     expect(row?.actions).toEqual([
       { id: 'tasks.reveal', label: 'Reveal', icon: 'eye', args: { task: created.id } },
       { separator: true },
-      { id: 'tasks.archive', label: 'Archive', icon: 'archive', danger: true, args: { task: created.id } },
+      { id: 'tasks.archive', label: 'Ship', icon: 'ship', args: { task: created.id } },
       { id: 'tasks.delete', label: 'Delete', icon: 'trash', danger: true, args: { task: created.id } },
     ]);
   });
 
-  it('marks exactly the destructive two', async () => {
+  it('offers Unship in place of Ship on a shipped task', async () => {
+    const h = (live = harness({ tasks: [task({ lifecycle: 'archived', archivedAt: 1 })] }));
+    const row = await rowOf(h, 't1');
+    const ids = (row?.actions ?? [])
+      .filter((entry): entry is Extract<typeof entry, { id: string }> => !('separator' in entry))
+      .map((entry) => entry.id);
+    expect(ids).toEqual(['tasks.reveal', 'tasks.restore', 'tasks.delete']);
+  });
+
+  /*
+   * Delete alone, and shipping is deliberately NOT marked destructive.
+   *
+   * It was, as `Archive`. Shipping is the gesture made most often now and it is
+   * reversible in one click from the row it lands on — painting the commonest
+   * verb in the danger colour would make the rail read as hazardous. What guards
+   * it is a confirm on a task with a live agent, which is the actual risk.
+   */
+  it('marks only delete destructive', async () => {
     const h = await harness();
     const created = await h.run<{ id: string }>('tasks.create', { title: 'a' });
     const row = await rowOf(h, created.id);
@@ -2050,7 +2177,7 @@ describe('the actions a task row declares', () => {
       .filter((entry): entry is { id: string; label: string; danger?: boolean } => !('separator' in entry))
       .filter((entry) => entry.danger === true)
       .map((entry) => entry.id);
-    expect(danger).toEqual(['tasks.archive', 'tasks.delete']);
+    expect(danger).toEqual(['tasks.delete']);
   });
 
   /**
@@ -2185,43 +2312,90 @@ describe('finished work', () => {
   const archived = (id: string): TaskRecord =>
     task({ id, title: `T ${id}`, lifecycle: 'archived', archivedAt: 5, sessions: [] });
 
-  it('keeps finished work OUT of the list, as a count at the foot', async () => {
-    // §1: "a Shipped this week footer row pinned to the bottom". Finished work
-    // LEAVES the list — a heading with the archived tasks under it puts the work
-    // you are done with back into the list you are reading, which is the one
-    // thing closing a task was supposed to stop.
+  it('draws shipped work in its own region below the active list', async () => {
+    /*
+     * It used to LEAVE the list and become a count behind a chevron, on the
+     * argument that finished work in the list you are reading is what closing a
+     * task was supposed to stop. The dimming is what makes that argument
+     * unnecessary: the rows are there to be read when you look for them and cost
+     * no attention when you do not.
+     */
     const h = (live = harness({ tasks: [archived('old'), task({ id: 'now', title: 'T now' })] }));
     const rows = await h.tree().children(undefined);
-
     const ids = rows.map((row) => row.id);
-    expect(ids).not.toContain('old');
-    const foot = rows.find((row) => row.id === 'group:shipped');
-    expect(foot?.label).toBe('Shipped this week');
-    expect(foot?.description).toBe('1');
-    // Last, so the shell can pin it.
-    expect(ids[ids.length - 1]).toBe('group:shipped');
+
+    // Active first, with NO heading over it, then the divider, then the shipped.
+    expect(ids).toEqual(['now', 'group:shipped', 'old']);
+    const divider = rows.find((row) => row.id === 'group:shipped');
+    expect(divider?.label).toBe('Shipped');
+    expect(divider?.description).toBe('1');
+    expect(divider?.section).toBe(true);
+    // It flows after the active list rather than being pinned to the window.
+    expect(divider?.foot).toBeUndefined();
   });
 
-  it('draws the foot even at zero, so the rail does not move as the week turns', async () => {
+  it('draws no divider at all when nothing has shipped', async () => {
+    /*
+     * The reverse of the old rule, which drew it at zero so a PINNED foot would
+     * not appear and disappear under the cursor. A divider that flows after the
+     * list has nothing to hold still, and `Shipped 0` is a heading over nothing.
+     */
     const h = (live = harness({ tasks: [task({ id: 'now' })] }));
     const rows = await h.tree().children(undefined);
-    expect(rows.find((row) => row.id === 'group:shipped')?.description).toBe('0');
+    expect(rows.find((row) => row.id === 'group:shipped')).toBeUndefined();
   });
 
-  it('opens the foot to reach what shipped — a count must not mean unreachable', async () => {
-    const h = (live = harness({ tasks: [archived('old'), task({ id: 'now' })] }));
-    expect((await h.tree().children(undefined)).map((row) => row.id)).not.toContain('old');
+  it('appends a new task to the bottom and moves nothing above it', async () => {
+    const h = (live = harness({
+      tasks: [
+        task({ id: 'first', createdAt: 100 }),
+        task({ id: 'third', createdAt: 300 }),
+        task({ id: 'second', createdAt: 200 }),
+      ],
+    }));
+    const ids = (await h.tree().children(undefined)).map((row) => row.id);
+    expect(ids).toEqual(['first', 'second', 'third']);
+  });
+
+  it('caps the shipped rows and offers the rest behind one row', async () => {
+    const many = Array.from({ length: 11 }, (_, i) =>
+      task({ id: `s${i}`, lifecycle: 'archived', archivedAt: 100 + i, sessions: [] }),
+    );
+    const h = (live = harness({ tasks: [...many, task({ id: 'now' })] }));
+
+    const rows = await h.tree().children(undefined);
+    const shippedRows = rows.filter((row) => row.id.startsWith('s'));
+    expect(shippedRows).toHaveLength(8);
+    // Newest shipped first, so the cap keeps the recent ones.
+    expect(shippedRows[0]?.id).toBe('s10');
+    // The count is the TRUE total, not the number of rows drawn.
+    expect(rows.find((row) => row.id === 'group:shipped')?.description).toBe('11');
+    expect(rows.find((row) => row.id === 'group:shipped:more')?.label).toBe('Show all 11');
+  });
+
+  it('shows every shipped row once asked, and offers the way back', async () => {
+    const many = Array.from({ length: 11 }, (_, i) =>
+      task({ id: `s${i}`, lifecycle: 'archived', archivedAt: 100 + i, sessions: [] }),
+    );
+    const h = (live = harness({ tasks: many }));
 
     await h.run('tasks.expandTabs', { task: 'group:shipped' });
     const rows = await h.tree().children(undefined);
-    expect(rows.map((row) => row.id)).toContain('old');
+    expect(rows.filter((row) => row.id.startsWith('s'))).toHaveLength(11);
+    expect(rows.find((row) => row.id === 'group:shipped:more')?.label).toBe('Show fewer');
+  });
 
-    const labels = (id: string): unknown[] =>
-      (rows.find((row) => row.id === id)?.actions ?? []).map((a) =>
-        'separator' in a ? '—' : a.label,
-      );
-    expect(labels('old')).toEqual(['Restore', '—', 'Delete']);
-    expect(labels('now')).toEqual(['Reveal', '—', 'Archive', 'Delete']);
+  it('draws no Show all row when everything shipped already fits', async () => {
+    const h = (live = harness({ tasks: [archived('old')] }));
+    const rows = await h.tree().children(undefined);
+    expect(rows.find((row) => row.id === 'group:shipped:more')).toBeUndefined();
+  });
+
+  it('gives a shipped row no chevron, because it has no live tabs to open', async () => {
+    const h = (live = harness({ tasks: [archived('old'), task({ id: 'now' })] }));
+    const rows = await h.tree().children(undefined);
+    expect(rows.find((row) => row.id === 'old')?.collapsed).toBeUndefined();
+    expect(rows.find((row) => row.id === 'now')?.collapsed).toBe(true);
   });
 
   it('marks what shipped as SHIPPED, in the row and in the card', async () => {
@@ -2234,7 +2408,6 @@ describe('finished work', () => {
      * it had finished.
      */
     const h = (live = harness({ tasks: [archived('old')] }));
-    await h.run('tasks.expandTabs', { task: 'group:shipped' });
     const row = (await h.tree().children(undefined)).find((entry) => entry.id === 'old');
 
     // The word this side writes, and the mark the card draws from it. The
@@ -2244,31 +2417,68 @@ describe('finished work', () => {
     expect((row?.data as { mark?: string } | undefined)?.mark).toBe('shipped');
   });
 
-  it('orders the live sections by what you must do', async () => {
-    // §5: attention routing IS the rail's shape. The sections are not kinds of
-    // task, they are distances from needing you, read top-down.
-    const h = (live = harness({ tasks: [task({ id: 'a' })] }));
+  it('has exactly one section, and it is Shipped', async () => {
+    /*
+     * The rail used to open with `Waiting on you` / `In flight` / `Resting` —
+     * attention routing as the rail's shape. That is gone by decision: the status
+     * dot carries it, and a heading per state is a thing to scan on the way to
+     * the rows. A blocked task is now row N with an amber dot and nothing floats
+     * it, which was raised and accepted. Do not add a blocked-first exception.
+     */
+    const h = (live = harness({
+      tasks: [task({ id: 'a' }), task({ id: 'b', lifecycle: 'archived', archivedAt: 1, sessions: [] })],
+    }));
     const ids = (await h.tree().children(undefined))
       .filter((row) => row.section === true)
       .map((row) => row.id);
-    expect(ids).toEqual(['group:resting']);
+    expect(ids).toEqual(['group:shipped']);
   });
 
-  it('brings an archived task BACK when it is revealed, before opening its root', async () => {
-    // Opening a root at a directory whose worktrees were removed would show an
-    // empty shell — the app pretending the task is there.
-    const h = (live = harness({ tasks: [archived('old')] }));
+  it('puts a shipped task\'s work back before opening its root, and leaves it shipped', async () => {
+    /**
+     * The behaviour change that makes an always-visible Shipped region safe.
+     *
+     * Opening a root at a directory whose worktrees were removed would show an
+     * empty shell — the app pretending the task is there — so the work is
+     * materialized first. What must NOT happen is the row moving: revealing used
+     * to invoke `tasks.restore`, which was defensible while shipped work sat
+     * behind a chevron you had to open on purpose, and is a footgun now that a
+     * stray click can land on three-week-old work.
+     */
+    const h = (live = harness({ tasks: [archived('old')], git: archivable }));
     await h.run('tasks.reveal', { task: 'old' });
 
     const order = h.invoked.map((call) => call.id);
-    expect(order).toContain('tasks.restore');
-    expect(order.indexOf('tasks.restore')).toBeLessThan(order.indexOf('layout.openRoot'));
+    expect(order).toContain('layout.openRoot');
+    // The worktrees are rebuilt — but by the half that does not touch lifecycle.
+    expect(order).not.toContain('tasks.restore');
+    expect((await h.run<TaskRecord[]>('tasks.list'))[0]?.lifecycle).toBe('archived');
   });
 
-  it('does not restore a live task on the way to revealing it', async () => {
+  it('does not re-provision a live task on the way to revealing it', async () => {
     const h = (live = harness({ tasks: [task({ id: 'now' })] }));
     await h.run('tasks.reveal', { task: 'now' });
     expect(h.invoked.some((call) => call.id === 'tasks.restore')).toBe(false);
+  });
+
+  it('un-ships to the BOTTOM of the active list, not into its original date slot', async () => {
+    /*
+     * You un-shipped it because you are working on it now. Sorting by
+     * `createdAt` would file three-week-old work above everything current and
+     * shift every row below it, which is what `activatedAt` exists to prevent.
+     */
+    const h = (live = harness({
+      tasks: [
+        task({ id: 'ancient', lifecycle: 'archived', archivedAt: 2, createdAt: 1, sessions: [] }),
+        task({ id: 'current', createdAt: 5_000 }),
+      ],
+      now: 9_000,
+      git: archivable,
+    }));
+
+    await h.run('tasks.restore', { task: 'ancient' });
+    const ids = (await h.tree().children(undefined)).map((row) => row.id);
+    expect(ids).toEqual(['current', 'ancient']);
   });
 });
 
@@ -3051,5 +3261,119 @@ describe('naming a task at create', () => {
     await drain();
     expect((await stored(h)).find((t) => t.id === 't1')?.slug).toBe('old-name');
     h.dispose();
+  });
+});
+
+/**
+ * The rail's search — typed in the shell, answered here.
+ *
+ * The division is the point: the shell holds what is in the box and this holds
+ * the query, because only this side knows the rows it chose not to send and only
+ * this side sets `collapsed`. A page-side filter could do neither.
+ */
+describe('searching the rail', () => {
+  const shipped = (id: string, title: string, at: number): TaskRecord =>
+    task({ id, title, lifecycle: 'archived', archivedAt: at, sessions: [] });
+
+  it('narrows both regions and keeps the divider, so a hit says which side it is on', async () => {
+    const h = (live = harness({
+      tasks: [
+        task({ id: 'live-hit', title: 'Fix the login redirect' }),
+        task({ id: 'live-miss', title: 'Rename the daemon' }),
+        shipped('done-hit', 'Login button alignment', 10),
+        shipped('done-miss', 'Bump the tokens', 20),
+      ],
+    }));
+
+    await h.run('tasks.filter', { query: 'login' });
+    const ids = (await h.tree().children(undefined)).map((row) => row.id);
+    expect(ids).toEqual(['live-hit', 'group:shipped', 'done-hit']);
+  });
+
+  it('finds a task by the repo it is in, which is often how you remember it', async () => {
+    const h = (live = harness({
+      tasks: [
+        task({ id: 'in-rails', title: 'Something opaque', repos: [{ path: '/x/railsApp', name: 'railsApp' }] }),
+        task({ id: 'elsewhere', title: 'Another thing', repos: [{ path: '/x/mobile', name: 'mobile' }] }),
+      ],
+    }));
+
+    await h.run('tasks.filter', { query: 'railsapp' });
+    expect((await h.tree().children(undefined)).map((row) => row.id)).toEqual(['in-rails']);
+  });
+
+  it('reaches a shipped task past the cap, which is what the field is FOR', async () => {
+    // Twenty shipped tasks means twelve the rail never sent. A page-side filter
+    // could not see this one at all.
+    const many = Array.from({ length: 20 }, (_, i) => shipped(`s${i}`, `Thing ${i}`, 100 + i));
+    const h = (live = harness({ tasks: [...many, shipped('needle', 'The rare thing', 1)] }));
+
+    expect((await h.tree().children(undefined)).map((row) => row.id)).not.toContain('needle');
+    await h.run('tasks.filter', { query: 'rare' });
+    expect((await h.tree().children(undefined)).map((row) => row.id)).toContain('needle');
+  });
+
+  it('counts what MATCHES, not the true total, so the divider agrees with its rows', async () => {
+    const h = (live = harness({
+      tasks: [shipped('a', 'Login fix', 10), shipped('b', 'Something else', 20)],
+    }));
+    await h.run('tasks.filter', { query: 'login' });
+    expect((await h.tree().children(undefined)).find((row) => row.id === 'group:shipped')?.description).toBe('1');
+  });
+
+  it('draws no Show all row while filtering, because the results are never capped', async () => {
+    const many = Array.from({ length: 20 }, (_, i) => shipped(`s${i}`, `Thing ${i}`, 100 + i));
+    const h = (live = harness({ tasks: many }));
+    await h.run('tasks.filter', { query: 'thing' });
+    const rows = await h.tree().children(undefined);
+    expect(rows.find((row) => row.id === 'group:shipped:more')).toBeUndefined();
+    expect(rows.filter((row) => row.id.startsWith('s'))).toHaveLength(20);
+  });
+
+  it('draws a matching row OPEN, so a multi-repo hit shows its tabs', async () => {
+    const h = (live = harness({ tasks: [task({ id: 't1', title: 'Fix the login redirect' })] }));
+    expect((await rowOf(h, 't1'))?.collapsed).toBe(true);
+
+    await h.run('tasks.filter', { query: 'login' });
+    expect((await rowOf(h, 't1'))?.collapsed).toBe(false);
+  });
+
+  it('keeps no divider when the query matches nothing shipped', async () => {
+    const h = (live = harness({
+      tasks: [task({ id: 'live', title: 'Fix login' }), shipped('done', 'Unrelated', 10)],
+    }));
+    await h.run('tasks.filter', { query: 'login' });
+    const rows = await h.tree().children(undefined);
+    expect(rows.find((row) => row.id === 'group:shipped')).toBeUndefined();
+  });
+
+  it('restores the capped, collapsed rail exactly when the query is cleared', async () => {
+    /*
+     * The field clears itself on unmount for this reason: a query nobody can see
+     * leaves the rail filtered, which reads as tasks having vanished.
+     */
+    const many = Array.from({ length: 20 }, (_, i) => shipped(`s${i}`, `Thing ${i}`, 100 + i));
+    const h = (live = harness({ tasks: [...many, task({ id: 'now', title: 'Live one' })] }));
+    const before = (await h.tree().children(undefined)).map((row) => row.id);
+
+    await h.run('tasks.filter', { query: 'thing' });
+    await h.run('tasks.filter', { query: '' });
+
+    expect((await h.tree().children(undefined)).map((row) => row.id)).toEqual(before);
+  });
+
+  it('nudges the tree when the query changes, and not when it does not', async () => {
+    // Each nudge is a full re-read across the port. A repeated query redrawing the
+    // rail is work for a list that cannot have changed.
+    const h = (live = harness({ tasks: [task()] }));
+    let nudges = 0;
+    h.tree().onDidChange?.(() => {
+      nudges += 1;
+    });
+
+    await h.run('tasks.filter', { query: 'a' });
+    expect(nudges).toBe(1);
+    await h.run('tasks.filter', { query: 'a' });
+    expect(nudges).toBe(1);
   });
 });

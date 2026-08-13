@@ -99,6 +99,8 @@ export const TASK_COMMANDS = {
    * it asks its own extension, which asks the shell.
    */
   machines: 'tasks.machines',
+  /** What the rail's search field reports, each time it changes. */
+  filter: 'tasks.filter',
 } as const;
 
 /** The composer's UI module, resolved by the renderer's table (ADR 0033). */
@@ -268,6 +270,13 @@ export const tasksManifest: Manifest = {
        */
       { id: TASK_COMMANDS.presentation },
       { id: TASK_COMMANDS.machines },
+      /*
+       * No `title` either, and for the same reason: this is the sidebar's search
+       * field reporting what is in it. "Tasks: Filter" in the palette would be a
+       * verb whose only sensible argument is whatever you were typing somewhere
+       * else.
+       */
+      { id: TASK_COMMANDS.filter },
     ],
   },
 };

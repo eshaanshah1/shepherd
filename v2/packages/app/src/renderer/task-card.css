@@ -297,16 +297,35 @@
 }
 
 /*
- * Finished work sits a step under live work.
+ * ── shipped: present, and not competing ───────────────────────────────────
  *
- * `textDim` is the ramp's "a resting card's title", and a RESTING task is live —
- * it is one you might pick up. A shipped one is in a drawer under a heading, and
- * at the same value it out-shouted that heading and read as the more important
- * of the two. The mark and the stamp were already at `textGhost`; this is the
- * title catching up with them.
+ * Finished work is a permanent region of the rail now rather than a count behind
+ * a chevron, so the recession is what makes that affordable: a dozen shipped
+ * tasks should read as one quiet block you can scan when you want it, and as
+ * texture the rest of the time.
+ *
+ * **A step down the ink ramp, never `opacity`.** `textMute`'s own job is written
+ * as "a section label, a secondary row", which is exactly what this is — where an
+ * opacity would have produced a colour that is in no palette and would drift off
+ * it again in light mode. The mark and the stamp are already `textGhost`; this is
+ * the title joining them.
+ *
+ * Keyed on `data-shipped` rather than on `data-mark='shipped'`, because a task
+ * can be shipped while its last run was failing, and that red mark should stay
+ * findable.
  */
-.sh-task-card[data-mark='shipped'] .sh-task-card__title {
+.sh-task-card[data-shipped] .sh-task-card__title {
   color: var(--sh-text-mute);
+}
+
+/*
+ * Selected or hovered, it comes back up to a live row's title. At that point you
+ * are working with it, and the faint version of a thing you are pointing at reads
+ * as disabled.
+ */
+.sh-task-card[data-shipped]:hover .sh-task-card__title,
+.sh-task-card[data-shipped][data-selected] .sh-task-card__title {
+  color: var(--sh-text-dim);
 }
 
 .sh-task-card[data-dense][data-selected] .sh-task-card__title {

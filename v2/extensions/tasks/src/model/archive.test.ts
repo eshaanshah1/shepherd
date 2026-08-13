@@ -49,6 +49,63 @@ describe('planArchive', () => {
     if (out.ok) expect(out.warnings).toEqual([]);
   });
 
+  /**
+   * The warning has to SUMMARIZE, because a dependency tree is not a list
+   * anybody reads.
+   *
+   * Measured in this repo's own worktree: 42,643 ignored paths, 42,170 of them
+   * under `node_modules` — a single warning string of roughly 1.7 MB, returned
+   * across the IPC port and written to the log as one line. Shelving happens on
+   * every pane-group close now, so this is not a rare path.
+   */
+  describe('the ignored-files warning', () => {
+    const nodeModules = Array.from({ length: 42_000 }, (_, i) => `node_modules/pkg${i}/index.js`);
+
+    it('names the directory rather than the files inside it', () => {
+      const out = planArchive(state({ ignoredPaths: nodeModules }));
+      expect(out.ok).toBe(true);
+      if (!out.ok) return;
+      expect(out.warnings[0]).toContain('node_modules/');
+      expect(out.warnings[0]).not.toContain('pkg41999');
+    });
+
+    it('stays bounded however many paths it is handed', () => {
+      const out = planArchive(state({ ignoredPaths: nodeModules }));
+      if (out.ok) expect(out.warnings[0]?.length ?? 0).toBeLessThan(1_000);
+    });
+
+    it('still reports the true total', () => {
+      const out = planArchive(state({ ignoredPaths: nodeModules }));
+      if (out.ok) expect(out.warnings[0]).toContain('42000');
+    });
+
+    it('names a handful of loose files individually, since that is readable', () => {
+      const out = planArchive(state({ ignoredPaths: ['.env', 'build/out.o'] }));
+      if (out.ok) {
+        expect(out.warnings[0]).toContain('.env');
+        expect(out.warnings[0]).toContain('build/');
+      }
+    });
+
+    it('groups several directories without listing any of their contents', () => {
+      const out = planArchive(
+        state({
+          ignoredPaths: [
+            ...Array.from({ length: 50 }, (_, i) => `node_modules/a${i}/x.js`),
+            ...Array.from({ length: 50 }, (_, i) => `dist/b${i}.js`),
+            '.env',
+          ],
+        }),
+      );
+      if (out.ok) {
+        expect(out.warnings[0]).toContain('node_modules/');
+        expect(out.warnings[0]).toContain('dist/');
+        expect(out.warnings[0]).toContain('.env');
+        expect(out.warnings[0]).not.toContain('a49');
+      }
+    });
+  });
+
   it('records the HEAD sha SEPARATELY from the branch', () => {
     // The detached-worktree fix: v1 restored to the archive commit because it
     // kept only the branch, and skipped `symbolic-ref` when the branch was empty.

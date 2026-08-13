@@ -88,6 +88,21 @@ export interface CardData {
   readonly question?: CardQuestion;
   /** A failed run's exit code, drawn in mono. */
   readonly exitCode?: number;
+  /**
+   * This task is finished — draw it as one dimmed line.
+   *
+   * One flag rather than each field going quietly absent, because the fields
+   * BELOW are suppressed for a shared reason: they describe live work. A diff is
+   * what a worktree currently holds, a repo chip is somewhere you can go, a suite
+   * result is a run that just happened, and a shipped task's checkouts are a
+   * snapshot in `refs/shepherd/*`. Leaving each one to be undefined on its own
+   * would make "did the service half forget, or is there nothing to say" an
+   * unanswerable question.
+   *
+   * The MARK is not suppressed. "I shipped this while it was red" is exactly what
+   * a permanently-visible region of finished work should be able to tell you.
+   */
+  readonly shipped?: boolean;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -184,5 +199,6 @@ export function readCardData(value: unknown): CardData | null {
     tabs: tabs !== undefined && tabs.length > 0 ? tabs : undefined,
     question: readQuestion(value['question']),
     exitCode: int(value['exitCode']),
+    ...(value['shipped'] === true ? { shipped: true as const } : {}),
   };
 }

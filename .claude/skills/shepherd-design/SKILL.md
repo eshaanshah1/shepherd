@@ -90,9 +90,18 @@ queue, notifications.
 
 Rules: one row height, whatever the row says. Metadata and hover actions share
 one grid cell (`Row` does this for you) so revealing actions never reflows.
-Sections are ordered by **what the user must do**, never alphabetically and never
-by recency. A section that needs the user takes `urgent`, and only one section
-may have it at a time.
+
+**Ordering is the surface's own decision, and the rail no longer routes by
+attention.** It used to open with `Waiting on you` / `In flight` / `Resting` —
+sections as distances from needing you. That is gone: the status mark carries it,
+an active list is a handful of rows, and a heading per state is a thing to scan on
+the way to the rows. The rail is now an append-ordered list of live work with one
+`Shipped` section under it, and **rows never re-order themselves** — a row that
+moves when its state changes is a row whose target moved mid-click. Do not
+reintroduce a blocked-first section; it was considered and declined.
+
+A list whose order genuinely encodes urgency may still say so, but say it in one
+place, and never by moving a row after it has been drawn.
 
 ### A stage tab
 
@@ -196,7 +205,7 @@ shifts because a state changed.
 | waiting on you | solid wool square | **opens** into a card with the question and both answers inline |
 | resting | hollow ring | nothing |
 | failed | solid red square | keeps the resting surface; red lives in the mark and the exit code |
-| shipped | a check | **leaves the list** and becomes a count at the foot |
+| shipped | a check | moves to the `Shipped` region: a dimmed one-line row, kept |
 
 A **square** always means *your move*. A **ring** means nothing is happening. A
 **meter** means something is.
@@ -208,6 +217,17 @@ cannot be read out, searched, or asserted on in a test.
 **A task waiting on you is the only element in the product allowed to change
 size**, and only to put its answer where the question is. Everything else is a
 fixed height or a fixed shape.
+
+**Shipped work is kept, not counted.** It was a count behind a chevron at the foot
+of the rail; it is a permanent region of dimmed rows now, because finished work is
+the record of what you did and a number is not readable. What makes that
+affordable is the recession — one step down the ink ramp (`textMute`, whose job is
+written as "a secondary row"), **never an `opacity`**, which would produce a
+colour in no palette and drift off it again in light mode.
+
+Moving between the two regions is **always a gesture the user makes.** Nothing
+else may ship a task: closing its panes frees its worktrees and leaves the row
+where it is.
 
 ---
 

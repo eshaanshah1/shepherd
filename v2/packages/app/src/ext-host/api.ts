@@ -625,6 +625,7 @@ function createViews(services: ExtHostServices, providers: Map<string, ViewProvi
           type,
           viewKind: 'tree',
           ...(provider.title === undefined ? {} : { title: provider.title }),
+          ...(provider.search === undefined ? {} : { search: provider.search }),
         },
         `view.register ${type}`,
       );

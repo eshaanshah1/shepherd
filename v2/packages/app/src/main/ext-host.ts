@@ -900,6 +900,7 @@ export class ExtensionHost {
           ...(call.key === undefined ? {} : { key: call.key }),
           ...(call.title === undefined ? {} : { title: call.title }),
           ...(call.icon === undefined ? {} : { icon: call.icon }),
+          ...(call.search === undefined ? {} : { search: call.search }),
         });
         this.#log.info(`${record.id} contributed the ${call.viewKind} view "${call.type}"`);
         return wireOk();

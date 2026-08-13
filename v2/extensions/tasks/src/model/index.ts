@@ -9,7 +9,7 @@
 
 export { slugify, uniqueSlug } from './slug.ts';
 export { taskRootId } from './root-id.ts';
-export { ARCHIVE_TTL_MS, expired } from './expiry.ts';
+
 export { repoName } from './repo-name.ts';
 export { expandHome, collapseHome } from './repo-path.ts';
 export { displayMatch, segmentsOf } from './match-display.ts';
@@ -24,3 +24,5 @@ export { resolveBranch } from './branch.ts';
 export type { RepoRefs, BranchPlan } from './branch.ts';
 export { planArchive, planRestore } from './archive.ts';
 export type { WorktreeState, ArchiveRecord, ArchivePlan } from './archive.ts';
+export { SHIPPED_CAP, activeOrder, capShipped, shippedOrder } from './order.ts';
+export type { Ordered } from './order.ts';

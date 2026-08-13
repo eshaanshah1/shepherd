@@ -46,7 +46,9 @@ import { displayState } from './model/lifecycle.ts';
 import { isTaskAgentState, rollUp, tintFor } from './model/agent-rollup.ts';
 import { collectTaskDiff } from './model/diff-collect.ts';
 import type { DiffStats } from './model/diff-stats.ts';
+import { fuzzyFilter } from '@shepherd/sdk';
 import { formatElapsed } from './model/elapsed.ts';
+import { SHIPPED_CAP, activeOrder, capShipped, shippedOrder } from './model/order.ts';
 import { capTabRows } from './model/tab-rows.ts';
 import {
   archiveTabsFrom,
@@ -57,7 +59,7 @@ import {
 import { synthTaskRoot } from './model/root-synth.ts';
 import { planLaunch } from './model/launch.ts';
 import { writePastedImages, type PastedImage } from './images.ts';
-import { ARCHIVE_TTL_MS, expired } from './model/expiry.ts';
+
 import {
   archiveWorktree,
   materializeTaskRoot,
@@ -164,14 +166,30 @@ interface TreeItemOut {
    */
   presents?: { id: string; args?: unknown };
   /**
+   * The one verb worth a button on the row itself, revealed on hover.
+   *
+   * Declared rather than left to a spread, which is how it went unchecked
+   * before: `...(cond ? {} : { primaryAction })` is a spread, and TypeScript
+   * does not excess-property-check those — so the field could carry anything,
+   * including the `icon: 'check'` that named no glyph in the allow-list and drew
+   * three dots on every task row for the life of the feature.
+   */
+  primaryAction?: TreeActionOut;
+  /**
    * The row's context menu. Structural, like everything else here — the SDK's
    * `TreeItemAction` is the contract and this is the shape that satisfies it,
    * so the extension keeps compiling against types it does not import.
    */
-  actions?: readonly (
-    | { id: string; label: string; icon?: string; danger?: boolean; shortcut?: string; args?: unknown }
-    | { separator: true }
-  )[];
+  actions?: readonly (TreeActionOut | { separator: true })[];
+}
+
+interface TreeActionOut {
+  id: string;
+  label: string;
+  icon?: string;
+  danger?: boolean;
+  shortcut?: string;
+  args?: unknown;
 }
 
 const CORRELATE_ATTEMPTS = 10;
@@ -486,6 +504,25 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     const mark = markOf(state);
     const what = busy.get(task.id);
     return mark === 'resting' && what !== undefined && BUILDING_PHASES.has(what) ? 'working' : mark;
+  };
+
+  /**
+   * What shipping this task right now would cost — the question the row hands the
+   * shell to ask (`TreeItem.primaryAction.confirm`).
+   *
+   * It names the CONSEQUENCE rather than asking "are you sure": the reason a
+   * confirm is worth a dialog here is that the panes close and a mid-turn agent
+   * dies with them, and a user who is told that can decide in one read. It also
+   * says the work is recoverable, because the fear a confirm creates is the fear
+   * of losing something — and shipping snapshots every uncommitted line.
+   */
+  const shipConfirm = (task: TaskRecord, state: string): string => {
+    const doing = markOf(state) === 'waiting' ? 'is waiting on an answer' : 'is still working';
+    const agents = task.sessions.length > 1 ? 'its agents' : 'its agent';
+    return (
+      `${task.title} ${doing}. Shipping closes its panes and stops ${agents} mid-turn. ` +
+      'Uncommitted work is snapshotted, so un-shipping brings it all back.'
+    );
   };
 
   /**
@@ -997,21 +1034,30 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
   );
 
   /**
-   * A task's pane group emptying means the task is done.
+   * A task's pane group emptying frees its disk. **It does not ship it.**
    *
-   * That is the user's own reading of the gesture, and it is the right one: you
-   * do not close every window on a piece of work you intend to come back to
-   * this minute. So it archives — the worktrees are snapshotted and removed,
-   * and the row sinks to the bottom of the list rather than sitting among live
-   * work as a draft nobody will read.
+   * This used to invoke `tasks.archive`, which meant closing your last pane on a
+   * piece of work declared that work finished. The two halves are separate now
+   * (`shelve` versus the lifecycle flip) and only the disk half runs here:
+   * shipping is a button, and nothing moves between the rail's two regions
+   * without somebody pressing it.
    *
-   * Archiving rather than deleting is what makes the gesture safe: every
-   * uncommitted line is in the snapshot, and `tasks.restore` puts it back
-   * exactly. A task with nothing in it archives to nothing, which is the
-   * "closing a scratch task disappears it" case with no special path.
+   * Keeping the teardown is not a compromise, it is the measurement. A live
+   * worktree came to **838 MB** on the machine this was written for — 807 MB of
+   * it the dependencies provisioning installs — against 16 KB for every shipped
+   * task combined. Deleting this trigger along with the auto-ship would have made
+   * every task the user opens and drifts away from hold most of a gigabyte
+   * indefinitely, with nothing anywhere reclaiming it.
    *
-   * Only a RUNNING task — an already archived one has no worktrees to snapshot,
-   * and a draft never had a pane to close.
+   * Snapshotting rather than deleting is what makes the gesture safe: every
+   * uncommitted line goes into `refs/shepherd/*`, and clicking the row puts it
+   * back. A task with nothing in it shelves to nothing, with no special path.
+   *
+   * **No lifecycle branch.** A running task stays running and keeps its place in
+   * the active list; a shipped one you had opened to look at stays shipped. Both
+   * simply stop occupying disk. A task already shelved is skipped — there is
+   * nothing left to snapshot, and `archiveWorktree` on an absent directory fails
+   * per repo.
    */
   /**
    * The layout gained, lost or renamed something — go and look again.
@@ -1033,25 +1079,18 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       const group = payload?.group ?? payload?.root;
       if (typeof group !== 'string') return;
       const task = store.list().find((candidate) => taskRootId(candidate.id) === group);
-      if (task === undefined || task.lifecycle !== 'running') return;
+      // A draft never had a pane to close, and a task whose work is already on
+      // the shelf has nothing left to snapshot.
+      if (task === undefined || task.lifecycle === 'draft' || isShelved(task)) return;
 
       ctx.log.info(`task ${task.id}: its pane group closed`);
 
-      void commands
-        .invoke(TASK_COMMANDS.archive, { task: task.id })
-        .then((result) => {
-          // A refusal is the point of the verb: a conflicted worktree cannot be
-          // snapshotted, so the task stays exactly as it is and says why.
-          // Silence here would be work quietly not saved.
-          if (!result.ok) {
-            ctx.log.warn(
-              `task ${task.id}: its panes closed but it could not be archived — ${result.error.message}`,
-            );
-          }
-        })
-        .catch((error: unknown) => {
-          ctx.log.error(`task ${task.id}: archiving on close threw — ${String(error)}`);
-        });
+      // A refusal is the point: a conflicted worktree cannot be snapshotted, so
+      // the task keeps its worktrees and says why. Silence here would be work
+      // quietly not saved.
+      void shelve(task).catch((error: unknown) => {
+        ctx.log.warn(`task ${task.id}: its panes closed but its work could not be shelved — ${String(error)}`);
+      });
     }),
   );
 
@@ -1061,35 +1100,23 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
   );
 
   /**
-   * Archives die after thirty days.
+   * **Shipped work does not expire, and there is no sweep.**
    *
-   * On startup only, which is the whole cadence it needs: an archive's age
-   * changes by the day, and a timer checking a day-scale condition every few
-   * minutes is a timer running for the life of the app to answer a question
-   * that will still be true tomorrow. An app left open for a month sweeps on
-   * its next launch, and nothing is lost by the delay — the snapshot is still
-   * there, which is the failure mode you want from a garbage collector.
+   * There was one: an archived task and its scrollback were deleted seven days
+   * after shipping, on the argument that "a shelf that fills up is one nobody
+   * trusts". That was written when Shipped was a collapsed drawer holding a
+   * weekly recap. It is a permanent region of the rail now, with a search over
+   * it, so it is the record of what you finished — and a region that silently
+   * empties is worse than a long one.
    *
-   * `tasks.delete` does the work, so expiry has no second removal path: the
-   * worktrees, the root and the record go the same way they go by hand, and a
-   * bug fixed in one is fixed in both.
+   * The disk argument does not survive the measurement either: shipping already
+   * removes the worktrees and `rm -rf`s the task root, so a shipped task is a
+   * small record plus its saved screens. Every shipped task on the machine this
+   * was measured on came to **16 KB**, against **838 MB** for a single live
+   * worktree. The sweep was deleting history to free kilobytes.
+   *
+   * `tasks.delete` is still there for work you actually want gone.
    */
-  const sweep = (): void => {
-    const stale = expired(store.list(), ctx.clock.now());
-    for (const id of stale) {
-      void commands.invoke(TASK_COMMANDS.delete, { task: id }).then((result) => {
-        if (result.ok) {
-          ctx.log.info(`expired task ${id} — archived more than ${ARCHIVE_TTL_MS / 86_400_000} days ago`);
-        } else {
-          // Reported, and the record stays: a task that fails to expire is one
-          // whose worktrees somebody may still need, and a silent failure here
-          // is disk that never gets freed and nobody ever hears about.
-          ctx.log.warn(`task ${id} was due to expire and did not — ${result.error.message}`);
-        }
-      });
-    }
-    if (stale.length > 0) changed();
-  };
 
   /**
    * What each task has CHANGED — read from git, cached, never per render.
@@ -1825,18 +1852,37 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
   const taskIssueFreeRepo = (taskId: string, repo: string): boolean =>
     hookIssue.get(`${taskId}:${repo}`) === undefined;
 
+  /**
+   * `spawn: false` — put the worktrees back without inventing an agent.
+   *
+   * The block at the end of `runProvision` starts an orchestrator for a task with
+   * no sessions, which is right when the task is new and wrong when it is coming
+   * back off the shelf: what a returning task wants is its own agents reattached
+   * (`materialize` does that from the stored resume targets), and a fresh one on
+   * the original brief is the same words with none of the transcript. The write
+   * that starts it also sets `lifecycle: 'running'`, which would drag a shipped
+   * task you only wanted to LOOK at back into the active list.
+   */
+  interface ProvisionOptions {
+    readonly images?: readonly PastedImage[];
+    readonly naming?: { settle: (task: TaskRecord) => Promise<TaskRecord> };
+    readonly spawn?: boolean;
+  }
+
   async function provision(
     task: TaskRecord,
     images?: readonly PastedImage[],
     naming?: { settle: (task: TaskRecord) => Promise<TaskRecord> },
+    opts?: ProvisionOptions,
   ): Promise<void> {
-    return whileBusy(task.id, 'provisioning', () => runProvision(task, images, naming));
+    return whileBusy(task.id, 'provisioning', () => runProvision(task, images, naming, opts));
   }
 
   async function runProvision(
     draft: TaskRecord,
     images?: readonly PastedImage[],
     naming?: { settle: (task: TaskRecord) => Promise<TaskRecord> },
+    opts?: ProvisionOptions,
   ): Promise<void> {
     taskIssue.delete(draft.id);
 
@@ -2080,7 +2126,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
      * transcript the archive was taken to preserve.
      */
       const now = store.get(task.id);
-      if (now !== undefined && now.sessions.length === 0) {
+      if (opts?.spawn !== false && now !== undefined && now.sessions.length === 0) {
         try {
           const session = await startSession(now, {
             prompt: orchestratorPrompt(now),
@@ -2100,6 +2146,213 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       }
     });
   }
+
+  /**
+   * Put a task's work on the shelf: snapshot it, close its panes, free its disk.
+   *
+   * **It does not touch the lifecycle, and that separation is the point.** These
+   * two things were one operation, and conflating them meant the only thing that
+   * reclaimed a worktree was also the thing that declared the work finished — so
+   * closing a task's last pane shipped it, which is a decision the app was making
+   * on the user's behalf. Shipping is now a button; this is the disk.
+   *
+   * Worth the size of the number: a live worktree measured **838 MB** on the
+   * machine this was written for, 807 MB of it the dependencies provisioning
+   * installs, against 16 KB for every shipped task combined. Nothing else frees
+   * that, so it has to be able to run without moving the task.
+   *
+   * Refuses rather than half-succeeds. A conflicted worktree cannot be
+   * snapshotted (`git write-tree` fails on an unmerged index), and the panes are
+   * only closed once what is on disk is safe — a refusal that had already closed
+   * them would leave the user with work to resolve and no agent left to do it.
+   */
+  async function shelve(task: TaskRecord): Promise<{ readonly warnings: readonly string[] }> {
+    return whileBusy(task.id, 'archiving', async () => {
+      const root = rootOf(task);
+
+      /**
+       * Capture what would reattach to each agent, BEFORE its pty is gone.
+       *
+       * Without this, materializing a task started a fresh agent on the original
+       * brief — the same words, none of the transcript — because the record held
+       * nothing that could reattach and `provision` treats a task with no
+       * sessions as one that has never run. The value is the kind's and stays
+       * opaque here (D11): asked for through `agents.resumeTarget`, stored, and
+       * handed back unread.
+       *
+       * The PANE is dropped in the same write. It closed with the root, and a
+       * record naming a pane that does not exist is what made the archive trigger
+       * unreliable in the first place.
+       */
+      const sessions = await Promise.all(
+        task.sessions.map(async (session) => {
+          // `ok` says the call succeeded, not that the value has a shape — it
+          // crossed a port and came from an extension this one has never seen.
+          // Read defensively or an agent extension that answers `undefined`
+          // takes the whole shelve down with a TypeError.
+          const answer = await commands.invoke<unknown>(AGENTS_RESUME_TARGET, { sessionId: session.id });
+          const value =
+            answer.ok && typeof answer.value === 'object' && answer.value !== null
+              ? (answer.value as { resumeTarget?: unknown }).resumeTarget
+              : undefined;
+          const target = typeof value === 'string' && value !== '' ? value : null;
+          if (target === null) {
+            // Not a failure: a session that never adopted an agent, or one whose
+            // agent cannot reattach. It stays in the record so the task still
+            // knows it ran, and materializing leaves it alone.
+            ctx.log.info(`task ${task.id}: session ${session.id} has nothing to resume`);
+          }
+          const { pane: _closed, ...rest } = session;
+          return { ...rest, ...(target === null ? {} : { resumeTarget: target }) };
+        }),
+      );
+      let current: TaskRecord = { ...task, sessions };
+      store.put(current);
+
+      const warnings: string[] = [];
+      const archives: RepoArchive[] = [];
+      for (const repo of current.repos) {
+        const out = await archiveWorktree(api.proposed.process, repo.path, `${root}/${repo.name}`);
+        if (!out.ok) {
+          // A refusal is the whole point — a conflicted worktree cannot be
+          // snapshotted, and failing inside git is how v1 found that out.
+          throw new Error(`${repo.name}: ${out.reason}`);
+        }
+        // Recorded, because a snapshot nothing points at is one materializing
+        // cannot find — and an unreferenced pinned commit is worse than no
+        // archive: it looks like the work is safe.
+        archives.push({ repo: repo.name, ...out.record });
+        // Gitignored files go either way; the user hears about it first.
+        for (const warning of out.warnings) warnings.push(`${repo.name}: ${warning}`);
+      }
+
+      /*
+       * The tabs, and what was on each of their screens.
+       *
+       * BEFORE `closeTaskRoot`, which is what kills the ptys — and a mirror dies
+       * with its session. Capturing afterwards would archive N empty screens and
+       * report no fault, because nothing would have failed.
+       *
+       * AFTER the worktree snapshots, so a conflicted repo that refuses above
+       * does not leave a directory of `.term` files behind for a task that still
+       * has its worktrees.
+       */
+      const tabs = await captureTabs(current);
+      current = { ...current, ...(tabs.length === 0 ? {} : { tabs }) };
+      store.put(current);
+
+      // AFTER the snapshots, and that order is the whole of it: a conflicted
+      // worktree refuses above, and a refusal that had already closed the task's
+      // panes would leave the user with the work still on disk and no agent left
+      // to finish resolving it. Shelving is only allowed to touch the screen once
+      // what is on disk is safe.
+      await closeTaskRoot(current);
+
+      /**
+       * The task root goes too — the whole directory, not just the worktrees.
+       *
+       * `archiveWorktree` removes each repo's checkout and leaves everything the
+       * extension GENERATED: the synthesized `CLAUDE.md`, the aggregated
+       * `.claude/` links, the now-empty repo folders. So a shelved task left a
+       * directory you could still `cd` into that described work no longer there,
+       * and the tasks directory grew a folder per task forever.
+       *
+       * Safe because the root is DERIVED and nothing else: every file in it is
+       * either generated from the record (root-synth) or a worktree already
+       * snapshotted into `refs/shepherd/*`. Materializing re-provisions and
+       * re-writes it, which is the same path that built it the first time — one
+       * code path for "make this task real", not two.
+       */
+      rmSync(root, { recursive: true, force: true });
+
+      const latest = store.get(task.id) ?? current;
+      store.put({ ...latest, archives, shelvedAt: ctx.clock.now() });
+      changed();
+      for (const warning of warnings) ctx.log.warn(`task ${task.id}: ${warning}`);
+      return { warnings };
+    });
+  }
+
+  /**
+   * Put a task's work back on disk — the counterpart to `shelve`, and equally
+   * silent about the lifecycle.
+   *
+   * Called for a shipped task you only want to LOOK at, which is why it cannot
+   * flip anything: with Shipped permanently on screen, clicking a row three weeks
+   * old must show you the work without quietly dragging it back into the list you
+   * are working from.
+   *
+   * Optimistic, for the same reason creating a task is: the record is written
+   * first and the git work follows, so this returns before every repo is back and
+   * the tree reports the rest.
+   */
+  async function materialize(task: TaskRecord): Promise<void> {
+    // `spawn: false` is load-bearing twice over — see `ProvisionOptions`.
+    await provision(task, undefined, undefined, { spawn: false });
+    // Re-provisioning gives back the branch and a CLEAN tree, which is not what
+    // was shelved. Replaying the snapshot is a separate step, and omitting it is
+    // what made an earlier build "restore" a task to an empty working tree while
+    // reporting success.
+    for (const archive of task.archives ?? []) {
+      const out = await restoreWorktree(api.proposed.process, `${rootOf(task)}/${archive.repo}`, archive);
+      if (!out.ok) ctx.log.warn(`task ${task.id}: ${archive.repo} work not replayed — ${out.reason}`);
+    }
+    /*
+     * The archives are consumed and `shelvedAt` goes with them: they describe a
+     * snapshot that has now been put back, and keeping them would let a second
+     * materialize overwrite newer work with the old one.
+     */
+    const now = store.get(task.id);
+    if (now !== undefined) {
+      const { shelvedAt: _gone, ...rest } = now;
+      store.put({ ...rest, archives: [] });
+    }
+
+    /**
+     * And put the AGENTS back — reattached, not restarted.
+     *
+     * This is what the shelved resume targets were for. Materializing used to
+     * leave a task with its worktrees and no agent, and clicking it then started
+     * a fresh one on the original brief: the same words with none of the
+     * transcript, which reads as the agent having forgotten everything it did.
+     *
+     * A task shelved WITH its tabs comes back as those tabs, and comes back
+     * QUIET — `rebuildTabs` paints each pane's screen and leaves its agent's
+     * resume line at the prompt, unsubmitted. The loop after it is the older
+     * path, for a record written before tabs existed.
+     *
+     * A session with no target is skipped rather than started fresh: an agent
+     * that cannot be reattached to is one there is nothing to restore, and
+     * re-prompting it is the behaviour being avoided. `tasks.spawn` is right
+     * there when you do want a new one.
+     */
+    const back = store.get(task.id);
+    if ((back?.tabs ?? []).length > 0) {
+      await rebuildTabs(back as TaskRecord);
+      changed();
+      return;
+    }
+    for (const session of back?.sessions ?? []) {
+      if (session.resumeTarget === undefined) continue;
+      try {
+        await resumeSession(store.get(task.id) as TaskRecord, session);
+      } catch (error: unknown) {
+        ctx.log.warn(`task ${task.id}: session ${session.id} not resumed — ${String(error)}`);
+      }
+    }
+    changed();
+  }
+
+  /**
+   * Is this task's work on the shelf rather than on disk?
+   *
+   * `shelvedAt` for anything shelved from now on. The lifecycle clause is for
+   * records written before that field existed, where being archived was the only
+   * way to have no worktrees — new records carry both, so the second half is
+   * history rather than a parallel rule.
+   */
+  const isShelved = (task: TaskRecord): boolean =>
+    task.shelvedAt !== undefined || task.lifecycle === 'archived';
 
   ctx.subscriptions.push(
     commands.register(TASK_COMMANDS.machines, {
@@ -2487,27 +2740,36 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         const root = taskRootId(task.id);
 
         /**
-         * An archived task is brought BACK by looking at it.
+         * A shelved task gets its work put back — and **stays where it is**.
          *
-         * Its worktrees were removed and its uncommitted work snapshotted, so
-         * opening a root at its directory would show an empty shell in a folder
-         * with nothing in it — the app pretending the task is there. Restoring
-         * first is what makes closing a task safe to do casually: the gesture
-         * that ends it is the same one that undoes it.
+         * Its worktrees were snapshotted and removed, so opening a root at its
+         * directory would show an empty shell in a folder with nothing in it: the
+         * app pretending the task is there. So it is materialized first.
+         *
+         * What this deliberately does NOT do is change which region the row is
+         * in. Looking at something used to un-ship it, which was defensible while
+         * Shipped was a collapsed drawer you had to open on purpose. It is a
+         * permanent list of dimmed rows now, and a stray click on work from three
+         * weeks ago would have dragged it back into the active list and
+         * re-provisioned git. Un-shipping is its own button (`tasks.restore`).
+         *
+         * The same path serves an ACTIVE task whose panes were closed — that is
+         * now a thing, because closing them reclaims the worktrees without
+         * shipping anything.
          *
          * Awaited, because the pane opens at the task root and a pane that
          * mounted before the worktrees landed would be a shell in a directory
-         * being rebuilt underneath it. `tasks.restore` provisions optimistically
-         * (the record flips first, the git work follows), so this returns before
-         * every repo is back — the tree reports the rest, which is the same
-         * bargain creating a task already makes.
+         * being rebuilt underneath it. `materialize` still returns before every
+         * repo is back — the tree reports the rest, which is the same bargain
+         * creating a task already makes.
          */
-        if (task.lifecycle === 'archived') {
-          const restored = await commands.invoke(TASK_COMMANDS.restore, { task: task.id });
-          if (!restored.ok) {
-            throw new Error(`could not restore the task: ${restored.error.code}: ${restored.error.message}`);
+        if (isShelved(task)) {
+          try {
+            await materialize(task);
+          } catch (error: unknown) {
+            throw new Error(`could not put the task's work back: ${String(error)}`);
           }
-          ctx.log.info(`task ${task.id}: restored by being revealed`);
+          ctx.log.info(`task ${task.id}: work materialized by being revealed`);
         }
 
         const opened = await commands.invoke<{ created: boolean; pane: string | null }>('layout.openRoot', {
@@ -2601,110 +2863,32 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
   ctx.subscriptions.push(
     commands.register(TASK_COMMANDS.archive, {
       schema: s.object({ task: s.string() }),
+      /**
+       * Ship it: shelve the work, and record that you are done with it.
+       *
+       * Two halves that used to be one function, and the split is what makes the
+       * rail's two regions honest — `shelve` frees the disk and can run on its
+       * own (closing a task's panes does exactly that), while the lifecycle flip
+       * here happens only because somebody pressed the button.
+       */
       handler: async (args) => {
         const found = store.get(args.task);
         if (found === undefined) throw new Error(`no task ${args.task}`);
-        let task: TaskRecord = found;
-        return whileBusy(task.id, 'archiving', async () => {
-        const root = rootOf(task);
-
-        /**
-         * Capture what would reattach to each agent, BEFORE its pty is gone.
-         *
-         * Without this, restoring a task started a fresh agent on the original
-         * brief — the same words, none of the transcript — because the record
-         * held nothing that could reattach and `provision` treats a task with no
-         * sessions as one that has never run. The value is the kind's and stays
-         * opaque here (D11): asked for through `agents.resumeTarget`, stored,
-         * and handed back unread.
-         *
-         * The PANE is dropped in the same write. It closed with the root, and a
-         * record naming a pane that does not exist is what made the archive
-         * trigger unreliable in the first place.
-         */
-        const sessions = await Promise.all(
-          task.sessions.map(async (session) => {
-            // `ok` says the call succeeded, not that the value has a shape —
-            // it crossed a port and came from an extension this one has never
-            // seen. Read defensively or an agent extension that answers
-            // `undefined` takes the whole archive down with a TypeError.
-            const answer = await commands.invoke<unknown>(AGENTS_RESUME_TARGET, { sessionId: session.id });
-            const value = answer.ok && typeof answer.value === 'object' && answer.value !== null
-              ? (answer.value as { resumeTarget?: unknown }).resumeTarget
-              : undefined;
-            const target = typeof value === 'string' && value !== '' ? value : null;
-            if (target === null) {
-              // Not a failure: a session that never adopted an agent, or one
-              // whose agent cannot reattach. It stays in the record so the task
-              // still knows it ran, and restore leaves it alone.
-              ctx.log.info(`task ${task.id}: session ${session.id} has nothing to resume`);
-            }
-            const { pane: _closed, ...rest } = session;
-            return { ...rest, ...(target === null ? {} : { resumeTarget: target }) };
-          }),
-        );
-        task = { ...task, sessions };
-        store.put(task);
-        const warnings: string[] = [];
-        const archives: RepoArchive[] = [];
-        for (const repo of task.repos) {
-          const out = await archiveWorktree(api.proposed.process, repo.path, `${root}/${repo.name}`);
-          if (!out.ok) {
-            // A refusal is the whole point — a conflicted worktree cannot be
-            // snapshotted, and failing inside git is how v1 found that out.
-            throw new Error(`${repo.name}: ${out.reason}`);
-          }
-          // Recorded, because a snapshot nothing points at is one restore cannot
-          // find — and an unreferenced pinned commit is worse than no archive:
-          // it looks like the work is safe.
-          archives.push({ repo: repo.name, ...out.record });
-          // Gitignored files go either way; the user hears about it first.
-          for (const warning of out.warnings) warnings.push(`${repo.name}: ${warning}`);
-        }
         /*
-         * The tabs, and what was on each of their screens.
+         * Its work may ALREADY be on the shelf, and then this is the flip alone.
          *
-         * BEFORE `closeTaskRoot`, which is what kills the ptys — and a mirror
-         * dies with its session. Capturing afterwards would archive N empty
-         * screens and report no fault, because nothing would have failed.
-         *
-         * AFTER the worktree snapshots, so a conflicted repo that refuses above
-         * does not leave a directory of `.term` files behind for a task that is
-         * still live.
+         * The ordinary path for a task you have stopped looking at: closing its
+         * panes shelved it, and you press Ship on that row later. Shelving twice
+         * fails inside git — the worktree directory is gone, so `write-tree` has
+         * nothing to run against and `archiveWorktree` reports "could not write
+         * the archive commit". Found by the smoke, which has real worktrees; no
+         * unit test could have, which is the argument for that smoke existing.
          */
-        const tabs = await captureTabs(task);
-        task = { ...task, ...(tabs.length === 0 ? {} : { tabs }) };
-        store.put(task);
-
-        // AFTER the snapshots, and that order is the whole of it: a conflicted
-        // worktree refuses above, and a refusal that had already closed the
-        // task's panes would leave the user with the work still on disk and no
-        // agent left to finish resolving it. Shelving is only allowed to touch
-        // the screen once what is on disk is safe.
-        await closeTaskRoot(task);
-
-        /**
-         * The task root goes too — the whole directory, not just the worktrees.
-         *
-         * `archiveWorktree` removes each repo's checkout and leaves everything
-         * the extension GENERATED: the synthesized `CLAUDE.md`, the aggregated
-         * `.claude/` links, the now-empty repo folders. So an archived task left
-         * a directory you could still `cd` into that described work no longer
-         * there, and `~/.shepherd/v2-dev/tasks` grew a folder per task forever.
-         *
-         * Safe because the root is DERIVED and nothing else: every file in it is
-         * either generated from the record (root-synth) or a worktree already
-         * snapshotted into `refs/shepherd/*`. Restoring re-provisions and
-         * re-materializes it, which is the same path that built it the first
-         * time — one code path for "make this task real", not two.
-         */
-        rmSync(root, { recursive: true, force: true });
-
-        store.put({ ...task, lifecycle: 'archived', archives, archivedAt: ctx.clock.now() });
+        const warnings = isShelved(found) ? [] : (await shelve(found)).warnings;
+        const latest = store.get(found.id) ?? found;
+        store.put({ ...latest, lifecycle: 'archived', archivedAt: ctx.clock.now() });
         changed();
-        for (const warning of warnings) ctx.log.warn(`task ${task.id}: ${warning}`);
-        return { id: task.id, lifecycle: 'archived', warnings };
-        });
+        return { id: found.id, lifecycle: 'archived', warnings };
       },
     }),
   );
@@ -2712,72 +2896,25 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
   ctx.subscriptions.push(
     commands.register(TASK_COMMANDS.restore, {
       schema: s.object({ task: s.string() }),
+      /**
+       * Un-ship it: put it back in the active list, and put its work back on disk.
+       *
+       * The mirror of `tasks.archive` — a lifecycle flip plus a call to the half
+       * that touches disk. `activatedAt` is what makes the un-shipped task land at
+       * the BOTTOM of the active list: you pulled it back because you are working
+       * on it now, and sorting it by `createdAt` would file three-week-old work
+       * above everything current and shift every row below it.
+       *
+       * Optimistic: the record flips first so the row moves immediately, and the
+       * git work follows behind a `busy` mark.
+       */
       handler: (args) => {
         const task = store.get(args.task);
         if (task === undefined) throw new Error(`no task ${args.task}`);
-        store.put({ ...task, lifecycle: 'running' });
+        store.put({ ...task, lifecycle: 'running', activatedAt: ctx.clock.now() });
         changed();
-        // Re-provisioning is the restore: `worktree add` recreates each repo at
-        // the same path on the same branch, and the root is re-materialized from
-        // what lands. Optimistic, for the same reason creating one is.
-        void whileBusy(task.id, 'restoring', async () => {
-          await provision(store.get(task.id) as TaskRecord);
-          // Re-provisioning gives back the branch and a CLEAN tree, which is not
-          // what was archived. Replaying the snapshot is a separate step, and
-          // omitting it is what made an earlier build "restore" a task to an
-          // empty working tree while reporting success.
-          for (const archive of task.archives ?? []) {
-            const out = await restoreWorktree(api.proposed.process, `${rootOf(task)}/${archive.repo}`, archive);
-            if (!out.ok) ctx.log.warn(`task ${task.id}: ${archive.repo} work not replayed — ${out.reason}`);
-          }
-          // The archives are consumed: they describe a snapshot that has now been
-          // put back, and keeping them would let a second restore overwrite newer
-          // work with the old snapshot.
-          const now = store.get(task.id);
-          if (now !== undefined) store.put({ ...now, archives: [] });
-
-          /**
-           * And put the AGENTS back — reattached, not restarted.
-           *
-           * This is what the archive's captured targets were for. Restoring used
-           * to leave a task with its worktrees and no agent, and clicking it
-           * then started a fresh one on the original brief: the same words with
-           * none of the transcript, which reads as the agent having forgotten
-           * everything it did. `claude --resume` picks the session up where it
-           * stopped.
-           *
-           * A session with no target is skipped rather than started fresh, for
-           * the same reason: an agent that cannot be reattached to is one there
-           * is nothing to restore, and re-prompting it is the behaviour being
-           * fixed. `tasks.spawn` is right there when you do want a new one.
-           */
-          const restored = store.get(task.id);
-
-          /*
-           * A task archived WITH its tabs comes back as those tabs — and comes
-           * back QUIET.
-           *
-           * `rebuildTabs` paints each pane's screen and leaves its agent's
-           * resume line at the prompt, unsubmitted. The loop below is the older
-           * path, for a record written before tabs existed: it opens one pane
-           * per session and runs the line.
-           */
-          if ((restored?.tabs ?? []).length > 0) {
-            await rebuildTabs(restored as TaskRecord);
-            changed();
-            return { task: task.id, restored: true };
-          }
-
-          for (const session of restored?.sessions ?? []) {
-            if (session.resumeTarget === undefined) continue;
-            try {
-              await resumeSession(store.get(task.id) as TaskRecord, session);
-            } catch (error: unknown) {
-              ctx.log.warn(`task ${task.id}: session ${session.id} not resumed — ${String(error)}`);
-            }
-          }
-        }).catch((error: unknown) => {
-          ctx.log.error(`task ${task.id}: restore threw — ${String(error)}`);
+        void whileBusy(task.id, 'restoring', () => materialize(task)).catch((error: unknown) => {
+          ctx.log.error(`task ${task.id}: un-shipping threw — ${String(error)}`);
         });
         return { id: task.id, lifecycle: 'running' };
       },
@@ -2812,6 +2949,30 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * nothing expanded because nobody has expanded anything.
    */
   const tabsExpanded = new Set<string>();
+
+  /**
+   * What is in the sidebar's search box.
+   *
+   * In memory and never stored, like `tabsExpanded` beside it: it is a property of
+   * a list somebody is looking at right now, and after a restart nobody has typed
+   * anything.
+   */
+  let query = '';
+
+  ctx.subscriptions.push(
+    commands.register(TASK_COMMANDS.filter, {
+      // No title — see the manifest. This is a field reporting its contents, not
+      // a verb anybody picks.
+      schema: s.object({ query: s.string() }),
+      handler: (args) => {
+        const next = args.query.trim();
+        if (next === query) return { query };
+        query = next;
+        changed();
+        return { query };
+      },
+    }),
+  );
 
   ctx.subscriptions.push(
     commands.register(TASK_COMMANDS.expandTabs, {
@@ -3015,6 +3176,13 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     views.registerViewType(TASK_VIEWS.tree, {
       kind: 'tree',
       title: 'Tasks',
+      /*
+       * The rail asks for a search field and answers it itself. It has to be this
+       * way round: the shell only ever holds the rows this provider chose to send,
+       * so a page-side filter could not reach a shipped task past `SHIPPED_CAP`,
+       * and `collapsed` is set here, so it could not open a match to its tabs.
+       */
+      search: { command: TASK_COMMANDS.filter, placeholder: 'Search' },
       data: {
         children: (parent) => {
           /*
@@ -3086,6 +3254,17 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
             // a card that also carried it in the trailing cell would say the same
             // word twice on one line.
             elapsed: formatElapsed(task.createdAt, ctx.clock.now()),
+            /*
+             * Shipped rows are DIMMED and one line — the whole reason finished
+             * work can sit permanently in the rail without costing attention.
+             *
+             * Everything below describes live work: a diff is what a worktree
+             * currently holds, a repo chip is somewhere you can go, a suite result
+             * is a run that just happened. None of it is true of a task whose
+             * checkouts are a snapshot, so the flag suppresses all of it rather
+             * than each field going quietly absent for its own reason.
+             */
+            ...(task.lifecycle === 'archived' ? { shipped: true } : {}),
             diff: diffs.get(task.id),
             suite: suites.get(task.id),
             repos: task.repos.map((repo, index) => ({
@@ -3106,7 +3285,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           // The surface that wants the numbers pays for them — see `refreshDiffs`.
           refreshDiffs();
 
-          const all = [...store.list()].sort((a, b) => b.createdAt - a.createdAt);
+          const all = store.list();
           if (all.length === 0) {
             // The empty state is the SHELL's, not a fake row: a list saying
             // "no tasks yet" in the shape of a task is a row you can click.
@@ -3114,60 +3293,50 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           }
 
           /**
-           * **Attention routing is the rail's SHAPE** (§5) — sections ordered by
-           * what you must do.
+           * **Two regions: not shipped, and shipped.** Nothing else.
            *
-           * A state-grouping was removed from here once, on the argument that it
-           * "sorted live tasks into buckets they have no relationship through".
-           * That argument was about *categorising*; this is about ORDER. The
-           * sections are not kinds of task, they are distances from needing you,
-           * and they are read top-down: the thing that is blocked on you is
-           * first because it is the only thing you can act on, and everything
-           * below it is progressively less your problem.
+           * This replaced `Waiting on you` / `In flight` / `Resting`, and the
+           * replacement is a product decision rather than a tidy-up — read that
+           * before restoring them, because this file has flipped on the question
+           * once already and left both sides' comments behind.
            *
-           * The bucket names are the design's and are not negotiable per-state:
-           * a fifth section is a fifth thing to scan, and the whole claim is
-           * that a glance is enough.
+           * Those sections ordered live tasks by *distance from needing you*,
+           * which is the app having an opinion about what matters. The position
+           * taken here is that the status dot already carries that, an active list
+           * is a handful of rows, and scanning a handful of rows for a colour is a
+           * glance. The cost is real and was accepted: a blocked task in a list of
+           * fifteen is row nine with an amber dot, and nothing floats it. Do not
+           * reintroduce a blocked-first exception — a row that moves when its
+           * state changes is exactly what the append order exists to prevent.
+           *
+           * The shipped half is no longer a count behind a chevron either. It is a
+           * region of dimmed rows you can read, search and un-ship from.
            */
-          const live = all.filter((task) => task.lifecycle !== 'archived');
-          const done = all.filter((task) => task.lifecycle === 'archived');
-          const stateOf = (task: TaskRecord): string =>
-            displayState(task.lifecycle, agentStatesOf(task));
-          const waiting = live.filter((task) => markFor(task, stateOf(task)) === 'waiting');
-          const inFlight = live.filter((task) => markFor(task, stateOf(task)) === 'working');
-          /*
-           * **Failed sits in `Resting`**, not in a section of its own.
-           *
-           * A run that failed is not doing anything — which is what `Resting`
-           * means — and its `red` square already says the rest. A `Failed`
-           * heading would split "nothing is happening here" across two places
-           * to look, for a state whose whole signal is one mark.
-           */
-          const resting = live.filter((task) => {
-            const mark = markFor(task, stateOf(task));
-            return mark !== 'waiting' && mark !== 'working';
-          });
-
           /**
-           * A heading, drawn only when it has something under it.
+           * The search, applied to both regions.
            *
-           * An empty section is a heading that says "nothing is waiting on you"
-           * in the shape of a thing you might have to read — and the count would
-           * be `0`, which is the one number a count never needs to show.
+           * Fuzzy over the title AND the repo names, because a task is often
+           * remembered by the repo it was in — `railsapp` finds every task that
+           * touched it. Same `fuzzyFilter` the ⌘K palette uses, so one query
+           * behaves the same way in both places.
+           *
+           * `fuzzyFilter` returns best-match-first, which is the wrong order for
+           * a rail whose whole promise is that rows do not move. So the matches
+           * are collected as a SET and each region keeps its own order — the
+           * filter decides which rows, never where they sit.
            */
-          const section = (id: string, label: string, of: readonly TaskRecord[], loud = false): void => {
-            if (of.length === 0) return;
-            rows.push({
-              id: `group:${id}`,
-              label,
-              description: String(of.length),
-              section: true,
-              // Only the first section's label is at full strength: it is the one
-              // you are meant to read, and the rest are structure.
-              tint: loud ? 'wool' : undefined,
-            });
-            for (const task of of) rows.push(rowFor(task));
-          };
+          const matching =
+            query === ''
+              ? undefined
+              : new Set(
+                  fuzzyFilter(query, all, (task) => `${task.title} ${task.repos.map((r) => r.name).join(' ')}`).map(
+                    (task) => task.id,
+                  ),
+                );
+          const shown = matching === undefined ? all : all.filter((task) => matching.has(task.id));
+
+          const live = activeOrder(shown.filter((task) => task.lifecycle !== 'archived'));
+          const done = shippedOrder(shown.filter((task) => task.lifecycle === 'archived'));
 
           const rows: TreeItemOut[] = [];
           const rowFor = (task: TaskRecord): TreeItemOut => {
@@ -3220,6 +3389,19 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
              * is what put the archiving row in that state for a whole ship.
              */
             const busyNote = busyWhat === undefined ? undefined : `${busyWhat}…`;
+            const shipped = task.lifecycle === 'archived';
+            /*
+             * An ACTIVE task whose work is on the shelf, which is a state that did
+             * not exist before: closing a task's panes reclaims its worktrees now
+             * without shipping it.
+             *
+             * Said in words rather than given a mark of its own. Nothing is
+             * happening to it, which is what the resting dot already means, and a
+             * colour cannot carry "your code is in a snapshot, not a directory".
+             */
+            const shelvedNote = !shipped && isShelved(task) ? 'shelved' : undefined;
+            const mark = markFor(task, state);
+            const liveAgent = !shipped && (mark === 'working' || mark === 'waiting');
             return {
               id: task.id,
               label: step ?? task.title,
@@ -3228,6 +3410,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
                 // that says `idle · archiving…` is answering the same question
                 // twice and disagreeing with itself.
                 busyNote ?? (issue === undefined ? state : `${state} — set hook failed`),
+                ...(shelvedNote === undefined ? [] : [shelvedNote]),
                 ...(repoNote === undefined ? [] : [repoNote]),
               ].join(' · '),
               // The word the shell resolves. `isTaskAgentState` rather than a
@@ -3244,7 +3427,19 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
                * after the window has just moved there.
                */
               root: taskRootId(task.id),
-              collapsed: true,
+              /*
+               * A shipped row has no chevron, because it has nothing to open. Its
+               * tabs were captured into the record and closed when it was shelved,
+               * so a disclosure triangle there would expand to an empty list —
+               * `capTabRows` reads the LIVE tabs, and a shipped task has none.
+               *
+               * A row that MATCHES a search is drawn open, so a hit on a multi-repo
+               * task shows the tabs and you can go straight to the right pane
+               * rather than clicking the row to find out what is in it. This is the
+               * one place the query touches the row's shape, and it is the reason
+               * the query has to live in the extension: `collapsed` is ours.
+               */
+              ...(shipped ? {} : { collapsed: matching === undefined }),
               /*
                * The row draws itself as a CARD (ADR 0033's seam, one level
                * down). `label`, `tint` and `command` above stay honest and stay
@@ -3271,10 +3466,12 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
                * step is the LABEL now, so nothing here needs to say it.
                */
               ...(busy.has(task.id) ? { busy: true } : {}),
-              // Clicking a task takes you to it — and for an archived one that
-              // means bringing it BACK: `tasks.reveal` restores the worktrees
-              // first (see its handler). One gesture, whatever state the task
-              // is in, because "show me this task" is one intention.
+              /*
+               * Clicking a task takes you to it, whatever region its row is in.
+               * For one whose work is on the shelf that means putting the
+               * worktrees back first (see `tasks.reveal`) — and NOT moving the
+               * row: looking at shipped work must not un-ship it.
+               */
               command: { id: TASK_COMMANDS.reveal, args: { task: task.id } },
               /*
                * And the read-only way to ask the same question, for a client whose
@@ -3289,29 +3486,48 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
                */
               presents: { id: TASK_COMMANDS.presentation, args: { task: task.id } },
               /*
-               * The ONE verb worth a button: finishing with a task is the
-               * gesture you make most, and it was two clicks into a context
-               * menu nobody discovers by looking.
+               * The ONE verb worth a button, and each region gets its own: ship
+               * the thing you are finished with, un-ship the thing you are not
+               * after all. Both were buried in a context menu nobody discovers by
+               * looking, and shipping is the gesture made most.
                *
-               * Nothing on an archived task — the verb that is available is the
-               * one that changes its state, which is the rule `actions` below
-               * already follows. Offering "Mark done" on something already done
-               * is an item that either fails or does nothing.
+               * The pair is deliberately symmetrical — same slot, same hover, one
+               * click each — because they undo one another and an undo that is
+               * harder to reach than the action reads as a one-way door.
                */
-              ...(task.lifecycle === 'archived'
-                ? {}
+              primaryAction: shipped
+                ? {
+                    id: TASK_COMMANDS.restore,
+                    label: 'Unship',
+                    icon: 'unship',
+                    args: { task: task.id },
+                  }
                 : {
-                    primaryAction: {
-                      id: TASK_COMMANDS.archive,
-                      label: 'Mark done',
-                      icon: 'check',
-                      args: { task: task.id },
-                    },
-                  }),
+                    id: TASK_COMMANDS.archive,
+                    label: 'Ship',
+                    icon: 'ship',
+                    args: { task: task.id },
+                    /*
+                     * Instant when nothing is running, and a question when
+                     * something is.
+                     *
+                     * Shipping closes the task's panes, which kills a mid-turn
+                     * agent — so the one case worth interrupting is the one where
+                     * a misclick throws away work in progress. Everything else
+                     * ships on a single click, because this is the gesture made
+                     * most and a confirm on all of it would be a dialog nobody
+                     * reads by the third time.
+                     *
+                     * `waiting` counts as live: an agent sitting on a question is
+                     * one turn from continuing, and shipping it discards the
+                     * answer you were about to give.
+                     */
+                    ...(liveAgent ? { confirm: shipConfirm(task, state) } : {}),
+                  },
               /*
                * The row's right-click menu. Declared HERE because the shell
                * cannot know a task's verbs — a sidebar that hardcoded Reveal /
-               * Archive / Delete would be a sidebar that knows what a task is,
+               * Ship / Delete would be a sidebar that knows what a task is,
                * which is the special case ADR 0031 exists to prevent.
                *
                * Each entry is a command id plus the args naming WHICH task, the
@@ -3319,30 +3535,32 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
                * extension rather than to the user (D14) — so `tasks.delete` from
                * a menu is authorized exactly as `tasks.delete` from the CLI is.
                *
-               * An archived task offers Restore where a live one offers Archive:
-               * the verb that is available is the one that changes its state,
-               * and offering "Archive" on something already archived is an item
-               * that either fails or does nothing.
+               * A shipped task offers Unship where an active one offers Ship: the
+               * verb that is available is the one that changes its state, and
+               * offering "Ship" on something already shipped is an item that
+               * either fails or does nothing.
                */
               actions: [
                 {
                   id: TASK_COMMANDS.reveal,
-                  label: task.lifecycle === 'archived' ? 'Restore' : 'Reveal',
+                  label: 'Reveal',
                   icon: 'eye',
                   args: { task: task.id },
                 },
                 { separator: true },
-                ...(task.lifecycle === 'archived'
-                  ? []
-                  : [
-                      {
-                        id: TASK_COMMANDS.archive,
-                        label: 'Archive',
-                        icon: 'archive',
-                        danger: true,
-                        args: { task: task.id },
-                      },
-                    ]),
+                shipped
+                  ? {
+                      id: TASK_COMMANDS.restore,
+                      label: 'Unship',
+                      icon: 'unship',
+                      args: { task: task.id },
+                    }
+                  : {
+                      id: TASK_COMMANDS.archive,
+                      label: 'Ship',
+                      icon: 'ship',
+                      args: { task: task.id },
+                    },
                 {
                   id: TASK_COMMANDS.delete,
                   label: 'Delete',
@@ -3354,49 +3572,65 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
             };
           };
 
-          section('waiting', 'Waiting on you', waiting, true);
-          section('flight', 'In flight', inFlight);
-          section('resting', 'Resting', resting);
+          // The active list, appended to and never re-ordered — and with NO
+          // heading. The Shipped divider below is the rail's only structure, and
+          // a second heading over "everything else" would name the obvious.
+          for (const task of live) rows.push(rowFor(task));
 
           /*
-           * **Shipped is ONE ROW pinned to the foot, not a section.**
+           * **Shipped is a region, drawn only when there is something in it.**
            *
-           * §1: "a Shipped this week footer row pinned to the bottom with
-           * `margin-top: auto`". Finished work LEAVES the list and becomes a
-           * count — drawing it as a heading with fourteen task rows under it
-           * puts the work you are done with back in the list you are reading,
-           * which is the one thing closing a task was supposed to stop.
+           * It was one row pinned to the window bottom with `foot: true`, holding
+           * a count and a drawer. Two things changed: finished work is worth
+           * seeing (dimmed, so it costs no attention), and the block now FLOWS
+           * after the active list rather than being nailed to the bottom — with
+           * three tasks, a pinned foot left a window-height gap above it.
            *
-           * The count is the content, so the row is drawn even at zero: a rail
-           * whose foot appears and disappears as the week turns over is a rail
-           * that moves under the cursor for no reason the reader can see.
+           * `foot` itself is untouched and still supported by the dock. It is a
+           * general `TreeItem` capability that tasks merely happened to be the
+           * only user of, and removing a shell mechanism to change one
+           * extension's layout is the wrong direction of blast radius.
+           *
+           * Drawn only when non-empty, which reverses the old rule that it be
+           * drawn at zero. That rule existed so the pinned foot would not appear
+           * and disappear under the cursor; a divider that flows after the list
+           * has nothing to hold still, and `Shipped 0` is a heading over nothing.
            */
-          const shippedOpen = tabsExpanded.has(SHIPPED_KEY);
-          rows.push({
-            id: SHIPPED_KEY,
-            label: 'Shipped this week',
-            description: String(done.length),
-            tint: 'done',
+          if (done.length > 0) {
             /*
-             * The one row that asks to sit at the physical bottom — and it has to
-             * ASK. The dock used to pin everything after the last heading, and
-             * this row is not one, so `Resting` was the last heading and the live
-             * resting tasks were what got nailed to the foot: `In flight` above a
-             * gap, `Resting` at the bottom of the window, which is the reverse of
-             * the order §5 reads top-down.
+             * **A search is never capped.** Reaching the fortieth shipped task is
+             * exactly what the field is for, so a cap here would turn it into a
+             * dead end — you would type the name of something you shipped and be
+             * told to press "Show all" to find out whether it was there.
              */
-            foot: true,
+            const showingAll = matching !== undefined || tabsExpanded.has(SHIPPED_KEY);
+            const { shown: shippedRows, hidden } = capShipped(done, SHIPPED_CAP, showingAll);
+            rows.push({
+              id: SHIPPED_KEY,
+              label: 'Shipped',
+              // The TRUE total, not the number of rows under it: a count that
+              // agreed with the visible rows would make the hidden ones invisible
+              // in both places at once.
+              description: String(done.length),
+              section: true,
+              tint: 'done',
+            });
+            for (const task of shippedRows) rows.push(rowFor(task));
             /*
-             * Collapsed by default and EXPANDABLE, which is the half a count
-             * alone would lose: finished work leaving the list must not mean
-             * finished work becoming unreachable. Clicking the foot opens it,
-             * and clicking it again closes it — the chevron in the drawing is
-             * this.
+             * The rest, behind one row — and it reuses `expandTabs` rather than
+             * adding a verb, because that command already means "this row is
+             * showing a subset, toggle it" and already holds `SHIPPED_KEY` as one
+             * of its keys.
              */
-            collapsed: !shippedOpen,
-            command: { id: TASK_COMMANDS.expandTabs, args: { task: SHIPPED_KEY } },
-          });
-          if (shippedOpen) for (const task of done) rows.push(rowFor(task));
+            if (matching === undefined && (hidden > 0 || showingAll)) {
+              rows.push({
+                id: `${SHIPPED_KEY}:more`,
+                label: showingAll ? 'Show fewer' : `Show all ${done.length}`,
+                tint: 'done',
+                command: { id: TASK_COMMANDS.expandTabs, args: { task: SHIPPED_KEY } },
+              });
+            }
+          }
 
           return Promise.resolve(rows);
         },
@@ -3408,13 +3642,6 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     }),
   );
 
-  /**
-   * Last, not first: the sweep nudges the tree, and `changed` is defined with
-   * the view it notifies. Calling it up where the function is declared threw
-   * `Cannot access 'changed' before initialization` — caught by its own test,
-   * which is the argument for having written the test.
-   */
-  sweep();
   /*
    * A beat under the demand-driven read, so a rail left open still tracks work
    * an agent is doing while nobody is clicking.

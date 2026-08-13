@@ -7,15 +7,19 @@ import {
   IconChevronRight,
   IconEye,
   IconPlus,
+  IconSearch,
   IconSettings,
   IconTrash,
 } from '@tabler/icons-react';
 import type { IconProps as TablerIconProps } from '@tabler/icons-react';
 import type { TreeItem, TreeItemAction, TreeItemSeparator } from '@shepherd/sdk';
 import {
+  Button,
+  Field,
   Icon,
   IconButton,
   Menu,
+  Modal,
   Row,
   SectionLabel,
   StateMark,
@@ -183,9 +187,28 @@ export function ViewDock({
   }
   const components = docked.filter((view) => view.kind === 'component');
 
+  /*
+   * The search field, and there is at most ONE however many views ask for it.
+   *
+   * It sits above every view rather than inside the one that declared it, because
+   * a field per tree in a sidebar of three trees is three fields — and the thing
+   * being searched for is "that piece of work", not "that row of this list". The
+   * first declaring view wins; a second is ignored rather than drawn, since two
+   * boxes at the top of a rail is the outcome nobody wants.
+   */
+  const searching = docked.find((view) => view.kind === 'tree' && view.search !== undefined);
+
   return (
     <nav className="sh-side" data-testid="view-dock">
       {actions === undefined ? null : <div className="sh-side-head">{actions}</div>}
+      {/*
+        Under the head, not above it. The head is the sky strip carrying the
+        panel's NAME, and a field above that put a control over the thing being
+        named. This is the top of the LIST: last thing before the rows scroll.
+      */}
+      {searching?.search === undefined ? null : (
+        <DockSearch view={searching.type} search={searching.search} bridge={bridge} />
+      )}
       <div className="sh-side-scroll">
         {[...groups].map(([base, contributions]) => (
           <TreeView
@@ -205,6 +228,88 @@ export function ViewDock({
     </nav>
   );
 }
+
+/**
+ * The rail's search field — typed here, answered by the extension.
+ *
+ * Quiet on purpose. The ink ramp writes `textDim` as "a resting card's title" and
+ * says it is NOT for "chrome at rest: a control at rest is `textFaint`, a step
+ * quieter" — so the field sits one step under the rows in both colour and size,
+ * and the rows stay the loudest thing on the surface.
+ *
+ * The shell holds what is in the box and nothing else; **the filtering is the
+ * extension's**, because a page-side filter over the rows it happens to have could
+ * do neither half of what this is for. It could not reach the rows the extension
+ * chose not to send (`tasks` draws the eight most recent shipped tasks, and search
+ * is how you find the fortieth), and it could not open a matching row to its tabs,
+ * because `collapsed` is the provider's to set.
+ *
+ * Debounced, and that is not a nicety: every keystroke is an IPC round-trip that
+ * ends in a tree re-read, and an un-debounced field re-reads the whole rail once
+ * per character.
+ */
+function DockSearch({
+  view,
+  search,
+  bridge,
+}: {
+  readonly view: string;
+  readonly search: { readonly command: string; readonly placeholder?: string };
+  readonly bridge: ViewsApi | null;
+}): React.JSX.Element {
+  const [text, setText] = useState('');
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void bridge?.activate(view, { id: search.command, args: { query: text } });
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [bridge, view, search.command, text]);
+
+  /*
+   * Cleared on unmount, or the extension keeps a query nothing is showing: the
+   * field is gone and the rail stays filtered, which reads as tasks having
+   * vanished.
+   */
+  useEffect(
+    () => () => {
+      void bridge?.activate(view, { id: search.command, args: { query: '' } });
+    },
+    [bridge, view, search.command],
+  );
+
+  return (
+    <div className="sh-side-search">
+      <Icon icon={IconSearch} size="sm" className="sh-side-search__glyph" />
+      <Field
+        variant="bare"
+        size="sm"
+        type="text"
+        value={text}
+        placeholder={search.placeholder ?? 'Search'}
+        aria-label={search.placeholder ?? 'Search'}
+        data-testid="dock-search"
+        onChange={(event) => setText(event.currentTarget.value)}
+        /*
+          Escape clears rather than blurs. A field you cannot empty without
+          selecting its contents is one that leaves the rail filtered.
+        */
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.stopPropagation();
+            setText('');
+          }
+        }}
+      />
+    </div>
+  );
+}
+
+/**
+ * Long enough that a typed word is one round-trip, short enough to feel live.
+ * Each change ends in a full tree re-read across the port.
+ */
+const SEARCH_DEBOUNCE_MS = 120;
 
 /**
  * A contributed tree — P6's kind, drawn by the sidebar itself, and drawn ONCE
@@ -308,6 +413,39 @@ function TreeView({
   const top = footAt === -1 ? shown : shown.slice(0, footAt);
   const bottom = footAt === -1 ? [] : shown.slice(footAt);
 
+  /**
+   * A verb a row asked us to CONFIRM, waiting on an answer.
+   *
+   * The shell owns the asking and nothing else: the question is a string the
+   * extension wrote, because only the extension can tell which invocation is the
+   * risky one — `tasks` marks Ship only when an agent is mid-turn — and only the
+   * shell has a surface to ask on. An extension cannot raise this itself; its
+   * service half runs in a utility process with no DOM.
+   */
+  const [asking, setAsking] = useState<
+    { readonly view: string; readonly label: string; readonly confirm: string; readonly verb: { readonly id: string; readonly args?: unknown } } | null
+  >(null);
+
+  /**
+   * The ONE path from a declared verb to `bridge.activate`.
+   *
+   * A row's click, its hover button and its menu entries all come through here,
+   * so attribution (D14 — to the contributing extension, never to the user) and
+   * the confirm are decided once rather than in three places that must agree.
+   */
+  const runVerb = (
+    viewType: string | undefined,
+    action: { readonly id: string; readonly label?: string; readonly args?: unknown; readonly confirm?: string },
+  ): void => {
+    if (viewType === undefined) return;
+    const verb = { id: action.id, ...(action.args === undefined ? {} : { args: action.args }) };
+    if (action.confirm === undefined) {
+      void bridge?.activate(viewType, verb);
+      return;
+    }
+    setAsking({ view: viewType, label: action.label ?? 'Continue', confirm: action.confirm, verb });
+  };
+
   const renderRow = (entry: { key: string; row: TreeItem }): React.JSX.Element => {
     {
           const { row } = entry;
@@ -361,11 +499,7 @@ function TreeView({
           const runAction = (id: string): void => {
             const chosen = declared.find((entry) => !isSeparator(entry) && entry.id === id);
             if (chosen === undefined || isSeparator(chosen)) return;
-            if (view === undefined) return;
-            void bridge?.activate(view.type, {
-              id: chosen.id,
-              ...(chosen.args === undefined ? {} : { args: chosen.args }),
-            });
+            runVerb(view?.type, chosen);
           };
 
           const isSelected =
@@ -495,9 +629,9 @@ function TreeView({
                   /*
                     The row's ONE hover verb, in the slot `Row` has always had
                     for it. `stopPropagation` because this control sits INSIDE a
-                    row that is itself a button: without it, marking a task done
+                    row that is itself a button: without it, shipping a task
                     would also reveal it, and the window would move to a task on
-                    its way to the DONE section.
+                    its way out of the active list.
                   */
                   row.primaryAction === undefined ? undefined : (
                     <IconButton
@@ -508,11 +642,8 @@ function TreeView({
                       data-testid="row-primary-action"
                       onClick={(event) => {
                         event.stopPropagation();
-                        if (view === undefined || row.primaryAction === undefined) return;
-                        void bridge?.activate(view.type, {
-                          id: row.primaryAction.id,
-                          ...(row.primaryAction.args === undefined ? {} : { args: row.primaryAction.args }),
-                        });
+                        if (row.primaryAction === undefined) return;
+                        runVerb(view?.type, row.primaryAction);
                       }}
                     />
                   )
@@ -620,6 +751,42 @@ function TreeView({
           <ul className="sh-rows sh-rows-foot-scroll">{bottom.slice(1).map(renderRow)}</ul>
         </div>
       )}
+      {/*
+        The confirm a row asked for. Mounted always and open only when asked, the
+        same shape the palette uses — `Modal` renders nothing while closed.
+
+        The shell writes the buttons and the extension writes the question, which
+        is the whole division: "Ship" is a word only `tasks` knows, and "is the
+        user sure" is a surface only the shell has.
+      */}
+      <Modal
+        open={asking !== null}
+        onOpenChange={(open) => {
+          if (!open) setAsking(null);
+        }}
+        title={asking?.label ?? ''}
+      >
+        <p className="sh-side-confirm__question">{asking?.confirm}</p>
+        <div className="sh-side-confirm__buttons">
+          {/*
+            Cancel first in the DOM so it takes initial focus: the dialog only
+            exists because the verb behind it is one you might not have meant.
+          */}
+          <Button variant="ghost" onClick={() => setAsking(null)}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            onClick={() => {
+              if (asking === null) return;
+              void bridge?.activate(asking.view, asking.verb);
+              setAsking(null);
+            }}
+          >
+            {asking?.label ?? 'Continue'}
+          </Button>
+        </div>
+      </Modal>
     </section>
   );
 }

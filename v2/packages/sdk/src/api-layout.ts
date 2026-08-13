@@ -120,7 +120,27 @@ export type ViewRef =
  * `src/` and `ui/` with a lint boundary between them.
  */
 export type ViewProvider =
-  | { readonly kind: 'tree'; readonly data: TreeDataProvider; readonly title?: string }
+  | {
+      readonly kind: 'tree';
+      readonly data: TreeDataProvider;
+      readonly title?: string;
+      /**
+       * A search field above the rows, which the extension answers.
+       *
+       * `TreeDataProvider` is `children(parent)` and nothing else, so a query has
+       * nowhere to live unless somebody owns it — and it has to be the extension.
+       * Only the extension knows the rows it did NOT send (`tasks` caps the
+       * shipped list, and search is how you reach past the cap), and only the
+       * extension sets `collapsed` (a match is drawn expanded so you can jump
+       * straight to the right tab). A shell-side filter over the rows it happens
+       * to hold could do neither.
+       *
+       * So the shell draws the field, sends each change to `command` as
+       * `{ query }`, and redraws when the provider fires `onDidChange` — the same
+       * mechanism a row's click already uses to toggle extension state.
+       */
+      readonly search?: { readonly command: string; readonly placeholder?: string };
+    }
   | {
       readonly kind: 'component';
       readonly component: string;
@@ -430,6 +450,24 @@ export interface TreeItem {
     /** A glyph NAME, resolved by the renderer against its own set. Never an SVG. */
     readonly icon?: string;
     readonly args?: unknown;
+    /**
+     * Ask this first. Absent means run immediately.
+     *
+     * The extension writes the QUESTION and the shell asks it, for the same
+     * reason a row's verbs are declared rather than known (ADR 0031): only the
+     * extension can tell whether this particular invocation is the risky one, and
+     * only the shell has a surface to ask on. An extension cannot raise a dialog
+     * itself — its service half runs in a utility process with no DOM.
+     *
+     * A STRING rather than a boolean, because "are you sure?" is not worth
+     * interrupting anybody for. What makes a confirm useful is naming the
+     * consequence, and only the caller knows it.
+     *
+     * Conditional by nature: the same button on two rows may carry it on one and
+     * not the other. `tasks` sets it on Ship only when an agent is mid-turn,
+     * because that is when shipping kills something that was working.
+     */
+    readonly confirm?: string;
   };
 }
 
@@ -505,6 +543,8 @@ export interface TreeItemAction {
   readonly shortcut?: string;
   readonly disabled?: boolean;
   readonly args?: unknown;
+  /** Ask this first — see `TreeItem.primaryAction.confirm`. */
+  readonly confirm?: string;
 }
 
 /** A rule between two groups of actions. */
