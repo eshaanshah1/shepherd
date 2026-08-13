@@ -17,6 +17,7 @@ import type {
   SessionError,
   SessionExit,
   SessionInfo,
+  SessionObserved,
   SessionResize,
   SessionSpec,
 } from '@shepherd/core';
@@ -138,6 +139,16 @@ class FakeHost implements SessionHostLike {
   }
   emitResize(r: SessionResize) {
     for (const listener of this.#resizeListeners) listener(r);
+  }
+  #observedListeners = new Set<(o: SessionObserved) => void>();
+  onObserved(listener: (o: SessionObserved) => void) {
+    this.#observedListeners.add(listener);
+    return toDisposable(() => {
+      this.#observedListeners.delete(listener);
+    });
+  }
+  emitObserved(o: SessionObserved) {
+    for (const listener of this.#observedListeners) listener(o);
   }
 
   // -- test drivers
