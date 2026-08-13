@@ -675,6 +675,27 @@ body.sh-dragging {
 .sh-side-view + .sh-side-view {
   box-shadow: inset 0 var(--sh-hairline) 0 var(--sh-line);
 }
+
+/*
+ * ── the confirm a row asked for ───────────────────────────────────────────
+ *
+ * The shell draws the dialog; the extension wrote the sentence in it. Buttons
+ * are trailing and Cancel comes FIRST in the DOM so it takes initial focus —
+ * this dialog exists precisely because the verb behind it is one you might not
+ * have meant.
+ */
+.sh-side-confirm__question {
+  margin: 0 0 var(--sh-space-lg);
+  color: var(--sh-text);
+  font-size: var(--sh-font-size-body);
+  line-height: var(--sh-line-height);
+}
+
+.sh-side-confirm__buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sh-space-sm);
+}
 .sh-rows {
   list-style: none;
   margin: 0;
@@ -859,6 +880,74 @@ body.sh-dragging {
  */
 .sh-side-head {
   flex: none;
+}
+
+/*
+ * ── the search, at the very top of the rail ───────────────────────────────
+ *
+ * Above every view rather than inside the one that declared it: what you are
+ * looking for is a piece of work, not a row of one particular list, and a field
+ * per tree would be three fields in a sidebar of three trees.
+ *
+ * The glyph sits in the same box as the input rather than beside it, so the text
+ * starts where the glyph ends and the field reads as one control. `flex: none`
+ * for the reason the head has it — the scroller below is what grows.
+ */
+/*
+ * ── the search: at the top of the LIST, and deliberately quiet ─────────────
+ *
+ * Under the head rather than over it — the head is the sky strip carrying the
+ * panel's name, and a control above that sits over the thing being named.
+ *
+ * **A step under the rows, not over them.** This was built louder than the list
+ * once, and that put a search box at the top of a surface whose job is showing
+ * what your agents are doing. The ink ramp already legislates the fix: `textDim`
+ * is "a resting card's title" and says in as many words that it is NOT for
+ * "chrome at rest — a control at rest is `textFaint`, a step quieter".
+ *
+ * No rule under it. A hairline made the field a band of its own, which is a second
+ * horizontal line competing with the `Shipped` divider — the one divider in the
+ * rail that carries meaning.
+ *
+ * **The inset is the sum of two, and that is why it looked wrong.** A row's mark
+ * sits at `space-lg + space-md`: the scroller pays the first (a card needs a gutter
+ * or its rounded corners have nothing to round against) and the card pays the
+ * second. This field is not inside the scroller, so charging it only `space-md`
+ * put its glyph a full 12px left of every mark below it. Written as the sum rather
+ * than as a single larger step so it stays true if either half moves.
+ */
+.sh-side-search {
+  flex: none;
+  display: flex;
+  align-items: center;
+  /* The card's own mark-to-title gap, so the placeholder lands in the titles'
+     column too. */
+  gap: var(--sh-space-md);
+  padding: var(--sh-space-md) calc(var(--sh-space-lg) + var(--sh-space-md));
+  color: var(--sh-text-faint);
+}
+
+.sh-side-search__glyph {
+  flex: none;
+}
+
+/*
+ * `medium` — the scale's own "a control's label", which is what this is. A step
+ * under the rows' `body`, so the type says the same thing the colour does.
+ */
+.sh-side-search input {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  font-size: var(--sh-font-size-medium);
+  color: var(--sh-text-dim);
+}
+
+/*
+ * The placeholder is quieter still: it is a hint about an empty control, and once
+ * you type, what you typed is the thing to read.
+ */
+.sh-side-search input::placeholder {
+  color: var(--sh-text-faint);
 }
 
 .sh-side-title {

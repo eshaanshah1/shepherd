@@ -252,6 +252,13 @@ const apiCallSchema = s.union(
     title: s.optional(s.string()),
     /** The glyph on the control that raises an overlay. A NAME, resolved in the renderer. */
     icon: s.optional(s.string()),
+    /**
+     * This tree wants a search field, and the verb that receives each query.
+     *
+     * Trees only. The query is answered by the extension rather than filtered in
+     * the page — see `ViewProvider`'s `search` for why it has to be.
+     */
+    search: s.optional(s.stored({ command: s.string(), placeholder: s.optional(s.string()) })),
   }),
   s.object({ kind: s.literal('view.unregister'), type: s.string() }),
   s.object({ kind: s.literal('view.changed'), type: s.string() }),

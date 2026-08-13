@@ -62,10 +62,45 @@ export function planArchive(state: WorktreeState): ArchivePlan {
       ? []
       : [
           `${state.ignoredPaths.length} ignored file(s) will be DELETED and are not in the archive: ` +
-            `${state.ignoredPaths.join(', ')}. Git-ignored files are not captured by the snapshot.`,
+            `${summarizePaths(state.ignoredPaths)}. Git-ignored files are not captured by the snapshot.`,
         ];
 
   return { ok: true, record: { branch: state.branch, headSha: state.headSha }, warnings };
+}
+
+/** How many top-level entries the summary names before it stops. */
+const SUMMARY_LIMIT = 12;
+
+/**
+ * Ignored paths as something a person can read: the directories, not their
+ * contents.
+ *
+ * Joining the paths themselves is what this replaces, and the number is the
+ * argument — measured in this repo's worktree, `ls-files --others --ignored`
+ * returns 42,643 paths, 42,170 of them under `node_modules`, so the old message
+ * was ~1.7 MB of text in one string. It crossed the IPC port as an archive
+ * result and went to the log as a single line, and it told the reader nothing
+ * they could act on: what matters about a dependency tree is that it goes and
+ * has to be reinstalled, not which 42,000 files were in it.
+ *
+ * A file at the root keeps its own name — `.env` is exactly the case this
+ * warning exists for, and collapsing it to `.env` would be the same string
+ * anyway.
+ */
+function summarizePaths(paths: readonly string[]): string {
+  const tops: string[] = [];
+  for (const path of paths) {
+    const cut = path.indexOf('/');
+    const top = cut === -1 ? path : `${path.slice(0, cut)}/`;
+    if (!tops.includes(top)) tops.push(top);
+    // Everything past the limit is already covered by the count in the message,
+    // and the walk stops rather than building a list to throw away.
+    if (tops.length > SUMMARY_LIMIT) break;
+  }
+  if (tops.length > SUMMARY_LIMIT) {
+    return `${tops.slice(0, SUMMARY_LIMIT).join(', ')} and more`;
+  }
+  return tops.join(', ');
 }
 
 /**

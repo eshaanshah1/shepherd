@@ -1,5 +1,7 @@
 import {
   IconArchive,
+  IconArrowBackUp,
+  IconCheck,
   IconChevronDown,
   IconDots,
   IconEye,
@@ -10,6 +12,7 @@ import {
   IconMaximize,
   IconPlus,
   IconSearch,
+  IconShip,
   IconTrash,
   IconX,
 } from '@tabler/icons-react';
@@ -38,6 +41,7 @@ import type { IconProps as TablerIconProps } from '@tabler/icons-react';
  */
 export const NAMED_GLYPHS: Readonly<Record<string, ComponentType<TablerIconProps>>> = {
   archive: IconArchive,
+  check: IconCheck,
   chevron: IconChevronDown,
   close: IconX,
   dots: IconDots,
@@ -51,6 +55,14 @@ export const NAMED_GLYPHS: Readonly<Record<string, ComponentType<TablerIconProps
   folder: IconFolder,
   'folder-filled': IconFolderFilled,
   plus: IconPlus,
+  /*
+   * Finishing with a task, and taking it back — the rail's two most-made
+   * gestures, and the pair has to read as one axis. An undo arrow rather than a
+   * second ship glyph for the reverse: un-shipping is not a kind of shipping,
+   * it is the withdrawal of a decision.
+   */
+  ship: IconShip,
+  unship: IconArrowBackUp,
   trash: IconTrash,
   search: IconSearch,
   'split-right': IconLayoutColumns,

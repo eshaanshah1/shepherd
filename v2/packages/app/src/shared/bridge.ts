@@ -169,6 +169,13 @@ export interface ViewContributionDTO {
   /** The glyph on the control that raises an overlay. Defaults to `plus`. */
   readonly icon?: string;
   /**
+   * This tree wants a search field, and this is the verb that receives the query.
+   *
+   * Carried as data like everything else here — see `ViewProvider`'s `search` for
+   * why the extension rather than the page owns the filtering.
+   */
+  readonly search?: { readonly command: string; readonly placeholder?: string };
+  /**
    * Whose view this is, when it is not this Mac's.
    *
    * Present only for a view read off another member of the net. The page draws

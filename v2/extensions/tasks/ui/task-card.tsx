@@ -75,7 +75,10 @@ export function TaskCard({ item, selected, invoke }: ExtensionRowProps): ReactEl
   // which is the whole point of the name-resolves-or-degrades seam.
   const card: CardData = data ?? { mark: 'resting' };
   const question = card.question;
-  const waiting = card.mark === 'waiting' && question !== undefined;
+  // Never on a shipped card. The ask block is the one thing below that `dense`
+  // does not gate — it is what a card OPENS for — so a stale question on finished
+  // work would draw answer buttons for an agent that is no longer running.
+  const waiting = card.mark === 'waiting' && question !== undefined && card.shipped !== true;
 
   /*
    * **A task is a ROW until it has something to show.**
@@ -98,16 +101,29 @@ export function TaskCard({ item, selected, invoke }: ExtensionRowProps): ReactEl
    * is tall is a rail you scroll to find the one thing that is not. The mark
    * already says it is working, in the same 12px slot a resting one uses.
    */
+  /*
+   * A SHIPPED task is always a row, and it wins over all three earners above.
+   *
+   * Each of those earns height for something a finished task does not have: there
+   * is no question to answer, no run to return to from a failure, and no live tabs
+   * for a mark strip to describe. It is also the reason the whole Shipped region
+   * can live permanently in the rail — a dozen finished tasks are a dozen dimmed
+   * lines, where a dozen cards would be the rail.
+   */
   const dense =
-    !waiting &&
-    card.mark !== 'failed' &&
-    (card.tabs === undefined || card.tabs.length < 2);
+    card.shipped === true ||
+    (!waiting && card.mark !== 'failed' && (card.tabs === undefined || card.tabs.length < 2));
 
   return (
     <div
       className="sh-task-card"
       data-mark={card.mark}
       data-dense={dense ? 'true' : undefined}
+      /*
+        Dimming is the stylesheet's, not a colour chosen here: the card paints in
+        role tokens and "finished work recedes" is a statement about emphasis.
+      */
+      data-shipped={card.shipped === true ? 'true' : undefined}
       data-selected={selected ? 'true' : undefined}
       data-open={waiting ? 'true' : undefined}
     >

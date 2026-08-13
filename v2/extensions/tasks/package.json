@@ -101,6 +101,9 @@
         },
         {
           "id": "tasks.machines"
+        },
+        {
+          "id": "tasks.filter"
         }
       ]
     }

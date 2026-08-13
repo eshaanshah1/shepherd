@@ -351,7 +351,7 @@ describe('a contributed row-s actions', () => {
       {
         id: 't1',
         label: 'One',
-        primaryAction: { id: 'tasks.archive', label: 'Mark done', icon: 'check', args: { task: 't1' } },
+        primaryAction: { id: 'tasks.archive', label: 'Ship', icon: 'ship', args: { task: 't1' } },
       },
       { id: 't2', label: 'Two' },
     ];
@@ -359,7 +359,7 @@ describe('a contributed row-s actions', () => {
     await settle();
     const buttons = all(view.container, 'row-primary-action');
     expect(buttons).toHaveLength(1);
-    expect(buttons[0]?.getAttribute('aria-label')).toBe('Mark done');
+    expect(buttons[0]?.getAttribute('aria-label')).toBe('Ship');
     view.unmount();
   });
 
@@ -372,7 +372,7 @@ describe('a contributed row-s actions', () => {
         id: 't1',
         label: 'One',
         command: { id: 'tasks.reveal', args: { task: 't1' } },
-        primaryAction: { id: 'tasks.archive', label: 'Mark done', args: { task: 't1' } },
+        primaryAction: { id: 'tasks.archive', label: 'Ship', args: { task: 't1' } },
       },
     ];
     const view = mount(<ViewDock views={bridge(TREE, calls, rows)} />);
@@ -383,6 +383,94 @@ describe('a contributed row-s actions', () => {
       { via: 'activate', type: 'tasks.tree', command: 'tasks.archive', args: { task: 't1' } },
     ]);
     view.unmount();
+  });
+
+  /**
+   * A verb a row asked us to CONFIRM.
+   *
+   * The shell asks and the extension writes the question, which is ADR 0031's
+   * rule arriving at one more door: only the extension can tell whether THIS
+   * invocation is the risky one — `tasks` marks Ship only when an agent is
+   * mid-turn — and only the shell has a surface to ask on.
+   */
+  describe('a verb that asks to be confirmed', () => {
+    const guarded: readonly TreeItem[] = [
+      {
+        id: 't1',
+        label: 'One',
+        command: { id: 'tasks.reveal', args: { task: 't1' } },
+        primaryAction: {
+          id: 'tasks.archive',
+          label: 'Ship',
+          args: { task: 't1' },
+          confirm: 'This stops its agent mid-turn.',
+        },
+      },
+    ];
+
+    it('runs nothing until the question is answered', async () => {
+      const calls: Call[] = [];
+      const view = mount(<ViewDock views={bridge(TREE, calls, guarded)} />);
+      await settle();
+      act(() => one(view.container, 'row-primary-action').click());
+      await settle();
+
+      expect(calls).toEqual([]);
+      expect(document.body.textContent).toContain('This stops its agent mid-turn.');
+      view.unmount();
+    });
+
+    it('runs it once confirmed, attributed exactly as an unguarded verb is', async () => {
+      const calls: Call[] = [];
+      const view = mount(<ViewDock views={bridge(TREE, calls, guarded)} />);
+      await settle();
+      act(() => one(view.container, 'row-primary-action').click());
+      await settle();
+
+      const confirmButton = [...document.querySelectorAll('button')].find(
+        (button) => button.textContent === 'Ship',
+      );
+      act(() => confirmButton?.click());
+      await settle();
+
+      expect(calls).toEqual([
+        { via: 'activate', type: 'tasks.tree', command: 'tasks.archive', args: { task: 't1' } },
+      ]);
+      view.unmount();
+    });
+
+    it('runs nothing when cancelled', async () => {
+      const calls: Call[] = [];
+      const view = mount(<ViewDock views={bridge(TREE, calls, guarded)} />);
+      await settle();
+      act(() => one(view.container, 'row-primary-action').click());
+      await settle();
+
+      const cancel = [...document.querySelectorAll('button')].find(
+        (button) => button.textContent === 'Cancel',
+      );
+      act(() => cancel?.click());
+      await settle();
+
+      expect(calls).toEqual([]);
+      view.unmount();
+    });
+
+    it('asks nothing for a verb that declared no confirm', async () => {
+      // The default has to stay instant: shipping is the gesture made most, and a
+      // dialog on all of it is one nobody reads by the third time.
+      const calls: Call[] = [];
+      const plain: readonly TreeItem[] = [
+        { id: 't1', label: 'One', primaryAction: { id: 'tasks.archive', label: 'Ship', args: { task: 't1' } } },
+      ];
+      const view = mount(<ViewDock views={bridge(TREE, calls, plain)} />);
+      await settle();
+      act(() => one(view.container, 'row-primary-action').click());
+      await settle();
+
+      expect(calls).toHaveLength(1);
+      view.unmount();
+    });
   });
 
   it('keeps a row selected while the window is on ANOTHER TAB of its group', async () => {
@@ -818,5 +906,135 @@ describe('rows arriving', () => {
     // the wholesale swap again, with an animation on top.
     expect(entering(view.container)).toEqual(['b']);
     view.unmount();
+  });
+});
+
+/**
+ * The search field the dock draws — and the half it deliberately does NOT do.
+ *
+ * It holds the text and sends it. It does not filter: the rows it has are the rows
+ * the extension chose to send, so a page-side filter could not reach a shipped task
+ * past `tasks`' cap and could not open a match to its tabs. Those assertions live in
+ * the extension's own suite; these pin the seam.
+ */
+describe('the dock-s search field', () => {
+  const SEARCHABLE: ViewContributionDTO[] = [
+    {
+      extension: 'shepherd.tasks',
+      type: 'tasks.tree',
+      kind: 'tree',
+      search: { command: 'tasks.filter', placeholder: 'Search' },
+    },
+  ];
+  const PLAIN: ViewContributionDTO[] = [
+    { extension: 'shepherd.tasks', type: 'tasks.tree', kind: 'tree' },
+  ];
+
+  /** The debounce, plus a beat. */
+  async function typed(): Promise<void> {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    });
+  }
+
+  /**
+   * Type into a CONTROLLED input.
+   *
+   * Assigning `.value` and firing `input` does not reach React — it tracks the
+   * value itself and sees no change — so the write goes through the prototype's
+   * own setter. Same helper `settings-screen` and `command-palette` already use.
+   */
+  function typeInto(field: HTMLInputElement, text: string): void {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    act(() => {
+      setter?.call(field, text);
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  }
+
+  const fieldOf = (view: { container: HTMLElement }): HTMLInputElement | null =>
+    view.container.querySelector('[data-testid="dock-search"]');
+
+  it('draws a field only for a view that asked for one', async () => {
+    const withField = mount(<ViewDock views={bridge(SEARCHABLE, [], [])} />);
+    await settle();
+    expect(fieldOf(withField)).not.toBeNull();
+    withField.unmount();
+
+    const without = mount(<ViewDock views={bridge(PLAIN, [], [])} />);
+    await settle();
+    expect(fieldOf(without)).toBeNull();
+    without.unmount();
+  });
+
+  it('uses the placeholder the view declared, since the shell has no word for it', async () => {
+    const view = mount(<ViewDock views={bridge(SEARCHABLE, [], [])} />);
+    await settle();
+    expect(fieldOf(view)?.getAttribute('placeholder')).toBe('Search');
+    view.unmount();
+  });
+
+  it('sends what was typed to the declared command, as the extension', async () => {
+    const calls: Call[] = [];
+    const view = mount(<ViewDock views={bridge(SEARCHABLE, calls, [])} />);
+    await settle();
+
+    typeInto(fieldOf(view) as HTMLInputElement, 'login');
+    await typed();
+
+    expect(calls).toContainEqual({
+      via: 'activate',
+      type: 'tasks.tree',
+      command: 'tasks.filter',
+      args: { query: 'login' },
+    });
+    view.unmount();
+  });
+
+  it('debounces, so a typed word is not one re-read per character', async () => {
+    // Every change ends in a full tree re-read across the port.
+    const calls: Call[] = [];
+    const view = mount(<ViewDock views={bridge(SEARCHABLE, calls, [])} />);
+    await settle();
+
+    const field = fieldOf(view) as HTMLInputElement;
+    for (const text of ['l', 'lo', 'log', 'logi', 'login']) typeInto(field, text);
+    await typed();
+
+    const queries = calls.filter((call) => call.command === 'tasks.filter').map((call) => call.args);
+    expect(queries).toContainEqual({ query: 'login' });
+    expect(queries.length).toBeLessThan(5);
+    view.unmount();
+  });
+
+  it('clears on Escape, because a field you cannot empty leaves the rail filtered', async () => {
+    const calls: Call[] = [];
+    const view = mount(<ViewDock views={bridge(SEARCHABLE, calls, [])} />);
+    await settle();
+
+    const field = fieldOf(view) as HTMLInputElement;
+    typeInto(field, 'login');
+    await typed();
+    act(() => {
+      field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    await typed();
+
+    expect(calls.filter((call) => call.command === 'tasks.filter').at(-1)?.args).toEqual({ query: '' });
+    view.unmount();
+  });
+
+  it('clears the query when it goes away, so nothing stays filtered by a field nobody can see', async () => {
+    const calls: Call[] = [];
+    const view = mount(<ViewDock views={bridge(SEARCHABLE, calls, [])} />);
+    await settle();
+
+    typeInto(fieldOf(view) as HTMLInputElement, 'login');
+    await typed();
+    view.unmount();
+    await settle();
+
+    const last = calls.filter((call) => call.command === 'tasks.filter').at(-1);
+    expect(last?.args).toEqual({ query: '' });
   });
 });

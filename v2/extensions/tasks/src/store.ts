@@ -135,13 +135,35 @@ export interface TaskRecord {
    */
   readonly tabs?: readonly ArchivedTab[];
   /**
-   * When it was archived, so it can expire.
+   * When it was shipped.
    *
    * Stored rather than derived from the snapshot commits' dates: a commit's
-   * timestamp is git's and can be anything, and the question here — how long
-   * has this been shelved — is about the app, not about the history.
+   * timestamp is git's and can be anything, and the question here — when did I
+   * finish this — is about the app, not about the history. It orders the Shipped
+   * region; it no longer expires anything.
    */
   readonly archivedAt?: number;
+  /**
+   * When it last entered the active list, which orders that list.
+   *
+   * Written on un-ship and nowhere else, so it is absent on every task that has
+   * never left. Absent means `createdAt`, which is where such a task already
+   * sits — so no stored record needs migrating. It exists because un-shipping
+   * three-week-old work has to append it to the list rather than file it above
+   * everything current by its original date.
+   */
+  readonly activatedAt?: number;
+  /**
+   * When its worktrees were last snapshotted and removed, if they are gone.
+   *
+   * The marker for a task whose work is in `refs/shepherd/*` rather than in a
+   * directory — which an ACTIVE task can now be, because closing its panes
+   * reclaims the disk without shipping it. Cleared when the worktrees come back.
+   *
+   * `archives` is not a substitute: a task with no repos shelves to an empty
+   * `archives` and still needs its generated root re-materialized.
+   */
+  readonly shelvedAt?: number;
 }
 
 const repoSchema = s.stored({ path: s.string(), name: s.string() });
@@ -168,6 +190,8 @@ const taskSchema = s.stored({
   createdAt: s.int(),
   model: s.optional(s.string()),
   archivedAt: s.optional(s.int()),
+  activatedAt: s.optional(s.int()),
+  shelvedAt: s.optional(s.int()),
   archives: s.optional(
     s.array(
       s.stored({
