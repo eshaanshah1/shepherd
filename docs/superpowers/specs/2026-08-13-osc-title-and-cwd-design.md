@@ -30,10 +30,14 @@ Three findings, in the order they matter:
 
 2. **`Pane.title` — the OSC title — is always the empty string, because nothing
    in v2 ever writes it.** `LayoutStore.observe()` (`layout/store.ts:799`) is the
-   only writer of `title` and `cwd`, and it has **zero callers**. The renderer's
-   `TerminalLike` exposes `onData` and `onResize` and nothing else; xterm's
-   `onTitleChange` is never subscribed to, and no OSC 7 handler is registered
-   anywhere.
+   only writer of `title` and `cwd`, and **no production code calls it**. Its one
+   caller is `store.test.ts:361`, which is how `restores cwd and userTitle, but
+   not the live title` passes: the test supplies the fact the app never produces.
+   That is the same shape as the archive-on-close bug this repo records, and it
+   is why the gate for this work is the smoke rather than a unit test. The
+   renderer's `TerminalLike` exposes `onData` and `onResize` and nothing else;
+   xterm's `onTitleChange` is never subscribed to, and no OSC 7 handler is
+   registered anywhere.
 
 3. So every pane falls through to the third step and shows its cwd tail forever.
    Setting `userTitle` to null would change nothing — it is already null.
