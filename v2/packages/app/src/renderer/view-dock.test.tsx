@@ -473,6 +473,27 @@ describe('a contributed row-s actions', () => {
     });
   });
 
+  it('draws NO mark for a row that declares no tint', async () => {
+    /*
+     * A row with no state has none to draw. This defaulted to the resting ring,
+     * which put "nothing is happening here" on things that are not tasks — the
+     * `Show all 27` control under the Shipped divider drew a shipped CHECK, and
+     * the diagnostics demo's `click me` row drew a ring.
+     */
+    const rows: readonly TreeItem[] = [
+      { id: 'control', label: 'Show all 27', command: { id: 'tasks.expandTabs' } },
+      { id: 'task', label: 'A task', tint: 'idle' },
+    ];
+    const view = mount(<ViewDock views={bridge(TREE, [], rows)} />);
+    await settle();
+
+    const drawn = all(view.container, 'view-row').map(
+      (row) => row.querySelector('.sh-ui-mark') !== null,
+    );
+    expect(drawn).toEqual([false, true]);
+    view.unmount();
+  });
+
   it('keeps a row selected while the window is on ANOTHER TAB of its group', async () => {
     // A task's row names its anchor root; its second tab is a different root in
     // the same group. Comparing root ids alone would blank the highlight the
@@ -566,11 +587,17 @@ describe('the dock-s foot group', () => {
   ];
 
   /** A live section, then the declared foot row and the finished tasks under it. */
+  /*
+   * The task rows carry a `tint`, because a real one always does — a row with no
+   * tint declares no state and the shell now draws no mark for it. Without one
+   * here, "an ordinary row still has a mark" below would be asserting against an
+   * under-specified fixture rather than against the treatment.
+   */
   const shipped = (n: number): readonly TreeItem[] => [
     { id: 'group:resting', label: 'Resting', section: true },
-    { id: 'live', label: 'Still going' },
+    { id: 'live', label: 'Still going', tint: 'idle' },
     { id: 'tasks.shipped', label: 'Shipped this week', description: String(n), foot: true },
-    ...Array.from({ length: n }, (_, i) => ({ id: `t${String(i)}`, label: `Task ${String(i)}` })),
+    ...Array.from({ length: n }, (_, i) => ({ id: `t${String(i)}`, label: `Task ${String(i)}`, tint: 'archived' })),
   ];
 
   it('draws a heading that is the first row, rather than dropping it', async () => {

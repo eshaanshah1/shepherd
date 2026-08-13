@@ -2371,6 +2371,11 @@ describe('finished work', () => {
     // The count is the TRUE total, not the number of rows drawn.
     expect(rows.find((row) => row.id === 'group:shipped')?.description).toBe('11');
     expect(rows.find((row) => row.id === 'group:shipped:more')?.label).toBe('Show all 11');
+    /*
+     * And it claims NO state. With a tint the shell drew a shipped check beside
+     * "Show all 11" — a mark asserting the control had finished something.
+     */
+    expect(rows.find((row) => row.id === 'group:shipped:more')?.tint).toBeUndefined();
   });
 
   it('shows every shipped row once asked, and offers the way back', async () => {

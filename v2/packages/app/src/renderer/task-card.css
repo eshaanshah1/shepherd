@@ -304,18 +304,23 @@
  * tasks should read as one quiet block you can scan when you want it, and as
  * texture the rest of the time.
  *
- * **A step down the ink ramp, never `opacity`.** `textMute`'s own job is written
- * as "a section label, a secondary row", which is exactly what this is — where an
- * opacity would have produced a colour that is in no palette and would drift off
- * it again in light mode. The mark and the stamp are already `textGhost`; this is
- * the title joining them.
+ * **Down the ink ramp, never `opacity`.** An opacity would produce a colour in no
+ * palette and drift off it again in light mode.
+ *
+ * `textGhost`, not `textMute`. `textMute` is the semantically obvious choice — its
+ * job is written as "a secondary row" — but on screen one step (`#C4C4C4` →
+ * `#8C8C8C`) reads as slightly grey rather than as recessive, and the whole reason
+ * a permanent Shipped region is affordable is that it costs no attention. `ghost`
+ * is where the age stamps already live, which is the weight that visibly recedes.
+ * A shipped title is a record of what happened, closer to what the machine
+ * produced than to prose you must read.
  *
  * Keyed on `data-shipped` rather than on `data-mark='shipped'`, because a task
  * can be shipped while its last run was failing, and that red mark should stay
  * findable.
  */
 .sh-task-card[data-shipped] .sh-task-card__title {
-  color: var(--sh-text-mute);
+  color: var(--sh-text-ghost);
 }
 
 /*

@@ -3613,7 +3613,6 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
               // in both places at once.
               description: String(done.length),
               section: true,
-              tint: 'done',
             });
             for (const task of shippedRows) rows.push(rowFor(task));
             /*
@@ -3626,7 +3625,14 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
               rows.push({
                 id: `${SHIPPED_KEY}:more`,
                 label: showingAll ? 'Show fewer' : `Show all ${done.length}`,
-                tint: 'done',
+                /*
+                 * **No tint.** This is a control, not a task, and a state mark on
+                 * it drew a shipped CHECK beside "Show all 27" — a claim that the
+                 * control had finished something. With no tint the shell draws no
+                 * mark and the label sits at the section's own inset, which is
+                 * where a "show more" belongs: under the divider it belongs to,
+                 * not in the column of the tasks it reveals.
+                 */
                 command: { id: TASK_COMMANDS.expandTabs, args: { task: SHIPPED_KEY } },
               });
             }
