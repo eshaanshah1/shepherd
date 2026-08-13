@@ -25,7 +25,7 @@ describe('palette', () => {
     expect(palette.well.dark).toBe('#121212');
     expect(palette.raised.dark).toBe('#161616');
     expect(palette.fill.dark).toBe('#1B1B1B');
-    expect(palette.line.dark).toBe('#1C1C1C');
+    expect(palette.line.dark).toBe('#222222');
     expect(palette.lineStrong.dark).toBe('#272727');
     expect(palette.ink.dark).toBe('#EDEDED');
     expect(palette.inkFaint.dark).toBe('#A8A8A8');
@@ -43,7 +43,7 @@ describe('palette', () => {
     expect(palette.pane.light).toBe('#FFFFFF');
     expect(palette.surface.light).toBe('#FAFAFA');
     expect(palette.fill.light).toBe('#E4E4E4');
-    expect(palette.line.light).toBe('#E2E2E2');
+    expect(palette.line.light).toBe('#DCDCDC');
     expect(palette.lineStrong.light).toBe('#D2D2D2');
     expect(palette.inkFaint.light).toBe('#565656');
     expect(palette.inkMute.light).toBe('#6E6E6E');

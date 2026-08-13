@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { paneId, type PaneID } from '@shepherd/sdk';
 import type { ThemeMode } from '@shepherd/design-tokens';
-import { CommandPalette, IconButton, TabStrip, type PaletteCommand } from '@shepherd/ui';
+import { CommandPalette, IconButton, TabStrip, type PaletteCommand, type TabMark } from '@shepherd/ui';
 import {
   LAYOUT_COMMANDS,
   displayTitle,
@@ -140,6 +140,28 @@ function paletteIcon(id: string): string | undefined {
   if (id.includes('splitDown') || id.includes('split-down')) return 'split-down';
   if (id.includes('zoom')) return 'zoom';
   if (id.includes('close')) return 'close';
+  return undefined;
+}
+
+/**
+ * The agent lifecycle → the tab strip's three-word vocabulary, and the only
+ * place the two meet.
+ *
+ * `TabStrip` is a primitive and does not know what a session is, so the
+ * translation lives here rather than in `@shepherd/ui`. Three of the six states
+ * map to nothing, and that is the design: `shell` and `idle` are quiet by
+ * definition, and **`working` is quiet on purpose** — a run in progress is not
+ * news, and a strip that lights up for every busy tab is one you stop reading.
+ * The pane itself already says it is working, in the head you are looking at.
+ *
+ * Priority when a root holds several sessions: your move beats a failure beats
+ * unread output. A tab shows one dot, so it must be the most actionable one —
+ * anything else and a blocked pane hides behind a finished sibling.
+ */
+function tabMark(states: readonly (string | undefined)[]): TabMark | undefined {
+  if (states.includes('blocked')) return 'attention';
+  if (states.includes('error')) return 'failed';
+  if (states.includes('needsCheck')) return 'unread';
   return undefined;
 }
 
@@ -496,6 +518,14 @@ export function App({
     const siblings = snapshots.roots.filter((root) => root.group === active.group);
     if (siblings.length < 2) return [];
     return siblings.map((root) => {
+      /*
+       * What this tab has to say, rolled up over EVERY session in the root — not
+       * the focused pane's, which is the label's rule and the wrong one here. A
+       * tab is a thing you are not looking at; the whole job of the dot is to
+       * report the pane inside it you cannot see, and a split whose second pane
+       * is blocked has something to say whichever half holds the focus.
+       */
+      const mark = tabMark(Object.values(root.sessions).map((session) => agents[session]?.state));
       const pane =
         root.tree === null || root.focusedPaneId === null
           ? null
@@ -513,9 +543,13 @@ export function App({
       // A root with no panes is a real state (its last pane was closed), and it
       // is still a tab you can switch to. It says so — a raw root id is an
       // internal name, and `window-1` on a tab teaches nothing.
-      return { id: root.root, label: pane === null ? 'Empty' : displayTitle(pane) };
+      return {
+        id: root.root,
+        label: pane === null ? 'Empty' : displayTitle(pane),
+        ...(mark === undefined ? {} : { mark }),
+      };
     });
-  }, [snapshots, active]);
+  }, [snapshots, active, agents]);
 
   /**
    * The takeover layer's visibility, which is MAIN's answer rather than this

@@ -94,7 +94,7 @@ export const palette: Readonly<Record<ColorToken, TokenSpec>> = {
   raised: { dark: '#161616', light: '#FFFFFF', job: 'a selected card, a menu' },
   active: { dark: '#1A1A1A', light: '#E8E8E8', job: 'the active tab' },
   fill: { dark: '#1B1B1B', light: '#E4E4E4', job: 'an active row' },
-  line: { dark: '#1C1C1C', light: '#E2E2E2', job: 'every seam' },
+  line: { dark: '#222222', light: '#DCDCDC', job: 'every seam' },
   lineStrong: { dark: '#272727', light: '#D2D2D2', job: 'a well’s edge, a bordered control' },
   lineActive: { dark: '#2A2A2A', light: '#C6C6C6', job: 'the focused pane’s edge; a pending suite cell' },
   edgeSelected: { dark: '#333333', light: '#B6B6B6', job: 'a selected card’s edge' },

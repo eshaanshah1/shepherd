@@ -343,29 +343,33 @@ body.sh-dragging {
   a second pty. Nothing here may set `display`, or it would fight that.
 */
 /*
- * The pane group — §1: `padding: 12px, gap: 12`.
+ * The pane group — §1's `gap: 12`, with NO outer padding.
  *
- * The gutter is what makes a pane read as a CARD sitting on the stage rather
- * than as a region of it, and it is the other half of the border step that
- * replaced opacity dimming: an edge with nothing around it is a seam, and a
- * seam cannot say "this one is focused".
+ * The gutter used to run around the group as well, on the argument that a pane
+ * needs space around it to read as a card. It does not: the card's own border
+ * and radius already say that, and against the window's own edges the gutter was
+ * a strip of stage colour framing the app for nothing — it cost a row of the
+ * grid on every side and made the pane look inset from a window it fills.
  *
- * On the group rather than on each pane, so a split's two panes are separated by
- * one gutter instead of two abutting margins — which is also what makes the
- * divider between them land on the gap rather than beside it.
+ * The gap BETWEEN siblings stays, because that one is load-bearing: it is what
+ * separates two panes with one gutter instead of two abutting borders, and what
+ * makes the divider land on the gap rather than beside it.
  */
 .sh-root {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
-  padding: var(--sh-space-lg);
 }
 
+/*
+ * No gap either. Siblings abut, so the seam between two panes is their own two
+ * borders and nothing else — the divider that rides it draws no ink of its own
+ * (see `.sh-divider`), or the seam would be three hairlines wide.
+ */
 .sh-split-root,
 .sh-split,
 .sh-split-child {
   display: flex;
-  gap: var(--sh-space-lg);
   flex: 1 1 0;
   min-width: 0;
   min-height: 0;
@@ -393,31 +397,42 @@ body.sh-dragging {
   background: var(--sh-pane-title-bg, var(--sh-pane));
   overflow: hidden;
 
-  /* A pane is a card: `r10`, and an edge that says whether it is the focused
-     one. */
-  border-radius: var(--sh-radius-card);
-  border: var(--sh-hairline) solid var(--sh-line);
-  transition: border-color var(--sh-motion) linear;
+  /*
+   * NO BORDER AT ALL — not on the focused pane either.
+   *
+   * With the gutter and the sibling gap gone there was nothing for a card edge
+   * to be an edge against: it drew a frame around the window and a doubled line
+   * between splits. What remained after that was a hairline on the focused pane
+   * alone, and it is gone too — see the note below, which is now a record of
+   * what focus USED to be drawn with rather than what it is.
+   *
+   * So a split currently has no focus signal in the stage. §6 still bans
+   * dimming, so the answer when one is wanted again is not opacity; it is the
+   * pane head, which is already a per-pane surface with the pane's own name in
+   * it and can carry the step without putting a line back between the grids.
+   */
 }
 
 /*
- * **Focus is ONE BORDER STEP, and an unfocused pane is not dimmed.**
+ * **An unfocused pane is not dimmed**, and that half still stands whatever
+ * replaces the border above.
  *
- * This was `opacity: 0.62`, carried from v1. §6 refuses it by name, and the
- * reason is not aesthetic: a dimmed pane is one whose live output you can no
- * longer read. The whole premise of this app is running several agents at once
- * and watching them — and the panes you are NOT focused on are precisely the
- * ones you are watching, because the focused one is the one you are typing in.
- * Dimming them makes the app worse at its own job in exact proportion to how
- * many are open.
+ * Focus was `opacity: 0.62`, carried from v1, before it was a border step. §6
+ * refuses opacity by name, and the reason is not aesthetic: a dimmed pane is one
+ * whose live output you can no longer read. The whole premise of this app is
+ * running several agents at once and watching them — and the panes you are NOT
+ * focused on are precisely the ones you are watching, because the focused one is
+ * the one you are typing in. Dimming them makes the app worse at its own job in
+ * exact proportion to how many are open.
  *
  * Opacity also washed the terminal's own colours, so a `grass` test line in an
  * unfocused pane was a different green from the same line focused — two shades
  * of one token, from a rule that never meant to touch colour at all.
+ *
+ * `data-focused` is still on the element and still correct; nothing in this
+ * stylesheet reads it. That is deliberate rather than dead markup — it is the
+ * hook whatever draws focus next will hang off.
  */
-.sh-pane[data-focused='true'] {
-  border-color: var(--sh-line-active);
-}
 
 /* ------------------------------------------------------- pane chrome surface */
 /*
@@ -564,6 +579,18 @@ body.sh-dragging {
 
 /* ---------------------------------------------------------------- dividers */
 
+/*
+ * The ONLY line left in the stage, and now the whole of the seam.
+ *
+ * A pane draws no border of its own (see `.sh-pane`), so this hairline is not a
+ * third one stacked between two others — it is the single edge between two
+ * siblings, which is the one place a line here is telling you something. Around
+ * the group there is nothing: a frame against the window's own edge says nothing
+ * at all.
+ *
+ * 1px of ink with a 7px grab target around it, and it lights up on hover — the
+ * one moment it is an object rather than a seam.
+ */
 .sh-divider {
   flex: 0 0 auto;
   background: var(--sh-line);

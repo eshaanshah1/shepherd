@@ -11,6 +11,8 @@ import {
 } from '@shepherd/core/layout';
 import {
   COMMANDS,
+  type AgentIndicatorDTO,
+  type AgentsApi,
   type CommandsApi,
   type IpcResult,
   type LayoutApi,
@@ -147,7 +149,27 @@ interface Rendered {
   readonly built: FakeTerminal[];
 }
 
-function render(options: { snapshot?: LayoutSnapshots | null; noTerminals?: boolean } = {}): Rendered {
+/**
+ * A stub `AgentsApi` that answers with a fixed set and never changes it.
+ *
+ * `onChanged` returns a no-op unsubscribe rather than dropping the listener on
+ * the floor: `App` follows first and pulls second, and a subscription that
+ * cannot be torn down leaks a setState into an unmounted tree.
+ */
+function fixedAgents(indicators: readonly AgentIndicatorDTO[]): AgentsApi {
+  return {
+    get: () => Promise.resolve({ ok: true as const, value: indicators }),
+    onChanged: () => () => {},
+  };
+}
+
+function render(
+  options: {
+    snapshot?: LayoutSnapshots | null;
+    noTerminals?: boolean;
+    agents?: AgentsApi;
+  } = {},
+): Rendered {
   const session = new SpySession();
   const built: FakeTerminal[] = [];
   const registry = new PaneSessionRegistry({
@@ -168,6 +190,7 @@ function render(options: { snapshot?: LayoutSnapshots | null; noTerminals?: bool
       terminals={options.noTerminals === true ? null : registry}
       layout={layout.api}
       commands={commands.api}
+      {...(options.agents === undefined ? {} : { agents: options.agents })}
       {...(initial === null ? {} : { initialSnapshot: initial })}
     />,
   );
@@ -901,6 +924,62 @@ describe('the tab strip', () => {
     // at the moment a second tab does, the way Safari's does.
     const { view } = render();
     expect(view.container.querySelector('[data-testid="tab-strip"]')).toBeNull();
+    view.unmount();
+  });
+
+  /**
+   * The same two-tab group, with sessions on the second root's pane so an agent
+   * indicator has somewhere to land.
+   */
+  const tabbedWithSessions = (sessions: Readonly<Record<string, string>>): LayoutSnapshots => {
+    const second = rootOf(leaf(makePane({ userTitle: 'logs' })), undefined, 'task:t1/tab-2', 'task:t1');
+    return snapshotsOf(
+      'task:t1',
+      rootOf(leaf(makePane({ userTitle: 'api' })), undefined, 'task:t1', 'task:t1'),
+      { ...second, sessions },
+    );
+  };
+
+  const markOf = (container: HTMLElement, index: number): string | null =>
+    [...container.querySelectorAll<HTMLElement>('[role="tab"]')][index]
+      ?.querySelector('.sh-ui-tab__dot')
+      ?.getAttribute('data-mark') ?? null;
+
+  it('dots a tab whose agent is waiting, and leaves a quiet one bare', async () => {
+    const { view } = render({
+      snapshot: tabbedWithSessions({ 'pane-x': 'session-1' }),
+      agents: fixedAgents([{ sessionId: 'session-1', state: 'blocked' }]),
+    });
+    await act(async () => {});
+    expect(markOf(view.container, 0)).toBeNull();
+    expect(markOf(view.container, 1)).toBe('attention');
+    view.unmount();
+  });
+
+  it('draws NO dot for a working agent', () => {
+    // Deliberate, and the reason the strip stays readable: a run in progress is
+    // not news. The pane you are looking at already says it is working.
+    const { view } = render({
+      snapshot: tabbedWithSessions({ 'pane-x': 'session-1' }),
+      agents: fixedAgents([{ sessionId: 'session-1', state: 'working' }]),
+    });
+    expect(markOf(view.container, 1)).toBeNull();
+    view.unmount();
+  });
+
+  it('shows the most actionable state when a root holds several sessions', async () => {
+    // One tab, one dot — so it must be the one you would act on. A blocked pane
+    // hiding behind a finished sibling is the whole failure this ordering exists
+    // to prevent.
+    const { view } = render({
+      snapshot: tabbedWithSessions({ 'pane-x': 'session-1', 'pane-y': 'session-2' }),
+      agents: fixedAgents([
+        { sessionId: 'session-1', state: 'needsCheck' },
+        { sessionId: 'session-2', state: 'blocked' },
+      ]),
+    });
+    await act(async () => {});
+    expect(markOf(view.container, 1)).toBe('attention');
     view.unmount();
   });
 
