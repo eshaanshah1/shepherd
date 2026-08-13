@@ -1668,7 +1668,8 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    */
   async function captureTabs(
     task: TaskRecord,
-    sessions: readonly SessionReading[],
+    /** What would reattach to each SESSION — keyed by session id, never by pane. */
+    targets: ReadonlyMap<string, string>,
   ): Promise<readonly ArchivedTab[]> {
     const listed = await commands.invoke<readonly unknown[]>('layout.listRoots', {
       group: taskRootId(task.id),
@@ -1677,6 +1678,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
 
     const roots: RootReading[] = [];
     const history: Record<string, string> = {};
+    const sessions: SessionReading[] = [];
 
     for (const raw of listed.value) {
       // Read defensively: this crossed a port, and `ok` says the call succeeded
@@ -1721,6 +1723,28 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
               ? p.lastSession
               : null;
         if (capturable === null) continue;
+
+        /*
+         * The pane→agent join, made HERE from the layout's own binding.
+         *
+         * It used to read `task.sessions[].pane`, and that field is gone by the
+         * time this runs: `shelve` strips it in the same write that captures the
+         * resume targets, and NOTHING puts it back — `materialize` restores
+         * panes but not the record's memory of which pane a session was in. So
+         * from the second shelve onward the record has no pane at all, and a
+         * join through it produced nothing for every task that had ever been
+         * archived once.
+         *
+         * The layout is the authority on what is on screen (it is why this
+         * function asks `listRoots` rather than the record in the first place),
+         * and `panes[].session` is the live binding. Joining on it needs no
+         * field the archive is about to destroy.
+         */
+        const target = targets.get(capturable);
+        if (target !== undefined) {
+          sessions.push({ pane: p.pane, sessionId: capturable, resumeTarget: target });
+        }
+
         const relative = historyPath(task.id, row.root, p.pane);
         try {
           const captured = await commands.invoke<{ bytes?: unknown }>('sessions.capture', {
@@ -1752,21 +1776,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     return archiveTabsFrom({
       roots,
       /*
-       * Passed IN, not read off the record — and that is the bug this argument
-       * exists to make unrepresentable.
-       *
-       * `shelve` drops each session's `pane` in the same write that captures its
-       * resume target, deliberately: the pane closes with the root, and a record
-       * naming one that does not exist is what made the archive trigger
-       * unreliable. But this join is BY PANE, so reading `task.sessions` here
-       * found the panes already gone and produced an empty list — every archived
-       * pane came back with no `resumeTarget`, `stagedResumeLine` answered
-       * `undefined`, and a restored tab sat at a bare shell with the agent's
-       * transcript on screen above it and no way back to it.
-       *
-       * Silent, because both halves looked right: the screen replayed, the pane
-       * opened, and "nothing to resume" is a legitimate answer for a session that
-       * never adopted an agent.
+       * Built above from the LAYOUT's binding, not from the record.
        *
        * `resumeTarget` is the only field restore needs, and it is opaque (D11) —
        * it names the agent's own way back without this extension ever learning
@@ -2468,29 +2478,23 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
             ctx.log.info(`task ${task.id}: session ${session.id} has nothing to resume`);
           }
           const { pane: _closed, ...rest } = session;
-          return {
-            stored: { ...rest, ...(target === null ? {} : { resumeTarget: target }) },
-            /*
-             * The same fact, keyed by the pane it is about — kept because the
-             * write above is what destroys that key.
-             *
-             * `captureTabs` joins a resume target to a pane BY PANE, and the
-             * record it would have read no longer has one. Building the reading
-             * here, from the session as it still is, is what makes the two
-             * writes independent of each other's order.
-             */
-            reading: {
-              ...(session.pane === undefined ? {} : { pane: session.pane }),
-              sessionId: session.id,
-              ...(target === null ? {} : { resumeTarget: target }),
-            },
-          };
+          return { ...rest, ...(target === null ? {} : { resumeTarget: target }) };
         }),
       );
-      const paneReadings: SessionReading[] = sessions.flatMap((entry) =>
-        entry.reading.pane === undefined ? [] : [entry.reading as SessionReading],
+      /*
+       * What would reattach to each session, keyed by SESSION ID.
+       *
+       * Handed to `captureTabs` rather than left for it to read back, because it
+       * is about to be written into a record whose `pane` this same write
+       * removes — and `pane` is what the archive used to join on. A session id
+       * is a key nothing here destroys.
+       */
+      const targets = new Map<string, string>(
+        sessions.flatMap((session) =>
+          session.resumeTarget === undefined ? [] : [[session.id, session.resumeTarget] as const],
+        ),
       );
-      let current: TaskRecord = { ...task, sessions: sessions.map((entry) => entry.stored) };
+      let current: TaskRecord = { ...task, sessions };
       store.put(current);
 
       const warnings: string[] = [];
@@ -2521,7 +2525,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
        * does not leave a directory of `.term` files behind for a task that still
        * has its worktrees.
        */
-      const tabs = await captureTabs(current, paneReadings);
+      const tabs = await captureTabs(current, targets);
       current = { ...current, ...(tabs.length === 0 ? {} : { tabs }) };
       store.put(current);
 
