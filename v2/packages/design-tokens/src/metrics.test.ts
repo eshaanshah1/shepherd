@@ -14,7 +14,7 @@ import { cssVariables } from './css.ts';
  * the numbers that were approved. These cases are Shepherd UI §2's own integers
  * — 10.5 / 11 / 11.5 / 12.5 / 13 / 14 / 16 / 19 of type, 24 / 28 / 34 of control,
  * `2 4 6 7 9 10 12 14 16 20` of space, `5 6 8 10 12 14 16` of radius, 34 of row,
- * and the fixed bands 28 / 38 / 40 / 44 / 124 / 332 — asserted against
+ * and the fixed bands 28 / 38 / 40 / 44 / 124 / 222 — asserted against
  * `round(base * ratio)` rather than against a literal. Change a ratio and the
  * named case below says which value moved.
  *
@@ -85,7 +85,7 @@ describe('the derived scale at the approved density', () => {
       tabStrip: 40,
       titlebar: 44,
       skyStrip: 124,
-      rail: 332,
+      rail: 222,
     });
   });
 
@@ -117,8 +117,8 @@ describe('the derived scale at the approved density', () => {
    * THREE BANDS DO NOT MOVE, and each has a reason that is not a preference.
    *
    * The ratio table said as much long before anything read it — "a titlebar is
-   * 44 because the traffic lights are, and a rail is 332 because that is how
-   * wide a task's title plus its metadata needs to be" — and then scaled both
+   * 44 because the traffic lights are, and a rail is 222 because that is how
+   * much of the window a list of tasks may take" — and then scaled both
    * anyway, which nothing noticed while the only density in use was 1. The sky
    * strip is the one that would have shown first: it is a DRAWING with literal
    * px coordinates (`sky-strip.tsx`), so a 105px box would have held a scene
@@ -127,12 +127,12 @@ describe('the derived scale at the approved density', () => {
   it('holds the OS constant, the drawing and the content measurement still', () => {
     expect(metrics.band.titlebar).toBe(44);
     expect(metrics.band.skyStrip).toBe(124);
-    expect(metrics.band.rail).toBe(332);
+    expect(metrics.band.rail).toBe(222);
     for (const density of Object.values(densities)) {
       const at = deriveMetrics({ baseFontSize: 13, density });
       expect(at.band.titlebar, `titlebar moved at ${String(density)}`).toBe(44);
       expect(at.band.skyStrip, `sky strip moved at ${String(density)}`).toBe(124);
-      expect(at.band.rail, `rail moved at ${String(density)}`).toBe(332);
+      expect(at.band.rail, `rail moved at ${String(density)}`).toBe(222);
     }
   });
 
@@ -204,7 +204,7 @@ describe('the derivation under other inputs', () => {
     expect(spacious.band.paneHead).toBe(44);
     expect(spacious.band.tabStrip).toBe(46);
     expect(spacious.band.titlebar).toBe(44);
-    expect(spacious.band.rail).toBe(332);
+    expect(spacious.band.rail).toBe(222);
   });
 
   it('leaves TYPE alone when only density moves', () => {

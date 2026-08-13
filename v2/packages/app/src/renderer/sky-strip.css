@@ -95,7 +95,8 @@
 
 .sh-sky__sheep {
   position: absolute;
-  right: 96px;
+  /* Under the glow, which the scene puts at 74% of the rail. */
+  right: 60px;
   bottom: 48px;
   inline-size: 27px;
   block-size: 21px;
@@ -185,7 +186,7 @@
    * flanks turn down, and two visible corners read as a box. Overflowing the
    * frame means only the shallow crown is on screen and the slope runs off both
    * edges, which is what a hill looks like. Same trick the rail's strip uses,
-   * where the 400px ellipse is clipped by a 332px rail.
+   * where the 400px ellipse is clipped by a 222px rail.
    */
   inline-size: 420px;
   block-size: 40px;
