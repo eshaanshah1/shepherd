@@ -1234,10 +1234,24 @@ describe('a long operation', () => {
     const during = await rowOf(h, 't1');
     expect(during?.busy).toBe(true);
     expect(during?.description).toBe('archiving…');
-    // And it KEEPS its name. A task being created has none yet, so its row is
-    // called after the step it is on; an archiving one has a settled name and the
-    // name is the only thing that says which of them is going away.
-    expect(during?.label).toBe(task().title);
+    /*
+     * And in the LABEL, which is the only one of the two a task card draws.
+     *
+     * This said the task's own title for one shipped build, on the argument that
+     * the name is what says which task is going away. The card reads `label` and
+     * `data` and has never read `description`, so what that actually produced was
+     * an archiving row that said nothing at all — the same defect the step labels
+     * were added to fix, re-committed one field along.
+     */
+    expect(during?.label).toBe('Archiving');
+    /*
+     * And it does NOT jump to In flight. It is busy, but it is not being built:
+     * upgrading its mark moved the row into the live-work section on its way out
+     * of the list, under the cursor of the person who just clicked it.
+     */
+    expect((during?.data as { mark?: unknown } | undefined)?.mark).not.toBe('working');
+    const sections = (await h.tree().children(undefined)).filter((entry) => entry.section === true);
+    expect(sections.map((entry) => entry.label)).not.toContain('In flight');
 
     finish();
     await archiving;

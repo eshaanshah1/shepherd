@@ -308,13 +308,20 @@ type BusyWhat =
  * Sentence case and three words at most, because this is a label and §6 governs
  * it now — the trailing chip this replaces was metadata and had looser rules.
  *
- * **`archiving` and `restoring` are deliberately absent.** Those tasks have a
- * real, settled name and the user is acting on a SPECIFIC one; replacing the
- * name with `Archiving` would take away the only thing that says which. They
- * keep their title and say what they are doing where they always did.
+ * `archiving` and `restoring` get one too. They were left out on the argument
+ * that their task has a settled name and the name is what says WHICH one is
+ * going away — true, and beside the point: the card draws `label` and `data`,
+ * and nothing else. The word went into `description`, which the card has never
+ * read, so an archiving task said precisely nothing. That is the same defect
+ * this whole change started as, re-committed one field along. You are looking at
+ * the row you just clicked, so which task it is was never the open question.
  */
 function stepLabel(what: BusyWhat, task: TaskRecord): string | undefined {
   switch (what) {
+    case 'archiving':
+      return 'Archiving';
+    case 'restoring':
+      return 'Restoring';
     case 'naming':
       return 'Naming the task';
     case 'worktrees':
@@ -435,8 +442,26 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
   }
 
   /**
+   * The phases that BUILD a task, as opposed to moving one that already exists.
+   *
+   * Only these may change a row's mark, and therefore which section it sits in.
+   * Archiving and restoring are the counter-example that made this a named set:
+   * they are busy, but the task is established work with its own real state, and
+   * upgrading it to `working` files it under **In flight** — so archiving a task
+   * made its row jump into the live-work section on its way out of the list, and
+   * jump under the cursor of the person who just clicked it.
+   */
+  const BUILDING_PHASES: ReadonlySet<BusyWhat> = new Set<BusyWhat>([
+    'provisioning',
+    'naming',
+    'worktrees',
+    'linking',
+    'starting',
+  ]);
+
+  /**
    * The mark a task's row wears — its agents' rollup, or `working` when Shepherd
-   * itself is the one doing something.
+   * itself is the one BUILDING it.
    *
    * A task being provisioned has lifecycle `draft` and no sessions, so the rollup
    * answers `idle` and `markOf` draws the hollow resting ring — "nothing is
@@ -445,12 +470,13 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * state already has a mark, and this one does. Shepherd cutting worktrees for
    * you IS working, and `working` is the three-bar meter that says so.
    *
-   * **It only ever upgrades `resting`.** Busy never overrides a mark an agent
-   * actually reported: archiving a task whose agent is blocked must keep the
-   * waiting square, because that square is the user's move and a spinner over it
-   * would hide the one thing in the rail they can act on. So this reads as "a
-   * task with nothing of its own to say, that Shepherd is working on, says
-   * working" — and nothing wider than that.
+   * **Two guards, and both are load-bearing.** It only ever upgrades `resting`,
+   * so busy never overrides a mark an agent actually reported — archiving a task
+   * whose agent is blocked keeps the waiting square, because that square is the
+   * user's move and a spinner over it would hide the one thing in the rail they
+   * can act on. And it only fires for a BUILDING phase, so a task being archived
+   * or restored keeps its own mark and its own section instead of jumping into
+   * **In flight** on its way out of the list.
    *
    * Used by the SECTION partition as well as by the card, and that is the whole
    * reason it is a named function: the two answering differently would file a
@@ -458,7 +484,8 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    */
   const markFor = (task: TaskRecord, state: string): string => {
     const mark = markOf(state);
-    return mark === 'resting' && busy.has(task.id) ? 'working' : mark;
+    const what = busy.get(task.id);
+    return mark === 'resting' && what !== undefined && BUILDING_PHASES.has(what) ? 'working' : mark;
   };
 
   /**
@@ -3182,15 +3209,17 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
             // "your task is ready" signal.
             const step = busyWhat === undefined ? undefined : stepLabel(busyWhat, task);
             /*
-             * Said in the DESCRIPTION only when the label is not saying it.
+             * The same fact, in the field the ORDINARY row draws.
              *
-             * Archiving and restoring keep their task's name (`stepLabel` returns
-             * nothing for them), so without this they would be a row with a
-             * spinner and no word anywhere — which is what the two oldest tests in
-             * this file exist to catch. Exactly one of the two lines carries the
-             * operation, never both and never neither.
+             * A contributed card reads `label` and `data`; a plain `TreeItem` —
+             * the fallback, and what a remote member's own sidebar draws — reads
+             * `label` and `description`. So the operation goes in both, and the
+             * duplication is deliberate rather than sloppy: it is one word on the
+             * one surface that shows both, and the alternative is a build without
+             * `tasks.card` saying nothing at all. Gating this on the card's needs
+             * is what put the archiving row in that state for a whole ship.
              */
-            const busyNote = busyWhat !== undefined && step === undefined ? `${busyWhat}…` : undefined;
+            const busyNote = busyWhat === undefined ? undefined : `${busyWhat}…`;
             return {
               id: task.id,
               label: step ?? task.title,
