@@ -1,5 +1,5 @@
 import { toDisposable, type Disposable } from '@shepherd/sdk';
-import { TerminalMirror, type ScreenState } from './mirror.ts';
+import { TerminalMirror, type ObservedPatch, type ScreenState } from './mirror.ts';
 
 /** Where a session's bytes go. One per attached view (a window, a phone, a tap). */
 export type PtySink = (bytes: Uint8Array) => void;
@@ -124,6 +124,14 @@ export class PtyFanout {
   /** What is on the display right now. */
   screen(): ScreenState {
     return this.#mirror.screen();
+  }
+
+  /**
+   * The mirror's reading of what the program calls itself, passed through
+   * untouched. The fanout does not know a session id; `SessionHost` attaches one.
+   */
+  onObserved(listener: (patch: ObservedPatch) => void): Disposable {
+    return this.#mirror.onObserved(listener);
   }
 
   /**

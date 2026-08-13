@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { isErr, isOk, sessionId, type SessionID } from '@shepherd/sdk';
-import { SessionHost, foregroundReading, type SessionExit } from './host.ts';
+import {
+  SessionHost,
+  foregroundReading,
+  type SessionExit,
+  type SessionObserved,
+} from './host.ts';
 
 // These run against a REAL /bin/sh pty. A faked spawn would prove the registry
 // and nothing about the thing that actually breaks — node-pty's prebuild, its
@@ -665,5 +670,54 @@ describe('a session created with its screen already on it', () => {
     });
     expect(seen).toContain('work from before');
     expect(seen).toContain('live-output');
+  });
+
+  /**
+   * Nobody is attached, which is the case that matters: the pane whose label
+   * goes stale is the tab you are not looking at.
+   */
+  it('announces the title and cwd a session emits, with nothing attached', async () => {
+    const host = makeHost({ hostname: 'mac-b' });
+    const seen: SessionObserved[] = [];
+    host.onObserved((observed) => seen.push(observed));
+
+    const created = host.create({
+      cwd: '/tmp',
+      command: '/bin/sh',
+      args: [
+        '-c',
+        `printf '\\033]2;named\\007'; printf '\\033]7;file://mac-b/w/api\\033\\\\'; sleep 5`,
+      ],
+    });
+    expect(isOk(created)).toBe(true);
+    if (!isOk(created)) return;
+
+    await waitFor(() => seen.length >= 2, 'the title and the cwd');
+    expect(seen).toEqual([
+      { sessionId: created.value.id, title: 'named' },
+      { sessionId: created.value.id, cwd: '/w/api' },
+    ]);
+  });
+
+  it('says nothing about a cwd another machine reported', async () => {
+    const host = makeHost({ hostname: 'mac-b' });
+    const seen: SessionObserved[] = [];
+    host.onObserved((observed) => seen.push(observed));
+
+    const created = host.create({
+      cwd: '/tmp',
+      command: '/bin/sh',
+      args: [
+        '-c',
+        `printf '\\033]7;file://build-box/srv\\033\\\\'; printf '\\033]2;done\\007'; sleep 5`,
+      ],
+    });
+    expect(isOk(created)).toBe(true);
+    if (!isOk(created)) return;
+
+    // The title is the barrier: it is emitted after the cwd, so once it has
+    // arrived the refused OSC 7 has definitely been parsed and dropped.
+    await waitFor(() => seen.length >= 1, 'the title');
+    expect(seen).toEqual([{ sessionId: created.value.id, title: 'done' }]);
   });
 });

@@ -11,7 +11,12 @@ import {
 } from '@shepherd/sdk';
 import { newSessionId, type RandomId } from '../identity.ts';
 import { PtyFanout, type PtySink } from './fanout.ts';
-import { DEFAULT_SCROLLBACK, TerminalMirror, type ScreenState } from './mirror.ts';
+import {
+  DEFAULT_SCROLLBACK,
+  TerminalMirror,
+  type ObservedPatch,
+  type ScreenState,
+} from './mirror.ts';
 import { arbitrate, type Viewport } from './viewport.ts';
 
 /**
@@ -170,6 +175,13 @@ export interface SessionResize {
   readonly rows: number;
 }
 
+/** What a session's program said about itself — only the fields that changed. */
+export interface SessionObserved {
+  readonly sessionId: SessionID;
+  readonly title?: string;
+  readonly cwd?: string;
+}
+
 export interface SessionExit {
   readonly sessionId: SessionID;
   readonly exitCode: number;
@@ -217,6 +229,11 @@ export interface SessionHostOptions {
    * logging rule exists to catch — so the host reports rather than hides it.
    */
   readonly onError?: (error: unknown, context: string) => void;
+  /**
+   * This machine's name, for the OSC 7 host check. Passed down to every
+   * session's mirror; core never reads it from the platform itself.
+   */
+  readonly hostname?: string;
 }
 
 interface SessionRecord {
@@ -239,14 +256,17 @@ export class SessionHost {
   readonly #willCreate: WillCreateHook[] = [];
   readonly #exitListeners = new Set<(exit: SessionExit) => void>();
   readonly #resizeListeners = new Set<(resize: SessionResize) => void>();
+  readonly #observedListeners = new Set<(observed: SessionObserved) => void>();
   readonly #newId: RandomId | undefined;
   readonly #defaultScrollback: number;
   readonly #onError: ((error: unknown, context: string) => void) | undefined;
+  readonly #hostname: string | undefined;
 
   constructor(options: SessionHostOptions = {}) {
     this.#newId = options.newId;
     this.#defaultScrollback = options.defaultScrollback ?? DEFAULT_SCROLLBACK;
     this.#onError = options.onError;
+    this.#hostname = options.hostname;
   }
 
   // ---------------------------------------------------------------- lifecycle
@@ -297,6 +317,7 @@ export class SessionHost {
           cols: resolved.cols,
           rows: resolved.rows,
           scrollback: resolved.scrollback,
+          ...(this.#hostname === undefined ? {} : { hostname: this.#hostname }),
         }),
       ),
       viewports: new Map(),
@@ -312,6 +333,10 @@ export class SessionHost {
 
     pty.onData((chunk: string | Buffer) => {
       record.fanout.feed(toBytes(chunk));
+    });
+
+    record.fanout.onObserved((patch: ObservedPatch) => {
+      this.#announceObserved({ sessionId: id, ...patch });
     });
 
     pty.onExit(({ exitCode, signal }) => {
@@ -345,6 +370,7 @@ export class SessionHost {
     for (const id of [...this.#sessions.keys()]) this.kill(id);
     this.#sessions.clear();
     this.#exitListeners.clear();
+    this.#observedListeners.clear();
     this.#willCreate.length = 0;
   }
 
@@ -592,6 +618,19 @@ export class SessionHost {
     });
   }
 
+  /**
+   * The program in a session named itself (OSC 0/2) or changed directory (OSC 7).
+   *
+   * Independent of who is attached, and that is the point: a tab nobody is
+   * looking at is exactly the one whose label would otherwise go stale.
+   */
+  onObserved(listener: (observed: SessionObserved) => void): Disposable {
+    this.#observedListeners.add(listener);
+    return toDisposable(() => {
+      this.#observedListeners.delete(listener);
+    });
+  }
+
   onExit(listener: (exit: SessionExit) => void): Disposable {
     this.#exitListeners.add(listener);
     return toDisposable(() => {
@@ -624,6 +663,16 @@ export class SessionHost {
       if (patch?.env) current = { ...current, env: { ...current.env, ...patch.env } };
     }
     return current;
+  }
+
+  #announceObserved(observed: SessionObserved): void {
+    for (const listener of [...this.#observedListeners]) {
+      try {
+        listener(observed);
+      } catch (error) {
+        this.#onError?.(error, `onObserved listener for ${observed.sessionId}`);
+      }
+    }
   }
 
   #reap(id: SessionID, record: SessionRecord, exitCode: number, signal: number | undefined): void {

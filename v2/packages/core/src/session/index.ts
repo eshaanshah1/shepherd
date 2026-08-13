@@ -5,6 +5,7 @@
 export {
   TerminalMirror,
   DEFAULT_SCROLLBACK,
+  type ObservedPatch,
   type ScreenState,
   type TerminalMirrorOptions,
 } from './mirror.ts';
@@ -21,6 +22,7 @@ export {
   type SessionError,
   type SessionErrorCode,
   type SessionExit,
+  type SessionObserved,
   type SessionResize,
   type SessionHostOptions,
   type SessionInfo,

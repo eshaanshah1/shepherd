@@ -1,5 +1,5 @@
 import { connect, type Socket } from 'node:net';
-import { spawnDetached } from '@shepherd/platform-darwin';
+import { spawnDetached, systemHostName } from '@shepherd/platform-darwin';
 import { resolveTransportName } from './ingress.ts';
 import type { CategoryLogger } from '@shepherd/sdk';
 import type { ClientSocket } from './session-client.ts';
@@ -100,6 +100,10 @@ function spawnDaemon(entry: string, socketPath: string, support: string): void {
       // transport they serve. Disagreeing gives a phone a reachable task list
       // and an unreachable terminal.
       `--transport=${resolveTransportName(process.argv)}`,
+      // Resolved HERE because this side may reach `platform/darwin` and the
+      // daemon may reach neither it nor `node:os`. A session's mirror needs it
+      // to tell its own OSC 7 from one an ssh session inside a pane emitted.
+      `--hostname=${systemHostName()}`,
     ],
     env: { ELECTRON_RUN_AS_NODE: '1' },
     // Beside the socket it serves, so whoever is asking "where did my terminals

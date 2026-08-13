@@ -46,4 +46,20 @@ describe('parseArgs', () => {
     // it would bind a socket somewhere adjacent to where the app is looking.
     expect(parseArgs(['--socket=/tmp/a=b/s.sock']).socketPath).toBe('/tmp/a=b/s.sock');
   });
+
+  it('reads the hostname the launcher resolved', () => {
+    expect(parseArgs(['--socket=/tmp/s.sock', '--hostname=mac-b.local']).hostname).toBe(
+      'mac-b.local',
+    );
+  });
+
+  /**
+   * Absent and empty are one case: a mirror handed `''` would compare every
+   * OSC 7 host against nothing, and `cwdFromOsc7` reads that as "refuse" — the
+   * same answer, reached less obviously.
+   */
+  it('omits an absent or empty hostname rather than passing one on', () => {
+    expect(parseArgs(['--socket=/tmp/s.sock']).hostname).toBeUndefined();
+    expect(parseArgs(['--socket=/tmp/s.sock', '--hostname=']).hostname).toBeUndefined();
+  });
 });
