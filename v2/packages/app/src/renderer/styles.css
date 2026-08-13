@@ -604,9 +604,8 @@ body.sh-dragging {
 
 .sh-side {
   /*
-   * 332 — wide enough for a task's title, its elapsed stamp and its diff line
-   * on one card without any of them truncating. It grew from 268 with the card:
-   * a rail sized for one-line rows cannot hold a four-line one.
+   * 222 — a third of the window's width is more than a list of tasks is worth,
+   * so a long title truncates rather than the grid giving up the space.
    */
   width: var(--sh-band-rail);
   flex: 0 0 var(--sh-band-rail);
@@ -620,7 +619,7 @@ body.sh-dragging {
    *
    * An inset shadow paints under the element's own children, and a sidebar row's
    * hover/selected fill is `width: 100%` — with the seam inset, the content box
-   * grows to the full 268px and a hovered row paints straight over the rightmost
+   * grows to the full rail width and a hovered row paints straight over the rightmost
    * pixel, so the sidebar↔content edge flickers away under the cursor. A border
    * reserves the pixel in layout instead, which is what an edge with full-width
    * children needs.
