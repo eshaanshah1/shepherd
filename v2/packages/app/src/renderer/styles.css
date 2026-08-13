@@ -160,8 +160,17 @@ body.sh-dragging {
    * palette. A z-index here would put the drag region on top of a dialog.
    */
   position: absolute;
-  inset-inline: 0;
   top: 0;
+  left: 0;
+  /*
+   * The RAIL's width, not the window's. The traffic lights are the only thing
+   * this layer exists to clear and they sit at the top-left, over the rail —
+   * so spanning the window would put a drag region across the tab strip and the
+   * pane head, and a control under a drag region is a control you cannot click.
+   * Held to the rail, the stage keeps the whole of its own column and starts at
+   * the window's top edge. The window drags by the sky.
+   */
+  inline-size: var(--sh-band-rail);
   height: var(--sh-plate-height);
   display: flex;
   align-items: center;
@@ -232,12 +241,10 @@ body.sh-dragging {
    */
 
   /*
-   * The titlebar's band, reserved. The plate floats over the whole width of the
-   * window, so without this the tab strip would sit under a drag region and a
-   * tab would not take a click. The rail deliberately does NOT reserve it — the
-   * sky strip is what the lights are meant to sit on.
+   * No reservation for the titlebar. The plate is the rail's width, so nothing
+   * of this column sits under it and the stage begins at the window's top edge —
+   * which is the whole of what "the app includes the titlebar" means over here.
    */
-  padding-block-start: var(--sh-band-titlebar);
 
   /* The containing block for the find bar, which is the only thing that floats
      over the grid. Nothing else here is positioned. */
@@ -259,14 +266,7 @@ body.sh-dragging {
  */
 .sh-find {
   position: absolute;
-  /*
-   * An absolute offset is measured from the stage's padding EDGE, which the
-   * stage's own top padding does not move — so the titlebar band has to be added
-   * here or the fallback corner lands under the drag region. The measured anchor
-   * (`usePaneAnchor`) needs no such thing: it reads a real pane's top, and that
-   * is already below the padding.
-   */
-  top: calc(var(--sh-band-titlebar) + var(--sh-space-md));
+  top: var(--sh-space-md);
   right: var(--sh-space-md);
   z-index: 20;
 
