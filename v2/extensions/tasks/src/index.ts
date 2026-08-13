@@ -266,8 +266,32 @@ interface LandedRepo {
 /**
  * What a busy row says it is doing. The word is drawn as-is, so it is written in
  * the tense a row can be read in the middle of.
+ *
+ * **The four provisioning words are STEPS, and that is the point.** Creating a
+ * task is the longest wait in the app — a model naming it, then probe 2's ~2.5s
+ * of network per repo, then a root to write and an agent to boot — and a single
+ * `provisioning…` held across all of it says only "still going" for twenty
+ * seconds. The handoff spec's own rule for a wait that long is a stage label
+ * (§8: under 100ms nothing, to 1s disable, to 3s a spinner, beyond that a
+ * label), so each phase names itself and the row moves while the work does.
+ *
+ * `provisioning` survives as the FLOOR rather than as a phase: `whileBusy` nests,
+ * so it is what a row falls back to in the gaps between phases and what it says
+ * during the prefetch that precedes the first one. Without it the row would blink
+ * to idle four times on the way through.
+ *
+ * `worktrees` is the one noun in a list of verbs, and deliberately: the verb for
+ * that phase is "adding", which names the git subcommand and tells a reader
+ * nothing. The other three are what they say.
  */
-type BusyWhat = 'archiving' | 'restoring' | 'provisioning' | 'naming';
+type BusyWhat =
+  | 'archiving'
+  | 'restoring'
+  | 'provisioning'
+  | 'naming'
+  | 'worktrees'
+  | 'linking'
+  | 'starting';
 
 function orchestratorPrompt(task: { title: string; brief: string }): string {
   return task.brief.trim() === '' ? `Start on the task "${task.title}".` : task.brief;
@@ -365,6 +389,33 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       changed();
     }
   }
+
+  /**
+   * The mark a task's row wears — its agents' rollup, or `working` when Shepherd
+   * itself is the one doing something.
+   *
+   * A task being provisioned has lifecycle `draft` and no sessions, so the rollup
+   * answers `idle` and `markOf` draws the hollow resting ring — "nothing is
+   * happening here" — for the whole of the longest wait in the app. That is the
+   * empty row this exists to stop: the handoff spec's first question is whether a
+   * state already has a mark, and this one does. Shepherd cutting worktrees for
+   * you IS working, and `working` is the three-bar meter that says so.
+   *
+   * **It only ever upgrades `resting`.** Busy never overrides a mark an agent
+   * actually reported: archiving a task whose agent is blocked must keep the
+   * waiting square, because that square is the user's move and a spinner over it
+   * would hide the one thing in the rail they can act on. So this reads as "a
+   * task with nothing of its own to say, that Shepherd is working on, says
+   * working" — and nothing wider than that.
+   *
+   * Used by the SECTION partition as well as by the card, and that is the whole
+   * reason it is a named function: the two answering differently would file a
+   * spinning row under `Resting`.
+   */
+  const markFor = (task: TaskRecord, state: string): string => {
+    const mark = markOf(state);
+    return mark === 'resting' && busy.has(task.id) ? 'working' : mark;
+  };
 
   /**
    * What each pane is currently asking of you, mirrored from the bus.
@@ -1837,18 +1888,33 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       }
     });
 
-    const landed = (await Promise.all(chains)).filter((entry): entry is LandedRepo => entry !== undefined);
+    const landed = (
+      await whileBusy(task.id, 'worktrees', () => Promise.all(chains))
+    ).filter((entry): entry is LandedRepo => entry !== undefined);
 
-    const plan = synthTaskRoot({
-      title: task.title,
-      brief: task.brief,
-      repos: landed.map((repo) => ({
-        name: repo.name,
-        path: repo.worktree,
-        ...readContribution(repo.worktree),
-      })),
+    /**
+     * Writing the root — its generated `CLAUDE.md` and the symlinked skills and
+     * agents the repos contribute.
+     *
+     * Its own phase rather than part of `worktrees`, because it is the step that
+     * has nothing to do with git and everything to do with what the agent will
+     * read a moment later: `readContribution` walks every landed worktree's
+     * `.claude/`, and on a multi-repo task that is the difference between "the
+     * network is slow" and "it is assembling my files" — two waits a user reads
+     * very differently.
+     */
+    const { plan, out } = await whileBusy(task.id, 'linking', async () => {
+      const planned = synthTaskRoot({
+        title: task.title,
+        brief: task.brief,
+        repos: landed.map((repo) => ({
+          name: repo.name,
+          path: repo.worktree,
+          ...readContribution(repo.worktree),
+        })),
+      });
+      return { plan: planned, out: materializeTaskRoot(root, planned) };
     });
-    const out = materializeTaskRoot(root, plan);
     for (const conflict of plan.conflicts) {
       // Measured to resolve in the filesystem otherwise, last-link-wins and
       // silent, so an agent runs the wrong repo's skill.
@@ -1871,20 +1937,27 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
      * directories moments later.
      */
     const ready = landed.filter((repo) => taskIssueFreeRepo(task.id, repo.name));
-    const taskComplaints: string[] = [];
-    for (const provider of taskProvisioned.all()) {
-      try {
-        const done = await provider({
-          task: { slug: task.slug, root },
-          branch: task.slug,
-          repos: ready.map((repo) => ({ path: repo.path, name: repo.name, worktree: repo.worktree })),
-        });
-        if (!done.ok) taskComplaints.push(done.message ?? 'reported a failure with no message');
-      } catch (error) {
-        // Somebody else's extension must not be able to take a task down.
-        taskComplaints.push(error instanceof Error ? error.message : String(error));
+    // Still `linking`: a provider here is finishing the root, and it is somebody
+    // else's shell script — the one step in the whole run whose duration this
+    // codebase cannot predict at all. Leaving it under the floor word would put
+    // the longest possible pause on the vaguest possible label.
+    const taskComplaints = await whileBusy(task.id, 'linking', async () => {
+      const complaints: string[] = [];
+      for (const provider of taskProvisioned.all()) {
+        try {
+          const done = await provider({
+            task: { slug: task.slug, root },
+            branch: task.slug,
+            repos: ready.map((repo) => ({ path: repo.path, name: repo.name, worktree: repo.worktree })),
+          });
+          if (!done.ok) complaints.push(done.message ?? 'reported a failure with no message');
+        } catch (error) {
+          // Somebody else's extension must not be able to take a task down.
+          complaints.push(error instanceof Error ? error.message : String(error));
+        }
       }
-    }
+      return complaints;
+    });
     if (taskComplaints.length > 0) {
       const message = taskComplaints.join('\n');
       taskIssue.set(task.id, message);
@@ -1908,13 +1981,20 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
      * failure is a warn and nothing more — the task is provisioned, the agent
      * still starts, and what the user gets is the dialog they get today.
      */
-    const seeded = seedClaudeTrust({
-      homeDir: ctx.homeDir,
-      dirs: [root, ...landed.map((repo) => repo.worktree)],
-      nonce: ctx.clock.now(),
-    });
-    if (seeded.ok) ctx.log.info(`task ${task.id}: ${seeded.detail}`);
-    else ctx.log.warn(`task ${task.id}: agents may open on Claude Code's trust prompt — ${seeded.detail}`);
+    /*
+     * The trust seed opens the `starting` phase rather than closing `linking`,
+     * because what it is FOR is the spawn below — it exists so the orchestrator
+     * does not open on a dialog. Grouping it with the step it serves is also what
+     * keeps the last label on screen until a pane actually appears.
+     */
+    await whileBusy(task.id, 'starting', async () => {
+      const seeded = seedClaudeTrust({
+        homeDir: ctx.homeDir,
+        dirs: [root, ...landed.map((repo) => repo.worktree)],
+        nonce: ctx.clock.now(),
+      });
+      if (seeded.ok) ctx.log.info(`task ${task.id}: ${seeded.detail}`);
+      else ctx.log.warn(`task ${task.id}: agents may open on Claude Code's trust prompt — ${seeded.detail}`);
 
     /**
      * The orchestrator starts itself (§7b: "composer auto-starts the
@@ -1928,25 +2008,26 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
      * spawning a fresh orchestrator in its place would silently drop the
      * transcript the archive was taken to preserve.
      */
-    const now = store.get(task.id);
-    if (now !== undefined && now.sessions.length === 0) {
-      try {
-        const session = await startSession(now, {
-          prompt: orchestratorPrompt(now),
-          role: 'orchestrator',
-          ...(images === undefined || images.length === 0 ? {} : { images }),
-        });
-        const latest = store.get(task.id) ?? now;
-        store.put({ ...latest, sessions: [...latest.sessions, session], lifecycle: 'running' });
-        changed();
-      } catch (error: unknown) {
-        // A task with no agent is degraded, not broken — the worktrees and the
-        // root are real and `tasks.spawn` still works. Reported for the same
-        // reason a failed repo is: silence here reads as "there was no agent to
-        // start".
-        ctx.log.warn(`task ${task.id}: no orchestrator started — ${String(error)}`);
+      const now = store.get(task.id);
+      if (now !== undefined && now.sessions.length === 0) {
+        try {
+          const session = await startSession(now, {
+            prompt: orchestratorPrompt(now),
+            role: 'orchestrator',
+            ...(images === undefined || images.length === 0 ? {} : { images }),
+          });
+          const latest = store.get(task.id) ?? now;
+          store.put({ ...latest, sessions: [...latest.sessions, session], lifecycle: 'running' });
+          changed();
+        } catch (error: unknown) {
+          // A task with no agent is degraded, not broken — the worktrees and the
+          // root are real and `tasks.spawn` still works. Reported for the same
+          // reason a failed repo is: silence here reads as "there was no agent to
+          // start".
+          ctx.log.warn(`task ${task.id}: no orchestrator started — ${String(error)}`);
+        }
       }
-    }
+    });
   }
 
   ctx.subscriptions.push(
@@ -2918,7 +2999,21 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
            * cards with no diff line for a beat rather than a row of `+0 −0`.
            */
           const cardFor = (task: TaskRecord, state: string): unknown => ({
-            mark: markOf(state),
+            mark: markFor(task, state),
+            /*
+             * The STEP, in the cell the elapsed stamp usually holds.
+             *
+             * Not a line of its own, because only a waiting card may change
+             * height (§5, and `task-card.css`'s own opening rule) — and a row
+             * that grew for fifteen seconds and shrank again would be the one
+             * kind of motion the spec refuses outright. The trail is a grid
+             * stack, so the word costs no new element and no new row.
+             *
+             * It REPLACES the stamp rather than joining it: a task four seconds
+             * old reads `0m`, which is the least useful thing the card could say
+             * in the one window where something is actually happening to it.
+             */
+            ...(busy.has(task.id) ? { stage: busy.get(task.id) } : {}),
             elapsed: formatElapsed(task.createdAt, ctx.clock.now()),
             diff: diffs.get(task.id),
             suite: suites.get(task.id),
@@ -2967,8 +3062,8 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           const done = all.filter((task) => task.lifecycle === 'archived');
           const stateOf = (task: TaskRecord): string =>
             displayState(task.lifecycle, agentStatesOf(task));
-          const waiting = live.filter((task) => markOf(stateOf(task)) === 'waiting');
-          const inFlight = live.filter((task) => markOf(stateOf(task)) === 'working');
+          const waiting = live.filter((task) => markFor(task, stateOf(task)) === 'waiting');
+          const inFlight = live.filter((task) => markFor(task, stateOf(task)) === 'working');
           /*
            * **Failed sits in `Resting`**, not in a section of its own.
            *
@@ -2978,7 +3073,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
            * to look, for a state whose whole signal is one mark.
            */
           const resting = live.filter((task) => {
-            const mark = markOf(stateOf(task));
+            const mark = markFor(task, stateOf(task));
             return mark !== 'waiting' && mark !== 'working';
           });
 
@@ -3022,7 +3117,15 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
              */
             const pending = task.repos.find((repo) => {
               const key = `${task.id}:${repo.name}`;
-              return provisioning.get(key) !== undefined || hookIssue.get(key) !== undefined;
+              /*
+               * "Not ready" is the predicate the comment above always claimed and
+               * the code did not have: `ready` stays in the map for the life of
+               * the task, so a landed repo kept the row saying `ready app…` —
+               * a done thing wearing an ellipsis. Nothing caught it because the
+               * busy spread below used to overwrite this line before it was drawn.
+               */
+              const state = provisioning.get(key);
+              return (state !== undefined && state !== 'ready') || hookIssue.get(key) !== undefined;
             });
             const repoNote =
               pending === undefined
@@ -3063,10 +3166,27 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
                */
               component: 'tasks.card',
               data: cardFor(task, state),
-              // Something is happening to it right now — a snapshot being taken,
-              // worktrees being rebuilt. The row says so where its status mark
-              // is, rather than looking idle for the seconds git takes.
-              ...(busy.has(task.id) ? { busy: true, description: `${busy.get(task.id) ?? ''}…` } : {}),
+              /*
+               * Something is happening to it right now — a snapshot being taken,
+               * worktrees being rebuilt. The row says so where its status mark
+               * is, rather than looking idle for the seconds git takes.
+               *
+               * The description is REBUILT rather than replaced, and that is a
+               * fix: this spread sits after `description` above and overwrote it
+               * with the bare stage word, so `repoNote` — the `working api…` the
+               * block above goes to the trouble of composing — could never appear.
+               * `busy` covers the whole of provisioning, which is precisely when a
+               * repo is landing, so the two were never on screen at the same time
+               * and the note was dead code wearing a comment about being useful.
+               */
+              ...(busy.has(task.id)
+                ? {
+                    busy: true,
+                    description: [`${busy.get(task.id) ?? ''}…`, ...(repoNote === undefined ? [] : [repoNote])].join(
+                      ' · ',
+                    ),
+                  }
+                : {}),
               // Clicking a task takes you to it — and for an archived one that
               // means bringing it BACK: `tasks.reveal` restores the worktrees
               // first (see its handler). One gesture, whatever state the task

@@ -1266,6 +1266,117 @@ describe('a long operation', () => {
     await until(async () => (await rowOf(h, String(during?.id)))?.busy === undefined);
   });
 
+  /**
+   * The row names the STEP, not just the fact that there is one.
+   *
+   * `provisioning…` held across the whole run said "still going" for twenty
+   * seconds — which is the same sentence at second 1 and second 19, so a user
+   * watching it cannot tell a slow fetch from a wedged one. These assert the four
+   * words and, more importantly, that they arrive in the order the work does.
+   */
+  describe('the step a new task is on', () => {
+    const REPO = { path: '/src/app', name: 'app' };
+
+    /** Every distinct stage word the row wore, in the order it first wore it. */
+    const recordStages = (h: Harness): string[] => {
+      const seen: string[] = [];
+      // `children()` has a synchronous body behind a resolved promise, so reading
+      // it inside the listener samples the row AT the nudge rather than after it.
+      // Awaiting here instead would let the next phase overwrite the answer.
+      void h.tree().onDidChange?.(() => {
+        void h.tree().children(undefined).then((rows) => {
+          const row = rows.find((entry) => entry.section !== true);
+          const stage = (row?.data as { stage?: unknown } | undefined)?.stage;
+          if (typeof stage === 'string' && seen[seen.length - 1] !== stage) seen.push(stage);
+        });
+      });
+      return seen;
+    };
+
+    it('walks naming → worktrees → linking → starting, in that order', async () => {
+      const h = (live = harness());
+      const stages = recordStages(h);
+
+      // No `name`, so the naming phase runs: it is the one step that happens
+      // before a single git call and the only chance the slug has to change.
+      await h.run('tasks.create', { title: 'Ship it', repos: [REPO] });
+      await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+      // First appearance, not the full sequence: `provisioning` is the floor
+      // between phases and `linking` is entered twice (the root, then the task
+      // hooks), so pinning the exact list would assert the seams rather than the
+      // order — and the order is the whole claim.
+      const firstSeen = ['naming', 'worktrees', 'linking', 'starting'].map((word) => stages.indexOf(word));
+      expect(firstSeen, `saw ${JSON.stringify(stages)}`).not.toContain(-1);
+      expect(firstSeen).toEqual([...firstSeen].sort((a, b) => a - b));
+    });
+
+    it('says `worktrees` while git is the thing taking the time', async () => {
+      let finish = (): void => undefined;
+      const held = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      const h = (live = harness({
+        git: (call) => (call.args[0] === 'worktree' && call.args[1] === 'add' ? held.then(() => OK) : OK),
+      }));
+
+      const created = await h.run<{ id: string }>('tasks.create', {
+        title: 'Ship it',
+        name: 'ship-it',
+        repos: [REPO],
+      });
+      await until(async () => {
+        const row = await rowOf(h, created.id);
+        return (row?.data as { stage?: unknown } | undefined)?.stage === 'worktrees';
+      });
+
+      const row = await rowOf(h, created.id);
+      expect(row?.busy).toBe(true);
+      // The per-repo note rides ALONGSIDE the stage rather than being replaced by
+      // it — which it was, silently, for as long as both have existed.
+      expect(row?.description).toBe('worktrees… · working app…');
+
+      finish();
+    });
+
+    /**
+     * The half the WORD cannot fix.
+     *
+     * A provisioning task has lifecycle `draft` and no sessions, so the rollup
+     * answers `idle` and the card drew the hollow resting ring — "nothing is
+     * happening here" — through the whole wait. The row was literally filed under
+     * `Resting` while git ran.
+     */
+    it('marks it working, and files it under In flight rather than Resting', async () => {
+      let finish = (): void => undefined;
+      const held = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      const h = (live = harness({
+        git: (call) => (call.args[0] === 'fetch' ? held.then(() => OK) : OK),
+      }));
+
+      await h.run<{ id: string }>('tasks.create', { title: 'Ship it', name: 'ship-it', repos: [REPO] });
+      const rows = await h.tree().children(undefined);
+      const row = rows.find((entry) => entry.section !== true);
+
+      expect((row?.data as { mark?: unknown } | undefined)?.mark).toBe('working');
+      expect(rows.find((entry) => entry.section === true)?.label).toBe('In flight');
+
+      finish();
+    });
+
+    it('drops the stage the moment the work is done, so the stamp comes back', async () => {
+      const h = (live = harness());
+      const created = await h.run<{ id: string }>('tasks.create', { title: 'Ship it', repos: [REPO] });
+      await until(async () => (await rowOf(h, created.id))?.busy !== true);
+
+      const row = await rowOf(h, created.id);
+      expect((row?.data as { stage?: unknown } | undefined)?.stage).toBeUndefined();
+      expect((row?.data as { elapsed?: unknown } | undefined)?.elapsed).toBeDefined();
+    });
+  });
+
   it('keeps saying "restoring" after the re-provision inside it finishes', async () => {
     // Restoring wraps a provision, so the two spans nest. An inner `finally`
     // that DELETED the word would drop the row back to idle at the halfway
