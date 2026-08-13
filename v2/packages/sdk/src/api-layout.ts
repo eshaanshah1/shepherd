@@ -239,7 +239,7 @@ export interface TreeItem {
   readonly id: string;
   readonly label: string;
   /**
-   * A heading rather than a row — drawn as an uppercase micro-label with its
+   * A heading rather than a row — drawn as a sentence-case micro-label with its
    * `description` as the count, and not clickable.
    *
    * Generic on purpose: grouping a list under headings is what every real
@@ -248,6 +248,24 @@ export interface TreeItem {
    * clickable.
    */
   readonly section?: boolean;
+  /**
+   * This heading sits INSIDE the one above it — drawn a step quieter, with no
+   * rule of its own.
+   *
+   * Depth, not styling. An extension says "this groups rows that are already
+   * grouped" and the shell decides what a nested heading looks like; §7's rule
+   * that a contribution supplies data and a token name is what keeps a `rule` or
+   * a `color` field off this interface.
+   *
+   * Two levels is the whole of it, because two is what a rail can carry: the
+   * outer heading names the region and the inner one partitions it. A third
+   * would be a tree, and a tree in a 332px column is an outline nobody reads.
+   *
+   * Meaningless without `section`, and ignored there rather than refused — a
+   * contribution that sets it on an ordinary row gets an ordinary row, which is
+   * the same failure mode `component` already has.
+   */
+  readonly subsection?: boolean;
   /**
    * This row, and everything a contribution sends after it, sits at the physical
    * FOOT of the list rather than merely last in it.
@@ -263,6 +281,43 @@ export interface TreeItem {
    */
   readonly foot?: boolean;
   readonly description?: string;
+  /**
+   * This row is a CONTROL on the list rather than an entry in it — draw it as
+   * chrome.
+   *
+   * `Show all 28` was the loudest pixel in the rail: an ordinary row, so body
+   * type at full `text` ink, sitting under eight shipped tasks drawn at
+   * `textGhost` and above nothing at all. It outshone the task the user was
+   * mid-turn on. The ink ramp already had the right answer written down —
+   * `textFaint`'s job is "a control at rest" — and the search field one row up
+   * already quotes that rule to sit a step under the rows. This is the same
+   * claim, declared instead of assumed.
+   *
+   * Orthogonal to `section`: a heading is not clickable and this is, which is
+   * exactly why it cannot be one. A quiet row keeps every other row property —
+   * the height, the leading slot, the hover fill, the keyboard semantics — and
+   * changes only how loudly it speaks.
+   */
+  readonly quiet?: boolean;
+  /**
+   * This row is in a region with **no state column** — draw it without the leading
+   * slot rather than reserving an empty one.
+   *
+   * The rail normally reserves that box on every row so a label's x cannot depend on
+   * whether its row has a status. Where a whole region's state is declared once by
+   * the heading over it — `Shipped`, whose rows all shipped — the box is 21px of
+   * indent paid for a column that is always empty, and the region reads better with
+   * its heading, its labels and its rows sharing one left edge.
+   *
+   * **The extension declares it because only the extension can.** Whether a list has
+   * a state column is a fact about a row's SIBLINGS: the same `… +3` control is right
+   * to reserve the box among tab rows that carry marks and wrong to reserve it among
+   * shipped rows that do not, and the shell sees one row at a time.
+   *
+   * Absent means the slot is reserved, so every tree that has never heard of this is
+   * drawn exactly as before.
+   */
+  readonly gutter?: boolean;
   /** A design-token name, resolved by the renderer. Never a raw colour. */
   readonly tint?: string;
   /**

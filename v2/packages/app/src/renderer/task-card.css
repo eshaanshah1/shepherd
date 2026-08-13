@@ -338,6 +338,42 @@
 }
 
 /*
+ * ── the duplicate count ───────────────────────────────────────────────────
+ *
+ * One row, more than one task — the only row in the rail that is not 1:1 with the
+ * thing it opens, so it says the number out loud.
+ *
+ * A hairline ring, not a filled pill: §10 refuses a badge as a way of making
+ * something louder, and this must be quieter than the title it qualifies. The ring
+ * is the same `line` the card's own edge uses, and the digit sits at `textMute` —
+ * one step above the shipped title so it reads as a fact about the row rather than
+ * part of its name.
+ *
+ * Round, and that is the one shape argument here: a rounded rectangle at this size
+ * reads as a tag (a thing you could click), where a ring reads as an annotation. It
+ * is not interactive and must not look it.
+ *
+ * `min-inline-size` with a centred digit rather than symmetric padding, so `2` and
+ * `12` are the same width and a column of rows does not shuffle.
+ */
+.sh-task-card__dupe {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-inline-size: var(--sh-font-size-medium);
+  block-size: var(--sh-font-size-medium);
+  padding-inline: var(--sh-space-hair);
+  border: var(--sh-hairline) solid var(--sh-line);
+  border-radius: 999px;
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-nano);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: var(--sh-text-mute);
+}
+
+/*
  * ── the trailing cell: metadata and the hover action, in ONE track ─────────
  *
  * §6 refuses "a row that grows to reveal hover actions". Both occupants sit in

@@ -57,12 +57,23 @@
   border-radius: 50%;
 }
 
-/* ── shipped — a check, and then it leaves the list ──────────────────────────
+/* ── shipped — a check, for the row that is not under a heading saying so ────
  *
  * Drawn as two borders on a rotated box rather than as an icon, because `Icon`
  * takes a Tabler component and this is 12px of chrome inside a 12px slot — a
- * glyph at that size is mostly antialiasing. It is also the one mark that is
- * transient by design: a shipped task becomes a count at the foot of the rail.
+ * glyph at that size is mostly antialiasing.
+ *
+ * **It used to be the one transient mark**, on the premise that "a shipped task
+ * becomes a count at the foot of the rail". That premise died when Shipped became
+ * a permanent region of readable rows: the check then repeated down the whole
+ * block, saying what the heading above it already said, in the slot where the eye
+ * starts scanning. The rail's shipped rows therefore draw an EMPTY slot
+ * (`markSlot`) and keep this mark for the one case that deviates from the heading —
+ * shipped while the last run was failing.
+ *
+ * The mark itself stays, and is not dead: a surface listing finished work WITHOUT
+ * a heading that declares it — a search result, a palette hit, another client's
+ * sidebar — has nothing else to say why the row is there.
  */
 .sh-ui-mark[data-state='shipped']::before {
   content: '';

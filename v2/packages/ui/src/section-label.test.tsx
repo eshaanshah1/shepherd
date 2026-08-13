@@ -85,6 +85,23 @@ describe('SectionLabel', () => {
     expect(label(plain.container).dataset.rule).toBe('false');
   });
 
+  it('draws a nested heading one step down the ramp and NOTHING else differently', () => {
+    /*
+     * A day label inside `Shipped` is the same KIND of thing at a smaller scope, so
+     * it is the same component at the same height and weight — one step quieter, and
+     * the rule dropped by the caller. A nested heading that changed size or weight
+     * would be a second component impersonating this one, and the hierarchy would
+     * then be carried by two facts that can disagree.
+     */
+    const nested = rulesMentioning('sh-ui-section-label').find(
+      (candidate) => candidate.selectorText === '.sh-ui-section-label[data-nested]',
+    );
+    expect(nested?.style.color).toBe('var(--sh-text-ghost)');
+    for (const property of ['height', 'font-size', 'font-weight', 'text-transform', 'letter-spacing', 'padding']) {
+      expect(nested?.style.getPropertyValue(property), `nested declares ${property}`).toBe('');
+    }
+  });
+
   it('spreads unanticipated props and forwards a ref', () => {
     let node: HTMLDivElement | null = null;
     const dom = mount(

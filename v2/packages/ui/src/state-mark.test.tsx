@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { mount } from './test-dom.ts';
-import { StateMark, markWords, type MarkState } from './state-mark.tsx';
+import { rulesMentioning } from './css-rules.ts';
+import { StateMark, markSlot, markWords, type MarkState } from './state-mark.tsx';
 import { SUITE_METER_MAX_CELLS, SuiteMeter } from './suite-meter.tsx';
+// Loaded for the `markSlot` case below, which asserts what the stylesheet does NOT
+// declare — a claim there is no way to make through the markup.
+import './styles.css';
 
 const STATES: MarkState[] = ['working', 'waiting', 'resting', 'failed', 'shipped'];
 
@@ -68,6 +72,26 @@ describe('StateMark', () => {
     const dom = mount(<StateMark state="resting" className="sh-row-glyph" />);
     expect(mark(dom.container).className).toContain('sh-ui-mark');
     expect(mark(dom.container).className).toContain('sh-row-glyph');
+  });
+
+  it('draws nothing at all without a state, so `markSlot` is an empty box', () => {
+    /*
+     * The escape hatch for a row whose state its REGION already declares — a
+     * shipped task under a heading reading `Shipped`, where eight identical checks
+     * spend the slot on nothing. It works because every shape in the stylesheet
+     * hangs off `[data-state]`, and the test is here so that stays true: a shape
+     * moved onto the bare `.sh-ui-mark` rule would put a mark back on every one of
+     * those rows.
+     */
+    expect(markSlot).toBe('sh-ui-mark');
+    const bare = rulesMentioning('sh-ui-mark').find((rule) => rule.selectorText === '.sh-ui-mark');
+    for (const property of ['background', 'border', 'content', 'transform']) {
+      expect(bare?.style.getPropertyValue(property), `.sh-ui-mark declares ${property}`).toBe('');
+    }
+    // …and it is still the fixed 12px box, which is the whole reason to reuse it:
+    // the label's x position must not depend on whether its row has a status.
+    expect(bare?.style.getPropertyValue('inline-size')).toBe('12px');
+    expect(bare?.style.getPropertyValue('block-size')).toBe('12px');
   });
 });
 

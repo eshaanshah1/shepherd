@@ -742,6 +742,30 @@ body.sh-dragging {
 .sh-rows li + li > .sh-ui-section-label { margin-top: var(--sh-space-md); }
 
 /*
+ * ── a heading lines up with the TITLES, not with the box around them ────────
+ *
+ * `SectionLabel` carries no padding of its own, on the argument that "the rail
+ * already gutters its own list, and a heading that padded too would sit inset from
+ * the cards it names". That is right about the card's BOX and wrong about what a
+ * reader sees: a dense card draws no border and no fill at rest, so the box edge is
+ * invisible and the heading was aligning to nothing — landing one `space-md` left of
+ * every title, mark and search glyph in the list.
+ *
+ * `space-md` is exactly the dense card's own inline padding, which is why the
+ * arithmetic is written as that token rather than a number: the heading follows the
+ * rows' inset when the space scale moves, instead of being a value that agreed with
+ * it once.
+ *
+ * It is the shell's rule and not the primitive's, deliberately. This inset is a fact
+ * about the RAIL — that its rows are contributed cards with a padding of their own —
+ * and a heading in the settings screen or a modal has no such neighbour to line up
+ * with.
+ */
+.sh-rows > li > .sh-ui-section-label {
+  padding-inline-start: var(--sh-space-md);
+}
+
+/*
  * A contributed row draws its own surface, so the host is a bare box.
  *
  * It carries no padding of its own: the card's `12px 13px` is the card's, and a

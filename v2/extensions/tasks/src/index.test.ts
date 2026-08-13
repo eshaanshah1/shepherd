@@ -2324,8 +2324,9 @@ describe('finished work', () => {
     const rows = await h.tree().children(undefined);
     const ids = rows.map((row) => row.id);
 
-    // Active first, with NO heading over it, then the divider, then the shipped.
-    expect(ids).toEqual(['now', 'group:shipped', 'old']);
+    // Active first, with NO heading over it, then the divider, then the day the
+    // work shipped on, then the shipped rows themselves.
+    expect(ids).toEqual(['now', 'group:shipped', 'group:shipped:day:Today', 'old']);
     const divider = rows.find((row) => row.id === 'group:shipped');
     expect(divider?.label).toBe('Shipped');
     expect(divider?.description).toBe('1');
@@ -2358,8 +2359,14 @@ describe('finished work', () => {
   });
 
   it('caps the shipped rows and offers the rest behind one row', async () => {
+    /*
+     * DISTINCT titles, and that is load-bearing rather than tidy: same-title
+     * shipped tasks collapse into one row now, so a fixture leaning on `task()`'s
+     * default title would draw eleven tasks as a single `×11` row and this test
+     * would be measuring the collapse instead of the cap.
+     */
     const many = Array.from({ length: 11 }, (_, i) =>
-      task({ id: `s${i}`, lifecycle: 'archived', archivedAt: 100 + i, sessions: [] }),
+      task({ id: `s${i}`, title: `T s${i}`, lifecycle: 'archived', archivedAt: 100 + i, sessions: [] }),
     );
     const h = (live = harness({ tasks: [...many, task({ id: 'now' })] }));
 
@@ -2370,17 +2377,34 @@ describe('finished work', () => {
     expect(shippedRows[0]?.id).toBe('s10');
     // The count is the TRUE total, not the number of rows drawn.
     expect(rows.find((row) => row.id === 'group:shipped')?.description).toBe('11');
-    expect(rows.find((row) => row.id === 'group:shipped:more')?.label).toBe('Show all 11');
+    /*
+     * **The hidden count, not the total.** It read `Show all 11`, which restates
+     * the number the divider two rows up already draws; the fact only this row can
+     * carry is how many are NOT on screen.
+     */
+    expect(rows.find((row) => row.id === 'group:shipped:more')?.label).toBe('3 more');
     /*
      * And it claims NO state. With a tint the shell drew a shipped check beside
      * "Show all 11" — a mark asserting the control had finished something.
      */
     expect(rows.find((row) => row.id === 'group:shipped:more')?.tint).toBeUndefined();
+    /*
+     * It is CHROME. This row shipped at full row ink in body type, which made the
+     * quietest region of the rail end in its loudest line — brighter than the task
+     * the user was mid-turn on.
+     */
+    expect(rows.find((row) => row.id === 'group:shipped:more')?.quiet).toBe(true);
   });
 
   it('shows every shipped row once asked, and offers the way back', async () => {
+    /*
+     * DISTINCT titles, and that is load-bearing rather than tidy: same-title
+     * shipped tasks collapse into one row now, so a fixture leaning on `task()`'s
+     * default title would draw eleven tasks as a single `×11` row and this test
+     * would be measuring the collapse instead of the cap.
+     */
     const many = Array.from({ length: 11 }, (_, i) =>
-      task({ id: `s${i}`, lifecycle: 'archived', archivedAt: 100 + i, sessions: [] }),
+      task({ id: `s${i}`, title: `T s${i}`, lifecycle: 'archived', archivedAt: 100 + i, sessions: [] }),
     );
     const h = (live = harness({ tasks: many }));
 
@@ -2388,6 +2412,79 @@ describe('finished work', () => {
     const rows = await h.tree().children(undefined);
     expect(rows.filter((row) => row.id.startsWith('s'))).toHaveLength(11);
     expect(rows.find((row) => row.id === 'group:shipped:more')?.label).toBe('Show fewer');
+  });
+
+  it('stamps a shipped row with when it SHIPPED, not how old the task is', async () => {
+    /*
+     * The defect this fixes, stated as the fixture: work begun at the epoch and
+     * shipped four hours later read `0d` — its AGE — because `elapsed` was
+     * `formatElapsed(createdAt)` for every row, live and shipped alike. On a
+     * three-week-old task shipped ten minutes ago it said `21d`, which is true
+     * about the wrong subject: the archive is asked what you finished, not what you
+     * started.
+     */
+    /*
+     * The instant is built from a LOCAL `Date` rather than from epoch arithmetic,
+     * so the expectation holds in any zone. An epoch offset asserts a UTC wall
+     * clock, and a half-hour zone (this was found on UTC+5:30) shifts the MINUTES
+     * as well as the hour — so even `/^\d\d:35$/` fails there.
+     */
+    const at = new Date(1970, 0, 1, 14, 35).getTime();
+    const h = (live = harness({
+      tasks: [task({ id: 'old', title: 'T old', lifecycle: 'archived', createdAt: 1, archivedAt: at, sessions: [] })],
+    }));
+    const row = (await h.tree().children(undefined)).find((entry) => entry.id === 'old');
+    // A clock, not a duration. `0d` — the task's age — is what this said before.
+    expect((row?.data as { elapsed?: string } | undefined)?.elapsed).toBe('14:35');
+  });
+
+  it('collapses same-day shipped tasks that share a title, and counts them', async () => {
+    /*
+     * Two tasks named identically, shipped the same afternoon, drew as two
+     * indistinguishable lines — which reads as a rendering bug rather than as the
+     * fact it is. One row and a count states it.
+     *
+     * The row opens the MOST RECENT of them: a row has one command, and "open both"
+     * is not a gesture the layout has. The count is the disclosure that it is
+     * standing in for more than it opens, and it travels in `description` too so
+     * the fact does not live only in our renderer.
+     */
+    const twin = (id: string, at: number): TaskRecord =>
+      task({ id, title: 'Update Shepherd with Shepherd-design', lifecycle: 'archived', archivedAt: at, sessions: [] });
+    const h = (live = harness({ tasks: [twin('older', 10), twin('newer', 20), task({ id: 'solo', title: 'T solo', lifecycle: 'archived', archivedAt: 30, sessions: [] })] }));
+
+    const rows = await h.tree().children(undefined);
+    const ids = rows.filter((row) => row.section !== true).map((row) => row.id);
+    expect(ids).toEqual(['solo', 'newer']);
+
+    const collapsed = rows.find((row) => row.id === 'newer');
+    expect((collapsed?.data as { dupe?: number } | undefined)?.dupe).toBe(2);
+    expect(collapsed?.description).toContain('2 tasks');
+    // The lone row carries no count at all, so the card's test is presence.
+    expect((rows.find((row) => row.id === 'solo')?.data as { dupe?: number } | undefined)?.dupe).toBeUndefined();
+    // And the divider still counts TASKS: three of them, in two rows.
+    expect(rows.find((row) => row.id === 'group:shipped')?.description).toBe('3');
+  });
+
+  it('keeps two same-title tasks apart when they shipped on different days', async () => {
+    /*
+     * The bound on the collapse, and the reason it happens per-day rather than
+     * across the region: two identical lines an hour apart are one line of the
+     * record, and the same two a fortnight apart are two different afternoons.
+     * Merging those would destroy exactly what a permanent archive is for.
+     */
+    const DAY = 24 * 60 * 60 * 1000;
+    const twin = (id: string, at: number): TaskRecord =>
+      task({ id, title: 'Same name', lifecycle: 'archived', archivedAt: at, sessions: [] });
+    const h = (live = harness({ tasks: [twin('today', 60_000), twin('before', 60_000 - 2 * DAY)] }));
+
+    const rows = await h.tree().children(undefined);
+    expect(rows.filter((row) => row.section !== true).map((row) => row.id)).toEqual(['today', 'before']);
+    for (const id of ['today', 'before']) {
+      expect((rows.find((row) => row.id === id)?.data as { dupe?: number } | undefined)?.dupe).toBeUndefined();
+    }
+    // Two days, two labels.
+    expect(rows.filter((row) => row.subsection === true)).toHaveLength(2);
   });
 
   it('draws no Show all row when everything shipped already fits', async () => {
@@ -2422,21 +2519,31 @@ describe('finished work', () => {
     expect((row?.data as { mark?: string } | undefined)?.mark).toBe('shipped');
   });
 
-  it('has exactly one section, and it is Shipped', async () => {
+  it('heads no region but Shipped, and nests the days inside it', async () => {
     /*
      * The rail used to open with `Waiting on you` / `In flight` / `Resting` —
      * attention routing as the rail's shape. That is gone by decision: the status
      * dot carries it, and a heading per state is a thing to scan on the way to
      * the rows. A blocked task is now row N with an amber dot and nothing floats
      * it, which was raised and accepted. Do not add a blocked-first exception.
+     *
+     * The day labels are not a second REGION and that is the whole point of
+     * `subsection`: `Shipped` names the region and the days partition it, so the
+     * active list still has no heading and the rail still has one band across it.
      */
     const h = (live = harness({
       tasks: [task({ id: 'a' }), task({ id: 'b', lifecycle: 'archived', archivedAt: 1, sessions: [] })],
     }));
-    const ids = (await h.tree().children(undefined))
-      .filter((row) => row.section === true)
-      .map((row) => row.id);
-    expect(ids).toEqual(['group:shipped']);
+    const sections = (await h.tree().children(undefined)).filter((row) => row.section === true);
+    expect(sections.map((row) => row.id)).toEqual(['group:shipped', 'group:shipped:day:Today']);
+    expect(sections[0]?.subsection).toBeUndefined();
+    expect(sections[1]?.subsection).toBe(true);
+    /*
+     * And a day carries NO count. `Shipped · 28` is the true total; `Today · 4`
+     * beside it invites adding the days up and finding they do not reach it,
+     * because the region is capped.
+     */
+    expect(sections[1]?.description).toBeUndefined();
   });
 
   it('puts a shipped task\'s work back before opening its root, and leaves it shipped', async () => {
@@ -3292,7 +3399,13 @@ describe('searching the rail', () => {
 
     await h.run('tasks.filter', { query: 'login' });
     const ids = (await h.tree().children(undefined)).map((row) => row.id);
-    expect(ids).toEqual(['live-hit', 'group:shipped', 'done-hit']);
+    // The day label survives the filter, because a clock time is only unambiguous
+    // under one — a search result stamped `00:00` with no day above it is worse
+    // than the age stamp it replaced.
+    expect(ids).toEqual(['live-hit', 'group:shipped', 'group:shipped:day:Today', 'done-hit']);
+    // Uncapped, and so still grouped: a search that reaches the fortieth shipped
+    // task crosses days, and the labels are what say which is which.
+    expect(ids).not.toContain('group:shipped:more');
   });
 
   it('finds a task by the repo it is in, which is often how you remember it', async () => {

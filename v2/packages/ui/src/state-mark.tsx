@@ -47,6 +47,26 @@ export const markWords: Readonly<Record<MarkState, string>> = {
   shipped: 'Shipped',
 };
 
+/**
+ * The empty slot, as a class name — for a row that must hold the state column
+ * without claiming a state.
+ *
+ * The same escape hatch `rowClasses` is: a consumer drawing its own markup gets
+ * the box without taking the component. The box is all there is to get, since
+ * every shape in the stylesheet hangs off `[data-state]` — omit the attribute and
+ * `.sh-ui-mark` is exactly 12×12 of nothing.
+ *
+ * It exists so the 12px stays in ONE file. `state-mark.css` opens by saying these
+ * are the sizes of marks rather than of chrome and are not repeated elsewhere; a
+ * consumer that wrote its own `inline-size: 12px` would be the repetition that
+ * comment forbids, and it would drift the first time a mark changed size.
+ *
+ * The honest use is a row whose state is already stated by the region it sits in
+ * — a shipped task under a heading that says Shipped. Not for a row whose state is
+ * merely unknown: that is `resting`, and it has a mark.
+ */
+export const markSlot = 'sh-ui-mark';
+
 export interface StateMarkProps extends Omit<ComponentPropsWithRef<'span'>, 'role' | 'title'> {
   /** Which of the five, by state. There is no colour prop and there will not be. */
   readonly state: MarkState;

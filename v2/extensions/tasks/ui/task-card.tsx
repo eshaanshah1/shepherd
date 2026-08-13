@@ -133,7 +133,32 @@ export function TaskCard({ item, selected, invoke }: ExtensionRowProps): ReactEl
         invalid and makes the inner ones unreachable by keyboard in some AT.
       */}
       <button type="button" className="sh-task-card__head" onClick={open}>
-        <StateMark state={card.mark} />
+        {/*
+          **A mark whose value the region already states is not information — and
+          neither is the space it was drawn in.**
+
+          `state-mark.css` said the premise out loud — "a check, and then it leaves
+          the list … transient by design: a shipped task becomes a count at the foot
+          of the rail" — and that stopped being true when Shipped became a permanent
+          region. Eight rows under a heading reading `Shipped` drew eight identical
+          checks at the left edge where the eye starts scanning.
+
+          **The slot goes with them**, which is the part worth stating because Row
+          rule 2 argues the opposite: a label's x must not depend on whether its row
+          happens to have a status. That rule is about ONE LIST, and the answer here
+          is that Shipped is a region with no state column at all — its heading, its
+          day labels, its titles and its `N more` all sit at one left edge, and the
+          21px is title track back on a 332px rail (14% of it at the narrow width
+          this was measured at).
+
+          The exception is the mark that DEVIATES from what the heading says. A task
+          can be shipped while its last run was failing, and `task-card.css` already
+          keys the dimming on `data-shipped` rather than on the mark for exactly that
+          reason: red must stay findable in a block you scan. That one row indents its
+          own title, which is the honest cost — the row you are meant to notice is the
+          row that looks different.
+        */}
+        {card.shipped === true && card.mark !== 'failed' ? null : <StateMark state={card.mark} />}
         <span className="sh-task-card__title">{item.label}</span>
         {/*
           The metadata and the hover action share ONE grid cell (§6: a row must
@@ -145,6 +170,21 @@ export function TaskCard({ item, selected, invoke }: ExtensionRowProps): ReactEl
           `visibility`, not `display`, for the same reason: a hidden-but-laid-out
           button is what keeps the cell that width when it is not shown.
         */}
+        {/*
+          The count of what this row stands for, OUTSIDE the trailing cell.
+
+          It sits between the title and the stamp rather than in the stack with
+          them, because it is not metadata that yields to a hover action — it is
+          part of what the row says, and a badge that vanished under the pointer
+          would take the disclosure with it. It is `flex: none`, so the title
+          truncates around it instead of the row growing.
+        */}
+        {card.dupe === undefined ? null : (
+          <span className="sh-task-card__dupe" title={`${card.dupe} tasks with this name`}>
+            <span aria-hidden="true">{card.dupe}</span>
+            <span className="sh-ui-sr-only">{card.dupe} tasks with this name</span>
+          </span>
+        )}
         <span className="sh-task-card__trail">
           {card.elapsed === undefined ? null : <span className="sh-task-card__elapsed">{card.elapsed}</span>}
           {action === undefined ? null : (

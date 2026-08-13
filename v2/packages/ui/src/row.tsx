@@ -60,6 +60,7 @@ export const rowClasses = {
   root: 'sh-ui-row',
   selected: 'sh-ui-row--selected',
   entering: 'sh-ui-row--entering',
+  quiet: 'sh-ui-row--quiet',
   leading: 'sh-ui-row__leading',
   label: 'sh-ui-row__label',
   trailing: 'sh-ui-row__trailing',
@@ -75,6 +76,43 @@ export interface RowProps extends ComponentPropsWithRef<'div'> {
   /** Revealed on hover and on keyboard focus within, over `meta`, never beside it. */
   readonly actions?: ReactNode;
   readonly selected?: boolean;
+  /**
+   * This row is a CONTROL on the list, not an entry in it — one step down the
+   * ink ramp and one step down the type scale.
+   *
+   * For `20 more`, `Show fewer`, and anything else whose job is to operate on the
+   * list it sits in. Such a row shipped at full `text` ink in body type, which
+   * made the quietest region of the rail end in its loudest line — and `textFaint`
+   * is the role whose stated job is "a control at rest", so the ramp already had
+   * the answer.
+   *
+   * **Everything else about the row is unchanged**, deliberately: same height,
+   * same leading slot, same hover fill, same focus ring. This is a volume knob,
+   * not a second row variant — a control that also got shorter would be the
+   * second-height defect §10 refuses, arriving through a door marked "quiet".
+   */
+  readonly quiet?: boolean;
+  /**
+   * This row is in a list with **no state column** — drop the leading slot
+   * entirely rather than reserving an empty one.
+   *
+   * Rule 2 above argues the opposite and is still right about what it covers: within
+   * one list the slot is fixed so a label's x cannot depend on whether that row has
+   * a status. This is the case the rule does not reach — a whole REGION where nothing
+   * has a mark, where the reserved box is 21px of indent every row pays for a column
+   * that is always empty.
+   *
+   * The rail's Shipped region is the case it exists for: its rows' state is declared
+   * once by the heading above them, so the heading, the day labels, the titles and
+   * the `N more` control all share one left edge.
+   *
+   * **Declared by the caller, never inferred.** Whether a list has a state column is
+   * a fact about the row's SIBLINGS, which neither this component nor the shell can
+   * see — the same `… +3` row is right to reserve the box among tab rows that have
+   * marks and wrong to reserve it among shipped rows that do not. Defaults to `true`,
+   * so every existing list is unchanged.
+   */
+  readonly gutter?: boolean;
   /**
    * This row is ARRIVING — fade and settle in, once.
    *
@@ -100,6 +138,8 @@ export function Row({
   meta,
   actions,
   selected = false,
+  quiet = false,
+  gutter = true,
   entering = false,
   className,
   children,
@@ -110,18 +150,23 @@ export function Row({
       className={cn(
         rowClasses.root,
         selected && rowClasses.selected,
+        quiet && rowClasses.quiet,
         entering && rowClasses.entering,
         className,
       )}
       data-selected={selected ? 'true' : undefined}
+      data-quiet={quiet ? 'true' : undefined}
       {...rest}
     >
       {/*
-       * Rendered unconditionally. An empty slot is the point: the box holds the
-       * label's x position for every row in the list, whether or not this
+       * Rendered whenever the list HAS a state column, empty or not: the box holds
+       * the label's x position for every row in the list, whether or not this
        * particular one has anything to put in it.
+       *
+       * `gutter={false}` is the one way out, and it is a claim about the whole list
+       * rather than about this row — see the prop.
        */}
-      <span className={rowClasses.leading}>{leading}</span>
+      {gutter ? <span className={rowClasses.leading}>{leading}</span> : null}
       <span className={rowClasses.label}>{children}</span>
       {/*
        * Also unconditional, and also for a layout reason rather than a tidiness

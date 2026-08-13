@@ -609,6 +609,87 @@ describe('the dock-s foot group', () => {
     view.unmount();
   });
 
+  it('nests a subsection heading under the one above it, and drops its rule', async () => {
+    /*
+     * `Shipped · 28` names the region; `Today` partitions it. Drawn identically the
+     * two read as peers when one contains the other, and the rule is what makes a
+     * heading a band across the list — so the nested one gives it up and steps down
+     * the ink ramp instead.
+     *
+     * Both are still `SectionLabel`, deliberately: the day label is the same kind of
+     * thing at a smaller scope, and a nested heading drawn by a second component
+     * would carry the hierarchy in two facts that can disagree.
+     */
+    const view = mount(
+      <ViewDock
+        views={bridge(TREE, [], [
+          { id: 'group:shipped', label: 'Shipped', description: '28', section: true },
+          { id: 'group:shipped:day:Today', label: 'Today', section: true, subsection: true },
+          { id: 't0', label: 'Task 0', tint: 'archived' },
+        ])}
+      />,
+    );
+    await settle();
+    const groups = all(view.container, 'view-group');
+    expect(groups.map((el) => el.getAttribute('data-nested'))).toEqual([null, 'true']);
+    expect(groups.map((el) => el.getAttribute('data-rule'))).toEqual(['true', 'false']);
+    view.unmount();
+  });
+
+  it('draws a quiet row as chrome, keeping every other row property', async () => {
+    /*
+     * `20 more` is a control on the list, not an entry in it. It shipped at row ink
+     * in body type, which made the quietest region of the rail end in its loudest
+     * line — louder than the task the user was mid-turn on.
+     *
+     * The declaration is the EXTENSION's, and has to be: a control row and a task
+     * row are the same shape here (a label plus a command), so the shell has nothing
+     * to infer it from.
+     */
+    const view = mount(
+      <ViewDock
+        views={bridge(TREE, [], [
+          { id: 't0', label: 'Task 0', tint: 'archived' },
+          { id: 'more', label: '20 more', quiet: true, command: { id: 'x' } },
+        ])}
+      />,
+    );
+    await settle();
+    const rows = all(view.container, 'view-row');
+    expect(rows.map((row) => row.getAttribute('data-quiet'))).toEqual([null, 'true']);
+    const quiet = rows[1];
+    // It claims no state — a mark here drew a shipped CHECK on a control.
+    expect(quiet?.querySelector('.sh-ui-mark')).toBeNull();
+    // And quiet alone does NOT drop the state column: among rows that have marks, a
+    // control belongs in their label column. That is `gutter`'s job, below.
+    expect(quiet?.querySelector('.sh-ui-row__leading')).not.toBeNull();
+    view.unmount();
+  });
+
+  it('drops a row’s leading slot when the contribution says its region has no marks', async () => {
+    /*
+     * `Shipped` declares its rows' state once, so they draw no mark and the reserved
+     * box becomes 21px of indent for a column that is always empty. The heading, the
+     * day labels, the titles and the `N more` control then share one left edge.
+     *
+     * Declared, never inferred: the same control is right to reserve the box among tab
+     * rows that carry marks, and the shell sees one row at a time.
+     */
+    const view = mount(
+      <ViewDock
+        views={bridge(TREE, [], [
+          { id: 'keeps', label: 'A tab', quiet: true, command: { id: 'x' } },
+          { id: 'drops', label: '20 more', quiet: true, gutter: false, command: { id: 'x' } },
+        ])}
+      />,
+    );
+    await settle();
+    const rows = all(view.container, 'view-row');
+    expect(rows[0]?.querySelector('.sh-ui-row__leading')).not.toBeNull();
+    expect(rows[1]?.querySelector('.sh-ui-row__leading')).toBeNull();
+    view.unmount();
+  });
+
   it('pins the declared foot row and what follows it, and NOTHING above it', async () => {
     const view = mount(<ViewDock views={bridge(TREE, [], shipped(2))} />);
     await settle();

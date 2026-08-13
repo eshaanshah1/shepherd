@@ -49,6 +49,7 @@ import type { DiffStats } from './model/diff-stats.ts';
 import { fuzzyFilter } from '@shepherd/sdk';
 import { formatElapsed } from './model/elapsed.ts';
 import { SHIPPED_CAP, activeOrder, capShipped, shippedOrder } from './model/order.ts';
+import { groupByDay } from './model/shipped-days.ts';
 import { capTabRows } from './model/tab-rows.ts';
 import {
   archiveTabsFrom,
@@ -136,14 +137,38 @@ export const LOCAL_MACHINE = 'here';
  * has a reason — no window, a renderer that never mounted it — and asking
  * forever would keep a timer alive for the life of the app to learn nothing.
  */
+/**
+ * What a SHIPPED row knows that a live one does not.
+ *
+ * Two facts, and both are decided by the grouping rather than by the task: the
+ * clock time belongs with the day header that makes it unambiguous, and the count
+ * is a property of the group the row collapsed. Passing them in — rather than
+ * having the row work them out — is what keeps a row that stands for two tasks
+ * from being a thing `rowFor` could produce by accident.
+ *
+ * Absent means "this is live work", which is the only other kind of row there is.
+ */
+interface ShipInfo {
+  /** `16:40` — when it shipped, in the format the day header disambiguates. */
+  readonly clock: string;
+  /** How many tasks share this row's title within its day. `1` for almost all. */
+  readonly count: number;
+}
+
 /** What this extension puts in a tree. Structural, so the SDK type stays the SDK's. */
 interface TreeItemOut {
   id: string;
   label: string;
   description?: string;
   section?: boolean;
+  /** A heading inside the heading above it — drawn a step quieter, with no rule. */
+  subsection?: boolean;
   /** This row sits at the physical foot of the list, and so does what follows it. */
   foot?: boolean;
+  /** This row operates on the list rather than belonging to it — drawn as chrome. */
+  quiet?: boolean;
+  /** This row's region has no state column — no leading slot, not an empty one. */
+  gutter?: boolean;
   tint?: string;
   busy?: boolean;
   /** The layout root this row stands for — the shell highlights from it. */
@@ -3248,12 +3273,38 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
            * at all until the first refresh lands — so a freshly-opened app draws
            * cards with no diff line for a beat rather than a row of `+0 −0`.
            */
-          const cardFor = (task: TaskRecord, state: string): unknown => ({
+          const cardFor = (task: TaskRecord, state: string, ship?: ShipInfo): unknown => ({
             mark: markFor(task, state),
             // No stage field: the step is the row's LABEL now (`stepLabel`), and
             // a card that also carried it in the trailing cell would say the same
             // word twice on one line.
-            elapsed: formatElapsed(task.createdAt, ctx.clock.now()),
+            /*
+             * **The live list stamps a DURATION, the archive stamps an EVENT.**
+             *
+             * This was `formatElapsed(task.createdAt)` for every row, live and
+             * shipped alike, and on finished work that reads as task AGE: work
+             * begun three weeks ago and shipped ten minutes ago said `21d`. The
+             * question a permanent archive is asked is "what did I finish today",
+             * and no formatting of the start time answers it.
+             *
+             * A shipped row therefore carries the clock time it was shipped at,
+             * computed at the grouping site because that is where the day header
+             * making `16:40` unambiguous is decided — the two are one treatment,
+             * and a card that formatted its own clock could be handed a time with
+             * no header above it.
+             *
+             * Live rows are untouched: a duration climbing IS the fact there.
+             */
+            elapsed: ship === undefined ? formatElapsed(task.createdAt, ctx.clock.now()) : ship.clock,
+            /*
+             * How many tasks this row stands for, when it is more than one.
+             *
+             * Absent at 1, so the card's test is presence rather than `> 1` — and
+             * absent entirely on live work, where two tasks of the same name are
+             * two things you are separately doing and collapsing them would hide
+             * one you might need to answer.
+             */
+            ...(ship !== undefined && ship.count > 1 ? { dupe: ship.count } : {}),
             /*
              * Shipped rows are DIMMED and one line — the whole reason finished
              * work can sit permanently in the rail without costing attention.
@@ -3339,7 +3390,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           const done = shippedOrder(shown.filter((task) => task.lifecycle === 'archived'));
 
           const rows: TreeItemOut[] = [];
-          const rowFor = (task: TaskRecord): TreeItemOut => {
+          const rowFor = (task: TaskRecord, ship?: ShipInfo): TreeItemOut => {
             const state = displayState(task.lifecycle, agentStatesOf(task));
             const busyWhat = busy.get(task.id);
             // Said on the row rather than in a log nobody has open — and
@@ -3412,6 +3463,17 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
                 busyNote ?? (issue === undefined ? state : `${state} — set hook failed`),
                 ...(shelvedNote === undefined ? [] : [shelvedNote]),
                 ...(repoNote === undefined ? [] : [repoNote]),
+                /*
+                 * A collapsed row says so IN WORDS, because it is the one row in
+                 * the rail that stands for more than one task.
+                 *
+                 * The card draws a `×2` badge, but this is the field that reaches
+                 * the row's tooltip and a remote member's own sidebar — and "this
+                 * line is two things" must not be a fact that exists only in our
+                 * renderer. Clicking still opens the most recent of them, which is
+                 * what the count is there to disclose.
+                 */
+                ...(ship !== undefined && ship.count > 1 ? [`${ship.count} tasks`] : []),
               ].join(' · '),
               // The word the shell resolves. `isTaskAgentState` rather than a
               // cast: `displayState` still returns the lifecycle union too, and
@@ -3450,7 +3512,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
                * ordinary row and loses nothing but the richer form.
                */
               component: 'tasks.card',
-              data: cardFor(task, state),
+              data: cardFor(task, state, ship),
               /*
                * Something is happening to it right now — a snapshot being taken,
                * worktrees being rebuilt. The row says so where its status mark is,
@@ -3604,7 +3666,20 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
              * told to press "Show all" to find out whether it was there.
              */
             const showingAll = matching !== undefined || tabsExpanded.has(SHIPPED_KEY);
-            const { shown: shippedRows, hidden } = capShipped(done, SHIPPED_CAP, showingAll);
+            /*
+             * **Capped in TASKS, then grouped into rows** — that order, and it is
+             * the reason day headers cost no work off the region.
+             *
+             * `SHIPPED_CAP` has always counted tasks, so eight tasks are kept and
+             * then drawn as however many rows they collapse to: eight tasks in
+             * seven rows plus two day labels, where a cap on ROWS would make the
+             * number of tasks on screen depend on how many happened to share a
+             * name and leave `hidden` wrong by the difference.
+             *
+             * Only rail HEIGHT pays for the labels, and two lines on a region you
+             * chose to keep permanently is the cheapest thing in it.
+             */
+            const { shown: shippedTasks, hidden } = capShipped(done, SHIPPED_CAP, showingAll);
             rows.push({
               id: SHIPPED_KEY,
               label: 'Shipped',
@@ -3614,7 +3689,39 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
               description: String(done.length),
               section: true,
             });
-            for (const task of shippedRows) rows.push(rowFor(task));
+            /*
+             * **Day headers, unconditionally** — not a threshold, not a setting.
+             *
+             * `16:40` is only unambiguous under a label naming the day, so the
+             * header and the clock are one treatment rather than two behaviours
+             * that could disagree; a region that grouped itself only past some
+             * number of rows would be a state machine whose states are both worse
+             * than either of them alone.
+             *
+             * The headers are ordinary `section` rows, nested — the shell draws
+             * them a step quieter with no rule of their own. `groupByDay` walks the
+             * order it is handed and never re-sorts, so introducing them cannot
+             * move a row: the labels land BETWEEN rows that were already in the
+             * order `shippedOrder` chose.
+             */
+            for (const day of groupByDay(shippedTasks, ctx.clock.now())) {
+              rows.push({
+                id: `${SHIPPED_KEY}:day:${day.label}`,
+                label: day.label,
+                /*
+                 * **No count on a day.** `Shipped · 28` says how much there is;
+                 * `Today · 4` beside it invites the reader to add the days up and
+                 * find they do not reach 28, because the region is capped. The
+                 * outer heading is the one that can afford a number, since it is
+                 * the one telling the truth about the whole archive.
+                 */
+                section: true,
+                subsection: true,
+              });
+              for (const row of day.rows) {
+                rows.push(rowFor(row.task, { clock: row.clock, count: row.count }));
+              }
+            }
             /*
              * The rest, behind one row — and it reuses `expandTabs` rather than
              * adding a verb, because that command already means "this row is
@@ -3624,15 +3731,35 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
             if (matching === undefined && (hidden > 0 || showingAll)) {
               rows.push({
                 id: `${SHIPPED_KEY}:more`,
-                label: showingAll ? 'Show fewer' : `Show all ${done.length}`,
                 /*
-                 * **No tint.** This is a control, not a task, and a state mark on
-                 * it drew a shipped CHECK beside "Show all 27" — a claim that the
-                 * control had finished something. With no tint the shell draws no
-                 * mark and the label sits at the section's own inset, which is
-                 * where a "show more" belongs: under the divider it belongs to,
-                 * not in the column of the tasks it reveals.
+                 * **The number you cannot get anywhere else.**
+                 *
+                 * This said `Show all 28`, which restates the total the divider
+                 * two rows up already draws; the fact only this row can carry is
+                 * how many are hidden. `20 more` is also shorter than the verb
+                 * phrase, which matters for the one line in the region that is not
+                 * a task title.
                  */
+                label: showingAll ? 'Show fewer' : `${hidden} more`,
+                /*
+                 * **A control, drawn as chrome.** The ink ramp writes `textFaint`
+                 * as "a control at rest", and the search field at the top of the
+                 * rail already quotes that rule to sit a step under the rows. This
+                 * row did not, so the quietest region of the rail ended in its
+                 * loudest line — brighter than the task the user was mid-turn on.
+                 *
+                 * **No tint**, unchanged and for its own reason: a state mark here
+                 * drew a shipped CHECK on something that is not a task.
+                 */
+                quiet: true,
+                /*
+                 * And no reserved slot either, because the region it closes has no
+                 * state column: the shipped rows above it drop their mark, so a box
+                 * held open here would indent this row 21px past every title it is
+                 * offering to reveal. `Shipped`, the day labels, the titles and this
+                 * all sit at one left edge.
+                 */
+                gutter: false,
                 command: { id: TASK_COMMANDS.expandTabs, args: { task: SHIPPED_KEY } },
               });
             }
