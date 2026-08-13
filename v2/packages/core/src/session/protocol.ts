@@ -87,6 +87,16 @@ export const RESPONSE = {
    * together or the viewer is correct-sized and stale.
    */
   resized: 69,
+  /**
+   * A session's program named itself or changed directory. A JSON frame:
+   * `{ sessionId, title?, cwd? }`, carrying only what changed.
+   *
+   * **Broadcast to every client, unlike `resized`.** A resize matters only to
+   * somebody painting, so it is gated on attachment. This is the opposite case:
+   * a suspended pane detaches, and it is exactly that tab whose label would
+   * otherwise freeze at whatever it said when you last looked at it.
+   */
+  observed: 70,
 } as const;
 
 export type RequestKind = (typeof REQUEST)[keyof typeof REQUEST];

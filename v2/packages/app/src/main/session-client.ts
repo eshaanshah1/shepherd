@@ -9,6 +9,7 @@ import {
   type Frame,
   type SessionError,
   type SessionExit,
+  type SessionObserved,
   type SessionResize,
   type ForegroundReading,
   type ScreenState,
@@ -103,6 +104,7 @@ export class SessionClient {
   readonly #attachments = new Map<number, LiveAttachment>();
   readonly #exitListeners = new Set<(exit: SessionExit) => void>();
   readonly #resizeListeners = new Set<(resize: SessionResize) => void>();
+  readonly #observedListeners = new Set<(observed: SessionObserved) => void>();
   #socket: ClientSocket | undefined;
   #connecting: Promise<void> | undefined;
   #nextAttachment = 1;
@@ -334,6 +336,14 @@ export class SessionClient {
     });
   }
 
+  /** A session's program named itself or changed directory. */
+  onObserved(listener: (observed: SessionObserved) => void): Disposable {
+    this.#observedListeners.add(listener);
+    return toDisposable(() => {
+      this.#observedListeners.delete(listener);
+    });
+  }
+
   onExit(listener: (exit: SessionExit) => void): Disposable {
     this.#exitListeners.add(listener);
     return toDisposable(() => this.#exitListeners.delete(listener));
@@ -343,6 +353,7 @@ export class SessionClient {
     this.#disposed = true;
     this.#attachments.clear();
     this.#exitListeners.clear();
+    this.#observedListeners.clear();
     // Destroying the socket ends nothing in the daemon. That asymmetry IS the
     // milestone: main going away is a viewer leaving, not a session ending.
     this.#socket?.destroy();
@@ -657,6 +668,23 @@ export class SessionClient {
           listener(resize);
         } catch (error) {
           this.#log.warn(`an onResize listener threw: ${String(error)}`);
+        }
+      }
+      return;
+    }
+
+    /**
+     * A session named itself or changed directory. Not routed by attachment —
+     * the daemon does not gate this one, because a suspended pane has detached
+     * and is precisely the tab whose label has to keep moving.
+     */
+    if (frame.kind === RESPONSE.observed) {
+      const observed = frame.json as SessionObserved;
+      for (const listener of [...this.#observedListeners]) {
+        try {
+          listener(observed);
+        } catch (error) {
+          this.#log.warn(`an onObserved listener threw: ${String(error)}`);
         }
       }
       return;

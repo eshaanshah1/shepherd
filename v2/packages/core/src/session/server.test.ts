@@ -400,4 +400,33 @@ describe('SessionServer refusals', () => {
     expect(reply?.kind).toBe(RESPONSE.err);
     expect((reply?.json as { value: { code: string } }).value.code).toBe('unknown-session');
   });
+
+  /**
+   * NOT gated on attachment, unlike `resized`.
+   *
+   * A suspended pane detaches, so an attachment gate would drop precisely the
+   * background-tab titles this frame exists to carry. The client below attaches
+   * to nothing and must still be told.
+   */
+  it('sends observed to a client that is attached to nothing', async () => {
+    const { host, server } = harness();
+    const client = fakeConnection();
+    greet(server, client.connection);
+
+    const created = host.create({
+      ...SHELL,
+      args: ['-c', `printf '\\033]2;named\\007'; sleep 5`],
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    await waitFor(
+      () => client.frames.some((f) => f.kind === RESPONSE.observed),
+      'the observed frame',
+    );
+    expect(client.frames.find((f) => f.kind === RESPONSE.observed)?.json).toEqual({
+      sessionId: created.value.id,
+      title: 'named',
+    });
+  });
 });
