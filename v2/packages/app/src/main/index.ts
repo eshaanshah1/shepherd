@@ -11,6 +11,7 @@ import {
   runGit,
   shellDefaults,
   systemHome,
+  systemHostName,
   systemUserName,
 } from '@shepherd/platform-darwin';
 import {
@@ -254,6 +255,7 @@ const local: SessionHostLike = USE_DAEMON
       log: logger.child('session'),
     })
   : new SessionHost({
+      hostname: systemHostName(),
       onError: (error, context) =>
         process.stderr.write(`[shepherd] session ${context}: ${String(error)}\n`),
     });

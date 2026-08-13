@@ -56,6 +56,16 @@ export interface Args {
    * the pty is the exact failure this milestone exists to prevent.
    */
   readonly transport: string;
+  /**
+   * What this machine calls itself, for the OSC 7 host check a session's mirror
+   * makes.
+   *
+   * Forwarded rather than read, because `boundaries.js` puts OS APIs in
+   * `platform/darwin` alone and this process may reach neither it nor `node:os`.
+   * Absent means a mirror accepts only a host-less OSC 7 — a cwd that does not
+   * update beats one taken from an `ssh` session's far end.
+   */
+  readonly hostname?: string;
 }
 
 export function parseArgs(argv: readonly string[]): Args {
@@ -63,17 +73,25 @@ export function parseArgs(argv: readonly string[]): Args {
   let level: LogLevel = 'info';
   let support: string | undefined;
   let transport = 'loopback';
+  let hostname: string | undefined;
   for (const arg of argv) {
     if (arg.startsWith('--transport=')) transport = arg.slice('--transport='.length);
     if (arg.startsWith('--socket=')) socketPath = arg.slice('--socket='.length);
     if (arg.startsWith('--log-level=')) level = arg.slice('--log-level='.length) as LogLevel;
     if (arg.startsWith('--support=')) support = arg.slice('--support='.length);
+    if (arg.startsWith('--hostname=')) hostname = arg.slice('--hostname='.length);
   }
-  return { socketPath, level, transport, ...(support === undefined ? {} : { support }) };
+  return {
+    socketPath,
+    level,
+    transport,
+    ...(support === undefined ? {} : { support }),
+    ...(hostname === undefined || hostname === '' ? {} : { hostname }),
+  };
 }
 
 export async function main(argv: readonly string[]): Promise<number> {
-  const { socketPath, level, support, transport } = parseArgs(argv);
+  const { socketPath, level, support, transport, hostname } = parseArgs(argv);
   const log = createLogger({
     clock: systemClock,
     level,
@@ -101,6 +119,9 @@ export async function main(argv: readonly string[]): Promise<number> {
   }
 
   const host = new SessionHost({
+    // The OSC 7 host check's other half — core is handed this rather than
+    // reading it, so a session's cwd can only ever come from this machine.
+    ...(hostname === undefined ? {} : { hostname }),
     onError: (error, context) => daemon.warn(`${context}: ${String(error)}`),
   });
   const server = new SessionServer({ host, log });
