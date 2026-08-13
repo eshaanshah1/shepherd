@@ -19,7 +19,9 @@ import { CommandRegistry } from '../commands/registry.ts';
 import { emptyGrants } from '../commands/authorize.ts';
 import { LayoutStore, type SessionSink } from './store.ts';
 import { LAYOUT_COMMANDS, registerLayoutCommands } from './commands.ts';
-import { leafIds } from './tree.ts';
+import { leaf, leafIds } from './tree.ts';
+import { makePane } from './pane.ts';
+import { deserializeNode, serializeNode } from './serialize.ts';
 
 const USER: Caller = { kind: 'user' };
 
@@ -1460,5 +1462,183 @@ describe('closing a tab falls through to its sibling', () => {
 
     await registry.invoke(LAYOUT_COMMANDS.closeRoot, { root: 'task:t1' }, USER);
     expect(activeRoot()).toBe(home);
+  });
+});
+
+describe('a read-only pane', () => {
+  it('round-trips readOnly and snapshotFile through serialize/deserialize', () => {
+    const pane = makePane({ id: paneId('p-1'), cwd: '/w', readOnly: true, snapshotFile: '/a/p-1.term' });
+    const persisted = serializeNode(leaf(pane));
+
+    expect(persisted).toEqual({
+      kind: 'leaf',
+      pane: { cwd: '/w', id: 'p-1', readOnly: true, snapshotFile: '/a/p-1.term' },
+    });
+
+    const back = deserializeNode(persisted);
+    if (back.kind !== 'leaf') throw new Error('expected a leaf');
+    expect(back.pane.readOnly).toBe(true);
+    expect(back.pane.snapshotFile).toBe('/a/p-1.term');
+  });
+
+  it('writes neither field for an ordinary pane, so an old reader sees what it always did', () => {
+    const persisted = serializeNode(leaf(makePane({ id: paneId('p-2') })));
+    expect(persisted).toEqual({ kind: 'leaf', pane: { id: 'p-2' } });
+  });
+
+  it('reads a record written before read-only panes existed as an ordinary pane', () => {
+    const back = deserializeNode({ kind: 'leaf', pane: { id: 'p-3' } });
+    if (back.kind !== 'leaf') throw new Error('expected a leaf');
+    expect(back.pane.readOnly).toBe(false);
+    expect(back.pane.snapshotFile).toBeNull();
+  });
+
+  it('refuses a snapshotFile that is not a string, rather than rendering a blank pane', () => {
+    expect(() => deserializeNode({ kind: 'leaf', pane: { snapshotFile: 7 } })).toThrow(
+      'pane.snapshotFile must be a string',
+    );
+  });
+});
+
+describe('a root opened with a shape', () => {
+  it('reproduces the axes, the ratios and the pane ids it was given', () => {
+    const store = build();
+    store.open('r-1', undefined, {
+      tree: {
+        kind: 'split',
+        axis: 'column',
+        ratio: 0.25,
+        first: { kind: 'leaf', pane: { id: 'p-a', readOnly: true, snapshotFile: '/a.term' } },
+        second: { kind: 'leaf', pane: { id: 'p-b', readOnly: true, snapshotFile: '/b.term' } },
+      },
+    });
+
+    const tree = store.tree(rootId('r-1'));
+    if (tree?.kind !== 'split') throw new Error('expected a split');
+    expect(tree.axis).toBe('column');
+    expect(tree.ratio).toBeCloseTo(0.25);
+    expect(store.panes(rootId('r-1'))).toEqual(['p-a', 'p-b']);
+    expect(store.pane(paneId('p-a'))?.snapshotFile).toBe('/a.term');
+  });
+
+  it('mints an ordinary single-pane root when the shape cannot be read', () => {
+    const store = build();
+    store.open('r-2', undefined, { tree: { kind: 'split', axis: 'sideways' } as never });
+    expect(store.panes(rootId('r-2'))).toHaveLength(1);
+    expect(store.tree(rootId('r-2'))?.kind).toBe('leaf');
+    expect(messages().some((m) => m.includes('could not open r-2 with the given shape'))).toBe(true);
+  });
+
+  it('opens a root through the command with the shape it was given', async () => {
+    const { registry, store } = wiredRoots();
+    const result = await registry.invoke(
+      LAYOUT_COMMANDS.openRoot,
+      {
+        root: 'r-3',
+        tree: {
+          kind: 'split',
+          axis: 'row',
+          ratio: 0.5,
+          first: { kind: 'leaf', pane: { id: 'p-c' } },
+          second: { kind: 'leaf', pane: { id: 'p-d' } },
+        },
+      },
+      USER,
+    );
+    expect(result.ok).toBe(true);
+    expect(store.panes(rootId('r-3'))).toEqual(['p-c', 'p-d']);
+  });
+});
+
+describe('a placeholder over a root that holds captured screens', () => {
+  it('is answered, because nothing in that root is live', () => {
+    const store = build();
+    store.open('r-4', undefined, {
+      tree: { kind: 'leaf', pane: { id: 'p-e', readOnly: true, snapshotFile: '/e.term' } },
+    });
+    store.setPlaceholder(rootId('r-4'), {
+      line: 'Archived',
+      action: { command: 'x.restore', label: 'Restore', args: { task: 't1' } },
+    });
+
+    expect(store.placeholderOf(rootId('r-4'))?.action?.label).toBe('Restore');
+  });
+
+  it('is still refused over a root with a LIVE pane — the case the guard exists for', () => {
+    const store = build();
+    store.open('r-5');
+    store.setPlaceholder(rootId('r-5'), { line: 'Creating the worktree' });
+    expect(store.placeholderOf(rootId('r-5'))).toBeUndefined();
+  });
+
+  it('is refused over a mixed root, where one pane is live', () => {
+    const store = build();
+    store.open('r-6', undefined, {
+      tree: {
+        kind: 'split',
+        axis: 'row',
+        ratio: 0.5,
+        first: { kind: 'leaf', pane: { id: 'p-f', readOnly: true, snapshotFile: '/f.term' } },
+        second: { kind: 'leaf', pane: { id: 'p-g' } },
+      },
+    });
+    store.setPlaceholder(rootId('r-6'), { line: 'Archived' });
+    expect(store.placeholderOf(rootId('r-6'))).toBeUndefined();
+  });
+
+  it('announces a changed action, so the button cannot go stale', () => {
+    const store = build();
+    store.open('r-7', undefined, {
+      tree: { kind: 'leaf', pane: { id: 'p-h', readOnly: true, snapshotFile: '/h.term' } },
+    });
+    const seen: RootID[] = [];
+    store.onDidChange((root) => seen.push(root));
+    store.setPlaceholder(rootId('r-7'), {
+      line: 'Archived',
+      action: { command: 'x.restore', label: 'Restore', args: { task: 't1' } },
+    });
+    store.setPlaceholder(rootId('r-7'), {
+      line: 'Archived',
+      action: { command: 'x.restore', label: 'Restore', args: { task: 't2' } },
+    });
+    expect(seen.filter((root) => root === 'r-7')).toHaveLength(2);
+  });
+});
+
+describe('a given shape beats a persisted one', () => {
+  /**
+   * The m3 smoke's finding, as a unit test.
+   *
+   * Shelving a task removes its root, but the layout's write is debounced — so a
+   * task revealed in the same breath found its own pre-archive record still on
+   * disk. It came back as LIVE panes in a worktree that had just been deleted,
+   * and the log said `restored 1 pane(s)`, which is also what a working restore
+   * says.
+   */
+  it('opens the shape the caller gave, not the one still sitting in storage', () => {
+    const storage = fakeKV();
+    const first = build(storage);
+    first.open('r-8');
+    first.flush();
+
+    const second = build(storage);
+    second.open('r-8', undefined, {
+      tree: { kind: 'leaf', pane: { id: 'p-fresh', readOnly: true, snapshotFile: '/a.term' } },
+    });
+
+    expect(second.panes(rootId('r-8'))).toEqual(['p-fresh']);
+    expect(second.pane(paneId('p-fresh'))?.readOnly).toBe(true);
+  });
+
+  it('still restores the persisted one when no shape is given', () => {
+    const storage = fakeKV();
+    const first = build(storage);
+    first.open('r-9');
+    first.split(rootId('r-9'), 'row');
+    first.flush();
+
+    const second = build(storage);
+    second.open('r-9');
+    expect(second.panes(rootId('r-9'))).toHaveLength(2);
   });
 });

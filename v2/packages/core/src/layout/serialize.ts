@@ -42,6 +42,15 @@ export interface PersistedPane {
   readonly id?: string;
   /** What this pane was showing. A claim, not a fact — see above. */
   readonly sessionId?: string;
+  /**
+   * Present only for a pane that shows a captured screen. Absent — not `false` —
+   * on every ordinary pane, so a payload written by this build is byte-identical
+   * to one written before the field existed for every layout with no snapshot
+   * in it.
+   */
+  readonly readOnly?: true;
+  /** The file that pane replays. Absolute. */
+  readonly snapshotFile?: string;
 }
 
 export type PersistedNode =
@@ -55,11 +64,20 @@ export type PersistedNode =
     };
 
 export function serializePane(pane: Pane, sessionId?: string): PersistedPane {
-  const out: { userTitle?: string; cwd?: string; id?: string; sessionId?: string } = {};
+  const out: {
+    userTitle?: string;
+    cwd?: string;
+    id?: string;
+    sessionId?: string;
+    readOnly?: true;
+    snapshotFile?: string;
+  } = {};
   if (pane.userTitle !== null && pane.userTitle !== '') out.userTitle = pane.userTitle;
   if (pane.cwd !== null && pane.cwd !== '') out.cwd = pane.cwd;
   out.id = pane.id;
   if (sessionId !== undefined && sessionId !== '') out.sessionId = sessionId;
+  if (pane.readOnly) out.readOnly = true;
+  if (pane.snapshotFile !== null && pane.snapshotFile !== '') out.snapshotFile = pane.snapshotFile;
   return out;
 }
 
@@ -104,6 +122,8 @@ export function deserializeNode(value: unknown, random?: RandomId): SplitNode {
         {
           userTitle: optionalString(pane['userTitle'], 'pane.userTitle'),
           cwd: optionalString(pane['cwd'], 'pane.cwd'),
+          readOnly: pane['readOnly'] === true,
+          snapshotFile: optionalString(pane['snapshotFile'], 'pane.snapshotFile'),
           ...(persistedId === null ? {} : { id: paneId(persistedId) }),
         },
         random,

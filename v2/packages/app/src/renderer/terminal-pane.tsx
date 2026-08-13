@@ -156,6 +156,14 @@ export function TerminalPane({
        * future indicator will read it too.
        */
       data-agent-state={agentState ?? ''}
+      /*
+       * This pane shows a captured screen and will never have a session.
+       *
+       * As DATA for the same reason the agent state is: the smoke reads it to
+       * prove that revealing shelved work put a snapshot on screen rather than
+       * a live shell, which is a claim no unit test can make about the real app.
+       */
+      data-readonly={pane.readOnly ? 'true' : ''}
       data-pane-title-surface={surface}
       style={style}
     >

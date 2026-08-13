@@ -74,6 +74,10 @@ function spyLayout(initial: LayoutSnapshots | null = null) {
         viewports.push(rect);
         return Promise.resolve({ ok: true, value: undefined });
       },
+      // No pane in these tests shows a captured screen; a fake that answered
+      // bytes would be inventing a state the assertions do not describe.
+      snapshot: () =>
+        Promise.resolve({ ok: false, error: { code: 'no-snapshot', message: 'no capture' } }),
     } satisfies LayoutApi,
     /** Main pushed a new projection. Structure-cloned, exactly as IPC would. */
     push: (snapshot: LayoutSnapshots) => {
@@ -1030,5 +1034,55 @@ describe('the tab strip', () => {
     });
     expect(tabLabels(view.container)).toEqual(['vim', 'term']);
     view.unmount();
+  });
+});
+
+/**
+ * A root of captured screens says what it is, and offers the verb that ends it.
+ *
+ * The condition is entirely the SNAPSHOT's: core answers with a placeholder for
+ * a root whose panes are all read-only and refuses over any root with a live
+ * pane, so the page never decides whether something is archived. These assert
+ * that it draws what it was told and runs the verb it was given, without
+ * knowing what `tasks.restore` is.
+ */
+describe('an archived root', () => {
+  const archivedSnapshot = (): LayoutSnapshots => ({
+    active: 'window-1',
+    roots: [
+      {
+        ...rootOf(leaf(makePane({ readOnly: true, snapshotFile: '/a.term' }))),
+        placeholder: {
+          line: 'Archived — this is what was on screen.',
+          action: { command: 'tasks.restore', label: 'Restore', args: { task: 't1' } },
+        },
+      },
+    ],
+  });
+
+  it('draws the banner over the panes and runs its verb through commands.invoke', () => {
+    const { view, commands } = render({ snapshot: archivedSnapshot() });
+
+    const banner = view.container.querySelector('[data-testid="archived-banner"]');
+    expect(banner?.textContent).toContain('Archived');
+
+    const button = banner?.querySelector('button');
+    act(() => button?.click());
+
+    expect(commands.calls).toEqual([{ command: 'tasks.restore', args: { task: 't1' } }]);
+  });
+
+  it('marks the pane read-only, so nothing downstream treats it as a live terminal', () => {
+    const { view } = render({ snapshot: archivedSnapshot() });
+    // The INNER `.sh-pane` — `PaneLeaf` wraps every pane in one of its own, and
+    // the read-only mark belongs to the terminal view inside it.
+    expect(
+      view.container.querySelector('[data-testid="pane"] .sh-pane')?.getAttribute('data-readonly'),
+    ).toBe('true');
+  });
+
+  it('draws no banner for an ordinary root', () => {
+    const { view } = render();
+    expect(view.container.querySelector('[data-testid="archived-banner"]')).toBeNull();
   });
 });

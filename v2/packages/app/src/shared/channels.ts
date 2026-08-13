@@ -29,6 +29,15 @@ export const INVOKE = {
   windowClose: 'window:close',
   layoutGet: 'layout:get',
   layoutViewport: 'layout:viewport',
+  /**
+   * The captured screen a read-only pane shows.
+   *
+   * Pull-shaped and asked ONCE, when that pane's terminal is built — not carried
+   * in the layout envelope. That envelope is pushed on every change, and a
+   * screenful of scrollback per read-only pane on each push is a cost paid
+   * forever for a value that never changes.
+   */
+  layoutSnapshot: 'layout:snapshot',
   commandInvoke: 'command:invoke',
   /**
    * What the palette lists. Pull-shaped like `layoutGet`, and a SNAPSHOT rather
@@ -245,14 +254,22 @@ export interface LayoutSnapshot {
   /** paneId -> sessionId, for panes showing a live session. */
   readonly sessions: Readonly<Record<string, string>>;
   /**
-   * Why this root is empty, when somebody filling it said so.
+   * Why this root is empty — or, for a root of captured screens, what it is.
    *
-   * Present ONLY alongside `tree: null` — core refuses to answer with one for a
-   * root that holds panes, so the page cannot draw a wait that is over. Absent
-   * on an empty root is the other real case: nothing has been asked of it, which
-   * is the home root at launch and after the last task is closed.
+   * Present alongside `tree: null` (the home root at launch, a task whose
+   * worktrees are still being cut) and alongside a tree whose every pane is
+   * read-only. Core refuses to answer with one over a root that holds a LIVE
+   * pane, so the page still cannot draw a wait that is over.
+   *
+   * `action` is one verb the setter offers with it, drawn as a button. A command
+   * id and a label and nothing else: the page runs it through `commands.invoke`
+   * without knowing what it does, the same way a contributed row's verbs work.
    */
-  readonly placeholder?: { readonly line: string; readonly names?: readonly string[] };
+  readonly placeholder?: {
+    readonly line: string;
+    readonly names?: readonly string[];
+    readonly action?: { readonly command: string; readonly label: string; readonly args?: unknown };
+  };
 }
 
 /**

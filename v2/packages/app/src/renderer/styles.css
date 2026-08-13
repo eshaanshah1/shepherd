@@ -1621,3 +1621,37 @@ body.sh-dragging {
   font-variant-numeric: tabular-nums;
   color: var(--sh-text-ghost);
 }
+
+/*
+ * The bar over a root of captured screens — an archived task's tabs, rendered
+ * from what was on screen when it was shelved.
+ *
+ * Painted in ROLES and STATIC. A pulse or a shimmer here would say something is
+ * happening, and the whole point of this root is that nothing is: no pty, no
+ * agent, no worktree on disk. The one control is the verb that ends the state.
+ */
+.sh-archived-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sh-space-md);
+  padding: var(--sh-space-sm) var(--sh-space-md);
+  background: var(--sh-surface);
+  border-bottom: var(--sh-hairline) solid var(--sh-line);
+  color: var(--sh-text-faint);
+  font-size: var(--sh-font-size-small);
+}
+
+.sh-archived-banner-action {
+  border: var(--sh-hairline) solid var(--sh-line);
+  border-radius: var(--sh-radius-md);
+  background: transparent;
+  color: var(--sh-text);
+  font: inherit;
+  padding: var(--sh-space-xs) var(--sh-space-sm);
+  cursor: pointer;
+}
+
+.sh-archived-banner-action:hover {
+  background: var(--sh-well);
+}

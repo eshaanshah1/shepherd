@@ -26,6 +26,23 @@ export interface Pane {
   readonly cwd: string | null;
   /** Typed into the pty once on mount. Transient; never persisted. */
   readonly initialCommand: string | null;
+  /**
+   * This pane shows a captured screen and NEVER gets a session.
+   *
+   * The one case where a pane with no session binding is correct rather than a
+   * failure: an archived task's tabs are rendered from what was on screen when
+   * it was shelved, and provisioning a worktree to look at old work is the cost
+   * this exists to avoid. Persisted, unlike the two live fields above — a
+   * snapshot is not work in flight, it is what the pane *is*.
+   */
+  readonly readOnly: boolean;
+  /**
+   * Where the bytes it replays live. Absolute, and read by MAIN, not here.
+   *
+   * A path and nothing more: the kernel does not learn that these came from an
+   * archive, or that a task exists. Whoever wrote the file named it.
+   */
+  readonly snapshotFile: string | null;
 }
 
 export interface PaneInit {
@@ -34,6 +51,8 @@ export interface PaneInit {
   userTitle?: string | null;
   cwd?: string | null;
   initialCommand?: string | null;
+  readOnly?: boolean;
+  snapshotFile?: string | null;
 }
 
 export function makePane(init: PaneInit = {}, random?: RandomId): Pane {
@@ -43,6 +62,8 @@ export function makePane(init: PaneInit = {}, random?: RandomId): Pane {
     userTitle: init.userTitle ?? null,
     cwd: init.cwd ?? null,
     initialCommand: init.initialCommand ?? null,
+    readOnly: init.readOnly ?? false,
+    snapshotFile: init.snapshotFile ?? null,
   };
 }
 

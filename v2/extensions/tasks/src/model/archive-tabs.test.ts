@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { archiveTabsFrom, historyPath, type RootReading } from './archive-tabs.ts';
+import {
+  archiveTabsFrom,
+  historyPath,
+  liveTreeFor,
+  snapshotTreeFor,
+  type RootReading,
+} from './archive-tabs.ts';
 
 const root = (id: string, panes: RootReading['panes']): RootReading => ({
   root: id,
@@ -79,5 +85,69 @@ describe('historyPath', () => {
     const path = historyPath('../../etc', '../..', 'p1');
     expect(path).not.toContain('..');
     expect(path).not.toContain('/etc');
+  });
+});
+
+describe('the shape a tab comes back with', () => {
+  const tab = {
+    root: 'task:t1/tab-2',
+    tree: {
+      kind: 'split',
+      axis: 'row',
+      ratio: 0.4,
+      first: { kind: 'leaf', pane: { id: 'p-1', cwd: '/w/a', sessionId: 's-9' } },
+      second: { kind: 'leaf', pane: { id: 'p-2', cwd: '/w/b' } },
+    },
+    focusedPane: 'p-1',
+    panes: [
+      { pane: 'p-1', cwd: '/w/a', userTitle: null, history: 't1/task_t1_tab-2/p-1.term' },
+      { pane: 'p-2', cwd: '/w/b', userTitle: null },
+    ],
+  } as const;
+
+  it('marks every leaf read-only and gives the captured ones their file', () => {
+    expect(snapshotTreeFor(tab, '/data/.archives')).toEqual({
+      kind: 'split',
+      axis: 'row',
+      ratio: 0.4,
+      first: {
+        kind: 'leaf',
+        pane: {
+          id: 'p-1',
+          cwd: '/w/a',
+          readOnly: true,
+          snapshotFile: '/data/.archives/t1/task_t1_tab-2/p-1.term',
+        },
+      },
+      // No capture for this pane — read-only all the same, so it cannot start a
+      // shell in a worktree the archive deleted. It comes back blank.
+      second: { kind: 'leaf', pane: { id: 'p-2', cwd: '/w/b', readOnly: true } },
+    });
+  });
+
+  it('drops a sessionId the archive happened to carry — nothing here is live', () => {
+    const snapshot = snapshotTreeFor(tab, '/d') as { first: { pane: Record<string, unknown> } };
+    expect(snapshot.first.pane['sessionId']).toBeUndefined();
+    const live = liveTreeFor(tab) as { first: { pane: Record<string, unknown> } };
+    expect(live.first.pane['sessionId']).toBeUndefined();
+  });
+
+  it('liveTreeFor keeps the geometry and marks nothing read-only', () => {
+    expect(liveTreeFor(tab)).toEqual({
+      kind: 'split',
+      axis: 'row',
+      ratio: 0.4,
+      first: { kind: 'leaf', pane: { id: 'p-1', cwd: '/w/a' } },
+      second: { kind: 'leaf', pane: { id: 'p-2', cwd: '/w/b' } },
+    });
+  });
+
+  it('answers undefined for a tab archived before trees were stored', () => {
+    expect(snapshotTreeFor({ ...tab, tree: undefined }, '/d')).toBeUndefined();
+    expect(liveTreeFor({ ...tab, tree: undefined })).toBeUndefined();
+  });
+
+  it('answers undefined for a tree it cannot walk, rather than half of one', () => {
+    expect(snapshotTreeFor({ ...tab, tree: { kind: 'sideways' } }, '/d')).toBeUndefined();
   });
 });

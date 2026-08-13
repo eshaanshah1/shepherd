@@ -1,5 +1,6 @@
+import { readFile } from 'node:fs/promises';
 import { ipcMain, webContents } from 'electron';
-import { USER, type Disposable, type RootID } from '@shepherd/sdk';
+import { paneId, USER, type Disposable, type RootID } from '@shepherd/sdk';
 import type { CommandRegistry } from '@shepherd/core';
 import type { LayoutStore } from '@shepherd/core/layout';
 import { EMIT, INVOKE, type IpcResult, type LayoutSnapshots } from '../shared/index.ts';
@@ -131,6 +132,45 @@ export function registerLayoutIpc(options: LayoutIpcOptions): LayoutIpc {
     return { ok: true, value: undefined };
   });
 
+  /**
+   * The screen a read-only pane was archived with, read off disk.
+   *
+   * It takes a PANE ID and never a path. The page has no filesystem and must not
+   * be handed one: main resolves `snapshotFile` from the tree it owns, so a
+   * compromised renderer can ask for the screen of a pane that exists and for
+   * nothing else on the machine.
+   *
+   * A file that has gone is `no-snapshot` and the pane comes back BLANK — the
+   * same stance `tasks`' own `readHistory` takes one layer up. An archive that
+   * was expired or hand-cleaned must not stop a tab from opening.
+   */
+  ipcMain.handle(
+    INVOKE.layoutSnapshot,
+    async (_event, raw: unknown): Promise<IpcResult<{ bytes: Uint8Array }>> => {
+      if (typeof raw !== 'string' || raw === '') {
+        return { ok: false, error: { code: 'invalid-argument', message: 'a pane id is required' } };
+      }
+      const file = store.pane(paneId(raw))?.snapshotFile ?? null;
+      if (file === null || file === '') {
+        return {
+          ok: false,
+          error: { code: 'no-snapshot', message: `pane ${raw} shows no captured screen` },
+        };
+      }
+      try {
+        return { ok: true, value: { bytes: new Uint8Array(await readFile(file)) } };
+      } catch (error) {
+        return {
+          ok: false,
+          error: {
+            code: 'no-snapshot',
+            message: `could not read ${file}: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        };
+      }
+    },
+  );
+
   ipcMain.handle(
     INVOKE.commandInvoke,
     async (_event, command: unknown, args: unknown): Promise<IpcResult<unknown>> => {
@@ -192,6 +232,7 @@ export function registerLayoutIpc(options: LayoutIpcOptions): LayoutIpc {
       for (const channel of [
         INVOKE.layoutGet,
         INVOKE.layoutViewport,
+        INVOKE.layoutSnapshot,
         INVOKE.commandInvoke,
         INVOKE.commandList,
       ]) {

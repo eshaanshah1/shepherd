@@ -14,9 +14,12 @@
 /** A pane, as it was when the task was shelved. */
 export interface ArchivedPane {
   /**
-   * The id it had. A restored pane gets a NEW one — `deserializeNode` mints them
-   * by design — so this is a correlation key within the archive and never
-   * something to look up later.
+   * The id it had — and the id it comes BACK with.
+   *
+   * This used to say a restored pane gets a new one, which was true until ADR
+   * 0036 made `deserializeNode` keep a persisted id. It matters now: a tab is
+   * reopened from its stored `tree`, and this is what joins a leaf of that tree
+   * to the screen and the resume line that belong to it.
    */
   readonly pane: string;
   readonly cwd: string | null;
@@ -124,3 +127,92 @@ export function historyPath(taskId: string, root: string, pane: string): string 
  * `.term` suffix is appended outside this, so nothing legible is lost.
  */
 const safe = (segment: string): string => segment.replace(/[^A-Za-z0-9_-]/g, '_');
+
+/**
+ * The tab's stored shape, with each leaf's pane put through `onPane`.
+ *
+ * One walk for both rewrites below, because they differ by two fields and a
+ * second copy is a second thing to keep in step with `serialize.ts`'s format.
+ * The format itself is never interpreted beyond `kind` / `first` / `second`:
+ * `axis` and `ratio` are carried across untouched, exactly as `ArchivedTab.tree`
+ * promises to.
+ *
+ * `undefined` for a tree that cannot be walked, never a half-rewritten one — a
+ * caller handed half a shape would open a tab missing panes with nothing saying
+ * why.
+ */
+function rewriteTree(
+  tree: unknown,
+  onPane: (pane: Record<string, unknown>, id: string | undefined) => Record<string, unknown>,
+): unknown | undefined {
+  const walk = (value: unknown): unknown => {
+    if (typeof value !== 'object' || value === null) throw new Error('not a node');
+    const node = value as Record<string, unknown>;
+    if (node['kind'] === 'leaf') {
+      const pane = (node['pane'] ?? {}) as Record<string, unknown>;
+      const id = typeof pane['id'] === 'string' ? pane['id'] : undefined;
+      return { kind: 'leaf', pane: onPane(pane, id) };
+    }
+    if (node['kind'] === 'split') {
+      return {
+        kind: 'split',
+        axis: node['axis'],
+        ratio: node['ratio'],
+        first: walk(node['first']),
+        second: walk(node['second']),
+      };
+    }
+    throw new Error('not a node');
+  };
+  try {
+    return walk(tree);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * A pane id and a session id are two different claims, and only the first
+ * survives being shelved: the session it names died when the panes were closed.
+ * A tree that carried one would have the layout try to reattach to a dead pty,
+ * which is the stale binding ADR 0036 verifies against.
+ */
+function withoutSession(pane: Record<string, unknown>): Record<string, unknown> {
+  const { sessionId: _dropped, ...rest } = pane;
+  return rest;
+}
+
+/**
+ * The shape to open this tab with when it is being LOOKED AT, not restored.
+ *
+ * Every leaf comes back read-only — including the ones with no capture. A pane
+ * that fell through would spawn a shell in a directory the archive deleted,
+ * which is the exact failure the whole snapshot view removes; "blank" is the
+ * honest answer for a screen that was never saved.
+ *
+ * The join is by pane id, which is the key `archiveTabsFrom` already used: the
+ * tree's leaf id and `ArchivedPane.pane` are the same string by construction, so
+ * there is one correlation here rather than two that can disagree.
+ */
+export function snapshotTreeFor(tab: ArchivedTab, archiveDir: string): unknown | undefined {
+  const historyOf = new Map(tab.panes.map((pane) => [pane.pane, pane.history]));
+  return rewriteTree(tab.tree, (pane, id) => {
+    const history = id === undefined ? undefined : historyOf.get(id);
+    return {
+      ...withoutSession(pane),
+      readOnly: true,
+      ...(history === undefined ? {} : { snapshotFile: `${archiveDir}/${history}` }),
+    };
+  });
+}
+
+/**
+ * The shape to open this tab with when it is being RESTORED: geometry and cwds,
+ * and nothing that would make a pane show a file instead of a pty.
+ *
+ * Screens and staged resume lines are hung on each pane afterwards, by id,
+ * rather than carried here — a tree says where the panes go.
+ */
+export function liveTreeFor(tab: ArchivedTab): unknown | undefined {
+  return rewriteTree(tab.tree, (pane) => withoutSession(pane));
+}

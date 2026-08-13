@@ -36,6 +36,15 @@ import { taskRootId } from './model/root-id.ts';
  * nobody asked for.
  */
 const ARCHIVE_HISTORY_LINES = 1000;
+
+/**
+ * What a shelved task's tab says about itself, over the screens it is showing.
+ *
+ * Named here rather than written at the call site so the two places that open a
+ * snapshot — a tab with a shape, and a task with no tabs at all — cannot say it
+ * two different ways.
+ */
+const ARCHIVED_LINE = 'Archived — this is what was on screen when the task was shelved.';
 /**
  * Asked of `agents-core`, never of a vendor: a task that named `claudeCode.*`
  * would be a task that knows which agent it hired (D11).
@@ -53,6 +62,8 @@ import { capTabRows } from './model/tab-rows.ts';
 import {
   archiveTabsFrom,
   historyPath,
+  liveTreeFor,
+  snapshotTreeFor,
   type ArchivedTab,
   type RootReading,
 } from './model/archive-tabs.ts';
@@ -1672,7 +1683,13 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
 
       const reading: RootReading['panes'][number][] = [];
       for (const rawPane of panes) {
-        const p = rawPane as { pane?: unknown; cwd?: unknown; userTitle?: unknown; session?: unknown };
+        const p = rawPane as {
+          pane?: unknown;
+          cwd?: unknown;
+          userTitle?: unknown;
+          session?: unknown;
+          lastSession?: unknown;
+        };
         if (typeof p.pane !== 'string') continue;
         reading.push({
           pane: p.pane,
@@ -1680,11 +1697,30 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           userTitle: typeof p.userTitle === 'string' ? p.userTitle : null,
         });
 
-        if (typeof p.session !== 'string') continue;
+        /*
+         * `lastSession` when the pane's own has EXITED — which is not an edge
+         * case, it is the ordinary end of a turn.
+         *
+         * A pane whose agent finished has no live session: the binding is
+         * dropped the moment the pty goes. It is still on screen and still shows
+         * what the agent did, and capturing off `session` alone archived that
+         * tab BLANK. The host retains a dead session's mirror for exactly this,
+         * and releases it when the pane closes.
+         *
+         * A pane with neither has no screen anywhere to capture — it never
+         * spawned anything.
+         */
+        const capturable =
+          typeof p.session === 'string'
+            ? p.session
+            : typeof p.lastSession === 'string'
+              ? p.lastSession
+              : null;
+        if (capturable === null) continue;
         const relative = historyPath(task.id, row.root, p.pane);
         try {
           const captured = await commands.invoke<{ bytes?: unknown }>('sessions.capture', {
-            session: p.session,
+            session: capturable,
             lines: ARCHIVE_HISTORY_LINES,
           });
           if (!captured.ok || typeof captured.value?.bytes !== 'string') {
@@ -1730,6 +1766,92 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
   }
 
   /**
+   * Every tab of a shelved task, opened as the SCREENS it was shelved with.
+   *
+   * No git, no directory, no pty. Its worktrees were snapshotted and removed,
+   * and this puts what was on the display back without putting any of that
+   * back: each tab opens at its archived root id, with its archived shape, and
+   * every pane in it shows a file (`Pane.readOnly`).
+   *
+   * `tasks.reveal` used to call `materialize` here instead, so a click on work
+   * from three weeks ago re-provisioned git and reinstalled its dependencies —
+   * 838 MB on the machine that was measured. Putting it back is `tasks.restore`
+   * now, and only that.
+   *
+   * The SHAPE comes back too, which the live restore could not do until this
+   * change: `layout.split` takes an axis and no path, so a tree of ratios could
+   * not be reproduced through it. A tab archived before shapes were stored opens
+   * flat — and still read-only, or its one pane would be a shell in a directory
+   * that no longer exists.
+   */
+  async function openSnapshotTabs(task: TaskRecord): Promise<void> {
+    const group = taskRootId(task.id);
+    for (const tab of task.tabs ?? []) {
+      const tree = snapshotTreeFor(tab, archiveDir());
+      const first = tab.panes[0];
+      const flatHistory = first?.history;
+      const opened = await commands.invoke('layout.openRoot', {
+        root: tab.root,
+        group,
+        ...(tree === undefined
+          ? {
+              readOnly: true,
+              ...(first?.cwd === undefined || first.cwd === null ? {} : { cwd: first.cwd }),
+              ...(first?.userTitle === undefined || first.userTitle === null
+                ? {}
+                : { title: first.userTitle }),
+              ...(flatHistory === undefined
+                ? {}
+                : { snapshotFile: `${archiveDir()}/${flatHistory}` }),
+            }
+          : { tree }),
+      });
+      if (!opened.ok) {
+        // Reported and stepped over, as `rebuildTabs` does: the other tabs are
+        // still worth showing, and giving up on the first failure would leave a
+        // task half on screen with nothing saying why.
+        ctx.log.warn(
+          `task ${task.id}: tab ${tab.root} was not shown — ${opened.error.code}: ${opened.error.message}`,
+        );
+        continue;
+      }
+
+      /*
+       * And what this root IS, with the one verb that ends the state.
+       *
+       * The label and the command id travel with it because the shell cannot
+       * know either (ADR 0031) — it draws a button for a command it has never
+       * heard of. Core answers with a placeholder only for a root whose panes
+       * are all read-only, so nothing here has to say when to stop showing it:
+       * restoring replaces the panes, and the banner goes with them.
+       */
+      const said = await commands.invoke('layout.setPlaceholder', {
+        root: tab.root,
+        placeholder: {
+          line: ARCHIVED_LINE,
+          action: { command: TASK_COMMANDS.restore, label: 'Restore', args: { task: task.id } },
+        },
+      });
+      if (!said.ok) {
+        ctx.log.warn(`task ${task.id}: tab ${tab.root} is shown without its banner`);
+      }
+    }
+    ctx.log.info(`task ${task.id}: showed ${(task.tabs ?? []).length} archived tab(s), started nothing`);
+  }
+
+  /** Drop this task's read-only roots. Nothing to drain: they hold no sessions. */
+  async function closeSnapshotTabs(task: TaskRecord): Promise<void> {
+    for (const tab of task.tabs ?? []) {
+      const closed = await commands.invoke('layout.closeRoot', { root: tab.root });
+      if (!closed.ok) {
+        ctx.log.warn(
+          `task ${task.id}: snapshot tab ${tab.root} did not close — ${closed.error.message}`,
+        );
+      }
+    }
+  }
+
+  /**
    * Put an archived task's tabs back — the SCREEN, and nothing else.
    *
    * **It relaunches nothing.** Each pane comes back at its directory with the
@@ -1753,13 +1875,25 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       const seed = readHistory(tab.panes[0]?.history);
       const staged = await stagedResumeLine(task, first);
 
+      /*
+       * The archived SHAPE, with none of the snapshot marking: these panes are
+       * about to be real. `snapshotTreeFor` is the read-only variant of the same
+       * rewrite, and the two must not be confused — one starts nothing, this one
+       * starts everything.
+       */
+      const tree = liveTreeFor(tab);
+
       const opened = await commands.invoke('layout.openRoot', {
         root: tab.root,
         group,
+        ...(tree === undefined ? {} : { tree }),
         ...(first?.cwd === undefined || first.cwd === null ? {} : { cwd: first.cwd }),
         ...(first?.userTitle === undefined || first.userTitle === null ? {} : { title: first.userTitle }),
-        ...(seed === undefined ? {} : { seed }),
-        ...(staged === undefined ? {} : { initialCommand: staged }),
+        // A shaped open mints several panes at once, so there is no "the" pane
+        // for `openRoot`'s own seed to land on — every pane of a shaped tab is
+        // seeded by id below instead. The flat path keeps using it.
+        ...(tree !== undefined || seed === undefined ? {} : { seed }),
+        ...(tree !== undefined || staged === undefined ? {} : { initialCommand: staged }),
       });
       if (!opened.ok) {
         // Reported and stepped over: the other tabs are still worth putting
@@ -1772,12 +1906,43 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       }
 
       /*
+       * A tab that carried a SHAPE is already whole — `layout.openRoot` built
+       * every pane of it — so all that is left is to give each one its screen
+       * and its staged line, by id.
+       *
+       * The ids are the archived ones: `deserializeNode` keeps a persisted id
+       * (ADR 0036), so the leaf that came back and the `ArchivedPane` that
+       * describes it are the same string. Joining them any other way would be a
+       * second correlation to keep in step.
+       */
+      if (tree !== undefined) {
+        for (const pane of tab.panes) {
+          const paneSeed = readHistory(pane.history);
+          const paneStaged = await stagedResumeLine(task, pane);
+          if (paneSeed === undefined && paneStaged === undefined) continue;
+          const seeded = await commands.invoke('layout.seedPane', {
+            pane: pane.pane,
+            ...(paneSeed === undefined ? {} : { seed: paneSeed }),
+            ...(paneStaged === undefined ? {} : { initialCommand: paneStaged }),
+          });
+          if (!seeded.ok) {
+            ctx.log.warn(
+              `task ${task.id}: pane ${pane.pane} of ${tab.root} came back without its screen — ${seeded.error.message}`,
+            );
+          }
+        }
+        continue;
+      }
+
+      /*
        * The rest of the tab's panes, in order, each with its own screen and its
-       * own staged line. The SPLIT SHAPE is not rebuilt: `layout.split` takes an
-       * axis and no path, so a tree of ratios cannot be reproduced through it,
-       * and a restore that silently produced a different arrangement would be
-       * worse than one that is honestly flat. The panes, their directories and
-       * their history all come back; the geometry does not, yet.
+       * own staged line — for a tab archived BEFORE shapes were stored.
+       *
+       * This is the flat fallback the comment here used to describe as the only
+       * option: `layout.split` takes an axis and no path, so a tree of ratios
+       * cannot be reproduced through it, and a restore that silently produced a
+       * different arrangement would be worse than one that is honestly flat.
+       * `layout.openRoot`'s `tree` is what closed that, above.
        */
       for (const pane of tab.panes.slice(1)) {
         const paneSeed = readHistory(pane.history);
@@ -2828,36 +2993,25 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         const root = taskRootId(task.id);
 
         /**
-         * A shelved task gets its work put back — and **stays where it is**.
+         * A shelved task is SHOWN, not put back — and **stays where it is**.
          *
-         * Its worktrees were snapshotted and removed, so opening a root at its
-         * directory would show an empty shell in a folder with nothing in it: the
-         * app pretending the task is there. So it is materialized first.
+         * Its worktrees were snapshotted and removed, so this renders the screens
+         * they were removed with. Nothing is provisioned, nothing is spawned, and
+         * the row does not move: looking at shipped work must not un-ship it, and
+         * looking at any shelved work must not spend a git restore on a glance.
+         * Putting it back is its own button (`tasks.restore`).
          *
-         * What this deliberately does NOT do is change which region the row is
-         * in. Looking at something used to un-ship it, which was defensible while
-         * Shipped was a collapsed drawer you had to open on purpose. It is a
-         * permanent list of dimmed rows now, and a stray click on work from three
-         * weeks ago would have dragged it back into the active list and
-         * re-provisioned git. Un-shipping is its own button (`tasks.restore`).
+         * The same path serves an ACTIVE task whose panes were closed — that is a
+         * thing, because closing them reclaims the worktrees without shipping
+         * anything.
          *
-         * The same path serves an ACTIVE task whose panes were closed — that is
-         * now a thing, because closing them reclaims the worktrees without
-         * shipping anything.
-         *
-         * Awaited, because the pane opens at the task root and a pane that
-         * mounted before the worktrees landed would be a shell in a directory
-         * being rebuilt underneath it. `materialize` still returns before every
-         * repo is back — the tree reports the rest, which is the same bargain
-         * creating a task already makes.
+         * This used to call `materialize` here. The cost was not theoretical: a
+         * live worktree measured 838 MB on the machine this was written for, and
+         * a stray click paid it.
          */
-        if (isShelved(task)) {
-          try {
-            await materialize(task);
-          } catch (error: unknown) {
-            throw new Error(`could not put the task's work back: ${String(error)}`);
-          }
-          ctx.log.info(`task ${task.id}: work materialized by being revealed`);
+        const shelved = isShelved(task);
+        if (shelved) {
+          await openSnapshotTabs(task);
         }
 
         /**
@@ -2879,12 +3033,33 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
          * When provisioning finishes, `openRoot` sees a root with no panes, seeds
          * the agent as its first, and the wait retires itself.
          */
+        /*
+         * A SHELVED task with no captured tabs opens empty, saying so.
+         *
+         * Without this it would fall through to the shell below — a pane at
+         * `rootOf(task)`, which is a directory the archive deleted. That is the
+         * app pretending the task is there, which is the failure `materialize`
+         * used to prevent by rebuilding it. Nothing was captured for it (it never
+         * spawned, or it was shelved before tabs were stored), so the honest
+         * answer is an empty root with the Restore verb on it.
+         */
         const placeholder = placeholderFor(task);
+        const archivedEmpty =
+          shelved && (task.tabs ?? []).length === 0
+            ? {
+                line: ARCHIVED_LINE,
+                action: { command: TASK_COMMANDS.restore, label: 'Restore', args: { task: task.id } },
+              }
+            : undefined;
         const opened = await commands.invoke<{ created: boolean; pane: string | null }>('layout.openRoot', {
           root,
           cwd: rootOf(task),
           title: task.title,
-          ...(placeholder === undefined ? {} : { empty: true, placeholder }),
+          ...(archivedEmpty !== undefined
+            ? { empty: true, placeholder: archivedEmpty }
+            : placeholder === undefined
+              ? {}
+              : { empty: true, placeholder }),
         });
         if (!opened.ok) {
           throw new Error(`could not open the task's root: ${opened.error.code}: ${opened.error.message}`);
@@ -3006,13 +3181,20 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     commands.register(TASK_COMMANDS.restore, {
       schema: s.object({ task: s.string() }),
       /**
-       * Un-ship it: put it back in the active list, and put its work back on disk.
+       * Put the work back: disk, git, panes, and each agent's resume line.
        *
-       * The mirror of `tasks.archive` — a lifecycle flip plus a call to the half
-       * that touches disk. `activatedAt` is what makes the un-shipped task land at
-       * the BOTTOM of the active list: you pulled it back because you are working
-       * on it now, and sorting it by `createdAt` would file three-week-old work
-       * above everything current and shift every row below it.
+       * **The only thing that materializes a task.** `tasks.reveal` used to do it
+       * as a side effect of being clicked, so reading three-week-old work
+       * re-provisioned git for it; the two are separate now and this is the half
+       * that costs something.
+       *
+       * The lifecycle flip is CONDITIONAL, and that is the difference between the
+       * two shelved states. A shipped task is being un-shipped, so it goes back to
+       * `running` and is dated — `activatedAt` is what makes it land at the BOTTOM
+       * of the active list, since you pulled it back because you are working on it
+       * now, and sorting by `createdAt` would file three-week-old work above
+       * everything current. A task that was merely shelved never left that list,
+       * and dating it would shuffle a row for a reason the user did not give.
        *
        * Optimistic: the record flips first so the row moves immediately, and the
        * git work follows behind a `busy` mark.
@@ -3020,12 +3202,26 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       handler: (args) => {
         const task = store.get(args.task);
         if (task === undefined) throw new Error(`no task ${args.task}`);
-        store.put({ ...task, lifecycle: 'running', activatedAt: ctx.clock.now() });
-        changed();
-        void whileBusy(task.id, 'restoring', () => materialize(task)).catch((error: unknown) => {
-          ctx.log.error(`task ${task.id}: un-shipping threw — ${String(error)}`);
+        const shipped = task.lifecycle === 'archived';
+        if (shipped) {
+          store.put({ ...task, lifecycle: 'running', activatedAt: ctx.clock.now() });
+          changed();
+        }
+        void whileBusy(task.id, 'restoring', async () => {
+          /*
+           * The snapshot roots go FIRST.
+           *
+           * They hold this task's own tab ids, and `layout.openRoot` is
+           * idempotent — rebuilding into them would find roots that already have
+           * panes and hand back the READ-ONLY ones. The restore would then
+           * finish with nothing live on screen and no error anywhere.
+           */
+          await closeSnapshotTabs(task);
+          await materialize(task);
+        }).catch((error: unknown) => {
+          ctx.log.error(`task ${task.id}: restoring threw — ${String(error)}`);
         });
-        return { id: task.id, lifecycle: 'running' };
+        return { id: task.id, lifecycle: shipped ? 'running' : task.lifecycle };
       },
     }),
   );
@@ -3706,6 +3902,28 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
                   args: { task: task.id },
                 },
                 { separator: true },
+                /*
+                 * An ACTIVE task whose work is on the shelf has one verb the
+                 * others do not: put it back.
+                 *
+                 * Its `primaryAction` stays Ship — that is the gesture made most
+                 * on a row you have stopped looking at — so this lives in the
+                 * menu, where the shipped row's own Unship button already points
+                 * at the same command. Revealing it now shows a snapshot, so
+                 * without this the only way back to a live worktree on an active
+                 * task would be to ship it and un-ship it again.
+                 */
+                ...(!shipped && isShelved(task)
+                  ? [
+                      {
+                        id: TASK_COMMANDS.restore,
+                        label: 'Restore work',
+                        icon: 'unship',
+                        args: { task: task.id },
+                      },
+                      { separator: true } as const,
+                    ]
+                  : []),
                 shipped
                   ? {
                       id: TASK_COMMANDS.restore,

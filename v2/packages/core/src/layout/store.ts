@@ -123,6 +123,24 @@ export interface OpenOptions {
    * would let the second caller of `open` move a root out from under the first.
    */
   readonly group?: string;
+  /**
+   * The SHAPE to mint this root with — splits, ratios and pane ids — instead of
+   * one pane.
+   *
+   * Applies to the mint alone, exactly like `empty` and `group` above: a
+   * restored root already has the panes the user left there, and re-deciding its
+   * shape here would let the second caller of `open` rearrange the first
+   * caller's window.
+   *
+   * It exists because `split` takes an axis and no path, so a tree of ratios
+   * could not be reproduced through it — which is why a restored task's tabs
+   * came back FLAT. One argument serves both the snapshot view and the live
+   * restore, so the two cannot drift into showing the same task two ways.
+   *
+   * A shape that cannot be read costs the shape and not the root: the mint falls
+   * through to the ordinary single pane below, warning as it goes.
+   */
+  readonly tree?: PersistedNode;
 }
 
 export interface CloseOutcome {
@@ -260,14 +278,44 @@ interface RootState {
 export interface RootPlaceholder {
   readonly line: string;
   readonly names?: readonly string[];
+  /**
+   * One verb the shell offers alongside the line, supplied by whoever set it.
+   *
+   * A command id and a label, exactly like `TreeItem.command` — so the shell
+   * draws a button for something it has never heard of. The alternative was the
+   * shell knowing `tasks.restore` exists, which is the special case ADR 0031
+   * exists to prevent.
+   */
+  readonly action?: {
+    readonly command: string;
+    readonly label: string;
+    /**
+     * `unknown`, because the kernel does not read it. It is the argument object
+     * the command was declared with, carried from whoever set the placeholder to
+     * whoever invokes it — typing it as a record here would be this file having
+     * an opinion about a value it only ever passes along.
+     */
+    readonly args?: unknown;
+  };
 }
 
 function samePlaceholder(a: RootPlaceholder | undefined, b: RootPlaceholder | undefined): boolean {
   if (a === undefined || b === undefined) return a === b;
   if (a.line !== b.line) return false;
+  // The action is compared too, or a root whose verb changed would keep drawing
+  // the old button — the exact staleness this whole guard is about, arriving
+  // through the one field that was added after it was written.
+  if (a.action?.command !== b.action?.command) return false;
+  if (a.action?.label !== b.action?.label) return false;
+  if (JSON.stringify(a.action?.args ?? null) !== JSON.stringify(b.action?.args ?? null)) return false;
   const left = a.names ?? [];
   const right = b.names ?? [];
   return left.length === right.length && left.every((name, i) => name === right[i]);
+}
+
+/** Every leaf of this tree shows a captured screen — nothing in it is live. */
+function allReadOnly(node: SplitNode): boolean {
+  return node.kind === 'leaf' ? node.pane.readOnly : allReadOnly(node.first) && allReadOnly(node.second);
 }
 
 export class LayoutStore {
@@ -286,6 +334,13 @@ export class LayoutStore {
    */
   readonly #initialSeed = new Map<PaneID, Uint8Array>();
   readonly #sessionByPane = new Map<PaneID, SessionID>();
+  /**
+   * What a pane was showing before its session exited. See `unbindSession`.
+   *
+   * Never persisted, for the reason `#initialSeed` is not: it names a pty, and
+   * no pty survives a relaunch.
+   */
+  readonly #lastSessionByPane = new Map<PaneID, SessionID>();
   readonly #paneBySession = new Map<SessionID, PaneID>();
   readonly #listeners = new Set<(root: RootID) => void>();
   readonly #log;
@@ -342,6 +397,49 @@ export class LayoutStore {
   open(id: string = 'window-1', init?: PaneSeed, options: OpenOptions = {}): RootID {
     const live = this.#roots.get(rootId(id));
     if (live) return live.id;
+
+    /*
+     * A caller-given SHAPE beats the persisted one, and it has to.
+     *
+     * This sits above `#restore` while `empty` and `group` sit below it, and the
+     * difference is which of the two is more recent. A restored root is the
+     * panes the user left there, and re-deciding its group or its emptiness
+     * would let the second caller of `open` move the first caller's window. A
+     * `tree` is not a preference about a root that already exists — it is the
+     * root's contents, handed over by the one thing that knows them.
+     *
+     * Measured, by the m3 smoke: shelving a task removes its root, but the
+     * layout's write is debounced by 400 ms, so a task revealed in the same
+     * breath found its own PRE-ARCHIVE record still on disk and came back as
+     * live panes in a worktree that had just been deleted. Nothing said so — the
+     * log read `restored 1 pane(s)`, which is what a working restore also says.
+     */
+    if (options.tree !== undefined) {
+      let shaped: SplitNode | undefined;
+      try {
+        shaped = deserializeNode(options.tree, this.#newPane);
+      } catch (error) {
+        // The same bargain `#restore` strikes: a shape that cannot be read costs
+        // the shape, and throwing would cost the caller its root. The
+        // fall-through restores or mints as if none had been given.
+        this.#log.warn(`could not open ${id} with the given shape: ${messageOf(error)}`);
+      }
+      if (shaped !== undefined) {
+        const state: RootState = {
+          id: rootId(id),
+          group: options.group ?? id,
+          tree: shaped,
+          focusedPaneId: firstLeafId(shaped),
+          zoomedPaneId: null,
+          viewport: { x: 0, y: 0, width: 0, height: 0 },
+          placeholder: undefined,
+        };
+        this.#roots.set(state.id, state);
+        this.#changed(state.id);
+        this.#log.info(`opened ${id} with a given shape of ${leafIds(shaped).length} pane(s)`);
+        return state.id;
+      }
+    }
 
     const restored = this.#restore(rootId(id));
     if (restored) return restored.id;
@@ -423,6 +521,7 @@ export class LayoutStore {
     for (const pane of state.tree === null ? [] : leafIds(state.tree)) {
       this.#initialInput.delete(pane);
       this.#initialSeed.delete(pane);
+      this.#releaseRemembered(pane);
     }
     this.#roots.delete(id);
     this.#changed(id);
@@ -534,17 +633,24 @@ export class LayoutStore {
   }
 
   /**
-   * What this root says about being empty — and **nothing at all once it holds a
-   * pane**.
+   * What this root says about itself — and **nothing at all while a LIVE pane is
+   * in it**.
    *
    * The tree is checked here rather than trusted to be cleared, because a stale
    * line is the one way this feature can lie: `Creating the worktree` drawn over
    * a running agent. `#seed` clears it too, so the state does not accumulate
    * falsehoods; this is what makes drawing one impossible rather than unlikely.
+   *
+   * The guard used to be "no panes at all", and the reason was never the panes —
+   * it was that running agent. A root whose every pane is READ-ONLY has no
+   * running agent and nothing on its way, so the lie is unreachable there and
+   * the guard narrows to what it was always about. That is what lets an archived
+   * tab say what it is over the screens it is showing.
    */
   placeholderOf(root: RootID): RootPlaceholder | undefined {
     const state = this.#roots.get(root);
-    if (!state || state.tree !== null) return undefined;
+    if (!state) return undefined;
+    if (state.tree !== null && !allReadOnly(state.tree)) return undefined;
     return state.placeholder;
   }
 
@@ -658,11 +764,38 @@ export class LayoutStore {
     this.#log.debug(`pane ${pane} shows session ${session}`);
   }
 
-  /** A session that exited on its own: the pane stays, the binding goes. */
+  /**
+   * A session that exited on its own: the pane stays, the binding goes — and
+   * the pane REMEMBERS what it was showing.
+   *
+   * The binding still has to go: it is what the renderer reads to decide
+   * whether to attach, and what `#adoptPersistedSessions` verifies against the
+   * daemon. Pointing a pane at a dead pty is the stale binding ADR 0036 exists
+   * to catch.
+   *
+   * But "this pane has no session" and "this pane never had one" are different
+   * facts, and only the first has a screen worth keeping. An agent that finished
+   * leaves a pane full of what it did; forgetting which session that was meant
+   * the tab archived blank, because the capture had nothing to name.
+   */
   unbindSession(session: SessionID): void {
     const pane = this.#paneBySession.get(session);
     this.#paneBySession.delete(session);
-    if (pane !== undefined) this.#sessionByPane.delete(pane);
+    if (pane !== undefined) {
+      this.#sessionByPane.delete(pane);
+      this.#lastSessionByPane.set(pane, session);
+    }
+  }
+
+  /**
+   * The session this pane was last showing, live or not.
+   *
+   * For a caller that wants the SCREEN rather than the stream — archiving is the
+   * one. Never for attaching: a value here is as likely to name a dead pty as a
+   * live one, which is the whole distinction it exists to draw.
+   */
+  lastSessionFor(pane: PaneID): SessionID | undefined {
+    return this.#sessionByPane.get(pane) ?? this.#lastSessionByPane.get(pane);
   }
 
   sessionFor(pane: PaneID): SessionID | undefined {
@@ -825,6 +958,7 @@ export class LayoutStore {
       state.focusedPaneId = null;
       state.zoomedPaneId = null;
       if (session !== undefined) this.#endSession(pane, session);
+      else this.#releaseRemembered(pane);
       this.#log.info(`closed the last pane of ${root}; it is now empty`);
       this.#changed(root);
       return ok({
@@ -839,6 +973,7 @@ export class LayoutStore {
     state.focusedPaneId = heir;
     if (state.zoomedPaneId === pane) state.zoomedPaneId = null;
     if (session !== undefined) this.#endSession(pane, session);
+    else this.#releaseRemembered(pane);
     this.#changed(root);
 
     return ok({
@@ -984,8 +1119,26 @@ export class LayoutStore {
   #endSession(pane: PaneID, session: SessionID): void {
     this.#sessionByPane.delete(pane);
     this.#paneBySession.delete(session);
+    this.#lastSessionByPane.delete(pane);
     this.#sessions.kill(session);
     this.#log.info(`pane ${pane} closed, ended session ${session}`);
+  }
+
+  /**
+   * A closing pane whose session had ALREADY exited.
+   *
+   * `kill` on a dead session ends nothing — the pty is gone. It is still the
+   * right call, because the sink is also what releases the screen the host
+   * retained for that session (`SessionHost.forget`), and a pane that closes
+   * without it leaks half a megabyte for the life of the process. Nothing
+   * outside this pane could still want that screen: it was the only thing
+   * showing it.
+   */
+  #releaseRemembered(pane: PaneID): void {
+    const remembered = this.#lastSessionByPane.get(pane);
+    if (remembered === undefined) return;
+    this.#lastSessionByPane.delete(pane);
+    this.#sessions.kill(remembered);
   }
 
   /** A structural change: notify, and schedule a write. */
