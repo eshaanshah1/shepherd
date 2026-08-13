@@ -108,11 +108,70 @@ describe('a shipped task card', () => {
     ...over,
   });
 
-  it('keeps its mark, title and age — you shipped this, and when', () => {
-    draw(item('Fix the login redirect', shipped()));
+  it('keeps its title and its stamp — you shipped this, and when', () => {
+    draw(item('Fix the login redirect', shipped({ elapsed: '16:40' })));
     expect(title()).toBe('Fix the login redirect');
-    expect(elapsed()?.textContent).toBe('3d');
+    // A clock, because the archive stamps the moment a thing finished rather than
+    // how long ago that was. The card does not know which it is handed.
+    expect(elapsed()?.textContent).toBe('16:40');
+    // The state still travels on the host, for the stylesheet and for a test — it
+    // is only the drawn MARK below that goes.
     expect(host.querySelector('.sh-task-card')?.getAttribute('data-mark')).toBe('shipped');
+  });
+
+  it('draws no mark AND no slot, because the heading above it already says Shipped', () => {
+    /*
+     * Eight rows under a divider reading `Shipped` drew eight identical checks — the
+     * 12px state slot spent on the one fact the divider declares, at the left edge
+     * where the eye starts scanning.
+     *
+     * The slot goes with them, and that is the load-bearing half: Row rule 2 reserves
+     * an empty box so a label's x cannot depend on whether its row has a status, and
+     * that rule is about ONE LIST. Shipped is a region with no state column at all,
+     * so the box would be 21px of indent every row pays for a column that is always
+     * empty — 14% of the title track at the narrow rail width this was measured at.
+     */
+    draw(item('Fix the login redirect', shipped()));
+    expect(host.querySelector('.sh-ui-mark')).toBeNull();
+  });
+
+  it('KEEPS the mark when the last run failed, because that deviates from the heading', () => {
+    /*
+     * The exception, and the reason the suppression is keyed on the mark rather than
+     * on `shipped` alone: a task can be shipped while its last run was failing, and
+     * `task-card.css` already dims from `data-shipped` instead of the mark for
+     * exactly this — red must stay findable in a block you scan.
+     */
+    draw(item('Fix git pulling in CLI', shipped({ mark: 'failed' })));
+    expect(host.querySelector('.sh-ui-mark[data-state="failed"]')).not.toBeNull();
+    expect(host.querySelector('.sh-ui-mark')?.textContent).toBe('Failed');
+  });
+
+  it('draws a count when one row stands for more than one task', () => {
+    /*
+     * Two identically-named tasks shipped the same afternoon were two
+     * indistinguishable lines, which reads as a rendering bug rather than the fact
+     * it is. The row opens the most recent of them, so the count is the disclosure
+     * that it is standing in for more than it opens — and it is announced, because a
+     * digit in a ring is not self-explanatory to a screen reader.
+     */
+    draw(item('Update Shepherd with Shepherd-design', shipped({ dupe: 2 })));
+    const badge = host.querySelector('.sh-task-card__dupe');
+    expect(badge?.textContent).toContain('2');
+    expect(badge?.getAttribute('title')).toBe('2 tasks with this name');
+  });
+
+  it('draws no count for the ordinary one-task row', () => {
+    draw(item('Fix the login redirect', shipped()));
+    expect(host.querySelector('.sh-task-card__dupe')).toBeNull();
+  });
+
+  it('never draws a count on live work, whatever the data says', () => {
+    // Two live tasks of the same name are two things you are separately doing, and
+    // collapsing them would hide one that might be waiting on you. The reader drops
+    // the field rather than the card ignoring it, so this holds for every consumer.
+    draw(item('Fix the login redirect', { mark: 'working', elapsed: '8m', dupe: 2 }));
+    expect(host.querySelector('.sh-task-card__dupe')).toBeNull();
   });
 
   it('says it is shipped, so a stylesheet can dim it', () => {

@@ -54,8 +54,28 @@ export interface CardAnswer {
 
 export interface CardData {
   readonly mark: CardMark;
-  /** `4m` / `2h` / `3d`, already formatted — the service half owns the clock. */
+  /**
+   * The trailing stamp, already formatted — the service half owns the clock.
+   *
+   * `4m` / `2h` / `3d` on live work, where a climbing duration is the fact. On a
+   * shipped row it is a `16:40` clock time instead, because the archive stamps the
+   * moment a thing finished rather than how long ago that was. One field either
+   * way: the card draws a stamp and does not need to know which question it
+   * answers, and a second field would be two things to keep in step.
+   */
   readonly elapsed?: string;
+  /**
+   * How many tasks this ONE row stands for, when it is more than one.
+   *
+   * Only ever set on a shipped row, and only for tasks that shipped the same day
+   * under the same title — two identical lines in a record are worth stating as a
+   * fact rather than drawing as what looks like a rendering bug.
+   *
+   * Absent at one, so the card's test is presence. The row still opens exactly one
+   * task (the most recent of them), which is why the count is drawn: it is the
+   * disclosure that the line is standing in for more than it opens.
+   */
+  readonly dupe?: number;
   /*
    * There is deliberately no `stage` field.
    *
@@ -189,9 +209,23 @@ export function readCardData(value: unknown): CardData | null {
     if (total !== undefined && passed !== undefined && total > 0) suite = { total, passed };
   }
 
+  /*
+   * A count of one is not a duplicate and a count below one is not a count — both
+   * reach the card as absent, so it never has to ask twice.
+   *
+   * **And only on shipped work**, which is a refusal rather than a tidy-up. Two LIVE
+   * tasks of the same name are two things you are separately doing, and one row
+   * standing for both would hide one that might be waiting on you. The service half
+   * does not send it for live work; enforcing that here is what makes the field's
+   * docstring true for every consumer rather than for the current caller.
+   */
+  const shipped = value['shipped'] === true;
+  const dupe = int(value['dupe']);
+
   return {
     mark: state,
     elapsed: str(value['elapsed']),
+    ...(shipped && dupe !== undefined && dupe > 1 ? { dupe } : {}),
     summary: str(value['summary']),
     diff: readDiff(value['diff']),
     suite,
@@ -199,6 +233,6 @@ export function readCardData(value: unknown): CardData | null {
     tabs: tabs !== undefined && tabs.length > 0 ? tabs : undefined,
     question: readQuestion(value['question']),
     exitCode: int(value['exitCode']),
-    ...(value['shipped'] === true ? { shipped: true as const } : {}),
+    ...(shipped ? { shipped: true as const } : {}),
   };
 }

@@ -55,6 +55,82 @@ describe('Row', () => {
     expect(row(plain.container).dataset.selected).toBeUndefined();
   });
 
+  it('marks a quiet row with a class and an attribute, and nothing else', () => {
+    const dom = mount(<Row quiet>20 more</Row>);
+    const el = row(dom.container);
+    expect(el.className).toContain(rowClasses.quiet);
+    expect(el.dataset.quiet).toBe('true');
+
+    const loud = mount(<Row>a task</Row>);
+    expect(row(loud.container).className).not.toContain(rowClasses.quiet);
+    expect(row(loud.container).dataset.quiet).toBeUndefined();
+  });
+
+  it('keeps every part of a quiet row, so it is a volume knob and not a variant', () => {
+    // Quiet and gutter-less are separate claims, and this is what keeps them
+    // separate: a quiet row still reserves the state column, because a control among
+    // rows that HAVE marks belongs in their label column.
+    const dom = mount(<Row quiet>20 more</Row>);
+    const el = row(dom.container);
+    expect(el.querySelector(`.${rowClasses.leading}`)).not.toBeNull();
+    expect(el.querySelector(`.${rowClasses.trailing}`)).not.toBeNull();
+  });
+
+  /**
+   * MUTATION TARGET #1a. `quiet` is colour and type only — it must not be allowed
+   * to grow into a second row shape.
+   *
+   * This is the door §10's "no row declares a second height" would be broken
+   * through: the critique that produced `quiet` also asked for a 26px archive row,
+   * and the two arriving together is exactly how a volume control acquires a
+   * height. Asserted on the DECLARATIONS, so adding `block-size`, `padding` or a
+   * `margin` to the quiet rules fails here rather than being noticed on screen.
+   */
+  it('quiet changes only colour and size, never geometry', () => {
+    const geometry = ['height', 'block-size', 'min-height', 'padding', 'margin', 'margin-inline', 'gap'];
+    for (const rule of rulesMentioning('sh-ui-row--quiet')) {
+      for (const property of geometry) {
+        expect(rule.style.getPropertyValue(property), `${rule.selectorText} declares ${property}`).toBe('');
+      }
+    }
+  });
+
+  it('drops the leading slot only when the list has no state column', () => {
+    /*
+     * The bound on rule 2, and the reason it is a prop rather than an inference:
+     * whether a list HAS a state column is a fact about a row's siblings, which this
+     * component cannot see. Default on, so every existing list is untouched.
+     */
+    const withColumn = mount(<Row>a task</Row>);
+    expect(row(withColumn.container).querySelector(`.${rowClasses.leading}`)).not.toBeNull();
+
+    const without = mount(<Row gutter={false}>20 more</Row>);
+    const el = row(without.container);
+    expect(el.querySelector(`.${rowClasses.leading}`)).toBeNull();
+    // The label is now the first child, so it sits at the row's own inset — which is
+    // the whole point: the region's heading, its rows and this share one left edge.
+    expect(el.firstElementChild?.className).toContain(rowClasses.label);
+    // And the trailing cell is untouched, because metadata is not what moved.
+    expect(el.querySelector(`.${rowClasses.trailing}`)).not.toBeNull();
+  });
+
+  it('draws a quiet row from the role whose job is "a control at rest"', () => {
+    // `textFaint`, and the search field one row above it in the rail already quotes
+    // the same rule — so this is the ink ramp being obeyed rather than a taste.
+    const base = rulesMentioning('sh-ui-row--quiet').find(
+      (rule) => rule.selectorText === '.sh-ui-row--quiet',
+    );
+    expect(base?.style.color).toBe('var(--sh-text-faint)');
+    expect(base?.style.getPropertyValue('font-size')).toBe('var(--sh-font-size-medium)');
+
+    // …and comes back UP the ramp on hover. A control that got fainter under the
+    // cursor reads as disabled at the moment you reach for it.
+    const hover = rulesMentioning('sh-ui-row--quiet').find(
+      (rule) => rule.selectorText === '.sh-ui-row--quiet:hover',
+    );
+    expect(hover?.style.color).toBe('var(--sh-text-dim)');
+  });
+
   /**
    * MUTATION TARGET #1. Adding a height to any state rule — `.sh-ui-row:hover`,
    * `.sh-ui-row--selected`, a `:has()` on the actions — must fail THIS test by

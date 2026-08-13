@@ -119,6 +119,22 @@ describe('readCardData', () => {
     expect(readCardData({ mark: 'resting', suite: { total: 4 } })?.suite).toBeUndefined();
   });
 
+  it('reads a duplicate count only above one, and only on shipped work', () => {
+    /*
+     * The row that stands for more than one task. `1` is not a duplicate and `0` is
+     * not a count, so both arrive absent and the card's test is presence.
+     *
+     * The `shipped` gate is a refusal, not a tidy-up: two LIVE tasks of the same
+     * name are two things you are separately doing, and one row standing for both
+     * would hide one that might be waiting on you.
+     */
+    expect(readCardData({ mark: 'shipped', shipped: true, dupe: 2 })?.dupe).toBe(2);
+    expect(readCardData({ mark: 'shipped', shipped: true, dupe: 1 })?.dupe).toBeUndefined();
+    expect(readCardData({ mark: 'shipped', shipped: true, dupe: 0 })?.dupe).toBeUndefined();
+    expect(readCardData({ mark: 'shipped', shipped: true, dupe: 'two' })?.dupe).toBeUndefined();
+    expect(readCardData({ mark: 'working', dupe: 2 })?.dupe).toBeUndefined();
+  });
+
   it('never throws, whatever it is handed', () => {
     const nasty: unknown[] = [
       { mark: 'resting', repos: 'not a list', tabs: {}, question: 5, suite: [], diff: [] },

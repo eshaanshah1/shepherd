@@ -452,13 +452,25 @@ function TreeView({
           const view = byType.get(entry.key);
           const key = `${entry.key}:${row.id}`;
           if (row.section === true) {
-            // A heading, not a row: `SectionLabel` draws the uppercase
+            // A heading, not a row: `SectionLabel` draws the sentence-case
             // micro-label, the `·` before the count and the rule to the edge.
             // Deliberately not a button — a group that looked clickable and did
             // nothing is the affordance lie this field exists to avoid.
+            //
+            // A NESTED heading drops the rule and steps down the ink ramp. The
+            // rule is what makes a heading read as a band across the list, and a
+            // second band inside the first says the two are peers when one
+            // contains the other; without it, the day labels inside `Shipped`
+            // read as what they are — a partition of the rows under it, not
+            // another region beside it.
+            const nested = row.subsection === true;
             return (
               <li key={key}>
-                <SectionLabel data-testid="view-group" {...(row.description === undefined ? {} : { count: row.description })}>
+                <SectionLabel
+                  data-testid="view-group"
+                  {...(nested ? { 'data-nested': 'true', rule: false } : {})}
+                  {...(row.description === undefined ? {} : { count: row.description })}
+                >
                   {row.label}
                 </SectionLabel>
               </li>
@@ -602,6 +614,20 @@ function TreeView({
                 tabIndex={0}
                 // Arriving, not merely present: see `arriving` above.
                 entering={arriving.has(key)}
+                /*
+                  A control on the list rather than an entry in it, declared by
+                  the contribution. The shell cannot infer this: `20 more` and a
+                  task row are the same shape here — a label plus a command — and
+                  guessing from "has no root" would quiet the diagnostics demo's
+                  rows too.
+                */
+                quiet={row.quiet === true}
+                /*
+                  …and whether the region it sits in has a state column at all.
+                  Also the contribution's to declare: it is a fact about this row's
+                  SIBLINGS, and the shell draws one row at a time.
+                */
+                gutter={row.gutter !== false}
                 // `row.root !== undefined` first, so a row that is about no
                 // root is never lit by the shell also not knowing its own.
                 selected={isSelected}

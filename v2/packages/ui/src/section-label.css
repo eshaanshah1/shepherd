@@ -85,3 +85,24 @@
 .sh-ui-section-label[data-rule='false']::after {
   border-top-color: transparent;
 }
+
+/*
+ * ── nested: a heading inside a heading ──────────────────────────────────────
+ *
+ * One step down the ink ramp from `textMute`, which is the whole of the
+ * distinction. The day labels inside `Shipped` are drawn by the same component at
+ * the same height, because they are the same KIND of thing at a smaller scope —
+ * and a nested heading that changed size or weight would be a second component
+ * pretending to be this one.
+ *
+ * `textGhost` puts it level with the rows it heads rather than above them, which
+ * is right: the label answers "when", the row answers "what", and neither is the
+ * thing you scan for. `Shipped` stays a step up, so the region still announces
+ * itself once.
+ *
+ * The rule is dropped by the caller (`rule={false}`) rather than here, so the
+ * component keeps one mechanism for one fact.
+ */
+.sh-ui-section-label[data-nested] {
+  color: var(--sh-text-ghost);
+}

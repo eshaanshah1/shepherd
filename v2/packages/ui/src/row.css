@@ -127,6 +127,33 @@
   color: var(--sh-text);
 }
 
+/* ---------------------------------------------------------------- quiet row */
+/*
+ * A control on the list, not an entry in it.
+ *
+ * `textFaint` is the role whose written job is "a control at rest", and
+ * `.sh-side-search` one row above already quotes that rule for the same reason —
+ * so this is the ramp being obeyed rather than a new opinion. The `medium` step
+ * is the same one that field uses: a step under the rows' `body`, so the type
+ * says what the colour says.
+ *
+ * **Colour and size only.** No height, no padding, no leading-slot change — a
+ * quiet row is the same box as a loud one, or §10's "no row declares a second
+ * height" would have been broken by a volume control.
+ *
+ * Hover comes back UP the ramp rather than further down it. The row is still a
+ * control, and a control that got fainter under the cursor reads as disabled at
+ * the exact moment you are reaching for it.
+ */
+.sh-ui-row--quiet {
+  font-size: var(--sh-font-size-medium);
+  color: var(--sh-text-faint);
+}
+
+.sh-ui-row--quiet:hover {
+  color: var(--sh-text-dim);
+}
+
 /* ----------------------------------------------------------- leading slot */
 /*
  * A fixed box. The CONTENTS vary — dot, spinner, glyph, eventually the sheep —
