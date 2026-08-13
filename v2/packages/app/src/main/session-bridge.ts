@@ -4,6 +4,7 @@ import type {
   ScreenState,
   SessionError,
   SessionExit,
+  SessionObserved,
   SessionResize,
   SessionInfo,
   SessionSpec,
@@ -40,6 +41,12 @@ export interface SessionHostLike {
   kill(id: SessionID, signal?: string): Result<void, SessionError>;
   onExit(listener: (exit: SessionExit) => void): Disposable;
   onResize(listener: (resize: SessionResize) => void): Disposable;
+  /**
+   * A session's program named itself or changed directory. The bridge does not
+   * use it — main subscribes, to keep pane labels live — but it belongs here
+   * because main only ever holds a `SessionHostLike`.
+   */
+  onObserved(listener: (observed: SessionObserved) => void): Disposable;
   has(id: SessionID): boolean;
   /**
    * The env-injection seam, and it runs in MAIN even when the ptys do not.

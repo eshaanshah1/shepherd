@@ -8,7 +8,7 @@
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { SessionHost, SessionServer } from '@shepherd/core';
-import type { SessionExit, SessionInfo } from '@shepherd/core';
+import type { SessionExit, SessionInfo, SessionObserved } from '@shepherd/core';
 import { createLogger, sessionId, systemClock, type SessionID } from '@shepherd/sdk';
 import { SessionRouter } from './session-router.ts';
 import type { ClientSocket } from './session-client.ts';
@@ -234,5 +234,50 @@ describe('this Mac’s own sessions', () => {
 
     const ids: SessionID[] = routed.list().map((info) => info.id);
     expect(ids).toContain(mine.id);
+  });
+
+  it('passes a local observation through with the id untouched', async () => {
+    const b = memberSide();
+    const { local, routed } = router(async () => b.socket);
+    const seen: SessionObserved[] = [];
+    routed.onObserved((observed) => void seen.push(observed));
+
+    const mine = local.create({
+      cwd: '/tmp',
+      command: '/bin/sh',
+      args: ['-c', `printf '\\033]2;local-name\\007'; sleep 5`],
+    });
+    if (!mine.ok) throw new Error(mine.error.message);
+
+    await until(() => seen.length > 0, 'the local observation');
+    expect(seen[0]).toEqual({ sessionId: mine.value.id, title: 'local-name' });
+  });
+});
+
+/**
+ * A pane bound to `mac-b∷x` hears about `mac-b∷x` and never about a bare id it
+ * has never seen — the same rule `onExit` and `onResize` already keep.
+ */
+describe('a member’s observations, qualified', () => {
+  it('re-emits a member’s title under the qualified id', async () => {
+    const b = memberSide();
+    const { routed } = router(async () => b.socket);
+    await routed.reach('mac-b');
+
+    const seen: SessionObserved[] = [];
+    routed.onObserved((observed) => void seen.push(observed));
+
+    const remote = b.host.create({
+      cwd: '/tmp',
+      command: '/bin/sh',
+      args: ['-c', `printf '\\033]2;over-there\\007'; sleep 5`],
+    });
+    if (!remote.ok) throw new Error(remote.error.message);
+
+    await until(() => seen.length > 0, 'the member’s observation');
+    expect(seen[0]).toEqual({
+      sessionId: `mac-b∷${remote.value.id}`,
+      title: 'over-there',
+    });
   });
 });

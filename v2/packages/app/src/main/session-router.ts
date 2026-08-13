@@ -4,6 +4,7 @@ import type {
   SessionError,
   SessionExit,
   SessionInfo,
+  SessionObserved,
   SessionResize,
   SessionSpec,
   Viewport,
@@ -89,6 +90,7 @@ export class SessionRouter implements SessionHostLike {
   readonly #members = new Map<string, Member>();
   readonly #exitListeners = new Set<(exit: SessionExit) => void>();
   readonly #resizeListeners = new Set<(resize: SessionResize) => void>();
+  readonly #observedListeners = new Set<(observed: SessionObserved) => void>();
   readonly #localSubscriptions: Disposable[] = [];
   #disposed = false;
 
@@ -101,6 +103,7 @@ export class SessionRouter implements SessionHostLike {
     this.#localSubscriptions.push(
       this.#local.onExit((exit) => this.#announceExit(exit)),
       this.#local.onResize((resize) => this.#announceResize(resize)),
+      this.#local.onObserved((observed) => this.#announceObserved(observed)),
     );
   }
 
@@ -302,6 +305,11 @@ export class SessionRouter implements SessionHostLike {
     return toDisposable(() => this.#resizeListeners.delete(listener));
   }
 
+  onObserved(listener: (observed: SessionObserved) => void): Disposable {
+    this.#observedListeners.add(listener);
+    return toDisposable(() => this.#observedListeners.delete(listener));
+  }
+
   dispose(): void {
     this.#disposed = true;
     for (const subscription of this.#localSubscriptions.splice(0)) subscription.dispose();
@@ -371,6 +379,12 @@ export class SessionRouter implements SessionHostLike {
         sessionId: toSessionId(qualify(memberId, resize.sessionId)),
       });
     });
+    client.onObserved((observed) => {
+      this.#announceObserved({
+        ...observed,
+        sessionId: toSessionId(qualify(memberId, observed.sessionId)),
+      });
+    });
 
     const member: Member = {
       client,
@@ -414,6 +428,16 @@ export class SessionRouter implements SessionHostLike {
         listener(resize);
       } catch (error) {
         this.#log.warn(`an onResize listener threw: ${String(error)}`);
+      }
+    }
+  }
+
+  #announceObserved(observed: SessionObserved): void {
+    for (const listener of [...this.#observedListeners]) {
+      try {
+        listener(observed);
+      } catch (error) {
+        this.#log.warn(`an onObserved listener threw: ${String(error)}`);
       }
     }
   }
