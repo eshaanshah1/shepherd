@@ -110,27 +110,6 @@
   color: var(--sh-text-ghost);
 }
 
-/*
- * The stage word, in the elapsed stamp's cell.
- *
- * Same size and same ink as the stamp it replaces, so the trailing column keeps
- * one weight whichever of the two is showing — the eye should not have to
- * re-find that corner because a task started provisioning.
- *
- * NOT mono and not tabular, which is the one place it parts from the stamp: §6
- * puts things in mono because they can be counted and read DOWN a column, and a
- * word is neither. Mono here would also make `worktrees` noticeably wider than
- * the stamp and shove the title further than the proportional face does.
- */
-.sh-task-card__stage {
-  flex: none;
-  font-size: var(--sh-font-size-nano);
-  color: var(--sh-text-ghost);
-  /* One line, always. The words are known and short, but a contribution supplies
-     this string and a long one must not be allowed to wrap the head. */
-  white-space: nowrap;
-}
-
 /* ── the sentence ──────────────────────────────────────────────────────────── */
 
 .sh-task-card__summary {
@@ -369,8 +348,6 @@
 
 /* …and the metadata yields to it, rather than the two overlapping. */
 .sh-task-card:hover .sh-task-card__elapsed,
-.sh-task-card:focus-within .sh-task-card__elapsed,
-.sh-task-card:hover .sh-task-card__stage,
-.sh-task-card:focus-within .sh-task-card__stage {
+.sh-task-card:focus-within .sh-task-card__elapsed {
   visibility: hidden;
 }

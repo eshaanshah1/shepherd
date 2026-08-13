@@ -293,6 +293,50 @@ type BusyWhat =
   | 'linking'
   | 'starting';
 
+/**
+ * What the row is CALLED while it is being built.
+ *
+ * The step goes in the LABEL rather than beside it, and the reason is what the
+ * label otherwise holds: a task has no name until the model answers, so until
+ * then `title` is `heuristicName`'s slice of the brief — which in practice reads
+ * `in the 3L tracker, NA`. That is not a worse name than the step, it is a WRONG
+ * one: it looks like something the user typed, so the row it names looks broken
+ * rather than unfinished. Saying `Creating the worktree` instead is both the
+ * progress and the honest answer to "what is this row", and the true name
+ * arriving is then the signal that the task is ready.
+ *
+ * Sentence case and three words at most, because this is a label and §6 governs
+ * it now — the trailing chip this replaces was metadata and had looser rules.
+ *
+ * **`archiving` and `restoring` are deliberately absent.** Those tasks have a
+ * real, settled name and the user is acting on a SPECIFIC one; replacing the
+ * name with `Archiving` would take away the only thing that says which. They
+ * keep their title and say what they are doing where they always did.
+ */
+function stepLabel(what: BusyWhat, task: TaskRecord): string | undefined {
+  switch (what) {
+    case 'naming':
+      return 'Naming the task';
+    case 'worktrees':
+      // A one-repo task is the common case, and `Creating worktrees` over a
+      // single worktree is the kind of plural that reads as a stock string.
+      return task.repos.length === 1 ? 'Creating the worktree' : 'Creating worktrees';
+    case 'linking':
+      return 'Linking agent files';
+    case 'starting':
+      return 'Starting the agent';
+    case 'provisioning':
+      /*
+       * The floor, and it needs a phrase for the same reason it exists: it is
+       * what a row falls back to in the gaps BETWEEN phases, so leaving it to
+       * the title would flash the junk name four times on the way through.
+       */
+      return 'Setting up';
+    default:
+      return undefined;
+  }
+}
+
 function orchestratorPrompt(task: { title: string; brief: string }): string {
   return task.brief.trim() === '' ? `Start on the task "${task.title}".` : task.brief;
 }
@@ -2200,7 +2244,6 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           task.repos.map((repo) => repo.path),
           ctx.clock.now(),
         );
-        changed();
         ctx.log.info(`created task ${task.id} (${slug}) with ${task.repos.length} repo(s)`);
 
         // OPTIMISTIC (D12): the record exists and is answerable NOW, and the
@@ -2212,9 +2255,21 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         // too, and a task with a history must never have its directory renamed
         // under it — the window in which a slug may change closed the first time
         // git ran for it.
+        /**
+         * Started BEFORE the first `changed()`, and the order is the whole point.
+         *
+         * `provision` runs synchronously into `whileBusy`, which sets the busy
+         * word and nudges the tree before it awaits anything — so by the time the
+         * nudge below lands, the row already has a step to be called. Nudging
+         * first left exactly one frame in which the task existed and nothing was
+         * busy, and that frame drew `task.title`: `heuristicName`'s slice of the
+         * brief, `in the 3L tracker, NA`. One frame is enough to see, because it
+         * is the frame the row is BORN in and the eye is already there.
+         */
         void provision(task, args.images, named === undefined ? { settle: settleName } : undefined).catch((error: unknown) => {
           ctx.log.error(`task ${task.id}: provisioning threw — ${String(error)}`);
         });
+        changed();
         return task;
       },
     }),
@@ -3000,20 +3055,9 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
            */
           const cardFor = (task: TaskRecord, state: string): unknown => ({
             mark: markFor(task, state),
-            /*
-             * The STEP, in the cell the elapsed stamp usually holds.
-             *
-             * Not a line of its own, because only a waiting card may change
-             * height (§5, and `task-card.css`'s own opening rule) — and a row
-             * that grew for fifteen seconds and shrank again would be the one
-             * kind of motion the spec refuses outright. The trail is a grid
-             * stack, so the word costs no new element and no new row.
-             *
-             * It REPLACES the stamp rather than joining it: a task four seconds
-             * old reads `0m`, which is the least useful thing the card could say
-             * in the one window where something is actually happening to it.
-             */
-            ...(busy.has(task.id) ? { stage: busy.get(task.id) } : {}),
+            // No stage field: the step is the row's LABEL now (`stepLabel`), and
+            // a card that also carried it in the trailing cell would say the same
+            // word twice on one line.
             elapsed: formatElapsed(task.createdAt, ctx.clock.now()),
             diff: diffs.get(task.id),
             suite: suites.get(task.id),
@@ -3101,6 +3145,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           const rows: TreeItemOut[] = [];
           const rowFor = (task: TaskRecord): TreeItemOut => {
             const state = displayState(task.lifecycle, agentStatesOf(task));
+            const busyWhat = busy.get(task.id);
             // Said on the row rather than in a log nobody has open — and
             // APPENDED, because the task really is in the state the tint shows.
             const issue = taskIssue.get(task.id);
@@ -3133,11 +3178,27 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
                 : hookIssue.get(`${task.id}:${pending.name}`) !== undefined
                   ? `${pending.name} — hook failed`
                   : `${provisioning.get(`${task.id}:${pending.name}`) ?? 'provisioning'} ${pending.name}…`;
+            // The step, or the name — never both, and the changeover IS the
+            // "your task is ready" signal.
+            const step = busyWhat === undefined ? undefined : stepLabel(busyWhat, task);
+            /*
+             * Said in the DESCRIPTION only when the label is not saying it.
+             *
+             * Archiving and restoring keep their task's name (`stepLabel` returns
+             * nothing for them), so without this they would be a row with a
+             * spinner and no word anywhere — which is what the two oldest tests in
+             * this file exist to catch. Exactly one of the two lines carries the
+             * operation, never both and never neither.
+             */
+            const busyNote = busyWhat !== undefined && step === undefined ? `${busyWhat}…` : undefined;
             return {
               id: task.id,
-              label: task.title,
+              label: step ?? task.title,
               description: [
-                issue === undefined ? state : `${state} — set hook failed`,
+                // The operation displaces the STATE rather than joining it: a row
+                // that says `idle · archiving…` is answering the same question
+                // twice and disagreeing with itself.
+                busyNote ?? (issue === undefined ? state : `${state} — set hook failed`),
                 ...(repoNote === undefined ? [] : [repoNote]),
               ].join(' · '),
               // The word the shell resolves. `isTaskAgentState` rather than a
@@ -3168,25 +3229,19 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
               data: cardFor(task, state),
               /*
                * Something is happening to it right now — a snapshot being taken,
-               * worktrees being rebuilt. The row says so where its status mark
-               * is, rather than looking idle for the seconds git takes.
+               * worktrees being rebuilt. The row says so where its status mark is,
+               * rather than looking idle for the seconds git takes.
                *
-               * The description is REBUILT rather than replaced, and that is a
-               * fix: this spread sits after `description` above and overwrote it
-               * with the bare stage word, so `repoNote` — the `working api…` the
-               * block above goes to the trouble of composing — could never appear.
-               * `busy` covers the whole of provisioning, which is precisely when a
-               * repo is landing, so the two were never on screen at the same time
-               * and the note was dead code wearing a comment about being useful.
+               * It no longer REPLACES the description, and that is a fix: this
+               * spread sits after `description` above, so writing one here
+               * overwrote it — and `repoNote`, the `working api…` the block above
+               * goes to the trouble of composing, could never appear. `busy`
+               * covers the whole of provisioning, which is precisely when a repo
+               * is landing, so the two were never on screen at the same time and
+               * the note was dead code wearing a comment about being useful. The
+               * step is the LABEL now, so nothing here needs to say it.
                */
-              ...(busy.has(task.id)
-                ? {
-                    busy: true,
-                    description: [`${busy.get(task.id) ?? ''}…`, ...(repoNote === undefined ? [] : [repoNote])].join(
-                      ' · ',
-                    ),
-                  }
-                : {}),
+              ...(busy.has(task.id) ? { busy: true } : {}),
               // Clicking a task takes you to it — and for an archived one that
               // means bringing it BACK: `tasks.reveal` restores the worktrees
               // first (see its handler). One gesture, whatever state the task

@@ -1234,6 +1234,10 @@ describe('a long operation', () => {
     const during = await rowOf(h, 't1');
     expect(during?.busy).toBe(true);
     expect(during?.description).toBe('archiving…');
+    // And it KEEPS its name. A task being created has none yet, so its row is
+    // called after the step it is on; an archiving one has a settled name and the
+    // name is the only thing that says which of them is going away.
+    expect(during?.label).toBe(task().title);
 
     finish();
     await archiving;
@@ -1267,51 +1271,78 @@ describe('a long operation', () => {
   });
 
   /**
-   * The row names the STEP, not just the fact that there is one.
+   * The row is NAMED for the step it is on, until it has a real name.
    *
    * `provisioning…` held across the whole run said "still going" for twenty
-   * seconds — which is the same sentence at second 1 and second 19, so a user
-   * watching it cannot tell a slow fetch from a wedged one. These assert the four
-   * words and, more importantly, that they arrive in the order the work does.
+   * seconds — the same sentence at second 1 and second 19, so a user watching it
+   * cannot tell a slow fetch from a wedged one. And the label it sat beside was
+   * `heuristicName`'s slice of the brief, which reads as a name somebody typed
+   * badly rather than one that has not arrived. These assert the four phrases,
+   * the order they arrive in, and the changeover to the true name.
    */
   describe('the step a new task is on', () => {
     const REPO = { path: '/src/app', name: 'app' };
 
-    /** Every distinct stage word the row wore, in the order it first wore it. */
-    const recordStages = (h: Harness): string[] => {
+    /** Every distinct label the row wore, in the order it first wore it. */
+    const recordLabels = (h: Harness): string[] => {
       const seen: string[] = [];
       // `children()` has a synchronous body behind a resolved promise, so reading
       // it inside the listener samples the row AT the nudge rather than after it.
       // Awaiting here instead would let the next phase overwrite the answer.
-      void h.tree().onDidChange?.(() => {
-        void h.tree().children(undefined).then((rows) => {
-          const row = rows.find((entry) => entry.section !== true);
-          const stage = (row?.data as { stage?: unknown } | undefined)?.stage;
-          if (typeof stage === 'string' && seen[seen.length - 1] !== stage) seen.push(stage);
-        });
+      h.tree().onDidChange?.(() => {
+        void h
+          .tree()
+          .children(undefined)
+          .then((rows) => {
+            const label = rows.find((entry) => entry.section !== true)?.label;
+            if (typeof label === 'string' && seen[seen.length - 1] !== label) seen.push(label);
+          });
       });
       return seen;
     };
 
     it('walks naming → worktrees → linking → starting, in that order', async () => {
       const h = (live = harness());
-      const stages = recordStages(h);
+      const labels = recordLabels(h);
 
       // No `name`, so the naming phase runs: it is the one step that happens
       // before a single git call and the only chance the slug has to change.
       await h.run('tasks.create', { title: 'Ship it', repos: [REPO] });
       await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
 
-      // First appearance, not the full sequence: `provisioning` is the floor
-      // between phases and `linking` is entered twice (the root, then the task
-      // hooks), so pinning the exact list would assert the seams rather than the
-      // order — and the order is the whole claim.
-      const firstSeen = ['naming', 'worktrees', 'linking', 'starting'].map((word) => stages.indexOf(word));
-      expect(firstSeen, `saw ${JSON.stringify(stages)}`).not.toContain(-1);
+      // First appearance, not the full sequence: `Setting up` is the floor
+      // between phases and `Linking agent files` is entered twice (the root, then
+      // the task hooks), so pinning the exact list would assert the seams rather
+      // than the order — and the order is the whole claim.
+      const steps = ['Naming the task', 'Creating the worktree', 'Linking agent files', 'Starting the agent'];
+      const firstSeen = steps.map((phrase) => labels.indexOf(phrase));
+      expect(firstSeen, `saw ${JSON.stringify(labels)}`).not.toContain(-1);
       expect(firstSeen).toEqual([...firstSeen].sort((a, b) => a - b));
     });
 
-    it('says `worktrees` while git is the thing taking the time', async () => {
+    it('is never BORN wearing the half-written name the heuristic guessed', async () => {
+      // The defect in the screenshot: a brief whose first line is a fragment gets
+      // sliced into `in the 3L tracker, NA`, and the row wore it from the moment
+      // it appeared. The frame it appears in is the one the eye is already on, so
+      // provisioning has to be started before the first nudge, not after.
+      //
+      // The phrase may legitimately come BACK at the end — with no model to
+      // improve on it, that slice really is the task's name. What must never
+      // happen is the row opening with it.
+      const h = (live = harness());
+      const labels = recordLabels(h);
+
+      await h.run('tasks.create', {
+        title: 'in the 3L tracker, NA',
+        brief: 'in the 3L tracker, NA is showing up for every device',
+        repos: [REPO],
+      });
+      await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+      expect(labels[0], `saw ${JSON.stringify(labels)}`).toBe('Setting up');
+    });
+
+    it('says `Creating the worktree` while git is the thing taking the time', async () => {
       let finish = (): void => undefined;
       const held = new Promise<void>((resolve) => {
         finish = resolve;
@@ -1325,22 +1356,38 @@ describe('a long operation', () => {
         name: 'ship-it',
         repos: [REPO],
       });
-      await until(async () => {
-        const row = await rowOf(h, created.id);
-        return (row?.data as { stage?: unknown } | undefined)?.stage === 'worktrees';
-      });
+      await until(async () => (await rowOf(h, created.id))?.label === 'Creating the worktree');
 
       const row = await rowOf(h, created.id);
       expect(row?.busy).toBe(true);
-      // The per-repo note rides ALONGSIDE the stage rather than being replaced by
-      // it — which it was, silently, for as long as both have existed.
-      expect(row?.description).toBe('worktrees… · working app…');
+      // The per-repo note survives now: the busy spread used to overwrite the
+      // description wholesale, so this line could never reach a screen.
+      expect(row?.description).toContain('working app…');
+
+      finish();
+    });
+
+    it('pluralises off the repos it is actually cutting', async () => {
+      let finish = (): void => undefined;
+      const held = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      const h = (live = harness({
+        git: (call) => (call.args[0] === 'worktree' && call.args[1] === 'add' ? held.then(() => OK) : OK),
+      }));
+
+      const created = await h.run<{ id: string }>('tasks.create', {
+        title: 'Ship it',
+        name: 'ship-it',
+        repos: [REPO, { path: '/src/api', name: 'api' }],
+      });
+      await until(async () => (await rowOf(h, created.id))?.label === 'Creating worktrees');
 
       finish();
     });
 
     /**
-     * The half the WORD cannot fix.
+     * The half a PHRASE cannot fix.
      *
      * A provisioning task has lifecycle `draft` and no sessions, so the rollup
      * answers `idle` and the card drew the hollow resting ring — "nothing is
@@ -1366,15 +1413,22 @@ describe('a long operation', () => {
       finish();
     });
 
-    it('drops the stage the moment the work is done, so the stamp comes back', async () => {
+    it('hands the row its true name the moment the work is done', async () => {
+      // The changeover IS the ready signal — there is no other thing that says
+      // "your task exists now".
       const h = (live = harness());
-      const created = await h.run<{ id: string }>('tasks.create', { title: 'Ship it', repos: [REPO] });
+      const created = await h.run<{ id: string }>('tasks.create', {
+        title: 'Ship it',
+        name: 'ship-it',
+        repos: [REPO],
+      });
       await until(async () => (await rowOf(h, created.id))?.busy !== true);
 
       const row = await rowOf(h, created.id);
-      expect((row?.data as { stage?: unknown } | undefined)?.stage).toBeUndefined();
+      expect(row?.label).toBe('ship-it');
       expect((row?.data as { elapsed?: unknown } | undefined)?.elapsed).toBeDefined();
     });
+
   });
 
   it('keeps saying "restoring" after the re-provision inside it finishes', async () => {
