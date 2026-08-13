@@ -114,7 +114,7 @@ describe('cssVariables', () => {
     // The three that never move: an OS constant, a drawing, and a content
     // measurement. The rest follow the shipped density (`compact`).
     expect(vars['--sh-band-titlebar']).toBe('44px');
-    expect(vars['--sh-band-rail']).toBe('222px');
+    expect(vars['--sh-band-rail']).toBe('264px');
     expect(vars['--sh-band-sky-strip']).toBe('124px');
     expect(vars['--sh-band-tab-strip']).toBe('34px');
     expect(vars['--sh-band-pane-head']).toBe('32px');

@@ -119,7 +119,7 @@ export const ratios = {
    *
    * **Three of them are density-EXEMPT, and the old comment said why without
    * acting on it**: "a titlebar is 44 because the traffic lights are, and a rail
-   * is 222 because that is how much of the window a list of tasks may take
+   * is 264 because that is how much of the window a list of tasks may take
    * before it costs the grid" — an OS constant and a layout budget. Neither is a spacing
    * preference, so neither follows one. The sky strip joins them because it is a
    * DRAWING: `sky-strip.tsx` places its stars, hills and sheep at literal px in
@@ -137,7 +137,7 @@ export const ratios = {
     tabStrip: 3.08, // 40px
     titlebar: 3.38, // 44px
     skyStrip: 9.54, // 124px — the one decorative surface in the app
-    rail: 17.08, //    222px
+    rail: 20.31, //    264px
   },
   /**
    * Padding and gap: `2 4 6 7 9 10 12 14 16 20`. Multiplies both inputs, because
