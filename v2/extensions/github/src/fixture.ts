@@ -1,0 +1,214 @@
+import type { PullRequest } from './model/pr.ts';
+
+/**
+ * A task's pull requests, invented — for a DEV BUILD, so this surface can be
+ * looked at.
+ *
+ * It exists because everything here is unreachable without a real repository, a
+ * real remote and a real open PR, and looking at the app is the check that
+ * catches what no unit test can: a row that wraps at 900px, a tone that
+ * disappears in light mode, a menu that opens off the bottom of the window.
+ *
+ * The shape is chosen to exercise the cases that are otherwise rare, all at
+ * once — which is the whole reason to write a fixture rather than open a PR:
+ *
+ *   - **two repos**, so the row's repo-first ordering and the identity marks
+ *     have something to distinguish;
+ *   - **a stack**, so `1 of 2` / `2 of 2 · on #301` render;
+ *   - **a failing check WITH output**, so the failure card has a subject;
+ *   - **a draft**, whose state word beats its checks and whose review line is
+ *     absent rather than "no review yet";
+ *   - **an approval and a requested change**, which are the two review verdicts;
+ *   - **an unresolved thread and a resolved one**, so both marks appear;
+ *   - **a merged PR**, so the `Merged` section and the shipped-row fact exist.
+ *
+ * Nothing here is persisted and nothing reaches GitHub. `github.seed` refuses
+ * outside a dev build.
+ */
+
+/** Times are relative to `now` so the pane's ages read sensibly whenever it runs. */
+export function fixturePrs(now: number): readonly PullRequest[] {
+  const minutes = (count: number): number => now - count * 60_000;
+
+  return [
+    {
+      repo: 'shepherd/sdk',
+      repoKey: 'sdk',
+      number: 44,
+      title: 'Tab rows in the sdk',
+      body:
+        'Adds TabMark and the row shape the strip needs, so the app side stops widening its own union.\n\n' +
+        "export type TabMark = 'attention' | 'failed' | 'unread';",
+      state: 'open',
+      baseRef: 'main',
+      headRef: 'tasks/add-multiple-task-tabs',
+      url: 'https://github.com/shepherd/sdk/pull/44',
+      added: 41,
+      removed: 2,
+      changedFiles: 3,
+      checks: [
+        { name: 'lint', state: 'passed', durationMs: 12_000 },
+        {
+          name: 'typecheck',
+          state: 'failed',
+          durationMs: 38_000,
+          summary: "tab-rows.ts:41:12 — Type 'string' is not assignable to type 'TabMark'.",
+          log: [
+            '$ pnpm -r typecheck',
+            'packages/sdk: tsc -b',
+            "src/tab-rows.ts(41,12): error TS2322: Type 'string' is not assignable to type 'TabMark'.",
+            'src/tab-rows.ts(58,3): error TS2554: Expected 2 arguments, but got 1.',
+            '2 errors · exited 2 after 38s',
+          ].join('\n'),
+          url: 'https://github.com/shepherd/sdk/actions/runs/1',
+        },
+        { name: 'test', state: 'skipped' },
+      ],
+      approvals: [],
+      changesRequested: [],
+      threads: [
+        {
+          id: 'T-1',
+          author: 'sam',
+          path: 'src/tree.ts',
+          line: 61,
+          side: 'right',
+          resolved: false,
+          body: 'use the token, not the literal',
+        },
+        { id: 'T-2', author: 'sam', path: 'src/tree.ts', line: 12, side: 'right', resolved: true, resolvedByYou: true, body: 'ok' },
+      ],
+      files: [
+        {
+          path: 'src/tree.ts',
+          added: 22,
+          removed: 1,
+          patch: [
+            '@@ -58,4 +58,11 @@',
+            ' export interface TreeItem {',
+            '   readonly id: string;',
+            '+  readonly mark?: TabMark;',
+            '+  readonly pr?: TreePr;',
+            '-  readonly tint?: string;',
+            ' }',
+          ].join('\n'),
+        },
+        { path: 'src/tab-rows.ts', added: 17, removed: 1 },
+        { path: 'src/index.ts', added: 2, removed: 0 },
+      ],
+      commits: [
+        { sha: 'e91c2a4', subject: 'Widen TabMark rather than the app’s union', author: 'claude', at: minutes(8) },
+        { sha: '77b0d13', subject: 'Tab rows in the sdk', author: 'claude', at: minutes(60) },
+        { sha: '2f4e881', subject: 'Start on the row shape', author: 'claude', at: minutes(100) },
+        { sha: 'ac0d5b2', subject: 'Sketch TreePr', author: 'claude', at: minutes(118) },
+      ],
+      reviewers: [{ login: 'sam', verdict: 'commented', comments: 2 }],
+      openedAt: minutes(120),
+      updatedAt: minutes(6),
+      mergeState: 'blocked',
+      dependsOn: [],
+    },
+    {
+      repo: 'shepherd/v2',
+      repoKey: 'v2',
+      number: 301,
+      title: 'Add multiple task tabs',
+      body: 'A task owns a pane group, so its tabs are roots of that group.',
+      state: 'open',
+      baseRef: 'main',
+      headRef: 'tasks/add-multiple-task-tabs',
+      url: 'https://github.com/shepherd/v2/pull/301',
+      added: 214,
+      removed: 38,
+      changedFiles: 12,
+      checks: Array.from({ length: 12 }, (_, index) => ({
+        name: ['lint', 'typecheck', 'test', 'smoke'][index % 4] + (index > 3 ? ` ${Math.floor(index / 4)}` : ''),
+        state: 'passed' as const,
+        durationMs: 14_000 + index * 3_000,
+      })),
+      approvals: ['jane'],
+      changesRequested: [],
+      threads: [
+        {
+          id: 'T-3',
+          author: 'sam',
+          path: 'ui/src/tab-strip.css',
+          line: 88,
+          side: 'right',
+          resolved: false,
+          body: 'this hard-codes a height the token layer already has',
+        },
+      ],
+      files: [
+        { path: 'app/src/renderer/app.tsx', added: 96, removed: 12 },
+        { path: 'ui/src/tab-strip.tsx', added: 61, removed: 4 },
+        { path: 'ui/src/tab-strip.css', added: 42, removed: 6 },
+      ],
+      commits: [
+        { sha: 'bb31f09', subject: 'Tab strip keyboard order', author: 'claude', at: minutes(22) },
+        { sha: '5c7a114', subject: 'Add multiple task tabs', author: 'claude', at: minutes(90) },
+      ],
+      reviewers: [
+        { login: 'jane', verdict: 'approved', comments: 0 },
+        { login: 'sam', verdict: 'commented', comments: 1 },
+      ],
+      openedAt: minutes(140),
+      updatedAt: minutes(20),
+      mergeState: 'clean',
+      // Across repos, git knows nothing, so the only source is the convention.
+      dependsOn: ['shepherd/sdk#44'],
+    },
+    {
+      repo: 'shepherd/v2',
+      repoKey: 'v2',
+      number: 305,
+      title: 'Tab overflow & keyboard order',
+      body: '',
+      state: 'draft',
+      // Based on #301's head — which is what makes this a stack, and is the only
+      // thing that does.
+      baseRef: 'tasks/add-multiple-task-tabs',
+      headRef: 'tasks/tab-overflow',
+      url: 'https://github.com/shepherd/v2/pull/305',
+      added: 58,
+      removed: 4,
+      changedFiles: 5,
+      checks: [],
+      approvals: [],
+      changesRequested: [],
+      threads: [],
+      files: [{ path: 'ui/src/tab-strip.tsx', added: 58, removed: 4 }],
+      commits: [{ sha: 'd41a7c8', subject: 'Overflow the strip at eight', author: 'claude', at: minutes(9) }],
+      reviewers: [],
+      openedAt: minutes(40),
+      updatedAt: minutes(8),
+      mergeState: 'unknown',
+      dependsOn: [],
+    },
+    {
+      repo: 'shepherd/v2',
+      repoKey: 'v2',
+      number: 288,
+      title: 'Tab strip primitive',
+      body: '',
+      state: 'merged',
+      baseRef: 'main',
+      headRef: 'tasks/tab-strip-primitive',
+      url: 'https://github.com/shepherd/v2/pull/288',
+      added: 180,
+      removed: 22,
+      changedFiles: 9,
+      checks: [],
+      approvals: ['jane'],
+      changesRequested: [],
+      threads: [],
+      files: [],
+      commits: [{ sha: '9a20e17', subject: 'Tab strip primitive', author: 'claude', at: minutes(130) }],
+      reviewers: [{ login: 'jane', verdict: 'approved', comments: 0 }],
+      openedAt: minutes(600),
+      updatedAt: minutes(120),
+      mergeState: 'clean',
+      dependsOn: [],
+    },
+  ];
+}

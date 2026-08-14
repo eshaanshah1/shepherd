@@ -31,6 +31,7 @@ import './settings.css';
  * second styling mechanism.
  */
 import './task-card.css';
+import './review-pane.css';
 import './sky-strip.css';
 
 /**

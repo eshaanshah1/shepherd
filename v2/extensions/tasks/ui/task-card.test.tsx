@@ -226,3 +226,71 @@ describe('a shipped task card', () => {
     expect(host.querySelector('.sh-task-card__action')?.getAttribute('title')).toBe('Unship');
   });
 });
+
+describe('a fact another extension contributed', () => {
+  const fact = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    icon: 'pull-request',
+    tone: 'negative',
+    title: '2 PRs · a check failed',
+    ...over,
+  });
+
+  it('draws the glyph and names it in words, since a colour cannot be read out', () => {
+    draw(item('Add multiple task tabs', { mark: 'working', facts: [fact()] }));
+    const cell = host.querySelector('.sh-task-card__fact');
+    expect(cell?.getAttribute('title')).toBe('2 PRs · a check failed');
+    expect(cell?.getAttribute('data-tone')).toBe('negative');
+    expect(cell?.textContent).toContain('2 PRs · a check failed');
+    expect(cell?.querySelector('svg')).not.toBeNull();
+  });
+
+  it('survives onto a shipped row, unlike every other live field', () => {
+    // A merged PR number is the record of what shipped — the most durable thing
+    // a finished row can carry.
+    draw(shippedRow({ facts: [fact({ icon: undefined, label: 'v2 #309', tone: 'quiet' })] }));
+    expect(host.querySelector('.sh-task-card__fact')?.textContent).toContain('v2 #309');
+  });
+
+  it('is a real button when it has a command, and a span when it does not', () => {
+    draw(item('x', { mark: 'working', facts: [fact()] }));
+    expect(host.querySelector('button.sh-task-card__fact')).toBeNull();
+
+    draw(item('x', { mark: 'working', facts: [fact({ command: { id: 'github.review', args: { task: 't1' } } })] }));
+    expect(host.querySelector('button.sh-task-card__fact')).not.toBeNull();
+  });
+
+  it('runs its command without also activating the row it sits in', async () => {
+    // This control is inside a row that is itself a button: without the stop,
+    // opening the review tab would also reveal the task.
+    const calls: string[] = [];
+    let rowClicks = 0;
+    act(() => {
+      root.render(
+        // The shape the dock really mounts: the card inside the element that
+        // carries the row's own activation.
+        <div onClick={() => (rowClicks += 1)}>
+          <TaskCard
+            item={item('x', { mark: 'working', facts: [fact({ command: { id: 'github.review' } })] })}
+            selected={false}
+            invoke={async (command) => {
+              calls.push(command);
+              return { ok: true, value: undefined };
+            }}
+          />
+        </div>,
+      );
+    });
+    act(() => host.querySelector<HTMLButtonElement>('button.sh-task-card__fact')?.click());
+    expect(calls).toEqual(['github.review']);
+    expect(rowClicks).toBe(0);
+  });
+
+  it('draws no glyph for a name this build does not know, rather than a placeholder', () => {
+    // `namedGlyph`'s `…` fallback is right for a hover action, which is an
+    // invisible button without one, and wrong for a fact that can be a label.
+    draw(item('x', { mark: 'working', facts: [fact({ icon: 'not-a-glyph', label: '#7' })] }));
+    const cell = host.querySelector('.sh-task-card__fact');
+    expect(cell?.querySelector('svg')).toBeNull();
+    expect(cell?.textContent).toContain('#7');
+  });
+});

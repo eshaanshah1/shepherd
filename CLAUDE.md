@@ -51,7 +51,26 @@ fight it.
    — the API and the M0–M4 milestones.
 4. [`docs/superpowers/specs/2026-08-06-architecture-review.md`](docs/superpowers/specs/2026-08-06-architecture-review.md)
    — what v1 got wrong; **its Rebuild checklist is normative for v2**.
-5. ADRs [0021](.claude/adr/0021-v2-store-is-node-sqlite.md)–[0043](.claude/adr/0043-v2-a-placeholder-may-cover-a-root-of-captured-screens.md).
+5. ADRs [0021](.claude/adr/0021-v2-store-is-node-sqlite.md)–[0045](.claude/adr/0045-v2-the-apps-path-is-harvested-from-the-login-shell.md).
+   **0045** is the app's `PATH`: startup runs the user's **login shell** once and
+   merges its `PATH` into `process.env`, because a Finder-launched `.app` is a
+   child of launchd and inherits `/usr/bin:/bin:/usr/sbin:/sbin` — so the same
+   `exec` call succeeds in `pnpm dev` and fails with `ENOENT` in the shipped app.
+   It is `-ilc` (the version-manager line lives in `.zshrc`, the INTERACTIVE
+   file), it is `$SHELL` rather than a hardcoded bash (v1's own rule, from the
+   other direction), it MERGES rather than replaces, and every failure lands on
+   the environment untouched. Measured on this machine: **28 directories added in
+   159ms** from a launchd-shaped `PATH`. It is the first statement of
+   `whenReady` because `openssl`, the daemon and `resolveProgram`'s cache all
+   read the environment after it.
+   **0044** is the pane kind: a `Pane` may carry a `view`, so a leaf of the
+   layout tree can be a contributed component instead of a terminal — the third
+   surface an extension's UI can reach, after the dock section and the overlay,
+   and the first that is a PLACE. It is the third pane with no session after
+   0042's read-only one, and a separate field rather than a widening of it
+   because the two are absent for opposite reasons. The enforcement is the
+   renderer never mounting `TerminalPane` for it — `TerminalPane` attaches on
+   mount and attaching spawns a pty. `github` is its first consumer.
    **0040** is settings: a page is STATIC data in a manifest, so the screen opens
    with zero extensions activated and activation stays lazy; only non-default
    values are stored, so reset is real and a changed default reaches an existing
@@ -215,7 +234,12 @@ env -u NODE_OPTIONS pnpm ship --dev   # → /Applications/Shep Night.app, daily 
   and **without `USER` the vendor CLI answers "Not logged in · Please run /login"
   in two seconds**, which looks exactly like a machine nobody signed in on.
   Measured; do not trim that allow-list. `USER` reaches an extension as
-  `ctx.userName`, for the reason `homeDir` does.
+  `ctx.userName`, for the reason `homeDir` does. **`PATH` is the one key an
+  extension should NOT name** (ADR 0045): `exec` composes it from the standard
+  locations plus the app's own, which since startup is the user's login-shell
+  `PATH`. Naming one replaces a good answer with a fixed list and puts the
+  extension back to knowing where tools live — `github`'s `token.ts` did exactly
+  that, and a test now asserts it names none.
 - **A quick-model call is ~6s and that is the floor** — `--safe-mode` already
   strips every customization, and ~5.5s of it is network. Nothing user-facing may
   wait on one. Task naming overlaps it with the per-repo `git fetch` and gives up

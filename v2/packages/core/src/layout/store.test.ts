@@ -1500,6 +1500,91 @@ describe('a read-only pane', () => {
   });
 });
 
+describe('a pane that is a contributed view (ADR 0044)', () => {
+  it('round-trips its type and state through serialize/deserialize', () => {
+    // Persisted, unlike `initialCommand`: a review tab is a place the user put
+    // something, so a relaunch owes them the tab back. What it does not owe them
+    // is the contents — `state` names the subject and the view re-reads it.
+    const pane = makePane({ id: paneId('p-1'), view: { type: 'github.review', state: { task: 't-1' } } });
+    const persisted = serializeNode(leaf(pane));
+
+    expect(persisted).toEqual({
+      kind: 'leaf',
+      pane: { id: 'p-1', view: { type: 'github.review', state: { task: 't-1' } } },
+    });
+
+    const back = deserializeNode(persisted);
+    if (back.kind !== 'leaf') throw new Error('expected a leaf');
+    expect(back.pane.view).toEqual({ type: 'github.review', state: { task: 't-1' } });
+  });
+
+  it('writes no `view` for an ordinary pane, so an old reader sees what it always did', () => {
+    const persisted = serializeNode(leaf(makePane({ id: paneId('p-2') })));
+    expect(persisted).toEqual({ kind: 'leaf', pane: { id: 'p-2' } });
+  });
+
+  it('omits `state` rather than writing it as undefined', () => {
+    const persisted = serializeNode(leaf(makePane({ id: paneId('p-3'), view: { type: 'github.review' } })));
+    expect(persisted).toEqual({ kind: 'leaf', pane: { id: 'p-3', view: { type: 'github.review' } } });
+  });
+
+  it('reads a record written before view panes existed as an ordinary pane', () => {
+    const back = deserializeNode({ kind: 'leaf', pane: { id: 'p-4' } });
+    if (back.kind !== 'leaf') throw new Error('expected a leaf');
+    expect(back.pane.view).toBeNull();
+  });
+
+  it('DROPS a malformed view rather than refusing the whole tree', () => {
+    // The opposite trade from `snapshotFile`, and deliberately: a bad axis is a
+    // window with no shape, while a bad view is one pane — and restoring it as an
+    // ordinary empty pane loses less than refusing to restore the window.
+    for (const view of [7, null, [], { state: 1 }, { type: '' }, { type: 3 }]) {
+      const back = deserializeNode({ kind: 'leaf', pane: { id: 'p-5', view } });
+      if (back.kind !== 'leaf') throw new Error('expected a leaf');
+      expect(back.pane.view).toBeNull();
+    }
+  });
+});
+
+describe('opening a contributed view (ADR 0044)', () => {
+  it('layout.split puts the view on the new pane', async () => {
+    const { registry, store } = wiredRoots();
+    const result = await registry.invoke(
+      LAYOUT_COMMANDS.split,
+      { axis: 'row', view: { type: 'github.review', state: { task: 't-1' } } },
+      USER,
+    );
+    expect(result.ok).toBe(true);
+    const pane = result.ok ? store.pane(paneId(String(result.value))) : undefined;
+    expect(pane?.view).toEqual({ type: 'github.review', state: { task: 't-1' } });
+  });
+
+  it('layout.newTab opens a view tab, named by `title`', async () => {
+    // Without `title` every contributed tab would be called `term`: a view pane
+    // has no program, so nothing ever sets an OSC title on it.
+    const { registry, store } = wiredRoots();
+    store.open('task:t1', {}, { group: 'task:t1' });
+    await registry.invoke(LAYOUT_COMMANDS.switchRoot, { root: 'task:t1' }, USER);
+
+    await registry.invoke(
+      LAYOUT_COMMANDS.newTab,
+      { view: { type: 'github.review' }, title: 'review' },
+      USER,
+    );
+    const focused = store.focused(rootId('task:t1/tab-2'));
+    const pane = focused === null ? undefined : store.pane(focused);
+    expect(pane?.view).toEqual({ type: 'github.review' });
+    expect(pane?.userTitle).toBe('review');
+  });
+
+  it('leaves an ordinary split with no view at all', async () => {
+    const { registry, store } = wiredRoots();
+    const result = await registry.invoke(LAYOUT_COMMANDS.split, { axis: 'row' }, USER);
+    const pane = result.ok ? store.pane(paneId(String(result.value))) : undefined;
+    expect(pane?.view).toBeNull();
+  });
+});
+
 describe('a root opened with a shape', () => {
   it('reproduces the axes, the ratios and the pane ids it was given', () => {
     const store = build();

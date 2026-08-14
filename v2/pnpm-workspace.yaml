@@ -81,14 +81,14 @@ catalog:
   #   tooltip       the delay/dismiss state machine and the collision-aware position
   #   slot          `asChild`, so a Button can BE a link without a second component
   #   context-menu  the right-click menu — Menu (added with its first consumer)
+  #   dropdown-menu the same list under a BUTTON — the day the note below predicted
   #
-  # `react-context-menu` and NOT `react-dropdown-menu`, which is the same
-  # component with a different trigger. The consumer that bought this primitive is
-  # a right-click on a sidebar task row; a `⋯` button that opens the same list has
-  # no caller yet, and the spec's rule is that a primitive arrives with one. The
-  # two share Radix's `Menu` internals, so the day a click-trigger appears it is a
-  # second package and a `trigger` prop on the component already here — not a
-  # rewrite.
+  # Both, and the second one arrived exactly as this note said it would. The
+  # original text: "`react-context-menu` and NOT `react-dropdown-menu`, which is
+  # the same component with a different trigger... the day a click-trigger appears
+  # it is a second package and a `trigger` prop on the component already here —
+  # not a rewrite." The caller is `Hand to agent`, which opens the task's live
+  # agents under the button that says it; the change was this line and one prop.
   #
   # Notably absent: `react-visually-hidden`. `.sh-ui-sr-only` is four lines of
   # CSS this package needs anyway (StatusDot's paired text), and a dependency for
@@ -98,6 +98,25 @@ catalog:
   '@radix-ui/react-tooltip': 1.2.16
   '@radix-ui/react-slot': 1.3.3
   '@radix-ui/react-context-menu': 2.3.7
+  '@radix-ui/react-dropdown-menu': 2.1.20
+
+  # Pierre's diff and tree views — the two surfaces where hand-rolling is a
+  # months-long project and buying is an afternoon.
+  #
+  # `@pierre/diffs` brings a real diff renderer: shiki highlighting, hunk
+  # expansion, virtualisation, and — the reason it is here rather than a `<pre>`
+  # — LINE ANNOTATIONS, which is exactly the shape of a review comment sitting in
+  # the diff where it was written. `@pierre/trees` is the file list beside it,
+  # path-first with its own selection model.
+  #
+  # The cost, stated: `diffs` unpacks to ~7 MB, most of it shiki's grammars, and
+  # `trees` renders through preact into a shadow root. Neither reaches React —
+  # the `/react` entries are wrappers — so there is no second React in the page.
+  # What the shadow root DOES mean is that our tokens reach it only because
+  # custom properties inherit through the boundary, which is worth knowing before
+  # anybody tries to style it with a descendant selector.
+  '@pierre/diffs': 1.3.5
+  '@pierre/trees': 1.0.0-beta.6
 
   # test
   jsdom: 30.0.1

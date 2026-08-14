@@ -53,6 +53,11 @@ export class PtyFanout {
     return this.#sinks.size + this.#pending.size;
   }
 
+  /** Whether the running program accepts pasted text — see `TerminalMirror`. */
+  get bracketedPaste(): boolean {
+    return this.#mirror.bracketedPaste;
+  }
+
   feed(bytes: Uint8Array): void {
     if (bytes.length === 0) return;
     this.#mirror.feed(bytes);

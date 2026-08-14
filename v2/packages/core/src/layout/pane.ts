@@ -1,4 +1,4 @@
-import type { PaneID } from '@shepherd/sdk';
+import type { PaneID, PaneView } from '@shepherd/sdk';
 import { newPaneId, type RandomId } from '../identity.ts';
 
 /**
@@ -43,6 +43,29 @@ export interface Pane {
    * archive, or that a task exists. Whoever wrote the file named it.
    */
   readonly snapshotFile: string | null;
+  /**
+   * This pane shows a contributed VIEW rather than a terminal, and so never
+   * gets a session either (ADR 0044).
+   *
+   * The second pane that is not a pty, after `readOnly` — and deliberately a
+   * separate field rather than a widening of it, because the two are absent for
+   * opposite reasons. A read-only pane HAD a session and is replaying what it
+   * printed; a view pane never had one and never will. Folding them into one
+   * flag would make "no session" mean two things, and the renderer would then
+   * need a second field to tell them apart, which is this one.
+   *
+   * Persisted, like `readOnly` and unlike `initialCommand`: a review tab is a
+   * place the user put something, not work in flight, so a relaunch owes them
+   * the tab back. What it does NOT owe them is the view's contents — `state`
+   * names a subject and the view re-reads it, so a stale PR is re-fetched rather
+   * than restored.
+   *
+   * The kernel does not resolve `type` and must not: the renderer matches it
+   * against the contributions an extension registered, so a pane whose extension
+   * is not loaded yet draws the empty slot and fills in when it is. That is also
+   * what keeps this field from being a component name — see `PaneView`.
+   */
+  readonly view: PaneView | null;
 }
 
 export interface PaneInit {
@@ -53,6 +76,7 @@ export interface PaneInit {
   initialCommand?: string | null;
   readOnly?: boolean;
   snapshotFile?: string | null;
+  view?: PaneView | null;
 }
 
 export function makePane(init: PaneInit = {}, random?: RandomId): Pane {
@@ -64,6 +88,7 @@ export function makePane(init: PaneInit = {}, random?: RandomId): Pane {
     initialCommand: init.initialCommand ?? null,
     readOnly: init.readOnly ?? false,
     snapshotFile: init.snapshotFile ?? null,
+    view: init.view ?? null,
   };
 }
 

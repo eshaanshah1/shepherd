@@ -6,6 +6,7 @@ import { app, BrowserWindow, ipcMain, webContents } from 'electron';
 import { color } from '@shepherd/design-tokens';
 import {
   appName,
+  installShellEnvironment,
   resolveAppPaths,
   runExec,
   runGit,
@@ -20,6 +21,7 @@ import {
   ExtensionRegistry,
   PermissionStore,
   SessionHost,
+  SecretsRegistry,
   SettingsRegistry,
   SqliteStore,
   registerSessionCommands,
@@ -31,6 +33,7 @@ import { agentsCoreManifest } from '@shepherd/ext-agents-core/manifest';
 import { claudeCodeManifest } from '@shepherd/ext-claude-code/manifest';
 import { tasksManifest } from '@shepherd/ext-tasks/manifest';
 import { worktreeHookManifest } from '@shepherd/ext-worktree-hook/manifest';
+import { githubManifest } from '@shepherd/ext-github/manifest';
 import {
   CORE_NAMESPACE,
   KERNEL,
@@ -93,6 +96,8 @@ import { publishSessionBound } from './session-bound.ts';
 import { registerCaptureCommand } from './capture-command.ts';
 import { registerReloadCommand } from './reload-command.ts';
 import { registerSettingsCommands } from './settings-commands.ts';
+import { registerSecretsCommands } from './secrets-commands.ts';
+import { keychainCipher } from './safe-storage.ts';
 import { GENERAL_PAGE } from './settings-general.ts';
 import { registerSettingsIpc } from './settings-ipc.ts';
 import { registerSettingsVisibility } from './settings-visibility.ts';
@@ -316,6 +321,21 @@ const permissions = new PermissionStore(store.namespace('permissions'), logger);
  */
 const settings = new SettingsRegistry({ store, logger });
 settings.contribute(CORE_NAMESPACE, [GENERAL_PAGE]);
+
+/**
+ * Secrets — declarations from every installed manifest, values encrypted by the
+ * OS keychain.
+ *
+ * Built here beside settings and for the same reason: it must answer with
+ * nothing activated. A user opening the Secrets screen is deciding whether to
+ * hand a credential over, and activating every installed extension in order to
+ * ask what they want would be the interruption the whole model avoids.
+ */
+const secrets = new SecretsRegistry({
+  store,
+  cipher: keychainCipher(),
+  onError: (message) => logger.warn('extension', message),
+});
 
 const registry = new CommandRegistry({
   logger,
@@ -782,6 +802,36 @@ function captureIfAsked(win: BrowserWindow): void {
 
 void app.whenReady().then(async () => {
   /**
+   * The user's real `PATH`, before anything in this process spawns a program.
+   *
+   * A Finder-launched `.app` is a child of launchd and inherits its `PATH`, which
+   * is `/usr/bin:/bin:/usr/sbin:/sbin` and nothing else — not the one the user
+   * configured. `exec.ts`'s `STANDARD_BIN_DIRS` covers `git` and `gh` and stops
+   * there; a version manager's shims exist only because a shell profile said so.
+   * So this asks the login shell once and merges what it says into `process.env`,
+   * which is what every consumer downstream already reads.
+   *
+   * **First, and awaited**, for three reasons that are each a real ordering bug:
+   * `remote.serve` below shells out to `openssl`; the daemon is spawned lazily and
+   * inherits `process.env` at that moment; and `exec.ts` caches a program's
+   * resolved path on first use, so anything resolved under launchd's `PATH` would
+   * outlive the reason it was wrong (`installShellEnvironment` drops that cache
+   * for the same reason, but it cannot undo a spawn that already happened).
+   *
+   * The cost is real and is the whole trade: a slow profile delays the window by
+   * up to `LOGIN_SHELL_TIMEOUT_MS`. Every failure — no shell, a wedged profile, a
+   * timeout — lands on the environment being left exactly as it was, so the worst
+   * case is the behaviour that shipped before this existed. `ms` is logged so
+   * "launch got slower" is answerable rather than guessed at.
+   */
+  const shellEnv = await installShellEnvironment();
+  logger.info(
+    'app',
+    `PATH from ${shellEnv.origin}${shellEnv.shell === null ? '' : ` (${shellEnv.shell})`} — ` +
+      `${shellEnv.added} dir(s) added in ${shellEnv.ms}ms`,
+  );
+
+  /**
    * Remote FIRST, and the order is load-bearing.
    *
    * `serve` mints this Mac's TLS identity, and the daemon serves the data path
@@ -1206,6 +1256,7 @@ void app.whenReady().then(async () => {
    * table that has not been filled in yet is a refusal nobody asked for.
    */
   registerSettingsCommands({ registry, settings, bus });
+  registerSecretsCommands({ registry, secrets });
 
   /**
    * The screen's own two halves: the channels the page reads it through, and the
@@ -1234,12 +1285,27 @@ void app.whenReady().then(async () => {
     agentsCoreManifest,
     claudeCodeManifest,
     tasksManifest,
-    // After `tasks`: it declares that dependency, and the point it registers
-    // into has to exist before it activates.
+    // After `tasks`: both declare that dependency, and the points they register
+    // into have to exist before they activate.
     worktreeHookManifest,
+    githubManifest,
   ]) {
     const added = extensions.add(manifest, 'builtin');
-    if (added.ok) continue;
+    if (added.ok) {
+      /*
+       * Declared at REGISTRATION, not at activation — one step earlier than
+       * settings pages, and deliberately.
+       *
+       * A secret is a thing the user is asked for before anything runs, so the
+       * screen listing it must not depend on the asker being up. A malformed
+       * declaration is reported and its siblings are kept: an extension whose
+       * second secret has a typo should still be able to hold its first.
+       */
+      for (const problem of secrets.declare(manifest.id, manifest.contributes?.secrets ?? [])) {
+        logger.warn('extension', problem);
+      }
+      continue;
+    }
     for (const problem of added.error) {
       logger.error('extension', `built-in ${manifest.id} is unloadable: ${problem.field}: ${problem.message}`);
     }
@@ -1257,9 +1323,10 @@ void app.whenReady().then(async () => {
     agentsCoreManifest,
     claudeCodeManifest,
     tasksManifest,
-    // After `tasks`: it declares that dependency, and the point it registers
-    // into has to exist before it activates.
+    // After `tasks`: both declare that dependency, and the points they register
+    // into have to exist before they activate.
     worktreeHookManifest,
+    githubManifest,
   ]) {
     if (extensions.state(extensionId(manifest.id)) === undefined) continue;
     await extensions.activate(extensionId(manifest.id));

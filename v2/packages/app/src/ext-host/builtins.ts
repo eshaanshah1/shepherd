@@ -9,6 +9,8 @@ import { activate as claudeCode } from '@shepherd/ext-claude-code';
 import { CLAUDE_CODE_ID } from '@shepherd/ext-claude-code/manifest';
 import { activate as worktreeHook } from '@shepherd/ext-worktree-hook';
 import { WORKTREE_HOOK_ID } from '@shepherd/ext-worktree-hook/manifest';
+import { activate as github } from '@shepherd/ext-github';
+import { GITHUB_ID } from '@shepherd/ext-github/manifest';
 
 /**
  * Which built-ins this build contains, by id.
@@ -34,4 +36,5 @@ export const BUILTIN_MODULES: ReadonlyMap<string, ActivateFn> = new Map<string, 
   [CLAUDE_CODE_ID, claudeCode],
   [TASKS_ID, tasks],
   [WORKTREE_HOOK_ID, worktreeHook],
+  [GITHUB_ID, github],
 ]);

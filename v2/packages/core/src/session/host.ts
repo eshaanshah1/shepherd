@@ -41,6 +41,37 @@ export const DEFAULT_COLS = 80;
 export const DEFAULT_ROWS = 24;
 export const DEFAULT_TERM = 'xterm-256color';
 
+/**
+ * The markers a bracketed paste is wrapped in — `CSI 200 ~` and `CSI 201 ~`.
+ *
+ * Named rather than inlined because the pair only means anything together, and
+ * because a test asserting about paste has to be able to say which bytes it is
+ * looking for without writing the escape twice.
+ */
+const PASTE_START = '\u001b[200~';
+const PASTE_END = '\u001b[201~';
+
+/**
+ * The bytes a paste becomes — separated from the session it is written to, so
+ * "what does this produce" is testable without a pty.
+ *
+ * That split is not tidiness. Asserting it through a real terminal means
+ * asserting on the tty's ECHO of the input, and a tty in canonical mode echoes
+ * a control byte as `^[` rather than as itself — so the test would be about
+ * line-discipline settings rather than about this decision. The two halves are
+ * covered where each is real: this function for the bytes, `TerminalMirror`'s
+ * own test for reading the mode off a live stream.
+ *
+ * Newlines become CR whether or not it brackets: a pty carries Enter as CR, and
+ * an `\n` reaches a program as a linefeed it will not act on. Inside brackets
+ * the CRs are part of the pasted body; outside them each one is an Enter, which
+ * is exactly why the mode matters.
+ */
+export function pasteBytes(text: string, bracketed: boolean): string {
+  const normalized = text.replace(/\r\n/g, '\r').replace(/\n/g, '\r');
+  return bracketed ? `${PASTE_START}${normalized}${PASTE_END}` : normalized;
+}
+
 /** What a caller asks for. Everything optional has a default in `resolveSpec`. */
 export interface SessionSpec {
   readonly cwd: string;
@@ -578,13 +609,31 @@ export class SessionHost {
    * Multi-line text, newlines normalized to CR — a pty carries Enter as `\r`,
    * and an `\n` reaches a shell as a literal linefeed it will not act on.
    *
-   * Deliberately does NOT wrap the text in `ESC[200~`/`ESC[201~`. Bracketed
-   * paste is a mode the *running program* enables and the *emulator* honours;
-   * in v2 the emulator is xterm.js in the renderer, which knows the mode and
-   * brackets on its own. Doing it here too would double the markers.
+   * **It brackets when, and only when, the running program asked for it.**
+   *
+   * This used to bracket never, on the argument that bracketed paste is a mode
+   * the program enables and the *emulator* honours — and in v2 the emulator is
+   * xterm.js in the renderer, which brackets on its own. That argument covers
+   * the renderer and nothing else. A caller reaching this through a command has
+   * no emulator in the loop: its bytes go straight to the pty. So unbracketed
+   * multi-line text arrives as one Enter per line — a six-line prompt handed to
+   * an agent submits its first line and scatters five into whatever runs next,
+   * which is v1's recorded lesson arriving through a door v1 did not have.
+   *
+   * The mode is READ rather than assumed, from the mirror, which parses the same
+   * stream the emulator does (`TerminalMirror.bracketedPaste`). That is what
+   * makes this safe in both directions: a shell with paste mode off still gets
+   * plain CRs and still behaves like a terminal paste, and a TUI that turned the
+   * mode on gets one paste blob and inserts it whole.
+   *
+   * It does NOT press Enter. Submitting is a separate decision — a caller that
+   * wants the text sent writes `\r` after this, and one filling a field for a
+   * person to check does not.
    */
   paste(id: SessionID, text: string): Result<void, SessionError> {
-    return this.write(id, text.replace(/\r\n/g, '\r').replace(/\n/g, '\r'));
+    const record = this.#sessions.get(id);
+    if (!record) return err(unknownSession(id));
+    return this.write(id, pasteBytes(text, record.fanout.bracketedPaste));
   }
 
   resize(id: SessionID, cols: number, rows: number): Result<void, SessionError> {

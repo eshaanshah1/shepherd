@@ -1,0 +1,1170 @@
+/*
+ * The review pane — drawn by `@shepherd/ext-github/ui`, painted here.
+ *
+ * The same division `task-card.css` makes one file over, and for §7's reason: a
+ * contribution supplies data and a token name and can set neither a colour nor a
+ * length. So the component's own suite asserts its markup and nothing about its
+ * geometry, and the geometry lives where every other length in this app does.
+ *
+ * Four tones and no fifth. `data-tone` is the only channel a phrase has for how
+ * loud it is, and what each one resolves to is decided here — which is what
+ * keeps a PR's state from becoming a sixth hue.
+ */
+
+.sh-review {
+  display: flex;
+  flex-direction: column;
+  block-size: 100%;
+  min-block-size: 0;
+  color: var(--sh-text);
+  font-size: var(--sh-font-size-body);
+}
+
+/* ------------------------------------------------------------------ the head */
+
+/*
+ * The pane's own head, which is also the crumb.
+ *
+ * A rule underneath and nothing else — no fill, no border, no radius. It is a
+ * line of text that happens to be at the top, which is what keeps it from
+ * reading as a second title bar over the one the tab strip already draws.
+ */
+.sh-review__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-sm);
+  flex: none;
+  block-size: var(--sh-row-height);
+  padding-inline: var(--sh-space-xl);
+  box-shadow: inset 0 calc(-1 * var(--sh-hairline)) 0 var(--sh-line);
+  font-size: var(--sh-font-size-micro);
+  color: var(--sh-text-dim);
+}
+
+.sh-review__name {
+  font-weight: 500;
+  color: var(--sh-text);
+}
+
+.sh-review__count,
+.sh-review__position {
+  font-family: var(--sh-font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--sh-text-faint);
+}
+
+.sh-review__sep {
+  color: var(--sh-text-ghost);
+}
+
+.sh-review__spacer {
+  flex: 1;
+}
+
+/* The way back, and it is a real button — never a chevron with a click on it. */
+.sh-review__back,
+.sh-review__synced {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sh-space-hair);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--sh-text-faint);
+  font: inherit;
+  cursor: pointer;
+  transition: color var(--sh-motion);
+}
+
+.sh-review__back:hover,
+.sh-review__synced:hover:not(:disabled) {
+  color: var(--sh-text);
+}
+
+/*
+ * The sync line IS the sync button.
+ *
+ * `gh · synced 12s ago` invites "and if I don't want to wait", so the thing that
+ * answers it is the thing that says it. Mono and a step quieter than the head,
+ * because it is a control at rest.
+ */
+.sh-review__synced {
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-nano);
+  color: var(--sh-text-ghost);
+}
+
+.sh-review__synced:disabled {
+  cursor: default;
+}
+
+/*
+ * A verb that failed, said once, above the content.
+ *
+ * A line rather than a banner or a toast: it is about the thing on screen, it
+ * should be readable next to it, and it must not move anything — so it takes a
+ * row's height whether or not there is anything in it to say. (It is only
+ * rendered when there is, and the height is on the element rather than reserved,
+ * because an error is rare enough that a one-row shift is cheaper than a
+ * permanent gap.)
+ */
+.sh-review__problem {
+  flex: none;
+  margin: 0;
+  padding: var(--sh-space-sm) var(--sh-space-xl);
+  font-size: var(--sh-font-size-micro);
+  color: var(--sh-red);
+}
+
+.sh-review__nothing {
+  margin: 0;
+  padding: var(--sh-space-lg) var(--sh-space-xl);
+  font-size: var(--sh-font-size-small);
+  color: var(--sh-text-faint);
+}
+
+/* ------------------------------------------------------------------ the list */
+
+.sh-review__body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-block-size: 0;
+}
+
+.sh-review__scroll {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  overflow-y: auto;
+  padding: var(--sh-space-sm) var(--sh-space-md);
+}
+
+/*
+ * The task-level footer: one verb, the order it would take, and what is stopping
+ * it.
+ *
+ * Drawn only when there are two or more PRs. With one, the sequence IS the PR
+ * and a footer naming a one-item order is a row of furniture.
+ */
+.sh-review__foot,
+.sh-pr-detail__foot {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-xs);
+  flex: none;
+  padding: var(--sh-space-md) var(--sh-space-xl);
+  box-shadow: inset 0 var(--sh-hairline) 0 var(--sh-line);
+}
+
+.sh-review__order,
+.sh-review__blocked,
+.sh-pr-detail__why {
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-nano);
+  color: var(--sh-text-ghost);
+}
+
+/* ------------------------------------------------------------------- a PR row */
+
+/*
+ * Two lines, one fixed height, and the height does not change for selection,
+ * hover or state — §5's rule, and the reason the second line is a fixed set of
+ * fields rather than "whatever there is to say".
+ */
+.sh-pr-row {
+  display: flex;
+  flex-direction: column;
+  padding: var(--sh-space-hair) var(--sh-space-md);
+  border-radius: var(--sh-radius-row);
+  cursor: pointer;
+  transition: background var(--sh-motion);
+}
+
+.sh-pr-row:hover {
+  background: var(--sh-fill-hover);
+}
+
+.sh-pr-row[data-selected='true'] {
+  background: var(--sh-fill-selected);
+}
+
+.sh-pr-row:focus-visible {
+  outline: var(--sh-focus-ring);
+  outline-offset: calc(-1 * var(--sh-hairline));
+}
+
+.sh-pr-row__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-sm);
+  block-size: var(--sh-control-md);
+}
+
+/* The repo's identity square — a ROLE the component names, a colour decided by
+   the token layer. Never a state: identity is a sixth axis. */
+.sh-pr-row__mark {
+  inline-size: 7px;
+  block-size: 7px;
+  border-radius: 2px;
+  flex: none;
+}
+
+/* A 12px slot whatever is in it, so every row starts its text at one x. */
+.sh-pr-row__mark-slot {
+  display: inline-grid;
+  place-items: center;
+  inline-size: 12px;
+  block-size: 12px;
+  flex: none;
+  color: var(--sh-text-ghost);
+}
+
+.sh-pr-row__repo {
+  flex: none;
+  font-weight: 600;
+  color: var(--sh-text);
+}
+
+.sh-pr-row__title {
+  flex: 1;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--sh-text-dim);
+}
+
+.sh-pr-row__state {
+  flex: none;
+}
+
+.sh-pr-row__go {
+  flex: none;
+  color: var(--sh-text-faint);
+}
+
+/*
+ * The mono line. Everything on it is a count, and counts in a proportional face
+ * do not line up between rows — which is the entire reason to have a column of
+ * them.
+ */
+.sh-pr-row__facts {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-hair);
+  padding-inline-start: calc(7px + var(--sh-space-sm));
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-nano);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--sh-text-ghost);
+}
+
+.sh-pr-row__sep {
+  color: var(--sh-text-ghost);
+}
+
+.sh-pr-row__stack {
+  color: var(--sh-text-faint);
+}
+
+.sh-pr-row__added {
+  color: var(--sh-grass);
+}
+
+/* `clay`, not `red`. A diff full of removals is not a failure, and the palette
+   lists failure under clay's "not for" precisely so the two stay a glance
+   apart. */
+.sh-pr-row__removed {
+  color: var(--sh-clay);
+}
+
+/*
+ * A finished PR: one line, one step down the ink ramp, KEPT.
+ *
+ * `--sh-text-ghost` and never an `opacity` — opacity would produce a colour in
+ * no palette and drift off it again in light mode.
+ */
+.sh-pr-row--closed .sh-pr-row__repo,
+.sh-pr-row--closed .sh-pr-row__title {
+  font-weight: 400;
+  color: var(--sh-text-ghost);
+}
+
+.sh-pr-row__closed-meta {
+  flex: none;
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-nano);
+  font-variant-numeric: tabular-nums;
+  color: var(--sh-text-ghost);
+}
+
+/* ----------------------------------------------------------------- one PR */
+
+.sh-pr-detail {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-block-size: 0;
+}
+
+/*
+ * ── the header, which stays put across all four tabs ────────────────────────
+ *
+ * That is the whole point of splitting the pane into sub-views: the header is
+ * the THING and the tabs are four jobs on it. A header that re-rendered per tab
+ * would make each tab feel like a different page.
+ */
+.sh-pr-head {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sh-space-sm);
+  padding: var(--sh-space-lg) var(--sh-space-xl) 0;
+}
+
+.sh-pr-head__title-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sh-space-sm);
+  min-inline-size: 0;
+}
+
+.sh-pr-head__title {
+  margin: 0;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--sh-font-size-large);
+  font-weight: 600;
+  letter-spacing: -0.022em;
+  color: var(--sh-text);
+}
+
+/* The number is quiet and large: it is how you refer to this PR out loud, so it
+   belongs beside the title — and it is not what you read first. */
+.sh-pr-head__number {
+  flex: none;
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-medium);
+  color: var(--sh-text-ghost);
+}
+
+.sh-pr-head__sub {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-sm);
+  flex-wrap: wrap;
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-nano);
+  color: var(--sh-text-ghost);
+}
+
+/*
+ * The state pill — the ONE place in this pane a state is drawn as a shape and a
+ * word together.
+ *
+ * Everywhere else the word travels as a tooltip (§5), because everywhere else
+ * the mark sits in a list where its neighbours give it meaning. This is the PR's
+ * own identity line, with nothing to read the shape against, so it says both.
+ */
+.sh-pr-head__pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sh-space-sm);
+  flex: none;
+  block-size: var(--sh-control-sm);
+  padding-inline: var(--sh-space-md);
+  border: var(--sh-hairline) solid var(--sh-line-strong);
+  border-radius: 999px;
+  font-family: var(--sh-font-sans);
+  font-size: var(--sh-font-size-micro);
+  color: var(--sh-text-dim);
+}
+
+.sh-pr-head__pill > i {
+  inline-size: 7px;
+  block-size: 7px;
+  border-radius: 50%;
+  flex: none;
+  background: currentColor;
+}
+
+.sh-pr-head__pill[data-tone='positive'] > i {
+  background: var(--sh-grass);
+}
+
+.sh-pr-head__pill[data-tone='negative'] > i {
+  background: var(--sh-red);
+}
+
+.sh-pr-head__pill[data-tone='neutral'] > i {
+  background: var(--sh-sky);
+}
+
+.sh-pr-head__pill[data-tone='quiet'] > i {
+  background: var(--sh-text-ghost);
+}
+
+/* A ref is an identifier you might copy, not prose — so it is a chip, not a
+   word in the sentence around it. */
+.sh-pr-head__ref {
+  flex: none;
+  padding-inline: var(--sh-space-sm);
+  border-radius: var(--sh-radius-sm);
+  background: var(--sh-fill-hover);
+  color: var(--sh-text-faint);
+}
+
+/* ── the sub-tabs ─────────────────────────────────────────────────────────── */
+
+.sh-pr-head__tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-hair);
+  block-size: var(--sh-plate-height);
+  margin-block-start: var(--sh-space-xs);
+  box-shadow: inset 0 calc(-1 * var(--sh-hairline)) 0 var(--sh-line);
+}
+
+/*
+ * A tab is a fill, never an underline.
+ *
+ * The stage's own tab strip is a fill (`tab-strip.css`), and a second tab
+ * language one level down would make the two rows read as unrelated systems —
+ * which is the exact confusion a nested tab row has to avoid.
+ */
+.sh-pr-head__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sh-space-sm);
+  block-size: var(--sh-control-sm);
+  padding-inline: var(--sh-space-md);
+  border: 0;
+  border-radius: var(--sh-radius-md);
+  background: none;
+  font: inherit;
+  font-size: var(--sh-font-size-micro);
+  color: var(--sh-text-mute);
+  cursor: pointer;
+  transition: background var(--sh-motion) linear, color var(--sh-motion) linear;
+}
+
+.sh-pr-head__tab:hover {
+  color: var(--sh-text-dim);
+}
+
+.sh-pr-head__tab[data-at='true'] {
+  background: var(--sh-fill-active);
+  font-weight: 500;
+  color: var(--sh-text);
+}
+
+.sh-pr-head__tab:focus-visible {
+  outline: var(--sh-focus-ring);
+}
+
+/*
+ * The count is why the row is worth its height: you can see what is in a tab
+ * before opening it. Only the failing one is ever coloured — a second coloured
+ * count would make the first stop meaning anything.
+ */
+.sh-pr-head__count {
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-nano);
+  font-variant-numeric: tabular-nums;
+  color: var(--sh-text-ghost);
+}
+
+.sh-pr-head__tab[data-at='true'] .sh-pr-head__count {
+  color: var(--sh-text-faint);
+}
+
+.sh-pr-head__count[data-tone='negative'] {
+  color: var(--sh-red);
+}
+
+.sh-pr-head__spacer {
+  flex: 1;
+}
+
+.sh-pr-head__total {
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-nano);
+  color: var(--sh-text-ghost);
+}
+
+/* ── the panels ───────────────────────────────────────────────────────────── */
+
+.sh-pr-detail__body {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  display: flex;
+}
+
+.sh-pr-panel {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  min-block-size: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  padding: var(--sh-space-lg) var(--sh-space-xl);
+}
+
+/* The two-column shapes do their own padding, because their columns are divided
+   by a rule that has to reach the pane's edges. */
+.sh-pr-panel--split,
+.sh-pr-panel--list {
+  flex-direction: row;
+  overflow: hidden;
+  padding: 0;
+}
+
+.sh-pr-panel__none {
+  margin: 0;
+  padding: var(--sh-space-lg) var(--sh-space-xl);
+  font-size: var(--sh-font-size-micro);
+  color: var(--sh-text-ghost);
+}
+
+/* ── conversation ─────────────────────────────────────────────────────────── */
+
+.sh-pr-thread {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sh-space-md);
+  /* A measure, so a description on a 1600px pane is still a paragraph rather
+     than a single line of a hundred characters. */
+  max-inline-size: 720px;
+  padding: var(--sh-space-lg) var(--sh-space-xl);
+}
+
+.sh-pr-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sh-space-sm);
+  padding: var(--sh-space-md);
+  border: var(--sh-hairline) solid var(--sh-line);
+  border-radius: var(--sh-radius-card);
+  background: var(--sh-surface);
+}
+
+/* An unresolved thread is the one thing on this surface asking for something,
+   so it gets the one brighter edge — the same step a waiting task card takes. */
+.sh-pr-card:not([data-resolved]) {
+  border-color: var(--sh-line-active);
+}
+
+.sh-pr-card[data-resolved] .sh-pr-card__body {
+  color: var(--sh-text-ghost);
+}
+
+.sh-pr-card__who {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-sm);
+  font-size: var(--sh-font-size-micro);
+  color: var(--sh-text-faint);
+}
+
+.sh-pr-card__login,
+.sh-pr-card__where {
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-micro);
+  color: var(--sh-text-quiet);
+}
+
+.sh-pr-card__body {
+  margin: 0;
+  font-size: var(--sh-font-size-card);
+  line-height: var(--sh-line-height);
+  color: var(--sh-text-dim);
+  overflow-wrap: anywhere;
+}
+
+.sh-pr-card__verbs {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-xs);
+  padding-block-start: var(--sh-space-hair);
+}
+
+/* The 12px state slot, shared by every mark on this surface so a label never
+   starts at two different x positions. */
+.sh-pr-card__mark {
+  display: inline-grid;
+  place-items: center;
+  inline-size: 12px;
+  block-size: 12px;
+  flex: none;
+}
+
+.sh-pr-card__mark[data-state='waiting']::before {
+  content: '';
+  inline-size: 8px;
+  block-size: 8px;
+  background: var(--sh-text);
+}
+
+.sh-pr-card__mark[data-state='resting']::before {
+  content: '';
+  inline-size: 7px;
+  block-size: 7px;
+  border: var(--sh-hairline) solid var(--sh-line-active);
+  border-radius: 50%;
+}
+
+.sh-pr-card__mark[data-state='approved'] {
+  color: var(--sh-grass);
+}
+
+.sh-pr-card__mark[data-state='resolved'] {
+  color: var(--sh-text-ghost);
+}
+
+/*
+ * The meta column — NOT a nav rail.
+ *
+ * Every line in it is a fact about this PR and none of them moves you anywhere,
+ * which is what makes a second column legal here at all. A rule on its leading
+ * edge rather than a background: it is the same surface, divided.
+ */
+.sh-pr-meta {
+  inline-size: 240px;
+  flex: 0 0 240px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sh-space-lg);
+  padding: var(--sh-space-lg) var(--sh-space-xl);
+  box-shadow: inset var(--sh-hairline) 0 0 var(--sh-line);
+}
+
+.sh-pr-meta__label {
+  margin: 0 0 var(--sh-space-xs);
+  font-size: var(--sh-font-size-micro);
+  font-weight: 600;
+  color: var(--sh-text-mute);
+}
+
+.sh-pr-meta__row {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-sm);
+  block-size: var(--sh-control-md);
+  font-size: var(--sh-font-size-card);
+  color: var(--sh-text-dim);
+}
+
+.sh-pr-meta__agent {
+  flex: 1;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sh-pr-meta__said {
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-nano);
+  color: var(--sh-text-ghost);
+}
+
+.sh-pr-meta__note,
+.sh-pr-meta__none {
+  margin: 0;
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-nano);
+  line-height: var(--sh-line-height);
+  color: var(--sh-text-ghost);
+}
+
+.sh-pr-meta__task {
+  margin: 0 0 var(--sh-space-hair);
+  font-size: var(--sh-font-size-card);
+  color: var(--sh-text-dim);
+}
+
+/* ── commits ──────────────────────────────────────────────────────────────── */
+
+.sh-pr-commit {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-md);
+  block-size: var(--sh-row-height);
+  font-size: var(--sh-font-size-card);
+  color: var(--sh-text-dim);
+}
+
+.sh-pr-commit__sha {
+  flex: none;
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-nano);
+  color: var(--sh-text-faint);
+}
+
+.sh-pr-commit__subject {
+  flex: 1;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sh-pr-commit__who,
+.sh-pr-commit__when {
+  flex: none;
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-nano);
+  color: var(--sh-text-ghost);
+}
+
+/* ── the name-and-its-contents pair: checks, and files ────────────────────── */
+
+/*
+ * A second list, and the only two places one is justified.
+ *
+ * The rule against two vertical rails is about NAVIGATION — a rail that moves
+ * you somewhere else. Neither of these does: it is a name on the left and that
+ * name's contents on the right, which is a log viewer.
+ */
+.sh-pr-list {
+  inline-size: 280px;
+  flex: 0 0 280px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: var(--sh-space-sm);
+  box-shadow: inset calc(-1 * var(--sh-hairline)) 0 0 var(--sh-line);
+}
+
+.sh-pr-list__row {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-sm);
+  block-size: var(--sh-row-height);
+  padding-inline: var(--sh-space-md);
+  border: 0;
+  border-radius: var(--sh-radius-row);
+  background: none;
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-micro);
+  color: var(--sh-text-dim);
+  cursor: pointer;
+  text-align: start;
+  transition: background var(--sh-motion) linear;
+}
+
+.sh-pr-list__row:hover {
+  background: var(--sh-fill-hover);
+}
+
+.sh-pr-list__row[data-at='true'] {
+  background: var(--sh-fill-active);
+  color: var(--sh-text);
+}
+
+.sh-pr-list__row:focus-visible {
+  outline: var(--sh-focus-ring);
+  outline-offset: calc(-1 * var(--sh-hairline));
+}
+
+.sh-pr-list__mark {
+  display: inline-grid;
+  place-items: center;
+  inline-size: 12px;
+  block-size: 12px;
+  flex: none;
+}
+
+.sh-pr-list__row[data-state='passed'] .sh-pr-list__mark {
+  color: var(--sh-grass);
+}
+
+.sh-pr-list__row[data-state='failed'] .sh-pr-list__mark::before {
+  content: '';
+  inline-size: 8px;
+  block-size: 8px;
+  background: var(--sh-red);
+}
+
+.sh-pr-list__row[data-state='running'] .sh-pr-list__mark::before,
+.sh-pr-list__row[data-state='skipped'] .sh-pr-list__mark::before {
+  content: '';
+  inline-size: 7px;
+  block-size: 7px;
+  border: var(--sh-hairline) solid var(--sh-line-active);
+  border-radius: 50%;
+}
+
+.sh-pr-list__row[data-state='skipped'] {
+  color: var(--sh-text-ghost);
+}
+
+.sh-pr-list__name {
+  flex: 1;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * A path clips at the HEAD, not the tail: `…/renderer/task-card.css` tells two
+ * files apart and `packages/app/src/rend…` does not. `direction: rtl` moves the
+ * ellipsis; the inner `bdi` keeps the text itself in reading order.
+ */
+.sh-pr-list__path {
+  flex: 1;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: start;
+}
+
+.sh-pr-list__meta {
+  flex: none;
+  color: var(--sh-text-ghost);
+}
+
+/* ── the log ──────────────────────────────────────────────────────────────── */
+
+.sh-pr-log,
+.sh-pr-diff {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  display: flex;
+  flex-direction: column;
+  min-block-size: 0;
+}
+
+.sh-pr-log__text {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  overflow: auto;
+  margin: 0;
+  padding: var(--sh-space-md) var(--sh-space-lg);
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-micro);
+  line-height: var(--sh-line-height);
+  color: var(--sh-text-dim);
+  /* A log wraps rather than scrolling sideways: a line you have to scroll to
+     read is a line you do not read. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.sh-pr-log__foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-xs);
+  padding: var(--sh-space-md) var(--sh-space-lg);
+  box-shadow: inset 0 var(--sh-hairline) 0 var(--sh-line);
+}
+
+.sh-pr-log__spacer {
+  flex: 1;
+}
+
+.sh-pr-log__note {
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-nano);
+  color: var(--sh-text-ghost);
+}
+
+/* ── the diff ─────────────────────────────────────────────────────────────── */
+
+.sh-pr-diff__head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-sm);
+  block-size: var(--sh-row-height);
+  padding-inline: var(--sh-space-lg);
+  box-shadow: inset 0 calc(-1 * var(--sh-hairline)) 0 var(--sh-line);
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-micro);
+  color: var(--sh-text-faint);
+}
+
+.sh-pr-diff__path {
+  flex: 1;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sh-pr-diff__mode {
+  color: var(--sh-text-ghost);
+}
+
+.sh-pr-diff__body {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  overflow: auto;
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-micro);
+  line-height: var(--sh-line-height);
+}
+
+.sh-pr-diff__line {
+  padding-inline: var(--sh-space-lg);
+  color: var(--sh-text-dim);
+  white-space: pre;
+}
+
+/*
+ * A diff's colours are a TINT plus the ink, never a solid fill: a block of green
+ * behind code makes the code the second thing you read. The tint is mixed from
+ * the same role the numbers use, so the two agree.
+ */
+.sh-pr-diff__line[data-kind='added'] {
+  color: var(--sh-grass);
+  background: color-mix(in srgb, var(--sh-grass) 8%, transparent);
+}
+
+.sh-pr-diff__line[data-kind='removed'] {
+  color: var(--sh-clay);
+  background: color-mix(in srgb, var(--sh-clay) 8%, transparent);
+}
+
+.sh-pr-diff__line[data-kind='hunk'],
+.sh-pr-diff__line[data-kind='meta'] {
+  color: var(--sh-text-ghost);
+}
+
+/*
+ * A review comment sits in the diff where it was written.
+ *
+ * That is the whole reason this tab has a diff at all rather than a list of
+ * paths: the comment and the line it is about are one thing, and a list of
+ * comments somewhere else makes you hold the file in your head.
+ */
+.sh-pr-diff__note {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-sm);
+  margin: var(--sh-space-sm) var(--sh-space-lg);
+  padding: var(--sh-space-sm) var(--sh-space-md);
+  border: var(--sh-hairline) solid var(--sh-line-active);
+  border-radius: var(--sh-radius-md);
+  background: var(--sh-surface);
+}
+
+.sh-pr-diff__note-text {
+  flex: 1;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-micro);
+  color: var(--sh-text-dim);
+}
+
+/*
+ * A thread the diff could not place, at the head of the file rather than
+ * nowhere.
+ *
+ * An unresolved comment you cannot see is one you will not address — so it is
+ * kept, and labelled, rather than pinned to whatever code now occupies its old
+ * line number.
+ */
+.sh-pr-diff__note[data-adrift='true'] {
+  border-style: dashed;
+}
+
+.sh-pr-diff__adrift {
+  flex: none;
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-nano);
+  color: var(--sh-text-ghost);
+}
+
+/*
+ * Pierre's tree, in our column.
+ *
+ * Width and edge only. It renders into a shadow root, so a descendant selector
+ * from this sheet reaches nothing inside it — what does reach it is the custom
+ * properties, which inherit through the boundary. That is the whole styling
+ * contract with it, and it is worth knowing before anybody tries a
+ * `.sh-pr-tree .something` rule and cannot work out why it does nothing.
+ */
+.sh-pr-tree {
+  inline-size: 280px;
+  flex: 0 0 280px;
+  overflow-y: auto;
+  box-shadow: inset calc(-1 * var(--sh-hairline)) 0 0 var(--sh-line);
+}
+
+.sh-pr-diff__view {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  overflow: auto;
+}
+
+/* ── the footer, shared by every tab ──────────────────────────────────────── */
+
+.sh-pr-detail__spacer {
+  flex: 1;
+}
+
+/* ------------------------------------------------------------------- tones */
+
+/*
+ * The four readings, resolved once.
+ *
+ * A phrase says which of the four it is and this decides what that looks like —
+ * the same division that keeps a contributed row from naming a hue, applied to
+ * this extension's own pane because the rule is about the palette rather than
+ * about who is writing.
+ */
+[data-tone='positive'] {
+  color: var(--sh-grass);
+}
+
+[data-tone='negative'] {
+  color: var(--sh-red);
+}
+
+[data-tone='neutral'] {
+  color: var(--sh-sky);
+}
+
+[data-tone='quiet'] {
+  color: var(--sh-text-ghost);
+}
+
+/* Removals are clay, never red — see `.sh-pr-row__removed`. */
+[data-tone='removed'] {
+  color: var(--sh-clay);
+}
+
+/* ---------------------------------------------------------------- markdown
+ *
+ * A PR body and a review comment, with their shape kept.
+ *
+ * The rhythm here is deliberately tighter than a document's: this is a card
+ * inside a pane, so a heading gets weight and a little space above it rather
+ * than a display size. The one thing that gets real emphasis is CODE — an
+ * agent's PR body is mostly commands and identifiers, and a monospace run
+ * against the prose is what makes it scannable.
+ */
+.sh-md {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sh-space-sm);
+  font-size: var(--sh-font-size-card);
+  line-height: var(--sh-line-height);
+  color: var(--sh-text-dim);
+  overflow-wrap: anywhere;
+}
+
+.sh-md__para {
+  margin: 0;
+  /* The body's own newlines are kept — an agent that wrote three lines meant
+     three lines. `pre-wrap` rather than `pre` so long lines still wrap. */
+  white-space: pre-wrap;
+}
+
+.sh-md__heading {
+  margin: var(--sh-space-sm) 0 0;
+  font-size: var(--sh-font-size-card);
+  font-weight: 600;
+  color: var(--sh-text);
+  letter-spacing: 0.01em;
+}
+
+/* The first block of a card must not push itself away from the byline. */
+.sh-md > :first-child {
+  margin-top: 0;
+}
+
+.sh-md__list {
+  margin: 0;
+  padding-left: var(--sh-space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sh-md__code {
+  margin: 0;
+  padding: var(--sh-space-sm) var(--sh-space-md);
+  background: var(--sh-canvas);
+  border: 1px solid var(--sh-line);
+  border-radius: var(--sh-radius-sm);
+  /* Scrolls itself rather than widening the card: a pasted command line is
+     routinely longer than this column, and wrapping one makes it unreadable
+     AND uncopyable. */
+  overflow-x: auto;
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-micro);
+  line-height: 1.5;
+  color: var(--sh-text);
+}
+
+.sh-md code {
+  font-family: var(--sh-font-mono);
+  font-size: 0.92em;
+  color: var(--sh-text);
+}
+
+.sh-md__para code,
+.sh-md__list code,
+.sh-md__quote code {
+  padding: 1px 4px;
+  /* `well` is the recessed surface — the role for a run of text set INTO the
+     card rather than onto it. `fill-*` are state colours and would read as
+     though the span were hovered. */
+  background: var(--sh-well);
+  border-radius: var(--sh-radius-sm);
+}
+
+.sh-md__code code {
+  padding: 0;
+  background: none;
+}
+
+.sh-md__quote {
+  margin: 0;
+  padding-left: var(--sh-space-md);
+  border-left: 2px solid var(--sh-line);
+  color: var(--sh-text-ghost);
+  white-space: pre-wrap;
+}
+
+.sh-md__rule {
+  margin: var(--sh-space-xs) 0;
+  border: 0;
+  border-top: 1px solid var(--sh-line);
+}
+
+.sh-md strong {
+  color: var(--sh-text);
+  font-weight: 600;
+}
+
+/* Not a navigation target — see `markdown.tsx`. It reads as a link and carries
+   its URL in a tooltip; the way out of this pane is `Open on GitHub`. */
+.sh-md__link {
+  /* `sky` is the blue of the five that mean something (§2). There is no
+     `accent` role, deliberately: a role names a job, not a hue. */
+  color: var(--sh-sky);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: default;
+}
+
+.sh-pr-card[data-resolved] .sh-md {
+  color: var(--sh-text-ghost);
+}

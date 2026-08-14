@@ -51,6 +51,17 @@ export interface PersistedPane {
   readonly readOnly?: true;
   /** The file that pane replays. Absolute. */
   readonly snapshotFile?: string;
+  /**
+   * Present only for a pane showing a contributed view (ADR 0044). Absent on
+   * every terminal, for the reason `readOnly` is absent rather than `false`.
+   *
+   * `state` round-trips as whatever JSON the view put there — the kernel does
+   * not read it and cannot validate it, so a record mangled by hand reaches the
+   * view as a value it must already be checking (it arrived over a port the
+   * same way). What IS checked here is that `type` is a string, because
+   * everything downstream keys on it.
+   */
+  readonly view?: { readonly type: string; readonly state?: unknown };
 }
 
 export type PersistedNode =
@@ -71,6 +82,7 @@ export function serializePane(pane: Pane, sessionId?: string): PersistedPane {
     sessionId?: string;
     readOnly?: true;
     snapshotFile?: string;
+    view?: { type: string; state?: unknown };
   } = {};
   if (pane.userTitle !== null && pane.userTitle !== '') out.userTitle = pane.userTitle;
   if (pane.cwd !== null && pane.cwd !== '') out.cwd = pane.cwd;
@@ -78,6 +90,15 @@ export function serializePane(pane: Pane, sessionId?: string): PersistedPane {
   if (sessionId !== undefined && sessionId !== '') out.sessionId = sessionId;
   if (pane.readOnly) out.readOnly = true;
   if (pane.snapshotFile !== null && pane.snapshotFile !== '') out.snapshotFile = pane.snapshotFile;
+  if (pane.view !== null) {
+    // `state` is omitted rather than written as `undefined`: this object is
+    // JSON-stringified, and a key whose value is undefined disappears anyway —
+    // spelling it out here is what makes the written shape match the type.
+    out.view =
+      pane.view.state === undefined
+        ? { type: pane.view.type }
+        : { type: pane.view.type, state: pane.view.state };
+  }
   return out;
 }
 
@@ -124,6 +145,7 @@ export function deserializeNode(value: unknown, random?: RandomId): SplitNode {
           cwd: optionalString(pane['cwd'], 'pane.cwd'),
           readOnly: pane['readOnly'] === true,
           snapshotFile: optionalString(pane['snapshotFile'], 'pane.snapshotFile'),
+          view: optionalView(pane['view']),
           ...(persistedId === null ? {} : { id: paneId(persistedId) }),
         },
         random,
@@ -154,6 +176,23 @@ function asRecord(value: unknown, what: string): Record<string, unknown> {
     throw new LayoutDecodeError(`${what} must be an object`);
   }
   return value as Record<string, unknown>;
+}
+
+/**
+ * A persisted `view`, or `null` for the overwhelming majority of panes.
+ *
+ * A record with a `view` that is not an object, or whose `type` is not a
+ * non-empty string, is DROPPED rather than thrown on — the difference from
+ * `axis` above being what the failure costs. A bad axis is a tree with no shape
+ * and nothing can be drawn; a bad view is one pane, and restoring it as an
+ * ordinary empty pane loses less than refusing to restore the window.
+ */
+function optionalView(value: unknown): { type: string; state?: unknown } | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const type = record['type'];
+  if (typeof type !== 'string' || type === '') return null;
+  return record['state'] === undefined ? { type } : { type, state: record['state'] };
 }
 
 function optionalString(value: unknown, what: string): string | null {

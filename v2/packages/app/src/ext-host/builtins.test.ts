@@ -4,6 +4,7 @@ import { agentsCoreManifest } from '@shepherd/ext-agents-core/manifest';
 import { claudeCodeManifest } from '@shepherd/ext-claude-code/manifest';
 import { tasksManifest } from '@shepherd/ext-tasks/manifest';
 import { worktreeHookManifest } from '@shepherd/ext-worktree-hook/manifest';
+import { githubManifest } from '@shepherd/ext-github/manifest';
 import { BUILTIN_MODULES } from './builtins.ts';
 
 /**
@@ -27,6 +28,7 @@ const REGISTERED = [
   claudeCodeManifest,
   tasksManifest,
   worktreeHookManifest,
+  githubManifest,
 ];
 
 describe('the built-in module table', () => {

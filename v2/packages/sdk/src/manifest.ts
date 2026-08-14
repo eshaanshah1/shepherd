@@ -1,6 +1,7 @@
 import { s, type Schema } from './schema.ts';
 import { settingsPageSchema, type SettingsPage, type SettingsPageWire } from './api-settings.ts';
 import type { Permission } from './permission.ts';
+import type { SecretSpec } from './secrets.ts';
 
 /**
  * The `shepherd` key of an extension's package.json (core-design §4).
@@ -79,6 +80,15 @@ export interface Manifest {
      * exactly one extension, when its page is opened.
      */
     readonly settings?: readonly SettingsPage[];
+    /**
+     * Credentials this extension needs, declared so the Secrets screen can list
+     * them with nothing activated — the same static-data trade `settings` makes
+     * one field up, and for the same reason.
+     *
+     * Declaring is not being granted: reading one still needs the `secrets`
+     * permission. See `SecretSpec`.
+     */
+    readonly secrets?: readonly SecretSpec[];
   };
 }
 
@@ -105,6 +115,8 @@ export const manifestSchema: Schema<{
     views?: { id: string; type: string; title: string; region?: string }[];
     /** Validated structurally here; its namespace rule is the host's (`pageIssues`). */
     settings?: SettingsPageWire[];
+    /** Structural only here; the key shape and the link scheme are the host's. */
+    secrets?: { key: string; title: string; description?: string; link?: string }[];
   };
 }> = s.object({
   id: s.string(),
@@ -136,6 +148,16 @@ export const manifestSchema: Schema<{
         ),
       ),
       settings: s.optional(s.array(settingsPageSchema)),
+      secrets: s.optional(
+        s.array(
+          s.object({
+            key: s.string(),
+            title: s.string(),
+            description: s.optional(s.string()),
+            link: s.optional(s.string()),
+          }),
+        ),
+      ),
     }),
   ),
 });

@@ -484,6 +484,30 @@ describe('terminals across a reshape', () => {
     expect(all(view.container, 'terminal-host')).toHaveLength(3);
     view.unmount();
   });
+
+  it('builds NO terminal for a leaf that is a contributed view (ADR 0044)', async () => {
+    /*
+     * The claim the whole pane kind rests on. `TerminalPane` attaches on mount
+     * and attaching spawns a pty, so a review tab that fell through to it would
+     * have a shell running behind a PR list — visible nowhere, killed by
+     * nothing, and indistinguishable from a pane the user opened.
+     */
+    const viewPane = makePane({ view: { type: 'github.review', state: { task: 't-1' } } });
+    const terminalPane = makePane({ userTitle: 'agent' });
+    const { view, built, registry } = render({
+      snapshot: snapshotOf(split('row', 0.5, leaf(viewPane), leaf(terminalPane)), terminalPane),
+    });
+    await registry.settled();
+
+    expect(all(view.container, 'pane')).toHaveLength(2);
+    // One host and one terminal, for the one leaf that is a terminal.
+    expect(all(view.container, 'terminal-host')).toHaveLength(1);
+    expect(built).toHaveLength(1);
+    // And the view pane says why it is empty rather than being empty: with no
+    // views bridge nothing has contributed the type, which is the waiting case.
+    expect(all(view.container, 'pane-view-missing')).toHaveLength(1);
+    view.unmount();
+  });
 });
 
 // -------------------------------------------------- several roots, one visible

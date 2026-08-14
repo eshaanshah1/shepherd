@@ -23,3 +23,15 @@ export {
 } from './exec.ts';
 export type { RunOptions, RunResult } from './exec.ts';
 export { spawnDetached } from './exec.ts';
+export {
+  HARVESTED,
+  LAUNCHCTL_TIMEOUT_MS,
+  LOGIN_SHELL_TIMEOUT_MS,
+  captureScript,
+  installShellEnvironment,
+  mergePath,
+  readCaptured,
+  shellCandidates,
+  spawnProbe,
+} from './shell-env.ts';
+export type { HarvestedName, PathOrigin, Probe, ShellEnvReport } from './shell-env.ts';

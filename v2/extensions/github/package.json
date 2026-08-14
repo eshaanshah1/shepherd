@@ -1,0 +1,123 @@
+{
+  "name": "@shepherd/ext-github",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "shepherd.github \u2014 the pull requests a task has open, where its agents are.",
+  "//exports": "The split every extension makes: main imports ./manifest to register, the utility process imports the root (which pulls in `activate`), ./model is the pure layer, and ./ui is the half the renderer mounts.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./manifest": {
+      "types": "./src/manifest.ts",
+      "default": "./src/manifest.ts"
+    },
+    "./model": {
+      "types": "./src/model/index.ts",
+      "default": "./src/model/index.ts"
+    },
+    "./ui": {
+      "types": "./ui/index.ts",
+      "default": "./ui/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -b",
+    "test": "vitest run"
+  },
+  "//dependencies": "@shepherd/ext-tasks is TYPE-ONLY \u2014 `import type` and nothing else. The runtime relationship is the point id plus the manifest's `dependencies` entry, which is the gate the host can review; a value import would route around it. See extensions/README.md.",
+  "//octokit": "@octokit/rest is a plain npm dependency, not a workspace one: the boundary lint is about which SHEPHERD packages an extension may reach, and a vendor client is exactly the kind of thing an extension is supposed to own privately. It is the only place in the repo that knows GitHub's wire shapes.",
+  "dependencies": {
+    "@octokit/rest": "^22.0.0",
+    "@shepherd/ext-tasks": "workspace:*",
+    "@shepherd/sdk": "workspace:*",
+    "@shepherd/ui": "workspace:*",
+    "@pierre/diffs": "catalog:",
+    "@pierre/trees": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "jsdom": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "//shepherd": "The manifest, as an extension declares it. `src/manifest.ts` is the typed copy the host loads, and `manifest.test.ts` asserts the two are identical.",
+  "shepherd": {
+    "id": "shepherd.github",
+    "name": "GitHub",
+    "version": "0.1.0",
+    "api": "^1.0.0",
+    "activation": [
+      "onStartup"
+    ],
+    "permissions": [
+      "storage",
+      "process.exec",
+      "network",
+      "secrets",
+      "views",
+      "layout",
+      "sessions"
+    ],
+    "dependencies": [
+      "shepherd.tasks",
+      "shepherd.agents-core"
+    ],
+    "contributes": {
+      "commands": [
+        {
+          "id": "github.review",
+          "title": "GitHub: Review"
+        },
+        {
+          "id": "github.sync",
+          "title": "GitHub: Sync"
+        },
+        {
+          "id": "github.prs"
+        },
+        {
+          "id": "github.pr"
+        },
+        {
+          "id": "github.diff"
+        },
+        {
+          "id": "github.open",
+          "title": "GitHub: Open on GitHub"
+        },
+        {
+          "id": "github.handToAgent",
+          "title": "GitHub: Hand to Agent"
+        },
+        {
+          "id": "github.merge",
+          "title": "GitHub: Merge"
+        },
+        {
+          "id": "github.land",
+          "title": "GitHub: Land Task"
+        },
+        {
+          "id": "github.seed",
+          "title": "GitHub: Seed Fake PRs (dev)"
+        }
+      ],
+      "secrets": [
+        {
+          "key": "token",
+          "title": "GitHub token",
+          "description": "Only needed if `gh auth token` cannot answer \u2014 this extension asks the GitHub CLI first. A fine-grained token with read access to pull requests is enough; add write to merge from here.",
+          "link": "https://github.com/settings/tokens"
+        }
+      ]
+    }
+  },
+  "//ui": "The UI half, imported ONLY by the renderer (boundaries.js). A separate subpath because it is a separate PROCESS: `.` is the service half and runs in a utility process with no DOM."
+}

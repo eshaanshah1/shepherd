@@ -465,6 +465,8 @@ export const boundaries = [
       denyExact('@shepherd/ext-diagnostics', SERVICE_HALF),
       denyExact('@shepherd/ext-agents-core', SERVICE_HALF),
       denyExact('@shepherd/ext-claude-code', SERVICE_HALF),
+      denyExact('@shepherd/ext-worktree-hook', SERVICE_HALF),
+      denyExact('@shepherd/ext-github', SERVICE_HALF),
       deny(['@shepherd/ext-*/*', '!@shepherd/ext-*/ui'], SERVICE_HALF),
     ),
   },

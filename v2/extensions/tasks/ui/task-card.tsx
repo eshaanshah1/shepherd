@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, type ReactElement } from 'react';
 import type { ExtensionRowProps } from '@shepherd/sdk';
-import { Button, IconButton, StateMark, SuiteMeter, namedGlyph } from '@shepherd/ui';
+import { Button, Icon, IconButton, NAMED_GLYPHS, StateMark, SuiteMeter, namedGlyph } from '@shepherd/ui';
 import { readCardData, type CardAnswer, type CardData } from './card-data.ts';
 
 /**
@@ -207,6 +207,65 @@ export function TaskCard({ item, selected, invoke }: ExtensionRowProps): ReactEl
           was about the button appearing from nothing.
         */}
         <span className="sh-task-card__trail">
+          {/*
+            What another extension says about this task (`tasks.cardFacts`) — a
+            PR's state, a deploy, a check.
+
+            IN the trailing cell, beside the row's own verb, and revealed with
+            it. Both are things you DO to this task — open its review tab, ship
+            it — so they belong to one gesture rather than sitting on two sides
+            of a rule. It also gives the title the whole line back at rest, which
+            is what the note above fought for and what a reserved slot with a
+            floating glyph in it was quietly spending.
+
+            The cost, stated: a fact is no longer readable without pointing at
+            the row, so the rail stops saying "this task's PR is red" at a
+            glance. That is the trade this shape makes.
+
+            A fact with a command is a real `<button>` and one without is a
+            `<span>` — never a div with a click handler, and never a button that
+            does nothing. `stopPropagation` because this sits inside a row that is
+            itself a button.
+          */}
+          {card.facts?.map((fact) => {
+          /*
+            `NAMED_GLYPHS` directly rather than `namedGlyph`, whose fallback is a
+            `…` — right for a hover action, which is an invisible button without
+            one, and wrong here: a fact can be a label alone, so an unknown name
+            should cost the glyph and not invent a mark that means nothing.
+          */
+          const glyph = fact.icon === undefined ? undefined : NAMED_GLYPHS[fact.icon];
+          const inside = (
+            <>
+              {glyph === undefined ? null : <Icon icon={glyph} size="sm" />}
+              {fact.label === undefined ? null : <span aria-hidden="true">{fact.label}</span>}
+              <span className="sh-ui-sr-only">{fact.title}</span>
+            </>
+          );
+          const shared = {
+            className: 'sh-task-card__fact',
+            'data-tone': fact.tone,
+            title: fact.title,
+          } as const;
+          return fact.command === undefined ? (
+            <span key={fact.title} {...shared}>
+              {inside}
+            </span>
+          ) : (
+            <button
+              key={fact.title}
+              type="button"
+              {...shared}
+              onClick={(event) => {
+                event.stopPropagation();
+                if (fact.command === undefined) return;
+                void invoke(fact.command.id, fact.command.args);
+              }}
+            >
+              {inside}
+            </button>
+          );
+        })}
           {action === undefined ? null : (
             <IconButton
               className="sh-task-card__action"

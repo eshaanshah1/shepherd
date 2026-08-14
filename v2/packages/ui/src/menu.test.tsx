@@ -153,6 +153,31 @@ describe('Menu', () => {
     expect(highlighted?.style.color).toBe('var(--sh-text-on-wool)');
   });
 
+  /**
+   * MUTATION TARGET. The keyboard's position in a menu has to be VISIBLE.
+   *
+   * This rule read `background: fill-selected; color: text-on-wool`. It was
+   * inverse video when it was written and stopped being anything at all when
+   * `fillSelected` became an alias of `raised` — which is the menu's own
+   * background. So a highlighted item painted the menu over the menu, in
+   * near-black ink, and the highlight disappeared in both directions at once.
+   *
+   * Asserted as ROLES rather than as computed colours because that is where the
+   * defect lived: both values were legal, both resolved, and the pair was the
+   * bug. `fillActive`'s job description is this exact case, in those words.
+   */
+  it('highlights with a fill that is NOT the menu’s own background', () => {
+    const menu = rulesMentioning('sh-ui-menu').find((rule) => rule.selectorText === '.sh-ui-menu');
+    const highlighted = rulesMentioning('sh-ui-menu__item').find(
+      (rule) => rule.selectorText === '.sh-ui-menu__item[data-highlighted]',
+    );
+    expect(highlighted?.style.background).toBe('var(--sh-fill-active)');
+    expect(highlighted?.style.background).not.toBe(menu?.style.background);
+    // And the label stays the ordinary ink: on-fill contrast ink is only ever
+    // legal over a SOLID fill, which `fillActive` is not.
+    expect(highlighted?.style.color).toBe('var(--sh-text)');
+  });
+
   it('styles every value from a role or a metric — no literal colour, no literal px', () => {
     // The rule this package exists to enforce, asserted rather than reviewed.
     for (const rule of rulesMentioning('sh-ui-menu')) {

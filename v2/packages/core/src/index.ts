@@ -179,6 +179,14 @@ export {
  * manifest declared and what the user has actually chosen.
  */
 export { SettingsRegistry, type OwnedPage, type SettingsRegistryOptions } from './settings/index.ts';
+export {
+  SecretsRegistry,
+  SECRETS_NAMESPACE,
+  type Cipher,
+  type DeclaredSecret,
+  type SecretsError,
+  type SecretsRegistryOptions,
+} from './secrets/index.ts';
 
 export {
   parseManifest,

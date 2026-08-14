@@ -102,7 +102,29 @@ export interface LayoutAPI {
 /** What a leaf shows. `terminal` is the one view kind core renders itself. */
 export type ViewRef =
   | { readonly kind: 'terminal'; readonly sessionId: SessionID }
-  | { readonly kind: 'view'; readonly type: string; readonly state?: unknown };
+  | ({ readonly kind: 'view' } & PaneView);
+
+/**
+ * A contributed view, as a PANE holds it — a registered view `type` plus
+ * whatever that view needs to know which subject it is showing.
+ *
+ * Its own type because a pane persists one (`serialize.ts`) and a command
+ * accepts one, so the shape is written down in three places that must agree. It
+ * is deliberately not a component name: the type resolves through the
+ * contribution list like every other view, so a pane restored before its
+ * extension activates draws the empty slot and fills in when the registration
+ * arrives — where a component name would let a pane reach the renderer's table
+ * with nothing declared behind it.
+ *
+ * `state` is the subject and nothing else — an id, a path, a pair of them. It
+ * crosses the port as JSON and comes back `unknown`, so a view reads it
+ * defensively; and it is the one field a pane may carry that the kernel does not
+ * understand, which is the same bargain `TreeItem.data` already makes.
+ */
+export interface PaneView {
+  readonly type: string;
+  readonly state?: unknown;
+}
 
 /**
  * A contributed view.
@@ -146,13 +168,22 @@ export type ViewProvider =
       readonly component: string;
       /**
        * Where the shell puts it. `dock` is a section in the sidebar; `overlay`
-       * is a modal card over the whole window — a composer, not a panel.
+       * is a modal card over the whole window — a composer, not a panel;
+       * `pane` is a leaf of the layout tree, beside the terminals.
        *
        * A form the user opens, fills in and dismisses does not belong in a
        * sidebar permanently taking space; v1 learned that with its ⌘T composer,
        * and this is the same shape declared rather than hardcoded.
+       *
+       * `pane` is the third and it is a different KIND of thing from the other
+       * two, which is why it is worth reading the rule rather than the word: a
+       * dock section and an overlay are chrome the shell owns and lends out,
+       * while a pane is a place in the tree the user splits, focuses, closes and
+       * comes back to after a relaunch. It is for a surface with a subject —
+       * this PR, this diff, this log — and never for a panel of controls, which
+       * is what the other two are for. See ADR 0044.
        */
-      readonly surface?: 'dock' | 'overlay';
+      readonly surface?: 'dock' | 'overlay' | 'pane';
       /**
        * The accelerator that raises it, in Electron's vocabulary
        * (`CmdOrCtrl+T`). **A modifier is required** — a bare key here would be
@@ -200,6 +231,32 @@ export interface ExtensionViewProps {
    * moment its repo picker answered.
    */
   done(): void;
+}
+
+/**
+ * What a PANE view is handed — `ExtensionViewProps` plus the two things only a
+ * pane has.
+ *
+ * Its own type for the reason `ExtensionRowProps` is: the extra fields are
+ * meaningless anywhere else, and widening the shared type would offer a dock
+ * section a `focused` that is always true and a `state` that is always
+ * undefined. It EXTENDS rather than duplicates, because a pane genuinely is a
+ * view — it invokes commands and it can be finished with (`done()` closes the
+ * pane, which is the honest reading of "I am finished" for something that owns a
+ * leaf).
+ *
+ * `focused` is passed rather than derived for ADR 0035's reason: focus is the
+ * shell's answer, taken from the snapshot it draws the grid from, and a pane
+ * keeping its own copy is the second copy that ADR exists to prevent. It matters
+ * more here than for a row — a pane binds keys (Esc, ⌘⇧], a letter), and a
+ * background pane that still answered them would fight the one you are looking
+ * at.
+ */
+export interface ExtensionPaneProps extends ExtensionViewProps {
+  /** What this pane was opened to show. `unknown`: it crossed a port. */
+  readonly state: unknown;
+  /** The user is on this pane. Bind keys only while true. */
+  readonly focused: boolean;
 }
 
 /**

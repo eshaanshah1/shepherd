@@ -22,6 +22,19 @@ import './task-card.css';
 const ruleFor = (selector: string): CSSStyleRule | undefined =>
   rulesMentioning(selector).find((rule) => rule.selectorText === selector);
 
+/**
+ * The rule that CARRIES a selector, whether or not it is the only one on it.
+ *
+ * The trailing verb's rules are shared with the contributed fact — the two are
+ * both things you do to the row, revealed together — so an exact match on
+ * `.sh-task-card__action` finds nothing while the properties it asserts are all
+ * still there. Matching on membership keeps those assertions about the
+ * behaviour rather than about the selector list's punctuation.
+ */
+const ruleCarrying = (selector: string): CSSStyleRule | undefined =>
+  rulesMentioning(selector)
+    .find((rule) => rule.selectorText.split(',').some((part) => part.trim() === selector));
+
 describe('the task card’s trailing action', () => {
   /**
    * MUTATION TARGET. The hover verb must not charge the title for space it does
@@ -88,7 +101,7 @@ describe('the task card’s trailing action', () => {
      * to a control that is also arriving; and 4px sits inside the button's own hit
      * target, so the target does not meaningfully move.
      */
-    const action = ruleFor('.sh-task-card__action');
+    const action = ruleCarrying('.sh-task-card__action');
     expect(action?.style.transform).toBe('translateX(var(--sh-space-xs))');
     expect(action?.style.transition).toContain('transform var(--sh-motion)');
 
@@ -109,7 +122,7 @@ describe('the task card’s trailing action', () => {
    * row waking up.
    */
   it('fades the verb and its backing over the row’s own duration', () => {
-    expect(ruleFor('.sh-task-card__action')?.style.transition).toContain('opacity var(--sh-motion)');
+    expect(ruleCarrying('.sh-task-card__action')?.style.transition).toContain('opacity var(--sh-motion)');
     expect(ruleFor('.sh-task-card__trail')?.style.transition).toContain('background var(--sh-motion)');
   });
 
@@ -121,7 +134,7 @@ describe('the task card’s trailing action', () => {
      * fades out — `opacity` alone would leave a control you cannot see but CAN
      * click and tab to, which is worse than no control.
      */
-    const action = ruleFor('.sh-task-card__action');
+    const action = ruleCarrying('.sh-task-card__action');
     expect(action?.style.visibility).toBe('hidden');
     expect(action?.style.opacity).toBe('0');
     expect(action?.style.transition).toContain('visibility var(--sh-motion)');
@@ -140,5 +153,41 @@ describe('the task card’s trailing action', () => {
     // Deleted rather than left unused: it reported task AGE on finished work, and a
     // corrected ship clock was true without earning a column beside every title.
     expect(rulesMentioning('sh-task-card__elapsed')).toHaveLength(0);
+  });
+});
+
+describe('a contributed fact', () => {
+  /**
+   * MUTATION TARGET. A fact is a VERB, and it is revealed WITH the row's other
+   * one.
+   *
+   * The PR glyph opens the review tab; Ship ships the task. Two things you do to
+   * the row, so one cell and one reveal. The shape this replaced reserved the
+   * verb's width and left the glyph floating in the middle of it — a control
+   * offset from the row's edge by exactly the width of a button that was not
+   * drawn yet, which reads as a mistake because it is one.
+   *
+   * The regression this guards is the reservation coming back: it charges every
+   * fact-bearing title for space that is empty at rest.
+   */
+  it('is hidden at rest and revealed with the row’s verb', () => {
+    // The one that DECLARES visibility: `.sh-task-card__fact` also has an
+    // earlier block for its own type and colour, and finding that one first
+    // would make this assert about the wrong rule.
+    const resting = rulesMentioning('sh-task-card__fact').find(
+      (rule) => rule.style.visibility !== '' && rule.selectorText.includes('.sh-task-card__fact'),
+    );
+    expect(resting?.style.visibility).toBe('hidden');
+
+    const revealed = rulesMentioning('sh-task-card__fact').find((rule) =>
+      rule.selectorText.includes(':hover .sh-task-card__fact'),
+    );
+    expect(revealed?.style.visibility).toBe('visible');
+  });
+
+  it('charges the title nothing at rest', () => {
+    // No reserved slot anywhere: the head's trailing inset is the regression.
+    expect(ruleFor('.sh-task-card__head')?.style.getPropertyValue('padding-inline-end')).toBe('');
+    expect(rulesMentioning('sh-task-card').some((rule) => rule.selectorText.includes('data-has-fact'))).toBe(false);
   });
 });

@@ -10,11 +10,15 @@ import {
   type Shepherd,
 } from '@shepherd/sdk';
 import {
+  CARD_FACTS_CHANGED_TOPIC,
+  CARD_FACTS_POINT,
   REPO_PROVISIONED_POINT,
   REPO_SUGGESTIONS_POINT,
   TASK_COMMANDS,
   TASK_PROVISIONED_POINT,
   TASK_VIEWS,
+  type CardFact,
+  type CardFactProvider,
   type RepoProvisioned,
   type TaskProvisioned,
 } from './manifest.ts';
@@ -852,6 +856,48 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     order: 'registration',
   });
   ctx.subscriptions.push(taskProvisioned);
+
+  /**
+   * What else a row can say — see `CARD_FACTS_POINT`.
+   *
+   * Priority order, unlike the two above, and the difference is that this one
+   * has a scarce resource to allocate: every provider is asked, each may answer
+   * with one fact, and the card draws them in the order they come back. Two
+   * integrations both wanting the cell is a real possibility, and "highest
+   * priority first" is at least a rule somebody can act on.
+   */
+  const cardFacts = points.define<CardFactProvider>(CARD_FACTS_POINT, { order: 'priority' });
+  ctx.subscriptions.push(cardFacts);
+
+  /**
+   * Every provider's answer for one task, dropped down to what a card can draw.
+   *
+   * Two guards, and both are about a contribution being unable to break the
+   * rail. A fact with neither a glyph nor a label is nothing rendered but still
+   * a cell drawn, so it is dropped; and a provider that THROWS is logged and
+   * skipped rather than taking `getChildren` with it, because this runs inside
+   * the one pass that draws the sidebar and an exception here is an empty
+   * window.
+   */
+  const factsFor = (task: TaskRecord): readonly CardFact[] =>
+    cardFacts.all().flatMap((provider) => {
+      let fact: CardFact | null;
+      try {
+        fact = provider({
+          id: task.id,
+          slug: task.slug,
+          title: task.title,
+          shipped: task.lifecycle === 'archived',
+          repos: task.repos.map((repo) => ({ path: repo.path, name: repo.name })),
+        });
+      } catch (error: unknown) {
+        ctx.log.warn(`a ${CARD_FACTS_POINT} provider threw for ${task.id} — ${String(error)}`);
+        return [];
+      }
+      if (fact === null) return [];
+      if (fact.icon === undefined && fact.label === undefined) return [];
+      return [fact];
+    });
 
   /**
    * The dogfood rule one level deeper: the built-in ranking registers through the
@@ -3008,6 +3054,19 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           // question is asked.
           displayState: displayState(task.lifecycle, agentStatesOf(task)),
           root: rootOf(task),
+          /**
+           * The PANE GROUP this task's tabs live in — `taskRootId`, and not to
+           * be confused with `root` above, which is a DIRECTORY.
+           *
+           * Reported because another extension has a legitimate reason to open a
+           * tab of a task (`github` opens a review tab) and the alternative is
+           * spelling `task:${id}` in its own source. That string is this
+           * extension's convention, it is derived in one place on purpose
+           * (`root-id.ts` says why), and a second writer of it is exactly the
+           * disagreement that file exists to prevent — with the failure being a
+           * tab that opens in a group of its own instead of in the task.
+           */
+          group: taskRootId(task.id),
           /** A task-level provisioning complaint — `repos[].hookIssue` one scope up. */
           hookIssue: taskIssue.get(task.id),
           repos: task.repos.map((repo) => ({
@@ -3430,6 +3489,16 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
   };
 
   /**
+   * A `tasks.cardFacts` provider saying its answer moved.
+   *
+   * The other half of that point — the rail re-reads and every provider is asked
+   * again. Subscribing is membership-gated only and adds a READER, so the
+   * single-writer rules elsewhere are untouched: nothing here learns what the
+   * fact was, only that there is something new to ask for.
+   */
+  ctx.subscriptions.push(events.on(CARD_FACTS_CHANGED_TOPIC, () => changed()));
+
+  /**
    * Which tasks are showing ALL of their tabs.
    *
    * In memory and never stored, like `provisioning` beside it: it is a property
@@ -3736,7 +3805,9 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
            * at all until the first refresh lands — so a freshly-opened app draws
            * cards with no diff line for a beat rather than a row of `+0 −0`.
            */
-          const cardFor = (task: TaskRecord, state: string, count?: number): unknown => ({
+          const cardFor = (task: TaskRecord, state: string, count?: number): unknown => {
+            const factsOf = factsFor(task);
+            return {
             mark: markFor(task, state),
             // No stage field: the step is the row's LABEL now (`stepLabel`), and
             // a card that also carried it in the trailing cell would say the same
@@ -3783,6 +3854,18 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
              * than each field going quietly absent for its own reason.
              */
             ...(task.lifecycle === 'archived' ? { shipped: true } : {}),
+            /*
+             * ABOVE the `shipped` suppression, deliberately, and it is the only
+             * thing that is.
+             *
+             * Everything below this line describes live work, which is why one
+             * flag can suppress all of it. A fact is not that: the motivating one
+             * is a merged PR number, and `v2 #309` beside a shipped task is the
+             * record of what shipped — the single most durable thing a finished
+             * row can say. A provider that has nothing to say about finished work
+             * is told (`CardFactSubject.shipped`) and answers `null`.
+             */
+            ...(factsOf.length === 0 ? {} : { facts: factsOf }),
             diff: diffs.get(task.id),
             suite: suites.get(task.id),
             repos: task.repos.map((repo, index) => ({
@@ -3798,7 +3881,8 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
                */
               mark: `repo${(index % 4) + 1}`,
             })),
-          });
+            };
+          };
 
           // The surface that wants the numbers pays for them — see `refreshDiffs`.
           refreshDiffs();

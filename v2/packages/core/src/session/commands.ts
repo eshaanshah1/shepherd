@@ -35,6 +35,20 @@ export interface SessionInventory {
     sink: (bytes: Uint8Array) => void,
     lines?: number,
   ): { ok: true } | { ok: false; error: { message: string } };
+  /**
+   * Text INTO the session, and the key that sends it — what `sessions.write`
+   * answers.
+   *
+   * Both, because the pair is the verb: `paste` delivers the body (bracketed if
+   * the running program asked for that) and `write` presses Enter. Splitting
+   * them here rather than taking a `submit` flag keeps this interface a
+   * description of the host rather than of the command.
+   */
+  paste(id: SessionInfo['id'], text: string): { ok: true } | { ok: false; error: { message: string } };
+  write(
+    id: SessionInfo['id'],
+    data: string | Uint8Array,
+  ): { ok: true } | { ok: false; error: { message: string } };
 }
 
 export interface SessionCommandsOptions {
@@ -68,6 +82,26 @@ export type ViewingLookup = (pane: PaneID) => boolean;
 export const SESSION_COMMANDS = {
   list: 'sessions.list',
   capture: 'sessions.capture',
+  /**
+   * Put text into a session, as if it had been pasted.
+   *
+   * The verb that was missing, and its absence was load-bearing in the wrong
+   * direction: `SessionHost.paste` has existed since M0 and nothing outside main
+   * could reach it, so an extension with something to say to a running agent had
+   * to open a SECOND agent to say it. `github`'s "Hand to agent" is the caller
+   * that made that indefensible.
+   *
+   * **Paste rather than type**, and the distinction is the whole verb: a typed
+   * newline is an Enter press (v1's recorded lesson), so multi-line text typed
+   * into a TUI submits its first line and scatters the rest. `host.paste`
+   * brackets iff the running program turned bracketed paste on, which it reads
+   * from the mirror rather than assuming.
+   *
+   * `submit` is separate and defaults to false. Filling a prompt and sending it
+   * are two decisions, and a verb that always sent would have no way to hand
+   * somebody a draft.
+   */
+  write: 'sessions.write',
 } as const;
 
 /**
@@ -128,6 +162,39 @@ export function registerSessionCommands(options: SessionCommandsOptions): Dispos
         // bytes may sit on a `SharedArrayBuffer`, which `Buffer.from`'s type
         // will not accept.
         return { bytes: Buffer.from(Array.from(captured)).toString('base64') };
+      },
+    }),
+
+    registry.register(SESSION_COMMANDS.write, {
+      // No title: it takes a session id and a body of text, so there is nothing
+      // for a person to pick out of a palette.
+      permission: 'sessions',
+      schema: s.object({
+        session: s.string(),
+        text: s.string(),
+        /** Press Enter after. Default false — see the verb's own comment. */
+        submit: s.optional(s.boolean()),
+      }),
+      /**
+       * Refuses an EXITED session rather than writing into a dead pty.
+       *
+       * `host.write` would answer `unknown-session` for one that has been
+       * reaped, but a session whose screen is retained is not in that map either
+       * — and "the agent finished while you were reading its PR" is the ordinary
+       * case here, not an edge one. A caller that is told gets to say so; one
+       * that is not sees its text vanish.
+       */
+      handler: (args) => {
+        const session = toSessionId(args.session);
+        const pasted = host.paste(session, args.text);
+        if (!pasted.ok) throw new Error(pasted.error.message);
+        if (args.submit === true) {
+          // A separate write, and AFTER the paste closes: a `\r` inside the
+          // brackets is part of the pasted text, not a key press.
+          const sent = host.write(session, '\r');
+          if (!sent.ok) throw new Error(sent.error.message);
+        }
+        return { ok: true, submitted: args.submit === true };
       },
     }),
 

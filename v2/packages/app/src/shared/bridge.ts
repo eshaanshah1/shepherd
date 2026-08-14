@@ -172,7 +172,7 @@ export interface ViewContributionDTO {
   /** How the page must draw it. `component` resolves against the UI table. */
   readonly kind: 'tree' | 'component';
   readonly component?: string;
-  readonly surface?: 'dock' | 'overlay';
+  readonly surface?: 'dock' | 'overlay' | 'pane';
   readonly key?: string;
   readonly title?: string;
   /** The glyph on the control that raises an overlay. Defaults to `plus`. */

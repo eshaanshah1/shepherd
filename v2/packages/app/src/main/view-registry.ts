@@ -40,8 +40,11 @@ export interface Contribution {
    * extension names a module, it does not supply one.
    */
   readonly component?: string;
-  /** Dock section or modal overlay. Components only; a tree is always a dock. */
-  readonly surface?: 'dock' | 'overlay';
+  /**
+   * Dock section, modal overlay, or a pane in the grid (ADR 0044). Components
+   * only; a tree is always a dock.
+   */
+  readonly surface?: 'dock' | 'overlay' | 'pane';
   /** The accelerator that raises an overlay. A modifier is required. */
   readonly key?: string;
   /** The heading the shell draws. Falls back to the view type. */
@@ -52,7 +55,7 @@ export interface Contribution {
 
 /** Everything a contribution declares beyond its kind. */
 export interface ViewDeclaration {
-  readonly surface?: 'dock' | 'overlay';
+  readonly surface?: 'dock' | 'overlay' | 'pane';
   readonly key?: string;
   readonly title?: string;
   readonly icon?: string;

@@ -511,10 +511,6 @@ describe('the extension host runtime', () => {
       await h.receive(activateAsk());
     });
 
-    it('rejects secrets with a named error rather than resolving undefined', async () => {
-      await expect(h.seen.ctx?.secrets.get('token')).rejects.toThrow(NotImplementedError);
-      await expect(h.seen.ctx?.secrets.get('token')).rejects.toThrow(/secrets\.get/);
-    });
 
     it('names every synchronous read it cannot serve across a port', () => {
       const proposed = h.seen.api?.proposed;
@@ -1062,5 +1058,68 @@ describe('the extension host runtime', () => {
       waiting.runtime.channelClosed('once');
       expect(() => waiting.runtime.channelClosed('twice')).not.toThrow();
     });
+  });
+});
+
+describe('secrets, once the keychain exists', () => {
+  /**
+   * The child asks by invoking a command and NEVER names an owner.
+   *
+   * That is the whole security model on this side: the owner is taken from the
+   * caller on main's side, so there is no shape of request in which one
+   * extension reads another's. A test that only checked the answer would pass
+   * for an implementation that passed a namespace — this checks the ARGS.
+   */
+  let s2: Harness;
+
+  beforeEach(async () => {
+    s2 = harness();
+    s2.runtime.start();
+    await s2.receive(helloOk);
+    await s2.receive(activateAsk());
+  });
+
+  const lastCall = (): unknown => s2.calls().at(-1)?.call;
+
+  it('asks for a key and nothing else', async () => {
+    const asked = s2.seen.ctx?.secrets.get('token');
+    await settle();
+    expect(lastCall()).toMatchObject({ kind: 'command.invoke', commandId: 'secrets.get', args: { key: 'token' } });
+    // No owner, no namespace: the child cannot name one, so it cannot name
+    // somebody else's.
+    expect(JSON.stringify(lastCall())).not.toContain('extension');
+    await s2.answer(wireOk({ key: 'token', value: 'gho_secret' }));
+    await expect(asked).resolves.toBe('gho_secret');
+  });
+
+  it('reads an unset secret as undefined rather than as a failure', async () => {
+    // "Not set", "never declared" and "cannot decrypt" are three causes with one
+    // correct response, and a caller telling them apart would write three
+    // branches that do the same thing.
+    const asked = s2.seen.ctx?.secrets.get('token');
+    await settle();
+    await s2.answer(wireOk({ key: 'token', value: null }));
+    await expect(asked).resolves.toBeUndefined();
+  });
+
+  it('THROWS for a denial, because that is a manifest bug no retry fixes', async () => {
+    // Attached BEFORE the answer: a rejection with no handler yet is an
+    // unhandled rejection, which vitest turns into a hang rather than a failure.
+    const asked = expect(s2.seen.ctx?.secrets.get('token')).rejects.toThrow(/secrets/);
+    await settle();
+    await s2.answer(wireErr('denied', 'lacks permission "secrets"'));
+    await asked;
+  });
+
+  it('throws when a write fails, rather than letting the caller believe it stored one', async () => {
+    const written = expect(s2.seen.ctx?.secrets.set('token', 'gho_secret')).rejects.toThrow(/keychain/);
+    await settle();
+    expect(lastCall()).toMatchObject({
+      kind: 'command.invoke',
+      commandId: 'secrets.set',
+      args: { key: 'token', value: 'gho_secret' },
+    });
+    await s2.answer(wireErr('handler-failed', 'the system keychain is not available'));
+    await written;
   });
 });

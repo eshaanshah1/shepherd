@@ -33,3 +33,29 @@
   cursor: default;
   user-select: none;
 }
+
+/*
+ * ── on a solid fill, the box goes away ───────────────────────────────────────
+ *
+ * A keycap's border is what makes it read as a key against a dark surface: rule
+ * 5's "flat, bordered, honest", and on `canvas` it is the only thing giving the
+ * legend an edge.
+ *
+ * On a PRIMARY button none of that holds. The button is already a solid block
+ * of `wool` with its own edge, so a second bordered box inside it is a control
+ * drawn inside a control — and the border, being `--sh-line` (a near-black
+ * ground's hairline), lands as a grey rectangle on near-white. What the legend
+ * needs there is what the label already has: the ink that reads on wool, and
+ * nothing else.
+ *
+ * `currentColor` rather than `textOnWool` by name, so this stays right for any
+ * future solid-fill variant whose ink is something else — the danger button's,
+ * for one. It is the same trick `menu.css` uses on a highlighted item's keycap,
+ * and for the same reason.
+ */
+.sh-ui-button--primary .sh-ui-keycap {
+  border-color: transparent;
+  color: currentColor;
+  /* The padding stays: it is what keeps the legend from touching the label, and
+     removing it with the border would make `Land task L` read as one word. */
+}

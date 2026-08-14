@@ -45,6 +45,7 @@ import {
 
 import { SplitView } from './split-view.tsx';
 import { TerminalPane } from './terminal-pane.tsx';
+import { ExtensionPane } from './extension-pane.tsx';
 import type { PaneTerminals } from './pane-sessions.ts';
 
 /**
@@ -434,9 +435,44 @@ export function App({
    */
   const [themeMode, setThemeMode] = useState<ThemeMode>(DEFAULT_THEME_MODE);
 
+  /*
+   * Read HERE rather than beside the dock, because `makeRenderPane` below needs
+   * it: a pane that shows a contributed view resolves its component through the
+   * same contribution list the sidebar draws from. One subscription, so the
+   * stage and the rail cannot disagree about what is contributed.
+   */
+  const contributions = useContributions(viewsApi);
+
   const makeRenderPane = useCallback(
     (visible: boolean) =>
     (pane: Pane, focused: boolean): ReactNode => {
+      /*
+       * A pane that is a contributed view, and the branch is FIRST because it is
+       * the one that must not fall through: `TerminalPane` attaches, and
+       * attaching spawns a pty. A PR list with a shell behind it is the defect
+       * ADR 0044's `view` field exists to make impossible.
+       *
+       * It does not wait for `terminals`. A view pane wants no session, so the
+       * registry the guard below is about is nothing to do with it — and a
+       * review tab drawing nothing until the terminal layer is ready would be a
+       * dependency it does not have.
+       */
+      if (pane.view !== null) {
+        return (
+          <ExtensionPane
+            pane={pane}
+            view={pane.view}
+            views={contributions}
+            bridge={viewsApi}
+            focused={focused}
+            // Closing the pane IS what "I am finished" means for a place. The
+            // kernel's own verb, off `LAYOUT_COMMANDS` — the same door ⌘W uses,
+            // so a view cannot end its own life by a path that skips the one
+            // terminator (ADR 0022).
+            onDone={() => invoke(LAYOUT_COMMANDS.close, { pane: pane.id })}
+          />
+        );
+      }
       if (terminals === null) return null;
       // A pane shows a session; a session may have an agent. Both hops can be
       // absent, and an absent one renders the empty slot rather than no slot.
@@ -459,7 +495,7 @@ export function App({
         />
       );
     },
-    [terminals, sessionsByPane, agents, themeMode],
+    [terminals, sessionsByPane, agents, themeMode, contributions, viewsApi, invoke],
   );
 
 
@@ -596,7 +632,6 @@ export function App({
     return () => watcher.dispose();
   }, [themeSetting, terminals]);
 
-  const contributions = useContributions(viewsApi);
   /** Every accelerator an overlay declared, for the footer's keycap strip. */
   const raisable = contributions.filter((view) => view.surface === 'overlay' && view.key !== undefined);
 

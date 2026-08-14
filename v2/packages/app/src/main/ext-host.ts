@@ -187,7 +187,7 @@ export interface ExtensionHostOptions {
       type: string,
       kind: 'tree' | 'component',
       component?: string,
-      declaration?: { surface?: 'dock' | 'overlay'; key?: string; title?: string },
+      declaration?: { surface?: 'dock' | 'overlay' | 'pane'; key?: string; title?: string },
     ): void;
     unregister(type: string): void;
     changed(type: string): void;
