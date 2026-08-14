@@ -114,6 +114,7 @@ const PACKAGES = [
   'extensions/claude-code',
   'extensions/tasks',
   'extensions/worktree-hook',
+  'extensions/github',
 ];
 
 /** `./src/index.ts` → `./dist/index.js`, and the entry that produces it. */
