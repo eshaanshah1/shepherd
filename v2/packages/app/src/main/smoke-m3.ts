@@ -369,11 +369,23 @@ export async function runM3Smoke(
     restoredRoots.length === shelvedTabs.length,
     `every tab came back: ${JSON.stringify(restoredRoots.map((root) => root.root))}`,
   );
+  /*
+   * No REAL agent binary ran, which is a claim about this fixture and not about
+   * the feature.
+   *
+   * It used to read "restoring ran no agent", back when the resume line was
+   * staged without a newline and deliberately left at the prompt. That is
+   * reversed now — the line ends in the Enter press — so what this can still
+   * honestly assert is that the stub kind this smoke hires is not `claude`, and
+   * therefore that nothing here is talking to a real API. Left in place because
+   * a smoke that silently started billing would be worth catching; renamed
+   * because the old wording now describes the opposite of the behaviour.
+   */
   const running = ((await invoke('sessions.list')) as {
     id: string;
     foregroundProcess?: string;
   }[]).filter((session) => (session.foregroundProcess ?? '').includes('claude'));
-  check(running.length === 0, `restoring ran no agent: ${JSON.stringify(running)}`);
+  check(running.length === 0, `no real agent binary ran in this fixture: ${JSON.stringify(running)}`);
   // …and it is LIVE now: the panes have ptys and nothing on screen is a
   // captured screen any more. The inverse of the reveal assertions above, which
   // is what makes the pair discriminating rather than two ways of passing.
@@ -383,7 +395,7 @@ export async function runM3Smoke(
   check(stillReadOnly === 0, `restoring replaced every captured screen: ${stillReadOnly} left`);
   const relaunched = [...(await idsOf())].filter((id) => !sessionsBeforeReveal.has(id));
   check(relaunched.length > 0, `restoring brought the panes back live: ${JSON.stringify(relaunched)}`);
-  say('ok — a restored task is rebuilt, not relaunched');
+  say('ok — a restored task comes back live, with its screens replaced by real ptys');
 
   const after = await until(
     'the work to be replayed',

@@ -2090,11 +2090,20 @@ describe('restoring a task with tabs rebuilds the SCREEN', () => {
     expect(opened[0]?.args).toMatchObject({ group: 'task:t1', cwd: '/wt' });
   });
 
-  it('STAGES the resume line without a newline, so nothing runs', async () => {
+  it('stages the resume line ending in the newline that RUNS it', async () => {
     /*
-     * The whole correction, in one assertion. `setInitialInput` documents a
-     * newline as an Enter press, so a staged line ending in one would relaunch
-     * every agent of a task somebody restored in order to glance at it.
+     * Inverted, deliberately. This asserted the opposite — a line with no
+     * newline, so nothing ran — on the argument that restoring a five-tab task
+     * to glance at it must not start five agents.
+     *
+     * The snapshot view removed that case: glancing is `tasks.reveal`, which
+     * provisions no worktree and starts no pty. What is left for Restore to mean
+     * is that the work is wanted back, and making the user press Enter once per
+     * tab is asking them to confirm what they just asked for.
+     *
+     * Exactly one newline, at the END: a second submits an empty prompt behind
+     * the command, and one in the middle runs a fragment and scatters the rest
+     * into whatever comes next.
      */
     const h = (live = harness({ tasks: [archivedWithTabs()], invoke: resuming }));
     await h.run('tasks.restore', { task: 't1' });
@@ -2103,8 +2112,8 @@ describe('restoring a task with tabs rebuilds the SCREEN', () => {
     const staged = h.invoked.find((call) => call.id === 'layout.openRoot')?.args as {
       initialCommand?: string;
     };
-    expect(staged.initialCommand).toBe('claude --resume opaque');
-    expect(staged.initialCommand).not.toContain('\n');
+    expect(staged.initialCommand).toBe('claude --resume opaque\n');
+    expect((staged.initialCommand?.match(/\n/gu) ?? []).length).toBe(1);
   });
 
   it('stages nothing in a tab that had no agent', async () => {
@@ -3967,7 +3976,7 @@ describe('an archived pane keeps the line that would resume its agent', () => {
     expect(tabs[0]?.panes[0]).toMatchObject({ pane: 'p-1', resumeTarget: 'opaque-target' });
   });
 
-  it('stages that line on restore, typed and left sitting at the prompt', async () => {
+  it('stages that line on restore, ending in the newline that runs it', async () => {
     const h = (live = withAgent());
     await h.run('tasks.archive', { task: 't1' });
     await h.run('tasks.restore', { task: 't1' });
@@ -3982,9 +3991,19 @@ describe('an archived pane keeps the line that would resume its agent', () => {
       .map((call) => (call.args as { initialCommand?: string }).initialCommand)
       .find((command) => command !== undefined);
     expect(line).toBeDefined();
-    // No trailing newline: a newline is an Enter press, and restoring five tabs
-    // must not start five agents.
-    expect(line).not.toContain('\n');
+    /*
+     * It ENDS in a newline, which is the Enter press.
+     *
+     * This assertion is inverted from what it was. The line used to be left
+     * sitting at the prompt so restoring a five-tab task to glance at it would
+     * not start five agents — and glancing no longer restores anything, so the
+     * only thing Restore can mean is that the work is wanted back.
+     *
+     * Exactly one, at the very end: a second would submit an empty prompt behind
+     * it, and one in the MIDDLE would run a fragment and scatter the rest.
+     */
+    expect(line?.endsWith('\n')).toBe(true);
+    expect((line?.match(/\n/gu) ?? []).length).toBe(1);
   });
 });
 
