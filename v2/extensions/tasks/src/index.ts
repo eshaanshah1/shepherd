@@ -1925,15 +1925,19 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
   /**
    * Put an archived task's tabs back — the SCREEN, and nothing else.
    *
-   * **It relaunches nothing.** Each pane comes back at its directory with the
-   * screen it had, and its agent's resume line is TYPED AND LEFT SITTING at the
-   * prompt. Pressing Enter is what resumes an agent, and that is the user's to
-   * press: restoring a five-tab task to glance at it must not start five agents.
+   * **It relaunches every agent it can.** Each pane comes back at its directory
+   * with the screen it had, and its agent's resume line is typed AND run.
    *
-   * The mechanism is one character. `layout.setInitialInput` documents that a
-   * newline in the staged string is an Enter press, so a line with none is typed
-   * and waits. There is no new seam here, and the "exactly one initial input per
-   * pane" invariant is untouched.
+   * That is a reversal: the line used to be left sitting at the prompt, because
+   * "restoring a five-tab task to glance at it must not start five agents". The
+   * snapshot view took that case away — glancing is `tasks.reveal` now, which
+   * provisions nothing — so the only thing Restore can mean is that you want the
+   * work back, and a per-tab Enter is a confirmation of what was already asked.
+   *
+   * The mechanism is one character either way. `layout.setInitialInput`
+   * documents that a newline in the staged string is an Enter press; the change
+   * is that `stagedResumeLine` now ends in one. There is no new seam here, and
+   * the "exactly one initial input per pane" invariant is untouched.
    *
    * Ids are the ARCHIVED ones (`layout.openRoot` takes the root to open), so a
    * restored task's tabs come back under the names they had — which is what the
@@ -2121,12 +2125,22 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
   }
 
   /**
-   * The line that WOULD resume this pane's agent — built, not run.
+   * The line that resumes this pane's agent — typed AND RUN.
    *
    * Asked of the agent kind through `agents.resumeCommand`, exactly as
    * `resumeSession` does, so `tasks` still never learns a binary or a flag
-   * (D11). Trailing whitespace is trimmed because the one thing that must not
-   * be in it is a newline.
+   * (D11).
+   *
+   * **The trailing newline is deliberate, and it reverses an earlier decision.**
+   * This used to trim it, so the line sat at the prompt waiting for a human — on
+   * the argument that "restoring a five-tab task to glance at it must not start
+   * five agents". That argument died with the snapshot view: glancing is now
+   * `tasks.reveal`, which costs no worktree and no pty, so the only reason left
+   * to press Restore is wanting the work BACK. Making the user then press Enter
+   * once per tab is asking them to confirm the thing they just asked for.
+   *
+   * Whitespace is still normalised first, so exactly one newline reaches the
+   * pty — two would submit the line and then an empty prompt behind it.
    */
   async function stagedResumeLine(
     task: TaskRecord,
@@ -2143,9 +2157,9 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       ctx.log.info(`task ${task.id}: a restored pane has no resume command to stage`);
       return undefined;
     }
-    // THE character. A trailing newline is an Enter press, and this line is
-    // meant to sit at the prompt until somebody decides to run it.
-    return command.replace(/\s+$/u, '');
+    // THE character: a trailing newline is an Enter press. See above for why
+    // this one is now sent rather than withheld.
+    return `${command.replace(/\s+$/u, '')}\n`;
   }
 
   async function closeTaskRoot(task: TaskRecord): Promise<void> {
