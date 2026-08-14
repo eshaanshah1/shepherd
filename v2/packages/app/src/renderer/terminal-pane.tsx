@@ -1,5 +1,5 @@
 import { useEffect, useRef, type CSSProperties, type ReactNode } from 'react';
-import { displayTitle, type Pane } from '@shepherd/core/layout';
+import { type Pane } from '@shepherd/core/layout';
 import { paneTitleSurface } from '@shepherd/design-tokens';
 import type { PaneTerminals } from './pane-sessions.ts';
 import { terminalBackground } from './theme.ts';
@@ -106,26 +106,25 @@ export function TerminalPane({
     return () => observer.disconnect();
   }, [pane.id, terminals]);
 
-  const name = displayTitle(pane);
-  // Always, now that the name can no longer BE the cwd — `displayTitle` ends at
-  // `term` rather than at a path. The condition this replaces existed to stop
-  // the head printing the same path twice.
-  const where = pathTail(pane.cwd);
-
   /*
-   * The pane head is painted on the GRID's background, not on `--sh-ink`, so the
-   * pane and the terminal inside it read as one surface — the strip stops being a
-   * lid on a window into another program. The seam is then the hairline alone.
+   * The pane no longer draws a head.
    *
-   * Two things follow, and both are the point (reference notes, takeaway 8):
+   * It was a 28px strip naming the pane and its cwd, and it was the app's THIRD
+   * row of chrome: the tab strip already names the root, the sidebar already
+   * names the task, and a single-pane task therefore read its own name twice in
+   * two bars stacked on each other. §10's rule — nothing repeats a name down the
+   * hierarchy — and the tab strip is now permanent, so the name has a place.
+   *
+   * The grid's own colour is still published here, and both halves still matter:
    *
    *   - the background travels as a custom property rather than a class, so the
-   *     bar and the grid cannot be painted with different colours; and
-   *   - the FOREGROUND set is chosen from that colour's measured luminance,
-   *     published as `data-pane-title-surface`. Never from the app's theme mode:
-   *     a light terminal palette inside a dark app would leave the head drawing
-   *     near-white text on near-white ground, and it would fail silently, only
-   *     for users who themed something.
+   *     pane's padding and the grid cannot be painted with different colours; and
+   *   - the FOREGROUND set is still chosen from that colour's measured luminance,
+   *     published as `data-pane-title-surface`, so anything mounted INSIDE a pane
+   *     later adopts the terminal's palette rather than the app's. Never from the
+   *     app's theme mode: a light terminal palette inside a dark app would leave
+   *     it drawing near-white text on near-white ground, and it would fail
+   *     silently, only for users who themed something.
    */
   const surface = paneTitleSurface(background);
   // `CSSProperties & Record<string, string>` is how a custom property gets past
@@ -139,9 +138,9 @@ export function TerminalPane({
     // sibling (measured; a conditional sibling does not). A remounted host is a
     // fresh xterm and lost scrollback. See `agent-badge.tsx`.
     //
-    // The head is a STATIC element in the same slot the badge used to occupy, so
-    // the terminal host keeps index 1 and its own identity for the life of the
-    // pane. Nothing here may become `{cond && <div/>}` around the host.
+    // The host is the pane's ONLY child now that the head is gone — which is
+    // still a static shape, and that is the invariant: nothing here may become
+    // `{cond && <div/>}` around the host.
     <div
       className="sh-pane"
       data-pane-id={pane.id}
@@ -167,21 +166,7 @@ export function TerminalPane({
       data-pane-title-surface={surface}
       style={style}
     >
-      <div className="sh-pane-head" data-testid="pane-head">
-        <span className="sh-pane-name">{name}</span>
-        {where === null ? null : <span className="sh-pane-branch">· {where}</span>}
-      </div>
       <div className="sh-term" data-testid="terminal-host" data-pane-id={pane.id} ref={hostRef} />
     </div>
   );
-}
-
-/**
- * The last two components of a path. Presentation only — a full absolute path in
- * a 28px strip is a line of ellipsis, and the pane's identity is the leaf.
- */
-function pathTail(cwd: string | null): string | null {
-  if (cwd === null || cwd === '') return null;
-  const parts = cwd.split('/').filter((part) => part !== '');
-  return parts.length === 0 ? '/' : parts.slice(-2).join('/');
 }

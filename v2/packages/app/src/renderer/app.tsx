@@ -511,13 +511,14 @@ export function App({
    * would be a second copy of what the snapshot already says, which is how the
    * sidebar's equivalent went stale twice before ADR 0035 pinned it down.
    *
-   * **Empty for a group of one**, so a single-tab task looks exactly as the app
-   * does today and the strip appears at the moment a second tab does.
+   * **A group of one still gets its tab.** The strip used to appear only at the
+   * moment a second tab did; it is the app's one permanent row of chrome now, so
+   * the window does not change shape under you when a second tab opens — and it
+   * is the ONLY place a root is named, since the per-pane head is gone.
    */
   const tabs = useMemo(() => {
     if (snapshots === null || active === null) return [];
     const siblings = snapshots.roots.filter((root) => root.group === active.group);
-    if (siblings.length < 2) return [];
     return siblings.map((root) => {
       /*
        * What this tab has to say, rolled up over EVERY session in the root — not
@@ -683,15 +684,13 @@ export function App({
             showing, and a wrapper that re-parented them on a switch would be a
             remounted pane, which is a second pty.
           */}
-          {tabs.length > 0 && (
-            <TabStrip
-              tabs={tabs}
-              activeId={snapshots?.active ?? ''}
-              onSelect={(root) => invoke(LAYOUT_COMMANDS.switchRoot, { root })}
-              onNew={() => invoke(LAYOUT_COMMANDS.newTab, {})}
-              newIcon={raiseIcon('plus')}
-            />
-          )}
+          <TabStrip
+            tabs={tabs}
+            activeId={snapshots?.active ?? ''}
+            onSelect={(root) => invoke(LAYOUT_COMMANDS.switchRoot, { root })}
+            onNew={() => invoke(LAYOUT_COMMANDS.newTab, {})}
+            newIcon={raiseIcon('plus')}
+          />
           {/*
             TWO ways to have nothing on the stage, and they draw the same thing.
 

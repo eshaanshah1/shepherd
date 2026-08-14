@@ -165,8 +165,8 @@ body.sh-dragging {
   /*
    * The RAIL's width, not the window's. The traffic lights are the only thing
    * this layer exists to clear and they sit at the top-left, over the rail —
-   * so spanning the window would put a drag region across the tab strip and the
-   * pane head, and a control under a drag region is a control you cannot click.
+   * so spanning the window would put a drag region across the tab strip, and a
+   * control under a drag region is a control you cannot click.
    * Held to the rail, the stage keeps the whole of its own column and starts at
    * the window's top edge. The window drags by the sky.
    */
@@ -407,9 +407,8 @@ body.sh-dragging {
    * what focus USED to be drawn with rather than what it is.
    *
    * So a split currently has no focus signal in the stage. §6 still bans
-   * dimming, so the answer when one is wanted again is not opacity; it is the
-   * pane head, which is already a per-pane surface with the pane's own name in
-   * it and can carry the step without putting a line back between the grids.
+   * dimming, so the answer when one is wanted again is not opacity — and it is
+   * no longer the pane head either, which is gone (see below).
    */
 }
 
@@ -473,50 +472,16 @@ body.sh-dragging {
 }
 
 /*
- * The mock's `.pane-title`: one 28px line of chrome above the grid — painted on
- * the GRID's background, so pane and terminal read as one surface and the strip
- * is not a lid on a window into another program. The hairline under it is then
- * the only seam.
+ * There was a `.sh-pane-head` here — the mock's `.pane-title`, one 28px line of
+ * chrome above the grid carrying the pane's name and its cwd. It is gone, and
+ * with it the app's third stacked row of chrome: the tab strip (now permanent)
+ * names the root and the sidebar names the task, so the head was the same name
+ * told back to you a third time, one row lower. §10: nothing repeats a name down
+ * the hierarchy.
  *
- * Every colour below is now a plain role. The `var(…, fallback)` pairs are gone
- * with the parallel family: a pane that declares no surface (the placeholder
- * card, a test, a future contributed leaf) simply inherits the app's roles, which
- * is what the fallbacks were spelling out by hand.
+ * The role re-declaration above STAYS — it is what lets anything mounted inside
+ * a pane later paint itself on the terminal's palette rather than the app's.
  */
-.sh-pane-head {
-  display: flex;
-  align-items: center;
-  gap: var(--sh-space-md);
-  flex: 0 0 auto;
-  height: var(--sh-row-height);
-  padding: 0 var(--sh-space-xl);
-  background: var(--sh-surface);
-  /* Inset, not `border-bottom`: 28px of content box, so the name and the badge
-     centre on the same line the grid's first row is measured from. */
-  box-shadow: inset 0 calc(-1 * var(--sh-hairline)) 0 var(--sh-line);
-  font-size: var(--sh-font-size-small);
-  color: var(--sh-text-dim);
-  white-space: nowrap;
-  overflow: hidden;
-}
-
-/* The pane's identity — Orca's "input fg" step, the strongest thing in the bar. */
-.sh-pane-name {
-  font-weight: 500;
-  color: var(--sh-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* A path is machine output, so it is mono — the rule at the top of this file,
-   applied to the one part of the bar the app did not write. */
-.sh-pane-branch {
-  font-family: var(--sh-font-mono);
-  color: var(--sh-text-faint);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-}
 
 /* ------------------------------------------------------------------ terminal */
 
@@ -530,8 +495,8 @@ body.sh-dragging {
   min-width: 0;
   min-height: 0;
   padding: calc(var(--sh-line-height) / 4) calc(var(--sh-line-height) / 2);
-  /* The same colour the head above it is painted with, from the same variable —
-     the padding around the grid must not be a third of a shade off it. */
+  /* The pane's own grid colour, from the same variable `.sh-pane` uses — the
+     padding around the grid must not be a shade off the grid itself. */
   background: var(--sh-pane-title-bg, var(--sh-pane));
   overflow: hidden;
 }

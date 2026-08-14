@@ -183,14 +183,17 @@ describe('TerminalPane chrome surface', () => {
     view.unmount();
   });
 
-  it('puts the head and the grid host under the same colour variable', () => {
-    // One declaration, inherited by both — the bar and the padding around the
-    // grid cannot end up a shade apart.
+  it('puts the grid host under the pane’s own colour variable, and draws NO head', () => {
+    // One declaration, inherited by the host — the padding around the grid
+    // cannot end up a shade off the grid. And the head is gone: the tab strip
+    // names the root and the sidebar names the task, so a third bar saying it
+    // again is the repeat §10 refuses.
     const spy = spyTerminals();
-    const view = render(spy, makePane({}), false, '#123456');
+    const view = render(spy, makePane({ userTitle: 'api' }), false, '#123456');
     const root = paneRoot(view.container);
 
-    expect(root.contains(one(view.container, 'pane-head'))).toBe(true);
+    expect(view.container.querySelector('[data-testid="pane-head"]')).toBeNull();
+    expect(root.textContent).toBe('');
     expect(root.contains(one(view.container, 'terminal-host'))).toBe(true);
     expect(root.style.getPropertyValue('--sh-pane-title-bg')).toBe('#123456');
     view.unmount();
