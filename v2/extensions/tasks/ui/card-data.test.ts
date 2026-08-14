@@ -143,3 +143,47 @@ describe('readCardData', () => {
     for (const value of nasty) expect(() => readCardData(value)).not.toThrow();
   });
 });
+
+describe('facts, which come from an extension this code has never seen', () => {
+  const read = (facts: unknown): unknown => readCardData({ mark: 'working', facts })?.facts;
+
+  it('keeps a well-formed fact whole', () => {
+    expect(read([{ icon: 'pull-request', label: '#44', tone: 'negative', title: 'a check failed' }])).toEqual([
+      { icon: 'pull-request', label: '#44', tone: 'negative', title: 'a check failed' },
+    ]);
+  });
+
+  it('drops one bad fact and keeps its neighbours', () => {
+    // A point any extension may register with must not let one contribution
+    // take the whole cell — or the rail.
+    expect(
+      read([
+        { title: 'no content at all' },
+        7,
+        null,
+        { icon: 'pull-request' },
+        { icon: 'pull-request', title: 'kept' },
+      ]),
+    ).toEqual([{ icon: 'pull-request', tone: 'quiet', title: 'kept' }]);
+  });
+
+  it('reads an unrecognised tone as quiet rather than refusing the fact', () => {
+    expect(read([{ label: '#1', title: 'x', tone: 'chartreuse' }])).toEqual([
+      { label: '#1', tone: 'quiet', title: 'x' },
+    ]);
+  });
+
+  it('drops a command with no id, since a cell that looks clickable must do something', () => {
+    expect(read([{ label: '#1', title: 'x', command: { args: { a: 1 } } }])).toEqual([
+      { label: '#1', tone: 'quiet', title: 'x' },
+    ]);
+    expect(read([{ label: '#1', title: 'x', command: { id: 'github.review' } }])).toEqual([
+      { label: '#1', tone: 'quiet', title: 'x', command: { id: 'github.review', args: undefined } },
+    ]);
+  });
+
+  it('is absent, not empty, when nothing was contributed', () => {
+    expect(readCardData({ mark: 'working' })?.facts).toBeUndefined();
+    expect(read('not an array')).toBeUndefined();
+  });
+});

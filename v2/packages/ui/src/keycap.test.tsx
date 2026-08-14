@@ -59,3 +59,25 @@ describe('KeyCap', () => {
     expect(node).toBe(cap(dom.container));
   });
 });
+
+describe('a keycap on a solid fill', () => {
+  /**
+   * MUTATION TARGET. The border is what makes a keycap read as a key against a
+   * dark surface — and it is a grey rectangle on near-white.
+   *
+   * A primary button is already a solid block of `wool` with its own edge, so a
+   * bordered box inside it is a control drawn inside a control. `currentColor`
+   * rather than `textOnWool` by name, so it stays right for any future
+   * solid-fill variant whose ink is something else.
+   */
+  it('drops its border and takes the button’s own ink', () => {
+    const rule = rulesMentioning('sh-ui-keycap').find(
+      (candidate) => candidate.selectorText === '.sh-ui-button--primary .sh-ui-keycap',
+    );
+    expect(rule?.style.borderColor).toBe('transparent');
+    // jsdom lower-cases the keyword on the way in.
+    expect(rule?.style.color?.toLowerCase()).toBe('currentcolor');
+    // The padding stays, or `Land task L` reads as one word.
+    expect(rule?.style.padding).toBe('');
+  });
+});

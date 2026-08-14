@@ -34,6 +34,16 @@ function sourceFiles(dir: string): readonly string[] {
       found.push(...sourceFiles(path));
       continue;
     }
+    /*
+     * Source only, never a test.
+     *
+     * A test that pins what an UNKNOWN glyph name does — `task-card.test.tsx`
+     * asserts that a fact naming one draws no glyph rather than a placeholder —
+     * has to write an unknown name down, and there is no way to do that which
+     * this scan would not read as a defect. Excluding tests is the narrower fix
+     * than teaching the regex about intent.
+     */
+    if (entry.includes('.test.')) continue;
     if (entry.endsWith('.ts') || entry.endsWith('.tsx')) found.push(path);
   }
   return found;

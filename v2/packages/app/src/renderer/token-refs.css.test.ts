@@ -34,6 +34,7 @@ import '@shepherd/ui/styles.css';
 import './styles.css';
 import './sky-strip.css';
 import './task-card.css';
+import './review-pane.css';
 import './settings.css';
 import './inspector.css';
 

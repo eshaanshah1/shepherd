@@ -3,10 +3,13 @@ import {
   IconArrowBackUp,
   IconCheck,
   IconChevronDown,
+  IconChevronLeft,
+  IconChevronRight,
   IconDots,
   IconEye,
   IconFolder,
   IconFolderFilled,
+  IconGitPullRequest,
   IconLayoutColumns,
   IconLayoutRows,
   IconMaximize,
@@ -43,6 +46,14 @@ export const NAMED_GLYPHS: Readonly<Record<string, ComponentType<TablerIconProps
   archive: IconArchive,
   check: IconCheck,
   chevron: IconChevronDown,
+  /*
+   * The two horizontal ones, and they are a PAIR: `chevron-right` means "there
+   * is more this way" on a row you can open, and `chevron-left` is the way back
+   * from what it opened. Adding one without the other is how a surface grows a
+   * door with no handle on the inside.
+   */
+  'chevron-right': IconChevronRight,
+  'chevron-left': IconChevronLeft,
   close: IconX,
   dots: IconDots,
   eye: IconEye,
@@ -54,6 +65,13 @@ export const NAMED_GLYPHS: Readonly<Record<string, ComponentType<TablerIconProps
    */
   folder: IconFolder,
   'folder-filled': IconFolderFilled,
+  /*
+   * A pull request, which is the only git noun in here and is deliberately the
+   * only one: it is a thing that exists on a server and has a state, where a
+   * branch or a commit is a thing in a directory and has none. The rail draws it
+   * for a task with PRs open, tinted by the worst of them.
+   */
+  'pull-request': IconGitPullRequest,
   plus: IconPlus,
   /*
    * Finishing with a task, and taking it back — the rail's two most-made

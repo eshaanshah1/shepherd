@@ -11,6 +11,7 @@ import {
   type Manifest,
   type Permission,
   type Result,
+  type SecretSpec,
   type SettingsPage,
   type SettingsPageWire,
 } from '@shepherd/sdk';
@@ -201,15 +202,18 @@ function contributionsOf(raw: {
   commands?: { id: string; title?: string; key?: string }[];
   views?: { id: string; type: string; title: string; region?: string }[];
   settings?: SettingsPageWire[];
+  secrets?: SecretSpec[];
 }): {
   commands?: readonly ContributedCommand[];
   views?: readonly ContributedView[];
   settings?: readonly SettingsPage[];
+  secrets?: readonly SecretSpec[];
 } {
   return {
     ...(raw.commands === undefined ? {} : { commands: raw.commands }),
     ...(raw.views === undefined ? {} : { views: raw.views }),
     ...(raw.settings === undefined ? {} : { settings: raw.settings }),
+    ...(raw.secrets === undefined ? {} : { secrets: raw.secrets }),
   };
 }
 

@@ -84,6 +84,14 @@ export function truncate(text: string): { text: string; truncated: boolean } {
  * was started. v1 also records why the fallback is not `bash -lc "command -v"`:
  * that reads BASH profiles, so a PATH configured in zsh is invisible and the
  * probe concludes the tool is not installed.
+ *
+ * **`shell-env.ts` now makes the inherited PATH trustworthy**, which changes what
+ * this list is for without retiring it. Startup asks the user's OWN login shell
+ * (never a hardcoded bash — that objection above is why) and merges its PATH into
+ * `process.env`, so the fallback half of `searchDirs` is usually the good half
+ * now. This list stays FIRST anyway: it is what answers when the harvest found
+ * nothing, and it costs a `stat` against four fixed directories to be certain
+ * `git` is findable rather than probably findable.
  */
 export const STANDARD_BIN_DIRS = ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin'] as const;
 

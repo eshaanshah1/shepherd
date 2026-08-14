@@ -77,12 +77,26 @@
  * `[data-highlighted]` is the whole reason the Radix dependency is here rather
  * than a `:hover` rule and an `activeIndex` in React state: those two are
  * separate facts and they disagree the moment you arrow down a menu with the
- * pointer still resting on item three. Inverse video, per rule 4 — the same
- * treatment a selected `Row` gets, because it means the same thing.
+ * pointer still resting on item three.
+ *
+ * ── it was INVISIBLE, and this is the fix ────────────────────────────────────
+ *
+ * This rule read `background: fill-selected; color: text-on-wool`, which was
+ * inverse video when it was written and stopped being anything at all when
+ * `fillSelected` became an ALIAS OF `raised`. The menu's own background is
+ * `raised`. So a highlighted item painted the menu's background over the menu's
+ * background, in `textOnWool` — an alias of `canvas`, near-black — and the
+ * keyboard's position in the menu became unreadable in both directions at once:
+ * no fill to see, and a label that vanished into it.
+ *
+ * `fillActive` is the role whose job description is literally this: "an active
+ * row — the one the keyboard is on, in a menu or a palette". `fillSelected`'s
+ * own `notFor` says it is for a selected CARD under an `edgeSelected`, and its
+ * docstring refuses inverse video by name — which this rule was.
  */
 .sh-ui-menu__item[data-highlighted] {
-  background: var(--sh-fill-selected);
-  color: var(--sh-text-on-wool);
+  background: var(--sh-fill-active);
+  color: var(--sh-text);
 }
 
 /*
@@ -148,6 +162,29 @@
 }
 
 /*
+ * What choosing this item DOES — `sends now`, `queues`, `opens a tab`.
+ *
+ * Mono and a step down the ink ramp, because it is a fact about the item rather
+ * than part of its name: the label is what you are choosing and this is what you
+ * would find out afterwards, said in advance. Beside the shortcut rather than
+ * instead of it — one is a promise from the app and the other an instruction to
+ * you, and an item may carry both.
+ */
+.sh-ui-menu__meta {
+  flex: 0 0 auto;
+  margin-left: var(--sh-space-lg);
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-nano);
+  color: var(--sh-text-ghost);
+}
+
+/* On the highlighted item it steps up with the label, or it reads as disabled
+   on the one row the keyboard is actually on. */
+.sh-ui-menu__item[data-highlighted] .sh-ui-menu__meta {
+  color: var(--sh-text-faint);
+}
+
+/*
  * The shortcut sits at the trailing edge with real space before it, never in a
  * second column: a menu of four verbs does not need a grid, and a grid would
  * align a keycap under nothing on every item that has none.
@@ -158,7 +195,7 @@
 }
 
 /*
- * On a highlighted item the keycap is ink on a solid block, so it cannot keep its
+ * On a highlighted item the keycap sits on a fill rather than on the menu, so it
  * own dim colour or its own hairline — both are one value against the opposite
  * surface. `currentColor` is what makes this correct in the danger case too,
  * with no second rule.

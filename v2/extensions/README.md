@@ -15,6 +15,8 @@ Occupants, per the
 | `agents-core/` | `shepherd.agents-core` | M2 | the agent abstraction: state model, attention, the hook/event ingress that is not Claude-specific |
 | `claude-code/` | `shepherd.claude-code` | M2 | the Claude Code adapter — the plugin/hook protocol, session resume, the lifecycle→state map v1 kept in `StopPolicy` |
 | `tasks/` | `shepherd.tasks` | M3 | queued/scheduled work over sessions; the first extension with a view of its own |
+| `worktree-hook/` | `shepherd.worktree-hook` | M3 | a script you choose, run in every worktree a task creates — the first extension to plug into another's point |
+| `github/` | `shepherd.github` | M4 | the pull requests a task has open; the first extension to own a PANE (ADR 0044) |
 
 An extension is a package with a `shepherd` manifest key and an `activate`
 function.

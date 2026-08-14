@@ -145,6 +145,25 @@ export class TerminalMirror {
   }
 
   /**
+   * Has the running program turned bracketed paste on (`CSI ? 2004 h`)?
+   *
+   * The mirror parses the same byte stream the emulator does, so it already
+   * knows this — and it is the ONLY thing in the app outside the renderer that
+   * does. That matters because a program's paste mode is what decides whether
+   * multi-line text can be delivered at all: unbracketed, every newline in it is
+   * an Enter, so a six-line prompt reaches a TUI as a first line submitted and
+   * five lines scattered into whatever came next. v1 recorded that lesson from
+   * the other side (`pasteText` vs `injectText`); this is the reading that lets
+   * `SessionHost.paste` act on it.
+   *
+   * Read live rather than observed: it changes whenever a program starts or
+   * exits, and a cached answer would be about the program before this one.
+   */
+  get bracketedPaste(): boolean {
+    return this.#terminal.modes.bracketedPasteMode;
+  }
+
+  /**
    * The same bytes the fanout delivers, in the same order.
    *
    * Decoded here with a STATEFUL decoder (`{ stream: true }`), so a multi-byte

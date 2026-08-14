@@ -213,6 +213,109 @@ export type TaskProvisioned = (
   fact: TaskProvisionedFact,
 ) => Promise<{ readonly ok: boolean; readonly message?: string }>;
 
+/**
+ * What else is true of this task? — the seam another extension draws on a task
+ * row through.
+ *
+ * The motivating provider is `github`: a task's pull requests are a fact about
+ * the task, they belong next to its agent state rather than in a second list
+ * that would repeat every task title, and `tasks` must not learn what a pull
+ * request is to show them. A CI extension and a deploy extension are the same
+ * shape, which is why this is a point and not a `pr` field.
+ *
+ * It publishes a question, not a step — the rule `REPO_SUGGESTIONS_POINT` states
+ * — and it clears ADR 0039's bar for a new point the same way: a different
+ * SUBJECT. `repoProvisioned` and `taskProvisioned` ask "is this checkout ready";
+ * this asks "what should this row say", of a task that already exists.
+ *
+ * ── the two things it deliberately refuses ───────────────────────────────────
+ *
+ * **A provider returns at most ONE fact**, and the card draws it in one cell. A
+ * task row is a fixed height and only a waiting-on-you card may grow (§5), so
+ * multiplicity is the provider's problem: three PRs are one glyph whose tooltip
+ * says three, and the list of them lives behind the row's verb. A point that
+ * returned a list would push that decision into a card that cannot make it.
+ *
+ * **It is synchronous.** The tree is built in one pass and a provider that
+ * awaited a network call would hold up every row in the rail behind the slowest
+ * integration anybody installed. A provider answers from what it already knows
+ * and refreshes by its own clock, which is also what makes an unreachable GitHub
+ * a row with no glyph rather than a rail that will not draw.
+ */
+export const CARD_FACTS_POINT = 'tasks.cardFacts';
+
+/** The task a provider is being asked about — enough to answer, and no more. */
+export interface CardFactSubject {
+  readonly id: string;
+  /** Also the branch every one of its worktrees is on. */
+  readonly slug: string;
+  readonly title: string;
+  /** Finished work: the row is one dimmed line, and most facts do not apply. */
+  readonly shipped: boolean;
+  readonly repos: readonly { readonly path: string; readonly name: string }[];
+}
+
+/**
+ * One short thing a row can say, in the vocabulary a contribution is allowed.
+ *
+ * A glyph NAME and a token ROLE, never an SVG and never a colour — the same rule
+ * `TreeItem.tint` and `TreeItemAction.icon` already follow, so a provider cannot
+ * make its cell louder than the palette allows or break a theme it never tested.
+ */
+export interface CardFact {
+  /**
+   * A glyph name from the shell's allow-list. An unknown name draws no glyph
+   * rather than a placeholder box — a provider's typo must not be louder than
+   * what it was trying to say.
+   */
+  readonly icon?: string;
+  /**
+   * A few characters of mono text — `#309`, `v2 #288`. Truncated by the card
+   * rather than by the provider, because only the card knows how much room the
+   * title left.
+   *
+   * A fact may be an icon, a label, or both. One with neither is dropped.
+   */
+  readonly label?: string;
+  /** Which of the palette's four readings this is. Defaults to `quiet`. */
+  readonly tone?: 'positive' | 'negative' | 'neutral' | 'quiet';
+  /**
+   * What it MEANS, in words. Required, and the one field with no default: a
+   * mark whose only content is a colour cannot be read out, searched, or
+   * asserted on in a test (§5).
+   */
+  readonly title: string;
+  /** Clicking it runs this, as the CONTRIBUTING extension (D14). */
+  readonly command?: { readonly id: string; readonly args?: unknown };
+}
+
+/**
+ * `null` when this provider has nothing to say about this task — which is the
+ * common answer, and must stay cheap: it is called once per row per redraw.
+ */
+export type CardFactProvider = (task: CardFactSubject) => CardFact | null;
+
+/**
+ * "Ask me again" — announced on the bus by a provider whose answer has changed.
+ *
+ * The other half of the point, and it has to exist: a provider is a synchronous
+ * read of something it already knows, so nothing about it tells the rail when
+ * that something moved. Without this a PR would turn red on GitHub and the glyph
+ * would stay blue until some unrelated redraw happened to come along.
+ *
+ * A **bus topic** rather than a callback on the registration, because a point
+ * hands out providers and has no hook for "somebody registered" — so this
+ * extension would have nothing to subscribe to at the moment it could. Any
+ * loaded extension may emit and listen on any topic (membership-gated only),
+ * which makes the announcement exactly as reviewable as the point itself.
+ *
+ * It carries **no payload**. It is a nudge, in the same shape `views.onDidChange`
+ * already uses: the rail re-reads, every provider is asked again, and nobody has
+ * to agree on a diff format. Emitting it for a task that did not change costs a
+ * tree re-read, so a provider should compare before it announces.
+ */
+export const CARD_FACTS_CHANGED_TOPIC = 'tasks.cardFacts.changed';
+
 export const tasksManifest: Manifest = {
   id: TASKS_ID,
   name: 'Tasks',

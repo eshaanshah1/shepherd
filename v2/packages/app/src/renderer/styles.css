@@ -433,6 +433,38 @@ body.sh-dragging {
  * hook whatever draws focus next will hang off.
  */
 
+/*
+ * A pane that is a contributed VIEW rather than a terminal (ADR 0044).
+ *
+ * Two declarations and no third, which is the whole of the shell's opinion about
+ * one. It is painted on `--sh-pane` rather than on the grid colour above,
+ * because there is no grid: `--sh-pane-title-bg` is published inline by
+ * `TerminalPane` and a view pane never sets it, so the fallback already resolves
+ * — this says so on purpose rather than by luck. And it scrolls its own
+ * contents, so a long list cannot push the stage's layout around.
+ *
+ * Deliberately no padding, no head and no border. The view owns the rectangle
+ * (`ExtensionPane` states why), and a shell-set inset here would be a margin no
+ * contributed layout could opt out of — which is exactly how a pane surface
+ * starts accumulating chrome the extension then works around.
+ */
+.sh-pane--view {
+  background: var(--sh-pane);
+  overflow: auto;
+}
+
+/*
+ * The view that could not be drawn. Same ramp and same restraint as
+ * `.sh-side-missing`, one surface along: a control-at-rest ink, small type, and
+ * enough padding that the sentence is not against the pane's edge.
+ */
+.sh-pane-missing {
+  color: var(--sh-text-faint);
+  font-size: var(--sh-font-size-small);
+  padding: var(--sh-space-lg) var(--sh-space-xl);
+  margin: 0;
+}
+
 /* ------------------------------------------------------- pane chrome surface */
 /*
  * Chrome painted on a background we do not own — and the one place in this app

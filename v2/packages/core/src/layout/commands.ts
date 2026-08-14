@@ -71,6 +71,20 @@ const AXIS = s.enumOf(['row', 'column'] as const);
 const DIRECTION = s.enumOf(['left', 'right', 'up', 'down'] as const);
 
 /**
+ * A contributed view, as a caller asks for one (ADR 0044).
+ *
+ * Declared once and shared by `split` and `newTab` for `PLACEHOLDER`'s reason:
+ * the two are the same fact arriving by two gestures, and a caller writing
+ * against one must not find the other's shape different.
+ *
+ * `state` is `s.unknown()` and that is the point rather than a gap — it belongs
+ * to whichever extension registered `type`, and a kernel that validated it
+ * would have to know what a pull request is. The view is what checks it, on the
+ * far side of a port that already delivers `unknown`.
+ */
+const VIEW = s.object({ type: s.string(), state: s.optional(s.unknown()) });
+
+/**
  * What an empty root says about itself — see `RootPlaceholder`.
  *
  * Declared once and used by both `openRoot` and `setPlaceholder`, because those
@@ -159,6 +173,15 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
         initialCommand: s.optional(s.string()),
         /** A captured screen, base64 — `layout.openRoot` documents it. */
         seed: s.optional(s.string()),
+        /**
+         * Open a contributed VIEW here instead of a terminal (ADR 0044).
+         *
+         * Exclusive with `initialCommand` in practice and not enforced to be:
+         * a view pane never gets a session, so the command has nothing to be
+         * typed into and is simply never read. Refusing the pair would be a
+         * second rule to remember for a combination nobody writes on purpose.
+         */
+        view: s.optional(VIEW),
       }),
       handler: (args) => {
         const root = resolveRoot(args.root);
@@ -166,6 +189,7 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
           store.split(root, args.axis, {
             ...(args.cwd === undefined ? {} : { cwd: args.cwd }),
             ...(args.initialCommand === undefined ? {} : { initialCommand: args.initialCommand }),
+            ...(args.view === undefined ? {} : { view: args.view }),
           }),
         );
         stageSeed(root, args.seed);
@@ -480,6 +504,17 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
         cwd: s.optional(s.string()),
         /** One line, typed once into the new tab's pane. `layout.split` documents why. */
         initialCommand: s.optional(s.string()),
+        /** A contributed view instead of a terminal — `layout.split` documents it. */
+        view: s.optional(VIEW),
+        /**
+         * What the tab strip calls it.
+         *
+         * A terminal tab needs no name here — it takes one from the program that
+         * runs in it, by OSC. A view pane has no program, so without this every
+         * contributed tab would be called `term`, and `userTitle` is the field
+         * that already means "a name that beats the OSC title".
+         */
+        title: s.optional(s.string()),
       }),
       /**
        * Another tab of the group you are looking at.
@@ -498,6 +533,8 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
           store.newTab(group, {
             ...(inherited === undefined || inherited === null ? {} : { cwd: inherited }),
             ...(args.initialCommand === undefined ? {} : { initialCommand: args.initialCommand }),
+            ...(args.view === undefined ? {} : { view: args.view }),
+            ...(args.title === undefined ? {} : { userTitle: args.title }),
           }),
         );
         // And LAND you in it. A tab you have to go and find is a tab the gesture

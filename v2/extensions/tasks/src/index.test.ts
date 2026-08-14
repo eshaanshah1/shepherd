@@ -520,6 +520,25 @@ afterEach(() => {
   live = undefined;
 });
 
+describe('tasks.list', () => {
+  it('reports the pane GROUP as well as the task directory, and they are not the same', async () => {
+    /*
+     * `root` is a directory on disk and `group` is the layout group its tabs
+     * live in, and the names are close enough that reading the wrong one is a
+     * silent bug — `github` opens a review tab into this group, and a directory
+     * there would open it in a group of its own instead of in the task.
+     *
+     * `task:<id>` is derived in exactly one place (`root-id.ts` says why), and
+     * reporting it is what keeps a second extension from writing that string.
+     */
+    const h = (live = harness({ tasks: [task()] }));
+    const [listed] = await h.run<{ root: string; group: string }[]>('tasks.list');
+    expect(listed?.group).toBe('task:t1');
+    expect(listed?.root).toContain('fix-login');
+    expect(listed?.root).not.toBe(listed?.group);
+  });
+});
+
 describe('tasks.delete', () => {
   it('removes the record, so the task is gone from the list it was in', async () => {
     const h = (live = harness({ tasks: [task()] }));

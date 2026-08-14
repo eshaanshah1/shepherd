@@ -315,23 +315,68 @@ export function createSettings(seed: Readonly<Record<string, unknown>>, services
 // ------------------------------------------------------------------------ secrets
 
 /**
- * Typed and deliberately unbuilt (M1 plan, P0): the keychain lands when
- * something needs a credential.
+ * The keychain, reached the way everything else is: by invoking a command.
  *
- * Every method returns a promise, so the refusal is a **rejection carrying a
- * named error** — the closest the signature allows to a value. `get` resolving
- * `undefined` would be worse in exactly the way this whole file is about: the
- * caller would read it as "no such secret" and go quiet.
+ * No new protocol kind and no namespace passed from here, and the second half is
+ * the point. The owner of a secret is taken from the CALLER on main's side, so
+ * there is no shape of request in which one extension reads another's — an
+ * extension cannot name an owner because it never gets to.
+ *
+ * `get` answers `undefined` for a secret that is not set, for one that was never
+ * declared, and for one this build cannot decrypt. Those are three causes with
+ * one correct response (work without it, or tell the user to fill it in), and a
+ * caller that had to tell them apart would be a caller writing three branches
+ * that do the same thing.
+ *
+ * It does NOT throw for a missing `secrets` permission — that arrives as a
+ * denied command, which is a rejection, because it is a manifest bug rather than
+ * a state of the world.
  */
-function createSecrets(): SecretStore {
-  const refuse = (verb: string): Promise<never> =>
-    Promise.reject(new NotImplementedError(`secrets.${verb}`, LANDS_IN('a later milestone')));
+function createSecrets(services: ExtHostServices): SecretStore {
   return {
-    get: () => refuse('get'),
-    set: () => refuse('set'),
-    delete: () => refuse('delete'),
+    async get(key) {
+      const answer = await services.call({
+        kind: 'command.invoke',
+        commandId: SECRETS_GET,
+        args: { key },
+      });
+      if (!answer.ok) {
+        // A denial is worth saying out loud once: it means the manifest is
+        // missing `secrets`, which no amount of retrying fixes.
+        if (answer.error.code === 'denied') throw new Error(answer.error.message);
+        return undefined;
+      }
+      const value = (answer.value as { value?: unknown } | null)?.value;
+      return typeof value === 'string' && value !== '' ? value : undefined;
+    },
+
+    async set(key, value) {
+      const answer = await services.call({
+        kind: 'command.invoke',
+        commandId: SECRETS_SET,
+        args: { key, value },
+      });
+      // A throw, not a swallowed failure: "there is no keychain" and "you never
+      // declared this key" are both things the extension has to be able to
+      // report, and a `void` return would leave it believing it had stored one.
+      if (!answer.ok) throw new Error(answer.error.message);
+    },
+
+    async delete(key) {
+      const answer = await services.call({
+        kind: 'command.invoke',
+        commandId: SECRETS_DELETE,
+        args: { key },
+      });
+      if (!answer.ok) throw new Error(answer.error.message);
+    },
   };
 }
+
+/** Main's secrets verbs, as literals — see `createSettings` for the same shape. */
+const SECRETS_GET = 'secrets.get';
+const SECRETS_SET = 'secrets.set';
+const SECRETS_DELETE = 'secrets.delete';
 
 // -------------------------------------------------------------------- the context
 
@@ -368,7 +413,7 @@ export function createContext(options: ContextOptions): ExtensionContext {
     dataDir: options.dataDir,
     homeDir: options.homeDir,
     userName: options.userName,
-    secrets: createSecrets(),
+    secrets: createSecrets(services),
     log,
     clock: options.clock,
     permissions: options.permissions,

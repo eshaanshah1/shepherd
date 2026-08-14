@@ -68,8 +68,10 @@ export type {
   SessionMeta,
 } from './api-sessions.ts';
 export { REGIONS } from './api-sessions.ts';
+export { secretKeyIssue, secretLinkIssue, secretPath, type SecretSpec } from './secrets.ts';
 export type {
   FocusDirection,
+  ExtensionPaneProps,
   ExtensionRowProps,
   ExtensionViewProps,
   LayoutAPI,
@@ -77,6 +79,7 @@ export type {
   LayoutNode,
   LayoutRoot,
   LayoutSplit,
+  PaneView,
   Rect,
   SplitAxis,
   StatusItem,

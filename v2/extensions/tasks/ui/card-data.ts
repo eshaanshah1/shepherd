@@ -52,6 +52,25 @@ export interface CardAnswer {
   readonly key?: string;
 }
 
+/**
+ * One thing another extension says about this task — `tasks.cardFacts`.
+ *
+ * Re-declared here rather than imported from `src/manifest.ts` because this is
+ * the READER's copy: everything in this file crosses an IPC port as `unknown`
+ * and is checked rather than cast, and a type imported from the writer would
+ * describe what was sent instead of what arrived.
+ */
+export interface CardFact {
+  /** A glyph name, resolved by the renderer against its own set. Never an SVG. */
+  readonly icon?: string;
+  /** A few characters of mono text. Never a colour, never a length. */
+  readonly label?: string;
+  readonly tone: 'positive' | 'negative' | 'neutral' | 'quiet';
+  /** What it means, in words — the tooltip and the accessible name. */
+  readonly title: string;
+  readonly command?: { readonly id: string; readonly args?: unknown };
+}
+
 export interface CardData {
   readonly mark: CardMark;
   /*
@@ -122,6 +141,17 @@ export interface CardData {
    * a permanently-visible region of finished work should be able to tell you.
    */
   readonly shipped?: boolean;
+  /**
+   * What OTHER extensions say about this task — a PR's state, a deploy, a
+   * check.
+   *
+   * Not suppressed by `shipped`, unlike everything above it. The fields that go
+   * quiet on a finished row describe live work; a fact does not — the motivating
+   * one is a merged PR number, which is the most durable thing a finished row
+   * can carry. A provider that has nothing to say about finished work is told so
+   * and says nothing.
+   */
+  readonly facts?: readonly CardFact[];
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -220,6 +250,7 @@ export function readCardData(value: unknown): CardData | null {
    */
   const shipped = value['shipped'] === true;
   const dupe = int(value['dupe']);
+  const facts = readFacts(value['facts']);
 
   return {
     mark: state,
@@ -232,5 +263,48 @@ export function readCardData(value: unknown): CardData | null {
     question: readQuestion(value['question']),
     exitCode: int(value['exitCode']),
     ...(shipped ? { shipped: true as const } : {}),
+    ...(facts.length === 0 ? {} : { facts }),
   };
+}
+
+/**
+ * The facts, checked one at a time — a malformed one is dropped and its
+ * neighbours are kept.
+ *
+ * These come from an extension this code has never seen, through a point any
+ * extension may register with, so "one bad contribution takes the whole cell"
+ * would be a defect a third party could ship into the rail.
+ *
+ * `title` is required for the reason the SDK says it is: a mark whose only
+ * content is a colour cannot be read out or asserted on. `tone` defaults to
+ * `quiet` rather than being refused — an unrecognised tone is a spelling
+ * mistake, and the quiet reading is the one that claims nothing.
+ */
+const TONES = ['positive', 'negative', 'neutral', 'quiet'] as const;
+
+function readFacts(value: unknown): readonly CardFact[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry): CardFact[] => {
+    if (!isRecord(entry)) return [];
+    const title = str(entry['title']);
+    if (title === undefined) return [];
+    const icon = str(entry['icon']);
+    const label = str(entry['label']);
+    // Neither a glyph nor a word is a cell with nothing in it, which still takes
+    // the space of one.
+    if (icon === undefined && label === undefined) return [];
+    const rawTone = entry['tone'];
+    const tone = TONES.find((candidate) => candidate === rawTone) ?? 'quiet';
+
+    const rawCommand = entry['command'];
+    let command: CardFact['command'];
+    if (isRecord(rawCommand)) {
+      const id = str(rawCommand['id']);
+      // Both or nothing: a cell that looks clickable and runs nothing is the
+      // affordance lie the rest of this file already refuses.
+      if (id !== undefined) command = { id, args: rawCommand['args'] };
+    }
+
+    return [{ ...(icon === undefined ? {} : { icon }), ...(label === undefined ? {} : { label }), tone, title, ...(command === undefined ? {} : { command }) }];
+  });
 }

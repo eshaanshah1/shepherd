@@ -371,6 +371,72 @@
 }
 
 /*
+ * ── a fact another extension contributed (`tasks.cardFacts`) ──────────────
+ *
+ * One cell, beside the title, holding a glyph and/or a few mono characters. It
+ * sits with `dupe` rather than in the trailing track because it is part of what
+ * the row SAYS: the trailing track belongs to the hover verb, and a fact that
+ * disappeared when you reached for the button would be a fact you could not
+ * read and act on at once.
+ *
+ * The tone is the whole of a contribution's influence over how it looks. Four
+ * roles, resolved here — the extension writes `negative` and this file decides
+ * that means `--sh-red`, which is what keeps a third party from shipping a hue
+ * the palette does not have or a colour that stops working in light mode.
+ *
+ * `quiet` is the default and is deliberately the same ink as `dupe`: a fact that
+ * is not asking for anything should be no louder than the count beside it.
+ */
+.sh-task-card__fact {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sh-space-hair);
+  /* From the right, with the verb beside it — see the reveal below. */
+  transform: translateX(var(--sh-space-xs));
+  transition:
+    opacity var(--sh-motion) linear,
+    transform var(--sh-motion) linear,
+    visibility var(--sh-motion) linear;
+  /* A button here must not look like one, and must not be a different height
+     from the span it replaces when a fact has no command. */
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-nano);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: var(--sh-text-mute);
+}
+
+.sh-task-card__fact[data-tone='positive'] {
+  color: var(--sh-grass);
+}
+
+.sh-task-card__fact[data-tone='negative'] {
+  color: var(--sh-red);
+}
+
+.sh-task-card__fact[data-tone='neutral'] {
+  color: var(--sh-sky);
+}
+
+/* A clickable fact is a target, and a 12px glyph is not one. The hit area grows
+   through an invisible pseudo-element so the drawn cell never changes size —
+   §9's coarse-pointer rule, and the reason it is not `padding`. */
+button.sh-task-card__fact {
+  position: relative;
+  cursor: pointer;
+}
+
+button.sh-task-card__fact::after {
+  content: '';
+  position: absolute;
+  inset: calc(-1 * var(--sh-space-sm));
+}
+
+/*
  * ── the trailing action: over the title, never beside it ──────────────────
  *
  * §6 refuses "a row that grows to reveal hover actions", and the mechanism that
@@ -429,6 +495,21 @@
 
 
 /*
+ * ── a contributed fact is a VERB, so it lives with the other one ─────────────
+ *
+ * The PR glyph opens the review tab. It is not metadata about the row, it is a
+ * thing you do to it — like Ship, which sits an inch to its right — so the two
+ * are revealed together and the row is a title at rest.
+ *
+ * The shape this replaced reserved a slot for the hover verb and left the glyph
+ * floating in the middle of it: a control offset from the row's edge by exactly
+ * the width of a button that was not drawn yet. It read as a mistake, because
+ * from the outside it is one — nothing explains the gap until you point at it.
+ *
+ * Everything below applies to both, which is the point: one cell, one reveal,
+ * one fade. The cost is stated in `task-card.tsx` and is real — a fact is no
+ * longer readable without pointing at the row.
+ *
  * `visibility`, never `display: none` — the button must stay out of the tab order
  * and out of hit-testing while it is not shown, which `opacity: 0` alone does not
  * do. A control you cannot see but can click is worse than no control.
@@ -454,7 +535,8 @@
  * move: the glyph settles before a pointer that has just entered the row can reach
  * it.
  */
-.sh-task-card__action {
+.sh-task-card__action,
+.sh-task-card__fact {
   visibility: hidden;
   opacity: 0;
   /* From the right, which is where it comes from — the row's own edge. */
@@ -466,7 +548,9 @@
 }
 
 .sh-task-card:hover .sh-task-card__action,
-.sh-task-card:focus-within .sh-task-card__action {
+.sh-task-card:hover .sh-task-card__fact,
+.sh-task-card:focus-within .sh-task-card__action,
+.sh-task-card:focus-within .sh-task-card__fact {
   visibility: visible;
   opacity: 1;
   transform: none;
@@ -479,13 +563,15 @@
  */
 @media (prefers-reduced-motion: reduce) {
   .sh-task-card__trail,
-  .sh-task-card__action {
+  .sh-task-card__action,
+  .sh-task-card__fact {
     transition: none;
   }
 
   /* And it does not travel at all, rather than travelling instantly — the slide is
      decoration, so the honest accommodation is that the verb is simply there. */
-  .sh-task-card__action {
+  .sh-task-card__action,
+  .sh-task-card__fact {
     transform: none;
   }
 }
