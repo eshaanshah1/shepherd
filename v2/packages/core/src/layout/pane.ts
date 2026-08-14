@@ -75,9 +75,10 @@ export const DEFAULT_PANE_TITLE = 'term';
  * own title, else `term`.
  *
  * **The cwd is deliberately not in this chain**, and it used to be its last
- * link. It is drawn *beside* the name now rather than as it, because a label
- * that is a path says where you are twice — the pane head already prints the
- * directory — and says what is running nowhere. A shell's own idle title
+ * link. A label that is a path says where you are and says what is running
+ * nowhere; the sidebar row already names the task, whose name is where you are.
+ * (The pane head used to print the directory beside the name — that bar is gone
+ * now, and the cwd with it.) A shell's own idle title
  * (`%n@%m:%~`) is dropped one layer down for the same reason, in
  * `isShellPromptTitle`, which is what leaves a plain shell landing here.
  *

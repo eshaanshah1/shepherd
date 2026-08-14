@@ -923,11 +923,14 @@ describe('the tab strip', () => {
   const tabLabels = (container: HTMLElement): string[] =>
     [...container.querySelectorAll<HTMLElement>('[role="tab"]')].map((tab) => tab.textContent ?? '');
 
-  it('draws no strip for a group of one', () => {
-    // A single-tab task looks exactly as the app does today: the strip appears
-    // at the moment a second tab does, the way Safari's does.
+  it('draws the strip for a group of one, with that one tab in it', () => {
+    // The strip is the app's one permanent row of chrome. It used to appear only
+    // at the moment a second tab did, which meant the window changed shape under
+    // you when one opened — and, since the pane head went, it is also the only
+    // place a root is named.
     const { view } = render();
-    expect(view.container.querySelector('[data-testid="tab-strip"]')).toBeNull();
+    expect(view.container.querySelector('[data-testid="tab-strip"]')).not.toBeNull();
+    expect(tabLabels(view.container)).toHaveLength(1);
     view.unmount();
   });
 
