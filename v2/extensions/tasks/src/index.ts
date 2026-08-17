@@ -64,7 +64,7 @@ import { collectTaskDiff } from './model/diff-collect.ts';
 import type { DiffStats } from './model/diff-stats.ts';
 import { fuzzyFilter } from '@shepherd/sdk';
 import { SHIPPED_CAP, activeOrder, capShipped, shippedOrder } from './model/order.ts';
-import { totalMatches } from './model/transcript-rollup.ts';
+import { hitsByTask, totalMatches } from './model/transcript-rollup.ts';
 import { groupByDay } from './model/shipped-days.ts';
 import { capTabRows } from './model/tab-rows.ts';
 import {
@@ -3543,11 +3543,13 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * (D1b: an extension cannot resolve a path, so `ctx.dataDir` is the host's
    * answer and a second derivation would be a second chance to be wrong).
    */
-  const taskDirs = (): readonly string[] =>
-    store.list().flatMap((task) => {
-      const root = rootOf(task);
-      return [root, ...task.repos.map((repo) => `${root}/${repo.name}`)];
-    });
+  const taskDirs = (): ReadonlyMap<string, readonly string[]> =>
+    new Map(
+      store.list().map((task) => {
+        const root = rootOf(task);
+        return [task.id, [root, ...task.repos.map((repo) => `${root}/${repo.name}`)] as const];
+      }),
+    );
 
   /**
    * Ask the provider, debounced, and redraw when the answer lands.
@@ -3579,7 +3581,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       searching = controller;
 
       provider
-        .search({ query: asked, dirs: taskDirs(), signal: controller.signal })
+        .search({ query: asked, dirs: [...taskDirs().values()].flat(), signal: controller.signal })
         .then((answer) => {
           // A superseded keystroke's answer must not overwrite a newer one — the
           // abort is advisory, and a provider is free to resolve anyway.
@@ -3616,14 +3618,38 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       // No title, for `filter`'s reason: it answers a page's question and means
       // nothing without a query somebody has typed.
       schema: s.object({}),
-      handler: () => ({
-        query,
-        total: totalMatches(hits),
+      handler: () => {
         // Only ever the CURRENT query's hits. Answering with the previous
         // query's would fill the overlay with rows that do not match the field
         // it opened with.
-        hits: hitsFor === query ? hits : [],
-      }),
+        const current = hitsFor === query ? hits : [];
+
+        /**
+         * **The join a provider cannot do.**
+         *
+         * A `TranscriptHit` names a directory and a session and stops there — it
+         * comes from a reader that must not know what a task is (D11). Which task
+         * that directory belongs to, what that task is called, and what state it
+         * is in are all facts THIS extension holds, so they are attached here.
+         *
+         * Without it the overlay drew the SESSION's own title on every row, which
+         * for three matches in one session is the same words three times and
+         * never once the name of the work. And a state mark beside a session
+         * title would be a task's state drawn next to something that is not the
+         * task.
+         */
+        const dirsOf = taskDirs();
+        const enriched = [...hitsByTask(current, dirsOf)].flatMap(([taskId, taskHits]) => {
+          const task = store.get(taskId);
+          // A task deleted between the search and this call: its hits are dropped
+          // rather than drawn under a row nothing can open.
+          if (task === undefined) return [];
+          const mark = markFor(task, displayState(task.lifecycle, agentStatesOf(task)));
+          return taskHits.map((hit) => ({ ...hit, task: task.title, mark }));
+        });
+
+        return { query, total: totalMatches(current), hits: enriched };
+      },
     }),
   );
 

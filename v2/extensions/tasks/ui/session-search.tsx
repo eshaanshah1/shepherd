@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactElement } from 'react';
 import { segmentsOfRange, type ExtensionViewProps } from '@shepherd/sdk';
-import { CommandPalette, type PaletteCommand } from '@shepherd/ui';
+import { CommandPalette, type MarkState, type PaletteCommand } from '@shepherd/ui';
 
 /**
  * ⇧⌘F — the surface a transcript hit actually fits on.
@@ -25,10 +25,28 @@ interface Match {
 
 interface Hit {
   readonly sessionId: string;
+  /** The session's own title. Secondary — a session is not the unit of work. */
   readonly title?: string;
+  /** The TASK this session belongs to, joined on by the extension. */
+  readonly task?: string;
+  /** That task's state mark — the same one the rail draws for it. */
+  readonly mark?: MarkState;
   readonly when: number;
   readonly total: number;
   readonly matches: readonly Match[];
+}
+
+/**
+ * The five states, spelled out.
+ *
+ * A UI fact, and a narrowing one: `mark` arrives as `unknown` off a port, and
+ * handing `StateMark` a string it has no case for would draw an empty slot with
+ * no way to tell that from a task that has no state.
+ */
+const MARKS = new Set<string>(['working', 'waiting', 'resting', 'failed', 'shipped']);
+
+function readMark(value: unknown): MarkState | undefined {
+  return typeof value === 'string' && MARKS.has(value) ? (value as MarkState) : undefined;
 }
 
 interface Answer {
@@ -53,9 +71,12 @@ function readAnswer(value: unknown): Answer | null {
     if (typeof raw !== 'object' || raw === null) continue;
     const hit = raw as Partial<Hit>;
     if (typeof hit.sessionId !== 'string' || !Array.isArray(hit.matches)) continue;
+    const mark = readMark((raw as { mark?: unknown }).mark);
     hits.push({
       sessionId: hit.sessionId,
       ...(typeof hit.title === 'string' ? { title: hit.title } : {}),
+      ...(typeof hit.task === 'string' ? { task: hit.task } : {}),
+      ...(mark === undefined ? {} : { mark }),
       when: typeof hit.when === 'number' ? hit.when : 0,
       total: typeof hit.total === 'number' ? hit.total : hit.matches.length,
       matches: hit.matches as readonly Match[],
@@ -75,19 +96,35 @@ const clock = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-d
  */
 function rowsOf(hits: readonly Hit[]): readonly PaletteCommand[] {
   return hits.flatMap((hit) => {
+    /*
+     * The session's identity, and never a pane: a pane does not survive a restart
+     * and does not exist at all for an archived task, which is most of what this
+     * searches.
+     */
     const short = hit.sessionId.slice(0, 6);
-    // The session's identity, and never a pane: a pane does not survive a restart
-    // and does not exist at all for an archived task, which is most of what this
-    // searches.
-    const label = hit.title ?? short;
+    /*
+     * **The TASK names the row.** A session title is the agent's summary of one
+     * conversation, so three matches inside one session repeat the same words
+     * three times and never once say which piece of work you are looking at —
+     * which is the first of the four things a hit has to carry. The session's own
+     * title falls back in only when the task is unknown, and the short id behind
+     * that.
+     */
+    const label = hit.task ?? hit.title ?? short;
     const extra = hit.total - hit.matches.length;
+    // `a3f81c · 12:38` — which conversation, and when. One cell, because two
+    // stacked lines of metadata is more chrome than a result row can carry.
+    const when = hit.when === 0 ? short : `${short} · ${clock.format(new Date(hit.when))}`;
 
     return hit.matches.map((match, at) => ({
       id: `${hit.sessionId}:${String(at)}`,
       title: label,
       group: 'Transcripts',
+      // The task's own mark, the same one the rail draws for it — which is what
+      // makes the leading slot worth the indent it was already taking.
+      ...(hit.mark === undefined ? {} : { mark: hit.mark }),
       detail: segmentsOfRange(match.text, [match.at[0], match.at[1]]),
-      ...(hit.when === 0 ? {} : { meta: clock.format(new Date(hit.when)) }),
+      meta: when,
       // Only on the first row of a session: repeating `4 more` beside each of its
       // matches would read as four more per row.
       ...(at === 0 && extra > 0 ? { note: `${String(extra)} more` } : {}),
