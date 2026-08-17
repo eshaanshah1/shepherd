@@ -68,6 +68,41 @@ describe('the task card’s trailing action', () => {
     }
   });
 
+  /**
+   * MUTATION TARGET. The chip may paint over the title and over nothing else.
+   *
+   * The overlap is only honest against text that was going to be truncated
+   * anyway: the title ellipsises, so a chip landing on its tail reads as the row
+   * ending early. `stage` and `dupe` are short, whole and pinned to the same edge,
+   * so the chip cuts them mid-glyph — shipping a task drew `Archiving` and the
+   * hovered row said `Arc`, which is not a truncated word but a different one.
+   *
+   * The fix reserves the chip's own width instead of a number copied from the
+   * button's size, and only on the rows that have something to protect — which is
+   * why the reservation this file bans everywhere else does not come back with it.
+   */
+  it('rejoins the flow beside a stage or a dupe, so it covers neither', () => {
+    const exception = rulesMentioning('sh-task-card__trail').find((rule) =>
+      rule.selectorText.includes(':has('),
+    );
+    expect(exception?.selectorText).toContain('.sh-task-card__stage');
+    expect(exception?.selectorText).toContain('.sh-task-card__dupe');
+    expect(exception?.style.position).toBe('static');
+    // `inset-block: 0` is what gave the chip full row height; a static box needs
+    // this instead, or the backing shrinks to the button and reads as a floating pill.
+    expect(exception?.style.getPropertyValue('align-self')).toBe('stretch');
+  });
+
+  it('lets the stage ellipsise rather than run past the row’s edge', () => {
+    // It still never GROWS — the title (`flex: 1`) gives up its width first — but a
+    // rail too narrow for both must truncate the word, not overflow it.
+    const stage = ruleFor('.sh-task-card__stage');
+    expect(stage?.style.getPropertyValue('text-overflow')).toBe('ellipsis');
+    expect(stage?.style.overflow).toBe('hidden');
+    expect(stage?.style.getPropertyValue('min-inline-size')).toBe('0px');
+    expect(stage?.style.flexGrow).toBe('0');
+  });
+
   it('backs the revealed button with the row’s OWN fill, never a new colour', () => {
     // `fillHover` and `fillSelected` are opaque (a `wash` token and a luminance
     // step), so the chip under the button is the same value as the row it sits on
