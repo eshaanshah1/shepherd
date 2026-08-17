@@ -7,8 +7,8 @@ import type { AgentState, StateTransition } from '@shepherd/ext-agents-core/stat
  * says so), and it ports as what it always was: a **total function over values**.
  * No IO, no clock, no host. `viewing` is a parameter and stays one.
  *
- * Three behaviours in here look like bugs and are not. Each cost a real debugging
- * session in v1 and each has an ADR:
+ * Four behaviours in here look like bugs and are not. Each cost a real debugging
+ * session and each has an ADR:
  *
  *   - **The ordering guard** (ADR 0004). Mid-turn events apply only while the
  *     session is `working`/`blocked`. A finished turn is left only by a new
@@ -22,6 +22,11 @@ import type { AgentState, StateTransition } from '@shepherd/ext-agents-core/stat
  *     this yet*, so a turn ending under the user's eyes lands `idle` directly.
  *     Without it the dot reads "done" until you click away and back, because the
  *     only clearing path fires on a focus *change*.
+ *   - **The compaction restart** (ADR 0046). Auto-compaction fires a real
+ *     `SessionStart`, mid-turn, and `SessionStart` is otherwise the second event
+ *     that escapes the ordering guard. Unguarded it lands the pane `idle` with the
+ *     agent still working, and the guard then discards the rest of the turn —
+ *     including the `Stop` that ends it.
  */
 
 /**
@@ -45,6 +50,8 @@ export interface HookInput {
   readonly reason?: string;
   /** From the ONE predicate (ADR 0020). Never recomputed in here. */
   readonly viewing?: boolean;
+  /** Why a `SessionStart` fired: `startup`, `resume`, `clear`, `compact`. */
+  readonly sessionSource?: string;
   /** How many background tasks the turn is paused on — see `backgroundTaskCount`. */
   readonly backgroundTasks?: number;
 }
@@ -65,6 +72,8 @@ export function applyEvent(input: HookInput): StateTransition {
   switch (event) {
     // Drop the shell's title so the agent's own can replace it.
     case 'SessionStart':
+      // Except when the restart IS a compaction, which happens mid-turn (ADR 0046).
+      if (input.sessionSource === 'compact') return ignore();
       return transition({ state: 'idle', clearTitle: true, applied: true });
     case 'SessionEnd':
       return to('shell');

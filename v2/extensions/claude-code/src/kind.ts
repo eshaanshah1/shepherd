@@ -274,6 +274,9 @@ export function reduce(input: AgentEventInput): AgentDecision {
       // Only `Stop` is ever paused on background work, and reducing the array
       // for any other event would be reading a field that is not there.
       backgroundTasks: event === 'Stop' ? backgroundTaskCount(hook) : 0,
+      // Its own field rather than a row in DETAIL_FIELD: `source` decides a
+      // branch, and `detail` is the cosmetic name for every event that has one.
+      sessionSource: event === 'SessionStart' ? stringField(hook, 'source') : '',
     }),
   };
 }
