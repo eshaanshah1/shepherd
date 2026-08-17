@@ -34,6 +34,7 @@ import { claudeCodeManifest } from '@shepherd/ext-claude-code/manifest';
 import { tasksManifest } from '@shepherd/ext-tasks/manifest';
 import { worktreeHookManifest } from '@shepherd/ext-worktree-hook/manifest';
 import { githubManifest } from '@shepherd/ext-github/manifest';
+import { recallManifest } from '@shepherd/ext-recall/manifest';
 import {
   CORE_NAMESPACE,
   KERNEL,
@@ -1289,6 +1290,7 @@ void app.whenReady().then(async () => {
     // into have to exist before they activate.
     worktreeHookManifest,
     githubManifest,
+    recallManifest,
   ]) {
     const added = extensions.add(manifest, 'builtin');
     if (added.ok) {
@@ -1327,6 +1329,7 @@ void app.whenReady().then(async () => {
     // into have to exist before they activate.
     worktreeHookManifest,
     githubManifest,
+    recallManifest,
   ]) {
     if (extensions.state(extensionId(manifest.id)) === undefined) continue;
     await extensions.activate(extensionId(manifest.id));

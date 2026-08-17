@@ -296,3 +296,132 @@ describe('CommandPalette groups', () => {
     expect(rule?.style.getPropertyValue('font-size')).toBe('var(--sh-micro-font-size)');
   });
 });
+
+/**
+ * Session search's half of this component.
+ *
+ * The rows come from an extension that searched 14.8 MB of transcript text this
+ * component never sees, so three things have to be true: the query can be owned
+ * by the caller, the rows must not be filtered again here, and the run that
+ * matched must be painted from segments the searcher supplied.
+ */
+const HIT: PaletteCommand = {
+  id: 'a3f81c:0',
+  title: 'Make Shepherd narrower',
+  group: 'Transcripts',
+  meta: '14:02',
+  note: '4 more',
+  detail: [
+    { text: 'set band.rail to 264 so ', matched: false },
+    { text: 'shepherd', matched: true },
+    { text: ' titles stop truncating', matched: false },
+  ],
+};
+
+describe('CommandPalette with supplied results', () => {
+  const mountWith = (props: Partial<Parameters<typeof CommandPalette>[0]>): void => {
+    const dom = mount(
+      <CommandPalette
+        open
+        onOpenChange={() => {}}
+        onRun={() => {}}
+        commands={[HIT]}
+        filtered
+        {...props}
+      />,
+    );
+    mounted.push(dom);
+  };
+
+  it('paints only the run the searcher marked', () => {
+    mountWith({});
+    const hits = [...document.querySelectorAll('.sh-ui-palette__hit')];
+    expect(hits.map((node) => node.textContent)).toEqual(['shepherd']);
+  });
+
+  it('draws the whole matched line, hit and all', () => {
+    mountWith({});
+    const detail = document.querySelector('.sh-ui-palette__detail');
+    expect(detail?.textContent).toBe('set band.rail to 264 so shepherd titles stop truncating');
+  });
+
+  it('draws when it happened and how many more that session holds', () => {
+    mountWith({});
+    expect(document.querySelector('.sh-ui-palette__when')?.textContent).toBe('14:02');
+    expect(document.querySelector('.sh-ui-palette__note')?.textContent).toBe('4 more');
+  });
+
+  it('does not filter rows it was told are already the answer', () => {
+    // The match is in the body, not the title. Re-running fuzzyFilter here would
+    // drop it — which is most transcript hits.
+    mountWith({});
+    const input = document.querySelector<HTMLInputElement>('[data-testid="palette-input"]');
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter?.call(input, 'zzzz');
+      input?.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(document.querySelectorAll('[data-testid="palette-item"]')).toHaveLength(1);
+  });
+
+  it('opens with a controlled query already in the field', () => {
+    mountWith({ query: 'shepherd', onQueryChange: () => {} });
+    expect(document.querySelector<HTMLInputElement>('[data-testid="palette-input"]')?.value).toBe(
+      'shepherd',
+    );
+  });
+
+  it('reports every keystroke to the caller that owns the query', () => {
+    const onQueryChange = vi.fn();
+    mountWith({ query: 'shep', onQueryChange });
+    const input = document.querySelector<HTMLInputElement>('[data-testid="palette-input"]');
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter?.call(input, 'sheph');
+      input?.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(onQueryChange).toHaveBeenCalledWith('sheph');
+  });
+
+  it('still filters internally when nothing says otherwise', () => {
+    // The ⌘K palette is untouched by any of the above.
+    const dom = mount(
+      <CommandPalette open onOpenChange={() => {}} commands={COMMANDS} onRun={() => {}} />,
+    );
+    mounted.push(dom);
+    const input = document.querySelector<HTMLInputElement>('[data-testid="palette-input"]');
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter?.call(input, 'zoom');
+      input?.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(document.querySelectorAll('[data-testid="palette-item"]')).toHaveLength(1);
+  });
+
+  it('collapses the leading slot only for rows with nothing in it', () => {
+    // The rule used to hit every row in the list, which hid the StateMark this
+    // component passes for `Jump to` rows and would hide a transcript hit's too.
+    // Markup cannot show it — the slot is drawn and then hidden — so the
+    // assertion is on the stylesheet.
+    const rule = rulesMentioning('sh-ui-row__leading').find((candidate) =>
+      candidate.selectorText.includes('sh-ui-palette__list'),
+    );
+    expect(rule?.selectorText).toContain('sh-ui-palette__item--plain');
+  });
+
+  it('marks a bare command row plain and a hit row not', () => {
+    mountWith({ commands: [HIT, { id: 'b', title: 'Rename Pane' }] });
+    const rows = [...document.querySelectorAll<HTMLElement>('[data-testid="palette-item"]')];
+    expect(rows[0]?.className).not.toContain('sh-ui-palette__item--plain');
+    expect(rows[1]?.className).toContain('sh-ui-palette__item--plain');
+  });
+
+  it('paints the hit with ink rather than a ground, which has no token', () => {
+    // A tinted background would need an `accent` role that roles.ts does not
+    // have, and `fillActive` means "the row the keyboard is on" — borrowing it
+    // would make every hit look selected.
+    const rule = rulesMentioning('sh-ui-palette__hit')[0];
+    expect(rule?.style.getPropertyValue('color')).toBe('var(--sh-text)');
+    expect(rule?.style.getPropertyValue('background')).toBe('');
+  });
+});

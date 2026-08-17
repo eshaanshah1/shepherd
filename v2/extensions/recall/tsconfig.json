@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // `src` rather than `.`, because unlike every other extension this one has
+    // no `ui/` half: it draws nothing, so there is no second directory to
+    // typecheck and no DOM to type it against.
+    "rootDir": "src",
+    "outDir": "out-tsc",
+    "tsBuildInfoFile": "out-tsc/tsconfig.tsbuildinfo",
+    "types": ["node"],
+    "lib": ["ES2023"],
+    "resolveJsonModule": true
+  },
+  "include": ["src/**/*.ts"],
+  "references": [{ "path": "../../packages/sdk" }, { "path": "../tasks" }]
+}

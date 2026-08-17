@@ -115,6 +115,7 @@ const PACKAGES = [
   'extensions/tasks',
   'extensions/worktree-hook',
   'extensions/github',
+  'extensions/recall',
 ];
 
 /** `./src/index.ts` → `./dist/index.js`, and the entry that produces it. */

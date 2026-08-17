@@ -101,12 +101,23 @@ export const TASK_COMMANDS = {
   machines: 'tasks.machines',
   /** What the rail's search field reports, each time it changes. */
   filter: 'tasks.filter',
+  /**
+   * The current query's transcript hits — what the overlay draws.
+   *
+   * A command rather than a prop, for `suggestRepos`' reason (D5): the overlay is
+   * a page, it cannot reach another extension's point table, and it must not
+   * learn how. So it asks its own extension, which asks the provider.
+   */
+  transcriptHits: 'tasks.transcriptHits',
 } as const;
 
 /** The composer's UI module, resolved by the renderer's table (ADR 0033). */
 export const TASK_VIEWS = {
   tree: 'tasks.tree',
   composer: 'tasks.composer',
+  /** The ⇧⌘F overlay, and the row that raises it. */
+  sessionSearch: 'tasks.sessionSearch',
+  transcriptCount: 'tasks.transcriptCount',
 } as const;
 
 /**
@@ -124,6 +135,73 @@ export const TASK_VIEWS = {
  * corrupt invariants it cannot see.
  */
 export const REPO_SUGGESTIONS_POINT = 'tasks.repoSuggestions';
+
+/**
+ * Any hits in these directories? — the transcript seam.
+ *
+ * Defined HERE and answered elsewhere, for the reason `REPO_SUGGESTIONS_POINT`
+ * states above: **publish questions, not steps.** This extension must not learn
+ * what a Claude transcript is — `store.ts` calls `resumeTarget` "opaque here
+ * (D11) … the moment this extension reads it, it has learned about a vendor",
+ * and a JSONL parser tracking somebody else's record types is that failure in
+ * its most durable form. `shepherd.recall` registers the built-in provider; a
+ * second agent vendor registers its own and the rail keeps working unchanged.
+ *
+ * The question is coarse on purpose. "Which sessions, and where did they match?"
+ * is answerable and stable; a seam per step of reading a file would freeze one
+ * vendor's format into this extension's public API.
+ */
+export const TRANSCRIPT_SEARCH_POINT = 'tasks.transcriptSearch';
+
+export interface TranscriptQuery {
+  /** Case-insensitive literal. Not a regex — a stray `(` must not throw on a keystroke. */
+  readonly query: string;
+  /** Task roots and worktrees. A provider may look beneath them. */
+  readonly dirs: readonly string[];
+  /** Snippets per session. Absent means the provider's own default. */
+  readonly maxPerSession?: number;
+  /**
+   * The keystroke that asked.
+   *
+   * A real `AbortSignal`, which is sound because a point's providers run in this
+   * same process (`ext-host/api.ts` holds one `PointRegistry` for all of them) —
+   * there is no port here to flatten it into a plain value.
+   */
+  readonly signal?: AbortSignal;
+}
+
+export interface TranscriptMatch {
+  readonly source: 'user' | 'assistant' | 'recap' | 'title' | 'agent';
+  /** The snippet as it will be drawn: one line, already windowed. */
+  readonly text: string;
+  /** The run to highlight, as offsets into `text`. */
+  readonly at: readonly [number, number];
+}
+
+/**
+ * One session that matched.
+ *
+ * **No Shepherd role on it, deliberately.** `orchestrator` / `workstream` is this
+ * extension's own fact, held in `task.sessions[].role`; a transcript reader that
+ * returned it would have to know what a task is. `tasks` joins `sessionId`
+ * against its own record to label the row, and a session it does not track — one
+ * started by hand in a worktree — is labelled by its short id alone.
+ */
+export interface TranscriptHit {
+  /** Which requested dir it was found under. Maps the hit back to a task. */
+  readonly dir: string;
+  readonly sessionId: string;
+  readonly title?: string;
+  /** Last activity, epoch ms. */
+  readonly when: number;
+  /** Every match in this session, uncapped — the `4 more` count comes from here. */
+  readonly total: number;
+  readonly matches: readonly TranscriptMatch[];
+}
+
+export interface TranscriptSearchProvider {
+  search(query: TranscriptQuery): Promise<readonly TranscriptHit[]>;
+}
 
 /**
  * A worktree exists — is anything else needed before it can be worked in?
@@ -380,6 +458,9 @@ export const tasksManifest: Manifest = {
        * else.
        */
       { id: TASK_COMMANDS.filter },
+      // No title, for `filter`'s reason one line up: this answers a page's
+      // question and means nothing without a query somebody has typed.
+      { id: TASK_COMMANDS.transcriptHits },
     ],
   },
 };

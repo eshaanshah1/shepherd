@@ -142,3 +142,11 @@ export type { DefinePointOptions, PointRegistryOptions } from './points.ts';
  * lists the way the ⌘K palette does.
  */
 export { fuzzyFilter, fuzzyMatch, fuzzyScore, type FuzzyMatch } from './fuzzy.ts';
+
+/**
+ * The one highlighter, here for the matcher's reason above.
+ *
+ * A view draws the run that matched and the service half decides where it is, so
+ * a copy on either side would be a second opinion about which characters won.
+ */
+export { segmentsOf, segmentsOfRange, type DisplaySegment } from './segments.ts';

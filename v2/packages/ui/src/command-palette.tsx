@@ -9,7 +9,7 @@ import { Field } from './field.tsx';
 import { KeyCap } from './keycap.tsx';
 import { Modal } from './modal.tsx';
 import { Row } from './row.tsx';
-import { fuzzyFilter } from '@shepherd/sdk';
+import { fuzzyFilter, type DisplaySegment } from '@shepherd/sdk';
 import { cn } from './cn.ts';
 
 /**
@@ -92,6 +92,20 @@ export interface PaletteCommand {
    * and its mark is the same one the rail draws for it.
    */
   readonly mark?: MarkState;
+  /**
+   * A second line under the title — the transcript line that matched, cut into
+   * runs so the hit can be painted.
+   *
+   * **Pre-segmented by whoever searched**, deliberately: this component has no
+   * matcher and must not acquire one. A palette that re-derived the highlight
+   * would be a second opinion about which characters were the match, which is
+   * exactly the drift `segmentsOfRange` living in the sdk exists to prevent.
+   */
+  readonly detail?: readonly DisplaySegment[];
+  /** Right-aligned, beside `shortcut`'s slot — a time. Display only. */
+  readonly meta?: string;
+  /** Right-aligned under `meta` — `4 more`. Display only. */
+  readonly note?: string;
 }
 
 export interface CommandPaletteProps {
@@ -108,6 +122,23 @@ export interface CommandPaletteProps {
   /** Shown when the query matches nothing. */
   readonly emptyLabel?: string;
   readonly className?: string;
+  /**
+   * The query, when the CALLER owns it — which it does whenever the results come
+   * from somewhere else and have to be re-fetched as you type.
+   *
+   * Uncontrolled by default, so the ⌘K palette is untouched by this.
+   */
+  readonly query?: string;
+  readonly onQueryChange?: (query: string) => void;
+  /**
+   * `commands` is already the result set — do not filter it here.
+   *
+   * A transcript search runs in an extension, over text this component does not
+   * hold, so the rows arriving ARE the answer. Running `fuzzyFilter` over them
+   * again would drop every row whose match is in the body rather than the title,
+   * which is most of them.
+   */
+  readonly filtered?: boolean;
 }
 
 export function CommandPalette({
@@ -118,27 +149,41 @@ export function CommandPalette({
   placeholder = 'Run a command…',
   emptyLabel = 'No matching command',
   className,
+  query: controlledQuery,
+  onQueryChange,
+  filtered = false,
 }: CommandPaletteProps): ReactElement {
-  const [query, setQuery] = useState('');
+  const [ownQuery, setOwnQuery] = useState('');
   const [active, setActive] = useState(0);
   const listId = useId();
   const listRef = useRef<HTMLDivElement | null>(null);
 
+  const controlled = controlledQuery !== undefined;
+  const query = controlledQuery ?? ownQuery;
+  const setQuery = (next: string): void => {
+    if (!controlled) setOwnQuery(next);
+    onQueryChange?.(next);
+  };
+
   const matches = useMemo(
-    () => fuzzyFilter(query, commands, (command) => command.title),
-    [query, commands],
+    () => (filtered ? commands : fuzzyFilter(query, commands, (command) => command.title)),
+    [query, commands, filtered],
   );
 
   /*
    * Reopening starts clean. A palette that remembers the last query is a palette
    * that opens showing four results out of two hundred, and the reason is
    * invisible until you notice the text you did not type.
+   *
+   * **A CONTROLLED query is left alone**, because then the caller decides what it
+   * opens with — session search opens on whatever the rail's field already holds,
+   * which is the whole reason the count row carries the query across.
    */
   useEffect(() => {
     if (!open) return;
-    setQuery('');
+    if (!controlled) setOwnQuery('');
     setActive(0);
-  }, [open]);
+  }, [open, controlled]);
 
   /*
    * The active index is CLAMPED against the current match list rather than reset
@@ -283,8 +328,36 @@ export function CommandPalette({
                     )}
                   </span>
                 }
-                className="sh-ui-palette__item"
-                meta={command.shortcut === undefined ? undefined : <KeyCap>{command.shortcut}</KeyCap>}
+                /*
+                 * `--plain` marks a row with nothing in its leading slot, and it
+                 * is what the stylesheet keys the slot-collapsing rule off. That
+                 * rule used to apply to EVERY row on the grounds that "in a
+                 * palette no row will ever have a status" — which stopped being
+                 * true when `mark` was added for §1's `Jump to` rows, and it has
+                 * been hiding marks this component passes ever since.
+                 */
+                className={cn(
+                  'sh-ui-palette__item',
+                  command.mark === undefined &&
+                    command.icon === undefined &&
+                    command.detail === undefined
+                    ? 'sh-ui-palette__item--plain'
+                    : undefined,
+                )}
+                meta={
+                  command.shortcut !== undefined ? (
+                    <KeyCap>{command.shortcut}</KeyCap>
+                  ) : command.meta === undefined && command.note === undefined ? undefined : (
+                    <span className="sh-ui-palette__aside">
+                      {command.meta === undefined ? null : (
+                        <span className="sh-ui-palette__when">{command.meta}</span>
+                      )}
+                      {command.note === undefined ? null : (
+                        <span className="sh-ui-palette__note">{command.note}</span>
+                      )}
+                    </span>
+                  )
+                }
                 /*
                  * `mousemove`, not `mouseenter`. With the pointer resting inside
                  * the list, `mouseenter` never fires again — so arrowing down
@@ -296,6 +369,26 @@ export function CommandPalette({
                 onClick={() => run(command.id)}
               >
                 {command.title}
+                {/*
+                  The matched line. Drawn INSIDE the row's label cell so it
+                  inherits the ellipsis the label already has — a transcript line
+                  is longer than any rail is wide, and a second cell would need
+                  its own truncation rule to say the same thing twice.
+                */}
+                {command.detail === undefined ? null : (
+                  <span className="sh-ui-palette__detail">
+                    {command.detail.map((segment, at) => (
+                      <span
+                        // The segments are a fixed cut of one string and never
+                        // reorder, so the position IS a stable identity.
+                        key={at}
+                        className={segment.matched ? 'sh-ui-palette__hit' : undefined}
+                      >
+                        {segment.text}
+                      </span>
+                    ))}
+                  </span>
+                )}
               </Row>
               </Fragment>
             ))

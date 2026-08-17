@@ -104,6 +104,9 @@
         },
         {
           "id": "tasks.filter"
+        },
+        {
+          "id": "tasks.transcriptHits"
         }
       ]
     }
