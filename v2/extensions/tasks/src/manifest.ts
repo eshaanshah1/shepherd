@@ -154,7 +154,7 @@ export const REPO_SUGGESTIONS_POINT = 'tasks.repoSuggestions';
  * what a Claude transcript is — `store.ts` calls `resumeTarget` "opaque here
  * (D11) … the moment this extension reads it, it has learned about a vendor",
  * and a JSONL parser tracking somebody else's record types is that failure in
- * its most durable form. `shepherd.recall` registers the built-in provider; a
+ * its most durable form. `shepherd.transcripts` registers the built-in provider; a
  * second agent vendor registers its own and the rail keeps working unchanged.
  *
  * The question is coarse on purpose. "Which sessions, and where did they match?"

@@ -11,8 +11,8 @@ import { activate as worktreeHook } from '@shepherd/ext-worktree-hook';
 import { WORKTREE_HOOK_ID } from '@shepherd/ext-worktree-hook/manifest';
 import { activate as github } from '@shepherd/ext-github';
 import { GITHUB_ID } from '@shepherd/ext-github/manifest';
-import { activate as recall } from '@shepherd/ext-recall';
-import { RECALL_ID } from '@shepherd/ext-recall/manifest';
+import { activate as transcripts } from '@shepherd/ext-transcripts';
+import { TRANSCRIPTS_ID } from '@shepherd/ext-transcripts/manifest';
 
 /**
  * Which built-ins this build contains, by id.
@@ -39,5 +39,5 @@ export const BUILTIN_MODULES: ReadonlyMap<string, ActivateFn> = new Map<string, 
   [TASKS_ID, tasks],
   [WORKTREE_HOOK_ID, worktreeHook],
   [GITHUB_ID, github],
-  [RECALL_ID, recall],
+  [TRANSCRIPTS_ID, transcripts],
 ]);

@@ -5,7 +5,7 @@ import { claudeCodeManifest } from '@shepherd/ext-claude-code/manifest';
 import { tasksManifest } from '@shepherd/ext-tasks/manifest';
 import { worktreeHookManifest } from '@shepherd/ext-worktree-hook/manifest';
 import { githubManifest } from '@shepherd/ext-github/manifest';
-import { recallManifest } from '@shepherd/ext-recall/manifest';
+import { transcriptsManifest } from '@shepherd/ext-transcripts/manifest';
 import { BUILTIN_MODULES } from './builtins.ts';
 
 /**
@@ -30,7 +30,7 @@ const REGISTERED = [
   tasksManifest,
   worktreeHookManifest,
   githubManifest,
-  recallManifest,
+  transcriptsManifest,
 ];
 
 describe('the built-in module table', () => {

@@ -1,0 +1,265 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`digest golden > compaction folds to a stable digest 1`] = `
+{
+  "agentName": null,
+  "aiTitle": null,
+  "assistantTurns": 1,
+  "customTitle": null,
+  "cwd": "/repo",
+  "firstTs": 1785751200000,
+  "gitBranch": null,
+  "lastTs": 1785751201000,
+  "models": [],
+  "recap": null,
+  "recapTs": null,
+  "sessionId": "compaction",
+  "turns": [
+    {
+      "seq": 0,
+      "source": "recap",
+      "text": "This session is being continued from a previous conversation that ran out of context.",
+      "ts": 1785751200000,
+    },
+    {
+      "seq": 1,
+      "source": "assistant",
+      "text": "Picking up where we left off.",
+      "ts": 1785751201000,
+    },
+  ],
+  "usage": {
+    "byModel": {},
+    "total": {
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "input": 0,
+      "output": 0,
+    },
+  },
+  "userTurns": 0,
+}
+`;
+
+exports[`digest golden > duplicate-usage folds to a stable digest 1`] = `
+{
+  "agentName": null,
+  "aiTitle": null,
+  "assistantTurns": 2,
+  "customTitle": null,
+  "cwd": "/repo",
+  "firstTs": 1785837600000,
+  "gitBranch": null,
+  "lastTs": 1785837601000,
+  "models": [
+    "claude-opus-5",
+  ],
+  "recap": null,
+  "recapTs": null,
+  "sessionId": "duplicate-usage",
+  "turns": [
+    {
+      "seq": 0,
+      "source": "assistant",
+      "text": "partial",
+      "ts": 1785837600000,
+    },
+    {
+      "seq": 1,
+      "source": "assistant",
+      "text": "partial and then some",
+      "ts": 1785837601000,
+    },
+  ],
+  "usage": {
+    "byModel": {
+      "claude-opus-5": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "input": 10,
+        "output": 40,
+      },
+    },
+    "total": {
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "input": 10,
+      "output": 40,
+    },
+  },
+  "userTurns": 0,
+}
+`;
+
+exports[`digest golden > interrupt folds to a stable digest 1`] = `
+{
+  "agentName": null,
+  "aiTitle": null,
+  "assistantTurns": 0,
+  "customTitle": null,
+  "cwd": "/repo",
+  "firstTs": 1785664800000,
+  "gitBranch": null,
+  "lastTs": 1785664802000,
+  "models": [],
+  "recap": null,
+  "recapTs": null,
+  "sessionId": "interrupt",
+  "turns": [
+    {
+      "seq": 0,
+      "source": "user",
+      "text": "start a long job",
+      "ts": 1785664800000,
+    },
+  ],
+  "usage": {
+    "byModel": {},
+    "total": {
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "input": 0,
+      "output": 0,
+    },
+  },
+  "userTurns": 1,
+}
+`;
+
+exports[`digest golden > markup-prompt folds to a stable digest 1`] = `
+{
+  "agentName": null,
+  "aiTitle": null,
+  "assistantTurns": 1,
+  "customTitle": null,
+  "cwd": "/repo",
+  "firstTs": 1785924000000,
+  "gitBranch": null,
+  "lastTs": 1785924002000,
+  "models": [],
+  "recap": null,
+  "recapTs": null,
+  "sessionId": "markup-prompt",
+  "turns": [
+    {
+      "seq": 0,
+      "source": "user",
+      "text": "<code>port: 8080</code>",
+      "ts": 1785924000000,
+    },
+    {
+      "seq": 2,
+      "source": "assistant",
+      "text": "Port 8080 is already bound.",
+      "ts": 1785924002000,
+    },
+  ],
+  "usage": {
+    "byModel": {},
+    "total": {
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "input": 0,
+      "output": 0,
+    },
+  },
+  "userTurns": 1,
+}
+`;
+
+exports[`digest golden > titles-and-recap folds to a stable digest 1`] = `
+{
+  "agentName": "Explore",
+  "aiTitle": "Fixing the port conflict",
+  "assistantTurns": 0,
+  "customTitle": "port bug",
+  "cwd": "/repo",
+  "firstTs": 1786010400000,
+  "gitBranch": "fix/port",
+  "lastTs": 1786010405000,
+  "models": [],
+  "recap": "You asked about a port conflict.",
+  "recapTs": 1786010405000,
+  "sessionId": "titles-and-recap",
+  "turns": [
+    {
+      "seq": 3,
+      "source": "user",
+      "text": "why is the port taken",
+      "ts": 1786010400000,
+    },
+    {
+      "seq": 4,
+      "source": "recap",
+      "text": "You asked about a port conflict.",
+      "ts": 1786010405000,
+    },
+  ],
+  "usage": {
+    "byModel": {},
+    "total": {
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "input": 0,
+      "output": 0,
+    },
+  },
+  "userTurns": 1,
+}
+`;
+
+exports[`digest golden > tool-loop folds to a stable digest 1`] = `
+{
+  "agentName": null,
+  "aiTitle": null,
+  "assistantTurns": 2,
+  "customTitle": null,
+  "cwd": "/repo",
+  "firstTs": 1785578400000,
+  "gitBranch": "main",
+  "lastTs": 1785578403000,
+  "models": [
+    "claude-opus-5",
+  ],
+  "recap": null,
+  "recapTs": null,
+  "sessionId": "tool-loop",
+  "turns": [
+    {
+      "seq": 0,
+      "source": "user",
+      "text": "list the files",
+      "ts": 1785578400000,
+    },
+    {
+      "seq": 1,
+      "source": "assistant",
+      "text": "Looking now.",
+      "ts": 1785578401000,
+    },
+    {
+      "seq": 3,
+      "source": "assistant",
+      "text": "Two files: a.ts and b.ts.",
+      "ts": 1785578403000,
+    },
+  ],
+  "usage": {
+    "byModel": {
+      "claude-opus-5": {
+        "cacheRead": 100,
+        "cacheWrite": 0,
+        "input": 30,
+        "output": 13,
+      },
+    },
+    "total": {
+      "cacheRead": 100,
+      "cacheWrite": 0,
+      "input": 30,
+      "output": 13,
+    },
+  },
+  "userTurns": 1,
+}
+`;
