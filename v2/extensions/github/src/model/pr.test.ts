@@ -24,6 +24,7 @@ function pr(overrides: Partial<PullRequest> = {}): PullRequest {
     state: 'open',
     baseRef: 'main',
     headRef: 'tasks/add-multiple-task-tabs',
+    headOid: 'a71c4e9b28d5f0631ac8e7b4920df15c6e83a047',
     url: 'https://github.com/shepherd/v2/pull/301',
     added: 214,
     removed: 38,

@@ -34,6 +34,10 @@ query($owner: String!, $name: String!, $head: String!, $prs: Int!, $checks: Int!
         isDraft
         baseRefName
         headRefName
+        # The head COMMIT, which is what tells this task's merged PR from one
+        # that merged on a branch of the same name before this task existed.
+        # See model/ownership.ts.
+        headRefOid
         additions
         deletions
         changedFiles
@@ -150,6 +154,8 @@ interface RawPullRequest {
   readonly isDraft: boolean;
   readonly baseRefName: string;
   readonly headRefName: string;
+  /** Non-null in the schema, but optional here so a fixture need not carry it. */
+  readonly headRefOid?: string | null;
   readonly additions: number;
   readonly deletions: number;
   readonly changedFiles: number;
@@ -263,6 +269,7 @@ function readPullRequest(raw: RawPullRequest, identity: RepoIdentity): PullReque
     state: readState(raw),
     baseRef: raw.baseRefName,
     headRef: raw.headRefName,
+    headOid: raw.headRefOid ?? '',
     url: raw.url,
     added: raw.additions,
     removed: raw.deletions,

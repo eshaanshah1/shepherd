@@ -93,6 +93,10 @@ export function readPr(value: unknown): PullRequest | null {
     body: str(value['body']) ?? '',
     baseRef: str(value['baseRef']) ?? '',
     headRef: str(value['headRef']) ?? '',
+    // Nothing on this surface draws it — it is read so the PR that reaches the
+    // pane is the same shape as the one the service holds. Empty is the value
+    // `isTaskWork` already reads as "unknown".
+    headOid: str(value['headOid']) ?? '',
     url: str(value['url']) ?? '',
     added: int(value['added']) ?? 0,
     removed: int(value['removed']) ?? 0,

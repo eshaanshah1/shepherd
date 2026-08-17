@@ -7,6 +7,14 @@ task's slug, checked out in every one of its repos.** So "which PRs belong to
 this task" is a lookup rather than a guess — and it stays correct when a PR is
 retitled, rebased, or opened by somebody else.
 
+The join is derived on every sync rather than stored, so nothing goes stale when
+a PR is opened, closed or reopened outside the app. Its one weakness is that a
+branch NAME is not unique over time — `uniqueSlug` only dedupes against tasks
+that exist now, a repo has its own history of branch names, and a multi-repo task
+asks the same name of every repo. `model/ownership.ts` is the guard: a **finished**
+PR is this task's only if the task's HEAD is its tip or one of its commits. A live
+PR always belongs, and anything unjudgeable is kept.
+
 ## What it puts on screen
 
 Two places, and nowhere else.
@@ -37,6 +45,7 @@ being absent from this manifest.
 | which tasks exist | `tasks.list`, every tick — a task appearing is exactly when its first PR is about to |
 | which GitHub repo a checkout is | `git remote get-url origin`, once per directory, then remembered (`remotes.ts`) |
 | the PRs | **one GraphQL query per repo** (`query.ts`), by head branch. REST would be five calls per PR |
+| whose work a finished PR is | `git rev-parse HEAD` (`heads.ts`), read **only** when a repo answered with a merged or closed PR — the ordinary task never pays for it |
 | the diffs | REST `pulls.listFiles`, **only when the Files tab opens**. GraphQL has no patch field, and a patch is the largest thing about a PR by an order of magnitude |
 | the token | `gh auth token` first, then this extension's own keychain secret. Never an env var |
 
