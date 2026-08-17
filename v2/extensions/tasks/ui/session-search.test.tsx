@@ -33,7 +33,9 @@ afterEach(() => {
 const hit = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   dir: '/w/one',
   sessionId: 'a3f81c2b3c4d',
-  title: 'Recall in task search',
+  title: 'Test session',
+  task: 'Recall in task search',
+  mark: 'working',
   when: Date.parse('2026-08-13T14:02:00.000Z'),
   total: 5,
   matches: [{ source: 'user', text: 'i wanna add recall to shepherd', at: [12, 18] }],
@@ -62,10 +64,41 @@ describe('the session-search overlay', () => {
     expect(field()?.value).toBe('recall');
   });
 
-  it('draws the session title and the matched line', async () => {
+  it('names the row after the TASK, not the session', async () => {
+    // Three matches in one session would otherwise repeat the session's own
+    // title three times and never say which piece of work it was.
     await draw({ query: 'recall', total: 5, hits: [hit()] });
     expect(text()).toContain('Recall in task search');
+    expect(text()).not.toContain('Test session');
+  });
+
+  it('draws the matched line', async () => {
+    await draw({ query: 'recall', total: 5, hits: [hit()] });
     expect(text()).toContain('i wanna add recall to shepherd');
+  });
+
+  it("draws the task's state mark, so the leading slot earns its indent", async () => {
+    await draw({ query: 'recall', total: 5, hits: [hit()] });
+    const mark = document.querySelector('.sh-ui-mark');
+    expect(mark).toBeTruthy();
+    expect(mark?.getAttribute('title') ?? mark?.getAttribute('aria-label')).toContain('Working');
+  });
+
+  it('names the session and when beside it', async () => {
+    await draw({ query: 'recall', total: 5, hits: [hit()] });
+    // Six characters of the session id — never a pane, which does not survive a
+    // restart and does not exist for an archived task.
+    expect(text()).toContain('a3f81c');
+  });
+
+  it('falls back to the session title when no task claims the hit', async () => {
+    await draw({ query: 'recall', total: 1, hits: [hit({ task: undefined, total: 1 })] });
+    expect(text()).toContain('Test session');
+  });
+
+  it('draws no mark when the state is not one the app knows', async () => {
+    await draw({ query: 'recall', total: 1, hits: [hit({ mark: 'nonsense', total: 1 })] });
+    expect(document.querySelector('.sh-ui-mark')).toBeNull();
   });
 
   it('paints the run the searcher marked', async () => {
@@ -84,10 +117,12 @@ describe('the session-search overlay', () => {
     expect(text()).not.toContain('more');
   });
 
-  it('falls back to the short session id when there is no title', async () => {
-    await draw({ query: 'recall', total: 1, hits: [hit({ title: undefined, total: 1 })] });
-    // Six characters of the id, and never a pane — a pane does not survive a
-    // restart and does not exist for an archived task.
+  it('falls back to the short id when neither task nor session is named', async () => {
+    await draw({
+      query: 'recall',
+      total: 1,
+      hits: [hit({ task: undefined, title: undefined, total: 1 })],
+    });
     expect(text()).toContain('a3f81c');
   });
 
