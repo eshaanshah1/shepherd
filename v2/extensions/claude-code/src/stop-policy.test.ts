@@ -34,6 +34,71 @@ describe('applyEvent — turn boundaries', () => {
   });
 });
 
+describe('applyEvent — the compaction restart (ADR 0046)', () => {
+  it('writes nothing when a SessionStart is a compaction', () => {
+    const t = fold({ event: 'SessionStart', sessionSource: 'compact', current: 'working' });
+    expect(t.applied).toBe(false);
+    expect(t.state).toBe('working');
+    expect(t.clearTitle).toBe(false);
+  });
+
+  it('keeps the reason a compacting turn already had', () => {
+    const t = fold({ event: 'SessionStart', sessionSource: 'compact', current: 'blocked', reason: 'kept' });
+    expect(t.state).toBe('blocked');
+    expect(t.reason).toBe('kept');
+  });
+
+  it('still lands idle for every other source', () => {
+    // Fail-safe in the same direction as `backgroundTaskCount`: an unknown source
+    // — or a plugin too old to send one — gets the plain behaviour, never a state
+    // with no way out.
+    for (const sessionSource of ['startup', 'resume', 'clear', '']) {
+      const t = fold({ event: 'SessionStart', sessionSource, current: 'shell' });
+      expect(t.state).toBe('idle');
+      expect(t.clearTitle).toBe(true);
+      expect(t.applied).toBe(true);
+    }
+  });
+
+  it('carries a turn through the compactions a real session fired', () => {
+    // Recorded from an interactive `claude` run at CLAUDE_CODE_AUTO_COMPACT_WINDOW
+    // =60000, which auto-compacted twice mid-turn. Before the guard this reached
+    // the final `Stop` at `idle`, so the guard discarded it: no `needsCheck` and
+    // no notification for a turn that really had ended.
+    const recorded = [
+      'SessionStart:startup',
+      'UserPromptSubmit',
+      'PreToolUse',
+      'PostToolUse',
+      'PreCompact',
+      'SubagentStop',
+      'SessionStart:compact',
+      'PostCompact',
+      'PreToolUse',
+      'PostToolUse',
+      'PreCompact',
+      'SubagentStop',
+      'SessionStart:compact',
+      'PostCompact',
+      'PreToolUse',
+      'PostToolUse',
+      'Stop',
+    ];
+
+    let state: AgentState = 'shell';
+    let finished = false;
+    for (const entry of recorded) {
+      const [event, sessionSource = ''] = entry.split(':');
+      const t = fold({ event: event as string, sessionSource, current: state });
+      if (t.applied) state = t.state;
+      finished = t.turnFinished;
+    }
+
+    expect(state).toBe('needsCheck');
+    expect(finished).toBe(true);
+  });
+});
+
 describe('applyEvent — Stop, decided by the background-task count', () => {
   it('finishes the turn with no background tasks', () => {
     const t = fold({ event: 'Stop', current: 'working', backgroundTasks: 0 });

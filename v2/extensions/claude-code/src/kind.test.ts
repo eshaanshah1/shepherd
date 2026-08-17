@@ -79,6 +79,19 @@ describe('reading the payload', () => {
     );
   });
 
+  it('reads the source off a SessionStart, so a compaction restart is not a new session', () => {
+    // ADR 0046. Auto-compaction restarts the session mid-turn and says so with
+    // `source: "compact"`; without the field the policy cannot tell it from a
+    // startup and lands the pane `idle` with the agent still working.
+    const decision = reduce(input('SessionStart', { source: 'compact' }, { current: 'working' }));
+    expect(transition(decision).state).toBe('working');
+    expect(decision.kind === 'transition' && decision.to.applied).toBe(false);
+
+    expect(transition(reduce(input('SessionStart', { source: 'startup' }, { current: 'shell' }))).state).toBe(
+      'idle',
+    );
+  });
+
   it('survives a payload whose fields are the wrong type', () => {
     // The payload is whatever Claude sent; a field of the wrong type must degrade
     // to "no name", never throw inside a reducer running on the hook path.
