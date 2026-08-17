@@ -17,10 +17,13 @@ import {
   TASK_COMMANDS,
   TASK_PROVISIONED_POINT,
   TASK_VIEWS,
+  TRANSCRIPT_SEARCH_POINT,
   type CardFact,
   type CardFactProvider,
   type RepoProvisioned,
   type TaskProvisioned,
+  type TranscriptHit,
+  type TranscriptSearchProvider,
 } from './manifest.ts';
 import { TaskStore, type RepoArchive, type RepoRef, type TaskRecord, type TaskSession } from './store.ts';
 import { slugify, uniqueSlug } from './model/slug.ts';
@@ -61,6 +64,7 @@ import { collectTaskDiff } from './model/diff-collect.ts';
 import type { DiffStats } from './model/diff-stats.ts';
 import { fuzzyFilter } from '@shepherd/sdk';
 import { SHIPPED_CAP, activeOrder, capShipped, shippedOrder } from './model/order.ts';
+import { totalMatches } from './model/transcript-rollup.ts';
 import { groupByDay } from './model/shipped-days.ts';
 import { capTabRows } from './model/tab-rows.ts';
 import {
@@ -835,6 +839,18 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     order: 'priority',
   });
   ctx.subscriptions.push(suggestions);
+
+  /**
+   * The transcript seam.
+   *
+   * Defined unconditionally, and `first()` is how it is read: a point with no
+   * provider is a question nobody answers yet, which is a different fact from a
+   * question nobody asked. The rail's own title filter never depends on it.
+   */
+  const transcripts = points.define<TranscriptSearchProvider>(TRANSCRIPT_SEARCH_POINT, {
+    order: 'priority',
+  });
+  ctx.subscriptions.push(transcripts);
 
   /**
    * Registration order, not priority: these are side effects on a directory, so
@@ -3507,6 +3523,78 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    */
   let query = '';
 
+  /**
+   * What the transcript provider last said, and which query it was answering.
+   *
+   * Held beside `query` and never stored, for `query`'s own reason: it is a
+   * property of a list somebody is looking at right now. `hitsFor` is what makes
+   * a stale answer visible — a count drawn from the previous query is worse than
+   * no count, because it is a number you would believe.
+   */
+  let hits: readonly TranscriptHit[] = [];
+  let hitsFor = '';
+  let searching: AbortController | undefined;
+  let debounce: ReturnType<typeof setTimeout> | undefined;
+
+  /**
+   * Each task's directories — its root, and one worktree per repo beneath it.
+   *
+   * Built from `rootOf`, which is the ONE derivation of a task root in this file
+   * (D1b: an extension cannot resolve a path, so `ctx.dataDir` is the host's
+   * answer and a second derivation would be a second chance to be wrong).
+   */
+  const taskDirs = (): readonly string[] =>
+    store.list().flatMap((task) => {
+      const root = rootOf(task);
+      return [root, ...task.repos.map((repo) => `${root}/${repo.name}`)];
+    });
+
+  /**
+   * Ask the provider, debounced, and redraw when the answer lands.
+   *
+   * **The title filter never waits on this.** Fuzzy matching over titles is
+   * synchronous and instant, so the rows render on the keystroke and the count
+   * row appears a beat later. A search that blocked the filter would make every
+   * keystroke as slow as the disk — which is the whole reason the results live in
+   * an overlay rather than in the rail.
+   */
+  const searchTranscripts = (): void => {
+    if (debounce !== undefined) clearTimeout(debounce);
+    searching?.abort();
+
+    if (query === '') {
+      hits = [];
+      hitsFor = '';
+      return;
+    }
+
+    debounce = setTimeout(() => {
+      // Read at call time, not at activation: a provider registers when its
+      // extension activates, which may be after this one did.
+      const provider = transcripts.first();
+      if (provider === undefined) return;
+
+      const asked = query;
+      const controller = new AbortController();
+      searching = controller;
+
+      provider
+        .search({ query: asked, dirs: taskDirs(), signal: controller.signal })
+        .then((answer) => {
+          // A superseded keystroke's answer must not overwrite a newer one — the
+          // abort is advisory, and a provider is free to resolve anyway.
+          if (controller.signal.aborted || asked !== query) return;
+          hits = answer;
+          hitsFor = asked;
+          changed();
+        })
+        .catch((error: unknown) => {
+          // A provider that throws is a degraded search, not a broken rail.
+          ctx.log.warn(`transcript search failed: ${String(error)}`);
+        });
+    }, 120);
+  };
+
   ctx.subscriptions.push(
     commands.register(TASK_COMMANDS.filter, {
       // No title — see the manifest. This is a field reporting its contents, not
@@ -3517,8 +3605,25 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         if (next === query) return { query };
         query = next;
         changed();
+        searchTranscripts();
         return { query };
       },
+    }),
+  );
+
+  ctx.subscriptions.push(
+    commands.register(TASK_COMMANDS.transcriptHits, {
+      // No title, for `filter`'s reason: it answers a page's question and means
+      // nothing without a query somebody has typed.
+      schema: s.object({}),
+      handler: () => ({
+        query,
+        total: totalMatches(hits),
+        // Only ever the CURRENT query's hits. Answering with the previous
+        // query's would fill the overlay with rows that do not match the field
+        // it opened with.
+        hits: hitsFor === query ? hits : [],
+      }),
     }),
   );
 
@@ -3717,6 +3822,35 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
        */
       key: 'CmdOrCtrl+N',
       title: 'New task',
+    }),
+  );
+
+  ctx.subscriptions.push(
+    views.registerViewType(TASK_VIEWS.sessionSearch, {
+      kind: 'component',
+      component: TASK_VIEWS.sessionSearch,
+      /*
+       * An overlay for the composer's reason: you raise it, read it and dismiss
+       * it. Parked in the rail it would be a results list competing with the task
+       * list for a 264px column, which is the arrangement this whole design
+       * exists to avoid.
+       */
+      surface: 'overlay',
+      /*
+       * ⇧⌘F, and the two keys it is deliberately NOT.
+       *
+       * ⌘F stays pane-local: `find-bar.tsx` argues that a find spanning panes
+       * would answer with a count across screens you cannot see, and taking it
+       * here would delete that gesture from every terminal in the app. ⌘K is
+       * commands. ⇧⌘F is what every editor binds to "find across everything", so
+       * it is the one gesture a person arrives already knowing.
+       *
+       * Note what this is NOT bound to: focusing the rail's search field. If
+       * clicking into that field raised this, the rail would have no filter at
+       * all — and filtering titles in place is the thing you do most.
+       */
+      key: 'CmdOrCtrl+Shift+F',
+      title: 'Session search',
     }),
   );
 
@@ -4333,6 +4467,46 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
                  */
                 gutter: false,
                 command: { id: TASK_COMMANDS.expandTabs, args: { task: SHIPPED_KEY } },
+              });
+            }
+          }
+
+          /**
+           * **The one row that admits what the rail cannot show.**
+           *
+           * A transcript hit is four things — which task, which session, the line
+           * that matched, and when — and it needs two lines and roughly 500px.
+           * This column is 264px with a 21px-padded field, so a snippet indented
+           * under a session gets ~31 characters against recall's 120: drawn here
+           * it would truncate the exact string you searched for. So the rail
+           * reports that the matches exist, and ⇧⌘F opens a surface that can hold
+           * them.
+           *
+           * `foot`, so it sits at the physical bottom rather than merely last —
+           * the shipped region grows and this must stay under it. `quiet` and no
+           * `gutter`, for the two reasons the `n more` row above states.
+           *
+           * **Drawn only when the answer is for the query on screen.** A count
+           * from the previous keystroke is a number you would believe.
+           */
+          if (query !== '' && hitsFor === query) {
+            const total = totalMatches(hits);
+            if (total > 0) {
+              rows.push({
+                id: 'transcripts',
+                /*
+                 * The label is duplicated in the component, and deliberately: this
+                 * one is what a remote member draws in its own sidebar and what a
+                 * screen reader announces, so it must stand alone in a build that
+                 * has never heard of `tasks.transcriptCount`. Same contract as
+                 * `label` on a task row that draws itself as a card.
+                 */
+                label: `${String(total)} in transcripts`,
+                foot: true,
+                quiet: true,
+                gutter: false,
+                component: TASK_VIEWS.transcriptCount,
+                data: { total },
               });
             }
           }

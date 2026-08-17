@@ -35,6 +35,7 @@
     "@shepherd/ext-diagnostics": "workspace:*",
     "@shepherd/ext-github": "workspace:*",
     "@shepherd/ext-tasks": "workspace:*",
+    "@shepherd/ext-recall": "workspace:*",
     "@shepherd/ext-worktree-hook": "workspace:*",
     "@shepherd/platform-darwin": "workspace:*",
     "@shepherd/remote": "workspace:*",

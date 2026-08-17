@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
 import type { ExtensionPaneProps, ExtensionRowProps, ExtensionViewProps } from '@shepherd/sdk';
-import { TaskCard, TaskComposer } from '@shepherd/ext-tasks/ui';
+import { SessionSearchView, TaskCard, TaskComposer, TranscriptCountRow } from '@shepherd/ext-tasks/ui';
 import { DiagnosticsCard } from '@shepherd/ext-diagnostics/ui';
 import { WorktreeHookEditor } from '@shepherd/ext-worktree-hook/ui';
 import { ReviewPane } from '@shepherd/ext-github/ui';
@@ -30,6 +30,7 @@ import { ReviewPane } from '@shepherd/ext-github/ui';
  */
 export const EXTENSION_UI: Readonly<Record<string, ComponentType<ExtensionViewProps>>> = {
   'tasks.composer': TaskComposer,
+  'tasks.sessionSearch': SessionSearchView,
   'diagnostics.card': DiagnosticsCard,
   'worktree-hook.editor': WorktreeHookEditor,
 };
@@ -56,6 +57,7 @@ export function resolveExtensionUi(component: string | undefined): ComponentType
  */
 export const EXTENSION_ROW_UI: Readonly<Record<string, ComponentType<ExtensionRowProps>>> = {
   'tasks.card': TaskCard,
+  'tasks.transcriptCount': TranscriptCountRow,
 };
 
 export function resolveExtensionRowUi(

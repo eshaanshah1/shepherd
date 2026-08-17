@@ -55,6 +55,14 @@
  * `--sh-row-height` is the right variable here and not the control scale, because
  * these ARE list rows: they are `Row`, and the number has to be the same one or
  * the ceiling is nine and a half of them.
+ *
+ * **It is a HEIGHT and no longer a row count.** Ten was always a claim about how
+ * much list a person will scan before typing instead, and that claim is about
+ * pixels; it only looked like a count while every row was one line. A transcript
+ * hit is two, so the same ceiling now holds about seven of them — which is the
+ * right behaviour and the wrong arithmetic to describe as "ten rows". The value
+ * is unchanged; what changed is that nothing downstream may read it as a number
+ * of items.
  */
 .sh-ui-palette .sh-ui-palette__list {
   display: flex;
@@ -107,14 +115,94 @@
 }
 
 /*
- * The leading slot has no occupant here and is collapsed to nothing.
+ * A row carrying a matched line is TWO lines, and it is the one row in this app
+ * allowed to be — the fixed height everything else keeps exists so a label never
+ * moves when a state changes, and nothing about a search result changes under you.
+ *
+ * `height: auto` rather than a second fixed number: the detail line's own type
+ * scale decides how tall it is, and a hardcoded 50px here would be a third
+ * opinion about that after the font size and the line height.
+ */
+.sh-ui-palette__list .sh-ui-palette__item:has(.sh-ui-palette__detail) {
+  height: auto;
+  padding-block: var(--sh-space-sm);
+}
+
+/*
+ * The matched line.
+ *
+ * `small` rather than `body`, so the title stays the thing read first. Mono
+ * because it is quoted text somebody else wrote, which is the same rule that puts
+ * a diff and a measurement in mono and a label in sans.
+ */
+.sh-ui-palette__detail {
+  display: block;
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-small);
+  line-height: var(--sh-line-height);
+  color: var(--sh-text-mute);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/*
+ * The hit — ONE STEP UP THE INK RAMP, and no ground behind it.
+ *
+ * A tinted background would need a role token that does not exist: there is no
+ * `accent` in `roles.ts`, the only washes are `sceneGlow` and `scrim`, and
+ * `fillActive` is spoken for as "an active row, the one the keyboard is on" —
+ * which is the row this sits inside, so borrowing it would make every hit look
+ * selected.
+ *
+ * A luminance step is how this language distinguishes everything else anyway: the
+ * shipped region recedes by ink rather than opacity, and a bordered field recesses
+ * by luminance rather than a shadow. The line is `textMute` and the match is
+ * `text`, which is a full step and reads clearly in both themes.
+ */
+.sh-ui-palette__hit {
+  color: var(--sh-text);
+}
+
+/*
+ * The right-hand pair: when it happened, over how many more matches that session
+ * holds. Tabular so a column of times does not jitter.
+ */
+.sh-ui-palette__aside {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--sh-space-hair);
+}
+
+.sh-ui-palette__when,
+.sh-ui-palette__note {
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-micro);
+  font-variant-numeric: tabular-nums;
+  color: var(--sh-text-faint);
+}
+
+/*
+ * The leading slot is collapsed for rows that have NOTHING to put in it.
  *
  * `Row` renders it unconditionally so that a LIST of rows starts every label at
- * the same x — the argument is on the component. In a palette no row will ever
- * have a status, so the invariant is preserved by removing the slot from all of
- * them rather than by leaving 12px of nothing in front of every command name.
+ * the same x — the argument is on the component. A palette of bare command names
+ * has no occupant for it, and 12px of nothing in front of every name is worse
+ * than losing the alignment nothing needs.
+ *
+ * **This used to apply to every row in the list**, on the stated grounds that "in
+ * a palette no row will ever have a status". That stopped being true when
+ * `PaletteCommand.mark` was added for §1's `Jump to` rows, and this rule has been
+ * quietly hiding the marks the component passes ever since — a defect you can
+ * only see by looking, since nothing throws when a slot is drawn and then hidden.
+ * A transcript hit carries the same mark the rail draws for its task, so the slot
+ * has to arrive.
+ *
+ * The component sets `--plain` when a row has no mark, no icon and no detail; the
+ * decision is made there because only it can see all three.
  */
-.sh-ui-palette__list .sh-ui-row__leading {
+.sh-ui-palette__list .sh-ui-palette__item--plain .sh-ui-row__leading {
   display: none;
 }
 
