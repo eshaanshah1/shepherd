@@ -13,6 +13,7 @@ import {
 } from './manifest.ts';
 import { FILE_PAGE, message, octokitClient, type GitHubClient } from './client.ts';
 import { Remotes } from './remotes.ts';
+import { readHead } from './heads.ts';
 import { Sync } from './sync.ts';
 import { readPaneTitles, readRoots, readTasks, type ListedTask } from './tasks-read.ts';
 import { handingMeans, markFor, pickAgent, readLive, readStates, type TaskAgent } from './model/agent-pick.ts';
@@ -105,6 +106,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): void {
     clock,
     client: () => client,
     remoteOf: (path) => remotes.of(path),
+    headOf: (path) => readHead(process, path),
     // The nudge that makes the rail re-read. Emitted only when something drawn
     // actually moved — `Sync.changed` is what decides that, because a tree
     // re-read is not free.

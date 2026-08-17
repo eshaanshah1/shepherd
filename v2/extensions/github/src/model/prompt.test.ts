@@ -10,6 +10,7 @@ const PR: PullRequest = {
   state: 'open',
   baseRef: 'main',
   headRef: 'tasks/add-multiple-task-tabs',
+  headOid: '4f2b91c0d7a3e58146bb0c29fd7e4a1b6c0d3e82',
   url: 'u',
   added: 41,
   removed: 2,

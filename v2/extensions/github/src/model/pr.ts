@@ -133,6 +133,17 @@ export interface PullRequest {
   readonly state: PrState;
   readonly baseRef: string;
   readonly headRef: string;
+  /**
+   * The commit at the head of it — what `ownership.ts` judges a finished PR by.
+   *
+   * Carried rather than taken from `commits[0]`, which is only the tip for a PR
+   * of fifty commits or fewer: the query asks for the FIRST fifty, so a longer
+   * one yields the oldest of them and the real head appears nowhere in the list.
+   *
+   * Empty when GitHub sent nothing, which every reader must treat as "unknown"
+   * rather than "none".
+   */
+  readonly headOid: string;
   readonly url: string;
   readonly added: number;
   readonly removed: number;

@@ -15,6 +15,10 @@ function fakeClock(): Clock & { advance(ms: number): void } {
   } as Clock & { advance(ms: number): void };
 }
 
+/** The commit the task's checkout is on, unless a test says otherwise. */
+const HEAD = 'a71c4e9b28d5f0631ac8e7b4920df15c6e83a047';
+const STRANGER = '2d68b5f0913ce7a4820db6135f9e074ac2b81d6f';
+
 function pr(overrides: Partial<PullRequest> = {}): PullRequest {
   return {
     repo: 'shepherd/v2',
@@ -24,6 +28,7 @@ function pr(overrides: Partial<PullRequest> = {}): PullRequest {
     state: 'open',
     baseRef: 'main',
     headRef: 'tabs',
+    headOid: HEAD,
     url: 'u',
     added: 1,
     removed: 0,
@@ -54,15 +59,20 @@ interface Harness {
   readonly sync: Sync;
   readonly clock: ReturnType<typeof fakeClock>;
   readonly asked: { slug: RepoSlug; branch: string }[];
+  /** Every repo whose HEAD was read — the cost `needsHead` exists to avoid. */
+  readonly headReads: string[];
+  readonly logs: string[];
   readonly redraws: () => number;
   readonly authFailures: () => number;
   answer: (prs: readonly PullRequest[]) => void;
   fail: (error: unknown) => void;
 }
 
-function harness(options: { remote?: RepoSlug | null } = {}): Harness {
+function harness(options: { remote?: RepoSlug | null; head?: string | null } = {}): Harness {
   const clock = fakeClock();
   const asked: { slug: RepoSlug; branch: string }[] = [];
+  const headReads: string[] = [];
+  const logs: string[] = [];
   let redraws = 0;
   let authFailures = 0;
   let answer: readonly PullRequest[] = [];
@@ -84,15 +94,21 @@ function harness(options: { remote?: RepoSlug | null } = {}): Harness {
     client: () => client,
     remoteOf: () =>
       Promise.resolve(options.remote === undefined ? { owner: 'shepherd', repo: 'v2' } : options.remote),
+    headOf: (path) => {
+      headReads.push(path);
+      return Promise.resolve(options.head === undefined ? HEAD : options.head);
+    },
     onChanged: () => (redraws += 1),
     onAuthFailure: () => (authFailures += 1),
-    log: () => {},
+    log: (line) => logs.push(line),
   });
 
   return {
     sync,
     clock,
     asked,
+    headReads,
+    logs,
     redraws: () => redraws,
     authFailures: () => authFailures,
     answer: (prs) => {
@@ -233,6 +249,50 @@ describe('redraws', () => {
     h.clock.advance(SYNC_INTERVALS.live);
     await h.sync.pass([TASK]);
     expect(h.redraws()).toBe(1);
+  });
+});
+
+describe('a PR that only shares the branch name', () => {
+  it('is dropped, and said out loud', async () => {
+    // A task took a slug some earlier branch had. GitHub answers truthfully
+    // about a branch of that name and means somebody else's work.
+    const h = harness();
+    h.answer([pr({ number: 288, state: 'merged', headOid: STRANGER })]);
+    await h.sync.pass([TASK]);
+    expect(h.sync.prsOf('t-1')).toEqual([]);
+    expect(h.logs.join(' ')).toContain('#288');
+  });
+
+  it('keeps this task’s own merged PR beside it', async () => {
+    const h = harness();
+    h.answer([
+      pr({ number: 301, state: 'merged' }),
+      pr({ number: 288, state: 'merged', headOid: STRANGER }),
+    ]);
+    await h.sync.pass([TASK]);
+    expect(h.sync.prsOf('t-1').map((entry) => entry.number)).toEqual([301]);
+  });
+
+  it('keeps everything when the HEAD cannot be read', async () => {
+    // A missing PR reads as the integration being broken; an extra one is noise.
+    const h = harness({ head: null });
+    h.answer([pr({ number: 288, state: 'merged', headOid: STRANGER })]);
+    await h.sync.pass([TASK]);
+    expect(h.sync.prsOf('t-1')).toHaveLength(1);
+  });
+
+  it('never reads HEAD for the ordinary task', async () => {
+    // The read is a subprocess, and a task whose PRs are all open — or which has
+    // none at all — needs no judgement.
+    const h = harness();
+    h.answer([pr({ state: 'open' })]);
+    await h.sync.pass([TASK]);
+    expect(h.headReads).toEqual([]);
+
+    h.answer([pr({ state: 'merged' })]);
+    h.clock.advance(SYNC_INTERVALS.live);
+    await h.sync.pass([TASK]);
+    expect(h.headReads).toEqual(['/repos/v2']);
   });
 });
 

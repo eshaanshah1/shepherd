@@ -1,6 +1,7 @@
 import type { Clock } from '@shepherd/sdk';
 import type { ChangedFile, PullRequest } from './model/pr.ts';
 import type { RepoSlug } from './model/remote.ts';
+import { needsHead, ownedByTask } from './model/ownership.ts';
 import { isAuthFailure, message, type GitHubClient } from './client.ts';
 
 /**
@@ -45,6 +46,14 @@ export interface SyncDeps {
   /** `null` while there is no token — every sync is then a no-op that says so. */
   client: () => GitHubClient | null;
   remoteOf: (repoPath: string) => Promise<RepoSlug | null>;
+  /**
+   * The commit that checkout is on, or `null` when it cannot be read.
+   *
+   * Asked only when a repo answered with a finished PR (`needsHead`), so the
+   * ordinary task pays nothing for it. See `model/ownership.ts` for what it is
+   * for and why `null` keeps rather than drops.
+   */
+  headOf: (repoPath: string) => Promise<string | null>;
   /** Something changed: redraw. Called at most once per task per sync. */
   onChanged: () => void;
   /** A credential that no longer works. The owner stops and re-resolves. */
@@ -217,7 +226,24 @@ export class Sync {
         // one.
         if (slug === null) continue;
         try {
-          found.push(...(await client.pullRequests(slug, task.branch, repo.name)));
+          const answered = await client.pullRequests(slug, task.branch, repo.name);
+          /*
+           * A branch name is not unique over time, so what GitHub answered may
+           * include a PR that merged on a branch of this name before this task
+           * existed. `ownedByTask` separates them by commit; the HEAD it needs
+           * is read only when there is a finished PR to judge.
+           */
+          const headOid = needsHead(answered) ? await this.#deps.headOf(repo.path) : null;
+          const { kept, dropped } = ownedByTask(answered, headOid);
+          found.push(...kept);
+          // Said out loud rather than filtered away: a PR that vanishes with no
+          // explanation is indistinguishable from one that was never found.
+          if (dropped.length > 0) {
+            const numbers = dropped.map((pr) => `#${pr.number}`).join(', ');
+            this.#deps.log(
+              `${repo.name}: ${numbers} on ${task.branch} is not this task’s work — no commit in common`,
+            );
+          }
         } catch (error: unknown) {
           if (isAuthFailure(error)) {
             /*
