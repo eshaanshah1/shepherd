@@ -1,6 +1,6 @@
 import type { Manifest } from '@shepherd/sdk';
 
-export const RECALL_ID = 'shepherd.recall';
+export const TRANSCRIPTS_ID = 'shepherd.transcripts';
 export const TASKS_ID = 'shepherd.tasks';
 
 /**
@@ -14,9 +14,9 @@ export const TASKS_ID = 'shepherd.tasks';
  */
 export const TRANSCRIPT_SEARCH_POINT_ID = 'tasks.transcriptSearch';
 
-export const recallManifest: Manifest = {
-  id: RECALL_ID,
-  name: 'Recall',
+export const transcriptsManifest: Manifest = {
+  id: TRANSCRIPTS_ID,
+  name: 'Transcripts',
   version: '0.1.0',
   api: '^1.0.0',
   activation: ['onStartup'],

@@ -1,9 +1,9 @@
 {
-  "name": "@shepherd/ext-recall",
+  "name": "@shepherd/ext-transcripts",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "shepherd.recall — reads past Claude Code sessions and answers tasks' transcript searches.",
+  "description": "shepherd.transcripts — reads past Claude Code sessions and answers tasks' transcript searches.",
   "//exports": "No `./ui`: this extension draws nothing. The rail row and the overlay are tasks' surfaces; what crosses from here is data.",
   "exports": {
     ".": {
@@ -22,8 +22,8 @@
   "//dependencies": "@shepherd/ext-tasks is a TYPE-ONLY dependency — `import type` and nothing else. The runtime relationship is the point id plus the manifest's `dependencies` entry, which is the gate the host can review; a value import would route around it. See extensions/README.md.",
   "//shepherd": "The manifest, as an extension declares it. `src/manifest.ts` is the typed copy the host loads, and `manifest.test.ts` asserts the two are identical.",
   "shepherd": {
-    "id": "shepherd.recall",
-    "name": "Recall",
+    "id": "shepherd.transcripts",
+    "name": "Transcripts",
     "version": "0.1.0",
     "api": "^1.0.0",
     "activation": [
