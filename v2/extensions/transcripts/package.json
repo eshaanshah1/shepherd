@@ -17,6 +17,10 @@
     "./model": {
       "types": "./src/model/index.ts",
       "default": "./src/model/index.ts"
+    },
+    "./parse": {
+      "types": "./src/parse/index.ts",
+      "default": "./src/parse/index.ts"
     }
   },
   "//dependencies": "@shepherd/ext-tasks is a TYPE-ONLY dependency — `import type` and nothing else. The runtime relationship is the point id plus the manifest's `dependencies` entry, which is the gate the host can review; a value import would route around it. See extensions/README.md.",
