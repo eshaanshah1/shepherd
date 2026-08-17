@@ -1,12 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import { countMatches, matchesIn, snippetAround } from './search.ts';
-import { absorbLines, emptyDigest, type SessionDigest } from './session.ts';
+import { type SessionDigest } from './session.ts';
+import { absorb, emptySession } from '../parse/session.ts';
+import { digestOf } from '../parse/digest.ts';
 
 const line = (rec: unknown): string => `${JSON.stringify(rec)}\n`;
+// Built through the real fold rather than by hand, so a change to what a digest
+// contains reaches these tests instead of passing them by.
 const withTurns = (...texts: string[]): SessionDigest =>
-  absorbLines(
-    emptyDigest('abc'),
-    texts.map((t) => line({ type: 'user', message: { role: 'user', content: t } })).join(''),
+  digestOf(
+    absorb(
+      emptySession('abc', '/x/abc.jsonl'),
+      texts
+        .map((t, i) =>
+          line({ type: 'user', uuid: `u${String(i)}`, message: { role: 'user', content: t } }),
+        )
+        .join(''),
+    ),
   );
 
 describe('snippetAround', () => {
@@ -68,7 +78,7 @@ describe('matchesIn', () => {
 
   it('matches the recap and the agent name', () => {
     const digest: SessionDigest = {
-      ...emptyDigest('abc'),
+      ...withTurns(),
       recap: 'ported recall',
       agentName: 'recall-bot',
     };

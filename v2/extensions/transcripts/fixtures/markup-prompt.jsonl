@@ -1,0 +1,3 @@
+{"type":"user","uuid":"u1","parentUuid":null,"timestamp":"2026-08-05T10:00:00.000Z","sessionId":"s5","cwd":"/repo","message":{"role":"user","content":"<code>port: 8080</code>"}}
+{"type":"user","uuid":"u2","parentUuid":"u1","timestamp":"2026-08-05T10:00:01.000Z","message":{"role":"user","content":"<system-reminder>internal machinery</system-reminder>"}}
+{"type":"assistant","uuid":"a1","parentUuid":"u2","timestamp":"2026-08-05T10:00:02.000Z","message":{"id":"m1","model":"claude-opus-5","stop_reason":"end_turn","content":[{"type":"text","text":"Port 8080 is already bound."}]}}

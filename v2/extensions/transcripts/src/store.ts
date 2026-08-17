@@ -1,6 +1,9 @@
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { cwdIsUnder, folderMatchesAny } from './model/project-dir.ts';
-import { absorbLines, emptyDigest, isEmptyDigest, type SessionDigest } from './model/session.ts';
+import { isEmptyDigest, type SessionDigest } from './model/session.ts';
+import { isSubagentFileName, subagentDirFor } from './parse/subagents.ts';
+import { absorb, completeBytes, emptySession, type ParsedSession } from './parse/session.ts';
+import { digestOf } from './parse/digest.ts';
 
 /**
  * The stripped-text index — and the only file in this extension that touches disk.
@@ -23,7 +26,12 @@ import { absorbLines, emptyDigest, isEmptyDigest, type SessionDigest } from './m
  * keystroke that asked has usually been superseded by another.
  */
 
-const CACHE_VERSION = 1;
+/**
+ * 2: the entry's digest gained `models`, `usage` and a `seq` on every turn, and
+ * the entry gained `subagents`. A v1 file deserializes into a digest missing all
+ * of them, so a mismatch is discarded whole rather than migrated.
+ */
+const CACHE_VERSION = 2;
 
 /** The filesystem calls this needs — an interface so a test needs no real disk. */
 export interface IndexFs {
@@ -39,13 +47,26 @@ export interface IndexFs {
 export interface IndexedSession {
   readonly path: string;
   readonly digest: SessionDigest;
+  /** Its subagent transcripts, by path. Empty for the great majority. */
+  readonly subagents: readonly string[];
 }
 
-export interface RecallIndex {
+export interface TranscriptIndex {
   /** Bring every session under `dirs` up to date. Resolves early if aborted. */
   refresh(dirs: readonly string[], signal?: AbortSignal): Promise<void>;
   /** What is known right now — never reads disk. */
   sessionsIn(dirs: readonly string[]): readonly IndexedSession[];
+  /**
+   * One session, fully parsed — streamed on demand and never cached.
+   *
+   * This is the other 97%: tool calls, tool output, thinking. Holding it would
+   * be exactly what `tasks/store.ts` forbids putting in `ctx.dataDir`.
+   */
+  parse(path: string): ParsedSession | null;
+  /** The subagent transcripts beside a session, read from disk now. */
+  subagentsOf(path: string): readonly string[];
+  /** Forget everything. A refresh already running may not write its answer back. */
+  invalidate(): void;
   save(): void;
 }
 
@@ -55,6 +76,7 @@ interface Entry {
   /** Bytes already folded in. A trailing partial line is deliberately NOT counted. */
   readonly consumed: number;
   readonly digest: SessionDigest;
+  readonly subagents: readonly string[];
 }
 
 export const nodeFs: IndexFs = {
@@ -109,17 +131,6 @@ export const nodeFs: IndexFs = {
   },
 };
 
-/**
- * How many bytes of `chunk` end in a complete line.
- *
- * `absorbLines` drops the tail after the last newline, so the offset must stop
- * there too — otherwise those bytes are skipped forever rather than re-read once
- * the rest of the record lands.
- */
-function completeBytes(chunk: string): number {
-  const lastBreak = chunk.lastIndexOf('\n');
-  return lastBreak === -1 ? 0 : Buffer.byteLength(chunk.slice(0, lastBreak + 1));
-}
 
 /**
  * Has the caller given up? — asked as a CALL, deliberately.
@@ -139,11 +150,39 @@ export function createIndex(opts: {
   readonly cacheFile: string;
   readonly fs?: IndexFs;
   readonly log?: (message: string) => void;
-}): RecallIndex {
+}): TranscriptIndex {
   const fs = opts.fs ?? nodeFs;
   const entries = new Map<string, Entry>();
+  /**
+   * The full parse each entry's digest was projected from — in memory only.
+   *
+   * An incremental fold needs the whole `ParsedSession` to continue from, and
+   * that is exactly the transcript bulk the cache may not hold. So it lives here
+   * and dies with the process: after a restart, a file that GREW is re-read from
+   * zero, while the far commoner unchanged file answers from its cached digest
+   * without being opened at all.
+   */
+  const parsedByPath = new Map<string, ParsedSession>();
   let loaded = false;
   let dirty = false;
+  /**
+   * Bumped on every invalidation.
+   *
+   * A refresh that began before one carries the old generation and must not
+   * write its now-stale result back — otherwise an invalidation is silently
+   * undone by a walk that resolves just after it. This index is exposed to that:
+   * `refresh` awaits between files, so a keystroke can supersede one mid-walk.
+   */
+  let generation = 0;
+
+  /** The subagent transcripts beside a session. An absent directory is the common case. */
+  const subagentsOf = (sessionPath: string): readonly string[] => {
+    const dir = subagentDirFor(sessionPath);
+    return fs
+      .listFiles(dir)
+      .filter(isSubagentFileName)
+      .map((name) => `${dir}/${name}`);
+  };
 
   const load = (): void => {
     if (loaded) return;
@@ -166,14 +205,15 @@ export function createIndex(opts: {
   const refresh = async (dirs: readonly string[], signal?: AbortSignal): Promise<void> => {
     load();
     if (dirs.length === 0 || aborted(signal)) return;
+    const mine = generation;
 
     for (const folder of fs.listDirs(opts.projectsDir)) {
-      if (aborted(signal)) return;
+      if (aborted(signal) || mine !== generation) return;
       if (!folderMatchesAny(folder, dirs)) continue;
 
       const dir = `${opts.projectsDir}/${folder}`;
       for (const name of fs.listFiles(dir)) {
-        if (aborted(signal)) return;
+        if (aborted(signal) || mine !== generation) return;
 
         const path = `${dir}/${name}`;
         const st = fs.stat(path);
@@ -182,39 +222,66 @@ export function createIndex(opts: {
         const known = entries.get(path);
         if (known !== undefined && known.size === st.size && known.mtimeMs === st.mtimeMs) continue;
 
-        // A file that shrank was rewritten rather than appended to, so the stored
-        // digest describes bytes that no longer exist. Start over.
-        const grew = known !== undefined && st.size >= known.size;
+        const sessionId = name.replace(/\.jsonl$/, '');
+        const carried = parsedByPath.get(path);
+        /**
+         * Continue only when the file grew AND the parse it grew from is still
+         * here. A file that shrank was rewritten rather than appended to, so the
+         * stored offset describes bytes that no longer exist; and after a
+         * restart the parse is gone even though the entry survived.
+         */
+        const grew = known !== undefined && carried !== undefined && st.size >= known.size;
         const from = grew ? known.consumed : 0;
-        const base = grew ? known.digest : emptyDigest(name.replace(/\.jsonl$/, ''));
+        const base = grew ? carried : emptySession(sessionId, path);
 
         const chunk = fs.readRange(path, from);
+        const parsed = absorb(base, chunk);
+
+        // Yield BEFORE writing, so the generation check below sees an
+        // invalidation that landed while this file was being read.
+        await Promise.resolve();
+        if (aborted(signal) || mine !== generation) return;
+
+        parsedByPath.set(path, parsed);
         entries.set(path, {
           size: st.size,
           mtimeMs: st.mtimeMs,
           consumed: from + completeBytes(chunk),
-          digest: absorbLines(base, chunk),
+          digest: digestOf(parsed),
+          subagents: subagentsOf(path),
         });
         dirty = true;
-
-        // Yield, so a cold walk of many files cannot hold the thread that draws
-        // the rail.
-        await Promise.resolve();
       }
     }
   };
 
   return {
     refresh,
+    subagentsOf,
     sessionsIn: (dirs) => {
       const out: IndexedSession[] = [];
       for (const [path, entry] of entries) {
         if (isEmptyDigest(entry.digest)) continue;
         if (!cwdIsUnder(entry.digest.cwd, dirs)) continue;
-        out.push({ path, digest: entry.digest });
+        // `subagents` is absent from a cache written before it existed; an old
+        // entry is otherwise perfectly good, so it answers empty rather than
+        // forcing a reindex.
+        out.push({ path, digest: entry.digest, subagents: entry.subagents ?? [] });
       }
       // Newest first, which is the order a person expects to read them in.
       return out.sort((a, b) => (b.digest.lastTs ?? 0) - (a.digest.lastTs ?? 0));
+    },
+    parse: (path) => {
+      const text = fs.readText(path);
+      if (text === undefined) return null;
+      const sessionId = (path.split('/').at(-1) ?? path).replace(/\.jsonl$/i, '');
+      return absorb(emptySession(sessionId, path), text);
+    },
+    invalidate: () => {
+      generation += 1;
+      entries.clear();
+      parsedByPath.clear();
+      dirty = true;
     },
     save: () => {
       if (!dirty) return;

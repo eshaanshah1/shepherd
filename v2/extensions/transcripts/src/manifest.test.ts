@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { PERMISSIONS } from '@shepherd/sdk';
 import type * as TasksManifest from '@shepherd/ext-tasks/manifest';
-import { recallManifest, TRANSCRIPT_SEARCH_POINT_ID } from './manifest.ts';
+import { transcriptsManifest, TRANSCRIPT_SEARCH_POINT_ID } from './manifest.ts';
 
 /**
  * The id `tasks` declares, as a TYPE.
@@ -19,17 +19,17 @@ const pkg = JSON.parse(readFileSync(join(import.meta.dirname, '../package.json')
   version: string;
 };
 
-describe('the recall manifest', () => {
+describe('the transcripts manifest', () => {
   it('matches the shepherd key of its own package.json, field for field', () => {
-    expect(pkg.shepherd).toEqual(recallManifest);
+    expect(pkg.shepherd).toEqual(transcriptsManifest);
   });
 
   it('declares the same version as the package', () => {
-    expect(recallManifest.version).toBe(pkg.version);
+    expect(transcriptsManifest.version).toBe(pkg.version);
   });
 
   it('declares only permissions the SDK knows', () => {
-    for (const permission of recallManifest.permissions) {
+    for (const permission of transcriptsManifest.permissions) {
       expect(PERMISSIONS).toContain(permission);
     }
   });
@@ -39,17 +39,17 @@ describe('the recall manifest', () => {
     // transcripts in a namespace the host mirrors across the port. And this
     // extension runs no process and draws no view, so a grant for either would be
     // one nobody can justify at review.
-    expect(recallManifest.permissions).toEqual(['storage']);
+    expect(transcriptsManifest.permissions).toEqual(['storage']);
   });
 
   it('contributes no surface of its own', () => {
     // The rail row and the ⇧⌘F overlay belong to `tasks`. What crosses from here
     // is data, which is what lets a second agent vendor replace this wholesale.
-    expect(recallManifest.contributes).toEqual({});
+    expect(transcriptsManifest.contributes).toEqual({});
   });
 
   it('declares tasks as a dependency — the point it registers into is theirs', () => {
-    expect(recallManifest.dependencies).toEqual(['shepherd.tasks']);
+    expect(transcriptsManifest.dependencies).toEqual(['shepherd.tasks']);
   });
 
   it('spells the point id exactly as tasks defines it', () => {
