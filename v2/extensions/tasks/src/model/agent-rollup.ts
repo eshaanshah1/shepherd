@@ -41,22 +41,23 @@ export function rollUp(states: readonly string[]): TaskAgentState {
 /**
  * The rollup → the design-token word the row carries.
  *
- * Every word here already resolves in `view-dock`'s `TINT_ROLES`, so this ships
+ * Every word here already resolves in `view-dock`'s `TINT_STATES`, so this ships
  * without touching the renderer. Two of them are worth stating out loud:
  *
- *   - `needsCheck` emits **`needs-check`**, which the shell paints `success` —
- *     GREEN. A finished turn is not the same signal as a blocked one, and the
- *     palette says so in as many words: `pasture` is "done / success", `hay` is
- *     "blocked / attention". v1 agreed and had shipped it that way for months
- *     (`Theme.needsCheck` = `0x43C988`, commented "done — ready for you"), which
- *     is also what the rollup priority comment means when it says `done` — there
- *     was never a separate state by that name, only this one under its
- *     user-facing word.
+ *   - `needsCheck` emits **`needs-check`**, which the shell draws as the `ready`
+ *     mark — a GREEN square. A finished turn is not the same signal as a blocked
+ *     one, and the palette says so in as many words: `grass` is "passed · done",
+ *     `wool` is the one that means answer me. v1 agreed and had shipped it that
+ *     way for months (`Theme.needsCheck` = `0x43C988`, commented "done — ready
+ *     for you"), which is also what the rollup priority comment means when it
+ *     says `done` — there was never a separate state by that name, only this one
+ *     under its user-facing word.
  *
- *     Spelling it `needs-you` instead would paint it amber and make "finished"
- *     and "waiting on an answer" the same colour, told apart only by a tooltip.
- *     Green still clears to grey the moment you look at the pane, so it reads as
- *     "done, unread" rather than "resolved, ignore me".
+ *     The table in `view-dock` disagreed with this paragraph for a while and sent
+ *     `needs-check` to the wool square, which made "finished" and "waiting on an
+ *     answer" one mark told apart only by a tooltip. Green still clears to the
+ *     resting ring the moment you look at the pane, so it reads as "done, unread"
+ *     rather than "resolved, ignore me".
  *   - `idle` emits `idle`, which `TINT_ROLES` does NOT contain. It resolves by
  *     falling through `markState`'s default, which is the behaviour any
  *     unrecognised word gets — so this is also the only real exercise that

@@ -21,15 +21,16 @@ import { cn } from './cn.ts';
  *     is also why the eventual animated sheep (`flock`) can land here without
  *     re-laying-out every row that draws one.
  *   - **A square always means *your move*.** A ring means nothing is happening.
- *     A meter means something is. The SHAPE is the vocabulary; `wool` and `red`
- *     are both squares because both are your move, and they differ in urgency
- *     rather than in kind.
+ *     A meter means something is. The SHAPE is the vocabulary; `wool`, `grass`
+ *     and `red` are all squares because all three are your move, and they differ
+ *     in urgency rather than in kind — a question, a finished turn nobody has
+ *     read, a run that failed.
  *   - **Every mark carries its word**, as a `title` and as `sr-only` text that is
  *     always in the DOM. Two states will eventually share a hue, and a fact
  *     encoded only in colour cannot be read out, searched, or asserted on.
  */
 
-export type MarkState = 'working' | 'waiting' | 'resting' | 'failed' | 'shipped';
+export type MarkState = 'working' | 'waiting' | 'ready' | 'resting' | 'failed' | 'shipped';
 
 /**
  * The word each state says, and it is the accessible name unless overridden.
@@ -42,6 +43,7 @@ export type MarkState = 'working' | 'waiting' | 'resting' | 'failed' | 'shipped'
 export const markWords: Readonly<Record<MarkState, string>> = {
   working: 'Working',
   waiting: 'Waiting on you',
+  ready: 'Ready for you',
   resting: 'Resting',
   failed: 'Failed',
   shipped: 'Shipped',

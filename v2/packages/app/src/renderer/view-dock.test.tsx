@@ -573,6 +573,18 @@ describe('a contribution-s tint word, resolved to a mark', () => {
     expect(markState('done')).toBe('shipped');
   });
 
+  it('does not draw a finished turn with the mark a blocked agent wears', () => {
+    /*
+     * Both are squares — reading a finished turn is your move exactly as
+     * answering a question is — and for a while both were the WOOL square, so
+     * the rail said "answer me" for work that had already answered. The hue is
+     * the whole difference and the test is on the hue's state, not the shape.
+     */
+    expect(markState('needs-check')).toBe('ready');
+    expect(markState('blocked')).toBe('waiting');
+    expect(markState('needs-check')).not.toBe(markState('blocked'));
+  });
+
   it('still answers resting for a word it does not know', () => {
     // A tint the shell has never seen is not an emergency, and a ring is the
     // mark that claims nothing.

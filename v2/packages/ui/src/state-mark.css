@@ -1,7 +1,7 @@
 /*
  * The state mark — §3.
  *
- * ONE fixed box, five shapes inside it. Every length here is a literal px rather
+ * ONE fixed box, four shapes inside it. Every length here is a literal px rather
  * than a scale step, and that is deliberate: these are the sizes of MARKS, not of
  * chrome. A 7px ring beside 13px text is 7px because 7 is what reads as a ring at
  * arm's length, and scaling it with the density mode would make the vocabulary
@@ -23,12 +23,19 @@
   position: relative;
 }
 
-/* ── waiting on you · failed — a solid 8×8 square ────────────────────────────
+/* ── waiting on you · ready · failed — a solid 8×8 square ────────────────────
  *
- * A square always means *your move*. The two share a shape because they are the
- * same request; they differ in how bad it is that you have not answered yet.
+ * A square always means *your move*. The three share a shape because they are
+ * the same request; they differ in what it is you are being asked to do, and the
+ * hue is the only thing that says which.
+ *
+ * `ready` is green rather than wool for the reason the palette gives `grass` its
+ * job — "passed · done". A finished turn and a question are not the same signal,
+ * and drawn in one colour they were told apart only by a tooltip: the rail said
+ * "answer me" for work that had already been answered.
  */
 .sh-ui-mark[data-state='waiting']::before,
+.sh-ui-mark[data-state='ready']::before,
 .sh-ui-mark[data-state='failed']::before {
   content: '';
   inline-size: 8px;
@@ -37,6 +44,10 @@
 
 .sh-ui-mark[data-state='waiting']::before {
   background: var(--sh-mark-waiting);
+}
+
+.sh-ui-mark[data-state='ready']::before {
+  background: var(--sh-mark-ready);
 }
 
 .sh-ui-mark[data-state='failed']::before {
