@@ -286,7 +286,10 @@ export class Sync {
         // The PREVIOUS answer survives a total failure. A stale list with a
         // complaint beside it beats an empty one, and beats a review tab that
         // blinks empty every time a laptop's wifi drops.
-        prs: failures.length > 0 && found.length === 0 ? (before?.prs ?? []) : found,
+        prs:
+          failures.length > 0 && found.length === 0
+            ? (before?.prs ?? [])
+            : keepPatches(found, before?.prs ?? []),
         syncedAt: this.#deps.clock.now(),
         ...(failures.length === 0 ? {} : { error: failures.join(' · ') }),
       });
@@ -296,6 +299,76 @@ export class Sync {
       this.#running.delete(task.id);
     }
   }
+}
+
+/**
+ * Carry the fetched patches over an answer that does not have them.
+ *
+ * A sync pass is one GraphQL round trip, and GraphQL's changed-file type has no
+ * patch field at all — so `found` describes every file and carries the diff of
+ * none. Writing it over the held answer therefore DELETED every patch the
+ * `github.diff` command had fetched, on every pass, roughly every twenty
+ * seconds.
+ *
+ * That alone would have been a re-fetch. What made it a dead end is that
+ * `github.diff` remembers what it has already fetched under `<pr>@<updatedAt>`,
+ * and `updatedAt` had not moved — so the Files tab asked, was told `cached`,
+ * and drew "the diff for this file has not been fetched" until somebody pushed
+ * to the branch. It was silent as well: `fingerprint` does not include patches,
+ * so `changed` saw nothing and no redraw announced the loss.
+ *
+ * The condition is exactly the one `github.diff`'s own cache key states: a
+ * patch is good while `updatedAt` has not moved. When it HAS moved the patches
+ * are stale and dropping them is correct — the fetch key changes with it, so
+ * the next look asks GitHub again.
+ *
+ * Matched by path, because that is what a patch is about; a file that has gone
+ * from the PR simply has no entry to carry.
+ */
+export function keepPatches(
+  found: readonly PullRequest[],
+  before: readonly PullRequest[],
+): readonly PullRequest[] {
+  if (before.length === 0) return found;
+  return found.map((pr) => {
+    const was = before.find((entry) => entry.repo === pr.repo && entry.number === pr.number);
+    if (was === undefined || was.updatedAt !== pr.updatedAt) return pr;
+    /*
+     * Both sides read defensively. `files` is absent on a PR nothing has looked
+     * at yet — `index.ts` says the same thing with `pr.files?.length ?? 0` —
+     * and an answer off a port is not a shape this code has checked. A missing
+     * list means there is nothing to carry, or nowhere to carry it to.
+     */
+    const held = was.files ?? [];
+    const files = pr.files;
+    if (files === undefined) return pr;
+    /*
+     * The whole REST-derived record, not just the patch.
+     *
+     * A pass answers from GraphQL, whose changed-file type carries a path and
+     * two counts and nothing else — so grafting only `patch` back on left
+     * `status` and `previousPath` to be overwritten with nothing every twenty
+     * seconds. The symptom was a renamed file reporting "its contents are
+     * identical", because the branch that says "renamed from X" tests a field
+     * that had just been erased. Same bug as the patch, one field along, which
+     * is the argument for carrying the record rather than a list of keys.
+     */
+    const heldOf = new Map(held.map((file) => [file.path, file] as const));
+    if (heldOf.size === 0) return pr;
+    return {
+      ...pr,
+      files: files.map((file) => {
+        const was = heldOf.get(file.path);
+        if (was === undefined) return file;
+        return {
+          ...file,
+          ...(was.patch === undefined ? {} : { patch: was.patch }),
+          ...(was.status === undefined ? {} : { status: was.status }),
+          ...(was.previousPath === undefined ? {} : { previousPath: was.previousPath }),
+        };
+      }),
+    };
+  });
 }
 
 /**

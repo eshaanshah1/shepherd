@@ -170,6 +170,25 @@ export function readStates(value: unknown): ReadonlyMap<string, { state: string;
  * literally what a TUI does with input arriving mid-turn, so this is a
  * description rather than a prediction.
  */
+/**
+ * What to CALL an agent in the conversation view's `Agent` block.
+ *
+ * The title of the pane it runs in, which is a layout fact and the whole point
+ * of it is that a user typed it or a program set it. Then the repo, then where
+ * it is rooted — a block has to say something, and a session id says nothing a
+ * person can use.
+ *
+ * Deliberately WITHOUT the agent's kind, which the hand-off picker does prefix.
+ * The two are answering different questions: a row in a list of candidates has
+ * to say what sort of thing it is, and this block is already headed `Agent`, so
+ * leading with `claude-code` spends the first word repeating the heading and
+ * the second on a directory. Naming the vendor here also broke the rule the
+ * rest of this extension keeps — it never says whose agent it hired.
+ */
+export function agentName(agent: TaskAgent, paneTitle: string | undefined): string {
+  return paneTitle ?? agent.repo ?? 'task root';
+}
+
 export function handingMeans(agent: TaskAgent): 'sends now' | 'queues' {
   return agent.state === 'working' ? 'queues' : 'sends now';
 }

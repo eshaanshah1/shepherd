@@ -1,4 +1,13 @@
-import type { CheckRun, CheckState, Commit, PrState, PullRequest, Reviewer, ReviewThread } from '../src/model/index.ts';
+import type {
+  ChangedFile,
+  CheckRun,
+  CheckState,
+  Commit,
+  PrState,
+  PullRequest,
+  Reviewer,
+  ReviewThread,
+} from '../src/model/index.ts';
 
 /**
  * What the review pane is handed, and the reader that refuses to trust it.
@@ -91,6 +100,9 @@ export function readPr(value: unknown): PullRequest | null {
     repoKey: str(value['repoKey']) ?? repo,
     title: str(value['title']) ?? `#${number}`,
     body: str(value['body']) ?? '',
+    // Empty rather than a guess: a PR whose opener GitHub cannot name is a
+    // deleted account, and the header falls back to the first commit's author.
+    author: str(value['author']) ?? '',
     baseRef: str(value['baseRef']) ?? '',
     headRef: str(value['headRef']) ?? '',
     // Nothing on this surface draws it — it is read so the PR that reaches the
@@ -106,20 +118,7 @@ export function readPr(value: unknown): PullRequest | null {
     changesRequested: strings(value['changesRequested']),
     threads: readThreads(value['threads']),
     files: Array.isArray(value['files'])
-      ? value['files'].flatMap((entry) => {
-          if (!isRecord(entry)) return [];
-          const path = str(entry['path']);
-          if (path === undefined) return [];
-          const patch = str(entry['patch']);
-          return [
-            {
-              path,
-              added: int(entry['added']) ?? 0,
-              removed: int(entry['removed']) ?? 0,
-              ...(patch === undefined ? {} : { patch }),
-            },
-          ];
-        })
+      ? readFiles(value['files'])
       : [],
     commits: readCommits(value['commits']),
     reviewers: readReviewers(value['reviewers']),
@@ -131,6 +130,40 @@ export function readPr(value: unknown): PullRequest | null {
 }
 
 /** Newest first, and a commit with no sha cannot be addressed by anything. */
+/**
+ * A PR's or a commit's changed files, off the port.
+ *
+ * Exported because two surfaces read the same shape from two commands, and
+ * because of what this function used to leave out: it rebuilt each file from
+ * `path`, the counts and `patch`, which silently dropped `status` and
+ * `previousPath` — so a renamed file arrived at the pane with nothing saying it
+ * was renamed, and the pane said "its contents are identical". The same class of
+ * loss `keepPatches` had one layer in. A reader that names fields drops the ones
+ * it was not told about, which is the argument for adding to it whenever the
+ * model grows.
+ */
+export function readFiles(value: unknown): readonly ChangedFile[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry): ChangedFile[] => {
+    if (!isRecord(entry)) return [];
+    const path = str(entry['path']);
+    if (path === undefined) return [];
+    const patch = str(entry['patch']);
+    const status = str(entry['status']);
+    const previousPath = str(entry['previousPath']);
+    return [
+      {
+        path,
+        added: int(entry['added']) ?? 0,
+        removed: int(entry['removed']) ?? 0,
+        ...(patch === undefined ? {} : { patch }),
+        ...(status === undefined ? {} : { status: status as ChangedFile['status'] }),
+        ...(previousPath === undefined ? {} : { previousPath }),
+      },
+    ];
+  });
+}
+
 function readCommits(value: unknown): readonly Commit[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((entry): Commit[] => {
@@ -143,6 +176,8 @@ function readCommits(value: unknown): readonly Commit[] {
         subject: str(entry['subject']) ?? '',
         author: str(entry['author']) ?? 'someone',
         at: int(entry['at']) ?? 0,
+        added: int(entry['added']) ?? 0,
+        removed: int(entry['removed']) ?? 0,
       },
     ];
   });

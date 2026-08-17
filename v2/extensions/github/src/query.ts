@@ -28,8 +28,11 @@ query($owner: String!, $name: String!, $head: String!, $prs: Int!, $checks: Int!
         number
         title
         url
-        bodyText
         body
+        # Who OPENED it, which is not who wrote its commits. A PR pushed from a
+        # work identity and opened from a personal one differs in both, and
+        # GitHub's own line names the opener.
+        author { login }
         state
         isDraft
         baseRefName
@@ -55,6 +58,12 @@ query($owner: String!, $name: String!, $head: String!, $prs: Int!, $checks: Int!
               oid
               messageHeadline
               committedDate
+              # What this ONE commit changed. GraphQL has it on the commit, so
+              # it costs nothing beyond the fields — unlike a patch, which does
+              # not exist here at all and needs the REST call that
+              # github.commitDiff makes when somebody opens one.
+              additions
+              deletions
               author { user { login } name }
             }
           }
@@ -149,7 +158,7 @@ interface RawPullRequest {
   readonly title: string;
   readonly url: string;
   readonly body: string | null;
-  readonly bodyText: string | null;
+  readonly author?: RawAuthor | null;
   readonly state: 'OPEN' | 'CLOSED' | 'MERGED';
   readonly isDraft: boolean;
   readonly baseRefName: string;
@@ -179,6 +188,8 @@ interface RawPrCommit {
     readonly oid: string;
     readonly messageHeadline: string;
     readonly committedDate: string;
+    readonly additions?: number | null;
+    readonly deletions?: number | null;
     readonly author: { readonly user: RawAuthor | null; readonly name: string | null } | null;
   } | null;
 }
@@ -262,10 +273,14 @@ function readPullRequest(raw: RawPullRequest, identity: RepoIdentity): PullReque
     repoKey: identity.repoKey,
     number: raw.number,
     title: raw.title,
-    // `bodyText` is the rendered markdown with the markup taken out, which is
-    // what a paragraph wants; `body` is the source and is still read for its
-    // `Depends-on:` trailers, where the raw line is the thing.
-    body: raw.bodyText ?? '',
+    // The markdown SOURCE, because the panel renders markdown. GitHub also
+    // offers `bodyText` — the same body with the markup taken out — and reading
+    // that hands the renderer a document whose headings, lists, fences and
+    // tables have already been dissolved into prose. Nothing downstream can put
+    // them back, and the panel draws exactly the wall of text it was written to
+    // prevent.
+    body: raw.body ?? '',
+    author: raw.author?.login ?? '',
     state: readState(raw),
     baseRef: raw.baseRefName,
     headRef: raw.headRefName,
@@ -459,6 +474,8 @@ function readCommits(raw: RawPullRequest): readonly PullRequest['commits'][numbe
           subject: commit.messageHeadline,
           author: commit.author?.user?.login ?? commit.author?.name ?? 'someone',
           at: Date.parse(commit.committedDate),
+          added: commit.additions ?? 0,
+          removed: commit.deletions ?? 0,
         },
       ];
     })

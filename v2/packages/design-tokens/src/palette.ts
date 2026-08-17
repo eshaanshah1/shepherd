@@ -71,7 +71,15 @@ export type ColorToken =
   | 'scnHill'
   | 'scnFlock'
   | 'scnFlockShade'
-  | 'scnFlockRest';
+  | 'scnFlockRest'
+  // Code syntax: the one place a hue is allowed to mean nothing.
+  | 'codeKeyword'
+  | 'codeString'
+  | 'codeComment'
+  | 'codeConstant'
+  | 'codeFunction'
+  | 'codeParameter'
+  | 'codePunctuation';
 
 export interface TokenSpec {
   readonly dark: string;
@@ -150,6 +158,40 @@ export const palette: Readonly<Record<ColorToken, TokenSpec>> = {
   scnFlock: { dark: '#D8D4C8', light: '#FFFFFF', job: 'the sheep’s body and fluff' },
   scnFlockShade: { dark: '#8A8679', light: '#94907F', job: 'the sheep’s legs' },
   scnFlockRest: { dark: '#3A3A38', light: '#DFDBCE', job: 'the empty state’s sheep, at rest' },
+
+  /*
+   * ── code syntax ─────────────────────────────────────────────────────────────
+   *
+   * The one place in this palette where a hue does NOT carry a job, and the
+   * exception is worth stating rather than smuggling. §2's rule — a saturated
+   * value without a job is banned — is about CHROME: a hue there is a claim
+   * about state, and a second meaning for it makes the first unreadable. Syntax
+   * colour is not chrome. It is a property of the text being quoted, it never
+   * appears outside a code surface, and nothing in the app reads it as a signal.
+   *
+   * The values are `@pierre/diffs`' own `pierre-dark` / `pierre-light`, brought
+   * across unchanged. That is deliberate: the diff already rendered in exactly
+   * these colours, so this move changes nothing on screen — it changes WHERE
+   * they are decided. They were baked inside a vendored theme; they are now a
+   * row of this table, so light mode is ours, and re-picking them later is an
+   * edit here rather than a fork of somebody's theme.
+   */
+  codeKeyword: { dark: '#FF678D', light: '#D32A61', job: 'a keyword, an operator, a storage type' },
+  codeString: { dark: '#5ECC71', light: '#199F43', job: 'a string, and a template’s literal half' },
+  /*
+   * The two greys are the one place these values are NOT Pierre's.
+   *
+   * It ships `#737373` and `#636363` in BOTH modes, and this package refuses a
+   * token that does not change with the mode — a rule with a test behind it,
+   * and right: the same mid-grey is a quiet comment on near-black and a
+   * washed-out one on white. Nudged apart rather than redesigned, so the dark
+   * mode reads as it did.
+   */
+  codeComment: { dark: '#7C7C7C', light: '#6E6E6E', job: 'a comment' },
+  codeConstant: { dark: '#68CDF2', light: '#1CA1C7', job: 'a number, a constant, a language literal' },
+  codeFunction: { dark: '#9D6AFB', light: '#693ACF', job: 'a function or method name at its use' },
+  codeParameter: { dark: '#A3A3A3', light: '#636363', job: 'a parameter or a plain variable' },
+  codePunctuation: { dark: '#6C6C6C', light: '#7B7B7B', job: 'brackets, commas, the syntax between' },
 };
 
 export const colorTokens = Object.keys(palette) as ColorToken[];

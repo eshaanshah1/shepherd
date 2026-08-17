@@ -16,7 +16,7 @@ import { Remotes } from './remotes.ts';
 import { readBranch, readHead } from './heads.ts';
 import { Sync } from './sync.ts';
 import { readPaneTitles, readRoots, readTasks, type ListedTask } from './tasks-read.ts';
-import { handingMeans, markFor, pickAgent, readLive, readStates, type TaskAgent } from './model/agent-pick.ts';
+import { agentName, handingMeans, markFor, pickAgent, readLive, readStates, type TaskAgent } from './model/agent-pick.ts';
 import { resolveToken } from './token.ts';
 import { fixturePrs } from './fixture.ts';
 import {
@@ -31,6 +31,7 @@ import {
   threadPrompt,
   type PullRequest,
   type TaskPrState,
+  type ChangedFile,
 } from './model/index.ts';
 
 /**
@@ -339,7 +340,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): void {
           signedIn: signedIn === true,
           viewer,
           taskTitle: task?.title ?? '',
-          ...branchAgent(task, states),
+          ...(await branchAgent(task, states)),
         };
       },
     }),
@@ -399,6 +400,43 @@ export function activate(ctx: ExtensionContext, api: Shepherd): void {
             ctx.log.info(`${args.pr}: showing the first ${FILE_PAGE} files`);
           }
           return { ok: true, files: files.length, capped: files.length >= FILE_PAGE };
+        } catch (error: unknown) {
+          return { ok: false, reason: message(error) };
+        }
+      },
+    }),
+  );
+
+  /**
+   * One commit's diff, held forever once fetched.
+   *
+   * A commit is IMMUTABLE, which is the whole difference from `github.diff`:
+   * that one keys its cache on the PR's `updatedAt` because a branch moves under
+   * it, and this one needs no such key because a sha names bytes that cannot
+   * change. Asking twice is a bug, not a refresh.
+   */
+  const commitFiles = new Map<string, readonly ChangedFile[]>();
+
+  ctx.subscriptions.push(
+    commands.register(GITHUB_COMMANDS.commitDiff, {
+      schema: s.object({ task: s.string(), pr: s.string(), sha: s.string() }),
+      handler: async (args) => {
+        const held = commitFiles.get(args.sha);
+        if (held !== undefined) return { ok: true, files: held, cached: true };
+
+        const active = await ensureClient();
+        if (active === null) return { ok: false, reason: 'not signed in' };
+        const pr = sync.prsOf(args.task).find((entry) => prKey(entry) === args.pr);
+        if (pr === undefined) return { ok: false, reason: 'no such pull request' };
+
+        const task = await taskById(args.task);
+        const slug = await remotes.of(repoPathOf(pr, task));
+        if (slug === null) return { ok: false, reason: 'that repo has no GitHub remote' };
+
+        try {
+          const files = await active.commit(slug, args.sha);
+          commitFiles.set(args.sha, files);
+          return { ok: true, files, cached: false };
         } catch (error: unknown) {
           return { ok: false, reason: message(error) };
         }
@@ -730,17 +768,35 @@ export function activate(ctx: ExtensionContext, api: Shepherd): void {
    * should this go to", per repo). This answers "who is on this task", and the
    * orchestrator is the truest single answer to that.
    */
-  const branchAgent = (
+  /**
+   * What each of a task's agents is CALLED — the title of the pane it runs in.
+   *
+   * A pane's name is a layout fact and the whole point of it is that a user
+   * typed it or a program set it, so it is asked for rather than derived. Two
+   * callers want it and they ask the same way; before this, one asked and the
+   * other invented a label, which is how the same agent had two names in one
+   * pane.
+   */
+  const paneTitles = async (task: ListedTask | undefined): Promise<ReadonlyMap<string, string>> => {
+    const titleOf = new Map<string, string>();
+    if (task?.group === undefined || task.group === null) return titleOf;
+    const roots = await commands.invoke(GITHUB_LAYOUT.listRoots, { group: task.group });
+    if (roots.ok) for (const [session, title] of readPaneTitles(roots.value)) titleOf.set(session, title);
+    return titleOf;
+  };
+
+  const branchAgent = async (
     task: ListedTask | undefined,
     states: ReadonlyMap<string, { state: string; kind?: string }>,
-  ): { agent?: { title: string; state: string } } => {
+  ): Promise<{ agent?: { title: string; state: string } }> => {
     const agents = (task?.agents ?? []).filter((agent) => states.has(agent.id));
     const chosen = agents.find((agent) => agent.role === 'orchestrator') ?? agents[0];
     if (chosen === undefined) return {};
     const found = states.get(chosen.id);
+    const titleOf = await paneTitles(task);
     return {
       agent: {
-        title: `${found?.kind ?? 'agent'} · ${chosen.repo ?? 'task root'}`,
+        title: agentName(chosen, titleOf.get(chosen.id)),
         state: found?.state ?? 'idle',
       },
     };
@@ -773,11 +829,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): void {
       }
     }
 
-    const titleOf = new Map<string, string>();
-    if (task?.group !== undefined && task.group !== null) {
-      const roots = await commands.invoke(GITHUB_LAYOUT.listRoots, { group: task.group });
-      if (roots.ok) for (const [session, title] of readPaneTitles(roots.value)) titleOf.set(session, title);
-    }
+    const titleOf = await paneTitles(task);
 
     return candidates.map((agent) => ({
       session: agent.id,

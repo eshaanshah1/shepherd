@@ -22,6 +22,7 @@ const PR: PullRequest = {
   commits: [],
   reviewers: [],
   body: '',
+  author: 'someone',
   openedAt: 0,
   updatedAt: 0,
   mergeState: 'blocked',

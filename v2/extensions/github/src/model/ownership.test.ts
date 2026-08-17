@@ -10,6 +10,7 @@ function pr(overrides: Partial<PullRequest> = {}): PullRequest {
     repo: 'shepherd/v2',
     repoKey: 'v2',
     number: 301,
+    author: 'someone',
     title: 'Add multiple task tabs',
     state: 'open',
     baseRef: 'main',
@@ -38,6 +39,8 @@ const commit = (sha: string): PullRequest['commits'][number] => ({
   sha,
   subject: 's',
   author: 'a',
+  added: 0,
+  removed: 0,
   at: 0,
 });
 

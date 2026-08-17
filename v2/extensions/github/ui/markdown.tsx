@@ -1,281 +1,203 @@
-import type { ReactElement, ReactNode } from 'react';
+import type { ComponentPropsWithoutRef, ReactElement, ReactNode } from 'react';
+import ReactMarkdown, { type Components } from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 /**
- * Enough markdown to read a pull request body, and no more.
+ * A pull request body, drawn as the document it is.
  *
- * The panel used to split on blank lines and emit `<p>`, with a comment arguing
- * that a renderer was not worth it "for a field most PRs use for two sentences".
- * That is true of a human's PR and false of this app's: an agent writes the body,
- * and an agent writes **headings, fenced code, and lists**. Flattened, a real one
- * renders as a single wall of prose in which the description, the reproduction
- * and the test plan are indistinguishable — which is what shipped, and what this
- * replaces.
+ * This used to be a hand-rolled block parser: nine constructs, a small inline
+ * pass, and everything else rendered as its own source text. It was already the
+ * second attempt — the first split on blank lines and emitted `<p>` — and it
+ * was still wrong about the things an agent actually writes. A nested list
+ * flattened to one level. A task list drew `[ ]` as two characters. A reference
+ * link, a footnote, an autolink and an HTML entity each came out as source.
  *
- * **It builds React elements, never HTML.** That deletes the sanitiser half of
- * the old objection outright: there is no `dangerouslySetInnerHTML` here, so a
- * body containing `<script>` is text that says `<script>`. It is also why images
- * are deliberately absent — a remote `<img>` in a pane is a network request to
- * whatever host a PR body names, which is a tracking pixel with extra steps.
+ * The line the old file drew was between constructs that change what a
+ * paragraph *is* and constructs that decorate a run of text. That line was
+ * sound; the mistake was believing the first set was small. It is CommonMark,
+ * which is a specification with a 600-case test suite, plus GFM, which is
+ * another one. `remark` implements both.
  *
- * It is a BLOCK parser with a small inline pass, not CommonMark. The line it
- * draws: constructs that change what a paragraph *is* (a heading, a list, a code
- * fence) are worth parsing, because getting them wrong destroys the shape of the
- * document. Constructs that only decorate a run of text (nested emphasis,
- * reference links, tables) are not, because getting them wrong costs a bit of
- * styling. When something is not recognised it renders as its own source text,
- * which is the failure mode markdown was designed around.
+ * **It still builds React elements, never HTML.** That is the property the
+ * whole panel rests on, and it is why `react-markdown` is here rather than
+ * `marked` or `markdown-it` — both are smaller and faster and both hand back an
+ * HTML string, which would mean `dangerouslySetInnerHTML` and a sanitiser to
+ * make it safe again.
+ *
+ * Three things are ours rather than the library's, each below with its reason:
+ * raw HTML renders as text, links do not navigate, and images do not load.
  */
-
-export type Block =
-  | { readonly kind: 'code'; readonly lang: string | null; readonly text: string }
-  | { readonly kind: 'heading'; readonly level: number; readonly text: string }
-  | { readonly kind: 'list'; readonly ordered: boolean; readonly items: readonly string[] }
-  | { readonly kind: 'quote'; readonly text: string }
-  | { readonly kind: 'rule' }
-  | { readonly kind: 'para'; readonly text: string };
-
-const FENCE = /^\s*(`{3,}|~{3,})\s*(\S+)?\s*$/;
-const HEADING = /^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$/;
-const BULLET = /^ {0,3}[-*+]\s+(.*)$/;
-const ORDERED = /^ {0,3}\d{1,9}[.)]\s+(.*)$/;
-const QUOTE = /^ {0,3}>\s?(.*)$/;
-const RULE = /^ {0,3}([-*_])\s*(?:\1\s*){2,}$/;
 
 /**
- * The document, as blocks. Pure, and the reason the parser is a separate
- * function from the component: every case below is a shape a real PR body has,
- * and none of them needs a DOM to assert about.
+ * Raw HTML in a body renders as TEXT.
+ *
+ * remark parses `<script>` into an `html` node, and the only shipped way to
+ * render one is `rehype-raw`, which parses it as real markup — so the library's
+ * default is to drop it in silence. Neither is right here. Dropping it deletes
+ * whatever sentence the tag was in, and a PR body that says "wrap it in
+ * `<details>`" is a normal thing for an agent to write.
+ *
+ * Rewriting the node to `text` in mdast, before `remark-rehype` ever sees it,
+ * gets the third answer: a body containing `<script>` is a body that SAYS
+ * `<script>`, with no sanitiser anywhere, because nothing was ever markup.
  */
-export function parseBlocks(source: string): readonly Block[] {
-  const lines = source.replace(/\r\n?/g, '\n').split('\n');
-  const blocks: Block[] = [];
-  let index = 0;
-
-  while (index < lines.length) {
-    const line = lines[index] ?? '';
-
-    if (line.trim() === '') {
-      index += 1;
-      continue;
-    }
-
-    /*
-     * Fences FIRST, and everything inside one is taken verbatim.
-     *
-     * A code block is where markdown's own syntax stops meaning anything, so a
-     * `# comment` in a shell snippet is a comment and not an H1 — which is the
-     * single most visible way a naive renderer mangles a PR body that contains a
-     * command line.
-     */
-    const fence = FENCE.exec(line);
-    if (fence !== null) {
-      const marker = fence[1] as string;
-      const body: string[] = [];
-      index += 1;
-      while (index < lines.length) {
-        const next = lines[index] ?? '';
-        // Closing fence: at least as long as the opening one, same character.
-        if (next.trimStart().startsWith(marker[0] as string) && next.trim().length >= marker.length) {
-          const closing = next.trim();
-          if (closing.split('').every((char) => char === marker[0])) {
-            index += 1;
-            break;
-          }
-        }
-        body.push(next);
-        index += 1;
+function htmlAsText() {
+  return (tree: { children?: unknown[] }): void => {
+    const walk = (node: { type?: string; value?: string; children?: unknown[] }): void => {
+      if (node.type === 'html') {
+        node.type = 'text';
+        return;
       }
-      blocks.push({ kind: 'code', lang: fence[2] ?? null, text: body.join('\n') });
-      continue;
-    }
-
-    if (RULE.test(line)) {
-      blocks.push({ kind: 'rule' });
-      index += 1;
-      continue;
-    }
-
-    const heading = HEADING.exec(line);
-    if (heading !== null) {
-      blocks.push({ kind: 'heading', level: (heading[1] as string).length, text: heading[2] ?? '' });
-      index += 1;
-      continue;
-    }
-
-    const quote = QUOTE.exec(line);
-    if (quote !== null) {
-      const body: string[] = [];
-      while (index < lines.length) {
-        const marked = QUOTE.exec(lines[index] ?? '');
-        if (marked === null) break;
-        body.push(marked[1] ?? '');
-        index += 1;
-      }
-      blocks.push({ kind: 'quote', text: body.join('\n') });
-      continue;
-    }
-
-    const bullet = BULLET.exec(line);
-    const ordered = bullet === null ? ORDERED.exec(line) : null;
-    if (bullet !== null || ordered !== null) {
-      const isOrdered = bullet === null;
-      const items: string[] = [];
-      while (index < lines.length) {
-        const current = lines[index] ?? '';
-        const match = isOrdered ? ORDERED.exec(current) : BULLET.exec(current);
-        if (match !== null) {
-          items.push(match[1] ?? '');
-          index += 1;
-          continue;
-        }
-        /*
-         * A continuation line — indented, not blank, not a new item — belongs to
-         * the item above. Without this, a wrapped bullet becomes a paragraph of
-         * its own and the list appears to end halfway down.
-         */
-        if (current.trim() !== '' && /^\s{2,}/.test(current) && items.length > 0) {
-          items[items.length - 1] = `${items[items.length - 1] as string} ${current.trim()}`;
-          index += 1;
-          continue;
-        }
-        break;
-      }
-      blocks.push({ kind: 'list', ordered: isOrdered, items });
-      continue;
-    }
-
-    /*
-     * A paragraph runs until a blank line or until something else starts.
-     *
-     * Its newlines are KEPT rather than collapsed. CommonMark would join them,
-     * but a PR body is written in a textarea by something that means its line
-     * breaks — an agent listing three findings on three lines expects three
-     * lines, and joining them is how this panel produced its wall of text.
-     */
-    const body: string[] = [];
-    while (index < lines.length) {
-      const current = lines[index] ?? '';
-      if (current.trim() === '') break;
-      if (FENCE.test(current) || HEADING.test(current) || QUOTE.test(current) || RULE.test(current)) break;
-      if (BULLET.test(current) || ORDERED.test(current)) break;
-      body.push(current);
-      index += 1;
-    }
-    blocks.push({ kind: 'para', text: body.join('\n') });
-  }
-
-  return blocks;
+      for (const child of node.children ?? []) walk(child as { type?: string; children?: unknown[] });
+    };
+    walk(tree);
+  };
 }
 
-/** `code`, **bold**, *italic*, ~~struck~~, [text](url), and a bare URL. */
-const INLINE =
-  /(`+)([^`]+?)\1|\*\*([^*]+?)\*\*|__([^_]+?)__|(?<![*\w])\*([^*\n]+?)\*(?!\*)|~~([^~]+?)~~|\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<>()]+)/g;
+/**
+ * The heading a body's `#` is allowed to be.
+ *
+ * The PR's own title is the `h2` above this card, so a body that opens with a
+ * single `#` must not outrank it. Shifted by two and capped at `h6`, which is
+ * the same rule the previous renderer had — a document's structure is relative,
+ * and the card is two levels down whatever the author thought.
+ */
+const HEADINGS = ['h3', 'h4', 'h5', 'h6', 'h6', 'h6'] as const;
+
+function heading(level: number) {
+  return function Heading({ children, node: _node, ...rest }: ComponentPropsWithoutRef<'h1'> & { node?: unknown }): ReactElement {
+    const Tag = HEADINGS[level - 1] ?? 'h6';
+    return (
+      <Tag {...rest} className="sh-md__heading" data-level={level}>
+        {children}
+      </Tag>
+    );
+  };
+}
+
+/*
+ * `{...rest}` goes FIRST in every component below, and that ordering is load
+ * bearing rather than style. remark puts classes and ids of its own on the
+ * nodes it builds — `sr-only` on the footnotes label, `task-list-item` on a
+ * checkbox's `li` — and spreading them after `className` silently replaces
+ * ours, so the element loses every rule this pane wrote for it. It is invisible
+ * in a diff and obvious on screen, which is the wrong way round.
+ */
+const COMPONENTS: Components = {
+  h1: heading(1),
+  h2: heading(2),
+  h3: heading(3),
+  h4: heading(4),
+  h5: heading(5),
+  h6: heading(6),
+
+  /*
+   * A link that reads as a link and does not navigate.
+   *
+   * This is a pane, not a browser: a click that replaced the app's own document
+   * would be unrecoverable, and there is no back. The URL is shown on hover and
+   * `Open on GitHub` is the way out of here. `urlTransform` below has already
+   * refused anything that is not http(s), so this is the second of two gates
+   * rather than the only one.
+   */
+  a({ children, href, node: _node, ...rest }) {
+    return (
+      <a {...rest} className="sh-md__link" title={href}>
+        {children}
+      </a>
+    );
+  },
+
+  /*
+   * An image is its alt text, and never a request.
+   *
+   * A remote `<img>` in a pane is a GET to whatever host a PR body names, which
+   * is a tracking pixel with extra steps — and a body is written by anyone who
+   * can open a pull request. The alt text is kept because it is the only part
+   * of an image that was ever readable here.
+   */
+  img({ alt, src }) {
+    return (
+      <span className="sh-md__image" title={typeof src === 'string' ? src : undefined}>
+        {alt === undefined || alt === '' ? 'image' : alt}
+      </span>
+    );
+  },
+
+  /*
+   * A table scrolls itself rather than widening the card.
+   *
+   * Same rule as a code block: a measurements table with a long first column
+   * must not push the conversation column sideways, because the column is
+   * shared with every review comment under it.
+   */
+  table({ children, node: _node, ...rest }) {
+    return (
+      <div className="sh-md__table-scroll">
+        <table {...rest} className="sh-md__table">
+          {children}
+        </table>
+      </div>
+    );
+  },
+
+  /*
+   * `data-lang` carries the fence's declared language to the stylesheet.
+   *
+   * Not highlighted, and that is a decision rather than a gap. A snippet in a
+   * PR body has no declared language most of the time, and guessing one paints
+   * somebody's log output as if it were source.
+   */
+  pre({ children, node: _node, ...rest }) {
+    return (
+      <pre {...rest} className="sh-md__code" data-lang={fenceLanguage(children)}>
+        {children}
+      </pre>
+    );
+  },
+
+  /*
+   * A task list is a checkbox, drawn and never operable.
+   *
+   * `disabled` is not styling: this is a rendering of a document on GitHub, and
+   * a checkbox that took a click would be a control that changed nothing while
+   * looking like it had.
+   */
+  input({ checked, type, node: _node }) {
+    if (type !== 'checkbox') return null;
+    return <input className="sh-md__check" type="checkbox" checked={checked === true} disabled readOnly />;
+  },
+};
+
+/** The `language-ts` class `remark` puts on a fenced block's `<code>`. */
+function fenceLanguage(children: ReactNode): string | undefined {
+  const only = Array.isArray(children) ? children[0] : children;
+  const className = (only as { props?: { className?: unknown } } | null)?.props?.className;
+  if (typeof className !== 'string') return undefined;
+  const found = /language-(\S+)/.exec(className);
+  return found?.[1];
+}
 
 /**
- * The inline pass.
+ * The only URLs that survive.
  *
- * Code spans are matched FIRST in the alternation, so `**` inside backticks
- * stays literal — the same rule the fence follows one level up, and the reason a
- * body explaining markdown syntax does not render as its own examples.
- *
- * A link's href is checked against `http(s)` at the pattern rather than after:
- * `javascript:` in an `<a>` is the one genuinely dangerous thing a body can
- * contain, and a pattern that cannot express it needs no filter to remove it.
+ * `javascript:` in an `href` is the one genuinely dangerous thing a body can
+ * carry, and a scheme test that names what is ALLOWED cannot be walked around
+ * by a scheme nobody thought of. The library's own transform is stricter than
+ * it looks but permits relative URLs, which mean nothing in a pane with no
+ * document to be relative to.
  */
-export function inline(text: string, keyPrefix = ''): readonly ReactNode[] {
-  const out: ReactNode[] = [];
-  let last = 0;
-  let match: RegExpExecArray | null;
-  INLINE.lastIndex = 0;
-
-  while ((match = INLINE.exec(text)) !== null) {
-    if (match.index > last) out.push(text.slice(last, match.index));
-    const key = `${keyPrefix}${match.index}`;
-    const [, , code, strongStar, strongUnder, emphasis, struck, linkText, linkHref, bare] = match;
-
-    if (code !== undefined) out.push(<code key={key}>{code}</code>);
-    else if (strongStar !== undefined || strongUnder !== undefined)
-      out.push(<strong key={key}>{strongStar ?? strongUnder}</strong>);
-    else if (emphasis !== undefined) out.push(<em key={key}>{emphasis}</em>);
-    else if (struck !== undefined) out.push(<s key={key}>{struck}</s>);
-    else if (linkHref !== undefined)
-      out.push(
-        // No `href` that navigates: this is a pane, not a browser, and a click
-        // that replaced the app's own document would be unrecoverable. The URL
-        // is shown and selectable; `Open on GitHub` is the way out of here.
-        <a key={key} className="sh-md__link" title={linkHref}>
-          {linkText === '' ? linkHref : linkText}
-        </a>,
-      );
-    else if (bare !== undefined)
-      out.push(
-        <a key={key} className="sh-md__link" title={bare}>
-          {bare}
-        </a>,
-      );
-
-    last = match.index + match[0].length;
-  }
-
-  if (last < text.length) out.push(text.slice(last));
-  return out;
+function onlyHttp(url: string): string {
+  return /^https?:\/\//i.test(url) ? url : '';
 }
 
 /** A markdown body, as elements. */
 export function Markdown({ text }: { readonly text: string }): ReactElement {
   return (
     <div className="sh-md">
-      {parseBlocks(text).map((block, index) => (
-        <Block key={index} block={block} at={index} />
-      ))}
+      <ReactMarkdown remarkPlugins={[remarkGfm, htmlAsText]} components={COMPONENTS} urlTransform={onlyHttp}>
+        {text}
+      </ReactMarkdown>
     </div>
   );
-}
-
-function Block({ block, at }: { readonly block: Block; readonly at: number }): ReactElement {
-  switch (block.kind) {
-    case 'code':
-      /*
-       * Not highlighted, and that is a decision rather than a gap. `@pierre/diffs`
-       * carries shiki for the Files tab, but a snippet in a PR body has no
-       * declared language most of the time — and guessing one paints somebody's
-       * log output as if it were source.
-       */
-      return (
-        <pre className="sh-md__code" data-lang={block.lang ?? undefined}>
-          <code>{block.text}</code>
-        </pre>
-      );
-    case 'heading': {
-      // Capped at h4: this is a card inside a pane, and the PR's own title is
-      // the h2 above it, so a body's `#` must not outrank it.
-      const level = Math.min(block.level + 2, 6);
-      const Tag = `h${level}` as 'h3';
-      return (
-        <Tag className="sh-md__heading" data-level={block.level}>
-          {inline(block.text, `h${at}-`)}
-        </Tag>
-      );
-    }
-    case 'list':
-      return block.ordered ? (
-        <ol className="sh-md__list">
-          {block.items.map((item, index) => (
-            <li key={index}>{inline(item, `l${at}-${index}-`)}</li>
-          ))}
-        </ol>
-      ) : (
-        <ul className="sh-md__list">
-          {block.items.map((item, index) => (
-            <li key={index}>{inline(item, `l${at}-${index}-`)}</li>
-          ))}
-        </ul>
-      );
-    case 'quote':
-      return <blockquote className="sh-md__quote">{inline(block.text, `q${at}-`)}</blockquote>;
-    case 'rule':
-      return <hr className="sh-md__rule" />;
-    case 'para':
-      return <p className="sh-md__para">{inline(block.text, `p${at}-`)}</p>;
-  }
 }

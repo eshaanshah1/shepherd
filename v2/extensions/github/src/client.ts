@@ -42,6 +42,14 @@ export interface GitHubClient {
    * thing in the app.
    */
   files(slug: RepoSlug, number: number): Promise<readonly ChangedFile[]>;
+  /**
+   * One COMMIT's changed files, with their patches.
+   *
+   * The same shape `files` returns and for the same reason — GraphQL has the
+   * counts on a commit but no patch anywhere — so a commit opens through the
+   * renderer a PR already uses rather than a second one.
+   */
+  commit(slug: RepoSlug, sha: string): Promise<readonly ChangedFile[]>;
 }
 
 /**
@@ -99,12 +107,33 @@ export function octokitClient(token: string): GitHubClient {
         path: file.filename,
         added: file.additions,
         removed: file.deletions,
+        ...(file.status === undefined ? {} : { status: file.status }),
+        ...(file.previous_filename === undefined ? {} : { previousPath: file.previous_filename }),
         /*
          * ABSENT rather than empty for a file GitHub withheld: it omits `patch`
          * for anything binary or over about a megabyte, and an empty string
          * would draw as a file with no changes rather than as one whose diff is
          * not available.
          */
+        ...(file.patch === undefined || file.patch === '' ? {} : { patch: file.patch }),
+      }));
+    },
+
+    async commit(slug, sha) {
+      const { data } = await octokit.rest.repos.getCommit({
+        owner: slug.owner,
+        repo: slug.repo,
+        ref: sha,
+        // A commit's file list pages the same way a PR's does, and the same
+        // reasoning caps it: past a hundred files nobody reads one by one.
+        per_page: FILE_PAGE,
+      });
+      return (data.files ?? []).map((file) => ({
+        path: file.filename,
+        added: file.additions,
+        removed: file.deletions,
+        ...(file.status === undefined ? {} : { status: file.status as ChangedFile['status'] }),
+        ...(file.previous_filename === undefined ? {} : { previousPath: file.previous_filename }),
         ...(file.patch === undefined || file.patch === '' ? {} : { patch: file.patch }),
       }));
     },

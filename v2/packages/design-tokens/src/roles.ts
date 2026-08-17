@@ -89,6 +89,14 @@ export type RoleName =
   | 'fillTab'
   | 'fillSelected'
   | 'textOnWool'
+  | 'codeFill'
+  | 'codeKeyword'
+  | 'codeString'
+  | 'codeComment'
+  | 'codeConstant'
+  | 'codeFunction'
+  | 'codeParameter'
+  | 'codePunctuation'
   | 'focusRing';
 
 interface RoleShared {
@@ -399,6 +407,82 @@ export const roles: Readonly<Record<RoleName, RoleSpec>> = {
     job: 'what a ⌘T composer or a ⌘K palette dims the app with.',
     notFor:
       'a backdrop blur. Glass is refused outright — the scrim is flat, and what is behind it stays readable as itself.',
+  },
+
+  /**
+   * The fill behind a run of code set into prose.
+   *
+   * A WASH rather than a surface token, and that is the whole point. `well` and
+   * `raised` are absolute luminances chosen against a card, and in light mode
+   * both of them are `#FFFFFF` — so a chip painted with either vanishes the
+   * moment the prose under it is not sitting on a card. A wash of `text` is
+   * derived from the ink instead, so it lightens on black and darkens on paper
+   * and reads against whatever ground it lands on.
+   *
+   * The alphas are per mode for the reason every wash here is: paper has less
+   * contrast to spend, so the same step needs less of it.
+   */
+  codeFill: {
+    kind: 'wash',
+    of: 'text',
+    alpha: { dark: 0.09, light: 0.07 },
+    job: 'the chip behind an inline code span, and the fill of a fenced block.',
+    notFor:
+      'a state. `fill-hover` and `fill-active` are the same order of step and would make a span of code read as though the pointer were on it.',
+  },
+
+  /*
+   * ── code syntax ─────────────────────────────────────────────────────────────
+   *
+   * Seven roles for the inside of a code surface, and the only hues in this file
+   * that do not name a state. See `palette.ts` for why that exception exists and
+   * why these particular values.
+   *
+   * They are roles rather than raw tokens because the consumer is a THIRD PARTY:
+   * `@pierre/diffs` reads them as CSS variables through a registered theme, and
+   * a vendor reading tier-1 token names would be the one thing §2 keeps private.
+   */
+  codeKeyword: {
+    kind: 'token',
+    token: 'codeKeyword',
+    job: 'a keyword inside a code surface.',
+    notFor: 'anything outside one. A hue in the chrome is a claim about state.',
+  },
+  codeString: {
+    kind: 'token',
+    token: 'codeString',
+    job: 'a string literal inside a code surface.',
+    notFor: 'a success. That is `grass`, and it means a check passed.',
+  },
+  codeComment: {
+    kind: 'token',
+    token: 'codeComment',
+    job: 'a comment inside a code surface.',
+    notFor: 'quiet chrome text. That ramp is `textMute` and `textGhost`.',
+  },
+  codeConstant: {
+    kind: 'token',
+    token: 'codeConstant',
+    job: 'a number, constant or language literal inside a code surface.',
+    notFor: 'a link or a focus ring. That blue is `sky`, and it means live · focus · send.',
+  },
+  codeFunction: {
+    kind: 'token',
+    token: 'codeFunction',
+    job: 'a function name inside a code surface.',
+    notFor: 'anything in the chrome — the palette has no violet, and this is why.',
+  },
+  codeParameter: {
+    kind: 'token',
+    token: 'codeParameter',
+    job: 'a parameter or plain variable inside a code surface.',
+    notFor: 'body text. Prose ink is `text` and its ramp.',
+  },
+  codePunctuation: {
+    kind: 'token',
+    token: 'codePunctuation',
+    job: 'brackets and separators inside a code surface.',
+    notFor: 'a border. A seam is `line`.',
   },
 
   // ── states ──────────────────────────────────────────────────────────────────

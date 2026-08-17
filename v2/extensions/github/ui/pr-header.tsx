@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react';
+import { Icon, namedGlyph } from '@shepherd/ui';
 import { agoText } from './review-data.ts';
-import { countChecks, stateWord, type PullRequest } from '../src/model/index.ts';
+import { countChecks, stateWord, type PrState, type PullRequest } from '../src/model/index.ts';
 
 /**
  * The PR's identity, and the sub-tab row under it — both of which stay put while
@@ -55,6 +56,21 @@ export function tabCount(tab: PrTab, pr: PullRequest): { text: string; failed: b
   }
 }
 
+/**
+ * The glyph for each state, from `@shepherd/ui`'s allow-list.
+ *
+ * By NAME rather than by importing Tabler, which the import boundaries forbid
+ * an extension and should: reaching the icon package directly is how a
+ * contributed surface ends up shipping a glyph at a fourth size and a second
+ * stroke weight.
+ */
+const GLYPH_OF: Readonly<Record<PrState, string>> = {
+  open: 'pull-request',
+  draft: 'pull-request-draft',
+  merged: 'pull-request-merged',
+  closed: 'pull-request-closed',
+};
+
 export function PrHeader({
   pr,
   tab,
@@ -72,22 +88,32 @@ export function PrHeader({
   return (
     <div className="sh-pr-head">
       <div className="sh-pr-head__title-line">
+        {/*
+          The state, on the title line, as a glyph and nothing else.
+
+          It was a pill on the line below — a bordered capsule holding a dot and
+          the word `open`. Three marks for one fact, none of which is the fact:
+          the border says a control you cannot press, the word repeats what the
+          shape already says, and the shape was a circle that means whatever its
+          hue means. The git-pull-request family is what every forge draws for
+          this and a reader knows it on sight, so it needs no capsule to be
+          found and no word to be read.
+
+          Beside the TITLE because that is what it is about. On the line below it
+          sat at the head of a sentence about branches and commits, reading as
+          that sentence's first word.
+
+          The word now travels as `title` and `aria-label`, which is the rule
+          everywhere else in this app and is what the pill was the exception to.
+        */}
+        <span className="sh-pr-head__state" data-tone={state.tone} title={state.text}>
+          <Icon icon={namedGlyph(GLYPH_OF[pr.state])} size="md" label={state.text} />
+        </span>
         <h2 className="sh-pr-head__title">{pr.title}</h2>
         <span className="sh-pr-head__number">#{pr.number}</span>
       </div>
 
       <div className="sh-pr-head__sub">
-        {/*
-          The state, as a pill with a dot. The one place in this pane a state is
-          drawn as a shape AND a word together — everywhere else the word travels
-          as a tooltip — because this is the PR's own identity line rather than a
-          row in a list, and there is nothing else here for the shape to be read
-          against.
-        */}
-        <span className="sh-pr-head__pill" data-tone={state.tone}>
-          <i aria-hidden="true" />
-          {pr.state}
-        </span>
         <span className="sh-pr-head__says">
           {authorOf(pr)} wants to merge {pr.commits.length} {pr.commits.length === 1 ? 'commit' : 'commits'} into
         </span>
@@ -144,7 +170,15 @@ export function PrHeader({
  * this app is usually an agent, and is what the commits say.
  */
 function authorOf(pr: PullRequest): string {
-  return pr.commits[0]?.author ?? 'someone';
+  /*
+   * The OPENER, and the first commit's author only as a fallback.
+   *
+   * These are the same person most of the time and different exactly when it
+   * matters: push from a work identity, open the PR from a personal one, and
+   * this line named the committer while GitHub's named the opener — two
+   * accounts for one PR, on two screens, with nothing saying which was which.
+   */
+  return pr.author === '' ? (pr.commits[0]?.author ?? 'someone') : pr.author;
 }
 
 /** `1 of 3 passed · 2m 41s total`, which is what the Checks tab wants instead of a diff. */

@@ -35,7 +35,9 @@
     "@shepherd/sdk": "workspace:*",
     "@shepherd/ui": "workspace:*",
     "@pierre/diffs": "catalog:",
-    "@pierre/trees": "catalog:"
+    "@pierre/trees": "catalog:",
+    "react-markdown": "catalog:",
+    "remark-gfm": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",
