@@ -28,6 +28,7 @@ Run them with Bash. Inside a pane the socket is already in your environment.
 shepherd task list                     # every task, with its state
 shepherd task spawn --repo api         # a tracked session working in api/
 shepherd task spawn --repo api --prompt "port the auth middleware"
+shepherd task rename-branch --name fix-login   # renames it in every repo at once
 shepherd task archive --task <id>      # shelve it; worktrees are snapshotted
 ```
 

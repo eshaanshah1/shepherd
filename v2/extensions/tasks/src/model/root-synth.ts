@@ -40,6 +40,8 @@ export interface RepoContribution {
 export interface SynthInput {
   readonly title: string;
   readonly brief: string;
+  /** The branch every worktree here is on. */
+  readonly branch: string;
   readonly repos: readonly RepoContribution[];
 }
 
@@ -164,6 +166,17 @@ function renderClaudeMd(input: SynthInput): string {
     '',
     'Each repo above is a git worktree on this task’s branch. A repo’s own',
     '`CLAUDE.md` loads when you first read a file inside it.',
+    '',
+    /*
+     * Stated as an invitation and not as an apology. The agent working here is
+     * the first party in a position to name this branch well, and the reason it
+     * is named what it is is history it does not need in order to act.
+     */
+    '## Branch',
+    '',
+    `Every worktree here is on \`${input.branch}\`. Rename it whenever you like:`,
+    '',
+    '    shepherd task rename-branch <name>',
     '',
   );
   return lines.join('\n');

@@ -10,7 +10,7 @@ import type { CheckRun, CheckState, PullRequest, PrState, ReviewThread } from '.
  * feature you can leave on and one you turn off.
  *
  * **Everything is asked for by HEAD BRANCH**, which is the join a task already
- * provides: every worktree of a task is on one branch named after its slug. So
+ * provides: a worktree is on exactly one branch, which git is asked for. So
  * "which PRs belong to this task" is a lookup rather than a guess, and it stays
  * correct when a PR is renamed, retitled, or opened by somebody else.
  *

@@ -13,7 +13,7 @@ import {
 } from './manifest.ts';
 import { FILE_PAGE, message, octokitClient, type GitHubClient } from './client.ts';
 import { Remotes } from './remotes.ts';
-import { readHead } from './heads.ts';
+import { readBranch, readHead } from './heads.ts';
 import { Sync } from './sync.ts';
 import { readPaneTitles, readRoots, readTasks, type ListedTask } from './tasks-read.ts';
 import { handingMeans, markFor, pickAgent, readLive, readStates, type TaskAgent } from './model/agent-pick.ts';
@@ -107,6 +107,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): void {
     client: () => client,
     remoteOf: (path) => remotes.of(path),
     headOf: (path) => readHead(process, path),
+    branchOf: (worktree) => readBranch(process, worktree),
     // The nudge that makes the rail re-read. Emitted only when something drawn
     // actually moved — `Sync.changed` is what decides that, because a tree
     // re-read is not free.
@@ -652,12 +653,12 @@ export function activate(ctx: ExtensionContext, api: Shepherd): void {
          * `owner/name` — seed with the REAL pull requests of a real repo instead
          * of invented ones.
          *
-         * The reason this exists: a task's branch IS its slug, and a slug cannot
-         * contain `/`, so a PR whose head is `fix/something` can never belong to
-         * a task no matter what you name it. Without this door the only way to
-         * look at genuine GitHub data in the app is to open a pull request whose
-         * branch happens to be slug-shaped, which is a change to somebody's
-         * repository made in order to take a screenshot.
+         * The reason this exists: a task's branch is minted, so a PR whose head
+         * is `fix/something` can never belong to a task you did not rename by
+         * hand first. Without this door the only way to look at genuine GitHub
+         * data in the app is to open a pull request on a branch that happens to
+         * match, which is a change to somebody's repository made in order to
+         * take a screenshot.
          */
         repo: s.optional(s.string()),
         /** Which branch to ask about. Defaults to the task's own. */
@@ -690,7 +691,9 @@ export function activate(ctx: ExtensionContext, api: Shepherd): void {
           const active = await ensureClient();
           if (active === null) return { ok: false, reason: 'not signed in' };
           const slug = { owner, repo: name };
-          const real = await active.pullRequests(slug, args.head ?? task.branch, name);
+          const head = args.head ?? (await readBranch(process, `${task.root}/${name}`));
+          if (head === null) return { ok: false, reason: `no branch in ${task.root}/${name}` };
+          const real = await active.pullRequests(slug, head, name);
           /*
            * Patches fetched HERE rather than left to the Files tab, because
            * `github.diff` resolves its repo from the local worktree's remote —
@@ -724,9 +727,8 @@ export function activate(ctx: ExtensionContext, api: Shepherd): void {
    *
    * The ORCHESTRATOR when there is one, else whichever workstream is live —
    * deliberately not `pickAgent`, which answers a different question ("who
-   * should this go to", per repo). This answers "who is on this branch", and a
-   * task's branch is one branch across every repo, so the orchestrator is the
-   * truest single answer.
+   * should this go to", per repo). This answers "who is on this task", and the
+   * orchestrator is the truest single answer to that.
    */
   const branchAgent = (
     task: ListedTask | undefined,

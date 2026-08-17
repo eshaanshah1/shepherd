@@ -371,6 +371,24 @@
 }
 
 /*
+ * ── the step, while a task is being built ─────────────────────────────────
+ *
+ * `flex: none`, so the title truncates around it rather than the row growing —
+ * the rule `dupe` above is built on, for the same reason (§10 refuses a row that
+ * grows to say something). Plain text and not a ring: `dupe` is a fact about the
+ * row that stays, and this is a word about right now that leaves.
+ *
+ * `text-mute` rather than a hue. The mark already carries the state, and a second
+ * coloured thing on the line would be a status word beside a status mark.
+ */
+.sh-task-card__stage {
+  flex: none;
+  font-size: var(--sh-font-size-nano);
+  color: var(--sh-text-mute);
+  white-space: nowrap;
+}
+
+/*
  * ── a fact another extension contributed (`tasks.cardFacts`) ──────────────
  *
  * One cell, beside the title, holding a glyph and/or a few mono characters. It

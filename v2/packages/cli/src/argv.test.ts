@@ -38,6 +38,14 @@ describe('parseArgv', () => {
     });
   });
 
+  it('maps a hyphenated verb, which is the shape a two-word verb takes', () => {
+    expect(parseArgv(['task', 'rename-branch', '--name', 'fix-login'])).toMatchObject({
+      ok: true,
+      command: 'tasks.renameBranch',
+      args: { name: 'fix-login' },
+    });
+  });
+
   it('accepts --flag=value as well as --flag value', () => {
     expect(parseArgv(['task', 'new', '--title=Fix login'])).toMatchObject({
       ok: true,

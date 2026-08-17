@@ -621,7 +621,8 @@ describe('the scope', () => {
       // The pill serialises back to the repo's NAME and not to `#name`: the `#`
       // opens a picker, which is a thing this card does and not a thing the
       // sentence says, so it does not travel to an agent reading the brief.
-      title: `fix the retry loop in shepherd${NBSP}and shepherd-ios`,
+      //
+      // No `title`: the composer sends what was written and nothing it derived.
       brief: `fix the retry loop in shepherd${NBSP}and shepherd-ios${NBSP}`,
       repos: [
         { path: `${HOME}/dev/shepherd`, name: 'shepherd' },
@@ -640,16 +641,16 @@ describe('the scope', () => {
 
 
 /**
- * The name ask, which happens behind the card and draws nothing.
+ * The name ask is not the composer's any more.
  *
- * The composer turns your paragraph into a directory name, and a line reporting
- * that name re-rendered on every keystroke — the brief, echoed back a second time
- * under the brief. The ask is worth keeping and the echo is not, so the answer
- * rides `tasks.create` and never reaches the screen.
+ * It ran here so that a name would exist by the time Create was pressed — the
+ * folder and the branch were derived from it, and provisioning waited. Nothing
+ * waits now, so the ask belongs where the answer is used: behind `tasks.create`,
+ * after the task already exists.
  */
 describe('the name ask', () => {
-  // Fake timers, because the ask is on a 2s idle pause and a real wait would put
-  // two seconds into every one of these.
+  // Fake timers, because the ask used to sit on a 2s idle pause: this asserts
+  // that letting that pause elapse produces no ask at all.
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
@@ -662,13 +663,6 @@ describe('the name ask', () => {
     });
   };
 
-  /**
-   * The idle pause, which is the only trigger there is.
-   *
-   * The composer has no blur hook to hang this on — the repo field it used to have
-   * is gone, and picking a repo is a `#` mention inside the brief now. So the ask
-   * fires when the typing stops, and a test has to let the timer run.
-   */
   const idle = async (): Promise<void> => {
     await act(async () => {
       vi.advanceTimersByTime(2_100);
@@ -676,82 +670,29 @@ describe('the name ask', () => {
     await act(async () => {});
   };
 
-  it('draws nothing, whatever it has been told', async () => {
-    invoke.mockImplementation(async (command: string) =>
-      command === 'tasks.suggestName'
-        ? { ok: true as const, value: { name: 'Add a cheap model seam' } }
-        : { ok: true as const, value: [] },
-    );
+  it('never asks while you type', async () => {
     await write('I wanna add a cheap model for naming tasks');
-    await idle();
-    await act(async () => {});
-    expect(container.textContent).not.toContain('Add a cheap model seam');
-    // And no line reserving the space for one, which is what used to echo the
-    // brief back to somebody still writing it.
-    expect(container.querySelector('[data-testid="composer-name"]')).toBeNull();
-  });
-
-  it('asks once the typing stops, carrying the brief', async () => {
-    await write('I wanna add a cheap model for naming tasks');
-    await idle();
-    expect(invoke).toHaveBeenCalledWith('tasks.suggestName', {
-      brief: 'I wanna add a cheap model for naming tasks',
-    });
-  });
-
-  it('does not ask about a brief too short to name', async () => {
-    await write('fix it');
     await idle();
     expect(invoke).not.toHaveBeenCalledWith('tasks.suggestName', expect.anything());
   });
 
-  it('sends the name it has to create', async () => {
-    invoke.mockImplementation(async (command: string) =>
-      command === 'tasks.suggestName'
-        ? { ok: true as const, value: { name: 'Add a cheap model seam' } }
-        : { ok: true as const, value: { slug: 'add-a-cheap-model-seam' } },
-    );
-    await write('I wanna add a cheap model for naming tasks');
-    await idle();
-    await act(async () => {});
-    await press('Enter', brief());
-    expect(invoke).toHaveBeenCalledWith(
-      'tasks.create',
-      expect.objectContaining({ name: 'Add a cheap model seam' }),
-    );
-  });
-
-  it('creates without a name when none has landed, rather than waiting for one', async () => {
-    // THE case the whole design exists for: Create pressed before a ~6s answer.
-    // The extension then names it from the brief, and nothing has been delayed.
-    invoke.mockImplementation(async (command: string) =>
-      command === 'tasks.suggestName'
-        ? new Promise(() => {
-            /* never answers */
-          })
-        : { ok: true as const, value: { slug: 'a-task' } },
-    );
+  it('sends the brief and no name, so the extension decides what it is called', async () => {
     await write('I wanna add a cheap model for naming tasks');
     await idle();
     await press('Enter', brief());
     const create = invoke.mock.calls.find((call) => call[0] === 'tasks.create');
     expect(create).toBeDefined();
     expect((create?.[1] as { name?: unknown }).name).toBeUndefined();
+    // And no title either: a title that IS present is one a person typed, and
+    // the brief's first line is not that.
+    expect((create?.[1] as { title?: unknown }).title).toBeUndefined();
+    expect((create?.[1] as { brief?: unknown }).brief).toBe('I wanna add a cheap model for naming tasks');
   });
 
-  it('ignores an answer whose shape nobody expected', async () => {
-    invoke.mockImplementation(async (command: string) =>
-      command === 'tasks.suggestName'
-        ? { ok: true as const, value: { name: 42 } }
-        : { ok: true as const, value: { slug: 'a-task' } },
-    );
+  it('draws no name of its own', async () => {
     await write('I wanna add a cheap model for naming tasks');
     await idle();
-    await act(async () => {});
-    await press('Enter', brief());
-    // Creates unnamed rather than carrying `42` into a directory name.
-    const create = invoke.mock.calls.find((call) => call[0] === 'tasks.create');
-    expect((create?.[1] as { name?: unknown }).name).toBeUndefined();
+    expect(container.querySelector('[data-testid="composer-name"]')).toBeNull();
   });
 });
 

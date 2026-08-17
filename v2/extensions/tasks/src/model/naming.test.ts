@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { heuristicName, namingPrompt, readName, stillTheSameBrief } from './naming.ts';
+import { firstLine, namingPrompt, readName, stillTheSameBrief } from './naming.ts';
 import { slugify } from './slug.ts';
 
 /**
- * The three pure decisions in naming a task, and the most defect-prone code in
+ * The pure decisions in naming a task, and the most defect-prone code in
  * the feature: a model asked for six words returns junk often enough that this is
  * the cheapest place to catch it. Measured — three of seven answers came back
  * wrapped in backticks, and one arrived under a preamble.
@@ -100,100 +100,6 @@ describe('readName', () => {
   });
 });
 
-describe('heuristicName', () => {
-  it('strips the filler a real brief starts with', () => {
-    // This is what you SEE whenever the model is slow, off or unauthenticated, so
-    // it is held to the real input rather than to a tidy one. Before this, the
-    // brief above produced `shepherd-i-wanna-add-a-new-feature-extension-it-s-something`.
-    const name = heuristicName(REAL_BRIEF);
-    expect(name).toBeDefined();
-    const slug = slugify(name ?? '');
-    expect(slug).not.toContain('i-wanna');
-    expect(slug).not.toContain('shepherd');
-    expect(slug.split('-').length).toBeLessThanOrEqual(6);
-  });
-
-  it('takes the first sentence, not the first 72 characters', () => {
-    expect(heuristicName('Fix the login loop. Then also rewrite the router.')).toBe('Fix the login loop');
-  });
-
-  it('drops a leading please and a question form', () => {
-    expect(heuristicName('Please can you fix the login loop')).toBe('fix the login loop');
-  });
-
-  it('does not end on a dangling function word when it had to cut', () => {
-    // Found by looking at real output rather than at assertions: cutting at a
-    // fixed word count lands mid-phrase often, and `fix-the-login-redirect-loop-on`
-    // reads like a truncation bug rather than a short name.
-    expect(heuristicName('Please can you fix the login redirect loop on Safari')).toBe('fix the login redirect loop');
-    expect(heuristicName('i want to make the composer show what the task will be called')).toBe(
-      'make the composer show',
-    );
-    expect(heuristicName('The BrowserStack session terminates early when the device is real')).toBe(
-      'The BrowserStack session terminates early',
-    );
-  });
-
-  it('keeps a name that was already short, even if it ends on such a word', () => {
-    // The trim is a consequence of cutting. A brief that never needed cutting is
-    // the user's own phrasing, and shortening it further would be editing them.
-    expect(heuristicName('Ship it')).toBe('Ship it');
-  });
-
-  it('has no answer for an empty brief, so the caller keeps its own title', () => {
-    expect(heuristicName('')).toBeUndefined();
-    expect(heuristicName('   \n  ')).toBeUndefined();
-  });
-
-  /**
-   * The two shapes that were on screen in the rail, both taken verbatim.
-   *
-   * Neither is hypothetical: they are the labels a screenshot of the Shipped
-   * drawer showed, and the second appeared TWICE and was byte-identical both
-   * times — a link eats the whole word budget and truncates mid-host, so two
-   * unrelated tasks became one unreadable row repeated.
-   */
-  it('drops the repo the brief opens on — the card already carries it as a chip', () => {
-    expect(heuristicName('in shepherd , I just created a new task and it looks wrong')).toBe(
-      'I just created a new task',
-    );
-    expect(heuristicName('in ai-harness-pulse check the stack:desktop dimension')).toBe(
-      'check the stack:desktop dimension',
-    );
-  });
-
-  it('leaves a brief that merely opens on a place alone', () => {
-    // The greedy version of the rule above ate the subject of this one, and the
-    // subject is the whole name: `in the` and `in production` are not repo
-    // names. A comma after it or a hyphen inside it is the tell.
-    expect(heuristicName('in production the retry loop hangs')).toBe(
-      'in production the retry loop hangs',
-    );
-  });
-
-  it('drops a URL rather than spending the name on half a hostname', () => {
-    // The link was the whole budget: this brief truncated to
-    // `can you handle this please: https://brow…` in the rail, and the SECOND
-    // task written the same way was byte-identical to it. What is left says
-    // little, because the brief said little — but it says it in three words and
-    // it is no longer indistinguishable from its neighbour.
-    expect(
-      heuristicName('can you handle this please: https://browserstack.atlassian.net/browse/ABC-1'),
-    ).toBe('handle this please');
-    expect(heuristicName('fix the retry loop https://example.com/a/b/c please')).toBe(
-      'fix the retry loop please',
-    );
-  });
-
-  it('has no answer for a brief that is nothing but filler', () => {
-    // Stripping everything must not leave an empty name for `slugify` to turn
-    // into the literal fallback `task`; `undefined` sends the caller back to its
-    // own title, which is at least what the user typed.
-    expect(heuristicName('I wanna')).toBeUndefined();
-    expect(heuristicName('please')).toBeUndefined();
-  });
-});
-
 describe('stillTheSameBrief', () => {
   it('holds while the brief the model was asked about is still being typed', () => {
     expect(stillTheSameBrief('fix the retry loop', 'fix the retry loop in the daemon')).toBe(true);
@@ -218,5 +124,27 @@ describe('stillTheSameBrief', () => {
     expect(
       stillTheSameBrief('fix the retry loop', 'fix the retry loop and also rewrite the whole daemon'),
     ).toBe(false);
+  });
+});
+
+describe('firstLine', () => {
+  it('is the first line, trimmed', () => {
+    expect(firstLine('  fix the login redirect  \nand then some more')).toBe('fix the login redirect');
+  });
+
+  it('is empty for an empty brief', () => {
+    expect(firstLine('   ')).toBe('');
+  });
+
+  // It becomes a tab title. Somebody's first line is occasionally a paragraph.
+  it('caps a long line and marks the cut', () => {
+    const capped = firstLine('a'.repeat(200));
+    expect(capped).toHaveLength(72);
+    expect(capped.endsWith('…')).toBe(true);
+  });
+
+  it('leaves a line of exactly the cap alone', () => {
+    const exact = 'b'.repeat(72);
+    expect(firstLine(exact)).toBe(exact);
   });
 });

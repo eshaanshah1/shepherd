@@ -114,27 +114,37 @@ export async function runM3Smoke(
   })) as { kind?: string };
   check(quick.kind === 'diagnostics.stub-agent', `the quick tier is the stub: ${quick.kind ?? 'none'}`);
 
-  // --- 1. create a task with a real repo, through the real transport.
+  /**
+   * --- 1. create a task with a real repo, through the real transport.
+   *
+   * **No `title`**, and that is the case being smoked: a title that is present is
+   * one a person typed, and it wins and suppresses the ask. Sending one here
+   * would mean this never exercised naming at all.
+   */
   const created = (await invoke('tasks.create', {
-    title: 'Smoke task',
     brief: 'Provisioned by the m3 smoke, with a brief long enough to be worth naming.',
     repos: [{ path: repo, name: 'api' }],
-  })) as { id: string; slug: string };
+  })) as { id: string; slug: string; title: string };
+  // Capped at 72 with an ellipsis, because this becomes a tab title and a
+  // brief's first line is occasionally a paragraph.
+  check(
+    created.title === 'Provisioned by the m3 smoke, with a brief long enough to be worth namin…',
+    `a task opens on its own brief, capped: ${created.title}`,
+  );
   /**
-   * **`create`'s answer carries the PROVISIONAL name, and that is by design.**
+   * **The slug is MINTED, and owes nothing to what was typed.**
    *
-   * The verb returns synchronously so the row is answerable at once (D12), while
-   * the name settles inside provisioning — before the first git write and never
-   * after. So the slug here is the heuristic, and the settled one is read back
-   * below, from the store and from disk.
-   *
-   * Asserted rather than ignored, because it is a fact a caller could get wrong:
-   * anybody treating this answer's slug as final would be reading it one beat too
-   * early.
+   * This is the property the whole design rests on: because no directory and no
+   * branch is named after the brief, nothing has to wait for a model to answer.
+   * A slug that echoed the brief here would mean the old coupling was back.
    */
   check(
-    created.slug === 'provisioned-by-the-m3-smoke',
-    `create answers with the heuristic name, before the model settles it: ${created.slug}`,
+    /^[a-z]+-[a-z]+(-\d+)?$/.test(created.slug),
+    `create mints a slug that owes nothing to the brief: ${created.slug}`,
+  );
+  check(
+    !created.slug.includes('provisioned') && !created.slug.includes('smoke'),
+    `and no word of the brief is in it: ${created.slug}`,
   );
 
   // --- 2. provisioning is OPTIMISTIC, so the worktree lands after the answer.
@@ -157,25 +167,37 @@ export async function runM3Smoke(
   say('ok — the worktree and the task root are on disk');
 
   /**
-   * The name is on DISK, in both places that outlive this process, and nothing was
-   * renamed to put it there.
+   * The model's name reaches the LABEL, and nothing else.
    *
-   * A slug stored correctly and a branch named something else is exactly the
-   * both-halves-of-a-correlation failure this file exists for: a unit test that
-   * supplies the name AND reads it back cannot discover that the two disagree.
+   * The two halves are asserted together because that is the correlation this
+   * file exists for: a unit test that supplies the name and reads it back cannot
+   * discover that the title moved while the directory stayed put — or that it
+   * did not.
    */
-  const settled = ((await invoke('tasks.list')) as { id: string; slug: string; title: string }[]).find(
-    (task) => task.id === created.id,
+  const settled = await until(
+    'the model’s name to land on the title',
+    async () =>
+      ((await invoke('tasks.list')) as { id: string; slug: string; title: string }[]).find(
+        (task) => task.id === created.id,
+      ),
+    (task) => task?.title === 'Stub Named This',
   );
-  check(settled?.slug === 'stub-named-this', `the stored slug is the model's: ${settled?.slug ?? 'none'}`);
-  check(settled?.title === 'Stub Named This', `and so is the row label: ${settled?.title ?? 'none'}`);
-  const branch = await head(worktree);
-  check(branch === 'stub-named-this', `the branch carries the model's name: ${branch}`);
+  check(settled?.title === 'Stub Named This', `the model's answer became the title: ${settled?.title ?? 'none'}`);
   check(
-    listed.root.endsWith('stub-named-this'),
-    `the worktree directory carries it too: ${listed.root}`,
+    settled?.slug === created.slug,
+    `and the folder did not move: ${settled?.slug ?? 'none'} was ${created.slug}`,
   );
-  say('ok — the model’s name reached the branch and the directory');
+  const branch = await head(worktree);
+  check(branch === created.slug, `the branch is the minted name, not the model's: ${branch}`);
+  check(
+    listed.root.endsWith(created.slug),
+    `and so is the worktree directory: ${listed.root}`,
+  );
+  check(
+    readFileSync(join(listed.root, 'CLAUDE.md'), 'utf8').includes('shepherd task rename-branch'),
+    'the task root tells the agent it may rename the branch',
+  );
+  say('ok — the name reached the label, and nothing on disk moved');
 
   /**
    * The hook ran, in the right directory, before anything else touched it.
@@ -680,12 +702,15 @@ export async function runM3Smoke(
     `the picked path became the repo's name: ${JSON.stringify(composed.repos)}`,
   );
   check(existsSync(join(composed.root, 'CLAUDE.md')), 'the composed task root was synthesized too');
-  // Both tasks were named the same thing, so the second one had to be given a
-  // distinct folder — `uniqueSlug` (D8) doing its job against a real collision
-  // rather than a contrived one.
+  /*
+   * Both tasks are named the same thing by the stub model, and they still live in
+   * different folders — because a folder is MINTED and a name reaches only the
+   * label. `uniqueSlug` is still behind this (D8), now resolving a collision
+   * between two random names rather than between two identical titles.
+   */
   check(
-    composed.root.endsWith('stub-named-this-2'),
-    `a second task with the same name got its own folder: ${composed.root}`,
+    composed.root !== listed.root && /\/[a-z]+-[a-z]+(-\d+)?$/.test(composed.root),
+    `a second task with the same name got its own minted folder: ${composed.root}`,
   );
   say('ok — a task was created from inside the app, worktree and task root included');
 

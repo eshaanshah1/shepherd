@@ -36,6 +36,7 @@ const VERBS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
     archive: 'tasks.archive',
     restore: 'tasks.restore',
     delete: 'tasks.delete',
+    'rename-branch': 'tasks.renameBranch',
   },
   session: { list: 'sessions.list' },
   agent: { list: 'agents.list', 'quick-model': 'agents.quickModel' },

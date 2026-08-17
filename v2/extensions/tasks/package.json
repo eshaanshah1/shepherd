@@ -89,6 +89,10 @@
           "title": "Tasks: Suggest a Name"
         },
         {
+          "id": "tasks.renameBranch",
+          "title": "Tasks: Rename the Branch"
+        },
+        {
           "id": "tasks.delete",
           "title": "Tasks: Delete"
         },

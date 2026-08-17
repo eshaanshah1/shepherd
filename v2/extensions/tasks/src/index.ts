@@ -26,8 +26,9 @@ import {
   type TranscriptSearchProvider,
 } from './manifest.ts';
 import { TaskStore, type RepoArchive, type RepoRef, type TaskRecord, type TaskSession } from './store.ts';
-import { slugify, uniqueSlug } from './model/slug.ts';
-import { heuristicName, namingPrompt, readName, stillTheSameBrief } from './model/naming.ts';
+import { uniqueSlug } from './model/slug.ts';
+import { branchTaken, mintName, pickBranch } from './model/mint.ts';
+import { firstLine, namingPrompt, readName, stillTheSameBrief } from './model/naming.ts';
 import { expandHome, collapseHome } from './model/repo-path.ts';
 import { displayMatch, segmentsOf, type DisplaySegment } from './model/match-display.ts';
 import { orderSuggestions, rankScored } from './model/pick-order.ts';
@@ -338,16 +339,14 @@ type BusyWhat =
   | 'starting';
 
 /**
- * What the row is CALLED while it is being built.
+ * What the row is DOING while it is being built — beside its name, never instead
+ * of it.
  *
- * The step goes in the LABEL rather than beside it, and the reason is what the
- * label otherwise holds: a task has no name until the model answers, so until
- * then `title` is `heuristicName`'s slice of the brief — which in practice reads
- * `in the 3L tracker, NA`. That is not a worse name than the step, it is a WRONG
- * one: it looks like something the user typed, so the row it names looks broken
- * rather than unfinished. Saying `Creating the worktree` instead is both the
- * progress and the honest answer to "what is this row", and the true name
- * arriving is then the signal that the task is ready.
+ * The step used to BE the label. It had to be: a task had no name until the
+ * model answered, so the only other thing to draw was a slice of the brief that
+ * read like a name somebody typed badly. A task is called something from the
+ * moment it exists now — its own brief, then the model's name — so the step
+ * moved one cell right and the row stopped taking turns with itself.
  *
  * Sentence case and three words at most, because this is a label and §6 governs
  * it now — the trailing chip this replaces was metadata and had looser rules.
@@ -1032,6 +1031,56 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     return answer;
   };
 
+  /** What a session's pane is called — one formula, two callers. */
+  const paneTitle = (task: TaskRecord, session: { role: string; repo?: string }): string =>
+    session.role === 'orchestrator' ? task.title : `${task.title} · ${session.repo ?? 'workstream'}`;
+
+  /**
+   * Every live pane of a task, told the task's current name.
+   *
+   * A pane is named once, when it opens, and its `userTitle` beats the OSC title
+   * a program sets — so a name that lands after the panes do reaches them only
+   * because this says so. A failure is logged and stepped over, for the reason
+   * the call in `openAgentPane` gives: a title is the decorative part of a spawn,
+   * and losing one is not worth an exception on a task that is otherwise fine.
+   */
+  async function relabelPanes(task: TaskRecord): Promise<void> {
+    for (const session of task.sessions) {
+      if (session.pane === undefined) continue;
+      const renamed = await commands.invoke('layout.rename', {
+        pane: session.pane,
+        title: paneTitle(task, session),
+      });
+      if (!renamed.ok) {
+        ctx.log.warn(`task ${task.id}: pane ${session.pane} kept its title — ${renamed.error.message}`);
+      }
+    }
+  }
+
+  /**
+   * Ask what this task should be called, and change ONLY what it is called.
+   *
+   * Nothing awaits this. It runs beside provisioning rather than in front of it,
+   * so a model that is slow, off or signed out costs a task nothing — and
+   * `undefined`, which is what a declined or absent model answers, is an ordinary
+   * outcome that leaves the brief in place.
+   *
+   * The record is RE-READ rather than written back from the copy this was handed:
+   * the ask takes seconds, and in those seconds a task can be archived, restored
+   * or deleted. Writing a captured record would undo whatever happened.
+   */
+  async function nameLater(task: TaskRecord): Promise<void> {
+    const named = await pendingName(task.brief);
+    if (named === undefined) return;
+    const now = store.get(task.id);
+    if (now === undefined || now.title === named) return;
+    const settled: TaskRecord = { ...now, title: named };
+    store.put(settled);
+    changed();
+    ctx.log.info(`task ${task.id}: named "${named}"`);
+    await relabelPanes(settled);
+  }
+
   ctx.subscriptions.push(
     commands.register(TASK_COMMANDS.suggestName, {
       title: 'Tasks: Suggest a Name',
@@ -1553,8 +1602,9 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     const pane = await openAgentPane(task, {
       cwd,
       command: plan.command,
-      title:
-        input.role === 'orchestrator' ? task.title : `${task.title} · ${input.repo ?? 'workstream'}`,
+      // Off the CURRENT record: naming runs beside provisioning, so a name can
+      // land between this task being handed over and its pane being opened.
+      title: paneTitle(store.get(task.id) ?? task, { role: input.role, ...(input.repo === undefined ? {} : { repo: input.repo }) }),
       // The prompt file is consumed by the line that runs; if no line ever
       // runs, nothing else will ever delete it.
       onFailure: () => rmSync(plan.promptFile, { force: true }),
@@ -2269,40 +2319,16 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * seconds of the wait that no per-repo state can speak for.
    */
   /**
-   * The slug's one permitted change — before the first git write, and never after
-   * (D19).
+   * A task's folder is minted, not named — and then it never moves.
    *
-   * At this moment the record has no sessions, no archives, nothing on disk is
-   * named after it and no pane has a cwd inside it. After the first
-   * `worktree add`, changing it would mean `git branch -m`, `git worktree move`,
-   * moving the task root and re-synthesizing its CLAUDE.md and symlinks, and
-   * re-seeding Claude Code's per-path trust — all while an orchestrator is booting
-   * with a cwd inside the directory being moved. So: once, here, or never.
-   *
-   * **The first `worktree add` waits for it** (D20). There is one clock, the ask's
-   * own, because a second and shorter one only produced names that could not be
-   * used: the window closes at the first git write, so an answer that arrives
-   * after it is an answer thrown away — and the 4s that used to bound this lost
-   * every real ~10.5s call. `pendingName` never rejects and an absent or
-   * signed-out model says so in about two seconds, so the wait a person actually
-   * sits through is the tail of an ask the composer already started (D21).
-   *
-   * `takenSlugs` is re-checked because a concurrent create may have taken the
-   * name in the meantime.
+   * The slug is a directory, and after the first `worktree add` changing it would
+   * mean `git branch -m`, `git worktree move`, moving the task root,
+   * re-synthesizing its CLAUDE.md and symlinks and re-seeding Claude Code's
+   * per-path trust, all while an orchestrator boots with a cwd inside the
+   * directory being moved. Rather than hold a task still until a name arrives,
+   * nothing on disk is named after the task at all — which is what lets the ask
+   * run beside provisioning instead of in front of it (`nameLater`).
    */
-  async function settleName(draft: TaskRecord): Promise<TaskRecord> {
-    const named = await pendingName(draft.brief);
-    if (named === undefined) return draft;
-
-    const slug = uniqueSlug(slugify(named), store.takenSlugs());
-    // The title is worth taking even when the slug is unchanged: one call answers
-    // both, and the row label is the half nothing on disk depends on.
-    const settled: TaskRecord = { ...draft, slug, title: named };
-    store.put(settled);
-    changed();
-    if (slug !== draft.slug) ctx.log.info(`task ${draft.id}: named ${slug} before its first worktree`);
-    return settled;
-  }
 
   /**
    * Did this repo get through BOTH steps — `worktree add` and every
@@ -2328,63 +2354,69 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    */
   interface ProvisionOptions {
     readonly images?: readonly PastedImage[];
-    readonly naming?: { settle: (task: TaskRecord) => Promise<TaskRecord> };
     readonly spawn?: boolean;
   }
 
   async function provision(
     task: TaskRecord,
     images?: readonly PastedImage[],
-    naming?: { settle: (task: TaskRecord) => Promise<TaskRecord> },
     opts?: ProvisionOptions,
   ): Promise<void> {
-    return whileBusy(task.id, 'provisioning', () => runProvision(task, images, naming, opts));
+    return whileBusy(task.id, 'provisioning', () => runProvision(task, images, opts));
   }
 
   async function runProvision(
-    draft: TaskRecord,
+    task: TaskRecord,
     images?: readonly PastedImage[],
-    naming?: { settle: (task: TaskRecord) => Promise<TaskRecord> },
     opts?: ProvisionOptions,
   ): Promise<void> {
-    taskIssue.delete(draft.id);
+    taskIssue.delete(task.id);
 
     /**
-     * The refs read starts BEFORE the name is awaited, which is the whole reason
-     * `provisionRepo` was split in two: reading a repo's refs does not need to
-     * know the branch yet, so the model thinks *during* the network rather than
-     * after it (probe 2: ~2.5s of fetch per repo against a 0.16s `worktree add`).
+     * Every repo's refs, read at once and before any branch is decided.
      *
-     * **Every** repo is prefetched, not just the first. Master prefetched one and
-     * said "by the time the loop reaches a second, the name settled long ago" —
-     * true of a serial loop, and no longer true: the chains below run at once, so
-     * a second repo's fetch would start at the same moment as the first's and pay
-     * the full network wait after the name rather than during it.
+     * `provisionRepo` was split in two so this half could start without knowing
+     * the branch, and the reason has changed rather than gone: it overlapped the
+     * network with a model call, and it now overlaps it with nothing while
+     * answering the question `pickBranch` asks — is this minted name already a
+     * branch here? Probe 2's numbers are why it is worth starting early either
+     * way (~2.5s of fetch per repo against a 0.16s `worktree add`), and why
+     * **every** repo is prefetched: the chains below run at once, so a second
+     * repo's fetch left until then would pay its full network wait in series.
      *
      * Each read is wrapped so it cannot reject while nobody is awaiting it.
      * `readRepoRefs` does not catch a transport rejection, and N eager promises
      * would be N chances at an unhandled rejection; the error is carried instead
      * and thrown at the site that can report it.
      */
-    const prefetched = draft.repos.map((repo) =>
+    const prefetched = task.repos.map((repo) =>
       readRepoRefs(api.proposed.process, repo).then(
         (refs) => ({ ok: true as const, refs }),
         (error: unknown) => ({ ok: false as const, error }),
       ),
     );
 
-    /**
-     * Everything below works with the SETTLED record, and the shadowing is the
-     * point: a task's name may change once, here, and no line after this may see
-     * the provisional one — least of all a `worktree add`.
-     *
-     * The row says `naming…` for it rather than `provisioning…`, because this is
-     * now a wait somebody sits through and a row that named the wrong thing would
-     * be a row you press again.
-     */
-    const task =
-      naming === undefined ? draft : await whileBusy(draft.id, 'naming', () => naming.settle(draft));
     const root = rootOf(task);
+
+    /**
+     * The task's branch — chosen once the refs are in, and checked against EVERY
+     * repo.
+     *
+     * A minted name has no relationship to the work, so a name that already
+     * exists somewhere is somebody else's branch: `resolveBranch` would check it
+     * out rather than create it, and the task would silently adopt a deleted
+     * task's commits. Usually this IS the slug; it differs only when that name
+     * was taken.
+     *
+     * A repo whose refs could not be read contributes nothing to the check, which
+     * is the honest reading — its chain is about to fail on the same error, and
+     * the alternative is treating an unread repo as "everything here is free".
+     */
+    const readable = (await Promise.all(prefetched)).flatMap((read) => (read.ok ? [read.refs] : []));
+    const branch = pickBranch(task.slug, readable, () => mintName(Math.random));
+    if (branch !== task.slug) {
+      ctx.log.info(`task ${task.id}: branch ${branch}, because ${task.slug} was taken`);
+    }
 
     /**
      * One chain per repo — `addWorktree`, then every `repoProvisioned` provider in
@@ -2410,7 +2442,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         const outcome = await addWorktree(
           api.proposed.process,
           repo,
-          task.slug,
+          branch,
           `${root}/${repo.name}`,
           read.refs,
         );
@@ -2438,7 +2470,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
             const done = await provider({
               repo: { path: repo.path, name: repo.name },
               worktree: outcome.worktree,
-              branch: task.slug,
+              branch,
               task: { slug: task.slug, root },
             });
             if (!done.ok) complaints.push(done.message ?? 'reported a failure with no message');
@@ -2487,6 +2519,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       const planned = synthTaskRoot({
         title: task.title,
         brief: task.brief,
+        branch,
         repos: landed.map((repo) => ({
           name: repo.name,
           path: repo.worktree,
@@ -2527,7 +2560,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         try {
           const done = await provider({
             task: { slug: task.slug, root },
-            branch: task.slug,
+            branch,
             repos: ready.map((repo) => ({ path: repo.path, name: repo.name, worktree: repo.worktree })),
           });
           if (!done.ok) complaints.push(done.message ?? 'reported a failure with no message');
@@ -2768,7 +2801,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    */
   async function materialize(task: TaskRecord): Promise<void> {
     // `spawn: false` is load-bearing twice over — see `ProvisionOptions`.
-    await provision(task, undefined, undefined, { spawn: false });
+    await provision(task, undefined, { spawn: false });
     // Re-provisioning gives back the branch and a CLEAN tree, which is not what
     // was shelved. Replaying the snapshot is a separate step, and omitting it is
     // what made an earlier build "restore" a task to an empty working tree while
@@ -2882,7 +2915,15 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
   ctx.subscriptions.push(
     commands.register(TASK_COMMANDS.create, {
       schema: s.object({
-        title: s.string(),
+        /**
+         * A title the caller chose.
+         *
+         * Optional, and the optionality is load-bearing: the composer sends only
+         * a brief, so a title that IS present is one a person typed and is left
+         * alone. While it was required, the composer supplied the brief's first
+         * line and nothing could tell the two apart.
+         */
+        title: s.optional(s.string()),
         /**
          * WHICH machine this task belongs on.
          *
@@ -2921,12 +2962,6 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
          */
         placement: s.optional(s.string()),
         brief: s.optional(s.string()),
-        /**
-         * A name the caller already has — the composer's speculative ask, landed
-         * before Create was pressed. Absent is perfectly normal: the heuristic
-         * then names the task and the race in `settleName` may improve it.
-         */
-        name: s.optional(s.string()),
         repos: s.optional(s.array(repoArg)),
         /**
          * Images pasted into the brief, base64, in the order their `[Image #N]`
@@ -2938,53 +2973,31 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       handler: async (args) => {
         const elsewhere = await forwardToMember(TASK_COMMANDS.create, args);
         if (elsewhere !== undefined) return elsewhere;
-        // The slug is resolved ONCE against what is taken and then stored (D8).
-        // Re-deriving it later would let two tasks titled the same resolve to one
-        // folder and quietly share a worktree.
-        // Derived ONCE and then stored (D8). What it is derived FROM is, in order:
-        // a name the caller already has, a filler-stripped heuristic, and finally
-        // the raw title — which is the paragraph that produced
-        // `shepherd-i-wanna-add-a-new-feature-extension-it-s-something`.
-        const named = args.name === undefined ? undefined : readName(args.name);
-        const slug = uniqueSlug(
-          slugify(named ?? heuristicName(args.brief ?? '') ?? args.title),
-          store.takenSlugs(),
-        );
         /**
-         * The ROW LABEL gets the heuristic too — read off the proposed TITLE,
-         * not off the brief.
+         * Minted, resolved ONCE against what is taken, and then stored (D8).
          *
-         * It used to reach only the slug, so a create with no `name` — the model
-         * off, signed out, or simply slower than the composer's speculative ask
-         * — got a sane branch and a row label that was the whole opening of the
-         * brief. That is how the rail filled with
-         * `can you handle this please: https://brow…`, twice, byte-identical:
-         * the composer's `titleOf` is the brief's first line capped at 72, so
-         * the ellipsis was the title's own and two links to the same host made
-         * one unreadable row repeated. §6 says a label is 1–3 words and §5 says
-         * a task is named once, in the rail; a label that is the paragraph fails
-         * the only job the rail has.
-         *
-         * **The title rather than the brief**, because the heuristic is a
-         * cleanup of a proposed NAME and the two callers propose different
-         * things. It leaves a real one alone — `--title 'Fix login'` is already
-         * three words with no filler and comes back unchanged — while stripping
-         * the opening, the link and the truncation mark off one that is a slice
-         * of a brief. Reading the brief instead would overwrite the name a CLI
-         * caller typed with a guess about the paragraph underneath it. The slug
-         * keeps reading the brief: it has always read it, it is tested against
-         * it, and a branch name wants the fuller source.
-         *
-         * `settleName` may still improve on this; it is what the row says in the
-         * meantime, and for good when the ask comes back empty.
+         * Re-deriving it later would let two tasks resolve to one folder and
+         * quietly share a worktree — and there is nothing to re-derive it FROM
+         * any more, which is the point: a folder that owes nothing to the brief
+         * is a folder no name has to arrive before.
          */
-        const title = named ?? heuristicName(args.title) ?? args.title;
+        const slug = uniqueSlug(mintName(Math.random), store.takenSlugs());
+        /**
+         * A title the caller TYPED wins, and is never revised.
+         *
+         * `--title 'Fix login'` is a person's choice; overwriting it with a guess
+         * about the paragraph underneath would be a regression, so it also
+         * suppresses the ask below. Everything else opens on the brief itself —
+         * unfinished rather than wrong, which is what it is — and `nameLater`
+         * replaces it if the model answers.
+         */
+        const chosen = args.title?.trim();
+        const authored = chosen !== undefined && chosen !== '';
+        const title = authored ? chosen : firstLine(args.brief ?? '');
         const task: TaskRecord = {
           schemaVersion: 1,
           id: nextId(),
           slug,
-          // One call answers both the branch and the row label (D18) — and when
-          // it does not answer at all, the heuristic still answers both.
           title,
           brief: args.brief ?? '',
           lifecycle: 'draft',
@@ -3020,24 +3033,23 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         // 0.16s but one network round-trip is 2.51s, paid ONCE PER REPO, so a
         // three-repo task is ~7.5s of nothing before a file is written. The
         // caller gets the task; provisioning reports itself through the record.
-        // The naming hook is passed HERE and nowhere else. `restore` provisions
-        // too, and a task with a history must never have its directory renamed
-        // under it — the window in which a slug may change closed the first time
-        // git ran for it.
-        /**
-         * Started BEFORE the first `changed()`, and the order is the whole point.
-         *
-         * `provision` runs synchronously into `whileBusy`, which sets the busy
-         * word and nudges the tree before it awaits anything — so by the time the
-         * nudge below lands, the row already has a step to be called. Nudging
-         * first left exactly one frame in which the task existed and nothing was
-         * busy, and that frame drew `task.title`: `heuristicName`'s slice of the
-         * brief, `in the 3L tracker, NA`. One frame is enough to see, because it
-         * is the frame the row is BORN in and the eye is already there.
-         */
-        void provision(task, args.images, named === undefined ? { settle: settleName } : undefined).catch((error: unknown) => {
+        void provision(task, args.images).catch((error: unknown) => {
           ctx.log.error(`task ${task.id}: provisioning threw — ${String(error)}`);
         });
+        /**
+         * BESIDE provisioning, never in front of it.
+         *
+         * Nothing awaits this and nothing it answers reaches disk, so a model
+         * that is slow, off or signed out costs the task exactly nothing. Here
+         * and not in `restore`: a returning task has been named already, and a
+         * second opinion about a name a person has been reading for a week is
+         * not an improvement.
+         */
+        if (!authored) {
+          void nameLater(task).catch((error: unknown) => {
+            ctx.log.error(`task ${task.id}: naming threw — ${String(error)}`);
+          });
+        }
         changed();
         return task;
       },
@@ -3687,6 +3699,98 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       },
     }),
   );
+  /**
+   * A git branch name, conservatively.
+   *
+   * Not `git check-ref-format`'s whole grammar: this is a name a person or an
+   * agent types for a branch we made, and the shapes it excludes are the ones
+   * that turn a rename into an argument git reads as a flag (`-rf`), a ref
+   * nobody meant (`a..b`), or a path (`../etc`).
+   */
+  /** A local branch rename is instant; this is a hang guard, not an expectation. */
+  const RENAME_TIMEOUT_MS = 30_000;
+
+  const BRANCH_NAME = /^[a-z0-9][a-z0-9._\-/]*$/i;
+  const legalBranch = (name: string): boolean =>
+    BRANCH_NAME.test(name) && !name.includes('..') && !name.endsWith('.lock') && !name.endsWith('/');
+
+  ctx.subscriptions.push(
+    commands.register(TASK_COMMANDS.renameBranch, {
+      title: 'Tasks: Rename the Branch',
+      schema: s.object({ task: s.optional(s.string()), name: s.string() }),
+      /**
+       * Scoped to the caller's own task, exactly as `tasks.spawn` is: the kernel
+       * authenticates the caller KIND, and which task a session belongs to is a
+       * question only this extension can answer.
+       *
+       * **Nothing is written to the record.** Git holds the branch, so a rename
+       * through this verb and one typed by hand in a terminal are the same event
+       * — and a stored copy would be a claim about somebody's repository that
+       * goes stale the first time they disagree.
+       */
+      handler: async (args, caller) => {
+        const owning = caller.kind === 'agent' ? taskOfSession(store, caller.sessionId) : undefined;
+        if (caller.kind === 'agent' && owning === undefined) {
+          throw new Error('this session does not belong to a task, so it has no branch to rename');
+        }
+        const id = args.task ?? owning?.id;
+        if (id === undefined) throw new Error('no task named, and the caller is not in one');
+        if (owning !== undefined && id !== owning.id) {
+          throw new Error(`a session in task ${owning.id} may not rename task ${id}'s branch`);
+        }
+        const task = store.get(id);
+        if (task === undefined) throw new Error(`no task ${id}`);
+
+        const name = args.name.trim();
+        if (!legalBranch(name)) throw new Error(`"${name}" is not a branch name`);
+
+        const root = rootOf(task);
+        const process_ = api.proposed.process;
+
+        // Every repo is asked BEFORE any is touched. A half-renamed task is two
+        // branches, and one task keeping one branch name is the property the
+        // `taskProvisioned` fact rests on.
+        const refs = await Promise.all(
+          task.repos.map((repo) => readRepoRefs(process_, { name: repo.name, path: repo.path })),
+        );
+        if (branchTaken(name, refs)) {
+          throw new Error(`"${name}" is already a branch in one of this task's repos`);
+        }
+
+        const renamed: string[] = [];
+        const failed: string[] = [];
+        let from = task.slug;
+        for (const repo of task.repos) {
+          const cwd = `${root}/${repo.name}`;
+          const head = await process_.gitRead(['symbolic-ref', '--short', 'HEAD'], { cwd, timeoutMs: RENAME_TIMEOUT_MS });
+          if (!head.ok) {
+            // `symbolic-ref` rather than `rev-parse --abbrev-ref`: the second
+            // answers the literal string `HEAD` on a detached head, which is a
+            // branch name git would happily rename to.
+            failed.push(`${repo.name}: ${head.stderr.trim() || 'not on a branch'}`);
+            continue;
+          }
+          from = head.stdout.trim();
+          if (from === name) {
+            renamed.push(repo.name);
+            continue;
+          }
+          const out = await process_.gitWrite(['branch', '-m', from, name], { cwd, timeoutMs: RENAME_TIMEOUT_MS });
+          if (out.ok) renamed.push(repo.name);
+          else failed.push(`${repo.name}: ${out.stderr.trim() || `git exited ${out.code}`}`);
+        }
+
+        // Reported, never rolled back (D15): a rename that succeeded is not a
+        // thing to undo behind the user's back, and the next read of git
+        // describes whatever is actually there.
+        if (failed.length > 0) ctx.log.warn(`task ${task.id}: rename incomplete — ${failed.join('; ')}`);
+        else ctx.log.info(`task ${task.id}: branch is now ${name}`);
+        changed();
+        return { id: task.id, from, to: name, renamed, failed };
+      },
+    }),
+  );
+
   ctx.subscriptions.push(
     commands.register(TASK_COMMANDS.delete, {
       title: 'Tasks: Delete',
@@ -3956,13 +4060,20 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
            * at all until the first refresh lands — so a freshly-opened app draws
            * cards with no diff line for a beat rather than a row of `+0 −0`.
            */
-          const cardFor = (task: TaskRecord, state: string, count?: number): unknown => {
+          const cardFor = (task: TaskRecord, state: string, count?: number, stage?: string): unknown => {
             const factsOf = factsFor(task);
             return {
             mark: markFor(task, state),
-            // No stage field: the step is the row's LABEL now (`stepLabel`), and
-            // a card that also carried it in the trailing cell would say the same
-            // word twice on one line.
+            /*
+             * The step this task is on, while it is being built.
+             *
+             * BESIDE the label rather than replacing it — a row that said
+             * `Creating the worktree` where its name goes was answering the wrong
+             * question — and beside rather than under, because §10 refuses a row
+             * that grows to say something. Absent the moment the work ends, which
+             * is what makes its disappearance the "ready" signal.
+             */
+            ...(stage === undefined ? {} : { stage }),
             /*
              * **There is no time stamp on a task row, and that is the third answer
              * rather than an omission.**
@@ -4135,8 +4246,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
                 : hookIssue.get(`${task.id}:${pending.name}`) !== undefined
                   ? `${pending.name} — hook failed`
                   : `${provisioning.get(`${task.id}:${pending.name}`) ?? 'provisioning'} ${pending.name}…`;
-            // The step, or the name — never both, and the changeover IS the
-            // "your task is ready" signal.
+            // Beside the name, not instead of it — see `stepLabel`.
             const step = busyWhat === undefined ? undefined : stepLabel(busyWhat, task);
             /*
              * The same fact, in the field the ORDINARY row draws.
@@ -4165,7 +4275,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
             const liveAgent = !shipped && (mark === 'working' || mark === 'waiting');
             return {
               id: task.id,
-              label: step ?? task.title,
+              label: task.title,
               description: [
                 // The operation displaces the STATE rather than joining it: a row
                 // that says `idle · archiving…` is answering the same question
@@ -4222,7 +4332,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
                * ordinary row and loses nothing but the richer form.
                */
               component: 'tasks.card',
-              data: cardFor(task, state, count),
+              data: cardFor(task, state, count, step),
               /*
                * Something is happening to it right now — a snapshot being taken,
                * worktrees being rebuilt. The row says so where its status mark is,

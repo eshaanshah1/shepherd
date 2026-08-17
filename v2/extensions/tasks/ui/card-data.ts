@@ -94,15 +94,17 @@ export interface CardData {
    * disclosure that the line is standing in for more than it opens.
    */
   readonly dupe?: number;
-  /*
-   * There is deliberately no `stage` field.
+  /**
+   * The step this task is on, while it is being built.
    *
-   * The step a task is on reaches the rail as the row's own LABEL (`stepLabel`,
-   * service half), because until the model answers there is no name for the
-   * label to hold — only `heuristicName`'s slice of the brief, which reads as a
-   * broken name rather than an unfinished one. A card field carrying the step as
-   * well would draw the same word twice on one line.
+   * It used to reach the rail as the row's own LABEL, because until the model
+   * answered there was no name for the label to hold. There is one from birth
+   * now — the brief — so the step sits BESIDE the name instead of replacing it,
+   * and beside rather than under, because §10 refuses a row that grows to say
+   * something. Absent the moment the work ends, which is what makes it
+   * disappearing the "ready" signal.
    */
+  readonly stage?: string;
   /** One sentence of what is happening. */
   readonly summary?: string;
   readonly diff?: CardDiff;
@@ -255,6 +257,7 @@ export function readCardData(value: unknown): CardData | null {
   return {
     mark: state,
     ...(shipped && dupe !== undefined && dupe > 1 ? { dupe } : {}),
+    stage: str(value['stage']),
     summary: str(value['summary']),
     diff: readDiff(value['diff']),
     suite,

@@ -50,7 +50,7 @@ function pr(overrides: Partial<PullRequest> = {}): PullRequest {
 
 const TASK: TaskSubject = {
   id: 't-1',
-  branch: 'tasks/add-multiple-task-tabs',
+  root: '/tasks/slate-merino',
   repos: [{ path: '/repos/v2', name: 'v2' }],
   shipped: false,
 };
@@ -61,6 +61,8 @@ interface Harness {
   readonly asked: { slug: RepoSlug; branch: string }[];
   /** Every repo whose HEAD was read — the cost `needsHead` exists to avoid. */
   readonly headReads: string[];
+  /** Every WORKTREE whose HEAD branch was read — the branch is git's to answer. */
+  readonly branchReads: string[];
   readonly logs: string[];
   readonly redraws: () => number;
   readonly authFailures: () => number;
@@ -68,8 +70,11 @@ interface Harness {
   fail: (error: unknown) => void;
 }
 
-function harness(options: { remote?: RepoSlug | null; head?: string | null } = {}): Harness {
+function harness(
+  options: { remote?: RepoSlug | null; head?: string | null; branch?: string | null } = {},
+): Harness {
   const clock = fakeClock();
+  const branchReads: string[] = [];
   const asked: { slug: RepoSlug; branch: string }[] = [];
   const headReads: string[] = [];
   const logs: string[] = [];
@@ -98,6 +103,12 @@ function harness(options: { remote?: RepoSlug | null; head?: string | null } = {
       headReads.push(path);
       return Promise.resolve(options.head === undefined ? HEAD : options.head);
     },
+    branchOf: (worktree) => {
+      branchReads.push(worktree);
+      return Promise.resolve(
+        options.branch === undefined ? 'tasks/add-multiple-task-tabs' : options.branch,
+      );
+    },
     onChanged: () => (redraws += 1),
     onAuthFailure: () => (authFailures += 1),
     log: (line) => logs.push(line),
@@ -108,6 +119,7 @@ function harness(options: { remote?: RepoSlug | null; head?: string | null } = {
     clock,
     asked,
     headReads,
+    branchReads,
     logs,
     redraws: () => redraws,
     authFailures: () => authFailures,
@@ -314,5 +326,34 @@ describe('changed', () => {
   it('ignores a field nothing draws', () => {
     // `updatedAt` moves whenever CI touches a PR, which is constantly.
     expect(changed(held([pr()]), held([pr({ updatedAt: 12_345 })]))).toBe(false);
+  });
+});
+
+/**
+ * Which branch a task is on is GIT's answer, not the task record's.
+ *
+ * A task's branch used to be its slug, so a record was enough. The slug is
+ * minted now and an agent is invited to rename the branch it works on, so the
+ * only place that knows is the worktree.
+ */
+describe('reading the branch', () => {
+  it('asks the worktree, not the task, and queries what it answered', async () => {
+    const h = harness({ branch: 'fix-login' });
+    h.answer([]);
+    await h.sync.pass([TASK]);
+
+    expect(h.branchReads).toEqual(['/tasks/slate-merino/v2']);
+    expect(h.asked.map((ask) => ask.branch)).toEqual(['fix-login']);
+  });
+
+  // `symbolic-ref` fails on a detached head where `rev-parse --abbrev-ref`
+  // answers the literal string `HEAD` — a perfectly valid thing to ask GitHub
+  // about and never what anybody meant.
+  it('asks for no PRs when a worktree is not on a branch', async () => {
+    const h = harness({ branch: null });
+    h.answer([]);
+    await h.sync.pass([TASK]);
+
+    expect(h.asked).toEqual([]);
   });
 });

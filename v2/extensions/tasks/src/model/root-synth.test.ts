@@ -16,7 +16,7 @@ const repo = (over: Partial<RepoContribution> & { name: string }): RepoContribut
 });
 
 const synth = (repos: readonly RepoContribution[]) =>
-  synthTaskRoot({ title: 'Fix login', brief: 'Make the login flow work.', repos });
+  synthTaskRoot({ title: 'Fix login', brief: 'Make the login flow work.', branch: 'slate-merino', repos });
 
 describe('the generated CLAUDE.md', () => {
   it('carries the brief', () => {
@@ -159,7 +159,27 @@ describe('purity', () => {
   it('does not mutate its input', () => {
     const repos = [repo({ name: 'api', skills: ['deploy'] }), repo({ name: 'web', skills: ['deploy'] })];
     const before = JSON.stringify(repos);
-    synthTaskRoot({ title: 't', brief: 'b', repos });
+    synthTaskRoot({ title: 't', brief: 'b', branch: 'slate-merino', repos });
     expect(JSON.stringify(repos)).toBe(before);
+  });
+});
+
+/**
+ * The branch, and permission to change it.
+ *
+ * A task's branch is minted before anyone knows what the task is about, so the
+ * agent working in it is the first party in a position to name it well.
+ */
+describe('the branch section', () => {
+  it('names the branch and the verb that renames it', () => {
+    const claudeMd = synth([]).claudeMd;
+    expect(claudeMd).toContain('slate-merino');
+    expect(claudeMd).toContain('shepherd task rename-branch');
+  });
+
+  // It is a prompt to act, not an explanation. An agent needs the door, not the
+  // history of why the door is there.
+  it('does not explain why the branch is named what it is', () => {
+    expect(synth([]).claudeMd).not.toMatch(/random|placeholder|minted|temporary/i);
   });
 });

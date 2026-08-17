@@ -68,6 +68,14 @@ import { taskRootId } from './model/root-id.ts';
  */
 
 const CALLER: Caller = { kind: 'device', deviceId: 'test' };
+/**
+ * A session id as the KERNEL brands it.
+ *
+ * A task's own `sessions[].id` is a plain string — it is this extension's
+ * record of a session, not the kernel's handle on one — so being an agent in a
+ * test means crossing that line explicitly rather than by accident.
+ */
+type CallerSession = Extract<Caller, { kind: 'agent' }>['sessionId'];
 const OK: ExecOk = { ok: true, stdout: '', stderr: '' };
 
 interface GitCall {
@@ -85,6 +93,15 @@ interface Harness {
    * about the handler that would be swallowed by testing it through the wrapper.
    */
   run<R>(id: string, args?: unknown): Promise<R>;
+  /**
+   * The same, as somebody else.
+   *
+   * A verb an AGENT is invited to call is scoped to that agent's own task, and
+   * the scope is this extension's to enforce — the kernel authenticates the
+   * caller's kind and cannot know which task a session belongs to. So a test has
+   * to be able to be a session.
+   */
+  runAs<R>(caller: Caller, id: string, args?: unknown): Promise<R>;
   /** Every `commands.invoke` the extension made — layout.close lives here. */
   readonly invoked: { id: string; args: unknown }[];
   readonly git: GitCall[];
@@ -414,6 +431,11 @@ function harness(
       if (spec === undefined) throw new Error(`no command ${id} was registered`);
       return (await spec.handler(args, CALLER)) as R;
     },
+    runAs: async <R>(caller: Caller, id: string, args?: unknown): Promise<R> => {
+      const spec = registered.get(id);
+      if (spec === undefined) throw new Error(`no command ${id} was registered`);
+      return (await spec.handler(args, caller)) as R;
+    },
     invoked,
     git,
     trace,
@@ -497,6 +519,15 @@ const listedState = async (h: Harness): Promise<string> =>
  */
 const rowOf = async (h: Harness, id: string): Promise<TreeItem | undefined> =>
   (await h.tree().children(undefined)).find((row) => row.id === id);
+
+/**
+ * The STEP a row is on, which is a field of its card and not its label.
+ *
+ * It was the label until a task had a name from birth; now the label is the
+ * task and this sits beside it, so a test asserting progress reads here.
+ */
+const stageOf = (row: TreeItem | undefined): string | undefined =>
+  (row?.data as { stage?: string } | undefined)?.stage;
 
 /**
  * Wait for work the extension started and did not hand back.
@@ -1092,10 +1123,9 @@ describe('a task owns a layout root', () => {
         const { h, finish } = heldAtWorktrees();
         const created = await h.run<{ id: string }>('tasks.create', {
           title: 'Ship it',
-          name: 'ship-it',
           repos: [REPO],
         });
-        await until(async () => (await rowOf(h, created.id))?.label === 'Creating the worktree');
+        await until(async () => stageOf(await rowOf(h, created.id)) === 'Creating the worktree');
 
         const before = openRootCalls(h).length;
         await h.run('tasks.reveal', { task: created.id });
@@ -1119,10 +1149,9 @@ describe('a task owns a layout root', () => {
         const { h, finish } = heldAtWorktrees();
         const created = await h.run<{ id: string }>('tasks.create', {
           title: 'Ship it',
-          name: 'ship-it',
           repos: [REPO],
         });
-        await until(async () => (await rowOf(h, created.id))?.label === 'Creating the worktree');
+        await until(async () => stageOf(await rowOf(h, created.id)) === 'Creating the worktree');
 
         await h.run('tasks.reveal', { task: created.id });
 
@@ -1142,10 +1171,9 @@ describe('a task owns a layout root', () => {
         const { h, finish } = heldAtWorktrees();
         const created = await h.run<{ id: string }>('tasks.create', {
           title: 'Ship it',
-          name: 'ship-it',
           repos: [REPO],
         });
-        await until(async () => (await rowOf(h, created.id))?.label === 'Creating the worktree');
+        await until(async () => stageOf(await rowOf(h, created.id)) === 'Creating the worktree');
         await h.run('tasks.reveal', { task: created.id });
 
         finish();
@@ -1169,7 +1197,6 @@ describe('a task owns a layout root', () => {
         }));
         const created = await h.run<{ id: string }>('tasks.create', {
           title: 'Ship it',
-          name: 'ship-it',
           repos: [REPO],
         });
         await until(async () => (await rowOf(h, created.id))?.busy !== true);
@@ -1191,29 +1218,31 @@ describe('a task owns a layout root', () => {
         const held = new Promise<void>((resolve) => {
           finish = resolve;
         });
+        // Held on the `worktree add` itself, which is the phase a task now opens
+        // in: nothing waits for a name any more, so there is no naming step to
+        // catch it in.
         const h = (live = harness({
-          invoke: (id) =>
-            id === 'agents.complete'
-              ? held.then(() => ({ ok: true as const, value: { ok: true, text: 'ship it' } }))
-              : undefined,
+          git: (call) =>
+            call.args[0] === 'worktree' && call.args[1] === 'add'
+              ? held.then(() => ({ ok: true as const, stdout: '', stderr: '' }))
+              : OK,
         }));
 
         const created = await h.run<{ id: string }>('tasks.create', {
-          title: 'Show pending state for initializing tasks',
           brief: 'Show a pending state for tasks that are still initializing, please.',
           repos: [REPO],
         });
-        await until(async () => (await rowOf(h, created.id))?.label === 'Naming the task');
+        await until(async () => stageOf(await rowOf(h, created.id)) === 'Creating the worktree');
 
         const before = openRootCalls(h).length;
         await h.run('tasks.reveal', { task: created.id });
 
         const opened = openRootCalls(h).slice(before)[0];
         // The repos are fixed from creation, so there is no phase they cannot be
-        // shown in — including this one, before the slug has settled.
+        // shown in.
         expect(opened).toMatchObject({
           empty: true,
-          placeholder: { line: 'Naming the task', names: ['app'] },
+          placeholder: { line: 'Creating the worktree', names: ['app'] },
         });
         const names = (opened?.placeholder as { names: string[] }).names;
         expect(names.some((name) => name.includes('-'))).toBe(false);
@@ -1226,19 +1255,19 @@ describe('a task owns a layout root', () => {
         const held = new Promise<void>((resolve) => {
           finish = resolve;
         });
-        const h = (live = harness({
-          invoke: (id) =>
-            id === 'agents.complete'
-              ? held.then(() => ({ ok: true as const, value: { ok: true, text: 'ship it' } }))
-              : undefined,
-        }));
+        // A task with no repos runs no git at all, so the phase to hold is the
+        // one that finishes its root.
+        const h = (live = harness());
+        h.point<TaskProvisioned>(TASK_PROVISIONED_POINT).register(async () => {
+          await held;
+          return { ok: true };
+        });
 
         const created = await h.run<{ id: string }>('tasks.create', {
-          title: 'Ship it',
           brief: 'Ship the thing that has been sitting in review for a fortnight now.',
           repos: [],
         });
-        await until(async () => (await rowOf(h, created.id))?.label === 'Naming the task');
+        await until(async () => stageOf(await rowOf(h, created.id)) === 'Linking agent files');
 
         const before = openRootCalls(h).length;
         await h.run('tasks.reveal', { task: created.id });
@@ -1246,7 +1275,7 @@ describe('a task owns a layout root', () => {
         const opened = openRootCalls(h).slice(before)[0];
         // The key is absent, not an empty array: §6 says an empty state with
         // nothing to add says nothing rather than padding.
-        expect(opened).toMatchObject({ empty: true, placeholder: { line: 'Naming the task' } });
+        expect(opened).toMatchObject({ empty: true, placeholder: { line: 'Linking agent files' } });
         expect((opened?.placeholder as { names?: unknown })?.names).toBeUndefined();
 
         finish();
@@ -1543,15 +1572,17 @@ describe('a long operation', () => {
     expect(during?.busy).toBe(true);
     expect(during?.description).toBe('archiving…');
     /*
-     * And in the LABEL, which is the only one of the two a task card draws.
+     * And on the CARD, beside the label rather than in place of it.
      *
      * This said the task's own title for one shipped build, on the argument that
      * the name is what says which task is going away. The card reads `label` and
      * `data` and has never read `description`, so what that actually produced was
-     * an archiving row that said nothing at all — the same defect the step labels
-     * were added to fix, re-committed one field along.
+     * an archiving row that said nothing at all. The step lives in `data.stage`
+     * now, which the card does draw — and the label goes on naming the task,
+     * which is the question the row was always being asked.
      */
-    expect(during?.label).toBe('Archiving');
+    expect(stageOf(during)).toBe('Archiving');
+    expect(during?.label).toBe('Fix login');
     /*
      * And it does NOT jump to In flight. It is busy, but it is not being built:
      * upgrading its mark moved the row into the live-work section on its way out
@@ -1608,7 +1639,7 @@ describe('a long operation', () => {
   describe('the step a new task is on', () => {
     const REPO = { path: '/src/app', name: 'app' };
 
-    /** Every distinct label the row wore, in the order it first wore it. */
+    /** Every distinct STEP the row showed, in the order it first showed it. */
     const recordLabels = (h: Harness): string[] => {
       const seen: string[] = [];
       // `children()` has a synchronous body behind a resolved promise, so reading
@@ -1619,19 +1650,57 @@ describe('a long operation', () => {
           .tree()
           .children(undefined)
           .then((rows) => {
-            const label = rows.find((entry) => entry.section !== true)?.label;
+            const label = stageOf(rows.find((entry) => entry.section !== true));
             if (typeof label === 'string' && seen[seen.length - 1] !== label) seen.push(label);
           });
       });
       return seen;
     };
 
-    it('walks naming → worktrees → linking → starting, in that order', async () => {
+    it('keeps the task on the row and puts the step beside it', async () => {
+      // The step used to REPLACE the label, because until the model answered
+      // there was no name for the row to hold. There is one from birth now — the
+      // brief — so the two facts sit side by side instead of taking turns.
+      let finish = (): void => undefined;
+      const held = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      const h = (live = harness({
+        git: (call) =>
+          call.args[0] === 'worktree' && call.args[1] === 'add' ? held.then(() => OK) : OK,
+      }));
+
+      const created = await h.run<{ id: string }>('tasks.create', {
+        brief: 'fix the login redirect loop',
+        repos: [REPO],
+      });
+      await until(
+        async () => (await rowOf(h, created.id))?.data !== undefined
+          && (((await rowOf(h, created.id))?.data as { stage?: string }).stage) === 'Creating the worktree',
+      );
+
+      const row = await rowOf(h, created.id);
+      expect(row?.label).toBe('fix the login redirect loop');
+      expect((row?.data as { stage?: string }).stage).toBe('Creating the worktree');
+
+      finish();
+    });
+
+    it('drops the stage when there is nothing left to do', async () => {
+      const h = (live = harness());
+      const created = await h.run<{ id: string }>('tasks.create', {
+        brief: 'fix the login redirect loop',
+        repos: [REPO],
+      });
+      await until(async () => (await rowOf(h, created.id))?.busy !== true);
+
+      expect(((await rowOf(h, created.id))?.data as { stage?: string }).stage).toBeUndefined();
+    });
+
+    it('walks worktrees → linking → starting, in that order', async () => {
       const h = (live = harness());
       const labels = recordLabels(h);
 
-      // No `name`, so the naming phase runs: it is the one step that happens
-      // before a single git call and the only chance the slug has to change.
       await h.run('tasks.create', { title: 'Ship it', repos: [REPO] });
       await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
 
@@ -1639,10 +1708,14 @@ describe('a long operation', () => {
       // between phases and `Linking agent files` is entered twice (the root, then
       // the task hooks), so pinning the exact list would assert the seams rather
       // than the order — and the order is the whole claim.
-      const steps = ['Naming the task', 'Creating the worktree', 'Linking agent files', 'Starting the agent'];
+      //
+      // There is no naming step to lead them any more: the ask runs beside all of
+      // this and none of these phases waits for it.
+      const steps = ['Creating the worktree', 'Linking agent files', 'Starting the agent'];
       const firstSeen = steps.map((phrase) => labels.indexOf(phrase));
       expect(firstSeen, `saw ${JSON.stringify(labels)}`).not.toContain(-1);
       expect(firstSeen).toEqual([...firstSeen].sort((a, b) => a - b));
+      expect(labels).not.toContain('Naming the task');
     });
 
     it('is never BORN wearing the half-written name the heuristic guessed', async () => {
@@ -1678,10 +1751,9 @@ describe('a long operation', () => {
 
       const created = await h.run<{ id: string }>('tasks.create', {
         title: 'Ship it',
-        name: 'ship-it',
         repos: [REPO],
       });
-      await until(async () => (await rowOf(h, created.id))?.label === 'Creating the worktree');
+      await until(async () => stageOf(await rowOf(h, created.id)) === 'Creating the worktree');
 
       const row = await rowOf(h, created.id);
       expect(row?.busy).toBe(true);
@@ -1703,10 +1775,9 @@ describe('a long operation', () => {
 
       const created = await h.run<{ id: string }>('tasks.create', {
         title: 'Ship it',
-        name: 'ship-it',
         repos: [REPO, { path: '/src/api', name: 'api' }],
       });
-      await until(async () => (await rowOf(h, created.id))?.label === 'Creating worktrees');
+      await until(async () => stageOf(await rowOf(h, created.id)) === 'Creating worktrees');
 
       finish();
     });
@@ -1731,7 +1802,7 @@ describe('a long operation', () => {
         git: (call) => (call.args[0] === 'fetch' ? held.then(() => OK) : OK),
       }));
 
-      await h.run<{ id: string }>('tasks.create', { title: 'Ship it', name: 'ship-it', repos: [REPO] });
+      await h.run<{ id: string }>('tasks.create', { title: 'Ship it', repos: [REPO] });
       const rows = await h.tree().children(undefined);
       const row = rows.find((entry) => entry.section !== true);
 
@@ -1748,13 +1819,12 @@ describe('a long operation', () => {
       const h = (live = harness());
       const created = await h.run<{ id: string }>('tasks.create', {
         title: 'Ship it',
-        name: 'ship-it',
         repos: [REPO],
       });
       await until(async () => (await rowOf(h, created.id))?.busy !== true);
 
       const row = await rowOf(h, created.id);
-      expect(row?.label).toBe('ship-it');
+      expect(row?.label).toBe('Ship it');
       // And it carries no time stamp. A task row had one on both sides of the
       // divider; it reported task age on finished work, and a corrected ship clock
       // was true without earning a column. The trailing cell holds the row's verb.
@@ -2368,53 +2438,61 @@ describe('shipped work that is old', () => {
  * extension (D14) rather than to the user.
  */
 /**
- * The row label, when the model does not answer.
+ * What a task is called, and what it is filed under — now two questions.
  *
- * The composer sends the brief's first line capped at 72 as the title, so with
- * no `name` the rail drew the opening of the paragraph — the screenshot that
- * started this had `can you handle this please: https://brow…` in it twice,
- * byte-identical, because two links to the same host truncate the same way. §6
- * says a label is 1–3 words; §5 says a task is named once, in the rail.
+ * The slug is minted, so nothing a user typed reaches a directory or a branch,
+ * and creating a task cannot wait on a model. The title opens on the brief and
+ * is replaced later, by a name that touches nothing but pixels.
  */
-describe('naming a task the quick model did not name', () => {
-  it('cleans a title that is a slice of the brief', async () => {
+describe('naming a task', () => {
+  const MINTED = /^[a-z]+-[a-z]+(-\d+)?$/;
+
+  it('mints a slug that owes nothing to the brief', async () => {
     const h = (live = harness());
-    const created = await h.run<{ title: string }>('tasks.create', {
-      // Verbatim from `titleOf`, ellipsis and all.
-      title: 'can you handle this please: https://browserstack.atlassian.net/browse/AB…',
-      brief: 'can you handle this please: https://browserstack.atlassian.net/browse/ABC-1',
+    const created = await h.run<{ slug: string }>('tasks.create', {
+      brief: 'fix the login redirect loop that happens after SSO',
       repos: [],
     });
-    expect(created.title).toBe('handle this please');
+    expect(created.slug).toMatch(MINTED);
+    expect(created.slug).not.toContain('login');
   });
 
-  it('leaves a title somebody actually authored alone', async () => {
+  it('titles a task with its own brief until something better arrives', async () => {
+    const h = (live = harness());
+    const created = await h.run<{ title: string }>('tasks.create', {
+      brief: 'fix the login redirect loop\nand the second line is ignored',
+      repos: [],
+    });
+    expect(created.title).toBe('fix the login redirect loop');
+  });
+
+  it('keeps a title the caller chose, and does not ask a model about it', async () => {
     /*
      * `shepherd task new --title 'Fix login' --brief '…'` is a name a person
-     * typed, and the brief underneath it is a different string on purpose. This
-     * is why the heuristic reads the TITLE and not the brief: reading the brief
-     * would overwrite the name with a guess about the paragraph beneath it.
+     * typed. Overwriting it with a guess about the paragraph beneath it would be
+     * a regression, so an explicit title also suppresses the ask.
      */
     const h = (live = harness());
     const created = await h.run<{ title: string }>('tasks.create', {
       title: 'Fix login',
-      brief: 'The redirect loop only reproduces on a real device.',
+      brief: 'fix the login redirect loop that happens after SSO',
       repos: [],
     });
     expect(created.title).toBe('Fix login');
+    expect(h.invoked.filter((call) => call.id === 'agents.complete')).toHaveLength(0);
   });
 
-  it('keeps the brief as the slug-s source, which is a different question', async () => {
-    // A branch name wants the fuller string; the row wants the shorter one. They
-    // are allowed to differ, and the slug's behaviour here is unchanged.
-    const h = (live = harness());
+  it('answers before the naming call could possibly have finished', async () => {
+    // The model never answers at all. Create must still return a whole task.
+    const h = (live = harness({
+      invoke: (id) => (id === 'agents.complete' ? new Promise(() => undefined) : undefined),
+    }));
     const created = await h.run<{ slug: string; title: string }>('tasks.create', {
-      title: 'Fix login',
-      brief: 'i wanna fix the login redirect loop on Safari',
+      brief: 'fix the login redirect loop that happens after SSO',
       repos: [],
     });
-    expect(created.title).toBe('Fix login');
-    expect(created.slug).toBe('fix-the-login-redirect-loop');
+    expect(created.slug).toMatch(MINTED);
+    expect(created.title).toBe('fix the login redirect loop that happens after SSO');
   });
 });
 
@@ -2524,11 +2602,11 @@ describe('pre-trusting the directories it generates', () => {
     const h = (live = harness());
     writeFileSync(join(h.homeDir, '.claude.json'), '{}', 'utf8');
 
-    const created = await h.run<{ id: string }>('tasks.create', { title: 'Fix login', repos: [] });
+    const created = await h.run<{ id: string; slug: string }>('tasks.create', { title: 'Fix login', repos: [] });
     await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
 
     const projects = configOf(h)['projects'] as Record<string, unknown>;
-    expect(projects[join(h.dataDir, 'fix-login')]).toEqual({ hasTrustDialogAccepted: true });
+    expect(projects[join(h.dataDir, created.slug)]).toEqual({ hasTrustDialogAccepted: true });
     expect(created.id).toBeTruthy();
   });
 
@@ -2536,14 +2614,14 @@ describe('pre-trusting the directories it generates', () => {
     const h = (live = harness());
     writeFileSync(join(h.homeDir, '.claude.json'), '{}', 'utf8');
 
-    await h.run('tasks.create', {
+    const created = await h.run<{ slug: string }>('tasks.create', {
       title: 'Fix login',
       repos: [{ name: 'api', path: '/src/api' }],
     });
     await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
 
     const projects = configOf(h)['projects'] as Record<string, unknown>;
-    expect(projects[join(h.dataDir, 'fix-login', 'api')]).toEqual({ hasTrustDialogAccepted: true });
+    expect(projects[join(h.dataDir, created.slug, 'api')]).toEqual({ hasTrustDialogAccepted: true });
   });
 
   it('trusts nothing but what it made — never the source repo', async () => {
@@ -2901,15 +2979,18 @@ describe('tasks.repoProvisioned', () => {
       return { ok: true };
     });
 
-    await h.run('tasks.create', { title: 'Fix login', repos: [REPO] });
+    const created = await h.run<{ slug: string }>('tasks.create', { title: 'Fix login', repos: [REPO] });
     await until(() => seen.length > 0);
 
+    // The branch and the folder are the same minted name here, and neither owes
+    // anything to the title — which is the property worth reading off the record
+    // rather than restating.
     expect(seen).toEqual([
       {
         repo: { path: '/src/api', name: 'api' },
-        worktree: join(h.dataDir, 'fix-login', 'api'),
-        branch: 'fix-login',
-        task: { slug: 'fix-login', root: join(h.dataDir, 'fix-login') },
+        worktree: join(h.dataDir, created.slug, 'api'),
+        branch: created.slug,
+        task: { slug: created.slug, root: join(h.dataDir, created.slug) },
       },
     ]);
   });
@@ -2975,7 +3056,7 @@ describe('tasks.repoProvisioned', () => {
       return { ok: true };
     });
 
-    await h.run('tasks.create', {
+    const created = await h.run<{ slug: string }>('tasks.create', {
       title: 'Fix login',
       repos: [REPO, { name: 'web', path: '/src/web' }],
     });
@@ -2986,7 +3067,7 @@ describe('tasks.repoProvisioned', () => {
     // in its OWN worktree — the ordering claim that does matter lives in
     // `provisioning repos concurrently` below, on `landed`.
     expect([...worktrees].sort()).toEqual(
-      [join(h.dataDir, 'fix-login', 'api'), join(h.dataDir, 'fix-login', 'web')].sort(),
+      [join(h.dataDir, created.slug, 'api'), join(h.dataDir, created.slug, 'web')].sort(),
     );
   });
 
@@ -3122,16 +3203,16 @@ describe('tasks.taskProvisioned', () => {
       return { ok: true };
     });
 
-    await h.run('tasks.create', { title: 'Fix login', repos: [API, WEB] });
+    const created = await h.run<{ slug: string }>('tasks.create', { title: 'Fix login', repos: [API, WEB] });
     await until(() => seen.length > 0);
 
     expect(seen).toEqual([
       {
-        task: { slug: 'fix-login', root: join(h.dataDir, 'fix-login') },
-        branch: 'fix-login',
+        task: { slug: created.slug, root: join(h.dataDir, created.slug) },
+        branch: created.slug,
         repos: [
-          { path: '/src/api', name: 'api', worktree: join(h.dataDir, 'fix-login', 'api') },
-          { path: '/src/web', name: 'web', worktree: join(h.dataDir, 'fix-login', 'web') },
+          { path: '/src/api', name: 'api', worktree: join(h.dataDir, created.slug, 'api') },
+          { path: '/src/web', name: 'web', worktree: join(h.dataDir, created.slug, 'web') },
         ],
       },
     ]);
@@ -3146,9 +3227,9 @@ describe('tasks.taskProvisioned', () => {
     let calls = 0;
     let rootAtCallTime: boolean | undefined;
     let panesAtCallTime = 0;
-    h.point<TaskProvisioned>(TASK_PROVISIONED_POINT).register(async () => {
+    h.point<TaskProvisioned>(TASK_PROVISIONED_POINT).register(async (fact) => {
       calls += 1;
-      rootAtCallTime = existsSync(join(h.dataDir, 'fix-login', 'CLAUDE.md'));
+      rootAtCallTime = existsSync(join(fact.task.root, 'CLAUDE.md'));
       panesAtCallTime = h.invoked.filter((call) => call.id === 'layout.openRoot').length;
       return { ok: true };
     });
@@ -3338,10 +3419,10 @@ describe('provisioning repos concurrently', () => {
       },
     }));
 
-    await h.run('tasks.create', { title: 'Fix login', repos: [API, WEB] });
-    await until(() => existsSync(join(h.dataDir, 'fix-login', 'CLAUDE.md')));
+    const created = await h.run<{ slug: string }>('tasks.create', { title: 'Fix login', repos: [API, WEB] });
+    await until(() => existsSync(join(h.dataDir, created.slug, 'CLAUDE.md')));
 
-    const claudeMd = readFileSync(join(h.dataDir, 'fix-login', 'CLAUDE.md'), 'utf8');
+    const claudeMd = readFileSync(join(h.dataDir, created.slug, 'CLAUDE.md'), 'utf8');
     expect(claudeMd.indexOf('api/')).toBeLessThan(claudeMd.indexOf('web/'));
   });
 
@@ -3528,13 +3609,13 @@ describe('tasks.suggestName', () => {
 });
 
 /**
- * The race, and the invariant that keeps it from ever becoming a rename:
+ * There is no race left, because there is nothing to race:
  *
- *   the slug may change exactly once, before the first git write, and never after.
+ *   the slug is minted at create and never changes; the name is only a label.
  *
- * That single sentence is what keeps `git branch -m`, `git worktree move`, a task
- * root that moves under a booting agent, and re-seeding trust out of this codebase
- * entirely.
+ * That is what keeps `git branch -m`, `git worktree move`, a task root that moves
+ * under a booting agent, and re-seeding trust out of this codebase entirely — and
+ * it is now bought without making anybody wait for a model.
  */
 describe('naming a task at create', () => {
   const REPO = { path: '/src/api', name: 'api' };
@@ -3555,67 +3636,39 @@ describe('naming a task at create', () => {
   const worktreeAdds = (h: Harness): GitCall[] =>
     h.git.filter((call) => call.args[0] === 'worktree' && call.args[1] === 'add');
 
-  it('uses a name the caller already has, and never asks again', async () => {
-    const h = harness({ invoke: named('Ignored — should not be asked') });
-    const created = await h.run<TaskRecord>('tasks.create', {
-      title: BRIEF,
-      brief: BRIEF,
-      name: 'Add a cheap model seam',
-      repos: [REPO],
-    });
-    expect(created.slug).toBe('add-a-cheap-model-seam');
-    // One call answers both the branch and the row label (D18).
-    expect(created.title).toBe('Add a cheap model seam');
-    expect(h.invoked.filter((call) => call.id === 'agents.complete')).toEqual([]);
-    h.dispose();
-  });
-
-  it('falls back to the heuristic, not to the whole first line', async () => {
-    const h = harness({ invoke: () => undefined });
-    const created = await h.run<TaskRecord>('tasks.create', {
-      title: "#shepherd I wanna add a new feature / extension. It's something like a dumb model",
-      brief: "#shepherd I wanna add a new feature / extension. It's something like a dumb model",
-      repos: [],
-    });
-    // The bug being fixed produced
-    // `shepherd-i-wanna-add-a-new-feature-extension-it-s-something`.
-    expect(created.slug).toBe('add-a-new-feature-extension');
-    h.dispose();
-  });
-
-  it('adopts a name that lands before the first git write, and renames nothing', async () => {
+  it('takes the name for the label and leaves the folder alone', async () => {
     const h = harness({ invoke: named('Add a cheap model seam') });
-    const created = await h.run<TaskRecord>('tasks.create', { title: BRIEF, brief: BRIEF, repos: [REPO] });
+    const created = await h.run<TaskRecord>('tasks.create', { brief: BRIEF, repos: [REPO] });
     await drain();
 
-    expect((await stored(h)).find((t) => t.id === created.id)?.slug).toBe('add-a-cheap-model-seam');
-    // ONE worktree add, under the settled name — one name for the lifetime of the
-    // task, and no rename behind it.
+    const now = (await stored(h)).find((t) => t.id === created.id);
+    expect(now?.title).toBe('Add a cheap model seam');
+    expect(now?.slug).toBe(created.slug);
+    // ONE worktree add, under the minted name, and nothing that would move it.
     expect(worktreeAdds(h)).toHaveLength(1);
-    expect(worktreeAdds(h)[0]?.args.join(' ')).toContain('add-a-cheap-model-seam');
+    expect(worktreeAdds(h)[0]?.args.join(' ')).toContain(created.slug);
     expect(h.git.some((call) => call.args.join(' ').includes('branch -m'))).toBe(false);
     expect(h.git.some((call) => call.args.join(' ').includes('worktree move'))).toBe(false);
     h.dispose();
   });
 
-  it('never writes git under the provisional name', async () => {
-    // The whole point of awaiting the name BEFORE the first write rather than
-    // renaming after it: no git command may ever mention the heuristic slug.
-    //
-    // Asserted against the WHOLE provisional slug, not a prefix of it: the
-    // heuristic (`add-a-cheap-model-for-naming`) and the settled name
-    // (`add-a-cheap-model-seam`) share their first four words, so a substring
-    // check would fail on the correct behaviour.
+  /**
+   * MUTATION TARGET. The whole reason the slug is minted: nothing a user typed
+   * may reach a directory or a branch, in any phase, under any name.
+   */
+  it('never writes git under anything the user typed', async () => {
     const h = harness({ invoke: named('Add a cheap model seam') });
-    await h.run<TaskRecord>('tasks.create', { title: BRIEF, brief: BRIEF, repos: [REPO] });
+    await h.run<TaskRecord>('tasks.create', { brief: BRIEF, repos: [REPO] });
     await drain();
-    expect(h.git.some((call) => call.args.join(' ').includes('add-a-cheap-model-for-naming'))).toBe(false);
+    for (const word of ['cheap', 'model', 'naming', 'wanna', 'seam']) {
+      expect(h.git.some((call) => call.args.join(' ').includes(word))).toBe(false);
+    }
     h.dispose();
   });
 
-  it('holds the first worktree add for a slow answer rather than dropping it', async () => {
-    // Fake timers, because the ask is the only clock now and a real ~10s wait is
-    // not something a suite can sit through.
+  it('does not hold the first worktree add for a slow answer', async () => {
+    // The inversion this change is FOR. Fake timers, because the ask is ~10s and
+    // the point is that nobody sits through it.
     vi.useFakeTimers();
     try {
       const h = harness({
@@ -3626,54 +3679,167 @@ describe('naming a task at create', () => {
               }) as never)
             : undefined,
       });
-      const created = await h.run<TaskRecord>('tasks.create', { title: BRIEF, brief: BRIEF, repos: [REPO] });
+      const created = await h.run<TaskRecord>('tasks.create', { brief: BRIEF, repos: [REPO] });
 
-      // Past the 4s this used to give up at, and still nothing is written: a name
-      // that lands after the first worktree add is a name that cannot be used.
-      await vi.advanceTimersByTimeAsync(4_000);
-      expect(worktreeAdds(h)).toHaveLength(0);
+      // The worktree is cut while the model is still thinking, which is the
+      // difference between this and every version before it.
+      await vi.advanceTimersByTimeAsync(100);
+      expect(worktreeAdds(h)).toHaveLength(1);
+      expect(worktreeAdds(h)[0]?.args.join(' ')).toContain(created.slug);
 
       await vi.advanceTimersByTimeAsync(60_000);
 
-      expect((await stored(h)).find((t) => t.id === created.id)?.slug).toBe('slow-but-correct');
+      const now = (await stored(h)).find((t) => t.id === created.id);
+      expect(now?.title).toBe('Slow But Correct');
+      expect(now?.slug).toBe(created.slug);
       expect(worktreeAdds(h)).toHaveLength(1);
-      expect(worktreeAdds(h)[0]?.args.join(' ')).toContain('slow-but-correct');
-      expect(h.git.some((call) => call.args.join(' ').includes('add-a-cheap-model-for-naming'))).toBe(false);
       h.dispose();
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('falls back to the heuristic when the ask fails, and does not wait for its timeout', async () => {
-    // The bound on the wait is the ask, so the ask failing has to end it — a
-    // signed-out model answers `ok: false` in a couple of seconds, and a task that
-    // sat 30s for that would be indistinguishable from a hang.
+  it('keeps the brief as the label when the ask fails, and provisions regardless', async () => {
+    // A signed-out model answers `ok: false` in a couple of seconds. Nothing about
+    // the task depends on it, so the only visible consequence is the label.
     const h = harness({
       invoke: (id) =>
         id === 'agents.complete'
           ? { ok: true as const, value: { ok: false, reason: 'failed', message: 'Not logged in' } }
           : undefined,
     });
-    const created = await h.run<TaskRecord>('tasks.create', { title: BRIEF, brief: BRIEF, repos: [REPO] });
+    const created = await h.run<TaskRecord>('tasks.create', { brief: BRIEF, repos: [REPO] });
     await drain();
 
-    expect((await stored(h)).find((t) => t.id === created.id)?.slug).toBe('add-a-cheap-model-for-naming');
+    expect((await stored(h)).find((t) => t.id === created.id)?.title).toBe(BRIEF);
     expect(worktreeAdds(h)).toHaveLength(1);
     h.dispose();
   });
 
+  /**
+   * MUTATION TARGET. `resolveBranch` treats an existing local branch as *check it
+   * out*, which is right when the name came from the work and catastrophic when
+   * it was drawn from a hat: the task would silently adopt a deleted task's
+   * commits, and the first symptom would be a diff nobody wrote.
+   */
+  it('does not check out a branch the repo already has', async () => {
+    // The refs read answers with the name the task was just given, so the first
+    // candidate always collides and a second has to be minted. Read off the
+    // record rather than off a variable set after `create` returns: provisioning
+    // starts before it does, and the refs read would win that race.
+    let live: Harness | undefined;
+    const h = harness({
+      git: async (call) => {
+        if (call.args[0] === 'for-each-ref' && call.args[2] === 'refs/heads') {
+          const tasks = (await live?.run<readonly TaskRecord[]>('tasks.list')) ?? [];
+          return { ok: true as const, stdout: `${tasks[0]?.slug ?? ''}\n`, stderr: '' };
+        }
+        return OK;
+      },
+    });
+    live = h;
+    const created = await h.run<TaskRecord>('tasks.create', { brief: BRIEF, repos: [REPO] });
+    await drain();
+
+    const add = worktreeAdds(h)[0];
+    expect(add).toBeDefined();
+    // A `-b` with a name that is NOT the folder's: the folder keeps what it was
+    // minted, and the branch had to move out of the way.
+    const branch = add?.args[add.args.indexOf('-b') + 1];
+    expect(branch).toMatch(/^[a-z]+-[a-z]+$/);
+    expect(branch).not.toBe(created.slug);
+    h.dispose();
+  });
+
+  it('picks one branch for a task, free in every one of its repos', async () => {
+    // Only the SECOND repo holds the minted name, and both worktrees still land
+    // on one branch: `taskProvisioned` publishes a single branch for the task.
+    let live: Harness | undefined;
+    const h = harness({
+      git: async (call) => {
+        if (call.args[0] === 'for-each-ref' && call.args[2] === 'refs/heads' && call.opts.cwd === '/src/web') {
+          const tasks = (await live?.run<readonly TaskRecord[]>('tasks.list')) ?? [];
+          return { ok: true as const, stdout: `${tasks[0]?.slug ?? ''}\n`, stderr: '' };
+        }
+        return OK;
+      },
+    });
+    live = h;
+    await h.run<TaskRecord>('tasks.create', {
+      brief: BRIEF,
+      repos: [REPO, { name: 'web', path: '/src/web' }],
+    });
+    await drain();
+
+    const branches = worktreeAdds(h).map((call) => call.args[call.args.indexOf('-b') + 1]);
+    expect(branches).toHaveLength(2);
+    expect(new Set(branches).size).toBe(1);
+    h.dispose();
+  });
+
+  it('does not resurrect a task deleted while the model was thinking', async () => {
+    let finish = (): void => undefined;
+    const held = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const h = harness({
+      invoke: (id) =>
+        id === 'agents.complete'
+          ? held.then(() => ({ ok: true as const, value: { ok: true, text: 'Some fine name' } }))
+          : undefined,
+    });
+    const created = await h.run<TaskRecord>('tasks.create', { brief: BRIEF, repos: [] });
+    await drain();
+    await h.run('tasks.delete', { task: created.id });
+
+    finish();
+    await drain();
+    expect((await stored(h)).some((t) => t.id === created.id)).toBe(false);
+    h.dispose();
+  });
+
+  it('relabels the panes it has already opened', async () => {
+    // A pane is named once, when it opens, and its `userTitle` beats the OSC
+    // title a program sets — so a name that lands after the panes do reaches them
+    // only because something says so.
+    //
+    // The model is held until the pane exists, which is the ONLY ordering this
+    // test is about: answer sooner and `startSession` reads the settled name off
+    // the record instead, which is the other half of the same problem.
+    let finish = (): void => undefined;
+    const held = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const h = harness({
+      invoke: (id) =>
+        id === 'agents.complete'
+          ? held.then(() => ({ ok: true as const, value: { ok: true, text: 'Add a cheap model seam' } }))
+          : undefined,
+    });
+    const created = await h.run<TaskRecord>('tasks.create', { brief: BRIEF, repos: [REPO] });
+    await until(async () => ((await stored(h)).find((t) => t.id === created.id)?.sessions.length ?? 0) > 0);
+
+    finish();
+    await drain();
+
+    const renames = h.invoked.filter((call) => call.id === 'layout.rename').map((call) => call.args);
+    expect(renames).toContainEqual(expect.objectContaining({ title: 'Add a cheap model seam' }));
+    h.dispose();
+  });
+
   it('does not rename a task that is being restored', async () => {
-    // Restore provisions too, and a task with a history must never have its
-    // directory renamed under it — the window in which a slug may change closed
-    // the first time git ran for it.
+    // Restore provisions too, and a returning task has been named already — a
+    // second opinion about a name somebody has been reading for a week is not an
+    // improvement, and its directory must never move under it either way.
     const h = harness({
       tasks: [task({ id: 't1', slug: 'old-name', title: 'Old name', brief: BRIEF, lifecycle: 'archived', sessions: [] })],
       invoke: named('A Brand New Name'),
     });
     await h.run('tasks.restore', { task: 't1' });
     await drain();
-    expect((await stored(h)).find((t) => t.id === 't1')?.slug).toBe('old-name');
+    const now = (await stored(h)).find((t) => t.id === 't1');
+    expect(now?.slug).toBe('old-name');
+    expect(now?.title).toBe('Old name');
     h.dispose();
   });
 });
@@ -4182,5 +4348,141 @@ describe('restoring re-correlates the record with the live panes', () => {
       role: 'orchestrator',
       resumeTarget: 'the-conversation',
     });
+  });
+});
+
+/**
+ * `tasks.renameBranch` — the door the task root points an agent at.
+ *
+ * A task's branch is minted before anyone knows what the task is about, so the
+ * agent working in it is the first party able to name it well. This verb is what
+ * makes that one call rather than one per repo, and it writes NOTHING to the
+ * record: git holds the branch, so this and a `git branch -m` typed into a
+ * terminal are the same event.
+ */
+describe('tasks.renameBranch', () => {
+  const API = { name: 'api', path: '/src/api' };
+  const WEB = { name: 'web', path: '/src/web' };
+
+  const drain = async (): Promise<void> => {
+    for (let tick = 0; tick < 40; tick += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+  };
+
+  /** A repo whose worktrees report a branch, so `symbolic-ref` answers something. */
+  const onBranch = (name: string) => (call: GitCall): ExecOk =>
+    call.args[0] === 'symbolic-ref' ? { ok: true, stdout: `${name}\n`, stderr: '' } : OK;
+
+  it('renames the branch in every worktree of the task', async () => {
+    const h = (live = harness({ git: onBranch('slate-merino') }));
+    const created = await h.run<TaskRecord>('tasks.create', { title: 'Fix login', repos: [API, WEB] });
+    await drain();
+
+    const out = await h.run<{ renamed: string[]; from: string; to: string }>('tasks.renameBranch', {
+      task: created.id,
+      name: 'fix-login',
+    });
+
+    expect(out.renamed).toEqual(['api', 'web']);
+    expect(out.to).toBe('fix-login');
+    expect(h.git.filter((call) => call.args[0] === 'branch' && call.args[1] === '-m')).toHaveLength(2);
+  });
+
+  it('leaves the record alone, because git is the one that holds a branch', async () => {
+    const h = (live = harness({ git: onBranch('slate-merino') }));
+    const created = await h.run<TaskRecord>('tasks.create', { title: 'Fix login', repos: [API] });
+    await drain();
+    await h.run('tasks.renameBranch', { task: created.id, name: 'fix-login' });
+
+    const now = (await h.run<readonly TaskRecord[]>('tasks.list')).find((t) => t.id === created.id);
+    expect(now?.slug).toBe(created.slug);
+    expect(now?.title).toBe('Fix login');
+  });
+
+  it('refuses a name already taken, before touching any repo', async () => {
+    // Checked across every repo first: a half-renamed task is two branches, and
+    // the point of one task keeping one branch name is lost by then.
+    const h = (live = harness({
+      git: (call) => {
+        if (call.args[0] === 'symbolic-ref') return { ok: true, stdout: 'slate-merino\n', stderr: '' };
+        if (call.args[0] === 'for-each-ref' && call.args[2] === 'refs/heads' && call.opts.cwd === '/src/web') {
+          return { ok: true, stdout: 'fix-login\n', stderr: '' };
+        }
+        return OK;
+      },
+    }));
+    const created = await h.run<TaskRecord>('tasks.create', { title: 'Fix login', repos: [API, WEB] });
+    await drain();
+    const before = h.git.length;
+
+    await expect(h.run('tasks.renameBranch', { task: created.id, name: 'fix-login' })).rejects.toThrow(
+      /fix-login/,
+    );
+    expect(h.git.slice(before).some((call) => call.args[0] === 'branch')).toBe(false);
+  });
+
+  it('refuses a name git would not read as a branch', async () => {
+    const h = (live = harness({ git: onBranch('slate-merino') }));
+    const created = await h.run<TaskRecord>('tasks.create', { title: 'Fix login', repos: [API] });
+    await drain();
+
+    for (const name of ['../etc', '-rf', 'a..b', 'ends/', 'thing.lock', '']) {
+      await expect(h.run('tasks.renameBranch', { task: created.id, name })).rejects.toThrow();
+    }
+  });
+
+  it('reports a repo that would not rename rather than undoing the ones that did', async () => {
+    // A rename that succeeded is not a thing to undo behind the user's back, and
+    // the next read of git describes whatever is actually there.
+    const h = (live = harness({
+      git: (call) => {
+        if (call.args[0] === 'symbolic-ref') return { ok: true, stdout: 'slate-merino\n', stderr: '' };
+        if (call.args[0] === 'branch' && call.opts.cwd?.endsWith('/web') === true) {
+          return { ok: false, code: 1, stdout: '', stderr: 'fatal: no such branch' };
+        }
+        return OK;
+      },
+    }));
+    const created = await h.run<TaskRecord>('tasks.create', { title: 'Fix login', repos: [API, WEB] });
+    await drain();
+
+    const out = await h.run<{ renamed: string[]; failed: string[] }>('tasks.renameBranch', {
+      task: created.id,
+      name: 'fix-login',
+    });
+    expect(out.renamed).toEqual(['api']);
+    expect(out.failed).toEqual(['web: fatal: no such branch']);
+  });
+
+  it("will not rename another task's branch", async () => {
+    const h = (live = harness({ git: onBranch('slate-merino') }));
+    const mine = await h.run<TaskRecord>('tasks.create', { title: 'Mine', repos: [API] });
+    const theirs = await h.run<TaskRecord>('tasks.create', { title: 'Theirs', repos: [WEB] });
+    await drain();
+
+    const session = (await h.run<readonly TaskRecord[]>('tasks.list')).find((t) => t.id === mine.id)
+      ?.sessions[0];
+    expect(session).toBeDefined();
+
+    await expect(
+      h.runAs({ kind: 'agent', sessionId: session!.id as CallerSession }, 'tasks.renameBranch', {
+        task: theirs.id,
+        name: 'fix-login',
+      }),
+    ).rejects.toThrow(/may not/);
+  });
+
+  it('means "mine" when an agent names no task', async () => {
+    const h = (live = harness({ git: onBranch('slate-merino') }));
+    const created = await h.run<TaskRecord>('tasks.create', { title: 'Fix login', repos: [API] });
+    await drain();
+
+    const session = (await h.run<readonly TaskRecord[]>('tasks.list')).find((t) => t.id === created.id)
+      ?.sessions[0];
+    const out = await h.runAs<{ id: string }>(
+      { kind: 'agent', sessionId: session!.id as CallerSession },
+      'tasks.renameBranch',
+      { name: 'fix-login' },
+    );
+    expect(out.id).toBe(created.id);
   });
 });

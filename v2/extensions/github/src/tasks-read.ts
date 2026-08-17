@@ -10,9 +10,9 @@ import { readAgents, type TaskAgent } from './model/agent-pick.ts';
  * is not a check"); what it buys here is that a `tasks` that grows a field, or
  * one record that fails to read on the far side, costs this extension nothing.
  *
- * A task with no id or no slug is DROPPED rather than defaulted. Both are
- * identifiers — the slug is the git branch every query is made against — and an
- * invented one would send a query about somebody else's branch.
+ * A task with no id or no root is DROPPED rather than defaulted. Both are
+ * identifiers — the root is where the worktrees whose branches are queried live
+ * — and an invented one would send a query about somebody else's branch.
  */
 export interface ListedTask extends TaskSubject {
   readonly title: string;
@@ -42,13 +42,14 @@ export function readTasks(value: unknown): readonly ListedTask[] {
     if (!isRecord(entry)) return [];
     const id = str(entry['id']);
     const slug = str(entry['slug']);
-    if (id === undefined || slug === undefined) return [];
+    const root = str(entry['root']);
+    if (id === undefined || slug === undefined || root === undefined) return [];
     return [
       {
         id,
-        // The task's branch IS its slug — every worktree of a task is on it, and
-        // that identity is what makes "which PRs are this task's" a lookup.
-        branch: slug,
+        // The DIRECTORY the worktrees sit under, not the pane group (`group`
+        // below) — `tasks.list` reports both under confusingly similar names.
+        root,
         title: str(entry['title']) ?? slug,
         shipped: entry['lifecycle'] === 'archived',
         repos: readRepos(entry['repos']),

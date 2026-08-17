@@ -182,6 +182,14 @@ export function TaskCard({ item, selected, invoke }: ExtensionRowProps): ReactEl
         {card.shipped === true && card.mark !== 'failed' ? null : <StateMark state={card.mark} />}
         <span className="sh-task-card__title">{item.label}</span>
         {/*
+          The step, while the task is being built — beside the name, never
+          instead of it, and `flex: none` so the title truncates AROUND it rather
+          than the row growing (§10). It leaves when the work does.
+        */}
+        {card.stage === undefined ? null : (
+          <span className="sh-task-card__stage">{card.stage}</span>
+        )}
+        {/*
           The count of what this row stands for, OUTSIDE the trailing cell.
 
           It is not metadata that yields to a hover action — it is part of what the
