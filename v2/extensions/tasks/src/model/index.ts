@@ -8,6 +8,7 @@
  */
 
 export { slugify, uniqueSlug } from './slug.ts';
+export { mintName, branchTaken, pickBranch } from './mint.ts';
 export { taskRootId } from './root-id.ts';
 
 export { repoName } from './repo-name.ts';

@@ -39,6 +39,16 @@ export const TASK_COMMANDS = {
    * keeps it (that is its job) and nothing else removes a record. Ten throwaway
    * tasks from a night of live testing is what that looks like on screen.
    */
+  /**
+   * Give this task's branch a name that means something.
+   *
+   * A verb rather than a line of instructions in the task root, because it is one
+   * call for a task with three repos and because the refusal it owes — a name
+   * already taken in one of them — has to be checked in every repo before any of
+   * them is touched. It writes nothing to the record: git holds the branch, so
+   * this and a `git branch -m` typed by hand are the same event.
+   */
+  renameBranch: 'tasks.renameBranch',
   delete: 'tasks.delete',
   /**
    * Take me to this task — what clicking a row in the sidebar means.
@@ -440,6 +450,7 @@ export const tasksManifest: Manifest = {
       { id: TASK_COMMANDS.restore, title: 'Tasks: Restore' },
       { id: TASK_COMMANDS.suggestRepos, title: 'Tasks: Suggest Repos' },
       { id: TASK_COMMANDS.suggestName, title: 'Tasks: Suggest a Name' },
+      { id: TASK_COMMANDS.renameBranch, title: 'Tasks: Rename the Branch' },
       { id: TASK_COMMANDS.delete, title: 'Tasks: Delete' },
       { id: TASK_COMMANDS.reveal, title: 'Tasks: Reveal' },
       /*

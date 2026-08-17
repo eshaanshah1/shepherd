@@ -19,11 +19,19 @@ import { isAuthFailure, message, type GitHubClient } from './client.ts';
  * shows no PRs for a second and then the truth.
  */
 
-/** A task as this extension needs it — the branch and where the checkouts are. */
+/** A task as this extension needs it — where its worktrees are, and its repos. */
 export interface TaskSubject {
   readonly id: string;
-  /** The task's slug, which is also the branch every worktree is on. */
-  readonly branch: string;
+  /**
+   * The task root, under which each repo has a worktree at `<root>/<name>`.
+   *
+   * The BRANCH is not here on purpose. It used to be, as the task's slug, on the
+   * premise that every worktree of a task is on a branch of that name — and the
+   * slug is minted now, with an agent invited to rename the branch it works on.
+   * So the branch is read from the worktree at sync time (`branchOf`), and this
+   * is what says where to look.
+   */
+  readonly root: string;
   readonly repos: readonly { readonly path: string; readonly name: string }[];
   /** Finished work. Asked about once, then left alone — see `dueAt`. */
   readonly shipped: boolean;
@@ -54,6 +62,14 @@ export interface SyncDeps {
    * for and why `null` keeps rather than drops.
    */
   headOf: (repoPath: string) => Promise<string | null>;
+  /**
+   * Which branch a worktree is on, or `null` when it is on none.
+   *
+   * `null` means no query: a detached head has no branch to ask GitHub about,
+   * and the string `HEAD` — which `rev-parse --abbrev-ref` would answer — is a
+   * valid branch name and always the wrong one.
+   */
+  branchOf: (worktree: string) => Promise<string | null>;
   /** Something changed: redraw. Called at most once per task per sync. */
   onChanged: () => void;
   /** A credential that no longer works. The owner stops and re-resolves. */
@@ -225,8 +241,13 @@ export class Sync {
         // remote is an ordinary member of a task, and every multi-repo user has
         // one.
         if (slug === null) continue;
+        // Per repo, because nothing keeps a task's repos on one branch once an
+        // agent can rename them — `tasks.renameBranch` does every repo at once,
+        // and a `git branch -m` typed by hand does not.
+        const branch = await this.#deps.branchOf(`${task.root}/${repo.name}`);
+        if (branch === null) continue;
         try {
-          const answered = await client.pullRequests(slug, task.branch, repo.name);
+          const answered = await client.pullRequests(slug, branch, repo.name);
           /*
            * A branch name is not unique over time, so what GitHub answered may
            * include a PR that merged on a branch of this name before this task
@@ -241,7 +262,7 @@ export class Sync {
           if (dropped.length > 0) {
             const numbers = dropped.map((pr) => `#${pr.number}`).join(', ');
             this.#deps.log(
-              `${repo.name}: ${numbers} on ${task.branch} is not this task’s work — no commit in common`,
+              `${repo.name}: ${numbers} on ${branch} is not this task’s work — no commit in common`,
             );
           }
         } catch (error: unknown) {

@@ -41,6 +41,7 @@ const plan = (skills: string[] = [], agents: string[] = []) =>
   synthTaskRoot({
     title: 'Fix login',
     brief: 'Make it work.',
+    branch: 'slate-merino',
     repos: [{ name: 'api', path: repoDir, skills, agents, hasSettings: false }],
   });
 
@@ -85,6 +86,7 @@ describe('materializeTaskRoot', () => {
         synthTaskRoot({
           title: 'Fix login',
           brief: 'b',
+          branch: 'slate-merino',
           repos: [{ name: 'api', path: moved, skills: ['deploy'], agents: [], hasSettings: false }],
         }),
       );

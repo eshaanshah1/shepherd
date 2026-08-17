@@ -33,3 +33,26 @@ export function readHead(process: ProcessAPI, repoPath: string): Promise<string 
     })
     .catch(() => null);
 }
+
+/**
+ * Which branch a worktree is on, or `null` when it is on none.
+ *
+ * `symbolic-ref --short HEAD` and never `rev-parse --abbrev-ref HEAD`: on a
+ * detached head the second answers the literal string `HEAD`, which is a valid
+ * branch to query GitHub about and always the wrong one. This one exits
+ * non-zero, and "no branch" is the honest answer.
+ *
+ * Asked of the WORKTREE rather than derived from the task, because a task's
+ * branch stopped being its slug: the slug is minted, and the agent working in
+ * the worktree is invited to rename what it is on.
+ */
+export function readBranch(process: ProcessAPI, worktree: string): Promise<string | null> {
+  return process
+    .gitRead(['symbolic-ref', '--short', 'HEAD'], { cwd: worktree, timeoutMs: 2_000 })
+    .then((result) => {
+      if (!result.ok) return null;
+      const name = result.stdout.trim();
+      return name === '' ? null : name;
+    })
+    .catch(() => null);
+}

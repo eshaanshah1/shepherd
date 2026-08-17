@@ -16,13 +16,13 @@ describe('readTasks', () => {
     ...over,
   });
 
-  it('reads a task, and takes its branch from its slug', () => {
-    // Every worktree of a task is on the slug branch, and that identity is what
-    // makes "which PRs are this task's" a lookup rather than a guess.
+  it('reads a task, and keeps the root its worktrees are under', () => {
+    // The ROOT rather than a branch: the branch is git's to answer, per worktree,
+    // and this is what says where those worktrees are.
     expect(readTasks([task()])).toEqual([
       {
         id: 't-1',
-        branch: 'add-github-pr-tracking',
+        root: '/data/tasks/add-github-pr-tracking',
         title: 'Add GitHub PR tracking',
         shipped: false,
         repos: [{ path: '/repos/v2', name: 'v2' }],
@@ -36,9 +36,12 @@ describe('readTasks', () => {
     expect(readTasks([task({ lifecycle: 'archived' })])[0]?.shipped).toBe(true);
   });
 
-  it('drops a record with no id or no slug rather than inventing one', () => {
-    // Both are identifiers; an invented slug would query somebody else's branch.
-    expect(readTasks([task({ id: undefined }), task({ slug: '' }), 7, null])).toEqual([]);
+  it('drops a record with no id, slug or root rather than inventing one', () => {
+    // Each is an identifier; an invented root would read a branch out of some
+    // other directory and query somebody else's work.
+    expect(
+      readTasks([task({ id: undefined }), task({ slug: '' }), task({ root: undefined }), 7, null]),
+    ).toEqual([]);
   });
 
   it('drops a half-formed repo and keeps the rest of the task', () => {

@@ -165,6 +165,24 @@ describe('a shipped task card', () => {
     expect(badge?.getAttribute('title')).toBe('2 tasks with this name');
   });
 
+  it('keeps the task on the row while it says what it is doing', () => {
+    // The step used to BE the label, because a task had no name until the model
+    // answered. It has one from birth now, so the two sit side by side.
+    draw(item('fix the login redirect loop', { mark: 'working', stage: 'Creating the worktree' }));
+    expect(host.querySelector('.sh-task-card__title')?.textContent).toBe('fix the login redirect loop');
+    expect(host.querySelector('.sh-task-card__stage')?.textContent).toBe('Creating the worktree');
+  });
+
+  it('draws the step in the head, so the row keeps one height (§10)', () => {
+    draw(item('Fix the login redirect', { mark: 'working', stage: 'Setting up' }));
+    expect(host.querySelector('.sh-task-card__head .sh-task-card__stage')).not.toBeNull();
+  });
+
+  it('draws no step once there is nothing left to do', () => {
+    draw(item('Fix the login redirect', { mark: 'working' }));
+    expect(host.querySelector('.sh-task-card__stage')).toBeNull();
+  });
+
   it('draws no count for the ordinary one-task row', () => {
     draw(item('Fix the login redirect', shipped()));
     expect(host.querySelector('.sh-task-card__dupe')).toBeNull();

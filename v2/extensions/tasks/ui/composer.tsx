@@ -1,8 +1,8 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { ExtensionViewProps } from "@shepherd/sdk";
 import { Composer, PromptField, SendButton, Select, type PromptFieldHandle } from "@shepherd/ui";
+import { firstLine } from "../src/model/naming.ts";
 import { repoName } from "../src/model/repo-name.ts";
-import { stillTheSameBrief } from "../src/model/naming.ts";
 import type { PastedImage } from "../src/images.ts";
 import { readPastedImage } from "./paste-image.ts";
 import { findTrigger, isUnwritten, type DisplaySegment } from "./mention.ts";
@@ -164,17 +164,6 @@ function readSuggestions(value: unknown): readonly RepoSuggestion[] {
 }
 
 /**
- * The task's name: the brief's first line, git-commit style.
- *
- * Trimmed and capped, because it becomes a slug, a branch name and a pane
- * title — and somebody's first line is occasionally a paragraph.
- */
-function titleOf(brief: string): string {
-  const first = brief.split("\n")[0]?.trim() ?? "";
-  return first.length <= 72 ? first : `${first.slice(0, 71).trimEnd()}…`;
-}
-
-/**
  * Where a task's work is laid down.
  *
  * **One option today, and the control is drawn anyway.** `in-place` is the
@@ -211,14 +200,6 @@ export function TaskComposer({
   const [active, setActive] = useState(0);
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
-  /**
-   * The name the model suggested, if one landed before the task was created.
-   *
-   * Nothing on the card draws it and nothing waits for it: the ask runs while the
-   * brief is being written and its answer rides `tasks.create`, or it does not
-   * arrive and the extension names the task from the brief instead.
-   */
-  const [suggested, setSuggested] = useState<string | null>(null);
   /**
    * WHICH machine this task will start on, and everything it could be.
    *
@@ -279,10 +260,6 @@ export function TaskComposer({
    * completions for text nobody has on screen any more.
    */
   const asked = useRef(0);
-  /** Which NAME ask is the newest — the same problem `asked` solves, one ask along. */
-  const namingAsk = useRef(0);
-  /** The brief the last name ask was about, so a pause with no new words asks nothing. */
-  const namedFor = useRef("");
 
   /**
    * The machines, asked once on mount.
@@ -383,50 +360,9 @@ export function TaskComposer({
   // Everything after that is a keystroke's; there is no debounce because there
   // is no timer here to get wrong, and the ask is one directory listing
   // (measured at ~10ms, cheaper than the keystroke that asked for it).
-  /**
-   * Ask what this task should be called.
-   *
-   * On an idle pause rather than per keystroke, and thresholded on CONTENT as well
-   * as time: a pause after twenty more characters is a different brief, a pause
-   * after two is the same one. §7c named the user's model budget as the reason
-   * `agents` is its own permission, and a per-keystroke ask would spend it several
-   * times per task.
-   */
-  const askForName = async (forBrief: string): Promise<void> => {
-    const trimmed = forBrief.trim();
-    if (trimmed.length < 24) return;
-    if (namedFor.current !== "" && stillTheSameBrief(namedFor.current, trimmed)) return;
-    namedFor.current = trimmed;
-    namingAsk.current += 1;
-    const mine = namingAsk.current;
-    const answer = await invoke("tasks.suggestName", { brief: forBrief });
-    // A newer ask has started, so this answer is about text nobody has on screen
-    // any more.
-    if (mine !== namingAsk.current) return;
-    if (!answer.ok) return;
-    const value = answer.value as { name?: unknown } | null;
-    if (typeof value === "object" && value !== null && typeof value.name === "string") {
-      setSuggested(value.name);
-    }
-  };
-
   useEffect(() => {
     void askForSuggestions("", "", "");
   }, []);
-
-  /**
-   * The idle pause, and the only trigger there is.
-   *
-   * Cleared on every change, so it fires once the typing STOPS rather than once
-   * per keystroke. Keyed on the BRIEF alone, deliberately: `askForName` is a new
-   * closure every render, so depending on it would clear and restart this timer on
-   * each keystroke — which is the one thing an idle pause must not do.
-   */
-  useEffect(() => {
-    if (brief.trim() === "") return undefined;
-    const timer = setTimeout(() => void askForName(brief), 2_000);
-    return () => clearTimeout(timer);
-  }, [brief]);
 
   /**
    * A repo already in the sentence stops being offered.
@@ -568,7 +504,7 @@ export function TaskComposer({
     if (!open || found.query !== query) {
       setActive(0);
       setQuery(found.query);
-      void askForSuggestions(titleOf(value), value, found.query);
+      void askForSuggestions(firstLine(value), value, found.query);
     }
     setOpen(true);
   };
@@ -666,12 +602,7 @@ export function TaskComposer({
   const create = async (): Promise<void> => {
     setBusy(true);
     const result = await invoke("tasks.create", {
-      title: titleOf(brief),
       brief,
-      // Whatever landed while this was being written. Absent is the ordinary case
-      // for a brief typed and submitted in one go, and the extension names it from
-      // the brief instead — nothing here waits for a model.
-      ...(suggested === null ? {} : { name: suggested }),
       // Absent when the user left the default alone, so the extension's own
       // default is not overwritten by a value the composer invented.
       ...(model === null ? {} : { model }),
@@ -695,8 +626,6 @@ export function TaskComposer({
     // Cleared only on success. A failed create keeps everything typed — the
     // form is the only copy of it.
     setBrief("");
-    setSuggested(null);
-    namedFor.current = "";
     promptRef.current?.setValue("");
     pasted.current = [];
     // The pills went with the text, so the scope empties by being re-read rather
@@ -816,7 +745,7 @@ export function TaskComposer({
             // ⏎ submits and ⇧⏎ newlines — the chat convention.
             if (event.key !== "Enter" || event.shiftKey) return;
             event.preventDefault();
-            if (titleOf(brief) !== "") void create();
+            if (brief.trim() !== "") void create();
           }}
         />
 
@@ -913,7 +842,7 @@ export function TaskComposer({
                  * there, which is exactly what somebody wants to see next.
                  */
                 setSuggestions([]);
-                void askForSuggestions(titleOf(brief), brief, "", id);
+                void askForSuggestions(firstLine(brief), brief, "", id);
               }}
             />
           )}
@@ -939,7 +868,7 @@ export function TaskComposer({
             type="submit"
             label="Start this task"
             data-testid="composer-create"
-            disabled={titleOf(brief) === "" || busy}
+            disabled={brief.trim() === "" || busy}
           />
         </div>
 
