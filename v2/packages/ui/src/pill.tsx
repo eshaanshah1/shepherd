@@ -6,8 +6,8 @@ import { Icon } from './icon.tsx';
 /**
  * A token that stands inside a sentence — `[icon] Image`.
  *
- * There is no box: an accent glyph ahead of a label in ordinary ink, at the size
- * of the text it sits in. What makes it a primitive rather than a `Button`
+ * An accent glyph ahead of a label in ordinary ink, at the size of the text it
+ * sits in, on a flat wash of the accent. What makes it a primitive rather than a `Button`
  * variant is WHERE it goes: a pill sits in the run of text, standing for
  * something the prose cannot say — a pasted image, an attachment, a thing the
  * composer is holding on the user's behalf. The glyph is drawn in `accent`,
@@ -22,7 +22,8 @@ import { Icon } from './icon.tsx';
  * whole margin box to the line, so a pill taller than the line box would open
  * every line that happens to contain one and the paragraph would breathe
  * unevenly. Its height is therefore derived from `--sh-line-height` and stays
- * under it, and there is no margin and no padding — see `pill.css`.
+ * under it, there is no margin, and the tint breathes sideways only — see
+ * `pill.css`.
  *
  * **Display only**, for `KeyCap`'s reason: a pressable thing in a run of text is
  * a link, and a link that looks like a control teaches the wrong gesture. No

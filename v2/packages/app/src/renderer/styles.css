@@ -1136,8 +1136,32 @@ body.sh-dragging {
  * made this read as a form rather than a writing surface.
  */
 .sh-composer-brief {
+  /*
+   * The line box is RE-DECLARED, not overridden, and that distinction is the
+   * whole fix for a defect this shipped.
+   *
+   * `--sh-line-height` is the contract for "how tall is a line here", and things
+   * inside a line measure themselves against it — a `Pill` sizes its selected
+   * band from it, because CSS gives an element no way to read the line-height it
+   * inherited once it has set its own. This rule used to set `line-height: 26px`
+   * as a literal, so the brief's lines were 26px while every token-reading thing
+   * in them still believed 20px. Selecting a line then drew a 26px band through
+   * the text and a 20px one through the pill, with a 3px notch top and bottom at
+   * every boundary between them (measured: 52/40/52 device pixels at 2x).
+   *
+   * Re-declaring the variable is the mechanism the token layer is built on — the
+   * same one `composer.css` uses for `--sh-line` and `--sh-surface` — and it
+   * means anything that lands in this subtree gets the right answer with no
+   * knowledge of where it is.
+   *
+   * The number itself is `--sh-line-height-large`, derived in the token layer
+   * from the base step like every other length, so it scales with density
+   * instead of sitting here as a literal 26.
+   */
+  --sh-line-height: var(--sh-line-height-large);
+
   font-size: var(--sh-font-size-large);
-  line-height: 26px;
+  line-height: var(--sh-line-height);
   letter-spacing: -0.005em;
   min-block-size: 96px;
   background: none;

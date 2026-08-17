@@ -241,4 +241,72 @@ describe('the handle', () => {
     expect(range.startContainer.textContent).toBe('#');
     cleanup();
   });
+
+  /**
+   * The selection the field paints for itself.
+   *
+   * jsdom implements Ranges and Selections properly and only lacks LAYOUT, so
+   * what is testable here is the decision — that the layer is emptied when there
+   * is nothing selected, that a selection elsewhere on the page is ignored, and
+   * that the listener is released. The GEOMETRY (one bar per line, at the line's
+   * own height) needs real rects and was measured in a browser instead; jsdom
+   * answers zero-size rects for everything, so asserting positions here would
+   * assert the harness.
+   */
+  const layerOf = (node: HTMLElement): HTMLElement => {
+    const found = node.parentElement?.querySelector<HTMLElement>('.sh-ui-prompt-band');
+    if (!found) throw new Error('no band layer');
+    return found;
+  };
+
+  const selectAll = (node: HTMLElement): void => {
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event('selectionchange'));
+  };
+
+  it('gives the band its own layer, outside the contenteditable', () => {
+    // The rule at the top of this file bans rewriting the DOM under the caret.
+    // Paint that lived INSIDE the editable would be content: it would land in
+    // `readValue`, in the undo stack, and under the user's arrow keys.
+    const { node, cleanup } = mount();
+    const layer = layerOf(node);
+    expect(node.contains(layer)).toBe(false);
+    expect(layer.getAttribute('aria-hidden')).toBe('true');
+    cleanup();
+  });
+
+  it('clears the band when the selection collapses', () => {
+    const { node, cleanup } = mount();
+    node.append(document.createTextNode('in a test'));
+    selectAll(node);
+    caretAt(node, 0);
+    document.dispatchEvent(new Event('selectionchange'));
+    expect(layerOf(node).childElementCount).toBe(0);
+    cleanup();
+  });
+
+  it('ignores a selection that is not in this field', () => {
+    // `selectionchange` fires on `document`, so every field in the app hears
+    // every selection anywhere. One `contains` call is what that costs.
+    const { node, cleanup } = mount();
+    node.append(document.createTextNode('in a test'));
+    const elsewhere = document.createElement('p');
+    elsewhere.append('some other text');
+    document.body.append(elsewhere);
+    selectAll(elsewhere);
+    expect(layerOf(node).childElementCount).toBe(0);
+    elsewhere.remove();
+    cleanup();
+  });
+
+  it('stops listening once unmounted, so a closed composer leaks no handler', () => {
+    const { node, cleanup } = mount();
+    node.append(document.createTextNode('in a test'));
+    cleanup();
+    expect(() => document.dispatchEvent(new Event('selectionchange'))).not.toThrow();
+  });
 });

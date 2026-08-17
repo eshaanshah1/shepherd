@@ -100,3 +100,35 @@ describe('the control row', () => {
     expect(ink).not.toContain('var(--sh-text-dim)');
   });
 });
+
+describe('the brief’s line box', () => {
+  /**
+   * A shipped defect, and the reason it is asserted at the CSS level.
+   *
+   * `--sh-line-height` is the contract for "how tall is a line here", and things
+   * INSIDE a line measure themselves against it — a `Pill` sizes its selected
+   * band from it, because CSS gives an element no way to read the line-height it
+   * inherited once it has set its own. The brief used to set `line-height: 26px`
+   * as a literal, so its lines were 26px while every token-reading thing in them
+   * still believed 20px. Selecting text then drew a 26px band and a 20px pill,
+   * notched 3px top and bottom at every boundary — measured 52/40/52 device
+   * pixels at 2x, which is exactly what the screenshot showed.
+   */
+  it('re-declares the token rather than overriding it with a literal', () => {
+    // The value comes from the token layer, derived from the base step like every
+    // other length, so it scales with density instead of sitting here as a 26.
+    expect(declared('.sh-composer-brief', '--sh-line-height')).toEqual([
+      'var(--sh-line-height-large)',
+    ]);
+    // And the line-height itself READS that, so the two can never disagree.
+    expect(declared('.sh-composer-brief', 'line-height')).toEqual(['var(--sh-line-height)']);
+  });
+
+  it('leaves no literal line-height anywhere a Pill can land', () => {
+    // The brief is the one surface in the app that holds pills in running text.
+    // A bare length here is the defect above, re-entered by a different door.
+    for (const value of declared('.sh-composer-brief', 'line-height')) {
+      expect(value, 'line-height must come from the token').toContain('var(--sh-line-height)');
+    }
+  });
+});

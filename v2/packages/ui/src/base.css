@@ -50,3 +50,25 @@
   outline: calc(2 * var(--sh-hairline)) solid var(--sh-focus-ring);
   outline-offset: var(--sh-hairline);
 }
+
+/*
+ * The selection, in the app's own colour rather than the platform's.
+ *
+ * Belongs here on this file's own terms: one mechanism, the same wherever it
+ * appears. Before it, the OS painted its accent — a colour that has nothing to
+ * do with this palette, and which sat beside a `Pill`'s own selected state in a
+ * different blue. Two selection colours on one line is the defect, and whether
+ * the platform's happened to be close enough was never something this app could
+ * decide: the user picks it in System Settings.
+ *
+ * `background-color` and not the `background` shorthand: the highlight
+ * pseudo-element takes a small, fixed set of properties, and the shorthand is
+ * not reliably one of them.
+ *
+ * No `color`. §6 refuses inverse video, so the ink does not flip — the wash is
+ * chosen to leave `text` legible on its own, which is also what keeps a
+ * selection over syntax-highlighted code readable as that code.
+ */
+::selection {
+  background-color: var(--sh-fill-selection);
+}

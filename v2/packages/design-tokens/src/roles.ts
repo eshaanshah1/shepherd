@@ -41,6 +41,8 @@ export type RoleName =
   | 'lineStrong'
   | 'lineActive'
   | 'edgeSelected'
+  | 'lineAccent'
+  | 'glintAccent'
   // text
   | 'text'
   | 'textQuiet'
@@ -81,6 +83,8 @@ export type RoleName =
   | 'scrim'
   // states
   | 'fillHover'
+  | 'fillAccent'
+  | 'fillSelection'
   | 'fillActive'
   | 'fillTab'
   | 'fillSelected'
@@ -183,6 +187,29 @@ export const roles: Readonly<Record<RoleName, RoleSpec>> = {
     token: 'edgeSelected',
     job: 'a selected card’s edge, over its `raised` fill.',
     notFor: 'inverse video. Selection is a fill plus an edge; the label stays legible.',
+  },
+  lineAccent: {
+    kind: 'wash',
+    of: 'sky',
+    // Well over `fillAccent`, because an edge is one device pixel and a wash
+    // that reads as a surface at 400px² is invisible at 1px. Paper again takes
+    // less: `sky` is a dark blue in light mode and an edge is the loudest place
+    // that shows.
+    alpha: { dark: 0.5, light: 0.34 },
+    job: 'the hairline around an accent-tinted box — a `Pill`.',
+    notFor:
+      'a seam or a control’s border. Those are `line` and `lineStrong`, which are neutral: this one is the accent, and it only ever draws around a fill of the same accent.',
+  },
+  glintAccent: {
+    kind: 'wash',
+    of: 'sky',
+    // The top edge only, and brighter than the rest of the border on purpose:
+    // it is the one place a flat box can say "lit from above" without a gradient
+    // or a shadow, both of which §10 refuses outright.
+    alpha: { dark: 0.72, light: 0.46 },
+    job: 'the lit top edge of an accent-tinted box — the top BORDER’s colour.',
+    notFor:
+      'an inset shadow. That paints against the inner face of the border box, so the top edge lands 2px against 1px everywhere else and the extra light drags the label optically low. It is a colour, not a second edge.',
   },
 
   // ── text ────────────────────────────────────────────────────────────────────
@@ -381,6 +408,59 @@ export const roles: Readonly<Record<RoleName, RoleSpec>> = {
     job: 'the hover fill on a row or a ghost control.',
     notFor:
       'a row that GROWS to reveal its actions. Hover actions share one grid cell with the metadata, so the track is already as wide as the wider of them.',
+  },
+  fillAccent: {
+    kind: 'wash',
+    of: 'sky',
+    // Read against `canvas` at a glance, not on inspection. The first pass at
+    // this was 0.16/0.11 and it was a smudge — a wash this small has to clear
+    // the surface behind it by a whole ramp step or it reads as nothing.
+    // Paper still takes less: `sky` is a DARK blue in light mode, so the same
+    // alpha over white lands a step louder than over near-black.
+    alpha: { dark: 0.24, light: 0.15 },
+    job: 'the tint behind a token the app is holding inside a sentence — a `Pill`.',
+    notFor:
+      'a status. It is a wash of `sky`, so it moves with the accent rather than naming a sixth colour, and the ink on it stays the sentence’s.',
+  },
+  /*
+   * The selection band.
+   *
+   * A WASH, and it is worth knowing that this was opaque for a while and why it
+   * could go back. A translucent band painted over itself lands a step brighter,
+   * and a browser paints adjacent LINES of one selection with a fraction of a
+   * pixel of overlap — measured on a four-line selection with no tokens in it:
+   * `rgb(79,110,139)` against a band of `rgb(54,73,90)`, a bright hairline at
+   * every line boundary. `Pill` painting the same token over the band was a
+   * second way to double it.
+   *
+   * Neither survives. `PromptField` draws the composer's selection itself now,
+   * one bar per line at the TEXT's height, so the bars are separated by the
+   * leading and cannot touch; and a pill draws no band at all. The one place the
+   * old hazard remains is `::selection` on ordinary app text, where the browser
+   * still decides the geometry — at this alpha the doubled pixel is faint, and
+   * the surfaces that hold real multi-line prose all go through the field.
+   */
+  fillSelection: {
+    kind: 'wash',
+    of: 'sky',
+    /*
+     * The two alphas move in OPPOSITE directions, and that is what "darker"
+     * means on each surface rather than an inconsistency.
+     *
+     * A wash mixes toward whatever is behind it, so on near-black LESS of the
+     * blue is darker and on paper MORE of it is — `sky` is a light blue in dark
+     * mode and a dark one in light mode. Reading the pair as "0.14 is the faint
+     * one" gets it backwards: both of these are a step down in brightness from
+     * where they were, on their own ground.
+     *
+     * Low enough on both to read THROUGH, which is the point of a wash here:
+     * selected text and a selected token keep their own colour and are lit
+     * rather than covered.
+     */
+    alpha: { dark: 0.14, light: 0.22 },
+    job: 'the background of selected text, everywhere in the app.',
+    notFor:
+      'a selected ROW or card. That is `fillSelected` plus `edgeSelected` — this one is the text-level selection a drag makes.',
   },
   fillActive: {
     kind: 'token',
