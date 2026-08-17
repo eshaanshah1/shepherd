@@ -380,12 +380,20 @@
  *
  * `text-mute` rather than a hue. The mark already carries the state, and a second
  * coloured thing on the line would be a status word beside a status mark.
+ *
+ * It shrinks before it overflows. `flex: 0 1 auto` still never GROWS, so the rule
+ * above holds — the title (`flex: 1`) gives up its width first and only a rail too
+ * narrow for both reaches this — but the word then ellipsises instead of running
+ * past the row's edge.
  */
 .sh-task-card__stage {
-  flex: none;
+  flex: 0 1 auto;
+  min-inline-size: 0;
+  overflow: hidden;
   font-size: var(--sh-font-size-nano);
   color: var(--sh-text-mute);
   white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 /*
@@ -493,6 +501,31 @@ button.sh-task-card__fact::after {
      rather than against the button's edge. */
   padding-inline-start: var(--sh-space-md);
   transition: background var(--sh-motion) linear;
+}
+
+/*
+ * The one thing on the line it may NOT paint over: a word that is not the title.
+ *
+ * Painting over the tail works because the title ellipsises — it is already a
+ * truncation, so the chip lands on one that was going to happen anyway. `stage`
+ * and `dupe` are not: they are short, whole, and sit at the very edge the chip
+ * occupies, so the chip guillotines them mid-glyph. Shipping a task drew
+ * `Archiving` and the hovered row read `Arc`, which is not a truncated word, it is
+ * a different one — and `dupe`'s note two blocks up says out loud that a badge
+ * which vanished under the pointer would take the row's disclosure with it.
+ *
+ * So the chip rejoins the flow for exactly those rows and reserves exactly its own
+ * width — no magic number to keep in step with the button's size, and no
+ * reservation on the rows that have neither, which is what taking it out of the
+ * flow bought. `stage` is transient and `dupe` is rare, so the title track is
+ * unchanged on essentially every row in the rail.
+ *
+ * `align-self: stretch` because `inset-block: 0` is what gave the chip full row
+ * height and a static box does not have it.
+ */
+.sh-task-card__head:has(> .sh-task-card__stage, > .sh-task-card__dupe) .sh-task-card__trail {
+  position: static;
+  align-self: stretch;
 }
 
 /*
