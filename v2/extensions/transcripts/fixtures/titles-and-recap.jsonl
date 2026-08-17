@@ -1,0 +1,5 @@
+{"type":"ai-title","aiTitle":"Fixing the port conflict"}
+{"type":"custom-title","customTitle":"port bug"}
+{"type":"agent-name","agentName":"Explore"}
+{"type":"user","uuid":"u1","parentUuid":null,"timestamp":"2026-08-06T10:00:00.000Z","sessionId":"s6","cwd":"/repo","gitBranch":"fix/port","message":{"role":"user","content":"why is the port taken"}}
+{"type":"system","subtype":"away_summary","timestamp":"2026-08-06T10:00:05.000Z","content":"You asked about a port conflict. (disable recaps in /config)"}
