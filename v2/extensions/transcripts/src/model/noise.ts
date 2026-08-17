@@ -82,8 +82,8 @@ export function isHarnessInjectedText(text: string): boolean {
   const head = text.slice(0, HEAD).trimStart().toLowerCase();
   if (head === '') return false;
 
-  const tag = LEADING_TAG.exec(head);
-  if (tag !== null && HARNESS_TAGS.has(tag[1])) return true;
+  const tag = LEADING_TAG.exec(head)?.[1];
+  if (tag !== undefined && HARNESS_TAGS.has(tag)) return true;
 
   return PREFIXES.some((prefix) => head.startsWith(prefix));
 }

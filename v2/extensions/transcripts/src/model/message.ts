@@ -86,10 +86,19 @@ export function toMessage(rec: unknown, seq: number): TranscriptMessage | null {
   const isCompactSummary = record.isCompactSummary === true;
 
   const decoded = contentBlocks(message?.content);
-  // An injected turn's prose is machinery, but a tool result inside one is
-  // genuine output — dropping the whole record loses real work.
+  /**
+   * A meta turn's prose is machinery, but a tool result inside one is genuine
+   * output — dropping the whole record loses real work.
+   *
+   * `isCompactSummary` is deliberately NOT treated the same, though it wears the
+   * same injected shape. Measured on a real one: it carries the boilerplate
+   * opener followed by a substantive summary of everything that came before, and
+   * after a compaction it is the ONLY place that earlier conversation still
+   * exists. Filtering it to tool-results would delete a session's history from
+   * the index at exactly the moment the transcript stopped holding it.
+   */
   const blocks =
-    record.type === 'user' && (isMeta || isCompactSummary)
+    record.type === 'user' && isMeta
       ? decoded.filter((block) => block.type === 'tool-result')
       : decoded;
   if (blocks.length === 0) return null;
@@ -112,6 +121,12 @@ export function toMessage(rec: unknown, seq: number): TranscriptMessage | null {
     isMeta,
     isCompactSummary,
     isSidechain: record.isSidechain === true,
-    isHarnessNoise: role === 'user' && isHarnessInjectedText(textOf(blocks)),
+    /**
+     * A compact summary opens with the continuation prefix, which is in the
+     * harness list — so it is exempted explicitly. It has its own flag, and a
+     * consumer deciding what to do with it should read that rather than be told
+     * the summary is noise.
+     */
+    isHarnessNoise: role === 'user' && !isCompactSummary && isHarnessInjectedText(textOf(blocks)),
   };
 }

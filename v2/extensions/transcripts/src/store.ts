@@ -1,6 +1,8 @@
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { cwdIsUnder, folderMatchesAny } from './model/project-dir.ts';
-import { absorbLines, emptyDigest, isEmptyDigest, type SessionDigest } from './model/session.ts';
+import { isEmptyDigest, type SessionDigest } from './model/session.ts';
+import { absorb, completeBytes, emptySession, type ParsedSession } from './parse/session.ts';
+import { digestOf } from './parse/digest.ts';
 
 /**
  * The stripped-text index — and the only file in this extension that touches disk.
@@ -109,17 +111,6 @@ export const nodeFs: IndexFs = {
   },
 };
 
-/**
- * How many bytes of `chunk` end in a complete line.
- *
- * `absorbLines` drops the tail after the last newline, so the offset must stop
- * there too — otherwise those bytes are skipped forever rather than re-read once
- * the rest of the record lands.
- */
-function completeBytes(chunk: string): number {
-  const lastBreak = chunk.lastIndexOf('\n');
-  return lastBreak === -1 ? 0 : Buffer.byteLength(chunk.slice(0, lastBreak + 1));
-}
 
 /**
  * Has the caller given up? — asked as a CALL, deliberately.
@@ -142,6 +133,16 @@ export function createIndex(opts: {
 }): RecallIndex {
   const fs = opts.fs ?? nodeFs;
   const entries = new Map<string, Entry>();
+  /**
+   * The full parse each entry's digest was projected from — in memory only.
+   *
+   * An incremental fold needs the whole `ParsedSession` to continue from, and
+   * that is exactly the transcript bulk the cache may not hold. So it lives here
+   * and dies with the process: after a restart, a file that GREW is re-read from
+   * zero, while the far commoner unchanged file answers from its cached digest
+   * without being opened at all.
+   */
+  const parsedByPath = new Map<string, ParsedSession>();
   let loaded = false;
   let dirty = false;
 
@@ -182,18 +183,26 @@ export function createIndex(opts: {
         const known = entries.get(path);
         if (known !== undefined && known.size === st.size && known.mtimeMs === st.mtimeMs) continue;
 
-        // A file that shrank was rewritten rather than appended to, so the stored
-        // digest describes bytes that no longer exist. Start over.
-        const grew = known !== undefined && st.size >= known.size;
+        const sessionId = name.replace(/\.jsonl$/, '');
+        const carried = parsedByPath.get(path);
+        /**
+         * Continue only when the file grew AND the parse it grew from is still
+         * here. A file that shrank was rewritten rather than appended to, so the
+         * stored offset describes bytes that no longer exist; and after a
+         * restart the parse is gone even though the entry survived.
+         */
+        const grew = known !== undefined && carried !== undefined && st.size >= known.size;
         const from = grew ? known.consumed : 0;
-        const base = grew ? known.digest : emptyDigest(name.replace(/\.jsonl$/, ''));
+        const base = grew ? carried : emptySession(sessionId, path);
 
         const chunk = fs.readRange(path, from);
+        const parsed = absorb(base, chunk);
+        parsedByPath.set(path, parsed);
         entries.set(path, {
           size: st.size,
           mtimeMs: st.mtimeMs,
           consumed: from + completeBytes(chunk),
-          digest: absorbLines(base, chunk),
+          digest: digestOf(parsed),
         });
         dirty = true;
 
