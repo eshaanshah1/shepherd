@@ -7,7 +7,7 @@ import type {
 import { TRANSCRIPT_SEARCH_POINT_ID } from './manifest.ts';
 import { countMatches, matchesIn } from './model/search.ts';
 import { bestTitle } from './model/session.ts';
-import { aborted, createIndex, type RecallIndex } from './store.ts';
+import { aborted, createIndex, type TranscriptIndex } from './store.ts';
 
 /**
  * `shepherd.transcripts` — the reader for Claude Code transcripts.
@@ -45,7 +45,7 @@ function attributeTo(cwd: string | null, dirs: readonly string[]): string | null
  * check anyway.
  */
 export async function searchWith(
-  index: RecallIndex,
+  index: TranscriptIndex,
   query: TranscriptQuery,
 ): Promise<readonly TranscriptHit[]> {
   const needle = query.query.trim();

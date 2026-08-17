@@ -211,4 +211,94 @@ describe('createIndex', () => {
 
     expect(index.sessionsIn([ROOT])[0]?.digest.turns.map((t) => t.text)).toEqual(['one', 'two']);
   });
+
+  /**
+   * `refresh` awaits between files, so an invalidation can land mid-walk. The
+   * walk must not then write the world it saw before it.
+   */
+  it('does not let an in-flight refresh undo an invalidation', async () => {
+    const fs = fakeFs({
+      [`/projects/${FOLDER}/aaa.jsonl`]: rec('one'),
+      [`/projects/${FOLDER}/bbb.jsonl`]: rec('two'),
+    });
+    const index = indexOn(fs);
+
+    const inFlight = index.refresh([ROOT]);
+    index.invalidate();
+    await inFlight;
+
+    expect(index.sessionsIn([ROOT])).toHaveLength(0);
+  });
+
+  it('indexes again cleanly after an invalidation', async () => {
+    const fs = fakeFs({ [`/projects/${FOLDER}/aaa.jsonl`]: rec('one') });
+    const index = indexOn(fs);
+    await index.refresh([ROOT]);
+    index.invalidate();
+    await index.refresh([ROOT]);
+
+    expect(index.sessionsIn([ROOT])).toHaveLength(1);
+  });
+
+  it('lists a session with its subagents, and does not list them as sessions', async () => {
+    const fs = fakeFs({
+      [`/projects/${FOLDER}/aaa.jsonl`]: rec('one'),
+      [`/projects/${FOLDER}/aaa/subagents/agent-a1.jsonl`]: rec('child'),
+      [`/projects/${FOLDER}/aaa/subagents/agent-a2.jsonl`]: rec('other child'),
+      // Not a transcript; the exact predicate must exclude it.
+      [`/projects/${FOLDER}/aaa/subagents/notes.jsonl`]: rec('nope'),
+    });
+    const index = indexOn(fs);
+    await index.refresh([ROOT]);
+
+    const sessions = index.sessionsIn([ROOT]);
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]?.subagents).toEqual([
+      `/projects/${FOLDER}/aaa/subagents/agent-a1.jsonl`,
+      `/projects/${FOLDER}/aaa/subagents/agent-a2.jsonl`,
+    ]);
+  });
+
+  it('answers no subagents for the ordinary session', async () => {
+    const fs = fakeFs({ [`/projects/${FOLDER}/aaa.jsonl`]: rec('one') });
+    const index = indexOn(fs);
+    await index.refresh([ROOT]);
+    expect(index.sessionsIn([ROOT])[0]?.subagents).toEqual([]);
+  });
+
+  it('discards a cache written by an older layout', async () => {
+    const path = `/projects/${FOLDER}/aaa.jsonl`;
+    const fs = fakeFs({ [path]: rec('one') });
+    fs.writeText('/cache.json', JSON.stringify({ version: 1, entries: { [path]: {} } }));
+
+    const index = indexOn(fs);
+    await index.refresh([ROOT]);
+
+    expect(index.sessionsIn([ROOT])[0]?.digest.turns[0]?.text).toBe('one');
+  });
+
+  it('parses one session in full, tool output and all', () => {
+    const path = `/projects/${FOLDER}/aaa.jsonl`;
+    const call = `${JSON.stringify({
+      type: 'assistant',
+      uuid: 'a1',
+      message: {
+        id: 'm1',
+        model: 'claude-opus-5',
+        stop_reason: 'tool_use',
+        content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls' } }],
+      },
+    })}\n`;
+    const index = indexOn(fakeFs({ [path]: rec('one') + call }));
+
+    const parsed = index.parse(path);
+    expect(parsed?.sessionId).toBe('aaa');
+    expect(parsed?.messages[1]?.blocks).toEqual([
+      { type: 'tool-call', id: 't1', name: 'Bash', input: { command: 'ls' } },
+    ]);
+  });
+
+  it('answers null for a session that is not there', () => {
+    expect(indexOn(fakeFs({})).parse('/nope.jsonl')).toBeNull();
+  });
 });
