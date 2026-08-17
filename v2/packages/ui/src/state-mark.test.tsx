@@ -7,7 +7,7 @@ import { SUITE_METER_MAX_CELLS, SuiteMeter } from './suite-meter.tsx';
 // declare — a claim there is no way to make through the markup.
 import './styles.css';
 
-const STATES: MarkState[] = ['working', 'waiting', 'resting', 'failed', 'shipped'];
+const STATES: MarkState[] = ['working', 'waiting', 'ready', 'resting', 'failed', 'shipped'];
 
 const mark = (container: HTMLElement): HTMLElement => {
   const found = container.querySelector<HTMLElement>('.sh-ui-mark');

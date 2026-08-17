@@ -624,7 +624,13 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * of losing something — and shipping snapshots every uncommitted line.
    */
   const shipConfirm = (task: TaskRecord, state: string): string => {
-    const doing = markOf(state) === 'waiting' ? 'is waiting on an answer' : 'is still working';
+    const mark = markOf(state);
+    const doing =
+      mark === 'waiting'
+        ? 'is waiting on an answer'
+        : mark === 'ready'
+          ? 'has finished a turn you have not read'
+          : 'is still working';
     const agents = task.sessions.length > 1 ? 'its agents' : 'its agent';
     return (
       `${task.title} ${doing}. Shipping closes its panes and stops ${agents} mid-turn. ` +
@@ -4272,7 +4278,8 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
              */
             const shelvedNote = !shipped && isShelved(task) ? 'shelved' : undefined;
             const mark = markFor(task, state);
-            const liveAgent = !shipped && (mark === 'working' || mark === 'waiting');
+            const liveAgent =
+              !shipped && (mark === 'working' || mark === 'waiting' || mark === 'ready');
             return {
               id: task.id,
               label: task.title,
@@ -4400,9 +4407,10 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
                      * most and a confirm on all of it would be a dialog nobody
                      * reads by the third time.
                      *
-                     * `waiting` counts as live: an agent sitting on a question is
-                     * one turn from continuing, and shipping it discards the
-                     * answer you were about to give.
+                     * `waiting` and `ready` both count as live: an agent sitting
+                     * on a question, or on a turn you have not read, is one turn
+                     * from continuing, and shipping it discards the answer you
+                     * were about to give.
                      */
                     ...(liveAgent ? { confirm: shipConfirm(task, state) } : {}),
                   },
@@ -4689,9 +4697,15 @@ function markOf(state: string): string {
       return 'working';
     case 'blocked':
     case 'needs-you':
+      return 'waiting';
+    /*
+     * A square, like `waiting` — reading a finished turn is still your move —
+     * but the GREEN one. The two shared `waiting` until now, which made a task
+     * that had answered you indistinguishable from one that was asking.
+     */
     case 'needsCheck':
     case 'needs-check':
-      return 'waiting';
+      return 'ready';
     case 'error':
     case 'failed':
       return 'failed';

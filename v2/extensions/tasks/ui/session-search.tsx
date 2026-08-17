@@ -37,13 +37,13 @@ interface Hit {
 }
 
 /**
- * The five states, spelled out.
+ * The states, spelled out.
  *
  * A UI fact, and a narrowing one: `mark` arrives as `unknown` off a port, and
  * handing `StateMark` a string it has no case for would draw an empty slot with
  * no way to tell that from a task that has no state.
  */
-const MARKS = new Set<string>(['working', 'waiting', 'resting', 'failed', 'shipped']);
+const MARKS = new Set<string>(['working', 'waiting', 'ready', 'resting', 'failed', 'shipped']);
 
 function readMark(value: unknown): MarkState | undefined {
   return typeof value === 'string' && MARKS.has(value) ? (value as MarkState) : undefined;

@@ -924,10 +924,17 @@ const TINT_STATES: Readonly<Record<string, MarkState>> = {
   review: 'waiting',
   hay: 'waiting',
   wool: 'waiting',
-  // `needs-check` is a finished turn nobody has looked at, so it is YOUR MOVE —
-  // a square, not a tick. `done` is the task itself finishing, which is the one
-  // state that leaves the list.
-  'needs-check': 'waiting',
+  /*
+   * `needs-check` is a finished turn nobody has looked at, so it is YOUR MOVE —
+   * a square, not a tick. `done` is the task itself finishing, which is the one
+   * state that leaves the list.
+   *
+   * A GREEN square, though, and not the wool one `blocked` wears: read as the
+   * same mark, the rail could not tell work that finished from work that is
+   * stuck. `agent-rollup.ts` has said so since it was written; this table was
+   * where the two collapsed back into one.
+   */
+  'needs-check': 'ready',
   done: 'shipped',
   /*
    * `archived` is the word `tasks` actually writes for finished work —

@@ -13,7 +13,7 @@
  * fact is honest; one that invents a zero is not.
  */
 
-export type CardMark = 'working' | 'waiting' | 'resting' | 'failed' | 'shipped';
+export type CardMark = 'working' | 'waiting' | 'ready' | 'resting' | 'failed' | 'shipped';
 
 export interface CardDiff {
   readonly added: number;
@@ -164,7 +164,7 @@ const str = (value: unknown): string | undefined => (typeof value === 'string' &
 const int = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isFinite(value) ? Math.trunc(value) : undefined;
 
-const MARKS: readonly CardMark[] = ['working', 'waiting', 'resting', 'failed', 'shipped'];
+const MARKS: readonly CardMark[] = ['working', 'waiting', 'ready', 'resting', 'failed', 'shipped'];
 
 const mark = (value: unknown): CardMark | undefined =>
   MARKS.find((candidate) => candidate === value);

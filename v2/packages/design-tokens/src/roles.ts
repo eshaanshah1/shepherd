@@ -60,6 +60,7 @@ export type RoleName =
   | 'markWorking'
   | 'markWorkingOff'
   | 'markWaiting'
+  | 'markReady'
   | 'markRest'
   | 'markFailed'
   | 'meterPass'
@@ -315,6 +316,13 @@ export const roles: Readonly<Record<RoleName, RoleSpec>> = {
     of: 'wool',
     job: 'the solid 8×8 square that means the agent is waiting on YOU.',
     notFor: 'anything that is merely notable. This mark is the one that opens a row into a card.',
+  },
+  markReady: {
+    kind: 'alias',
+    of: 'grass',
+    job: 'the solid 8×8 square of a turn that finished and has not been read.',
+    notFor:
+      'a question. `markWaiting` is the one that opens a row into a card; this one is a square because reading it is still your move, and green because the work is done rather than stuck.',
   },
   markRest: {
     kind: 'token',
