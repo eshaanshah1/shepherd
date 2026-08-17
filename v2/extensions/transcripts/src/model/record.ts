@@ -12,6 +12,27 @@
 
 const RECAP_TAIL = /\s*\(disable recaps in \/config\)\s*$/;
 
+/**
+ * An object, or null for anything else — the guard every accessor here opens
+ * with. An array is NOT a record: a `content` list reaching a field reader would
+ * answer `undefined` for every key rather than saying it is the wrong shape.
+ */
+export function asRecord(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+/**
+ * A string field, or null.
+ *
+ * Empty counts as PRESENT — only a non-string is null. `stringField` below
+ * treats empty as absent instead, because a title of `''` is no title; here an
+ * empty tool result is a real result.
+ */
+export function stringOrNull(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
+}
+
 /** A well-formed record's `type`, or null for anything that is not an object. */
 export function recordType(rec: unknown): string | null {
   if (typeof rec !== 'object' || rec === null) return null;
