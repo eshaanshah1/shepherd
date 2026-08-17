@@ -1,4 +1,4 @@
-import type { ActivateFn } from '@shepherd/sdk';
+import { s, type ActivateFn } from '@shepherd/sdk';
 import type {
   TranscriptHit,
   TranscriptQuery,
@@ -7,7 +7,31 @@ import type {
 import { TRANSCRIPT_SEARCH_POINT_ID } from './manifest.ts';
 import { countMatches, matchesIn } from './model/search.ts';
 import { bestTitle } from './model/session.ts';
+import { emptyRollup, withUsage, type UsageRollup } from './model/usage.ts';
+import type { ParsedSession } from './parse/session.ts';
 import { aborted, createIndex, type TranscriptIndex } from './store.ts';
+import { tail, type Tail } from './watch.ts';
+
+/** The commands this extension answers, named once. */
+export const TRANSCRIPT_COMMANDS = {
+  read: 'transcripts.read',
+  usage: 'transcripts.usage',
+  watch: 'transcripts.watch',
+  unwatch: 'transcripts.unwatch',
+} as const;
+
+/** The topics it speaks on. A consumer subscribes; the parser owns the offset. */
+export const TRANSCRIPT_EVENTS = {
+  appended: 'transcripts.appended',
+  lifecycle: 'transcripts.lifecycle',
+} as const;
+
+/** Two rollups added together, model by model. */
+function mergeRollups(a: UsageRollup, b: UsageRollup): UsageRollup {
+  let out = a;
+  for (const [model, usage] of Object.entries(b.byModel)) out = withUsage(out, model, usage);
+  return out;
+}
 
 /**
  * `shepherd.transcripts` — the reader for Claude Code transcripts.
@@ -82,7 +106,7 @@ export async function searchWith(
 }
 
 export const activate: ActivateFn = (ctx, api) => {
-  const { points } = api.proposed;
+  const { points, commands, events } = api.proposed;
 
   /**
    * `~/.claude/projects`, composed here rather than handed over resolved.
@@ -100,6 +124,97 @@ export const activate: ActivateFn = (ctx, api) => {
     },
   });
 
+  /** Live tails, by path. One per file however many callers asked for it. */
+  const tails = new Map<string, Tail>();
+
+  const pathArg = s.object({ path: s.string() });
+
+  ctx.subscriptions.push(
+    commands.register(TRANSCRIPT_COMMANDS.read, {
+      // No title: a program asks this, not a person browsing the palette.
+      schema: s.object({ path: s.string(), subagents: s.optional(s.boolean()) }),
+      /**
+       * The parent alone by default, its subagents only when asked.
+       *
+       * A caller rendering a conversation and a caller totalling tokens want
+       * opposite answers here, and neither should pay for the other's.
+       */
+      handler: (args) => {
+        const parsed = index.parse(args.path);
+        if (parsed === null) return null;
+        if (args.subagents !== true) return parsed;
+
+        const children = index
+          .subagentsOf(args.path)
+          .map((child) => index.parse(child))
+          .filter((child): child is ParsedSession => child !== null);
+        return { ...parsed, subagents: children };
+      },
+    }),
+
+    commands.register(TRANSCRIPT_COMMANDS.usage, {
+      schema: pathArg,
+      /**
+       * Subagents are counted ALWAYS.
+       *
+       * Their tokens were spent on the parent's behalf, so a total that omitted
+       * them would be the same class of wrong the dedupe rule exists to prevent,
+       * only in the other direction.
+       */
+      handler: (args) => {
+        const parsed = index.parse(args.path);
+        if (parsed === null) return null;
+        return index
+          .subagentsOf(args.path)
+          .map((child) => index.parse(child))
+          .filter((child): child is ParsedSession => child !== null)
+          .reduce((acc, child) => mergeRollups(acc, child.usage), parsed.usage);
+      },
+    }),
+
+    commands.register(TRANSCRIPT_COMMANDS.watch, {
+      schema: pathArg,
+      handler: (args) => {
+        if (tails.has(args.path)) return false;
+        tails.set(
+          args.path,
+          tail(
+            args.path,
+            {
+              onAppended: (messages) => {
+                events.emit(TRANSCRIPT_EVENTS.appended, { path: args.path, messages });
+              },
+              onLifecycle: (lifecycle) => {
+                events.emit(TRANSCRIPT_EVENTS.lifecycle, { path: args.path, ...lifecycle });
+              },
+            },
+            // The clock is injected all the way down, so a test drives the
+            // debounce without sleeping.
+            { schedule: (fn, ms) => ctx.clock.setTimeout(fn, ms).dispose },
+          ),
+        );
+        return true;
+      },
+    }),
+
+    commands.register(TRANSCRIPT_COMMANDS.unwatch, {
+      schema: pathArg,
+      handler: (args) => {
+        tails.get(args.path)?.close();
+        return tails.delete(args.path);
+      },
+    }),
+
+    // Every tail holds a watcher. Deactivation has to close them, or the host
+    // keeps a handle on a file nobody is reading.
+    {
+      dispose: () => {
+        for (const open of tails.values()) open.close();
+        tails.clear();
+      },
+    },
+  );
+
   const point = points.get<TranscriptSearchProvider>(TRANSCRIPT_SEARCH_POINT_ID);
   if (point === undefined) {
     /**
@@ -108,6 +223,8 @@ export const activate: ActivateFn = (ctx, api) => {
      * transcripts is not load-bearing for anything else in the app.
      */
     ctx.log.warn(`nothing defines ${TRANSCRIPT_SEARCH_POINT_ID} — transcript search is off`);
+    // The commands above are already registered and stay so: they answer about
+    // a file on disk and owe `tasks` nothing.
     return;
   }
 
