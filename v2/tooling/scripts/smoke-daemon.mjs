@@ -25,7 +25,15 @@ const support = mkdtempSync(join(tmpdir(), 'shepherd-v2-daemon-sup-'));
 const run = (flag) => {
   const result = spawnSync(
     electronBinary,
-    [entry, flag, `--shepherd-user-data=${userData}`, `--shepherd-support=${support}`],
+    [
+      entry,
+      flag,
+      `--shepherd-user-data=${userData}`,
+      `--shepherd-support=${support}`,
+      // Forwarded to the daemon, so the reachability rule can be WATCHED rather
+      // than waited a minute for.
+      '--socket-check-ms=250',
+    ],
     {
       encoding: 'utf8',
       timeout: 150_000,
@@ -109,6 +117,35 @@ try {
   check(session2 === session1, `pass 2 REATTACHED the same session (${session1.slice(0, 8)} vs ${session2.slice(0, 8)})`);
   check(pane2 === pane1, `the pane kept its id across the restart (${pane1.slice(0, 8)} vs ${pane2.slice(0, 8)})`);
   check(pid2 === pid1, `it is the same pty, not a lookalike (${pid1} vs ${pid2})`);
+
+  /**
+   * And the leak the two passes above could never see: a daemon nobody can reach
+   * must not keep its ptys for ever.
+   *
+   * Everything this file asserts rests on "sessions but no clients ⇒ never
+   * exit", which is right for the restart between pass 1 and pass 2 and wrong
+   * once the app is gone for good. Measured on one machine before this rule
+   * existed: 51 abandoned daemons, 475 of macOS's 511 ptys consumed, every fresh
+   * `pty create` failing. A smoke deletes its own support directory on the way
+   * out — socket included — so this reproduces the exact condition.
+   *
+   * The `pkill` in the `finally` below is what used to be load-bearing here. It
+   * stays as a belt for the case where the rule is broken; this check is what
+   * says it is not.
+   */
+  const found = spawnSync('pgrep', ['-f', `socket=${support}/session.sock`], { encoding: 'utf8' });
+  const daemonPid = Number(found.stdout.trim().split('\n')[0]);
+  check(
+    Number.isInteger(daemonPid) && daemonPid > 0 && alive(daemonPid),
+    `the daemon is running with no app attached (pid ${daemonPid})`,
+  );
+  rmSync(`${support}/session.sock`, { force: true });
+  // Its own interval plus room for the shutdown it triggers.
+  const deadline = Date.now() + 10_000;
+  while (alive(daemonPid) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  check(!alive(daemonPid), 'a daemon whose socket is gone exits instead of holding its ptys for ever');
 } finally {
   // `socket=`, not `--socket=`: a pkill pattern starting with `--` is parsed as
   // an option and matches nothing.

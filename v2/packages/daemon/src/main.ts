@@ -1,5 +1,5 @@
 import { createServer, type Socket } from 'node:net';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, stat, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { EventsIngress, SessionHost, SessionServer, SqliteStore, reclaimSocketPath } from '@shepherd/core';
 import {
@@ -10,6 +10,7 @@ import {
   type EndpointFactory,
 } from '@shepherd/remote';
 import { createLogger, systemClock, type LogLevel } from '@shepherd/sdk';
+import { socketVerdict, verdictReason, type SocketIdentity } from './socket-watch.ts';
 
 /**
  * `shepherdd` — the process that owns the ptys.
@@ -31,9 +32,29 @@ import { createLogger, systemClock, type LogLevel } from '@shepherd/sdk';
  *     accumulate forever.
  *   - **Sessions, but no clients** ⇒ never exit. That IS the app being closed
  *     with agents running, which is the case this whole process exists to serve.
+ *
+ * And a third, which is about REACHABILITY rather than about work:
+ *
+ *   - **The socket we bound is gone, or is no longer ours** ⇒ exit. The rule
+ *     above cannot tell a restarting app from one that is never coming back, so
+ *     it assumes the first — and every abandoned dev run and smoke therefore
+ *     kept its ptys for good (measured: 51 daemons, 475 of this machine's 511
+ *     ptys, every fresh `pty create` failing). A smoke deletes its support
+ *     directory on the way out, socket included, so nothing can dial that daemon
+ *     ever again. `socket-watch.ts` argues why that is a fact rather than a
+ *     guess, and why the production socket never trips it.
  */
 
 const IDLE_EXIT_MS = 30_000;
+
+/**
+ * How often the daemon checks that it is still reachable.
+ *
+ * A minute, because nothing here is racing: the condition it detects is
+ * permanent once true, and the cost of noticing it late is one stray process for
+ * up to a minute rather than for ever.
+ */
+const SOCKET_CHECK_MS = 60_000;
 
 export interface Args {
   readonly socketPath: string;
@@ -66,6 +87,14 @@ export interface Args {
    * update beats one taken from an `ssh` session's far end.
    */
   readonly hostname?: string;
+  /**
+   * How often to check that the socket we bound is still ours.
+   *
+   * A flag rather than a constant because it is the ONLY way to observe the
+   * third exit rule in a test that finishes: the condition is permanent once
+   * true, so a minute is right in production and unbearable in a smoke.
+   */
+  readonly socketCheckMs: number;
 }
 
 export function parseArgs(argv: readonly string[]): Args {
@@ -74,7 +103,14 @@ export function parseArgs(argv: readonly string[]): Args {
   let support: string | undefined;
   let transport = 'loopback';
   let hostname: string | undefined;
+  let socketCheckMs = SOCKET_CHECK_MS;
   for (const arg of argv) {
+    if (arg.startsWith('--socket-check-ms=')) {
+      const given = Number.parseInt(arg.slice('--socket-check-ms='.length), 10);
+      // A zero or a word would busy-loop or produce a `NaN` interval that never
+      // fires; either way the rule silently stops existing.
+      if (Number.isInteger(given) && given > 0) socketCheckMs = given;
+    }
     if (arg.startsWith('--transport=')) transport = arg.slice('--transport='.length);
     if (arg.startsWith('--socket=')) socketPath = arg.slice('--socket='.length);
     if (arg.startsWith('--log-level=')) level = arg.slice('--log-level='.length) as LogLevel;
@@ -83,6 +119,7 @@ export function parseArgs(argv: readonly string[]): Args {
   }
   return {
     socketPath,
+    socketCheckMs,
     level,
     transport,
     ...(support === undefined ? {} : { support }),
@@ -91,7 +128,7 @@ export function parseArgs(argv: readonly string[]): Args {
 }
 
 export async function main(argv: readonly string[]): Promise<number> {
-  const { socketPath, level, support, transport, hostname } = parseArgs(argv);
+  const { socketPath, level, support, transport, hostname, socketCheckMs } = parseArgs(argv);
   const log = createLogger({
     clock: systemClock,
     level,
@@ -305,6 +342,51 @@ export async function main(argv: readonly string[]): Promise<number> {
     idleTimer.unref?.();
   }
 
+  /**
+   * Keep checking that the socket we bound is still the one under our name.
+   *
+   * Started only after a successful `listen`, so the identity recorded is the
+   * file this process is actually serving. A stat that fails for any reason
+   * OTHER than the path being absent is ignored: `undefined` here means ENOENT
+   * and nothing else, because a daemon that killed live agents over a transient
+   * `EINTR` would be a worse bug than the leak this closes.
+   */
+  async function watchOwnSocket(): Promise<void> {
+    const identify = async (): Promise<SocketIdentity | undefined> => {
+      try {
+        const found = await stat(socketPath);
+        return { dev: found.dev, ino: found.ino };
+      } catch (error: unknown) {
+        if ((error as { code?: string }).code === 'ENOENT') return undefined;
+        daemon.warn(`could not stat ${socketPath}: ${String(error)}`);
+        // Not `undefined`: that would read as "gone" and end the daemon.
+        return bound;
+      }
+    };
+
+    const bound = await identify();
+    if (bound === undefined) {
+      // Bound and already unlinked, which is somebody else's race and not a
+      // state this can reason about. The other two rules still apply.
+      daemon.warn(`${socketPath} vanished between listen and stat — not watching it`);
+      return;
+    }
+
+    const timer = setInterval(() => {
+      void identify().then((now) => {
+        const verdict = socketVerdict(bound, now);
+        if (verdict === 'ours') return;
+        daemon.info(verdictReason(verdict, socketPath));
+        clearInterval(timer);
+        // `shutdown` kills every session, which is the honest cost: they are
+        // ptys nobody can reach and nobody will ever attach to again.
+        shutdown(0);
+      });
+    }, socketCheckMs);
+    // Never hold the event loop open just to watch our own file.
+    timer.unref?.();
+  }
+
   let shuttingDown = false;
   function shutdown(code: number): void {
     if (shuttingDown) return;
@@ -375,6 +457,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       // readiness rather than sleeping and hoping.
       process.stdout.write(`shepherdd: ready ${process.pid}\n`);
       armIdleExit();
+      void watchOwnSocket();
     });
   });
 }
