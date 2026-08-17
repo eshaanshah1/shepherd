@@ -62,6 +62,7 @@ export function PrDetail({
   agent,
   task,
   onNeedDiff,
+  onNeedCommit,
 }: {
   readonly pr: PullRequest;
   readonly actions: PrActions;
@@ -72,6 +73,7 @@ export function PrDetail({
   readonly agent?: PanelProps['agent'];
   readonly task?: PanelProps['task'];
   readonly onNeedDiff: () => void;
+  readonly onNeedCommit?: PanelProps['onNeedCommit'];
 }): ReactElement {
   /**
    * Which tab, and it opens on the one that needs you.
@@ -101,6 +103,7 @@ export function PrDetail({
           onHandThread={actions.onHandThread}
           onOpenExternal={actions.onOpenExternal}
           onNeedDiff={onNeedDiff}
+          {...(onNeedCommit === undefined ? {} : { onNeedCommit })}
           {...(agent === undefined ? {} : { agent })}
           {...(task === undefined ? {} : { task })}
         />

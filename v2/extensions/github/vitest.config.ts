@@ -8,5 +8,9 @@ export default defineConfig({
     // jsdom` docblock — one project, two environments, no glob table to drift.
     include: ['src/**/*.test.ts', 'ui/**/*.test.ts', 'ui/**/*.test.tsx'],
     environment: 'node',
+    // The browser APIs jsdom lacks and the view half needs to mount. Harmless
+    // under `node`, where it finds them already absent and defines nothing a
+    // service test can reach.
+    setupFiles: ['./ui/jsdom-gaps.ts'],
   },
 });

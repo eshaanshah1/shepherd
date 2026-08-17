@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pickAgent, readAgents, readLive, type TaskAgent } from './agent-pick.ts';
+import { agentName, pickAgent, readAgents, readLive, type TaskAgent } from './agent-pick.ts';
 
 const agents: readonly TaskAgent[] = [
   { id: 's-root', role: 'orchestrator' },
@@ -93,5 +93,29 @@ describe('readLive', () => {
   it('is the set of ids sessions.list reported', () => {
     expect([...readLive([{ id: 'a' }, { id: 'b' }, { nope: 1 }, 3])]).toEqual(['a', 'b']);
     expect([...readLive(undefined)]).toEqual([]);
+  });
+});
+
+describe('agentName', () => {
+  const agent = (over: Partial<TaskAgent> = {}): TaskAgent => ({
+    id: 's1',
+    role: 'workstream',
+    ...over,
+  });
+
+  it('is the title of the pane the agent runs in', () => {
+    // A pane's name is a layout fact, and the point of it is that a person
+    // typed it. The picker has always used it; the Agent block did not, so one
+    // agent answered to two names depending which surface you read.
+    expect(agentName(agent({ repo: 'v2' }), 'retry-loop')).toBe('retry-loop');
+  });
+
+  it('never names the vendor, which the block’s own heading already covers', () => {
+    expect(agentName(agent({ kind: 'claude-code', repo: 'v2' }), 'retry-loop')).not.toContain('claude-code');
+  });
+
+  it('falls back to the repo, then to where it is rooted', () => {
+    expect(agentName(agent({ repo: 'v2' }), undefined)).toBe('v2');
+    expect(agentName(agent(), undefined)).toBe('task root');
   });
 });

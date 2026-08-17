@@ -34,6 +34,7 @@ export function fixturePrs(now: number): readonly PullRequest[] {
     {
       repo: 'shepherd/sdk',
       repoKey: 'sdk',
+      author: 'claude',
       number: 44,
       title: 'Tab rows in the sdk',
       body:
@@ -98,10 +99,10 @@ export function fixturePrs(now: number): readonly PullRequest[] {
         { path: 'src/index.ts', added: 2, removed: 0 },
       ],
       commits: [
-        { sha: 'e91c2a4', subject: 'Widen TabMark rather than the app’s union', author: 'claude', at: minutes(8) },
-        { sha: '77b0d13', subject: 'Tab rows in the sdk', author: 'claude', at: minutes(60) },
-        { sha: '2f4e881', subject: 'Start on the row shape', author: 'claude', at: minutes(100) },
-        { sha: 'ac0d5b2', subject: 'Sketch TreePr', author: 'claude', at: minutes(118) },
+        { sha: 'e91c2a4', subject: 'Widen TabMark rather than the app’s union', author: 'claude', at: minutes(8), added: 0, removed: 0 },
+        { sha: '77b0d13', subject: 'Tab rows in the sdk', author: 'claude', at: minutes(60), added: 0, removed: 0 },
+        { sha: '2f4e881', subject: 'Start on the row shape', author: 'claude', at: minutes(100), added: 0, removed: 0 },
+        { sha: 'ac0d5b2', subject: 'Sketch TreePr', author: 'claude', at: minutes(118), added: 0, removed: 0 },
       ],
       reviewers: [{ login: 'sam', verdict: 'commented', comments: 2 }],
       openedAt: minutes(120),
@@ -112,6 +113,7 @@ export function fixturePrs(now: number): readonly PullRequest[] {
     {
       repo: 'shepherd/v2',
       repoKey: 'v2',
+      author: 'claude',
       number: 301,
       title: 'Add multiple task tabs',
       body: 'A task owns a pane group, so its tabs are roots of that group.',
@@ -147,8 +149,8 @@ export function fixturePrs(now: number): readonly PullRequest[] {
         { path: 'ui/src/tab-strip.css', added: 42, removed: 6 },
       ],
       commits: [
-        { sha: 'bb31f09', subject: 'Tab strip keyboard order', author: 'claude', at: minutes(22) },
-        { sha: '5c7a114', subject: 'Add multiple task tabs', author: 'claude', at: minutes(90) },
+        { sha: 'bb31f09', subject: 'Tab strip keyboard order', author: 'claude', at: minutes(22), added: 0, removed: 0 },
+        { sha: '5c7a114', subject: 'Add multiple task tabs', author: 'claude', at: minutes(90), added: 0, removed: 0 },
       ],
       reviewers: [
         { login: 'jane', verdict: 'approved', comments: 0 },
@@ -163,6 +165,7 @@ export function fixturePrs(now: number): readonly PullRequest[] {
     {
       repo: 'shepherd/v2',
       repoKey: 'v2',
+      author: 'claude',
       number: 305,
       title: 'Tab overflow & keyboard order',
       body: '',
@@ -181,7 +184,7 @@ export function fixturePrs(now: number): readonly PullRequest[] {
       changesRequested: [],
       threads: [],
       files: [{ path: 'ui/src/tab-strip.tsx', added: 58, removed: 4 }],
-      commits: [{ sha: 'd41a7c8', subject: 'Overflow the strip at eight', author: 'claude', at: minutes(9) }],
+      commits: [{ sha: 'd41a7c8', subject: 'Overflow the strip at eight', author: 'claude', at: minutes(9), added: 0, removed: 0 }],
       reviewers: [],
       openedAt: minutes(40),
       updatedAt: minutes(8),
@@ -191,6 +194,7 @@ export function fixturePrs(now: number): readonly PullRequest[] {
     {
       repo: 'shepherd/v2',
       repoKey: 'v2',
+      author: 'claude',
       number: 288,
       title: 'Tab strip primitive',
       body: '',
@@ -207,7 +211,7 @@ export function fixturePrs(now: number): readonly PullRequest[] {
       changesRequested: [],
       threads: [],
       files: [],
-      commits: [{ sha: '9a20e17', subject: 'Tab strip primitive', author: 'claude', at: minutes(130) }],
+      commits: [{ sha: '9a20e17', subject: 'Tab strip primitive', author: 'claude', at: minutes(130), added: 0, removed: 0 }],
       reviewers: [{ login: 'jane', verdict: 'approved', comments: 0 }],
       openedAt: minutes(600),
       updatedAt: minutes(120),

@@ -36,6 +36,7 @@ function pr(overrides: Partial<PullRequest> = {}): PullRequest {
     commits: [],
     reviewers: [],
     body: '',
+  author: 'someone',
     openedAt: 0,
     updatedAt: 0,
     mergeState: 'clean',

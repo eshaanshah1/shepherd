@@ -3,7 +3,7 @@ import type { Clock } from '@shepherd/sdk';
 import type { PullRequest } from './model/pr.ts';
 import type { RepoSlug } from './model/remote.ts';
 import type { GitHubClient } from './client.ts';
-import { changed, Sync, SYNC_INTERVALS, type TaskSubject } from './sync.ts';
+import { changed, keepPatches, Sync, SYNC_INTERVALS, type TaskSubject } from './sync.ts';
 
 function fakeClock(): Clock & { advance(ms: number): void } {
   let at = 1_000;
@@ -40,6 +40,7 @@ function pr(overrides: Partial<PullRequest> = {}): PullRequest {
     commits: [],
     reviewers: [],
     body: '',
+    author: 'someone',
     openedAt: 0,
     updatedAt: 0,
     mergeState: 'clean',
@@ -91,6 +92,7 @@ function harness(
       return Promise.resolve(answer);
     },
     merge: () => Promise.resolve({ ok: true }),
+    commit: () => Promise.resolve([]),
     files: () => Promise.resolve([]),
   };
 
@@ -355,5 +357,75 @@ describe('reading the branch', () => {
     await h.sync.pass([TASK]);
 
     expect(h.asked).toEqual([]);
+  });
+});
+
+describe('keepPatches', () => {
+  /*
+   * A sync pass is one GraphQL round trip and GraphQL has no patch field, so a
+   * pass describes every file and carries the diff of none. Writing it straight
+   * over the held answer deleted every fetched patch every twenty seconds —
+   * and `github.diff` then answered `cached` for them, because its key is
+   * `<pr>@<updatedAt>` and `updatedAt` had not moved. The Files tab said "the
+   * diff for this file has not been fetched" until somebody pushed.
+   */
+  const withPatch = pr({
+    files: [
+      { path: 'a.ts', added: 1, removed: 0, patch: '@@ -1 +1 @@' },
+      { path: 'b.ts', added: 2, removed: 0, patch: '@@ -2 +2 @@' },
+    ],
+  });
+  const fromGraphql = pr({ files: [{ path: 'a.ts', added: 1, removed: 0 }, { path: 'b.ts', added: 2, removed: 0 }] });
+
+  it('carries a fetched patch onto an answer that has none', () => {
+    const [kept] = keepPatches([fromGraphql], [withPatch]);
+    expect(kept?.files?.map((file) => file.patch)).toEqual(['@@ -1 +1 @@', '@@ -2 +2 @@']);
+  });
+
+  it('drops them when the PR has moved, because then they are stale', () => {
+    // `github.diff`'s cache key changes with `updatedAt` too, so the next look
+    // asks GitHub again rather than drawing a diff of the previous head.
+    const [kept] = keepPatches([{ ...fromGraphql, updatedAt: 5 }], [withPatch]);
+    expect(kept?.files?.every((file) => file.patch === undefined)).toBe(true);
+  });
+
+  it('matches by path, so a file that left the PR carries nothing', () => {
+    const renamed = pr({ files: [{ path: 'c.ts', added: 1, removed: 0 }] });
+    const [kept] = keepPatches([renamed], [withPatch]);
+    expect(kept?.files).toEqual([{ path: 'c.ts', added: 1, removed: 0 }]);
+  });
+
+  it('leaves another PR’s patches alone', () => {
+    const other = pr({ number: 999, files: [{ path: 'a.ts', added: 1, removed: 0 }] });
+    const [kept] = keepPatches([other], [withPatch]);
+    expect(kept?.files?.[0]?.patch).toBeUndefined();
+  });
+
+  it('is a no-op with nothing held', () => {
+    expect(keepPatches([fromGraphql], [])).toEqual([fromGraphql]);
+  });
+});
+
+describe('keepPatches, on the fields beside the patch', () => {
+  /*
+   * A pass answers from GraphQL, which knows a path and two counts. Everything
+   * the REST call added — the patch, and what GitHub said HAPPENED to the file —
+   * has to survive it, or a renamed file reports "its contents are identical"
+   * twenty seconds after it reported the truth.
+   */
+  const held = pr({
+    files: [{ path: 'new.ts', added: 0, removed: 0, status: 'renamed', previousPath: 'old.ts' }],
+  });
+  const fromGraphql = pr({ files: [{ path: 'new.ts', added: 0, removed: 0 }] });
+
+  it('carries `status` and `previousPath`, not only the patch', () => {
+    const [kept] = keepPatches([fromGraphql], [held]);
+    expect(kept?.files?.[0]?.status).toBe('renamed');
+    expect(kept?.files?.[0]?.previousPath).toBe('old.ts');
+  });
+
+  it('still drops them when the PR has moved', () => {
+    const [kept] = keepPatches([{ ...fromGraphql, updatedAt: 9 }], [held]);
+    expect(kept?.files?.[0]?.status).toBeUndefined();
   });
 });

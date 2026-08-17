@@ -109,6 +109,15 @@ export const GITHUB_COMMANDS = {
    * later read has more in it.
    */
   diff: 'github.diff',
+  /**
+   * The same, for ONE commit.
+   *
+   * Separate from `diff` rather than a flag on it because it is a different
+   * question — "what did this commit do" instead of "what does this branch
+   * do" — and because their caches cannot be shared: a PR's diff is keyed on
+   * its head, and a commit's is immutable and keyed on nothing but the sha.
+   */
+  commitDiff: 'github.commitDiff',
   /** Open it in a browser, which is the one thing this app will not reimplement. */
   open: 'github.open',
   /**

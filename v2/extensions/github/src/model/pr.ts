@@ -82,6 +82,18 @@ export interface ChangedFile {
   readonly added: number;
   readonly removed: number;
   /**
+   * What GitHub says happened to it, carried rather than inferred.
+   *
+   * It is the difference between the two reasons a file arrives with no patch,
+   * which the pane used to report as one: a rename with no edits has NOTHING to
+   * diff, and a file whose patch was never asked for has one nobody fetched.
+   * Both drew "the diff for this file has not been fetched", which is a lie in
+   * the first case and unactionable in the second.
+   */
+  readonly status?: 'added' | 'removed' | 'modified' | 'renamed' | 'copied' | 'changed' | 'unchanged';
+  /** Where a renamed file came from — the only interesting thing about it. */
+  readonly previousPath?: string;
+  /**
    * The unified diff for this file, when it has been fetched.
    *
    * Absent until the Files tab asks: a patch is the largest thing about a PR by
@@ -99,6 +111,9 @@ export interface Commit {
   readonly subject: string;
   readonly author: string;
   readonly at: number;
+  /** What this ONE commit changed. From GraphQL, so it costs no extra call. */
+  readonly added: number;
+  readonly removed: number;
 }
 
 /** A reviewer and where they landed — the meta column's first block. */
@@ -123,13 +138,24 @@ export interface PullRequest {
   readonly number: number;
   readonly title: string;
   /**
-   * The description, as text.
+   * The description, as markdown SOURCE.
    *
-   * Plain rather than markdown, and drawn as a paragraph: rendering markdown
-   * would mean a renderer, a sanitiser and a decision about images, for a field
-   * most PRs use for two sentences. `Open on GitHub` is one button away.
+   * The source rather than GitHub's markup-stripped rendering of it, because
+   * this field is drawn by a renderer (`ui/markdown.tsx`) and a body arriving
+   * pre-flattened has nothing left to render.
    */
   readonly body: string;
+  /**
+   * Who OPENED the pull request, which is not who wrote its commits.
+   *
+   * The header used to say `commits[0].author` and call it the author. Those are
+   * two different people the moment somebody pushes from one git identity and
+   * opens the PR from another — which is ordinary for anyone with a work
+   * account and a personal one, and made this pane disagree with GitHub's own
+   * line about the same PR. Empty when GitHub has no account to name, which is
+   * what a deleted user looks like.
+   */
+  readonly author: string;
   readonly state: PrState;
   readonly baseRef: string;
   readonly headRef: string;

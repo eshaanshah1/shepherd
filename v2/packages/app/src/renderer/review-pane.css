@@ -369,42 +369,34 @@
  * the mark sits in a list where its neighbours give it meaning. This is the PR's
  * own identity line, with nothing to read the shape against, so it says both.
  */
-.sh-pr-head__pill {
+/*
+ * The state, on the title line — a glyph, no capsule, no word.
+ *
+ * `align-self: center` because the row is baseline-aligned for the title and
+ * its `#4`, and a glyph has no baseline worth aligning: sat on one it hangs
+ * below the text it belongs to.
+ */
+.sh-pr-head__state {
   display: inline-flex;
-  align-items: center;
-  gap: var(--sh-space-sm);
   flex: none;
-  block-size: var(--sh-control-sm);
-  padding-inline: var(--sh-space-md);
-  border: var(--sh-hairline) solid var(--sh-line-strong);
-  border-radius: 999px;
-  font-family: var(--sh-font-sans);
-  font-size: var(--sh-font-size-micro);
-  color: var(--sh-text-dim);
+  align-self: center;
 }
 
-.sh-pr-head__pill > i {
-  inline-size: 7px;
-  block-size: 7px;
-  border-radius: 50%;
-  flex: none;
-  background: currentColor;
+/* The tone paints the glyph's own stroke. There is nothing behind it to fill. */
+.sh-pr-head__state[data-tone='positive'] {
+  color: var(--sh-grass);
 }
 
-.sh-pr-head__pill[data-tone='positive'] > i {
-  background: var(--sh-grass);
+.sh-pr-head__state[data-tone='negative'] {
+  color: var(--sh-red);
 }
 
-.sh-pr-head__pill[data-tone='negative'] > i {
-  background: var(--sh-red);
+.sh-pr-head__state[data-tone='neutral'] {
+  color: var(--sh-sky);
 }
 
-.sh-pr-head__pill[data-tone='neutral'] > i {
-  background: var(--sh-sky);
-}
-
-.sh-pr-head__pill[data-tone='quiet'] > i {
-  background: var(--sh-text-ghost);
+.sh-pr-head__state[data-tone='quiet'] {
+  color: var(--sh-text-ghost);
 }
 
 /* A ref is an identifier you might copy, not prose — so it is a chip, not a
@@ -554,6 +546,18 @@
   background: var(--sh-surface);
 }
 
+/*
+ * The description, which is the one thing here that is not a card.
+ *
+ * None of the chrome: no border, no fill, no radius, no inset. See
+ * `pr-panels.tsx` for why — a card draws a boundary, and the description has
+ * nothing to be bounded against. It holds the rendered body and nothing else,
+ * so it sets no rhythm of its own; `.sh-md` owns that.
+ */
+.sh-pr-body {
+  display: flow-root;
+}
+
 /* An unresolved thread is the one thing on this surface asking for something,
    so it gets the one brighter edge — the same step a waiting task card takes. */
 .sh-pr-card:not([data-resolved]) {
@@ -692,13 +696,43 @@
 
 /* ── commits ──────────────────────────────────────────────────────────────── */
 
+/*
+ * A commit row, which opens its own diff — so it is a button, not a div.
+ *
+ * It keeps the row's shape rather than taking a control's: no fill at rest, no
+ * border, no radius. The hover wash is the whole affordance, which is this
+ * pane's rule for a row you can act on, and it is what stops a list of sixteen
+ * commits reading as a stack of sixteen buttons.
+ */
 .sh-pr-commit {
   display: flex;
   align-items: center;
   gap: var(--sh-space-md);
+  inline-size: 100%;
   block-size: var(--sh-row-height);
+  padding-inline: var(--sh-space-sm);
+  border: 0;
+  border-radius: var(--sh-radius-sm);
+  background: none;
+  font: inherit;
   font-size: var(--sh-font-size-card);
   color: var(--sh-text-dim);
+  text-align: start;
+  cursor: default;
+  transition: background var(--sh-motion) linear;
+}
+
+.sh-pr-commit:hover {
+  background: var(--sh-fill-hover);
+}
+
+/*
+ * One commit's diff, under the row that says which. A column rather than the
+ * side-by-side `--list` shape: there is no tree here, because the question was
+ * "what did this commit do" and its files are the answer in full.
+ */
+.sh-pr-panel--stack {
+  flex-direction: column;
 }
 
 .sh-pr-commit__sha {
@@ -882,63 +916,147 @@
 
 /* ── the diff ─────────────────────────────────────────────────────────────── */
 
+/*
+ * What was here — `__head`, `__path`, `__mode`, `__body`, `__line[data-kind]` —
+ * styled a hand-rolled diff renderer that `@pierre/diffs` replaced, and no
+ * element has carried those classes since. It is deleted rather than kept: a
+ * rule that matches nothing is not harmless, it is a description of the screen
+ * that stopped being true, and the next reader has no way to tell which half of
+ * this file is live. `__head` and `__path` are used again below, and finding
+ * two of each is what turned that up.
+ */
+
+/*
+ * The diff's own header — ours, not the package's.
+ *
+ * A button because it toggles the file, so it has to take a keyboard and say
+ * what it does. It reads as a row rather than a control: no fill, no border, no
+ * radius until you hover it, because a bordered capsule across the top of a
+ * diff is a second toolbar.
+ */
 .sh-pr-diff__head {
-  flex: none;
   display: flex;
   align-items: center;
   gap: var(--sh-space-sm);
-  block-size: var(--sh-row-height);
-  padding-inline: var(--sh-space-lg);
-  box-shadow: inset 0 calc(-1 * var(--sh-hairline)) 0 var(--sh-line);
-  font-family: var(--sh-font-mono);
-  font-size: var(--sh-font-size-micro);
-  color: var(--sh-text-faint);
-}
-
-.sh-pr-diff__path {
-  flex: 1;
+  flex: none;
+  inline-size: 100%;
   min-inline-size: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  padding: var(--sh-space-sm) var(--sh-space-lg);
+  border: 0;
+  border-block-end: var(--sh-hairline) solid var(--sh-line);
+  background: var(--sh-surface);
+  font: inherit;
+  font-size: var(--sh-font-size-medium);
+  color: var(--sh-text);
+  text-align: start;
+  cursor: default;
+  transition: background var(--sh-motion) linear;
 }
 
-.sh-pr-diff__mode {
-  color: var(--sh-text-ghost);
-}
-
-.sh-pr-diff__body {
-  flex: 1 1 auto;
-  min-block-size: 0;
-  overflow: auto;
-  font-family: var(--sh-font-mono);
-  font-size: var(--sh-font-size-micro);
-  line-height: var(--sh-line-height);
-}
-
-.sh-pr-diff__line {
-  padding-inline: var(--sh-space-lg);
-  color: var(--sh-text-dim);
-  white-space: pre;
+.sh-pr-diff__head:hover {
+  background: var(--sh-fill-hover);
 }
 
 /*
- * A diff's colours are a TINT plus the ink, never a solid fill: a block of green
- * behind code makes the code the second thing you read. The tint is mixed from
- * the same role the numbers use, so the two agree.
+ * The change mark — what happened to this file.
+ *
+ * Its tones are the counts' tones, so the glyph and the numbers beside it never
+ * disagree. Everything that is not an arrival or a departure is quiet ink: the
+ * shape already says edit-or-move, and a third hue here would be a colour that
+ * means "ordinary".
  */
-.sh-pr-diff__line[data-kind='added'] {
-  color: var(--sh-grass);
-  background: color-mix(in srgb, var(--sh-grass) 8%, transparent);
-}
-
-.sh-pr-diff__line[data-kind='removed'] {
-  color: var(--sh-clay);
-  background: color-mix(in srgb, var(--sh-clay) 8%, transparent);
-}
-
-.sh-pr-diff__line[data-kind='hunk'],
-.sh-pr-diff__line[data-kind='meta'] {
+.sh-pr-diff__mark {
+  display: inline-flex;
+  flex: none;
   color: var(--sh-text-ghost);
+}
+
+.sh-pr-diff__mark[data-tone='added'] {
+  color: var(--sh-grass);
+}
+
+.sh-pr-diff__mark[data-tone='removed'] {
+  color: var(--sh-red);
+}
+
+/* The chevron is the only glyph here, and it is the size of the text beside it
+   — the package's own was a fixed 16px against 12.5px type, which made the
+   loudest thing in the row the mark that says least. */
+.sh-pr-diff__head > .sh-icon {
+  flex: none;
+  color: var(--sh-text-ghost);
+}
+
+/*
+ * A path elides from the LEFT, because the end of it is the filename and that
+ * is the half you are reading.
+ *
+ * `direction: rtl` is what puts the ellipsis at the front, and it is why this
+ * shrinks rather than grows: at `flex: 1` the box is the whole row and RTL lays
+ * the text against its far edge, so the path drifted right with the chevron
+ * stranded on the left.
+ *
+ * The spacer that holds the counts against the right edge is on the COUNTS, not
+ * here. `margin-inline-end` resolves against this element's own direction, and
+ * this element is `rtl` — so an auto margin here lands on the physical left and
+ * pushes the path away from the chevron, which is the bug it was meant to fix.
+ */
+.sh-pr-diff__path {
+  flex: 0 1 auto;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: start;
+  font-family: var(--sh-font-mono);
+}
+
+.sh-pr-diff__count {
+  flex: none;
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-micro);
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * A file the diff has nothing to draw for — a rename, or one GitHub withheld.
+ *
+ * Listed at the foot rather than left out. A PR that moved a directory is
+ * mostly renames, and a Files tab that silently skips a third of its own count
+ * reads as files that failed to load.
+ */
+.sh-pr-diff__quiet {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sh-space-lg);
+  padding: var(--sh-space-sm) var(--sh-space-lg);
+  border-block-start: var(--sh-hairline) solid var(--sh-line);
+  font-size: var(--sh-font-size-medium);
+  color: var(--sh-text-dim);
+}
+
+/* The arrow in `old → new`, which is the whole sentence for a moved file. */
+.sh-pr-diff__arrow {
+  flex: none;
+  color: var(--sh-text-ghost);
+}
+
+.sh-pr-diff__reason {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  font-size: var(--sh-font-size-micro);
+  color: var(--sh-text-ghost);
+}
+
+/* The first count carries the gap, so both sit against the right edge. */
+.sh-pr-diff__count[data-tone='added'] {
+  margin-inline-start: auto;
+  color: var(--sh-grass);
+}
+
+.sh-pr-diff__count[data-tone='removed'] {
+  color: var(--sh-red);
 }
 
 /*
@@ -1000,16 +1118,107 @@
  * `.sh-pr-tree .something` rule and cannot work out why it does nothing.
  */
 .sh-pr-tree {
-  inline-size: 280px;
-  flex: 0 0 280px;
+  inline-size: 200px;
+  flex: 0 0 200px;
   overflow-y: auto;
   box-shadow: inset calc(-1 * var(--sh-hairline)) 0 0 var(--sh-line);
+
+  /*
+   * Its density, set the only way a shadow root can be reached.
+   *
+   * Every one of these is a property the package documents as its own knob, and
+   * custom properties inherit through the boundary — which is the whole styling
+   * contract with it, and why there is no descendant selector here.
+   *
+   * Only the type. The ROW HEIGHT and the gap factor are not here on purpose:
+   * the component writes them inline on its own host from its `density` option,
+   * so a declaration in this file is outranked and silently does nothing. That
+   * one is asked for in `pr-panels.tsx` as `density: 'compact'`.
+   *
+   * These two have no such counterpart, which is exactly why they work — and
+   * why the split is worth stating rather than discovering twice.
+   *
+   * The font is the app's, not `system-ui`. This column sits against a pane of
+   * Geist, and a second sans at the same size does not read as a different
+   * package — it reads as a rendering bug.
+   */
+  --trees-font-size-override: var(--sh-font-size-medium);
+  --trees-font-family-override: var(--sh-font-sans);
+
+  /*
+   * The indent, which is where this column's width was actually going.
+   *
+   * Measured at the defaults: 43px before the first name and 19px per level
+   * after it, so at depth three — `v2/extensions/transcripts/fixtures/x.jsonl`,
+   * an ordinary path in this repo — 99px of the column was spent on air and
+   * the name it exists to show was the thing being truncated.
+   *
+   * The 19px is not one number. Each level draws a guide worth `level-gap`, and
+   * every level after the first ALSO adds `item-row-gap + icon-width / 2` to
+   * hang the next guide under the middle of the icon above it. So half an icon
+   * is the largest single term, and trimming only `level-gap` — the one knob
+   * whose name suggests it owns this — moves a third of it.
+   *
+   * A guide still marks every level; it is 2px of gap rather than 6px, which is
+   * enough to read as depth in a column this narrow and is what "compact"
+   * should have meant here.
+   */
+  --trees-padding-inline-override: var(--sh-space-md);
+  --trees-level-gap-override: 2px;
+  --trees-item-row-gap-override: var(--sh-space-xs);
+  --trees-icon-width-override: 14px;
+
+  /*
+   * Its palette, which is otherwise NOT ours.
+   *
+   * The package ships `#009fff` as its accent and mixes the selected row's fill
+   * out of it, so a selected file arrived in a blue this app does not contain —
+   * and its ground is `#141415`, a near-black a step off `surface`. Neither is a
+   * bug in the package; they are its defaults, and defaults are what a
+   * contributed surface is supposed to replace. §7: a contributed surface
+   * supplies data and a TOKEN NAME, and may not introduce a hue the palette
+   * does not have.
+   *
+   * Selection is `raised` plus `edgeSelected` — the same pair a selected task
+   * card takes in the rail, so one gesture reads the same in both places.
+   */
+  --trees-bg-override: var(--sh-surface);
+  --trees-fg-override: var(--sh-text-dim);
+  --trees-fg-muted-override: var(--sh-text-ghost);
+  --trees-bg-muted-override: var(--sh-fill-hover);
+  --trees-border-color-override: var(--sh-line);
+  --trees-selected-bg-override: var(--sh-fill-selected);
+  --trees-selected-fg-override: var(--sh-text);
+  --trees-selected-focused-border-color-override: var(--sh-edge-selected);
+  --trees-focus-ring-color-override: var(--sh-edge-selected);
+  --trees-accent-override: var(--sh-sky);
 }
 
 .sh-pr-diff__view {
   flex: 1 1 auto;
   min-block-size: 0;
   overflow: auto;
+
+  /*
+   * The file header was `1lh + 3 × 8px` — 44px of chrome over a two-line diff,
+   * and the tallest thing in the tab. It is not settable directly, and it does
+   * not need to be: it is composed from the line box and the block gap, so
+   * moving those moves it to 30px and tightens every code row on the way past.
+   *
+   * The gaps come from the app's space scale rather than the package's 8px
+   * fallback, which is what keeps this pane on one rhythm with the rest.
+   */
+  /*
+   * The same size as the tree beside it. They are one surface read left to
+   * right, and the package defaults differ by half a point — enough that the
+   * diff looked like the larger of two panes rather than the other half of one.
+   */
+  --diffs-font-size: var(--sh-font-size-medium);
+  --diffs-line-height: 18px;
+  --diffs-gap-block: var(--sh-space-xs);
+  --diffs-gap-inline: var(--sh-space-sm);
+  --diffs-font-family: var(--sh-font-mono);
+  --diffs-header-font-family: var(--sh-font-sans);
 }
 
 /* ── the footer, shared by every tab ──────────────────────────────────────── */
@@ -1051,37 +1260,96 @@
 
 /* ---------------------------------------------------------------- markdown
  *
- * A PR body and a review comment, with their shape kept.
+ * A PR body and a review comment, drawn as documents.
  *
- * The rhythm here is deliberately tighter than a document's: this is a card
- * inside a pane, so a heading gets weight and a little space above it rather
- * than a display size. The one thing that gets real emphasis is CODE — an
- * agent's PR body is mostly commands and identifiers, and a monospace run
- * against the prose is what makes it scannable.
+ * The rhythm used to be deliberately tighter than a document's, on the argument
+ * that this is a card inside a pane — a heading got weight and six pixels and
+ * nothing else. That was written for a two-sentence review comment and it is
+ * wrong for the thing this pane exists to show: an agent's PR body is a hundred
+ * lines with eight sections, and at one size and one weight it reads as an
+ * undifferentiated wall no matter how correctly it was parsed.
+ *
+ * So the scale is a document's, and the four levers are GitHub's, because
+ * GitHub is where these bodies are written and previewed and the comparison is
+ * one the reader makes whether or not we invite it:
+ *
+ *   1. a heading is BIGGER, not just bolder, and the top two carry a rule
+ *   2. blocks are a full line apart, not half of one
+ *   3. body ink is `text`, not `text-dim` — dim prose makes every bold run
+ *      strobe, which is the opposite of emphasis
+ *   4. code is a chip with real padding, because an agent's body is mostly
+ *      commands and identifiers and that run is what makes it scannable
+ *
+ * Measure is NOT capped here. `.sh-pr-thread` already caps this column at 720px
+ * for exactly this reason, and a second cap on the same text is a second
+ * authority on one question — whichever is tighter silently wins and the other
+ * reads as live code that does nothing.
  */
 .sh-md {
   display: flex;
   flex-direction: column;
-  gap: var(--sh-space-sm);
+  gap: var(--sh-space-xxl);
   font-size: var(--sh-font-size-card);
-  line-height: var(--sh-line-height);
-  color: var(--sh-text-dim);
+  line-height: 1.55;
+  color: var(--sh-text);
   overflow-wrap: anywhere;
 }
 
-.sh-md__para {
+.sh-md p {
   margin: 0;
-  /* The body's own newlines are kept — an agent that wrote three lines meant
-     three lines. `pre-wrap` rather than `pre` so long lines still wrap. */
-  white-space: pre-wrap;
 }
 
+/*
+ * A heading opens a section, so its space belongs ABOVE it.
+ *
+ * `.sh-md`'s gap already separates blocks; this is the extra distance that
+ * makes the heading belong to what follows rather than sitting between two
+ * paragraphs equidistant from both.
+ */
 .sh-md__heading {
-  margin: var(--sh-space-sm) 0 0;
+  margin: var(--sh-space-md) 0 0;
   font-size: var(--sh-font-size-card);
-  font-weight: 600;
+  /* Heavier than `strong`, which is 600. A heading that weighs the same as the
+     bold run three lines under it is not a level, it is another bold line. */
+  font-weight: 700;
+  line-height: 1.3;
   color: var(--sh-text);
-  letter-spacing: 0.01em;
+  letter-spacing: 0;
+}
+
+.sh-md__heading[data-level='1'] {
+  font-size: var(--sh-font-size-title);
+}
+
+.sh-md__heading[data-level='2'] {
+  font-size: var(--sh-font-size-large);
+}
+
+/*
+ * A rule under the top two levels, which is what turns a bold line into a
+ * section break. Below that it would be a rule every few paragraphs, which
+ * divides nothing.
+ */
+.sh-md__heading[data-level='1'],
+.sh-md__heading[data-level='2'] {
+  padding-block-end: var(--sh-space-sm);
+  border-block-end: var(--sh-hairline) solid var(--sh-line);
+}
+
+/*
+ * `remark-gfm`'s own footnotes label, which is not a section of the document.
+ *
+ * It emits `<h2 id="footnote-label">Footnotes</h2>` above the note list, and
+ * GitHub hides it from sight entirely. Kept visible here — a pane has no page
+ * structure around it to make an unlabelled list of notes legible — but drawn
+ * as the quiet label it is rather than as another `##`.
+ */
+.sh-md__heading[id='footnote-label'] {
+  font-size: var(--sh-font-size-small);
+  font-weight: 600;
+  color: var(--sh-text-ghost);
+  padding-block-end: 0;
+  border-block-end: 0;
 }
 
 /* The first block of a card must not push itself away from the byline. */
@@ -1089,19 +1357,42 @@
   margin-top: 0;
 }
 
-.sh-md__list {
+.sh-md ul,
+.sh-md ol {
   margin: 0;
-  padding-left: var(--sh-space-lg);
+  padding-inline-start: var(--sh-space-huge);
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--sh-space-xs);
+}
+
+/* A nested list is one step in, and closer to its parent than to the next
+   item — it belongs to the line above it. */
+.sh-md li > ul,
+.sh-md li > ol {
+  margin-block-start: var(--sh-space-xs);
+}
+
+/*
+ * A task list drops its marker: the checkbox IS the marker, and a bullet beside
+ * one is two marks for one item.
+ */
+.sh-md li:has(> .sh-md__check) {
+  list-style: none;
+  margin-inline-start: calc(-1 * var(--sh-space-lg));
+}
+
+.sh-md__check {
+  margin-inline-end: var(--sh-space-sm);
+  accent-color: var(--sh-text-ghost);
+  vertical-align: baseline;
 }
 
 .sh-md__code {
   margin: 0;
-  padding: var(--sh-space-sm) var(--sh-space-md);
-  background: var(--sh-canvas);
-  border: 1px solid var(--sh-line);
+  padding: var(--sh-space-lg) var(--sh-space-xl);
+  background: var(--sh-code-fill);
+  border: var(--sh-hairline) solid var(--sh-line);
   border-radius: var(--sh-radius-sm);
   /* Scrolls itself rather than widening the card: a pasted command line is
      routinely longer than this column, and wrapping one makes it unreadable
@@ -1109,50 +1400,101 @@
   overflow-x: auto;
   font-family: var(--sh-font-mono);
   font-size: var(--sh-font-size-micro);
-  line-height: 1.5;
+  line-height: 1.55;
   color: var(--sh-text);
 }
 
 .sh-md code {
   font-family: var(--sh-font-mono);
-  font-size: 0.92em;
+  font-size: 0.9em;
   color: var(--sh-text);
 }
 
-.sh-md__para code,
-.sh-md__list code,
-.sh-md__quote code {
-  padding: 1px 4px;
-  /* `well` is the recessed surface — the role for a run of text set INTO the
-     card rather than onto it. `fill-*` are state colours and would read as
-     though the span were hovered. */
-  background: var(--sh-well);
+/*
+ * An inline code span is a CHIP.
+ *
+ * `code-fill`, which is a wash of the ink rather than a surface token. `well`
+ * was the recessed surface — right while this sat on a card, and invisible the
+ * moment the card came off, because a recess only reads against something
+ * raised. It was worse than invisible in light mode, where `well` and `raised`
+ * are BOTH `#FFFFFF`. A wash is derived from `text`, so it lightens on black
+ * and darkens on paper and needs no card under it.
+ */
+.sh-md :not(.sh-md__code) > code {
+  padding: 2px 5px;
+  background: var(--sh-code-fill);
   border-radius: var(--sh-radius-sm);
 }
 
 .sh-md__code code {
   padding: 0;
   background: none;
+  font-size: inherit;
 }
 
-.sh-md__quote {
+.sh-md blockquote {
   margin: 0;
-  padding-left: var(--sh-space-md);
-  border-left: 2px solid var(--sh-line);
-  color: var(--sh-text-ghost);
-  white-space: pre-wrap;
+  padding-inline-start: var(--sh-space-lg);
+  border-inline-start: 2px solid var(--sh-line);
+  color: var(--sh-text-dim);
 }
 
-.sh-md__rule {
-  margin: var(--sh-space-xs) 0;
+.sh-md hr {
+  margin: 0;
   border: 0;
-  border-top: 1px solid var(--sh-line);
+  border-top: var(--sh-hairline) solid var(--sh-line);
 }
 
 .sh-md strong {
   color: var(--sh-text);
   font-weight: 600;
 }
+
+/* ── tables ─────────────────────────────────────────────────────────────── */
+
+/* Scrolls itself rather than widening the card, for the reason `.sh-md__code`
+   does: a wide table must not push the conversation column sideways. */
+.sh-md__table-scroll {
+  overflow-x: auto;
+}
+
+.sh-md__table {
+  border-collapse: collapse;
+  /* `auto`, so a two-column key/value table sits at the width of its own text
+     rather than stretching one cell of numbers across the card. */
+  table-layout: auto;
+  font-size: var(--sh-font-size-body);
+}
+
+.sh-md__table th,
+.sh-md__table td {
+  padding: var(--sh-space-sm) var(--sh-space-lg);
+  text-align: start;
+  vertical-align: baseline;
+  border: var(--sh-hairline) solid var(--sh-line);
+}
+
+.sh-md__table th {
+  font-weight: 600;
+  color: var(--sh-text);
+  background: var(--sh-code-fill);
+}
+
+/*
+ * A header row of nothing is not drawn.
+ *
+ * `| | |` over a divider is how a key/value table is written, and GFM is right
+ * to emit the empty `<thead>` — the document did declare one. Drawing it puts a
+ * blank bordered band above the first fact, which reads as a table that lost
+ * its headings rather than one that never had any. The selector is "a row with
+ * no non-empty cell", not "a row with an empty cell": one blank heading beside
+ * three real ones is a heading somebody left out, and that one should show.
+ */
+.sh-md__table thead tr:not(:has(th:not(:empty))) {
+  display: none;
+}
+
+/* ── links and images ───────────────────────────────────────────────────── */
 
 /* Not a navigation target — see `markdown.tsx`. It reads as a link and carries
    its URL in a tooltip; the way out of this pane is `Open on GitHub`. */
@@ -1163,6 +1505,22 @@
   text-decoration: underline;
   text-underline-offset: 2px;
   cursor: default;
+}
+
+/*
+ * An image that was not loaded, said so rather than left as a gap.
+ *
+ * It is drawn as the alt text in a chip because the reader has to be able to
+ * tell "there is a picture here you are not seeing" from "the author wrote a
+ * sentence" — see `markdown.tsx` for why it is never fetched.
+ */
+.sh-md__image {
+  padding: 2px var(--sh-space-sm);
+  background: var(--sh-code-fill);
+  border: var(--sh-hairline) dashed var(--sh-line);
+  border-radius: var(--sh-radius-sm);
+  font-size: var(--sh-font-size-micro);
+  color: var(--sh-text-ghost);
 }
 
 .sh-pr-card[data-resolved] .sh-md {

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } 
 import type { ExtensionPaneProps } from '@shepherd/sdk';
 import { Button, Empty, Icon, KeyCap, SectionLabel, namedGlyph } from '@shepherd/ui';
 import { blockedBy, landOrder, prKey, type CheckRun, type PullRequest, type ReviewThread } from '../src/model/index.ts';
-import { agoText, readReview, type ReviewData } from './review-data.ts';
+import { agoText, readFiles, readReview, type ReviewData } from './review-data.ts';
 import { ClosedPrRow, PrRow } from './pr-row.tsx';
 import { PrDetail, type PrActions, type WrapHand } from './pr-detail.tsx';
 import { HandMenu, HAND_COPY, HAND_MORE, HAND_NEW_AGENT, type AgentChoice } from './hand-menu.tsx';
@@ -156,6 +156,26 @@ export function ReviewPane({ state, focused, invoke }: ExtensionPaneProps): Reac
     [invoke, taskId, ask],
   );
 
+  /**
+   * One commit's files, answered to the caller rather than folded into the PR.
+   *
+   * A commit is immutable, so the command holds its answer forever and a second
+   * open is free. `null` on any failure: the Commits tab draws an empty diff,
+   * which is the same shape as a commit that touched nothing and is the most a
+   * reader can act on either way.
+   */
+  const needCommit = useCallback(
+    async (sha: string, key: string) => {
+      if (taskId === null) return null;
+      const answer = await invoke('github.commitDiff', { task: taskId, pr: key, sha });
+      if (!answer.ok) return null;
+      const value = answer.value;
+      if (typeof value !== 'object' || value === null) return null;
+      return readFiles((value as { files?: unknown }).files);
+    },
+    [invoke, taskId],
+  );
+
   const actionsFor = (pr: PullRequest): PrActions => ({
     onHandCheck: (check: CheckRun) => {
       asking.current = 'check';
@@ -255,6 +275,7 @@ export function ReviewPane({ state, focused, invoke }: ExtensionPaneProps): Reac
           wrapHand={wrapHand}
           now={now}
           onNeedDiff={() => void needDiff(prKey(showing))}
+          onNeedCommit={(sha) => needCommit(sha, prKey(showing))}
           {...(data.agent === undefined ? {} : { agent: data.agent })}
           task={{
             title: data.taskTitle,

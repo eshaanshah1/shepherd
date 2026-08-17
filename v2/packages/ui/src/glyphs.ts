@@ -9,7 +9,10 @@ import {
   IconEye,
   IconFolder,
   IconFolderFilled,
+  IconGitMerge,
   IconGitPullRequest,
+  IconGitPullRequestClosed,
+  IconGitPullRequestDraft,
   IconLayoutColumns,
   IconLayoutRows,
   IconMaximize,
@@ -70,8 +73,19 @@ export const NAMED_GLYPHS: Readonly<Record<string, ComponentType<TablerIconProps
    * only one: it is a thing that exists on a server and has a state, where a
    * branch or a commit is a thing in a directory and has none. The rail draws it
    * for a task with PRs open, tinted by the worst of them.
+   *
+   * FOUR of them, because a pull request's state is a thing the glyph itself
+   * says everywhere else this noun is drawn — every forge in the world uses
+   * this family and a reader already knows it on sight. Drawing one shape and
+   * leaving the state to a coloured dot beside it throws that away and asks the
+   * reader to learn our dot instead. `merged` is the merge glyph rather than a
+   * fifth pull-request variant, because that is the shape the arrow actually
+   * makes when it lands.
    */
   'pull-request': IconGitPullRequest,
+  'pull-request-closed': IconGitPullRequestClosed,
+  'pull-request-draft': IconGitPullRequestDraft,
+  'pull-request-merged': IconGitMerge,
   plus: IconPlus,
   /*
    * Finishing with a task, and taking it back — the rail's two most-made
