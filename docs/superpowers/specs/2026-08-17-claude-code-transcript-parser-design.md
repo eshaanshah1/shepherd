@@ -86,11 +86,20 @@ this design adopts wholesale: dedupe on `message.id:requestId`, falling back to
 `msg:<id>` then `uuid:<id>`, and take `Math.max` per field on collision, because
 a later duplicate row can carry *more* complete usage than the first.
 
-### 2.3 `isSidechain` does not appear; subagent turns live only in sibling files
+### 2.3 `isSidechain` is a subagent file's self-label, not a pointer from the parent
 
-Orca reads an `isSidechain` flag on records. In this corpus it appears **zero**
-times — including in a session that demonstrably ran subagents (`204c2bc8…`, 1.2
-MB, with a populated `subagents/` directory beside it).
+Orca reads an `isSidechain` flag on records. Across the whole corpus:
+
+| | |
+|---|---|
+| top-level session files with `isSidechain:true` | **0** of 720 |
+| `subagents/` files with `isSidechain:true` | **145** of 146 |
+
+So the flag is real and consistent, but it does not do what a reader might
+assume. It never marks a subagent turn *inside the parent's* transcript — it
+marks records within a subagent's own file as belonging to a sidechain. It is a
+label to be **verified** while parsing a subagent transcript, never a way to
+**find** one.
 
 Subagent conversation lives entirely in sibling files, at a layout confirmed here:
 
@@ -103,9 +112,9 @@ A sampled subagent file holds `assistant`, `user` and `attachment` records — a
 ordinary transcript, not a special format.
 
 **Decision:** subagents are a **file-discovery** concern, not a record-flag one.
-The parser finds them by path and parses each with the same fold. The
-`isSidechain` field is still read when present (older or future versions may
-carry it) but nothing depends on it.
+The parser finds them by path and parses each with the same fold. `isSidechain`
+is read and surfaced on the message, and a subagent file whose records lack it
+is worth logging — but discovery never depends on it.
 
 Note this also means recall is not miscounting subagents today — it does not
 recurse, so it simply never sees them. 864 files exist; it reads 718.
@@ -124,6 +133,67 @@ explicit `transcriptPath` from a caller that has one, because a caller holding
 the authoritative path should never be made to guess — but id→path discovery
 stays the ordinary route, and no code compensates for a divergence this corpus
 does not show. If it appears later, the escape hatch is already there.
+
+### 2.5 Orca serves seven providers; not every rule it carries is Claude's
+
+Orca decodes Claude, Codex, Grok, OMP and more, and some of its modules are
+explicitly shared across all of them. Borrowing from it therefore requires asking,
+per rule, **whose format taught orca that**. Checked against its source:
+
+| Rule | Where it lives in orca | Provider |
+|---|---|---|
+| meta/synthetic turn keeps only tool-results | `transcript-line-decoders-claude.ts` | Claude |
+| all-tool-result user row → role `tool` | `transcript-line-decoders-claude.ts` | Claude |
+| `stop_reason` terminal set + no-`tool_use` backup | `decodeClaudeTurnLifecycle` | Claude |
+| usage dedup on `message.id:requestId` | `claude-usage/transcript-record-parser.ts` | Claude |
+| `agent-<id>.jsonl` subagent layout | `session-scanner-subagent-transcripts.ts` | Claude |
+| `tool_result` content coercion | `transcript-record-blocks.ts` | **shared** (Claude + Codex) |
+| harness-injected tag allowlist | `harness-injected-user-turns.ts` | **shared** — every provider |
+| oversized-record drop, fd-in-`finally` | `transcript-incremental-reader.ts` | provider-agnostic |
+
+The two shared rows are the ones to treat with care. The coercion is harmless —
+Claude's `tool_result.content` genuinely takes all three shapes, so the rule earns
+its place regardless of who else needed it. **The tag allowlist is a union**, and
+adopting it wholesale would import other harnesses' vocabulary as though it were
+Claude's.
+
+So it was measured instead. Occurrences of each of orca's 19 tags across the 720
+Claude session files here:
+
+```
+task-notification    1343     bash-input                21     agent-message           0
+command-name          148     bash-stderr               21     cross-session-message   0
+command-message       122     bash-stdout               21     fork-boilerplate        0
+command-args          121     user-prompt-submit-hook    1     local-command-stderr    0
+local-command-stdout   98                                      mcp-polling-update      0
+system-reminder        75                                      mcp-resource-update     0
+local-command-caveat   63                                      teammate-message        0
+                                                               user-memory-input       0
+```
+
+Eleven of nineteen are attested. The eight that are not are all plausibly Claude
+Code features simply unexercised in this corpus (cross-session messaging, MCP
+resources, memory input, forking) rather than other providers' — but "plausibly"
+is not "observed", and orca's own comment sets the standard: *"only tags we have
+observed count."*
+
+**Decision:** the allowlist ships with the eleven attested tags. The other eight
+are recorded in the source as candidates, with this census as the reason they are
+not yet enabled, so adding one later is a one-line change backed by evidence
+rather than a guess repeated from another project.
+
+### 2.6 The corpus is full of ordinary markup, which is why §3.1's defect bites
+
+The same census, unfiltered, is dominated by content rather than machinery:
+
+```
+<code> 3742   <p> 3313   <td> 3213   <strong> 1770   <summary> 1668
+<tr> 1539     <name> 1472   <status> 1201   <li> 679   <details> 433
+```
+
+HTML and generic XML-ish tags, thousands of them — pasted tables, disclosure
+blocks, config fragments. Recall's current filter cannot tell these from
+`<task-notification>`, and §3.1 is where that is fixed.
 
 ## 3. Module shape
 
@@ -216,11 +286,14 @@ dropped from the index. The comment above it shows the intent was right ("one
 that merely CONTAINS a tag is a person who pasted something") and the
 implementation does not reach it.
 
-The replacement is orca's approach: an **allowlist of tag names actually observed
-from harnesses** (`system-reminder`, `task-notification`, `local-command-stdout`,
-`command-name`, `bash-input`, `agent-message`, …) plus a short list of observed
-prefixes (`[request interrupted`, `caveat: the messages below were generated…`,
-the compact-continuation opener). An unknown kebab tag stays a user turn. Orca's
+The replacement is orca's approach with orca's list **replaced by the census of
+§2.5**: an allowlist of the eleven tag names actually observed in this corpus
+(`task-notification`, `command-name`, `command-message`, `command-args`,
+`local-command-stdout`, `system-reminder`, `local-command-caveat`, `bash-input`,
+`bash-stderr`, `bash-stdout`, `user-prompt-submit-hook`), plus a short list of
+observed prefixes (`[request interrupted`, `caveat: the messages below were
+generated…`, the compact-continuation opener). An unknown kebab tag stays a user
+turn — which, per §2.6, is thousands of real pastes. Orca's
 own comment states the stake precisely: *"a real prompt starting with a custom
 `<my-element>` … is a genuine user turn, and misclassifying it would hide the
 turn."* The lowercased copy used for classification is capped at 256 characters,
