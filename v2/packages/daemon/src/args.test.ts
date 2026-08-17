@@ -19,6 +19,7 @@ describe('parseArgs', () => {
       support: '/tmp/sup',
       level: 'debug',
       transport: 'loopback',
+      socketCheckMs: 60_000,
     });
   });
 
@@ -61,5 +62,33 @@ describe('parseArgs', () => {
   it('omits an absent or empty hostname rather than passing one on', () => {
     expect(parseArgs(['--socket=/tmp/s.sock']).hostname).toBeUndefined();
     expect(parseArgs(['--socket=/tmp/s.sock', '--hostname=']).hostname).toBeUndefined();
+  });
+});
+
+/**
+ * The socket-reachability check's interval.
+ *
+ * A flag because the rule it drives is otherwise unobservable in a test that
+ * finishes: the condition it detects is permanent, so production wants a minute
+ * and a smoke wants a beat.
+ */
+describe('--socket-check-ms', () => {
+  it('defaults to a minute, which is the production cadence', () => {
+    expect(parseArgs(['--socket=/tmp/a.sock']).socketCheckMs).toBe(60_000);
+  });
+
+  it('takes a value a smoke can wait for', () => {
+    expect(parseArgs(['--socket=/tmp/a.sock', '--socket-check-ms=250']).socketCheckMs).toBe(250);
+  });
+
+  /**
+   * MUTATION TARGET. A zero busy-loops and a word produces a `NaN` interval that
+   * never fires — and a rule that never fires is a rule that stopped existing,
+   * silently, which is exactly the shape of the leak this was written to close.
+   */
+  it('refuses a value that would disable the rule rather than tune it', () => {
+    for (const bad of ['0', '-1', 'soon', '']) {
+      expect(parseArgs(['--socket=/tmp/a.sock', `--socket-check-ms=${bad}`]).socketCheckMs).toBe(60_000);
+    }
   });
 });

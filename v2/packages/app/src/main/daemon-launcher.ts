@@ -88,6 +88,12 @@ function tryConnect(path: string): Promise<Socket | undefined> {
  * `require()`, which is exactly the quiet route-around that file exists to
  * prevent.
  */
+/** `--socket-check-ms=<n>` if this process was given one, else nothing. */
+function socketCheckArg(argv: readonly string[]): readonly string[] {
+  const given = argv.find((arg) => arg.startsWith('--socket-check-ms='));
+  return given === undefined ? [] : [given];
+}
+
 function spawnDaemon(entry: string, socketPath: string, support: string): void {
   spawnDetached({
     execPath: process.execPath,
@@ -104,6 +110,15 @@ function spawnDaemon(entry: string, socketPath: string, support: string): void {
       // daemon may reach neither it nor `node:os`. A session's mirror needs it
       // to tell its own OSC 7 from one an ssh session inside a pane emitted.
       `--hostname=${systemHostName()}`,
+      /*
+       * Forwarded when this process was given one, and absent otherwise so the
+       * daemon keeps its own default.
+       *
+       * It exists for the daemon smoke: the rule it tunes — a daemon whose
+       * socket is gone exits — is observable only by waiting for one interval,
+       * and a minute is right in production and unbearable in a gate.
+       */
+      ...socketCheckArg(process.argv),
     ],
     env: { ELECTRON_RUN_AS_NODE: '1' },
     // Beside the socket it serves, so whoever is asking "where did my terminals
