@@ -16,13 +16,13 @@ describe('absorb', () => {
 
   it('keeps the tool call and its output, which the digest will not', () => {
     const s = fold('tool-loop');
-    expect(s.messages[1].blocks).toContainEqual({
+    expect(s.messages[1]?.blocks).toContainEqual({
       type: 'tool-call',
       id: 't1',
       name: 'Bash',
       input: { command: 'ls' },
     });
-    expect(s.messages[2].blocks).toContainEqual({
+    expect(s.messages[2]?.blocks).toContainEqual({
       type: 'tool-result',
       toolUseId: 't1',
       output: 'a.ts\nb.ts',
@@ -37,8 +37,8 @@ describe('absorb', () => {
   it('keeps a markup paste and marks only the real machinery', () => {
     const users = fold('markup-prompt').messages.filter((m) => m.role === 'user');
     expect(users).toHaveLength(2);
-    expect(users[0].isHarnessNoise).toBe(false);
-    expect(users[1].isHarnessNoise).toBe(true);
+    expect(users[0]?.isHarnessNoise).toBe(false);
+    expect(users[1]?.isHarnessNoise).toBe(true);
   });
 
   it('ends interrupted when the turn was interrupted', () => {
@@ -50,7 +50,7 @@ describe('absorb', () => {
     expect(s.aiTitle).toBe('Fixing the port conflict');
     expect(s.customTitle).toBe('port bug');
     expect(s.agentName).toBe('Explore');
-    expect(s.recaps[0].text).toBe('You asked about a port conflict.');
+    expect(s.recaps[0]?.text).toBe('You asked about a port conflict.');
   });
 
   it('records an unrecognised type rather than dropping it', () => {
@@ -103,8 +103,8 @@ describe('absorb', () => {
   it('counts every record, so seq keeps file order', () => {
     const s = fold('titles-and-recap');
     expect(s.records).toBe(5);
-    expect(s.messages[0].seq).toBe(3);
-    expect(s.recaps[0].seq).toBe(4);
+    expect(s.messages[0]?.seq).toBe(3);
+    expect(s.recaps[0]?.seq).toBe(4);
   });
 });
 
