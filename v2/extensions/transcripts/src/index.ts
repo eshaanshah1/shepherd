@@ -10,7 +10,7 @@ import { bestTitle } from './model/session.ts';
 import { aborted, createIndex, type RecallIndex } from './store.ts';
 
 /**
- * `shepherd.recall` — the reader for past Claude Code sessions.
+ * `shepherd.transcripts` — the reader for Claude Code transcripts.
  *
  * It is its own extension rather than a corner of `tasks` or of `claude-code`,
  * and both halves of that are deliberate. Against `tasks`: this parses a vendor's
