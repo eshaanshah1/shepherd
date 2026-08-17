@@ -3450,6 +3450,27 @@ describe('tasks.suggestName', () => {
     h.dispose();
   });
 
+  // The cache used to match on LENGTH alone, so the next task's brief only had to
+  // land within the drift window to be answered with the previous task's name —
+  // two unrelated rows, byte-identical, and no second call to show for it.
+  it('does not answer one brief with an unrelated brief of a similar length', async () => {
+    const answers = ['Investigate git icon visibility', 'Restore a pty across restarts'];
+    let asked = 0;
+    const h = harness({
+      invoke: (id) =>
+        id === 'agents.complete'
+          ? { ok: true as const, value: { ok: true, text: answers[asked++] ?? 'exhausted' } }
+          : undefined,
+    });
+
+    const first = await h.run('tasks.suggestName', { brief: 'the git icon does not show up in the sidebar rows' });
+    const second = await h.run('tasks.suggestName', { brief: 'the daemon drops a pty when the app restarts' });
+
+    expect(first).toEqual({ name: 'Investigate git icon visibility' });
+    expect(second).toEqual({ name: 'Restore a pty across restarts' });
+    h.dispose();
+  });
+
   it('does not ask about a brief too short to name', async () => {
     const h = harness({ invoke: answering('whatever') });
     expect(await h.run('tasks.suggestName', { brief: 'fix it' })).toEqual({ name: null });

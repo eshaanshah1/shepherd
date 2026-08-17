@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import type { ExtensionViewProps } from "@shepherd/sdk";
 import { Composer, PromptField, SendButton, Select, type PromptFieldHandle } from "@shepherd/ui";
 import { repoName } from "../src/model/repo-name.ts";
+import { stillTheSameBrief } from "../src/model/naming.ts";
 import type { PastedImage } from "../src/images.ts";
 import { readPastedImage } from "./paste-image.ts";
 import { findTrigger, isUnwritten, type DisplaySegment } from "./mention.ts";
@@ -394,7 +395,7 @@ export function TaskComposer({
   const askForName = async (forBrief: string): Promise<void> => {
     const trimmed = forBrief.trim();
     if (trimmed.length < 24) return;
-    if (namedFor.current !== "" && Math.abs(trimmed.length - namedFor.current.length) < 20) return;
+    if (namedFor.current !== "" && stillTheSameBrief(namedFor.current, trimmed)) return;
     namedFor.current = trimmed;
     namingAsk.current += 1;
     const mine = namingAsk.current;

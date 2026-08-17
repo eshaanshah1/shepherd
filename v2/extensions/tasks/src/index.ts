@@ -24,7 +24,7 @@ import {
 } from './manifest.ts';
 import { TaskStore, type RepoArchive, type RepoRef, type TaskRecord, type TaskSession } from './store.ts';
 import { slugify, uniqueSlug } from './model/slug.ts';
-import { heuristicName, namingPrompt, readName } from './model/naming.ts';
+import { heuristicName, namingPrompt, readName, stillTheSameBrief } from './model/naming.ts';
 import { expandHome, collapseHome } from './model/repo-path.ts';
 import { displayMatch, segmentsOf, type DisplaySegment } from './model/match-display.ts';
 import { orderSuggestions, rankScored } from './model/pick-order.ts';
@@ -957,15 +957,6 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    */
   const MIN_BRIEF_CHARS = 24;
   /**
-   * How much a brief must have moved before the same question is worth re-asking.
-   *
-   * On CONTENT rather than on a timer alone: a pause after twenty more characters
-   * is a different brief, a pause after two is the same one. §7c named budget as
-   * the reason `agents` is its own permission, and a per-keystroke ask would spend
-   * it several times per task.
-   */
-  const BRIEF_DRIFT_CHARS = 20;
-  /**
    * How long the ASK may take, and so how long a task's first `worktree add` may
    * be held for a name (D20) — this is the only clock.
    *
@@ -1017,7 +1008,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
   const pendingName = (brief: string): Promise<string | undefined> => {
     const trimmed = brief.trim();
     if (trimmed.length < MIN_BRIEF_CHARS) return Promise.resolve(undefined);
-    if (pending !== undefined && Math.abs(pending.brief.length - trimmed.length) < BRIEF_DRIFT_CHARS) {
+    if (pending !== undefined && stillTheSameBrief(pending.brief, trimmed)) {
       return pending.answer;
     }
     const answer = askForName(trimmed).catch(() => undefined);

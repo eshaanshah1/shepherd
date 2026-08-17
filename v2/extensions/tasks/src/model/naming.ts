@@ -76,6 +76,32 @@ const JOIN = /^(?:&|and|\+|,)$/i;
 const REFUSAL = /^(?:i'?m\s+sorry|sorry|i\s+can(?:'?t|not)|i\s+am\s+unable|as\s+an\s+ai)/i;
 
 /**
+ * How much a brief must have moved before the same question is worth re-asking.
+ *
+ * On CONTENT rather than on a timer alone: a pause after twenty more characters
+ * is a different brief, a pause after two is the same one. §7c named budget as
+ * the reason `agents` is its own permission, and a per-keystroke ask would spend
+ * it several times per task.
+ */
+const BRIEF_DRIFT_CHARS = 20;
+
+/**
+ * Is `next` the brief `asked` was about, a little further along?
+ *
+ * The prefix half is what makes this a question about a brief rather than about a
+ * number. Length alone answered "the git icon does not show up in the sidebar
+ * rows" with the name of a task about a pty, because the two are five characters
+ * apart — and since the answer came from the cache there was no model call to
+ * disagree with it. Every reuse this exists for is the SAME brief still being
+ * typed, so a brief that is not an extension of the one asked about is a
+ * different brief however closely its length matches.
+ */
+export function stillTheSameBrief(asked: string, next: string): boolean {
+  const grown = next.startsWith(asked) || asked.startsWith(next);
+  return grown && Math.abs(asked.length - next.length) < BRIEF_DRIFT_CHARS;
+}
+
+/**
  * The prompt never mentions a branch, and the omission is the load-bearing part.
  *
  * `slugify` owns the branch: it lowercases, collapses everything outside

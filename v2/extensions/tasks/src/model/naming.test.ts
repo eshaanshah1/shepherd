@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { heuristicName, namingPrompt, readName } from './naming.ts';
+import { heuristicName, namingPrompt, readName, stillTheSameBrief } from './naming.ts';
 import { slugify } from './slug.ts';
 
 /**
@@ -191,5 +191,32 @@ describe('heuristicName', () => {
     // own title, which is at least what the user typed.
     expect(heuristicName('I wanna')).toBeUndefined();
     expect(heuristicName('please')).toBeUndefined();
+  });
+});
+
+describe('stillTheSameBrief', () => {
+  it('holds while the brief the model was asked about is still being typed', () => {
+    expect(stillTheSameBrief('fix the retry loop', 'fix the retry loop in the daemon')).toBe(true);
+    expect(stillTheSameBrief('fix the retry loop', 'fix the retry loop')).toBe(true);
+    // Backwards too: the composer asks at an idle pause, and a backspace before
+    // Create must not pay for the model a second time.
+    expect(stillTheSameBrief('fix the retry loop now', 'fix the retry loop')).toBe(true);
+  });
+
+  it('does not hold for a different brief that happens to be a similar length', () => {
+    // The whole defect: two unrelated tasks five characters apart shared a name,
+    // and the cache answered the second without a model call to disagree.
+    expect(
+      stillTheSameBrief(
+        'the git icon does not show up in the sidebar rows',
+        'the daemon drops a pty when the app restarts',
+      ),
+    ).toBe(false);
+  });
+
+  it('does not hold once the same brief has really moved on', () => {
+    expect(
+      stillTheSameBrief('fix the retry loop', 'fix the retry loop and also rewrite the whole daemon'),
+    ).toBe(false);
   });
 });
