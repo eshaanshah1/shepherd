@@ -43,6 +43,7 @@ export function cssVariables(mode: ThemeMode, scale: Metrics = metrics): Record<
   vars[cssVarName('density')] = `${scale.density}`;
   vars[cssVarName('font-size')] = `${scale.fontSize}px`;
   vars[cssVarName('line-height')] = `${scale.lineHeight}px`;
+  vars[cssVarName('line-height-large')] = `${scale.lineHeightLarge}px`;
   vars[cssVarName('row-height')] = `${scale.rowHeight}px`;
   vars[cssVarName('hairline')] = `${scale.hairline}px`;
   for (const [step, size] of Object.entries(scale.type)) {

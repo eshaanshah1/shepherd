@@ -1,27 +1,56 @@
 /*
- * Pill — a token inside prose, drawn as prose.
+ * Pill — a token inside prose, drawn as prose on a tint.
  *
- * There is no box. An earlier version had a hairline, an accent tint and an
- * accent label all at once, at the small type size, and the four signals
- * together made a run of text look like it had a form control dropped into it.
- * A pill is not a control; it is a WORD the app is holding, so the signal is one
- * thing — an accent glyph ahead of an ordinary label — and everything else is
- * the sentence's.
+ * A tint and no hairline. The version this replaced had a hairline, a tint and
+ * an accent label all at once AT THE SMALL TYPE SIZE, and it was mostly the size
+ * doing the damage: a token a step down from its sentence reads as a form
+ * control dropped into the text. At the sentence's own size a fill is just the
+ * app's hand around a word, so the box is one flat wash of `accent` with no edge
+ * to argue with it.
  *
  * The height is still load-bearing and still the only load-bearing thing: it is
- * what keeps an inline-flex box from opening the line it sits in.
+ * what keeps an inline-flex box from opening the line it sits in. Which is also
+ * why the fill breathes sideways only — vertical padding would grow the box and
+ * every line holding a pill with it.
  */
 
 .sh-ui-pill {
   /*
-   * Tier 3, declared beside its owner. One line box minus a step, so an
-   * inline-flex box — which contributes its whole margin box to the line — can
-   * never be the tallest thing on that line.
+   * Tier 3, declared beside its owner: the chip's own height.
+   *
+   * Derived from the TEXT and capped at the line box, and it needs both halves.
+   *
+   * From the text, because the chip should hug the word it holds: one em plus a
+   * step is 20px around 16px type and 17px around 13px, so it stays the same
+   * shape wherever it lands. It used to be `line-height` minus a step, which
+   * made the chip a property of the LINE — and a line box is set by whatever
+   * leading a surface wants, so the same pill came out nearly line-tall in the
+   * composer's 26px lines and cramped in a 20px one.
+   *
+   * Capped, because a pill still may not be the tallest thing on its line: an
+   * inline-flex box contributes its whole margin box, so one taller than the
+   * line box opens every line that contains one. `min()` makes that structural
+   * rather than a number somebody has to keep checking against the leading.
+   *
+   * Note what the cap is NOT for any more: the selection band. `PromptField`
+   * paints that itself, one bar per line at the line's own height, so the chip
+   * is free to be shorter than the band without leaving a notch in it — which
+   * is exactly what it should be.
    */
-  --sh-ui-pill-height: calc(var(--sh-line-height) - var(--sh-space-xs));
+  --sh-ui-pill-height: min(calc(1em + var(--sh-space-xs)), var(--sh-line-height));
 
   display: inline-flex;
-  align-items: center;
+  /*
+   * `baseline`, so the LABEL is what the flex container offers the line as its
+   * baseline. With `center` the container has no baseline-aligned item at all,
+   * the browser synthesises one from the border box, and the whole pill hangs
+   * off a number that has nothing to do with the word inside it.
+   *
+   * The glyph opts back out (`align-self: center`, below) — it has no baseline
+   * of its own, so left in the group it aligns on its own bottom edge and rides
+   * 1px high in the box.
+   */
+  align-items: baseline;
   /*
    * Half a step, and the only sub-scale value in the kit — an optical fix, not a
    * new size. `xs` is 4px, but the glyph carries its own air: the icon box is
@@ -35,13 +64,68 @@
 
   height: var(--sh-ui-pill-height);
   /* No margin, deliberately: a vertical margin on an inline-level box is added
-     to the line box, which is exactly what the height above is avoiding. */
-  /* No padding either — padding is what a fill needs to breathe, and there is no
-     fill. The space around a pill is the space around a word: the sentence's. */
-  padding: 0;
-  /* Centred on the line box rather than sat on the baseline — a baseline-aligned
-     box hangs below the text it is beside. */
-  vertical-align: middle;
+     to the line box, which is exactly what the height above is avoiding. The
+     space AROUND a pill stays the space around a word — the sentence's. */
+  /*
+   * Sideways only. `height` above is the whole vertical story, so a padding
+   * block would either be ignored under `border-box` or open the line under
+   * `content-box` — and one of those two is a bug on a machine you are not
+   * looking at. The inline step is the small one: the fill has to clear the
+   * label's own sidebearings without reading as a word-space of its own.
+   */
+  padding-block: 0;
+  padding-inline: var(--sh-space-sm);
+  /*
+   * On the baseline, with the label as the thing being aligned.
+   *
+   * This was `middle` and it is the misalignment that shipped. `middle` centres
+   * the BOX on the baseline plus half an x-height, which is not where the label's
+   * own line box is centred — the two differ by `x/2 - (ascent - descent)/2`, so
+   * the word inside a pill sat ~0.8px low against the prose beside it at 16px and
+   * ~1.1px low at 13px. Height was never the cause and no height fixes it: the
+   * drift is a property of the alignment, not of the box.
+   *
+   * `baseline` hands the job to the browser instead — the pill's baseline IS the
+   * label's, so the label lands on the sentence's baseline at any font size. It
+   * does not hang below the line the way a naive baseline-aligned box would,
+   * because the label's line box (below) exactly fills the content box.
+   */
+  vertical-align: baseline;
+
+  /*
+   * The box: a wash, a hairline of the same accent, and a lit top edge.
+   *
+   * Every one of the three is the ROLE rather than the hue, so an extension that
+   * re-declares `--sh-sky` gets the whole treatment retinted for free — exactly
+   * as the glyph below does. They are three washes of ONE colour and not three
+   * colours, which is why this reads as a lit box rather than as decoration.
+   */
+  background: var(--sh-fill-accent);
+  /* Structure in the shorthand and colour in a longhand — `button.css`'s shape,
+     and `--sh-hairline` rather than a literal `1px` so a seam is one token. */
+  border: var(--sh-hairline) solid transparent;
+  /*
+   * The lit top edge, and it REPLACES the top border rather than sitting inside
+   * it. The first version drew it as `box-shadow: inset 0 1px 0`, which paints
+   * against the inner face of the border box — so the top read 2px against 1px
+   * everywhere else, and the extra band of light above the label dragged the
+   * word optically low in a box it was in fact centred in. A brighter border
+   * COLOUR is the same light for none of that: one edge, one pixel, four sides.
+   *
+   * Four side longhands rather than `border-color` plus one override, and that
+   * is for the TEST rather than for the cascade: jsdom's CSSOM drops any
+   * shorthand holding a `var()`, so a `border-color` here is invisible to
+   * `css-rules.ts` and the 2px defect above could ship again unseen. These four
+   * it can read. Do not fold them back up.
+   */
+  border-top-color: var(--sh-glint-accent);
+  border-right-color: var(--sh-line-accent);
+  border-bottom-color: var(--sh-line-accent);
+  border-left-color: var(--sh-line-accent);
+  /* `md`, a control's radius. `sm` is the chip's, and a chip has no edge to
+     round — with a border on, the tighter corner reads as a clipped rectangle.
+     Not a capsule: the one round thing in this language is the send button. */
+  border-radius: var(--sh-radius-md);
 
   /* The app SAYS this word, so sans (styles.css's job rule). */
   font-family: var(--sh-font-sans);
@@ -52,9 +136,18 @@
    * work in the boxed version.
    */
   font-size: inherit;
-  /* 1, so the line box around the label is the label. The pill's height is the
-     box's, and a second opinion here would fight it. */
-  line-height: 1;
+  /*
+   * The content box exactly, and this is what makes `vertical-align: baseline`
+   * above safe. A baseline-aligned box only hangs below its line when it has
+   * slack under the label to hang by; with the label's line box filling the
+   * content box there is none, and the pill's height goes on being decided by
+   * `--sh-ui-pill-height` alone.
+   *
+   * It also has to be a LENGTH rather than `1`. At `1` the label's box is one em,
+   * which is 13px in a row and 16px in the composer, so the slack — and with it
+   * the amount the pill hung low — changed with whatever font size it landed in.
+   */
+  line-height: calc(var(--sh-ui-pill-height) - 2 * var(--sh-hairline));
   /*
    * Ordinary ink. The label is a word in a sentence and is coloured like one;
    * `accent` is spent on the glyph below, where one mark can carry the whole
@@ -65,26 +158,36 @@
 
   /* Display only, like a keycap: not a pointer, not a stray drag target. */
   cursor: default;
-  user-select: none;
+  /*
+   * `all`, and this one was a DATA bug rather than a cosmetic one.
+   *
+   * It was `none`, for the keycap reason. But `none` takes the element out of
+   * the selection's text as well as out of the mouse's reach, so copying a
+   * selection that spanned a pill silently dropped its label — `in shepherd now`
+   * came off the clipboard as `in  now`, which the composer's own requirements
+   * name as something that has to work. Measured, not reasoned.
+   *
+   * `all` rather than `auto` because `auto` allows HALF a pill to be selected,
+   * and half a token is a thing the model this component states — "a pill is one
+   * character" — does not have. Any selection touching it takes all of it.
+   */
+  user-select: all;
 }
 
+
 /*
- * The signal, and the only one.
+ * The glyph, and the one place the accent is spent.
  *
- * The ROLE is named rather than the colour — an extension that re-declares
- * `--sh-sky` gets its own pill for free, and cobalt stays a fact about the
- * token layer.
+ * The ROLE rather than the hue, so a theme that re-declares `--sh-sky` moves it.
  */
 .sh-ui-pill .sh-icon {
   color: var(--sh-sky);
-}
-
-/*
- * A pill with no glyph has nowhere to put the signal, so the label takes it
- * back. Without this rule such a pill is literally indistinguishable from the
- * text around it — the icon is optional in the type, and a token nobody can see
- * is worse than a loud one.
- */
-.sh-ui-pill:not(:has(.sh-icon)) {
-  color: var(--sh-sky);
+  /*
+   * Out of the baseline group the container aligns on. An SVG has no baseline of
+   * its own, so a browser synthesises one at its bottom margin edge — left in the
+   * group it lines that edge up with the label's baseline and rides a pixel high.
+   * Taking it out is also what leaves the LABEL alone defining the pill's
+   * baseline.
+   */
+  align-self: center;
 }

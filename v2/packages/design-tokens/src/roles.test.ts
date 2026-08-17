@@ -200,3 +200,41 @@ describe('roleToken', () => {
     for (const role of roleNames) expect(() => roleToken(role)).not.toThrow();
   });
 });
+
+describe('the selection band', () => {
+  /**
+   * A wash, and the hazard it carries is written down because it has bitten.
+   *
+   * Painted over itself, a translucent band lands a step brighter — measured at
+   * `rgb(79,110,139)` against `rgb(54,73,90)` on a four-line selection with no
+   * tokens in it, a bright hairline at every line boundary where the browser
+   * overlapped one line's band with the next. It was opaque for a while for
+   * exactly that reason.
+   *
+   * What changed is who paints it: `PromptField` lays one bar per line at the
+   * text's own height, so the bars are separated by the leading and never touch,
+   * and `Pill` no longer paints a band at all. Anything that starts painting
+   * this token over itself again has to solve the overlap first.
+   */
+  it('is a wash, low enough that selected text keeps its own colour', () => {
+    const spec = roles.fillSelection;
+    expect(spec.kind).toBe('wash');
+    if (spec.kind !== 'wash') throw new Error('unreachable');
+    // Low enough on both grounds to read THROUGH; that is the whole point of a
+    // wash here rather than a fill.
+    expect(spec.alpha.dark).toBeLessThanOrEqual(0.25);
+    expect(spec.alpha.light).toBeLessThanOrEqual(0.25);
+    /*
+     * And light takes MORE than dark, which is the opposite of every other wash
+     * in this file and is deliberate. A wash mixes toward what is behind it, so
+     * "darker" is less of the colour on near-black and more of it on paper —
+     * `sky` being a light blue in one mode and a dark blue in the other. The
+     * usual `light < dark` rule is about matching a step's WEIGHT across modes;
+     * this one is about matching its darkness, and the two point opposite ways.
+     */
+    expect(spec.alpha.light).toBeGreaterThan(spec.alpha.dark);
+    for (const mode of ['dark', 'light'] as const) {
+      expect(roleValue('fillSelection', mode), mode).toContain('color-mix');
+    }
+  });
+});

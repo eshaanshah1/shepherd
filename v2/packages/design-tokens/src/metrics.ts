@@ -98,6 +98,18 @@ export const ratios = {
    * The moment the user moves either, they part company, and that is correct.
    */
   lineHeight: 1.54,
+  /*
+   * 2.0 — 26px, the line box the LARGE type step needs.
+   *
+   * `large` is 16px and 1.54 gives it 20px, which is tighter than the glyphs the
+   * font actually draws: the composer's brief has always run at 26 and carried
+   * the number as a literal in the app's own sheet. A literal there is a length
+   * outside the token layer, and a line box is the one length things INSIDE a
+   * line measure themselves against — a `Pill` sizes its selected band from it —
+   * so a surface that changes it and does not say so leaves everything in it
+   * believing the wrong number. Derived here, density-scaled like the rest.
+   */
+  lineHeightLarge: 2.0,
   /**
    * A sidebar/list row. Deliberately NOT a cell multiple (that would be 40, an
    * enormous list row): chrome away from the grid has its own scale. Rows that
@@ -269,6 +281,7 @@ export interface Metrics {
   /** `type.body`, under the name the stylesheet already uses. */
   readonly fontSize: number;
   readonly lineHeight: number;
+  readonly lineHeightLarge: number;
   readonly rowHeight: number;
 
   /**
@@ -352,6 +365,7 @@ export function deriveMetrics(inputs: ScaleInputs = defaultScaleInputs): Metrics
     },
     fontSize: type.body,
     lineHeight: px(base, ratios.lineHeight),
+    lineHeightLarge: px(base, ratios.lineHeightLarge),
     rowHeight: px(base, ratios.row, density),
     microLabel: {
       fontSize: type.nano,

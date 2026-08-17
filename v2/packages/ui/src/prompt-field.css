@@ -32,3 +32,71 @@
   color: var(--sh-text-faint);
   pointer-events: none;
 }
+
+/*
+ * The selection, painted by the field instead of by the browser.
+ *
+ * `::selection` cannot take a `border-radius` and is drawn per text RUN, so a
+ * brief full of tokens gets a band with a shaped hole at every one and square
+ * ends besides. `PromptField` measures the Range and lays one rounded bar per
+ * line into the layer below; this rule is the other half of that and turns the
+ * native paint off inside the field, so the two can never both draw.
+ *
+ * Scoped to the field on purpose — everywhere else in the app the browser's
+ * band is correct and `base.css` colours it.
+ */
+.sh-ui-prompt::selection,
+.sh-ui-prompt *::selection {
+  background-color: transparent;
+}
+
+/*
+ * The positioned box the bars are placed in. It wraps the editable and adds no
+ * metrics of its own: everything a caller styles still lands on `.sh-ui-prompt`.
+ *
+ * `isolation` is what keeps the band BEHIND the text. An absolutely positioned
+ * sibling paints above in-flow content whatever the source order, so the layer
+ * has to go negative — and a negative layer with no stacking context to sit in
+ * would fall through this box entirely and hide behind the composer's own
+ * surface, which is the same trap `Pill` hit one file over.
+ */
+.sh-ui-prompt-host {
+  position: relative;
+  isolation: isolate;
+}
+
+/*
+ * Paint, not content: behind the text, and untouchable.
+ *
+ * `inset: 0` rather than a size of its own, and `overflow: hidden` so a bar for
+ * a line scrolled out of view is clipped instead of escaping the field.
+ */
+.sh-ui-prompt-band {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/*
+ * One bar, one line.
+ *
+ * Positioned by `transform` rather than `inset`, because a bar moves on every
+ * scroll tick and a transform is the one way to move it without laying the
+ * layer out again. It is not motion — there is no transition on it, so §10's
+ * refusal of a control that moves under the cursor does not apply.
+ *
+ * `sm` is the radius, and it is the SMALLEST this language has — the chip's
+ * step. It walked down from `row` to `md` to here: on a 21px bar the rounder
+ * steps read as a lozenge rather than as a highlighted run. Anything squarer
+ * than this needs a new radius token, not a literal.
+ */
+.sh-ui-prompt-band__bar {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  display: block;
+  background: var(--sh-fill-selection);
+  border-radius: var(--sh-radius-sm);
+}

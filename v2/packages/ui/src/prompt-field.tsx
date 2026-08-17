@@ -151,6 +151,7 @@ export const PromptField = forwardRef<PromptFieldHandle, PromptFieldProps>(funct
   ref,
 ) {
   const host = useRef<HTMLDivElement>(null);
+  const band = useRef<HTMLDivElement>(null);
 
   const report = useCallback(() => {
     const node = host.current;
@@ -309,8 +310,147 @@ export const PromptField = forwardRef<PromptFieldHandle, PromptFieldProps>(funct
     return () => node.removeEventListener('input', clean);
   }, []);
 
+  /*
+   * Paint the selection ourselves, as one rounded bar per line.
+   *
+   * A browser's `::selection` cannot take a `border-radius`, and it is drawn per
+   * text run rather than per line — so a token in the middle of a selection ends
+   * up with its own shaped hole and the band's ends are always square. Both are
+   * things this surface has to get right, because a brief is mostly tokens.
+   *
+   * The mechanism is a read, which is what lets it exist beside the restraint
+   * rule at the top of this file: it measures a Range and writes to a layer that
+   * is NOT inside the contenteditable, so it never touches the edited DOM, never
+   * moves the caret and never pushes anything onto the undo stack. The layer is
+   * `aria-hidden` and untouchable — it is paint, not content.
+   *
+   * One bar per LINE, not per rect. `getClientRects` hands back a rect per run
+   * and they overlap: measured on one line, a pill reports the whole line box
+   * (h=26) while the text either side reports the font's own box (h=21), and the
+   * pill's inner label reports a third rect inside the second. Taking the union
+   * per line and drawing it at the line's own height is what turns that into the
+   * single continuous band a reader sees — and it is why a pill needs no selected
+   * state of its own any more: the band is already behind it.
+   */
+  useEffect(() => {
+    const node = host.current;
+    const layer = band.current;
+    if (node === null || layer === null) return;
+
+    const paint = (): void => {
+      const selection = window.getSelection();
+      const live =
+        selection !== null &&
+        !selection.isCollapsed &&
+        selection.rangeCount > 0 &&
+        node.contains(selection.anchorNode);
+      if (!live) {
+        layer.replaceChildren();
+        return;
+      }
+      const range = selection.getRangeAt(0);
+      // A host with no layout answers no rects — jsdom is one — and a field that
+      // threw there would take every renderer test with it (`rectOf`'s rule).
+      if (typeof range.getClientRects !== 'function') return;
+      const box = node.getBoundingClientRect();
+      const lineHeight = Number.parseFloat(getComputedStyle(node).lineHeight);
+      if (!Number.isFinite(lineHeight) || lineHeight <= 0) return;
+
+      /**
+       * The bar is the TEXT's own box, not the line box.
+       *
+       * That is what keeps the leading readable: a band as tall as the line box
+       * leaves no gap between one selected line and the next, so a paragraph
+       * reads as a solid slab and the line-height looks half what it is. It is
+       * also the height the browser's own `::selection` uses everywhere else in
+       * the app, so a selection here is the same shape as a selection anywhere —
+       * this only rounds it and makes it continuous.
+       *
+       * MEASURED off a text node rather than taken from the rects, and that is
+       * the point of the walk. The rects are not one shape: on a single line a
+       * text run reports the font's box, a `Pill` reports its own box, and the
+       * pill's label reports a third inside that. Taking the smallest of them
+       * made the band's height depend on WHAT was selected — a run with a token
+       * in it came out shorter than one without, which is a band that changes
+       * size as you drag.
+       *
+       * Text inside a token is skipped for the same reason: a pill sets its own
+       * `line-height`, so its label answers the chip's box and not the line's.
+       */
+      const textBox = (): number | null => {
+        const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+        for (let text = walker.nextNode(); text !== null; text = walker.nextNode()) {
+          if ((text.textContent ?? '').length === 0) continue;
+          if (text.parentElement?.closest('.sh-ui-pill') != null) continue;
+          const probe = document.createRange();
+          probe.setStart(text, 0);
+          probe.setEnd(text, 1);
+          const height = probe.getBoundingClientRect().height;
+          if (height > 0) return height;
+        }
+        return null;
+      };
+
+      /** min-left and max-right per line, keyed by which line the rect is on. */
+      const lines = new Map<number, { left: number; right: number }>();
+      for (const rect of range.getClientRects()) {
+        if (rect.width === 0) continue;
+        const top = rect.top - box.top;
+        const index = Math.round(top / lineHeight);
+        const left = rect.left - box.left;
+        const right = left + rect.width;
+        const seen = lines.get(index);
+        if (seen === undefined) lines.set(index, { left, right });
+        else {
+          seen.left = Math.min(seen.left, left);
+          seen.right = Math.max(seen.right, right);
+        }
+      }
+
+      // A field holding nothing but tokens — or a host with no layout — falls
+      // back to the line box rather than drawing a bar nobody can see.
+      const barHeight = textBox() ?? lineHeight;
+      const barOffset = (lineHeight - barHeight) / 2;
+
+      layer.replaceChildren(
+        ...[...lines.entries()].map(([index, span]) => {
+          const bar = document.createElement('i');
+          bar.className = 'sh-ui-prompt-band__bar';
+          bar.style.transform = `translate(${span.left}px, ${index * lineHeight + barOffset}px)`;
+          bar.style.inlineSize = `${span.right - span.left}px`;
+          bar.style.blockSize = `${barHeight}px`;
+          return bar;
+        }),
+      );
+    };
+
+    document.addEventListener('selectionchange', paint);
+    // The rects are viewport-relative and the field scrolls, so a scroll moves
+    // every bar. Resize changes where the lines wrap, and an edit changes what
+    // is selected under the caret.
+    node.addEventListener('scroll', paint);
+    node.addEventListener('input', paint);
+    const observer =
+      typeof ResizeObserver === 'function' ? new ResizeObserver(paint) : null;
+    observer?.observe(node);
+    return () => {
+      document.removeEventListener('selectionchange', paint);
+      node.removeEventListener('scroll', paint);
+      node.removeEventListener('input', paint);
+      observer?.disconnect();
+    };
+  }, []);
+
   return (
-    <div
+    /*
+     * The wrapper exists only so the band has a positioned box to live in that is
+     * NOT the contenteditable. Everything the caller styles — the class, the
+     * metrics, the placeholder — stays on the editable element, so a consumer's
+     * `.sh-composer-brief` still lands where it always did.
+     */
+    <div className="sh-ui-prompt-host">
+      <div className="sh-ui-prompt-band" ref={band} aria-hidden="true" />
+      <div
       {...rest}
       ref={host}
       className={cn('sh-ui-prompt', className)}
@@ -338,6 +478,7 @@ export const PromptField = forwardRef<PromptFieldHandle, PromptFieldProps>(funct
         event.preventDefault();
         document.execCommand('insertText', false, text);
       }}
-    />
+      />
+    </div>
   );
 });
