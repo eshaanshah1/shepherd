@@ -15,12 +15,51 @@ const repo = (over: Partial<RepoContribution> & { name: string }): RepoContribut
   ...over,
 });
 
-const synth = (repos: readonly RepoContribution[]) =>
-  synthTaskRoot({ title: 'Fix login', brief: 'Make the login flow work.', branch: 'slate-merino', repos });
+const synth = (repos: readonly RepoContribution[], brief = 'Make the login flow work.') =>
+  synthTaskRoot({ brief, branch: 'slate-merino', repos });
 
 describe('the generated CLAUDE.md', () => {
   it('carries the brief', () => {
     expect(synth([repo({ name: 'api' })]).claudeMd).toContain('Make the login flow work.');
+  });
+
+  /*
+   * The first thing said, because it is the fact that changes what the agent
+   * does next: these are throwaway checkouts, so committing and rewriting in
+   * them is free rather than something to be careful about.
+   */
+  it('says the workspace is isolated before it says anything else', () => {
+    const opening = synth([repo({ name: 'api' })]).claudeMd.split('## ')[0] ?? '';
+    expect(opening).toMatch(/isolated/i);
+    expect(opening).toMatch(/worktree/i);
+  });
+
+  /*
+   * A brief is somebody's chat message. This one is a paste of a previous task
+   * root, and dropped in raw its `## Repos` became the document's own heading —
+   * so the file described two sets of repos, one of them another task's.
+   */
+  it('quotes the brief, so a brief containing headings cannot restructure the file', () => {
+    const out = synth([repo({ name: 'api' })], '## Repos\n\n- `other/` — /somewhere/else');
+    expect(out.claudeMd).toContain('> ## Repos');
+    expect(out.claudeMd).not.toMatch(/^## Repos\n\n- `other\/`/m);
+    // The task's own repo map is still the only one stated as fact.
+    expect(out.claudeMd).toContain('- `api/` — /tasks/fix-login/api');
+  });
+
+  it('leaves the brief section out entirely when there is no brief', () => {
+    expect(synth([repo({ name: 'api' })], '   \n\n  ').claudeMd).not.toContain('What was asked for');
+  });
+
+  /*
+   * The title was the brief's own first line — the model's name for the task
+   * lands after this file is written and nothing rewrites it — so an H1 built
+   * from it printed the brief's opening words twice.
+   */
+  it('does not open on a heading cut out of the brief', () => {
+    expect(synth([repo({ name: 'api' })], 'Make the login flow work.\nAnd the logout one.').claudeMd).not.toContain(
+      '# Make the login flow work.',
+    );
   });
 
   it('carries the repo map, because a nested CLAUDE.md is NOT loaded at startup', () => {
@@ -30,10 +69,6 @@ describe('the generated CLAUDE.md', () => {
     const out = synth([repo({ name: 'api' }), repo({ name: 'web' })]);
     expect(out.claudeMd).toContain('api');
     expect(out.claudeMd).toContain('web');
-  });
-
-  it('names the task', () => {
-    expect(synth([repo({ name: 'api' })]).claudeMd).toContain('Fix login');
   });
 
   it('is produced for a task with no repos at all', () => {
@@ -159,7 +194,7 @@ describe('purity', () => {
   it('does not mutate its input', () => {
     const repos = [repo({ name: 'api', skills: ['deploy'] }), repo({ name: 'web', skills: ['deploy'] })];
     const before = JSON.stringify(repos);
-    synthTaskRoot({ title: 't', brief: 'b', branch: 'slate-merino', repos });
+    synthTaskRoot({ brief: 'b', branch: 'slate-merino', repos });
     expect(JSON.stringify(repos)).toBe(before);
   });
 });

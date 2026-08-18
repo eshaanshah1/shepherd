@@ -39,7 +39,6 @@ function seedRepo(skills: string[] = [], agents: string[] = []): void {
 
 const plan = (skills: string[] = [], agents: string[] = []) =>
   synthTaskRoot({
-    title: 'Fix login',
     brief: 'Make it work.',
     branch: 'slate-merino',
     repos: [{ name: 'api', path: repoDir, skills, agents, hasSettings: false }],
@@ -84,7 +83,6 @@ describe('materializeTaskRoot', () => {
       materializeTaskRoot(
         root,
         synthTaskRoot({
-          title: 'Fix login',
           brief: 'b',
           branch: 'slate-merino',
           repos: [{ name: 'api', path: moved, skills: ['deploy'], agents: [], hasSettings: false }],
