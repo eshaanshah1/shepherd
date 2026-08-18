@@ -38,7 +38,14 @@ export interface RepoContribution {
 }
 
 export interface SynthInput {
-  readonly title: string;
+  /**
+   * The prompt that opened the task, verbatim.
+   *
+   * There is no `title` beside it, and its absence is deliberate: the title at
+   * provisioning time is the brief's own first line — the model's name for the
+   * task lands seconds later and nothing rewrites this file — so an H1 built
+   * from it was the brief's opening words printed twice.
+   */
   readonly brief: string;
   /** The branch every worktree here is on. */
   readonly branch: string;
@@ -146,27 +153,72 @@ function planKind(
   return { links, conflicts };
 }
 
+/**
+ * What an agent reads the moment a session opens at the task root — and, because
+ * Claude walks UP from cwd, what a workstream agent down inside a repo worktree
+ * reads too.
+ *
+ * It ORIENTS before it informs. An agent that has just booted does not yet know
+ * that these directories are throwaway worktrees rather than the user's real
+ * checkouts, and that is the one fact here that changes what it is safe to do:
+ * commit, rewrite, install, leave dirty. The repo map and the branch used to be
+ * stated with no such frame, so both read as trivia.
+ *
+ * The brief goes LAST and goes QUOTED. Last because it is the one section that
+ * is not about the workspace, and the orchestrator was handed it as its first
+ * message anyway — it is here for the agent that was spawned into a worktree
+ * with a two-line prompt and has no other way to learn what the task is.
+ * Quoted because a brief is somebody's chat message: it arrives with its own
+ * headings, its own lists, and sometimes a paste of this very file, and dropped
+ * in raw it becomes the document's structure instead of a quotation inside it.
+ */
 function renderClaudeMd(input: SynthInput): string {
   const lines = [
-    `# ${input.title}`,
+    '# Shepherd task workspace',
     '',
-    input.brief,
+    'You are an agent working in an isolated workspace Shepherd built for one task.',
+    'Each repo below is a **git worktree** — its own checkout of that repo, on a',
+    'branch of its own, living in this directory. Nothing you do here reaches the',
+    'checkout the user works in day to day, so commit, rewrite history, install',
+    'dependencies or leave the tree dirty as the work needs.',
+    '',
+    'The other half of that: the paths below are the copies to edit. Changing the',
+    'original checkout instead puts the work outside this task.',
     '',
     '## Repos',
     '',
   ];
   if (input.repos.length === 0) {
-    lines.push('_None — this task has no repos._');
+    lines.push('_None — this task has no repos._', '');
   } else {
     // A path per repo, because the agent has to cd into these and because a
     // nested CLAUDE.md only loads once it does.
     for (const repo of input.repos) lines.push(`- \`${repo.name}/\` — ${repo.path}`);
+    lines.push(
+      '',
+      'Only this file is loaded when a session starts. A repo’s own `CLAUDE.md` stays',
+      'unread until you open a file inside that repo, so read it before you change',
+      'anything in there.',
+      '',
+    );
   }
+
+  /*
+   * Said only when there is something to say. Measured: a nested repo's agents
+   * and settings are NEVER loaded from here, so these links are the only reason
+   * a repo's skills work at the root — but a task whose repos ship neither gets
+   * a sentence about an empty directory.
+   */
+  const contributed = input.repos.some((repo) => repo.skills.length > 0 || repo.agents.length > 0);
+  if (contributed) {
+    lines.push(
+      'Skills and agents from these repos are linked into `.claude/` at this root, so',
+      'they work from anywhere in the task.',
+      '',
+    );
+  }
+
   lines.push(
-    '',
-    'Each repo above is a git worktree on this task’s branch. A repo’s own',
-    '`CLAUDE.md` loads when you first read a file inside it.',
-    '',
     /*
      * Stated as an invitation and not as an apology. The agent working here is
      * the first party in a position to name this branch well, and the reason it
@@ -174,10 +226,41 @@ function renderClaudeMd(input: SynthInput): string {
      */
     '## Branch',
     '',
-    `Every worktree here is on \`${input.branch}\`. Rename it whenever you like:`,
+    `Every worktree here is on \`${input.branch}\` — one branch across all of them, so a`,
+    'change spanning two repos carries the same name in both. Rename it to something',
+    'that describes the work:',
     '',
     '    shepherd task rename-branch <name>',
     '',
   );
+
+  const brief = quoteBrief(input.brief);
+  if (brief.length > 0) {
+    lines.push(
+      '## What was asked for',
+      '',
+      'The prompt that opened this task, as it was typed:',
+      '',
+      ...brief,
+      '',
+    );
+  }
+
   return lines.join('\n');
+}
+
+/**
+ * The brief as a blockquote — every line prefixed, blank lines included.
+ *
+ * Prefixing the BLANK lines too is what keeps it one quotation rather than
+ * several: an unprefixed blank line ends a blockquote, and the next paragraph of
+ * somebody's prompt would resume as the document's own voice.
+ *
+ * Long runs of blank lines collapse, because a brief is typed into a composer
+ * and arrives with the spacing of a chat message.
+ */
+function quoteBrief(brief: string): readonly string[] {
+  const body = brief.replace(/\n{3,}/g, '\n\n').trim();
+  if (body === '') return [];
+  return body.split('\n').map((line) => (line.trim() === '' ? '>' : `> ${line}`));
 }

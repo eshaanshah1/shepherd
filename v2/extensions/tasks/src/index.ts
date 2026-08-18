@@ -2523,7 +2523,6 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
      */
     const { plan, out } = await whileBusy(task.id, 'linking', async () => {
       const planned = synthTaskRoot({
-        title: task.title,
         brief: task.brief,
         branch,
         repos: landed.map((repo) => ({
