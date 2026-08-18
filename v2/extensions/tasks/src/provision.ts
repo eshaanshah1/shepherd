@@ -109,6 +109,27 @@ export async function readRepoRefs(
   // Opportunistic, and its failure is not the task's failure.
   await process_.gitRead(['fetch', '--quiet', 'origin'], opts).catch(() => undefined);
 
+  const originHead = async (): Promise<string | undefined> =>
+    (await lines(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']))[0];
+
+  /**
+   * `refs/remotes/origin/HEAD` is written by `git clone` and by `git remote
+   * set-head` — not by a fetch, on any git before 2.47. A repo whose remote was
+   * added by hand therefore has none, and case 3 of `resolveBranch` would base a
+   * brand-new branch on the source repo's own HEAD: whatever branch that
+   * checkout happens to be sitting on, half-finished feature branch included.
+   *
+   * So it is asked for and recorded once. `--auto` costs a round trip, which is
+   * why it is skipped whenever the ref is already there, and its failure is
+   * ignored for the same reason the fetch's is — offline is not a task's
+   * failure, and `undefined` still falls back to `HEAD`.
+   */
+  let defaultBase = await originHead();
+  if (defaultBase === undefined) {
+    await process_.gitWrite(['remote', 'set-head', 'origin', '--auto'], opts).catch(() => undefined);
+    defaultBase = await originHead();
+  }
+
   return {
     localBranches: await lines(['for-each-ref', '--format=%(refname:short)', 'refs/heads']),
     remoteBranches: await lines(['for-each-ref', '--format=%(refname:short)', 'refs/remotes']),
@@ -122,7 +143,7 @@ export async function readRepoRefs(
     ]).then((rows) =>
       rows.filter((row) => row.startsWith('branch ')).map((row) => row.slice('branch refs/heads/'.length)),
     ),
-    defaultBase: (await lines(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']))[0],
+    defaultBase,
   };
 }
 

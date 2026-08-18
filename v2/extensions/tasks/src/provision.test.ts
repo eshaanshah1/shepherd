@@ -144,22 +144,26 @@ interface GitCall {
  * the thing that has to be true — asserting only the return value would pass
  * for a version that ran both in the wrong place.
  */
+type Canned = ExecOk | ExecErr | ((args: readonly string[]) => ExecOk | ExecErr);
+
 function fakeGit(canned: {
-  read?: ExecOk | ExecErr;
-  write?: ExecOk | ExecErr;
+  read?: Canned;
+  write?: Canned;
 }): ProcessAPI & { calls: GitCall[] } {
   const calls: GitCall[] = [];
   const ok: ExecOk = { ok: true, stdout: '', stderr: '' };
+  const answer = (given: Canned | undefined, args: readonly string[]): ExecOk | ExecErr =>
+    given === undefined ? ok : typeof given === 'function' ? given(args) : given;
   return {
     calls,
     exec: () => Promise.resolve(ok),
     gitRead: (args, opts) => {
       calls.push({ fn: 'gitRead', args, opts });
-      return Promise.resolve(canned.read ?? ok);
+      return Promise.resolve(answer(canned.read, args));
     },
     gitWrite: (args, opts) => {
       calls.push({ fn: 'gitWrite', args, opts });
-      return Promise.resolve(canned.write ?? ok);
+      return Promise.resolve(answer(canned.write, args));
     },
   };
 }
@@ -256,10 +260,14 @@ describe('readRepoRefs', () => {
     expect(git.calls.every((call) => call.opts.cwd === '/src/api')).toBe(true);
   });
 
-  it('never writes, so it is safe to start before anything is decided', async () => {
+  it('touches nothing but origin/HEAD, so it is safe to start before anything is decided', async () => {
+    // The one write it may make is `remote set-head`, which records what origin
+    // already says. Nothing about the task, its branch or its worktrees.
     const git = fakeGit({});
     await readRepoRefs(git, repo);
-    expect(git.calls.filter((call) => call.fn === 'gitWrite')).toEqual([]);
+    for (const call of git.calls.filter((c) => c.fn === 'gitWrite')) {
+      expect(call.args).toEqual(['remote', 'set-head', 'origin', '--auto']);
+    }
   });
 
   it('survives a repo with no remote, because the fetch is opportunistic', async () => {
@@ -269,6 +277,59 @@ describe('readRepoRefs', () => {
     const refs = await readRepoRefs(git, repo);
     expect(refs.localBranches).toEqual([]);
     expect(refs.defaultBase).toBeUndefined();
+  });
+
+  /**
+   * `refs/remotes/origin/HEAD` is written by `git clone` and by `git remote
+   * set-head` — never by a plain fetch on older git. A repo that acquired its
+   * remote with `git remote add` therefore has no origin/HEAD, and the base for
+   * a brand-new branch silently became whatever branch the SOURCE repo happened
+   * to have checked out.
+   */
+  describe('origin/HEAD', () => {
+    const symbolic = (args: readonly string[]): boolean =>
+      args[0] === 'symbolic-ref' && args.includes('refs/remotes/origin/HEAD');
+    const setHead = (call: GitCall): boolean => call.args.join(' ') === 'remote set-head origin --auto';
+
+    it('asks origin what its default is when the repo has no origin/HEAD, then reads it back', async () => {
+      let asked = 0;
+      const git = fakeGit({
+        read: (args) =>
+          symbolic(args)
+            ? { ok: true, stdout: ++asked === 1 ? '' : 'origin/trunk\n', stderr: '' }
+            : { ok: true, stdout: '', stderr: '' },
+      });
+
+      const refs = await readRepoRefs(git, repo);
+
+      expect(refs.defaultBase).toBe('origin/trunk');
+      expect(git.calls.filter(setHead)).toHaveLength(1);
+      expect(git.calls.find(setHead)?.opts.cwd).toBe('/src/api');
+    });
+
+    it('leaves a repo that already has one alone, since set-head costs a round trip', async () => {
+      const git = fakeGit({
+        read: (args) => ({ ok: true, stdout: symbolic(args) ? 'origin/main\n' : '', stderr: '' }),
+      });
+
+      const refs = await readRepoRefs(git, repo);
+
+      expect(refs.defaultBase).toBe('origin/main');
+      expect(git.calls.filter(setHead)).toEqual([]);
+    });
+
+    it('stays undefined when origin cannot be asked, rather than guessing a base', async () => {
+      // Offline, or no remote at all. `resolveBranch` then falls back to HEAD,
+      // which is the honest answer — a guessed `origin/main` is an invalid ref.
+      const git = fakeGit({
+        read: (args) => (symbolic(args) ? { ok: true, stdout: '', stderr: '' } : { ok: true, stdout: '', stderr: '' }),
+        write: { ok: false, code: 128, stdout: '', stderr: 'unable to access origin' },
+      });
+
+      const refs = await readRepoRefs(git, repo);
+
+      expect(refs.defaultBase).toBeUndefined();
+    });
   });
 });
 
