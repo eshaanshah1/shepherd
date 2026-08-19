@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { paneId, type PaneID } from '@shepherd/sdk';
 import type { ThemeMode } from '@shepherd/design-tokens';
-import { CommandPalette, IconButton, TabStrip, type PaletteCommand, type TabMark } from '@shepherd/ui';
+import { CommandPalette, IconButton, TabStrip, type MarkState, type PaletteCommand } from '@shepherd/ui';
 import {
   LAYOUT_COMMANDS,
   displayTitle,
@@ -30,7 +30,7 @@ import { ArchivedBanner } from './archived-banner.tsx';
 import { EmptyState } from './empty-state.tsx';
 import { FindBar } from './find-bar.tsx';
 import { SkyStrip } from './sky-strip.tsx';
-import { ViewDock, raiseIcon } from './view-dock.tsx';
+import { ViewDock, contributedIcon, raiseIcon } from './view-dock.tsx';
 import { ViewOverlay } from './view-overlay.tsx';
 import { SettingsScreen } from './settings-screen.tsx';
 import { useContributions } from './contributions.ts';
@@ -146,25 +146,37 @@ function paletteIcon(id: string): string | undefined {
 }
 
 /**
- * The agent lifecycle → the tab strip's three-word vocabulary, and the only
- * place the two meet.
+ * The agent lifecycle → the mark a tab wears, and the only place the two meet.
  *
  * `TabStrip` is a primitive and does not know what a session is, so the
- * translation lives here rather than in `@shepherd/ui`. Three of the six states
- * map to nothing, and that is the design: `shell` and `idle` are quiet by
- * definition, and **`working` is quiet on purpose** — a run in progress is not
- * news, and a strip that lights up for every busy tab is one you stop reading.
- * The pane itself already says it is working, in the head you are looking at.
+ * translation lives here rather than in `@shepherd/ui`.
  *
- * Priority when a root holds several sessions: your move beats a failure beats
- * unread output. A tab shows one dot, so it must be the most actionable one —
- * anything else and a blocked pane hides behind a finished sibling.
+ * **Every agent tab carries a mark, including a quiet one.** The state is the
+ * tab's own — you cannot see the pane inside a tab you are not on, and a strip
+ * where only trouble draws something makes "working" and "no agent here"
+ * the same picture.
+ *
+ * **A tab with no agent carries nothing.** `shell` is a plain terminal and a
+ * contributed view (a pull request, a diff) has no session at all; both fall
+ * through to `undefined`, as does a word this build does not know. State belongs
+ * to agents, and a ring on a pull-request tab would claim a lifecycle it has not
+ * got.
+ *
+ * The order is v1's `AgentState.rollUp` unchanged — blocked > error > needsCheck
+ * > working > idle. A tab shows one mark, so it must be the most actionable one:
+ * anything else and a blocked pane hides behind a working sibling.
  */
-function tabMark(states: readonly (string | undefined)[]): TabMark | undefined {
-  if (states.includes('blocked')) return 'attention';
-  if (states.includes('error')) return 'failed';
-  if (states.includes('needsCheck')) return 'unread';
-  return undefined;
+const TAB_MARKS: readonly (readonly [state: string, mark: MarkState])[] = [
+  ['blocked', 'waiting'],
+  ['error', 'failed'],
+  ['needsCheck', 'ready'],
+  ['working', 'working'],
+  ['idle', 'resting'],
+];
+
+function tabMark(states: readonly (string | undefined)[]): MarkState | undefined {
+  const present = new Set(states);
+  return TAB_MARKS.find(([state]) => present.has(state))?.[1];
 }
 
 /**
@@ -578,6 +590,19 @@ export function App({
        * pane in `~` therefore reads as its own last component, which is what a
        * terminal tab has always shown.
        */
+      /*
+       * What the tab IS, for one with no agent to report — the glyph the view
+       * declared, through the renderer's own allow-list.
+       *
+       * Only ever the FOCUSED pane's, because a tab draws one leading slot and a
+       * root can hold several views. `undefined` for a terminal, for a view that
+       * declared no glyph, and for a name the allow-list does not carry, which
+       * all draw the empty slot rather than a wrong picture.
+       */
+      const icon =
+        pane === null || pane.view === null
+          ? undefined
+          : contributedIcon(contributions.find((view) => view.type === pane.view?.type)?.icon);
       // A root with no panes is a real state (its last pane was closed), and it
       // is still a tab you can switch to. It says so — a raw root id is an
       // internal name, and `window-1` on a tab teaches nothing.
@@ -585,9 +610,10 @@ export function App({
         id: root.root,
         label: pane === null ? 'Empty' : displayTitle(pane),
         ...(mark === undefined ? {} : { mark }),
+        ...(icon === undefined ? {} : { icon }),
       };
     });
-  }, [snapshots, active, agents]);
+  }, [snapshots, active, agents, contributions]);
 
   /**
    * The takeover layer's visibility, which is MAIN's answer rather than this

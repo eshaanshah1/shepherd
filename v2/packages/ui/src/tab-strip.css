@@ -91,38 +91,17 @@
 }
 
 /*
- * The dot — the strip's ONLY variable, and it is conditional.
+ * The mark — the strip's ONLY variable, and it is conditional.
  *
- * §3 gives state a shape in a fixed 12×12 slot (`StateMark`), and this is
- * deliberately not that: a slot per tab would draw a resting ring on every
- * healthy tab, which is a row of five marks saying nothing four times. Here the
- * absence IS the state. What survives from §3 is the part that matters — three
- * hues that already carry these jobs elsewhere, and a word in the DOM for each,
- * because a fact encoded only in colour cannot be read out or asserted on.
+ * `StateMark` rather than a dot of this strip's own: the state of an agent has
+ * one shape vocabulary in this product, and a second one here would mean the
+ * rail and the tab of the same agent disagreed about what a square meant. It
+ * brings its own fixed 12×12 slot, so a tab's label does not move when the agent
+ * inside it changes state.
  *
- * `wool` for attention rather than the mock's amber: there is no amber in this
- * palette, and §2 refuses a saturated value without a job. Wool is already what
- * "your move" is drawn in, and the brightness order the mock wanted survives —
- * attention is the loudest, unread the quietest, failed the only hue.
+ * A tab with no agent draws no mark but keeps the SLOT, so a tab does not widen
+ * — and shove every tab to its right along — at the moment its agent starts.
  */
-.sh-ui-tab__dot {
-  flex: 0 0 auto;
-  inline-size: 5px;
-  block-size: 5px;
-  border-radius: 50%;
-}
-
-.sh-ui-tab__dot[data-mark='unread'] {
-  background: var(--sh-text-mute);
-}
-
-.sh-ui-tab__dot[data-mark='attention'] {
-  background: var(--sh-mark-waiting);
-}
-
-.sh-ui-tab__dot[data-mark='failed'] {
-  background: var(--sh-mark-failed);
-}
 
 /*
  * Pinned to the trailing edge, so the control does not walk left and right as

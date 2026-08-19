@@ -242,6 +242,13 @@ export function activate(ctx: ExtensionContext, api: Shepherd): void {
        */
       surface: 'pane',
       title: 'review',
+      /*
+       * The tab's glyph, in the slot a terminal tab draws its agent's state in.
+       * A review tab has no agent and so no state, and the pull-request mark is
+       * what it has to say instead — which is also the one thing that tells it
+       * apart from the tabs either side at a glance.
+       */
+      icon: 'pull-request',
     }),
   );
 

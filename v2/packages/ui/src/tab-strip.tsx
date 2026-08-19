@@ -1,7 +1,9 @@
 import type { ComponentType, ReactElement } from 'react';
 import type { IconProps as TablerIconProps } from '@tabler/icons-react';
 import { cn } from './cn.ts';
+import { Icon } from './icon.tsx';
 import { IconButton } from './icon-button.tsx';
+import { StateMark, markSlot, type MarkState } from './state-mark.tsx';
 
 /**
  * The tabs of ONE pane group.
@@ -28,33 +30,39 @@ import { IconButton } from './icon-button.tsx';
  */
 
 /**
- * What a tab has to SAY, if anything.
+ * What a tab SAYS, when there is an agent in it.
  *
- * Absent is the common case and the point of the whole vocabulary: a tab that is
- * fine draws nothing, so the row stays even and a dot anywhere in it is worth
- * looking at. There is deliberately no `working` member — a run in progress is
- * not news, and a strip where every busy tab lights up is a strip you stop
- * reading.
+ * `StateMark`'s vocabulary and not the agent lifecycle's, for the reason that
+ * primitive gives: a primitive does not know what a session is. `blocked` and
+ * `needsCheck` are Claude Code's words and stay on the app's side of the
+ * boundary; `waiting` and `ready` are things anything can be.
  *
- * The MARK's vocabulary, not the agent lifecycle's, for `StateMark`'s reason: a
- * primitive does not know what a session is. `unread` / `attention` / `failed`
- * are things a set of anything can be; `needsCheck` and `blocked` are Claude
- * Code's words and stay on the app's side of the boundary.
+ * A tab with no agent — a plain shell, a contributed view — draws no mark but
+ * KEEPS the slot (`markSlot`). Two rules meet there and both survive: a ring on
+ * a pull-request tab would claim a lifecycle it has not got, and a tab that grew
+ * by the mark's width when its agent started would slide every tab to its right
+ * along — which is §10's control that moves under the cursor, on the one gesture
+ * (spawning an agent) that makes it happen.
  */
-export type TabMark = 'unread' | 'attention' | 'failed';
-
-/** The word each mark says — the dot's accessible name, since colour cannot be read out. */
-export const tabMarkWords: Readonly<Record<TabMark, string>> = {
-  unread: 'Unread output',
-  attention: 'Waiting on you',
-  failed: 'Failed',
-};
 
 export interface TabDescriptor {
   readonly id: string;
   readonly label: string;
-  /** Absent = nothing to say = no dot. See `TabMark`. */
-  readonly mark?: TabMark;
+  /** The rollup over the agents in this tab. Absent = no agent = an empty slot. */
+  readonly mark?: MarkState;
+  /**
+   * What this tab IS, when it has no state to be in — a pull request, a diff.
+   *
+   * A component and never a name, which is `Icon`'s rule: a primitive that
+   * resolved a string would have to hold the table, and the table is the
+   * renderer's allow-list.
+   *
+   * It shares the mark's slot and LOSES to it, so a split holding an agent and a
+   * view reports the agent. Identity is what a tab falls back to once there is
+   * no state to report; a glyph that displaced a blocked square would hide the
+   * one thing in the strip you can act on.
+   */
+  readonly icon?: ComponentType<TablerIconProps>;
 }
 
 export interface TabStripProps {
@@ -99,9 +107,16 @@ export function TabStrip({
           data-tab-id={tab.id}
           onClick={() => onSelect(tab.id)}
         >
-          {tab.mark === undefined ? null : (
-            <span className="sh-ui-tab__dot" data-mark={tab.mark} title={tabMarkWords[tab.mark]}>
-              <span className="sh-ui-sr-only">{tabMarkWords[tab.mark]}</span>
+          {tab.mark !== undefined ? (
+            <StateMark state={tab.mark} />
+          ) : (
+            /*
+              `markSlot` rather than a box of this strip's own: the 12px is
+              declared once, beside the mark, and a second literal here would
+              drift the moment a mark changed size.
+            */
+            <span className={markSlot} aria-hidden="true">
+              {tab.icon === undefined ? null : <Icon icon={tab.icon} size="sm" />}
             </span>
           )}
           <span className="sh-ui-tab__label">{tab.label}</span>

@@ -6,6 +6,7 @@ import {
   IconChevronDown,
   IconChevronRight,
   IconEye,
+  IconGitPullRequest,
   IconPlus,
   IconSearch,
   IconSettings,
@@ -877,7 +878,20 @@ const ACTION_ICONS: Readonly<Record<string, ComponentType<TablerIconProps>>> = {
   trash: IconTrash,
   plus: IconPlus,
   settings: IconSettings,
+  'pull-request': IconGitPullRequest,
 };
+
+/**
+ * The same table, resolved WITHOUT a fallback.
+ *
+ * A surface that would rather draw nothing than draw the wrong glyph needs the
+ * miss back — `raiseIcon`'s `IconPlus` is right for a control that must be
+ * pressable and wrong for a tab, where a `+` would read as "new tab" on a tab
+ * that opens nothing.
+ */
+export function contributedIcon(name: string | undefined): ComponentType<TablerIconProps> | undefined {
+  return name === undefined ? undefined : ACTION_ICONS[name];
+}
 
 /**
  * The glyph for the control that raises an overlay view.
@@ -889,7 +903,7 @@ const ACTION_ICONS: Readonly<Record<string, ComponentType<TablerIconProps>>> = {
  * indistinguishable from the new-task button beside it.
  */
 export function raiseIcon(name: string | undefined): ComponentType<TablerIconProps> {
-  return (name === undefined ? undefined : ACTION_ICONS[name]) ?? IconPlus;
+  return contributedIcon(name) ?? IconPlus;
 }
 
 /**
