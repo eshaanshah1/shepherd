@@ -1019,31 +1019,13 @@ describe('a task owns a layout root', () => {
     ]);
   });
 
-  it('LANDS you in the task — every spawn switches to its root', async () => {
-    // v1's composer behaviour: you asked for work, so you are taken to it. A
-    // pane opened in a root nobody switched to is an agent running off screen.
+  it('LEAVES the window where it is — a spawn does not switch to the task', async () => {
+    // A spawn lands seconds after you asked for it, by which point you are
+    // reading something else. `tasks.reveal` is the verb that moves the window.
     const h = (live = harness({ tasks: [task()] }));
     await h.run('tasks.spawn', { task: 't1', prompt: 'go' });
 
-    expect(h.invoked.filter((call) => call.id === 'layout.switchRoot')).toEqual([
-      { id: 'layout.switchRoot', args: { root: 'task:t1' } },
-    ]);
-    // After the pane exists, or the window moves to a root with nothing in it.
-    expect(h.trace.indexOf('invoke layout.switchRoot')).toBeGreaterThan(
-      h.trace.indexOf('invoke layout.openRoot'),
-    );
-  });
-
-  it('does NOT fail the spawn when the switch fails — the agent is running either way', async () => {
-    const h = (live = harness({
-      tasks: [task()],
-      invoke: (id) =>
-        id === 'layout.switchRoot'
-          ? { ok: false, error: { code: 'handler-failed', message: 'no root', commandId: 'layout.switchRoot' } }
-          : undefined,
-    }));
-    const session = await h.run<{ pane?: string }>('tasks.spawn', { task: 't1', prompt: 'go' });
-    expect(session.pane).toBe('p1');
+    expect(h.invoked.filter((call) => call.id === 'layout.switchRoot')).toEqual([]);
   });
 
   describe('tasks.reveal', () => {

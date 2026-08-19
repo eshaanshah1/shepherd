@@ -1459,10 +1459,10 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * Open a pane in the task's root and type one line into it.
    *
    * The half `startSession` and `resumeSession` share: which layout verb opens
-   * the pane (mint the root, or split the live one), naming it, and taking the
-   * window there. What differs between them is the LINE — a fresh agent reads a
-   * prompt file, a resumed one names a session — and that is the whole of the
-   * difference, which is why it is the only parameter.
+   * the pane (mint the root, or split the live one) and naming it. What differs
+   * between them is the LINE — a fresh agent reads a prompt file, a resumed one
+   * names a session — and that is the whole of the difference, which is why it
+   * is the only parameter.
    */
   async function openAgentPane(
     task: TaskRecord,
@@ -1541,23 +1541,12 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       }
     }
 
-    /**
-     * And LAND you in it — v1's composer behaviour: you asked for work, so you
-     * are taken to it. A spawn that opened a pane in a root nobody switched to
-     * is an agent running somewhere off screen, which is the thing the sidebar
-     * exists to stop being the normal case.
-     *
-     * A failure is a warn, not a failed spawn: the pane is real and the agent is
-     * running in it either way, and refusing the spawn because the window would
-     * not move would throw away work over navigation.
+    /*
+     * And LEAVE the window where it is. A spawn finishes seconds after it was
+     * asked for — provisioning is slow — so switching to it takes the screen
+     * away from whatever was read in the meantime. The sidebar row is how a
+     * task off screen announces itself, and `tasks.reveal` is how you go.
      */
-    const switched = await commands.invoke('layout.switchRoot', { root });
-    if (!switched.ok) {
-      ctx.log.warn(
-        `task ${task.id}: the window stayed where it was — ${switched.error.code}: ${switched.error.message}`,
-      );
-    }
-
     return pane;
   }
 
