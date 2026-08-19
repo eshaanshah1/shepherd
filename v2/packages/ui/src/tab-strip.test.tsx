@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
 import { act } from 'react';
-import { IconPlus } from '@tabler/icons-react';
+import { IconGitPullRequest, IconPlus } from '@tabler/icons-react';
 import { rulesMentioning } from './css-rules.ts';
 import { TabStrip } from './tab-strip.tsx';
 import { mount } from './test-dom.ts';
@@ -99,34 +99,95 @@ describe('TabStrip', () => {
     expect(values).not.toContain('var(--sh-sky)');
   });
 
-  it('draws a dot only for a tab with something to say', () => {
-    // The whole vocabulary: absence IS the resting state. A slot on every tab
-    // would put a mark on four healthy ones so the fifth could be found.
+  it('draws a mark only for a tab that has one, and keeps the slot on the rest', () => {
+    // A tab with no agent has no state to be in, so it claims none. It keeps the
+    // 12px, though: a tab that widened when its agent started would shove every
+    // tab to its right along, which is a control moving under the cursor.
     const view = mount(
       <TabStrip
         tabs={[
           { id: 'a', label: 'api' },
-          { id: 'b', label: 'logs', mark: 'attention' },
+          { id: 'b', label: 'logs', mark: 'waiting' },
         ]}
         activeId="a"
         onSelect={() => {}}
       />,
     );
-    const dots = tabs(view.container).map((tab) => tab.querySelector('.sh-ui-tab__dot'));
-    expect(dots[0]).toBeNull();
-    expect(dots[1]?.getAttribute('data-mark')).toBe('attention');
+    const marks = tabs(view.container).map((tab) => tab.querySelector('.sh-ui-mark'));
+    expect(marks[0]).not.toBeNull();
+    expect(marks[0]?.getAttribute('data-state')).toBeNull();
+    expect(marks[1]?.getAttribute('data-state')).toBe('waiting');
     view.unmount();
   });
 
-  it('puts every dot’s word in the DOM', () => {
-    // Two of the three are a hue apart and nothing else. A fact encoded only in
-    // colour cannot be read out, searched, or asserted on — `StateMark`'s rule,
-    // and it does not stop applying because the mark got smaller.
+  it('says nothing about a stateless tab, in the DOM as well as on screen', () => {
+    // The empty slot is spacing, not a sixth state. It must not reach a screen
+    // reader as one — `StateMark` puts its word in the DOM, and this has none.
+    const view = mount(
+      <TabStrip tabs={[{ id: 'a', label: 'zsh' }]} activeId="a" onSelect={() => {}} />,
+    );
+    expect(tabs(view.container)[0]?.textContent).toBe('zsh');
+    view.unmount();
+  });
+
+  it('draws a tab’s own glyph in the slot when it has no state to report', () => {
+    // A review tab is not an agent and has no lifecycle, so what it has to say
+    // is what it IS.
+    const view = mount(
+      <TabStrip
+        tabs={[{ id: 'a', label: 'review', icon: IconGitPullRequest }]}
+        activeId="a"
+        onSelect={() => {}}
+      />,
+    );
+    expect(tabs(view.container)[0]?.querySelector('.sh-ui-mark svg')).not.toBeNull();
+    view.unmount();
+  });
+
+  it('lets the agent’s state beat the tab’s glyph, never the other way round', () => {
+    // One leading slot. A glyph displacing a blocked square would hide the one
+    // thing in the strip you can act on.
+    const view = mount(
+      <TabStrip
+        tabs={[{ id: 'a', label: 'review', icon: IconGitPullRequest, mark: 'waiting' }]}
+        activeId="a"
+        onSelect={() => {}}
+      />,
+    );
+    const slot = tabs(view.container)[0]?.querySelector('.sh-ui-mark');
+    expect(slot?.getAttribute('data-state')).toBe('waiting');
+    expect(slot?.querySelector('svg')).toBeNull();
+    view.unmount();
+  });
+
+  it('draws a mark for a quiet agent as readily as a loud one', () => {
+    // The strip reports the pane you are NOT looking at. A tab that drew nothing
+    // while its agent worked made 'working' and 'no agent here' one picture.
+    const view = mount(
+      <TabStrip
+        tabs={[
+          { id: 'a', label: 'api', mark: 'working' },
+          { id: 'b', label: 'logs', mark: 'resting' },
+        ]}
+        activeId="a"
+        onSelect={() => {}}
+      />,
+    );
+    expect(tabs(view.container).map((tab) => tab.querySelector('.sh-ui-mark')?.getAttribute('data-state'))).toEqual([
+      'working',
+      'resting',
+    ]);
+    view.unmount();
+  });
+
+  it('puts every mark’s word in the DOM', () => {
+    // Two states are a hue apart and nothing else. A fact encoded only in colour
+    // cannot be read out, searched, or asserted on.
     const view = mount(
       <TabStrip
         tabs={[
           { id: 'a', label: 'api', mark: 'failed' },
-          { id: 'b', label: 'logs', mark: 'unread' },
+          { id: 'b', label: 'logs', mark: 'ready' },
         ]}
         activeId="a"
         onSelect={() => {}}
@@ -134,7 +195,7 @@ describe('TabStrip', () => {
     );
     expect(tabs(view.container).map((tab) => tab.textContent)).toEqual([
       'Failedapi',
-      'Unread outputlogs',
+      'Ready for youlogs',
     ]);
     view.unmount();
   });

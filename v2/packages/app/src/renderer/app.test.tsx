@@ -18,7 +18,9 @@ import {
   type LayoutApi,
   type LayoutSnapshot,
   type LayoutSnapshots,
+  type ViewContributionDTO,
   type ViewportRect,
+  type ViewsApi,
 } from '../shared/index.ts';
 import { MENU_INVOCATIONS } from '../shared/menu-commands.ts';
 import { App } from './app.tsx';
@@ -167,11 +169,24 @@ function fixedAgents(indicators: readonly AgentIndicatorDTO[]): AgentsApi {
   };
 }
 
+/** A views bridge that has contributed exactly these, and never changes. */
+function fixedViews(views: readonly ViewContributionDTO[]): ViewsApi {
+  return {
+    list: () => Promise.resolve({ ok: true as const, value: views }),
+    children: () => Promise.resolve({ ok: true as const, value: [] }),
+    activate: () => Promise.resolve({ ok: true as const, value: undefined }),
+    invoke: () => Promise.resolve({ ok: true as const, value: undefined }),
+    present: () => Promise.resolve({ ok: true as const, value: { shown: false } }),
+    onChanged: () => () => {},
+  };
+}
+
 function render(
   options: {
     snapshot?: LayoutSnapshots | null;
     noTerminals?: boolean;
     agents?: AgentsApi;
+    views?: ViewsApi;
   } = {},
 ): Rendered {
   const session = new SpySession();
@@ -195,6 +210,7 @@ function render(
       layout={layout.api}
       commands={commands.api}
       {...(options.agents === undefined ? {} : { agents: options.agents })}
+      {...(options.views === undefined ? {} : { views: options.views })}
       {...(initial === null ? {} : { initialSnapshot: initial })}
     />,
   );
@@ -973,35 +989,101 @@ describe('the tab strip', () => {
 
   const markOf = (container: HTMLElement, index: number): string | null =>
     [...container.querySelectorAll<HTMLElement>('[role="tab"]')][index]
-      ?.querySelector('.sh-ui-tab__dot')
-      ?.getAttribute('data-mark') ?? null;
+      ?.querySelector('.sh-ui-mark')
+      ?.getAttribute('data-state') ?? null;
 
-  it('dots a tab whose agent is waiting, and leaves a quiet one bare', async () => {
+  it('marks a tab whose agent is waiting, and leaves an agentless one bare', async () => {
     const { view } = render({
       snapshot: tabbedWithSessions({ 'pane-x': 'session-1' }),
       agents: fixedAgents([{ sessionId: 'session-1', state: 'blocked' }]),
     });
     await act(async () => {});
     expect(markOf(view.container, 0)).toBeNull();
-    expect(markOf(view.container, 1)).toBe('attention');
+    expect(markOf(view.container, 1)).toBe('waiting');
     view.unmount();
   });
 
-  it('draws NO dot for a working agent', () => {
-    // Deliberate, and the reason the strip stays readable: a run in progress is
-    // not news. The pane you are looking at already says it is working.
+  it('marks a working agent and a resting one, because a tab is a pane you cannot see', async () => {
+    // Every agent tab says what its agent is doing. A strip that drew nothing
+    // until something went wrong made 'working' and 'no agent here' one picture.
+    for (const [state, mark] of [
+      ['working', 'working'],
+      ['idle', 'resting'],
+      ['needsCheck', 'ready'],
+      ['error', 'failed'],
+    ] as const) {
+      const { view } = render({
+        snapshot: tabbedWithSessions({ 'pane-x': 'session-1' }),
+        agents: fixedAgents([{ sessionId: 'session-1', state }]),
+      });
+      await act(async () => {});
+      expect(markOf(view.container, 1)).toBe(mark);
+      view.unmount();
+    }
+  });
+
+  it('leaves a plain shell bare — state belongs to agents', async () => {
+    // A pane that has dropped back to a prompt has no agent, and neither has a
+    // contributed view. Neither gets a mark; a ring on a pull-request tab would
+    // claim a lifecycle it has not got.
     const { view } = render({
       snapshot: tabbedWithSessions({ 'pane-x': 'session-1' }),
-      agents: fixedAgents([{ sessionId: 'session-1', state: 'working' }]),
+      agents: fixedAgents([{ sessionId: 'session-1', state: 'shell' }]),
     });
+    await act(async () => {});
     expect(markOf(view.container, 1)).toBeNull();
     view.unmount();
   });
 
+  it('draws a view tab’s declared glyph where an agent tab draws its state', async () => {
+    // A review tab has no session and so no state. What it has instead is what
+    // it IS, and the glyph is also the one thing telling it from its neighbours.
+    const reviewPane = makePane({ view: { type: 'github.review', state: { task: 't-1' } } });
+    const { view } = render({
+      snapshot: snapshotsOf(
+        'task:t1',
+        rootOf(leaf(makePane({ userTitle: 'api' })), undefined, 'task:t1', 'task:t1'),
+        rootOf(leaf(reviewPane), undefined, 'task:t1/tab-2', 'task:t1'),
+      ),
+      views: fixedViews([
+        { extension: 'shepherd.github', type: 'github.review', kind: 'component', surface: 'pane', icon: 'pull-request' },
+      ]),
+    });
+    await act(async () => {});
+    const slots = [...view.container.querySelectorAll<HTMLElement>('[role="tab"]')].map((tab) =>
+      tab.querySelector('.sh-ui-mark svg'),
+    );
+    // The terminal tab keeps its empty slot; the review tab fills it.
+    expect(slots[0]).toBeNull();
+    expect(slots[1]).not.toBeNull();
+    view.unmount();
+  });
+
+  it('draws no glyph for a view whose name the allow-list does not carry', async () => {
+    // A contribution names a glyph; the renderer owns the table. An unknown name
+    // is the empty slot, never a fallback picture that means something else.
+    const oddPane = makePane({ view: { type: 'other.view', state: null } });
+    const { view } = render({
+      snapshot: snapshotsOf(
+        'task:t1',
+        rootOf(leaf(makePane({ userTitle: 'api' })), undefined, 'task:t1', 'task:t1'),
+        rootOf(leaf(oddPane), undefined, 'task:t1/tab-2', 'task:t1'),
+      ),
+      views: fixedViews([
+        { extension: 'x', type: 'other.view', kind: 'component', surface: 'pane', icon: 'not-a-glyph' },
+      ]),
+    });
+    await act(async () => {});
+    expect(
+      [...view.container.querySelectorAll<HTMLElement>('[role="tab"]')][1]?.querySelector('.sh-ui-mark svg'),
+    ).toBeNull();
+    view.unmount();
+  });
+
   it('shows the most actionable state when a root holds several sessions', async () => {
-    // One tab, one dot — so it must be the one you would act on. A blocked pane
+    // One tab, one mark — so it must be the one you would act on. A blocked pane
     // hiding behind a finished sibling is the whole failure this ordering exists
-    // to prevent.
+    // to prevent. The order is v1's: blocked > error > needsCheck > working > idle.
     const { view } = render({
       snapshot: tabbedWithSessions({ 'pane-x': 'session-1', 'pane-y': 'session-2' }),
       agents: fixedAgents([
@@ -1010,7 +1092,20 @@ describe('the tab strip', () => {
       ]),
     });
     await act(async () => {});
-    expect(markOf(view.container, 1)).toBe('attention');
+    expect(markOf(view.container, 1)).toBe('waiting');
+    view.unmount();
+  });
+
+  it('ranks a finished turn above a working sibling', async () => {
+    const { view } = render({
+      snapshot: tabbedWithSessions({ 'pane-x': 'session-1', 'pane-y': 'session-2' }),
+      agents: fixedAgents([
+        { sessionId: 'session-1', state: 'working' },
+        { sessionId: 'session-2', state: 'needsCheck' },
+      ]),
+    });
+    await act(async () => {});
+    expect(markOf(view.container, 1)).toBe('ready');
     view.unmount();
   });
 
