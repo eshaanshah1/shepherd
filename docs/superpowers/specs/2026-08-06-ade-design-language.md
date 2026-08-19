@@ -182,6 +182,15 @@ It is OFL, so it redistributes inside an app bundle with no licence tier to reas
 about, and it has the character rule 6 asks for. Berkeley Mono remains a possible
 later swap — one token edit plus a regeneration, per the above.
 
+The file that ships is the **Nerd Fonts patch** of it, because the grid is asked
+to draw Private Use Area icons — a prompt, `eza`, `lazygit` — and macOS resolves
+a missing glyph through CoreText's cascade list, which is system faces only and
+carries no PUA. An unpatched face draws that whole set as tofu boxes, and a Nerd
+Font installed on the machine is never reached. The patch is the same design at
+the same 600/1000 advance on every glyph, icons included, so the cell is
+unchanged and none of the metrics above move. A later swap has to bring its own
+icon coverage; `fonts.test.ts` is where it fails if it does not.
+
 ### Recorded drift this amendment caught
 
 `metrics.rowHeight` was documented as "exactly 2 cells" while reading **28**, when

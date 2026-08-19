@@ -474,7 +474,25 @@ export const fonts = {
    * after it here is a genuine fallback again.
    */
   sans: "'Geist', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif",
-  mono: "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace",
+  /**
+   * The MACHINE's face, and the grid's — so it has to cover what the machine
+   * actually emits. A prompt, `eza`, `lazygit`, `starship` and Claude Code's own
+   * output all draw Nerd Font icons out of the Private Use Area, and no fallback
+   * named here can rescue a codepoint the first face misses: macOS resolves an
+   * unmapped glyph through CoreText's cascade list, which is system faces only
+   * and carries no PUA at all. A Nerd Font *installed* on the machine is never
+   * reached. Unpatched, the whole icon set draws as tofu.
+   *
+   * So the shipped face is the Nerd Fonts patch of the same typeface — same
+   * design, same 600/1000 advance on every glyph including the icons, so the
+   * cell stays the cell and the metrics above still hold. Plain JetBrains Mono
+   * follows it as the fallback for a machine that has one installed and a
+   * bundle that somehow did not load.
+   *
+   * `fonts.test.ts` asserts the coverage: a swap that drops the icons fails
+   * there rather than in a screenshot.
+   */
+  mono: "'JetBrainsMono Nerd Font', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace",
   /**
    * Retained as a token, used by nothing. Shepherd UI is two faces split by job
    * and has no third voice; this stays so a contributed view that reaches for a
