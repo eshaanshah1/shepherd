@@ -14,9 +14,8 @@
  * **Every exception is named here with its reason, and that is the point.** A
  * refusal with a silent carve-out is not a refusal. When a surface genuinely
  * needs one — §10 permits exactly one, a menu over an already-raised surface —
- * the exception is added HERE, deliberately, next to the others. It is currently
- * unexercised: the composer's picker was fused to the well and both its theme
- * shadows went with it, so no primitive draws a drop shadow at all.
+ * the exception is added HERE, deliberately, next to the others. There is one,
+ * and it is `Select`'s list: see the assertion below.
  *
  * Scope is `@shepherd/ui` — the primitive set the shell and every extension build
  * on. The app's own renderer sheet is a second consumer with the same class of
@@ -63,13 +62,26 @@ describe('§10 — the refusals, over the whole sheet', () => {
     // An `inset` shadow is a hairline drawn without spending a border (`card.css`
     // uses one for its header seam), and `--sh-focus-ring` is required by §9.
     // Neither lifts anything off the page, which is what §10 refuses.
+    //
+    // The single permitted exception, and the terms it is permitted on: a MENU,
+    // over a surface that is already raised. `Select`'s list opens out of a modal
+    // and over a pane of live terminal output — one luminance step against
+    // arbitrary text is not a boundary, and the alternative is a control the user
+    // cannot find the edges of. Anything else that wants this has to come here
+    // and argue for itself.
+    const allowedDrop = '.sh-ui-select__list';
     const drops = declaring('box-shadow')
       .filter((rule) => {
         const value = rule.style.getPropertyValue('box-shadow');
         return !value.includes('inset') && !value.includes('--sh-focus-ring');
       })
+      .filter((rule) => !rule.selectorText.includes(allowedDrop))
       .map((rule) => describeRule(rule, 'box-shadow'));
     expect(drops).toEqual([]);
+
+    // …and the exception is a claim about ONE selector, so it fails if the list
+    // stops drawing the shadow this carve-out exists for.
+    expect(declaring('box-shadow').map((rule) => rule.selectorText)).toContain(allowedDrop);
   });
 
   it('fills nothing with a gradient', () => {

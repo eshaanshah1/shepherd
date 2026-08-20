@@ -74,7 +74,12 @@
 
 .sh-ui-select__list {
   position: absolute;
-  top: calc(100% + var(--sh-space-xs));
+  /*
+   * The side is `select.tsx`'s to decide — it measures the trigger against the
+   * viewport, because a select in a footer row has nothing under it. Nothing here
+   * may set `top` or `bottom` on the base rule, or the flip has a second opinion
+   * to argue with.
+   */
   left: 0;
   /* Sized to its widest option, never to the trigger: `Row`'s trailing area does
      not shrink, so a list narrower than a row starves the label to nothing. */
@@ -82,15 +87,56 @@
   min-inline-size: 100%;
   max-inline-size: min(22rem, 80vw);
   z-index: 10;
-  max-height: calc(var(--sh-row-height) * 8);
+  /*
+   * Eight rows, or the room the trigger actually has — whichever is less.
+   * `--sh-ui-select-room` is the measured distance to the viewport edge on the
+   * side this opened toward, published inline; the `md` comes back off it so the
+   * last row is not flush against the window.
+   */
+  max-height: min(
+    calc(var(--sh-row-height) * 8),
+    calc(var(--sh-ui-select-room, 100vh) - var(--sh-space-md))
+  );
   overflow-y: auto;
   padding: var(--sh-space-xs);
+
+  /*
+   * `--sh-line` re-declared on the element that draws with it, which is the
+   * escape hatch `composer.css` documents: inside a `Composer` the generic seam
+   * is transparent, and a list floating over a live terminal is the one thing on
+   * that surface that must have an edge. `lineStrong` is the value because this
+   * is a bordered control rather than a seam between two bands of chrome.
+   */
+  --sh-line: var(--sh-line-strong);
   border: var(--sh-hairline) solid var(--sh-line);
   border-radius: var(--sh-radius-md);
   /* Raised, because it floats over content. The sunken trigger and the raised
      list is the same pairing a field and its picker have elsewhere. */
   background: var(--sh-raised);
+
+  /*
+   * The one shadow the language allows: a menu over an already-raised surface
+   * (`roles.ts`, on `raised`; the exception is registered in
+   * `refusals.css.test.ts`). It is earned here rather than taken — this list
+   * opens out of a modal and over a pane of live terminal output, where one
+   * luminance step against arbitrary text is not a boundary.
+   *
+   * A mix of `canvas` rather than a black: the window's own backdrop darkens in
+   * dark mode and lightens in light, so the shadow follows a contributed theme
+   * instead of dropping a grey rectangle on paper.
+   */
+  box-shadow: 0 var(--sh-space-xs) var(--sh-space-lg) color-mix(in srgb, var(--sh-canvas) 62%, transparent);
 }
+
+/* The gap belongs to whichever side the list opened on. */
+.sh-ui-select__list[data-drop='down'] {
+  top: calc(100% + var(--sh-space-xs));
+}
+
+.sh-ui-select__list[data-drop='up'] {
+  bottom: calc(100% + var(--sh-space-xs));
+}
+
 
 /*
  * The keyboard's highlight, which is NOT selection.

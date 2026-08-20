@@ -55,6 +55,7 @@ const SET_AT_RUNTIME: Readonly<Record<string, string>> = {
   '--sh-pane-title-bg': 'terminal-pane.tsx — the grid’s own background, per pane',
   '--sh-ui-textarea-min': 'textarea.tsx — derived from the `minLines` prop',
   '--sh-ui-textarea-max': 'textarea.tsx — derived from the `maxLines` prop',
+  '--sh-ui-select-room': 'select.tsx — the measured room between the trigger and the viewport edge',
 };
 
 const declarationsOf = (rule: CSSStyleRule): Array<[string, string]> => {
