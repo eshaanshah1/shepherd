@@ -47,6 +47,8 @@ export interface Contribution {
   readonly surface?: 'dock' | 'overlay' | 'pane';
   /** The accelerator that raises an overlay. A modifier is required. */
   readonly key?: string;
+  /** The verb a PANE's `key` runs — see `ViewDeclaration.command`. */
+  readonly command?: string;
   /** The heading the shell draws. Falls back to the view type. */
   readonly title?: string;
   /** The glyph on the control that raises an overlay. Defaults to `plus`. */
@@ -57,6 +59,8 @@ export interface Contribution {
 export interface ViewDeclaration {
   readonly surface?: 'dock' | 'overlay' | 'pane';
   readonly key?: string;
+  /** The verb a PANE's `key` runs — see `ViewDeclaration.command` in the SDK. */
+  readonly command?: string;
   readonly title?: string;
   readonly icon?: string;
   /** A tree that wants a search field, and the verb its query goes to. */
@@ -112,6 +116,13 @@ export class ViewRegistry {
       // v1's menu-accelerator lesson and not something an extension gets to do.
       ...(declaration.surface === undefined ? {} : { surface: declaration.surface }),
       ...(declaration.key === undefined || !hasModifier(declaration.key) ? {} : { key: declaration.key }),
+      // The verb a PANE's key runs. Kept only alongside a key that survived the
+      // check above: a command with no accelerator has nothing to fire it, and
+      // half a declaration reaching the page invites a handler that guesses at
+      // the other half.
+      ...(declaration.command === undefined || declaration.key === undefined || !hasModifier(declaration.key)
+        ? {}
+        : { command: declaration.command }),
       ...(declaration.title === undefined ? {} : { title: declaration.title }),
       // An unknown name is passed through and the renderer falls back to `plus`
       // — the same rule a row's action glyph gets: a typo must not be louder

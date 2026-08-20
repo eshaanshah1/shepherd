@@ -1,0 +1,55 @@
+/*
+ * The scratch pane — drawn by `@shepherd/ext-scratch/ui`, painted here.
+ *
+ * The same division `review-pane.css` makes: a contribution supplies data and a
+ * token name and sets neither a colour nor a length. The editor's own theme is
+ * the exception this file cannot cover — CodeMirror's base styles are injected
+ * into the head at runtime and win on order, so anything that fights them has
+ * to go through `EditorView.theme`. What is left for here is the two wrappers
+ * CodeMirror knows nothing about, and they are exactly the two that were
+ * missing: without a height on them the editor sizes to its TEXT, so the pane
+ * had a live top and a dead bottom, and clicking below the last line did
+ * nothing at all.
+ */
+
+.sh-scratch {
+  display: flex;
+  flex-direction: column;
+  block-size: 100%;
+  min-block-size: 0;
+  inline-size: 100%;
+  background: var(--sh-surface);
+  color: var(--sh-text);
+}
+
+/*
+ * `min-block-size: 0` on a flex child is what lets the editor SCROLL rather
+ * than grow the pane past its bounds — the default `min-height: auto` makes a
+ * flex item refuse to shrink below its content.
+ */
+.sh-scratch-host {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  inline-size: 100%;
+}
+
+.sh-scratch-host > .cm-editor {
+  block-size: 100%;
+}
+
+.sh-scratch--empty {
+  align-items: center;
+  justify-content: center;
+  padding: var(--sh-space-xl);
+  color: var(--sh-text-dim);
+  font-size: var(--sh-font-size-body);
+  text-align: center;
+}
+
+.sh-scratch-problem {
+  margin: 0;
+  padding: var(--sh-space-sm) var(--sh-space-lg);
+  border-block-end: 1px solid var(--sh-line);
+  color: var(--sh-text-dim);
+  font-size: var(--sh-font-size-micro);
+}

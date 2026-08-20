@@ -70,9 +70,21 @@ export function menuTemplate({ appName, isDev }: MenuOptions): MenuItemSpec[] {
       // events these produce. Their accelerators come from Electron, so they
       // are not in this file's accelerator audit — none of them is a bare key.
       submenu: [
-        { role: 'undo' },
-        { role: 'redo' },
-        { type: 'separator' },
+        /*
+         * Undo and redo are deliberately ABSENT, not roles and not commands.
+         *
+         * `role: 'undo'` is an AppKit key equivalent, so ⌘Z never reaches the
+         * page — and what it runs instead is `webContents.undo()`, the
+         * browser's DOCUMENT undo, which knows nothing about an editor keeping
+         * its own history in its own state. In a scratch pane that is either
+         * nothing or a corrupted buffer.
+         *
+         * Removing the items gives ⌘Z back to the page, where the focused pane
+         * owns it: CodeMirror's history keymap answers it in an editor, and a
+         * terminal ignores it exactly as it did before (xterm has no undo, so
+         * the role was doing nothing there either). The cost is that the Edit
+         * menu no longer LISTS them, which is the smaller loss.
+         */
         { role: 'cut' },
         { role: 'copy' },
         { role: 'paste' },

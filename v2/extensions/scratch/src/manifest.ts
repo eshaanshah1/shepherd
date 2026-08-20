@@ -1,0 +1,65 @@
+import type { Manifest } from '@shepherd/sdk';
+
+/**
+ * The manifest, typed, so main can register this extension without importing
+ * its code (`@shepherd/ext-scratch/manifest`).
+ *
+ * It duplicates the `shepherd` key of `package.json`, which is the shape a
+ * third-party extension is discovered by, and `manifest.test.ts` asserts the two
+ * are identical rather than trusting anybody to keep them so. The copy rather
+ * than a JSON import is the same small trade every extension here makes:
+ * `resolveJsonModule` is off across this repo.
+ */
+export const SCRATCH_ID = 'shepherd.scratch';
+
+export const SCRATCH_COMMANDS = {
+  /** Mint a buffer and open a tab holding it. What ⌘⇧N runs. */
+  create: 'scratch.create',
+  read: 'scratch.read',
+  write: 'scratch.write',
+  /** Soft-delete. Called by the pane on its way out, not by the shell. */
+  close: 'scratch.close',
+  /** ⌘-click on a link. http/https only; see `index.ts` for the guard. */
+  open: 'scratch.open',
+} as const;
+
+/**
+ * The view type AND the component name, deliberately one string.
+ *
+ * The renderer resolves the type against the contributions an extension
+ * registered, and only then resolves that contribution's `component` against
+ * its static table (ADR 0044). Two hops, one name, so a persisted `view` on
+ * disk reads as the thing it is.
+ */
+export const SCRATCH_VIEWS = { pad: 'scratch.pad' } as const;
+
+/** The accelerator. Free: the only contributed keys are ⌘N and ⌘⇧F. */
+export const SCRATCH_KEY = 'CmdOrCtrl+Shift+N';
+
+export const scratchManifest: Manifest = {
+  id: SCRATCH_ID,
+  name: 'Scratch',
+  version: '0.1.0',
+  api: '^1.0.0',
+  /**
+   * `onStartup` because the accelerator must work before anything
+   * scratch-shaped has happened. An extension woken by its own first use cannot
+   * own the key that IS its own first use.
+   */
+  activation: ['onStartup'],
+  /**
+   * `layout` because `scratch.create` opens a tab. `process.exec` because a
+   * ⌘-clicked link runs `open(1)`: there is no kernel `shell.openExternal`, and
+   * `extensions/github/src/index.ts:461` says so and says what to do instead.
+   */
+  permissions: ['storage', 'views', 'layout', 'process.exec'],
+  contributes: {
+    commands: [
+      { id: SCRATCH_COMMANDS.create, title: 'Scratch: New' },
+      { id: SCRATCH_COMMANDS.read },
+      { id: SCRATCH_COMMANDS.write },
+      { id: SCRATCH_COMMANDS.close },
+      { id: SCRATCH_COMMANDS.open },
+    ],
+  },
+};

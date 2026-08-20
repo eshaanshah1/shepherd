@@ -79,7 +79,7 @@ function draw(prs: readonly Record<string, unknown>[], options: { focused?: bool
   };
   act(() => {
     root.render(
-      <ReviewPane state={{ task: 't-1' }} focused={options.focused ?? true} invoke={invoke} done={() => {}} />,
+      <ReviewPane state={{ task: 't-1' }} focused={options.focused ?? true} paneId="p1" invoke={invoke} done={() => {}} />,
     );
   });
   // The mount's `github.prs` resolves on a microtask.
@@ -255,7 +255,7 @@ describe('the verbs', () => {
       return { ok: true, value: { ok: false, reason: 'somebody merged it first' } };
     };
     act(() => {
-      root.render(<ReviewPane state={{ task: 't-1' }} focused invoke={invoke} done={() => {}} />);
+      root.render(<ReviewPane state={{ task: 't-1' }} focused paneId="p1" invoke={invoke} done={() => {}} />);
     });
     await settle();
     const merge = all('button').find((node) => node.textContent?.includes('Merge'));
@@ -321,6 +321,7 @@ describe('a pane whose state cannot be read', () => {
         <ReviewPane
           state={{ nothing: true }}
           focused
+      paneId="p1"
           invoke={async () => ({ ok: true, value: undefined })}
           done={() => {}}
         />,
@@ -394,7 +395,7 @@ describe('choosing which agent gets it', () => {
       return { ok: true, value: { ok: true } };
     };
     act(() => {
-      root.render(<ReviewPane state={{ task: 't-1' }} focused invoke={invoke} done={() => {}} />);
+      root.render(<ReviewPane state={{ task: 't-1' }} focused paneId="p1" invoke={invoke} done={() => {}} />);
     });
     act(() => {});
   }

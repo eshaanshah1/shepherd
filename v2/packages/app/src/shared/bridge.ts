@@ -174,6 +174,8 @@ export interface ViewContributionDTO {
   readonly component?: string;
   readonly surface?: 'dock' | 'overlay' | 'pane';
   readonly key?: string;
+  /** The verb a PANE's `key` runs — see `ViewDeclaration.command` in the SDK. */
+  readonly command?: string;
   readonly title?: string;
   /** The glyph on the control that raises an overlay. Defaults to `plus`. */
   readonly icon?: string;

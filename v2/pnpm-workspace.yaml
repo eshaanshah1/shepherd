@@ -60,6 +60,25 @@ catalog:
   '@types/react': 19.2.18
   '@types/react-dom': 19.2.4
 
+  # The scratch pane's editor. CodeMirror rather than a ProseMirror-family
+  # editor because it keeps the document as EXACT TEXT and only decorates it;
+  # Tiptap, Milkdown and Lexical hold a rich document and serialize on the way
+  # out, which rewrites what you paste. In a pane that is partly "somewhere to
+  # dump text", that is disqualifying.
+  #
+  # `@lezer/markdown` ships GFM as separately importable extensions. Enabling
+  # Strikethrough, TaskList and Autolink and NOT Table is how "no tables" is
+  # implemented: a table is not a construct the parser knows, so it stays as the
+  # characters you typed rather than being rendered and then suppressed.
+  '@codemirror/state': 6.7.1
+  '@codemirror/view': 6.43.8
+  '@codemirror/language': 6.12.4
+  '@codemirror/commands': 6.10.4
+  '@codemirror/lang-markdown': 6.5.2
+  '@lezer/common': 1.5.2
+  '@lezer/markdown': 1.7.2
+  '@lezer/highlight': 1.2.3
+
   # the design system (packages/ui)
   #
   # `cva` is the variant plumbing shadcn uses, taken on its own: ~1 kB, no

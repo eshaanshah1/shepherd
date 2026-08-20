@@ -28,7 +28,7 @@
     { "path": "../../extensions/claude-code" },
     { "path": "../../extensions/tasks" },
     { "path": "../../extensions/worktree-hook" },
-    { "path": "../../extensions/github" },
+    { "path": "../../extensions/github" }, { "path": "../../extensions/scratch" },
     { "path": "../../extensions/transcripts" }
   ]
 }

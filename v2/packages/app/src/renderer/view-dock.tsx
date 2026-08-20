@@ -7,6 +7,7 @@ import {
   IconChevronRight,
   IconEye,
   IconGitPullRequest,
+  IconNotes,
   IconPlus,
   IconSearch,
   IconSettings,
@@ -879,6 +880,7 @@ const ACTION_ICONS: Readonly<Record<string, ComponentType<TablerIconProps>>> = {
   plus: IconPlus,
   settings: IconSettings,
   'pull-request': IconGitPullRequest,
+  notes: IconNotes,
 };
 
 /**
