@@ -106,10 +106,17 @@ export const scratchTheme: Extension = EditorView.theme({
     verticalAlign: 'middle',
     borderTop: '1px solid var(--sh-line)',
   },
+  /*
+   * PLACEMENT only. How the box looks is `@shepherd/ui`'s checkbox.css — this
+   * rule exists because a control sitting in a run of text needs to be told
+   * where the text's baseline is, which the primitive cannot know.
+   *
+   * Nothing here may name a colour or a size: the moment this file did, the
+   * scratch pane would have a checkbox that stopped following the palette the
+   * first time either changed.
+   */
   '.sh-scratch-check': {
     marginRight: 'var(--sh-space-xs)',
-    verticalAlign: 'baseline',
-    accentColor: 'var(--sh-sky)',
-    cursor: 'pointer',
+    verticalAlign: 'text-bottom',
   },
 });

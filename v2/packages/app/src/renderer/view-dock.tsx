@@ -7,7 +7,6 @@ import {
   IconChevronRight,
   IconEye,
   IconGitPullRequest,
-  IconNotes,
   IconPlus,
   IconSearch,
   IconSettings,
@@ -22,6 +21,7 @@ import {
   IconButton,
   Menu,
   Modal,
+  NAMED_GLYPHS,
   Row,
   SectionLabel,
   StateMark,
@@ -880,7 +880,6 @@ const ACTION_ICONS: Readonly<Record<string, ComponentType<TablerIconProps>>> = {
   plus: IconPlus,
   settings: IconSettings,
   'pull-request': IconGitPullRequest,
-  notes: IconNotes,
 };
 
 /**
@@ -892,7 +891,21 @@ const ACTION_ICONS: Readonly<Record<string, ComponentType<TablerIconProps>>> = {
  * that opens nothing.
  */
 export function contributedIcon(name: string | undefined): ComponentType<TablerIconProps> | undefined {
-  return name === undefined ? undefined : ACTION_ICONS[name];
+  /*
+   * Two tables, and a name lives in exactly ONE of them.
+   *
+   * `NAMED_GLYPHS` in `@shepherd/ui` is the allow-list §7 describes, and it is
+   * where a new contributed name goes — it lives in the design system so a
+   * contributed UI can resolve a name without importing Tabler, which the
+   * boundaries forbid. `ACTION_ICONS` above predates it and still holds the
+   * names that were here first.
+   *
+   * Consulted in that order so nothing already resolving changes, and consulted
+   * at all so the allow-list the repo documents is the one that works. Folding
+   * the older table into the newer one is worth doing and is not this change.
+   */
+  if (name === undefined) return undefined;
+  return ACTION_ICONS[name] ?? NAMED_GLYPHS[name];
 }
 
 /**

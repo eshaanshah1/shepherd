@@ -102,6 +102,27 @@ describe('what a scratch pane draws', () => {
     expect(rendered('<script>alert(1)</script>')).toBe('<script>alert(1)</script>');
   });
 
+  it('draws a bare checkbox, which markdown does not have but people type', () => {
+    expect(rendered('[] ship it')).toBe('☐ ship it');
+    expect(rendered('[ ] ship it')).toBe('☐ ship it');
+    expect(rendered('[x] shipped')).toBe('☐ shipped');
+  });
+
+  it('does NOT draw a bare bracket pair as a link', () => {
+    // `[x]` parses as a shortcut reference Link with no URL. Drawn as a link it
+    // was a blue underlined `x`, which is what a dashless checkbox looked like.
+    expect(rendered('see [ref] there')).toBe('see [ref] there');
+  });
+
+  it('still draws a real inline link as its text alone', () => {
+    // The negative control for the rule above: a Link WITH a URL is still a link.
+    expect(rendered('[the docs](https://x.com)')).toBe('the docs');
+  });
+
+  it('leaves a bracket pair that is a link label alone', () => {
+    expect(rendered('[x](https://x.com)')).toBe('x');
+  });
+
   it('leaves prose exactly as typed', () => {
     expect(rendered('nothing special here')).toBe('nothing special here');
   });

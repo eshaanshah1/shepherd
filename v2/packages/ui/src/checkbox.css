@@ -1,0 +1,104 @@
+/*
+ * Checkbox.
+ *
+ * A box that fills, and nothing moves. The check is drawn at full size in both
+ * states and revealed by `opacity` on the MARK alone — not on the control, which
+ * is §10's dimming refusal — so the box cannot change size, gain a border, or
+ * shift the text beside it when it is ticked. A list of ten of these must not
+ * reflow as you work down it.
+ *
+ * Every colour is a ROLE, and the pair is `Switch`'s: the empty box is the same
+ * `sunken` surface a field uses, so an unticked box and an empty input read as
+ * the same kind of "nothing here yet"; the filled box is `sky`, which is the one
+ * colour in this app that means "you did this".
+ */
+
+.sh-ui-checkbox {
+  /*
+   * Sized by the TEXT, not by the control scale.
+   *
+   * `--sh-control-sm` is 20px, which is right for a control that sits in a row
+   * of its own and wrong for one that sits in a sentence: beside 14px text a
+   * 20px box is the largest thing on the line and reads as a button somebody
+   * dropped into a paragraph. `1em` makes it the size of whatever it is written
+   * among, which is the only sizing that is right in both places.
+   *
+   * Exposed as a property so a consumer that IS a form row can pin it to a
+   * control metric — the pattern `--sh-ui-pill-height` and
+   * `--sh-ui-textarea-min` already follow.
+   */
+  --sh-ui-checkbox-size: 1em;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: var(--sh-ui-checkbox-size);
+  height: var(--sh-ui-checkbox-size);
+  padding: 0;
+  border: var(--sh-hairline) solid var(--sh-line);
+  /* Tracks the box: a fixed 5px on a 14px square is nearly a circle. */
+  border-radius: calc(var(--sh-ui-checkbox-size) / 4);
+  background: var(--sh-sunken);
+  color: var(--sh-text-on-wool);
+  cursor: pointer;
+  position: relative;
+  transition: background var(--sh-motion), border-color var(--sh-motion);
+}
+
+.sh-ui-checkbox:hover:not(:disabled) {
+  background: var(--sh-fill-hover);
+}
+
+.sh-ui-checkbox:focus-visible {
+  outline: none;
+  box-shadow: var(--sh-focus-ring);
+}
+
+.sh-ui-checkbox[aria-checked='true'] {
+  background: var(--sh-sky);
+  border-color: var(--sh-sky);
+}
+
+.sh-ui-checkbox:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+/*
+ * A 44px target on a coarse pointer, from an invisible pseudo-element rather
+ * than from growing the drawn box — §9's rule. It is centred on the control, so
+ * a box in a text line does not steal the line above it.
+ */
+@media (pointer: coarse) {
+  .sh-ui-checkbox::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 44px;
+    height: 44px;
+    transform: translate(-50%, -50%);
+  }
+}
+
+.sh-ui-checkbox__mark {
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* Present in both states so the box's contents never change size; only its
+     visibility does. */
+  opacity: 0;
+  transition: opacity var(--sh-motion);
+}
+
+.sh-ui-checkbox[aria-checked='true'] .sh-ui-checkbox__mark {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sh-ui-checkbox,
+  .sh-ui-checkbox__mark {
+    transition: none;
+  }
+}

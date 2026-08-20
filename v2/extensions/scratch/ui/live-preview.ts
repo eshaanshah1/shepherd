@@ -66,6 +66,15 @@ const TASK_LINE = /^\s*[-*+]\s+\[[ xX]\]/;
 /** An unordered list marker. Ordered ones keep their digits. */
 const BULLET_MARK = /^[-*+]$/;
 
+/**
+ * A checkbox with no list marker in front of it, at the head of a line.
+ *
+ * `[]` as well as `[ ]` and `[x]`, because somebody typing fast does not put the
+ * space in. Requires whitespace or end-of-line after it so `[x](url)` — a real
+ * link whose text happens to be `x` — is untouched.
+ */
+const BARE_CHECKBOX = /^(\s{0,3})(\[[ xX]?\])(?=\s|$)/;
+
 const hide = Decoration.replace({});
 
 /**
@@ -123,6 +132,20 @@ function throughSpace(state: EditorState, from: number, to: number): number {
   return end;
 }
 
+/**
+ * The task's own words, as the box's accessible name.
+ *
+ * A checkbox named "checkbox" tells a screen reader nothing, and this is the
+ * only text that says what ticking it means. Truncated because a name is read
+ * aloud and a paragraph is not a name.
+ */
+function taskLabel(state: EditorState, after: number): string {
+  const line = state.doc.lineAt(Math.min(after, state.doc.length));
+  const text = state.doc.sliceString(after, line.to).trim();
+  if (text === '') return 'task';
+  return text.length > 80 ? `${text.slice(0, 79)}…` : text;
+}
+
 /** Does any selection range touch `[from, to]`? Inclusive at both ends. */
 function touches(state: EditorState, from: number, to: number): boolean {
   return state.selection.ranges.some((range) => range.from <= to && range.to >= from);
@@ -157,9 +180,23 @@ export function buildDecorations(
       enter: (node) => {
         const blockClass = BLOCK_CLASS[node.name];
         if (blockClass !== undefined) {
-          if (touchesLines(state, node.from, node.to)) return false;
+          /*
+           * STYLING IS IMMEDIATE; ONLY MARKER HIDING WAITS.
+           *
+           * The line class goes on whether or not the selection is here, so a
+           * heading looks like a heading from the first character typed after
+           * its `#`. What waits for the caret to leave is the `#` itself, and
+           * that half has to wait: hiding it under the caret shifts the text
+           * being typed sideways mid-word.
+           *
+           * The first version withheld both, which made a heading appear only
+           * when you pressed Enter — technically the caret rule, and wrong
+           * about what the rule is FOR. The rule exists so the characters under
+           * the caret do not move; a font size is not a character.
+           */
           found.push(Decoration.line({ class: blockClass }).range(node.from));
-          return true;
+          // Not descending is what leaves the markers visible.
+          return !touchesLines(state, node.from, node.to);
         }
 
         if (node.name === 'HorizontalRule') {
@@ -169,16 +206,42 @@ export function buildDecorations(
         }
 
         if (node.name === 'TaskMarker') {
-          if (touchesLines(state, node.from, node.to)) return false;
+          /*
+           * Per NODE, not per line — see `ListMark` below for the reasoning the
+           * two of them share.
+           */
+          if (touches(state, node.from, node.to)) return false;
           // The marker is `[ ]` or `[x]`; the character is one in from the left.
           const at = node.from + 1;
           const checked = state.doc.sliceString(at, at + 1).toLowerCase() === 'x';
-          found.push(Decoration.replace({ widget: new CheckboxWidget(checked, at) }).range(node.from, node.to));
+          found.push(
+            Decoration.replace({
+              widget: new CheckboxWidget(checked, at, taskLabel(state, node.to)),
+            }).range(node.from, node.to),
+          );
           return false;
         }
 
         if (node.name === 'ListMark') {
-          if (touchesLines(state, node.from, node.to)) return false;
+          /*
+           * Per NODE, not per line — the rule splits by what the marker BECOMES.
+           *
+           * A marker that turns into a widget (a bullet, a checkbox) should
+           * become it as soon as the thing exists, because that is the whole
+           * feedback: you typed a checkbox and you got a checkbox. Per line, a
+           * single-line document showed nothing at all until you pressed Enter
+           * to have somewhere else to put the caret — which is precisely what it
+           * looked like from the outside: "checkboxes don't work".
+           *
+           * A marker that merely DISAPPEARS (`#`, `>`) stays per line, because
+           * hiding it reflows the text under the caret mid-word and buys nothing
+           * — the heading is already styled by then.
+           *
+           * The caret can never be inside one of these at the moment it applies:
+           * a `TaskMarker` needs content after it to parse at all, so by the
+           * time the node exists the caret is past it.
+           */
+          if (touches(state, node.from, node.to)) return false;
           const line = state.doc.lineAt(node.from);
           // A task's marker is its checkbox. Drawing a bullet as well would
           // give every checkbox a redundant dot in front of it.
@@ -221,6 +284,21 @@ export function buildDecorations(
           return false;
         }
 
+        /*
+         * A bracket pair is not a link just because lezer called it one.
+         *
+         * `[x] this is done` parses as `Link` with two `LinkMark`s and NO `URL`
+         * — a shortcut reference, which CommonMark only resolves if a matching
+         * `[x]: …` definition exists somewhere, and lezer does not check. Styled
+         * as a link it drew a blue underlined `x`, which is what a checkbox
+         * somebody typed without a dash actually looked like.
+         *
+         * So a `Link` needs a `URL` child to be drawn as one. Returning false
+         * leaves its brackets visible, which is the honest rendering of text
+         * that is only text.
+         */
+        if (node.name === 'Link' && node.node.getChild('URL') === null) return false;
+
         const inlineClass = INLINE_CLASS[node.name];
         if (inlineClass === undefined) return true;
         if (touches(state, node.from, node.to)) return false;
@@ -228,6 +306,41 @@ export function buildDecorations(
         return true;
       },
     });
+  }
+
+  /*
+   * A checkbox with no list marker — `[ ] thing` — which markdown does not have.
+   *
+   * This is a deliberate departure and the only one in this file. GFM requires a
+   * list marker (`- [ ] thing`), and lezer produces NO node at all for a bare
+   * bracket pair, so the syntax tree cannot help: this is a line scan.
+   *
+   * It is here because it is what people type. A person writing a to-do writes
+   * `[] ship it`, the same instinct that says they will never hand-type a
+   * markdown table — and the alternative was worse than nothing, since `[x]` on
+   * its own parses as a shortcut reference link and drew as one.
+   *
+   * The cost, and it is real: a bare checkbox is not a checkbox anywhere else.
+   * Pasted into GitHub it stays as the characters you typed.
+   */
+  for (const span of spans) {
+    let line = state.doc.lineAt(Math.min(span.from, state.doc.length));
+    while (line.from <= span.to) {
+      const bare = BARE_CHECKBOX.exec(line.text);
+      if (bare !== null) {
+        const from = line.from + (bare[1] ?? '').length;
+        const to = from + (bare[2] ?? '').length;
+        if (!touches(state, from, to)) {
+          const at = from + 1;
+          const checked = state.doc.sliceString(at, at + 1).toLowerCase() === 'x';
+          found.push(
+            Decoration.replace({ widget: new CheckboxWidget(checked, at, taskLabel(state, to)) }).range(from, to),
+          );
+        }
+      }
+      if (line.to >= state.doc.length) break;
+      line = state.doc.lineAt(line.to + 1);
+    }
   }
 
   return Decoration.set(found, true);
