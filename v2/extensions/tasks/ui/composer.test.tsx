@@ -729,8 +729,9 @@ describe('the model picker', () => {
   it('draws every model the answer carried, and NOTHING else', async () => {
     await open();
     // No *Default* row: there is no "default" model to pick, there is a model you
-    // get by default and it is the one showing on the trigger.
-    expect(options()).toEqual(MODEL_ROWS.map((row) => `${row.label}${row.description}`));
+    // get by default and it is the one showing on the trigger. Labels only — the
+    // kind's own gloss on each model is not a thing the list draws.
+    expect(options()).toEqual(MODEL_ROWS.map((row) => row.label));
   });
 
   it('opens PRE-FILLED with the resolved default, and sends it', async () => {

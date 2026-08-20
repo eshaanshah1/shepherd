@@ -3,6 +3,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { mount } from './test-dom.ts';
 import { Modal, type ModalSize } from './modal.tsx';
 import { Button } from './button.tsx';
+import { Composer } from './composer.tsx';
+import { Select } from './select.tsx';
+import { rulesMentioning } from './css-rules.ts';
 import './styles.css';
 
 const SIZES: ModalSize[] = ['md', 'lg'];
@@ -134,6 +137,35 @@ describe('Modal', () => {
     expect(hiddenAncestor).not.toBeNull();
     expect(hiddenAncestor?.contains(el)).toBe(false);
 
+    dom.unmount();
+  });
+
+  /**
+   * A composer's menus float free, and this is where that is decided.
+   *
+   * `overflow: auto` makes this element a scroll container, and a scroll container
+   * clips every absolutely positioned descendant at its padding edge — so a
+   * `Select`'s list, anchored to a control in the card's last row, is cut off at
+   * the card's bottom no matter what the list does. Asserted on the RULE rather
+   * than through layout, because jsdom does not clip anything and would report a
+   * fixed version and a broken one identically.
+   */
+  it('does not clip a composer — a menu opened in the card floats over the app', () => {
+    const declared = rulesMentioning('.sh-ui-modal')
+      .filter((rule) => rule.selectorText.includes(':has(.sh-ui-composer)'))
+      .map((rule) => rule.style.getPropertyValue('overflow'));
+    expect(declared).toContain('visible');
+
+    // …and the composer really is what the selector answers about, so the rule
+    // cannot quietly stop matching.
+    const dom = mount(
+      <Modal open onOpenChange={() => {}} title="New task" size="lg">
+        <Composer>
+          <Select value="a" options={[{ value: 'a', label: 'A' }]} label="Model" onChange={() => {}} />
+        </Composer>
+      </Modal>,
+    );
+    expect(content().querySelector('.sh-ui-composer')).not.toBeNull();
     dom.unmount();
   });
 

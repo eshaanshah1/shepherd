@@ -176,9 +176,7 @@ function readSuggestions(value: unknown): readonly RepoSuggestion[] {
  * A literal list rather than a query: these are not a capability something
  * advertises, they are the shapes `provision` knows how to make.
  */
-const PLACEMENTS = [
-  { value: 'worktree', label: 'worktree', description: 'a cut of its own, per repo' },
-] as const;
+const PLACEMENTS = [{ value: 'worktree', label: 'worktree' }] as const;
 
 export function TaskComposer({
   invoke,
@@ -222,7 +220,7 @@ export function TaskComposer({
    * id hardcoded here would go stale the week the vendor ships a tier (D11).
    */
   const [model, setModel] = useState<string | null>(null);
-  const [models, setModels] = useState<readonly { value: string; label: string; description?: string }[]>([]);
+  const [models, setModels] = useState<readonly { value: string; label: string }[]>([]);
 
   /**
    * Where the work happens.
@@ -294,8 +292,7 @@ export function TaskComposer({
           const id = record['value'];
           const label = record['label'];
           if (typeof id !== 'string' || typeof label !== 'string') return [];
-          const kind = record['description'];
-          return [{ value: id, label, ...(typeof kind === 'string' ? { description: kind } : {}) }];
+          return [{ value: id, label }];
         }),
       );
     });

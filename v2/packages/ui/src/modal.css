@@ -94,6 +94,25 @@
   border: 0;
   border-radius: 0;
   padding: 0;
+
+  /*
+   * And it stops CLIPPING, which is the half that is about behaviour rather than
+   * paint.
+   *
+   * `overflow: auto` above makes this box a scroll container, and a scroll
+   * container clips every absolutely positioned descendant at its padding edge —
+   * including a `Select`'s list, which is anchored to a control in the card's last
+   * row and therefore always opens past that edge. The list is a MENU: it is
+   * supposed to leave the card and float over whatever is behind it.
+   *
+   * Affordable because a composer cannot outgrow its box: the brief is a
+   * `PromptField`, and `textarea.css` caps it at `--sh-ui-textarea-max` from its
+   * `maxLines`. Nothing else in the card grows. A future contribution that scrolls
+   * inside here has to scroll its own band (the repo picker's list already does)
+   * rather than ask this element to do it — a scroll box HERE is a clip box for
+   * everything the card floats.
+   */
+  overflow: visible;
 }
 
 /* The scrollbar, matching everything else in the app: a thumb and nothing else. */
