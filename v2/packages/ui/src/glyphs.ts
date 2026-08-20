@@ -17,6 +17,7 @@ import {
   IconLayoutRows,
   IconMaximize,
   IconPlus,
+  IconNotes,
   IconSearch,
   IconShip,
   IconTrash,
@@ -59,6 +60,12 @@ export const NAMED_GLYPHS: Readonly<Record<string, ComponentType<TablerIconProps
   'chevron-left': IconChevronLeft,
   close: IconX,
   dots: IconDots,
+  /*
+   * A page of notes, for the scratch pane. The one glyph here that stands for a
+   * PLACE rather than an action or a state — a tab wearing it is saying what it
+   * is, which is what a tab with no agent has to fall back on.
+   */
+  notes: IconNotes,
   eye: IconEye,
   /*
    * Two folders, and the pair IS the fact a repo picker has to state: filled =

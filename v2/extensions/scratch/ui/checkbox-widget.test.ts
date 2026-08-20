@@ -8,24 +8,49 @@ function view(doc: string): EditorView {
 }
 
 describe('the checkbox widget', () => {
-  it('draws an input that is checked when the marker says so', () => {
-    expect((new CheckboxWidget(true, 3).toDOM() as HTMLInputElement).checked).toBe(true);
+  it('draws the design system control, not a browser-drawn input', () => {
+    // An <input type="checkbox"> renders a box no token can reach — its fill,
+    // radius and check are the platform's, so it was the one thing in the pane
+    // that followed neither the palette nor the theme.
+    const el = new CheckboxWidget(true, 3, 'ship it').toDOM();
+    expect(el.tagName).toBe('BUTTON');
+    expect(el.classList.contains('sh-ui-checkbox')).toBe(true);
   });
 
-  it('draws an unchecked input for an empty marker', () => {
-    expect((new CheckboxWidget(false, 3).toDOM() as HTMLInputElement).checked).toBe(false);
+  it('says it is checked where a screen reader can read it', () => {
+    expect(new CheckboxWidget(true, 3, 'ship it').toDOM().getAttribute('aria-checked')).toBe('true');
+    expect(new CheckboxWidget(false, 3, 'ship it').toDOM().getAttribute('aria-checked')).toBe('false');
+  });
+
+  it('is named for the task, not for itself', () => {
+    const el = new CheckboxWidget(false, 3, 'ship it').toDOM();
+    expect(el.getAttribute('aria-label')).toBe('ship it');
+    expect(el.getAttribute('title')).toBe('ship it');
+  });
+
+  it('stays out of the tab order — the document is the tab stop', () => {
+    // A task list of twenty would otherwise put twenty stops between the text
+    // and whatever comes after the pane.
+    expect((new CheckboxWidget(false, 3, 'x').toDOM() as HTMLButtonElement).tabIndex).toBe(-1);
+  });
+
+  it('is not editable content, inside a contenteditable', () => {
+    expect(new CheckboxWidget(false, 3, 'x').toDOM().getAttribute('contenteditable')).toBe('false');
   });
 
   it('is equal to another widget with the same state and position', () => {
     // eq drives whether CodeMirror reuses the DOM node. Getting it wrong makes
     // every keystroke rebuild every checkbox on screen.
-    expect(new CheckboxWidget(true, 3).eq(new CheckboxWidget(true, 3))).toBe(true);
-    expect(new CheckboxWidget(true, 3).eq(new CheckboxWidget(false, 3))).toBe(false);
-    expect(new CheckboxWidget(true, 3).eq(new CheckboxWidget(true, 9))).toBe(false);
+    expect(new CheckboxWidget(true, 3, 'a').eq(new CheckboxWidget(true, 3, 'a'))).toBe(true);
+    expect(new CheckboxWidget(true, 3, 'a').eq(new CheckboxWidget(false, 3, 'a'))).toBe(false);
+    expect(new CheckboxWidget(true, 3, 'a').eq(new CheckboxWidget(true, 9, 'a'))).toBe(false);
+    // The label is part of it too: a task whose words changed is a box whose
+    // accessible name changed, and reusing the node would keep the old one.
+    expect(new CheckboxWidget(true, 3, 'a').eq(new CheckboxWidget(true, 3, 'b'))).toBe(false);
   });
 
   it('ignores its own DOM events so CodeMirror does not treat them as edits', () => {
-    expect(new CheckboxWidget(true, 3).ignoreEvent()).toBe(true);
+    expect(new CheckboxWidget(true, 3, 'x').ignoreEvent()).toBe(true);
   });
 
   it('toggles an unchecked marker to x', () => {

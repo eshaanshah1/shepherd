@@ -8,6 +8,12 @@ import { scratchExtensions } from './editor.ts';
 /** The layout store's number, so the app has one save cadence rather than two. */
 export const SAVE_DEBOUNCE_MS = 400;
 
+/**
+ * `layout.rename`, named here rather than imported: values do not cross between
+ * packages (`boundaries.js`), so a command id is re-stated and only types
+ * travel. The same convention the service half follows for `layout.newTab`.
+ */
+const LAYOUT_RENAME = 'layout.rename';
 
 export function readScratchId(state: unknown): string | undefined {
   if (typeof state !== 'object' || state === null) return undefined;
@@ -21,7 +27,43 @@ export function wordCount(text: string): number {
   return words === null ? 0 : words.length;
 }
 
-export function ScratchPane({ state, invoke }: ExtensionPaneProps): ReactElement {
+/** What the tab strip calls a pane with nothing to name it. */
+export const FALLBACK_TITLE = 'scratch';
+
+/** Long enough to be a name, short enough that a tab stays a tab. */
+const TITLE_MAX = 40;
+
+/**
+ * The tab's name, taken from a leading heading.
+ *
+ * The FIRST non-empty line, and only if it is an ATX heading. Not the first line
+ * of prose: a paragraph's opening words are a sentence fragment, and a strip of
+ * those reads worse than a strip of `scratch` because each one looks like it
+ * might be a name. A heading is the one thing in the document the writer
+ * deliberately made a label.
+ *
+ * Leading blank lines are skipped because people leave them, and a document that
+ * opens with a blank line has still been given a heading.
+ *
+ * `undefined` means "nothing here is a name" — the caller falls back rather than
+ * this function inventing one, so there is one place the fallback is decided.
+ */
+export function headingTitle(text: string): string | undefined {
+  for (const line of text.split('\n')) {
+    if (line.trim() === '') continue;
+    // 1 to 6 hashes, then whitespace, then something. `#foo` is not a heading in
+    // CommonMark and must not become one here.
+    const heading = /^ {0,3}(#{1,6})\s+(.*)$/.exec(line);
+    if (heading === null) return undefined;
+    // A closed ATX heading ends in its own hashes: `# Title #`. They are syntax.
+    const inner = (heading[2] ?? '').replace(/\s+#+\s*$/, '').trim();
+    if (inner === '') return undefined;
+    return inner.length > TITLE_MAX ? `${inner.slice(0, TITLE_MAX - 1).trimEnd()}…` : inner;
+  }
+  return undefined;
+}
+
+export function ScratchPane({ state, paneId, invoke }: ExtensionPaneProps): ReactElement {
   const id = readScratchId(state);
   const host = useRef<HTMLDivElement | null>(null);
   const view = useRef<EditorView | null>(null);
@@ -53,6 +95,22 @@ export function ScratchPane({ state, invoke }: ExtensionPaneProps): ReactElement
     let timer: ReturnType<typeof setTimeout> | null = null;
     let live = true;
 
+    /*
+     * The name the tab is currently wearing, so a rename only goes out when the
+     * heading actually CHANGES. Without this every save would rename the pane,
+     * and a rename writes the layout — which is the debounced whole-tree
+     * re-encode this component already goes out of its way not to trigger per
+     * keystroke.
+     */
+    let titled: string | null = null;
+
+    const retitle = (text: string): void => {
+      const next = headingTitle(text) ?? FALLBACK_TITLE;
+      if (next === titled) return;
+      titled = next;
+      void latestInvoke.current(LAYOUT_RENAME, { pane: paneId, title: next });
+    };
+
     const flush = (): void => {
       if (timer !== null) {
         clearTimeout(timer);
@@ -62,6 +120,7 @@ export function ScratchPane({ state, invoke }: ExtensionPaneProps): ReactElement
       const text = pending;
       pending = null;
       void latestInvoke.current(SCRATCH_COMMANDS.write, { id, text });
+      retitle(text);
     };
 
     const schedule = (next: string): void => {
@@ -75,6 +134,13 @@ export function ScratchPane({ state, invoke }: ExtensionPaneProps): ReactElement
       if (!live) return;
       if (!read.ok) setProblem('could not read this scratch');
       const doc = read.ok ? ((read.value as { text?: string }).text ?? '') : '';
+      /*
+       * On mount too, not only on edit: a pane restored from a layout carries
+       * whatever name it was last given, so a buffer whose heading changed
+       * elsewhere — or whose heading this build learned to read — would keep a
+       * stale name until the next keystroke.
+       */
+      retitle(doc);
 
       view.current = new EditorView({
         state: EditorState.create({
@@ -103,7 +169,7 @@ export function ScratchPane({ state, invoke }: ExtensionPaneProps): ReactElement
       view.current?.destroy();
       view.current = null;
     };
-  }, [id]);
+  }, [id, paneId]);
 
 
 

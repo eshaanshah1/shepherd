@@ -51,6 +51,7 @@ export { ICON_STROKE, Icon, iconSizes, type IconProps, type IconSize } from './i
 // Controls
 export { Button, buttonVariants, type ButtonProps, type ButtonSize, type ButtonVariant } from './button.tsx';
 export { IconButton, type IconButtonProps, type IconButtonSize } from './icon-button.tsx';
+export { Checkbox, checkboxDOM, type CheckboxProps } from './checkbox.tsx';
 export { Switch, type SwitchProps } from './switch.tsx';
 export { Select, DEFAULT_OPTION_LABEL, type SelectOption, type SelectProps } from './select.tsx';
 export { KeyCap, type KeyCapProps } from './keycap.tsx';

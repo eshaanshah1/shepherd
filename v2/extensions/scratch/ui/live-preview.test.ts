@@ -26,6 +26,28 @@ function ranges(doc: string, caret?: number, head?: number): [number, number][] 
 
 const decorated = (doc: string, caret?: number, head?: number): boolean => ranges(doc, caret, head).length > 0;
 
+/** Is the marker at `[0, n]` replaced — i.e. gone from the screen? */
+function markerHidden(doc: string, caret?: number, head?: number): boolean {
+  const state = stateOf(doc, caret, head);
+  let hidden = false;
+  buildDecorations(state).between(0, doc.length, (from, to, deco) => {
+    const spec = deco.spec as { class?: string; widget?: unknown };
+    // A replacement covers characters; a line class covers none.
+    if (to > from && spec.class === undefined && spec.widget === undefined) hidden = true;
+  });
+  return hidden;
+}
+
+/** Is the line carrying a style class, whatever the markers are doing? */
+function lineStyled(doc: string, caret?: number, head?: number): boolean {
+  const state = stateOf(doc, caret, head);
+  let styled = false;
+  buildDecorations(state).between(0, doc.length, (from, to, deco) => {
+    if (from === to && (deco.spec as { class?: string }).class !== undefined) styled = true;
+  });
+  return styled;
+}
+
 describe('live preview, with the selection away from the construct', () => {
   it('decorates a heading', () => expect(decorated('# hi\n\nx', 6)).toBe(true));
   it('decorates bold', () => expect(decorated('**hi**\n\nx', 8)).toBe(true));
@@ -72,20 +94,34 @@ describe('live preview, with the selection away from the construct', () => {
 });
 
 describe('the caret rule', () => {
-  it('shows a heading raw when the caret is on its line', () => {
-    expect(decorated('# hi\n\nx', 2)).toBe(false);
+  it('styles a heading while the caret is still on it, and keeps the # visible', () => {
+    // Styling is immediate so a heading looks like one from the first character
+    // typed; hiding the `#` waits, because removing it under the caret shifts
+    // the text being typed sideways mid-word.
+    expect(lineStyled('# hi\n\nx', 2)).toBe(true);
+    expect(markerHidden('# hi\n\nx', 2)).toBe(false);
+  });
+
+  it('hides the # once the caret leaves the line', () => {
+    expect(markerHidden('# hi\n\nx', 6)).toBe(true);
   });
 
   it('shows the heading rendered once the caret leaves that line', () => {
     expect(decorated('# hi\n\nx', 6)).toBe(true);
   });
 
-  it('is per LINE for a block: caret at the end of the line is still raw', () => {
-    expect(decorated('# hi\n\nx', 4)).toBe(false);
+  it('is per LINE for a block: the marker stays at the end of the line', () => {
+    expect(markerHidden('# hi\n\nx', 4)).toBe(false);
   });
 
-  it('is per LINE for a block: caret at the very start is still raw', () => {
-    expect(decorated('# hi\n\nx', 0)).toBe(false);
+  it('is per LINE for a block: the marker stays at the very start', () => {
+    expect(markerHidden('# hi\n\nx', 0)).toBe(false);
+  });
+
+  it('keeps a bullet marker visible while the caret is on its line', () => {
+    // The same split, for the construct where it matters most: a `-` replaced by
+    // a bullet under the caret moves every character after it.
+    expect(markerHidden('- one\n\nx', 3)).toBe(false);
   });
 
   it('is per NODE for an inline: other bold on the same line stays rendered', () => {
@@ -100,10 +136,11 @@ describe('the caret rule', () => {
     expect(decorated('**hi**\n\nx', 0, 6)).toBe(false);
   });
 
-  it('decorates nothing when the whole document is selected', () => {
-    // atomicRanges interacts with selections, not only with the caret.
+  it('hides no marker anywhere when the whole document is selected', () => {
+    // atomicRanges interacts with selections, not only with the caret — nothing
+    // inside a selection may vanish, or select-all-then-type loses characters.
     const doc = '# hi\n\n**bold** and `code`';
-    expect(decorated(doc, 0, doc.length)).toBe(false);
+    expect(markerHidden(doc, 0, doc.length)).toBe(false);
   });
 });
 
@@ -118,4 +155,40 @@ describe('live preview survives', () => {
   it('a caret on a fence opening line', () => expect(() => ranges('```js\nx\n```', 3)).not.toThrow());
   it('nested lists', () => expect(() => ranges('- a\n  - b\n    - c', 16)).not.toThrow());
   it('a document of only newlines', () => expect(() => ranges('\n\n\n\n', 2)).not.toThrow());
+});
+
+describe('a checkbox with no list marker', () => {
+  it('is decorated at the head of a line', () => {
+    expect(decorated('[] ship it\n\nx', 12)).toBe(true);
+  });
+
+  it('is left raw while the selection touches it', () => {
+    expect(markerHidden('[] ship it', 1)).toBe(false);
+  });
+
+  it('is NOT decorated mid-line, where it is just brackets', () => {
+    expect(decorated('see [] there\n\nx', 14)).toBe(false);
+  });
+
+  it('is NOT decorated when it is a link label', () => {
+    // `[x](url)` is a real link whose text is `x`; the lookahead protects it.
+    const found = ranges('[x](https://x.com)\n\ny', 20);
+    const widgets: string[] = [];
+    buildDecorations(stateOf('[x](https://x.com)\n\ny', 20)).between(0, 18, (f, t, d) => {
+      const w = (d.spec as { widget?: { constructor: { name: string } } }).widget;
+      if (w) widgets.push(w.constructor.name);
+    });
+    expect(found.length).toBeGreaterThan(0);
+    expect(widgets).not.toContain('CheckboxWidget');
+  });
+
+  it('does not double up on a real task line', () => {
+    // `- [ ] x` is handled by TaskMarker; the bare scan must not fire too.
+    const widgets: string[] = [];
+    buildDecorations(stateOf('- [ ] x\n\ny', 9)).between(0, 7, (f, t, d) => {
+      const w = (d.spec as { widget?: { constructor: { name: string } } }).widget;
+      if (w) widgets.push(w.constructor.name);
+    });
+    expect(widgets.filter((n) => n === 'CheckboxWidget')).toHaveLength(1);
+  });
 });

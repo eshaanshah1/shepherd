@@ -110,6 +110,7 @@ const PACKAGES = [
   'packages/ui',
   'packages/remote',
   'extensions/diagnostics',
+  'extensions/scratch',
   'extensions/agents-core',
   'extensions/claude-code',
   'extensions/tasks',
