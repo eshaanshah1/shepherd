@@ -191,6 +191,19 @@ export type ViewProvider =
        * lesson. Ignored for a `dock` view, which is always on screen.
        */
       readonly key?: string;
+      /**
+       * The verb `key` runs, for a `pane` surface.
+       *
+       * An overlay's key raises the overlay, which needs no verb — the shell
+       * owns that layer and toggling it is the whole action. A pane's cannot
+       * work that way: opening one usually means minting the SUBJECT it will
+       * show first, and nothing can rewrite a pane's `view.state` afterwards.
+       * So the key runs a command, and the command opens the pane with the
+       * subject already in hand.
+       *
+       * Ignored without a `key`, and ignored for `dock` and `overlay`.
+       */
+      readonly command?: string;
       /** Shown as the section/card heading. Falls back to the view type. */
       readonly title?: string;
       /**
@@ -257,6 +270,15 @@ export interface ExtensionPaneProps extends ExtensionViewProps {
   readonly state: unknown;
   /** The user is on this pane. Bind keys only while true. */
   readonly focused: boolean;
+  /**
+   * Which leaf this is.
+   *
+   * A pane that can be asked about before it closes has to be able to NAME
+   * itself: the shell holds the claims and the claim has to say which pane it
+   * belongs to. `state` cannot answer that — it is the subject, which two panes
+   * showing the same PR would share.
+   */
+  readonly paneId: string;
 }
 
 /**

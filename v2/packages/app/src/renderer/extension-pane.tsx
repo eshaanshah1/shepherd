@@ -58,6 +58,7 @@ export function ExtensionPane({
     () => ({
       state: view.state,
       focused,
+      paneId: String(pane.id),
       invoke: async (command: string, args?: unknown) => {
         if (bridge === null) return { ok: false as const, error: { code: 'unavailable', message: 'no bridge' } };
         const result = await bridge.invoke(view.type, command, args);
@@ -65,7 +66,7 @@ export function ExtensionPane({
       },
       done: onDone,
     }),
-    [bridge, view.type, view.state, focused, onDone],
+    [bridge, view.type, view.state, focused, onDone, pane.id],
   );
 
   return (

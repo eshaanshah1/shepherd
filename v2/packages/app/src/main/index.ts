@@ -29,6 +29,7 @@ import {
 import { LayoutStore, registerLayoutCommands } from '@shepherd/core/layout';
 import { AttentionStore, ViewingResolver, registerAttentionCommands } from '@shepherd/core';
 import { diagnosticsManifest } from '@shepherd/ext-diagnostics/manifest';
+import { scratchManifest } from '@shepherd/ext-scratch/manifest';
 import { agentsCoreManifest } from '@shepherd/ext-agents-core/manifest';
 import { claudeCodeManifest } from '@shepherd/ext-claude-code/manifest';
 import { tasksManifest } from '@shepherd/ext-tasks/manifest';
@@ -1283,6 +1284,7 @@ void app.whenReady().then(async () => {
   extensionHost.registerCommands();
   for (const manifest of [
     diagnosticsManifest,
+    scratchManifest,
     agentsCoreManifest,
     claudeCodeManifest,
     tasksManifest,
@@ -1322,6 +1324,7 @@ void app.whenReady().then(async () => {
   // rather than two that must agree.
   for (const manifest of [
     diagnosticsManifest,
+    scratchManifest,
     agentsCoreManifest,
     claudeCodeManifest,
     tasksManifest,

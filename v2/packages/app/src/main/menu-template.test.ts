@@ -63,6 +63,45 @@ describe('menu accelerators', () => {
   });
 });
 
+describe('undo and redo reach the page', () => {
+  /*
+   * `role: 'undo'` is an AppKit key equivalent that calls `webContents.undo()`
+   * — the browser's DOCUMENT undo. An editor pane keeps its history in its own
+   * state and never hears about it, so ⌘Z there does nothing or corrupts the
+   * buffer. No terminal pane ever noticed, because xterm has no undo.
+   */
+  const roles = (): Set<string> => {
+    const found = new Set<string>();
+    for (const item of flattenMenu(menuTemplate({ appName: 'Shep', isDev: false }))) {
+      if (item.role !== undefined) found.add(item.role);
+    }
+    return found;
+  };
+
+  it('has no undo ROLE', () => {
+    expect(roles()).not.toContain('undo');
+  });
+
+  it('has no redo ROLE', () => {
+    expect(roles()).not.toContain('redo');
+  });
+
+  it('keeps cut, copy, paste and select-all as roles — xterm reads their DOM events', () => {
+    // The negative control. Only the two with an in-page owner move.
+    for (const role of ['cut', 'copy', 'paste', 'selectAll']) {
+      expect(roles()).toContain(role);
+    }
+  });
+
+  it('does not replace them with commands either — ⌘Z belongs to the page', () => {
+    // A menu ITEM on ⌘Z would take the key back whatever it then did with it.
+    // The whole fix is that the accelerator stops existing here.
+    const keys = declaredAccelerators(menuTemplate({ appName: 'Shep', isDev: false }));
+    expect(keys).not.toContain('CmdOrCtrl+Z');
+    expect(keys).not.toContain('CmdOrCtrl+Shift+Z');
+  });
+});
+
 describe('menu commands', () => {
   it('offers every command exactly once', () => {
     expect(commandsInMenu(template).sort()).toEqual([...commandIds].sort());

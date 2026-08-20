@@ -1,0 +1,88 @@
+{
+  "name": "@shepherd/ext-scratch",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "shepherd.scratch \u2014 a pane that is a markdown document instead of a terminal.",
+  "//exports": "The split every extension makes: main imports ./manifest to register, the utility process imports the root (which pulls in `activate`), and ./ui is the half the renderer mounts.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./manifest": {
+      "types": "./src/manifest.ts",
+      "default": "./src/manifest.ts"
+    },
+    "./ui": {
+      "types": "./ui/index.ts",
+      "default": "./ui/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -b",
+    "test": "vitest run"
+  },
+  "//codemirror": "A private vendor dependency of this extension, on the same footing as github's @octokit/rest: the boundary lint is about which SHEPHERD packages an extension may reach, and a vendor editor is exactly the kind of thing an extension owns privately. Imported ONLY from ui/ \u2014 the service half has no DOM.",
+  "dependencies": {
+    "@shepherd/sdk": "workspace:*",
+    "@shepherd/ui": "workspace:*",
+    "@codemirror/state": "catalog:",
+    "@codemirror/view": "catalog:",
+    "@codemirror/language": "catalog:",
+    "@codemirror/commands": "catalog:",
+    "@codemirror/lang-markdown": "catalog:",
+    "@lezer/common": "catalog:",
+    "@lezer/markdown": "catalog:",
+    "@lezer/highlight": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "jsdom": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "@shepherd/design-tokens": "workspace:*"
+  },
+  "//shepherd": "The manifest, as an extension declares it. `src/manifest.ts` is the typed copy the host loads, and `manifest.test.ts` asserts the two are identical.",
+  "shepherd": {
+    "id": "shepherd.scratch",
+    "name": "Scratch",
+    "version": "0.1.0",
+    "api": "^1.0.0",
+    "activation": [
+      "onStartup"
+    ],
+    "permissions": [
+      "storage",
+      "views",
+      "layout",
+      "process.exec"
+    ],
+    "contributes": {
+      "commands": [
+        {
+          "id": "scratch.create",
+          "title": "Scratch: New"
+        },
+        {
+          "id": "scratch.read"
+        },
+        {
+          "id": "scratch.write"
+        },
+        {
+          "id": "scratch.close"
+        },
+        {
+          "id": "scratch.open"
+        }
+      ]
+    }
+  },
+  "//ui": "The UI half, imported ONLY by the renderer (boundaries.js). A separate subpath because it is a separate PROCESS: `.` is the service half and runs in a utility process with no DOM.",
+  "//tokens": "A DEV dependency, used only by theme.test.ts to assert that every var() the theme names is a token the design system actually publishes \u2014 a var() naming a token that does not exist fails silently at runtime. The theme itself names them as strings, the way every other view in the app does."
+}

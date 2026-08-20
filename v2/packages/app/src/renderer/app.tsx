@@ -32,6 +32,7 @@ import { FindBar } from './find-bar.tsx';
 import { SkyStrip } from './sky-strip.tsx';
 import { ViewDock, contributedIcon, raiseIcon } from './view-dock.tsx';
 import { ViewOverlay } from './view-overlay.tsx';
+import { PaneKeys } from './pane-keys.ts';
 import { SettingsScreen } from './settings-screen.tsx';
 import { useContributions } from './contributions.ts';
 import { useSetting } from './use-setting.ts';
@@ -870,6 +871,13 @@ export function App({
       )}
 
       <ViewOverlay views={contributions} bridge={viewsApi} />
+
+      {/*
+        The same job for panes, which run a verb rather than raising a layer.
+        Draws nothing; it exists to hold one keydown listener.
+      */}
+      <PaneKeys views={contributions} invoke={(command) => void invoke(command, {})} />
+
 
       {/*
         ⌘K. Mounted always and open only when asked — `Modal` renders nothing at

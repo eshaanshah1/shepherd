@@ -35,6 +35,7 @@ import './styles.css';
 import './sky-strip.css';
 import './task-card.css';
 import './review-pane.css';
+import './scratch-pane.css';
 import './settings.css';
 import './inspector.css';
 

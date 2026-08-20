@@ -4,6 +4,7 @@ import { SessionSearchView, TaskCard, TaskComposer, TranscriptCountRow } from '@
 import { DiagnosticsCard } from '@shepherd/ext-diagnostics/ui';
 import { WorktreeHookEditor } from '@shepherd/ext-worktree-hook/ui';
 import { ReviewPane } from '@shepherd/ext-github/ui';
+import { ScratchPane } from '@shepherd/ext-scratch/ui';
 
 /**
  * The in-proc React seam (§7b, ADR 0033): the one place a contributed view's
@@ -83,6 +84,7 @@ export function resolveExtensionRowUi(
  */
 export const EXTENSION_PANE_UI: Readonly<Record<string, ComponentType<ExtensionPaneProps>>> = {
   'github.review': ReviewPane,
+  'scratch.pad': ScratchPane,
 };
 
 export function resolveExtensionPaneUi(
