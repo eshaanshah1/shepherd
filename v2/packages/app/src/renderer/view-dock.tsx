@@ -858,6 +858,13 @@ function TreeView({
    * Falls back to the view type for the same reason `ComponentView` does: a
    * contribution that declared no title still has a list, and an unnamed list is
    * worse than one named by its id.
+   *
+   * Drawn only when the view's OWN list has rows in it. `Tasks` names the live
+   * list; the foot names itself (`Shipped`), and it is pinned to the bottom of
+   * the rail rather than sitting under the heading. With no live tasks the
+   * heading was a word floating over a hairline with nothing between it and the
+   * shipped drawer — it read as a label for the shipped work, which is the one
+   * thing it does not name.
    */
   const heading = views[0];
 
@@ -880,7 +887,7 @@ function TreeView({
 
   return (
     <section className="sh-side-view" data-view-type={base}>
-      {heading === undefined ? null : (
+      {heading === undefined || top.length === 0 ? null : (
         <SectionLabel role="heading" aria-level={2} data-testid="view-title">
           {heading.title ?? heading.type}
         </SectionLabel>

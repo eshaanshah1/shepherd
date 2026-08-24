@@ -793,7 +793,15 @@ body.sh-dragging {
  * and a heading in the settings screen or a modal has no such neighbour to line up
  * with.
  */
-.sh-rows > li > .sh-ui-section-label {
+.sh-rows > li > .sh-ui-section-label,
+/*
+ * ...and so does the SHELL's own heading, for the same reason and to the same
+ * number. It sits outside `.sh-rows` (it names the list rather than living in
+ * it), so the rule above missed it and a view's title stood one `space-md` left
+ * of every heading a contribution sent — `Tasks` and `Shipped`, one above the
+ * other, on two different left edges.
+ */
+.sh-side-view > .sh-ui-section-label {
   padding-inline-start: var(--sh-space-md);
 }
 

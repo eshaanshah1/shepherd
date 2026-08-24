@@ -1322,6 +1322,21 @@ describe('a tree section-s heading', () => {
     expect(view.container.querySelector('[data-view-type="shell.tree"]')).toBeNull();
     view.unmount();
   });
+
+  it('is not drawn when the live list is empty and only the foot has rows', async () => {
+    // `Tasks` names the live list. The foot names itself and is pinned to the
+    // bottom of the rail, so with nothing live the heading sat over a hairline
+    // with nothing under it and read as a label for the shipped drawer.
+    const view = mount(
+      <ViewDock
+        views={bridge(titled('shell.tree', 'Tasks'), [], [{ id: 'done', label: 'Shipped', foot: true }])}
+      />,
+    );
+    await settle();
+    expect(all(view.container, 'view-title')).toHaveLength(0);
+    expect(all(view.container, 'view-row')).toHaveLength(1);
+    view.unmount();
+  });
 });
 
 /**
