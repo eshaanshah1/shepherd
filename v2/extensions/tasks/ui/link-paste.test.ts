@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   LINK_PILL_FALLBACK,
-  claimsPaste,
+  claimedVendor,
   dressPill,
   linkPill,
   readLink,
@@ -10,15 +10,22 @@ import {
 } from './link-paste.ts';
 
 const PATTERNS = [
-  { hostSuffix: '.atlassian.net', pathPrefix: '/browse/' },
-  { hostSuffix: '.slack.com', pathPrefix: '/archives/' },
+  { hostSuffix: '.atlassian.net', pathPrefix: '/browse/', vendor: 'jira' as const },
+  { hostSuffix: '.slack.com', pathPrefix: '/archives/', vendor: 'slack' as const },
 ];
 
 const JIRA = 'https://x.atlassian.net/browse/SHEP-412';
 
-describe('claimsPaste', () => {
-  it('claims a lone url that matches a pattern', () => {
-    expect(claimsPaste(JIRA, PATTERNS)).toBe(true);
+describe('claimedVendor', () => {
+  /**
+   * The vendor, not a boolean — and it is what lets the pill be Jira's from the
+   * frame it lands in rather than from whenever a subprocess answers.
+   */
+  it('names whose a lone matching url is', () => {
+    expect(claimedVendor(JIRA, PATTERNS)).toBe('jira');
+    expect(claimedVendor('https://x.slack.com/archives/C1/p1724500000123456', PATTERNS)).toBe(
+      'slack',
+    );
   });
 
   /**
@@ -27,42 +34,49 @@ describe('claimsPaste', () => {
    * sentence.
    */
   it('leaves a url inside a sentence alone', () => {
-    expect(claimsPaste(`see ${JIRA} please`, PATTERNS)).toBe(false);
-    expect(claimsPaste(`${JIRA} ${JIRA}`, PATTERNS)).toBe(false);
+    expect(claimedVendor(`see ${JIRA} please`, PATTERNS)).toBeNull();
+    expect(claimedVendor(`${JIRA} ${JIRA}`, PATTERNS)).toBeNull();
   });
 
   it('tolerates the whitespace a copied url arrives wrapped in', () => {
-    expect(claimsPaste(`  ${JIRA}\n`, PATTERNS)).toBe(true);
+    expect(claimedVendor(`  ${JIRA}\n`, PATTERNS)).toBe('jira');
   });
 
   it('leaves an unmatched url, and anything that is not a url, alone', () => {
-    expect(claimsPaste('https://example.com/browse/A-1', PATTERNS)).toBe(false);
-    expect(claimsPaste('https://x.atlassian.net/wiki/spaces/ENG', PATTERNS)).toBe(false);
-    expect(claimsPaste('C#', PATTERNS)).toBe(false);
-    expect(claimsPaste('', PATTERNS)).toBe(false);
+    expect(claimedVendor('https://example.com/browse/A-1', PATTERNS)).toBeNull();
+    expect(claimedVendor('https://x.atlassian.net/wiki/spaces/ENG', PATTERNS)).toBeNull();
+    expect(claimedVendor('C#', PATTERNS)).toBeNull();
+    expect(claimedVendor('', PATTERNS)).toBeNull();
   });
 
   it('claims nothing at all before the patterns have arrived', () => {
     // The answer is a round trip away, and paste has to keep working meanwhile.
-    expect(claimsPaste(JIRA, [])).toBe(false);
+    expect(claimedVendor(JIRA, [])).toBeNull();
   });
 
   it('honours a pattern that requires a query parameter', () => {
-    const patterns = [{ hostSuffix: '.atlassian.net', pathPrefix: '/jira/', query: 'selectedIssue' }];
+    const patterns = [
+      {
+        hostSuffix: '.atlassian.net',
+        pathPrefix: '/jira/',
+        query: 'selectedIssue',
+        vendor: 'jira' as const,
+      },
+    ];
     const board = 'https://x.atlassian.net/jira/software/projects/A/boards/1';
-    expect(claimsPaste(`${board}?selectedIssue=A-1`, patterns)).toBe(true);
-    expect(claimsPaste(board, patterns)).toBe(false);
+    expect(claimedVendor(`${board}?selectedIssue=A-1`, patterns)).toBe('jira');
+    expect(claimedVendor(board, patterns)).toBeNull();
   });
 
   it('refuses a scheme this composer should not be turning into anything', () => {
-    expect(claimsPaste('javascript:alert(1)', PATTERNS)).toBe(false);
-    expect(claimsPaste('file:///etc/passwd', PATTERNS)).toBe(false);
+    expect(claimedVendor('javascript:alert(1)', PATTERNS)).toBeNull();
+    expect(claimedVendor('file:///etc/passwd', PATTERNS)).toBeNull();
   });
 });
 
 describe('linkPill', () => {
   it('carries the url as its token and the fallback as its label', () => {
-    const pill = linkPill(JIRA, 'l1');
+    const pill = linkPill(JIRA, 'l1', 'jira');
     expect(pill.dataset['token']).toBe(JIRA);
     expect(pill.textContent).toBe(LINK_PILL_FALLBACK);
     expect(pill.dataset['linkId']).toBe('l1');
@@ -70,19 +84,41 @@ describe('linkPill', () => {
   });
 
   /**
-   * The renderer does not know the grammars, so at insert time all it knows is
-   * that SOMETHING claimed this URL. A pill that guessed a vendor from the
-   * hostname would be the vendor knowledge this whole seam exists to keep out.
+   * A STATE, not a noun. `Link` said what the thing was at the one moment
+   * nobody was asking that — and a pill that never resolved then looked exactly
+   * like one still in flight.
    */
-  it('is unmarked and untinted until something says which vendor it is', () => {
-    expect(linkPill(JIRA, 'l1').dataset['link']).toBeUndefined();
-    expect(linkPill(JIRA, 'l1').querySelector('svg')).toBeNull();
+  it('says it is loading rather than naming the thing it holds', () => {
+    expect(LINK_PILL_FALLBACK).toBe('Loading…');
+  });
+
+  /**
+   * Already the vendor's, both halves, because the pattern that claimed the
+   * paste said whose it was. The pill it becomes is the same box with a
+   * different word in it — no tint arriving late, no mark appearing beside a
+   * label that had already settled.
+   */
+  it('wears the vendor’s tint and mark from the frame it lands in', () => {
+    const pill = linkPill(JIRA, 'l1', 'jira');
+    expect(pill.dataset['link']).toBe('jira');
+    expect(pill.querySelector('svg')).not.toBeNull();
+  });
+
+  it('draws the other vendor when that is the one that claimed it', () => {
+    expect(linkPill('https://x.slack.com/archives/C1/p1', 'l1', 'slack').dataset['link']).toBe(
+      'slack',
+    );
+  });
+
+  it('marks its glyph decorative — the label is what is read out', () => {
+    const pill = linkPill(JIRA, 'l1', 'jira');
+    expect(pill.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
   });
 });
 
 describe('dressPill', () => {
   it('swaps in the label and the mark, and leaves the token alone', () => {
-    const pill = linkPill(JIRA, 'l1');
+    const pill = linkPill(JIRA, 'l1', 'jira');
     dressPill(pill, { vendor: 'jira', label: 'SHEP-412 Retry loop', resolved: true });
     expect(pill.textContent).toBe('SHEP-412 Retry loop');
     expect(pill.dataset['link']).toBe('jira');
@@ -92,13 +128,24 @@ describe('dressPill', () => {
   });
 
   it('keeps the id, so a second answer can still find the same node', () => {
-    const pill = linkPill(JIRA, 'l1');
+    const pill = linkPill(JIRA, 'l1', 'jira');
     dressPill(pill, { vendor: 'slack', label: 'Slack thread', resolved: false });
     expect(pill.dataset['linkId']).toBe('l1');
   });
 
+  /**
+   * The provider that ANSWERED is the one that read the URL, so its vendor wins
+   * over the pattern's — the two can legitimately differ when one extension
+   * claims a host another resolves.
+   */
+  it('re-tints when the answer names a different vendor than the pattern did', () => {
+    const pill = linkPill(JIRA, 'l1', 'jira');
+    dressPill(pill, { vendor: 'slack', label: 'Slack thread', resolved: true });
+    expect(pill.dataset['link']).toBe('slack');
+  });
+
   it('marks its glyph decorative — the label is what is read out', () => {
-    const pill = linkPill(JIRA, 'l1');
+    const pill = linkPill(JIRA, 'l1', 'jira');
     dressPill(pill, { vendor: 'jira', label: 'A-1', resolved: false });
     expect(pill.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
   });
@@ -139,34 +186,51 @@ describe('readLink', () => {
 });
 
 describe('readPatterns', () => {
-  it('keeps the entries with both halves and drops the rest', () => {
+  it('keeps the entries with every half and drops the rest', () => {
     expect(
       readPatterns({
         patterns: [
-          { hostSuffix: '.slack.com', pathPrefix: '/archives/' },
-          { hostSuffix: '.x.com' },
-          { pathPrefix: '/y/' },
-          { hostSuffix: '', pathPrefix: '/z/' },
+          { hostSuffix: '.slack.com', pathPrefix: '/archives/', vendor: 'slack' },
+          { hostSuffix: '.x.com', vendor: 'jira' },
+          { pathPrefix: '/y/', vendor: 'jira' },
+          { hostSuffix: '', pathPrefix: '/z/', vendor: 'jira' },
           'nope',
           null,
         ],
       }),
-    ).toEqual([{ hostSuffix: '.slack.com', pathPrefix: '/archives/' }]);
+    ).toEqual([{ hostSuffix: '.slack.com', pathPrefix: '/archives/', vendor: 'slack' }]);
+  });
+
+  /**
+   * `readLink`'s rule, one door along: a pattern this side cannot draw is one it
+   * should never have matched, because there is no untinted link pill to fall
+   * back to any more.
+   */
+  it('drops a pattern naming a vendor it could not draw', () => {
+    expect(
+      readPatterns({
+        patterns: [
+          { hostSuffix: '.linear.app', pathPrefix: '/issue/', vendor: 'linear' },
+          { hostSuffix: '.a.com', pathPrefix: '/p/' },
+          { hostSuffix: '.b.com', pathPrefix: '/p/', vendor: 7 },
+        ],
+      }),
+    ).toEqual([]);
   });
 
   it('keeps a query only when it is a usable one', () => {
     expect(
       readPatterns({
         patterns: [
-          { hostSuffix: '.a.com', pathPrefix: '/p/', query: 'issue' },
-          { hostSuffix: '.b.com', pathPrefix: '/p/', query: '' },
-          { hostSuffix: '.c.com', pathPrefix: '/p/', query: 7 },
+          { hostSuffix: '.a.com', pathPrefix: '/p/', query: 'issue', vendor: 'jira' },
+          { hostSuffix: '.b.com', pathPrefix: '/p/', query: '', vendor: 'jira' },
+          { hostSuffix: '.c.com', pathPrefix: '/p/', query: 7, vendor: 'jira' },
         ],
       }),
     ).toEqual([
-      { hostSuffix: '.a.com', pathPrefix: '/p/', query: 'issue' },
-      { hostSuffix: '.b.com', pathPrefix: '/p/' },
-      { hostSuffix: '.c.com', pathPrefix: '/p/' },
+      { hostSuffix: '.a.com', pathPrefix: '/p/', query: 'issue', vendor: 'jira' },
+      { hostSuffix: '.b.com', pathPrefix: '/p/', vendor: 'jira' },
+      { hostSuffix: '.c.com', pathPrefix: '/p/', vendor: 'jira' },
     ]);
   });
 

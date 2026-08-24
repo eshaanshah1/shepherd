@@ -4483,8 +4483,8 @@ describe('tasks.renameBranch', () => {
  * activates, and paste has to keep working through it.
  */
 describe('the pasted-link point', () => {
-  const jiraPattern = { hostSuffix: '.atlassian.net', pathPrefix: '/browse/' };
-  const slackPattern = { hostSuffix: '.slack.com', pathPrefix: '/archives/' };
+  const jiraPattern = { hostSuffix: '.atlassian.net', pathPrefix: '/browse/', vendor: 'jira' as const };
+  const slackPattern = { hostSuffix: '.slack.com', pathPrefix: '/archives/', vendor: 'slack' as const };
 
   it('answers with no patterns when nothing provides any', async () => {
     const h = harness();

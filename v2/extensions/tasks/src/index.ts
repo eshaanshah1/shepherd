@@ -3649,11 +3649,17 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       handler: () => {
         // Deduplicated: two providers claiming the same shape is a legitimate
         // thing to have done, and this list is walked on every paste.
+        //
+        // The vendor is part of the key, so the same shape claimed for two
+        // different vendors survives as two entries rather than one of them
+        // being drawn in the other's colour. Which of the two a pill wears is
+        // then the renderer's first-match, and the resolver's answer overrides
+        // it either way.
         const seen = new Set<string>();
         const patterns: PastedLinkPattern[] = [];
         for (const provider of pastedLinks.all()) {
           for (const pattern of provider.patterns) {
-            const key = `${pattern.hostSuffix}|${pattern.pathPrefix}|${pattern.query ?? ''}`;
+            const key = `${pattern.hostSuffix}|${pattern.pathPrefix}|${pattern.query ?? ''}|${pattern.vendor}`;
             if (seen.has(key)) continue;
             seen.add(key);
             patterns.push(pattern);

@@ -27,14 +27,14 @@ const JIRA_HOST = '.atlassian.net';
 const SLACK_HOST = '.slack.com';
 
 export const JIRA_PATTERNS: readonly PastedLinkPattern[] = [
-  { hostSuffix: JIRA_HOST, pathPrefix: '/browse/' },
+  { hostSuffix: JIRA_HOST, pathPrefix: '/browse/', vendor: 'jira' },
   // The board form keeps the issue in a query parameter, so the path alone would
   // claim every board anybody has open.
-  { hostSuffix: JIRA_HOST, pathPrefix: '/jira/', query: 'selectedIssue' },
+  { hostSuffix: JIRA_HOST, pathPrefix: '/jira/', query: 'selectedIssue', vendor: 'jira' },
 ];
 
 export const SLACK_PATTERNS: readonly PastedLinkPattern[] = [
-  { hostSuffix: SLACK_HOST, pathPrefix: '/archives/' },
+  { hostSuffix: SLACK_HOST, pathPrefix: '/archives/', vendor: 'slack' },
 ];
 
 export const LINK_PATTERNS: readonly PastedLinkPattern[] = [...JIRA_PATTERNS, ...SLACK_PATTERNS];

@@ -911,8 +911,8 @@ describe('the machine picker', () => {
 describe('a pasted link', () => {
   const JIRA = 'https://x.atlassian.net/browse/SHEP-412';
   const PATTERNS = [
-    { hostSuffix: '.atlassian.net', pathPrefix: '/browse/' },
-    { hostSuffix: '.slack.com', pathPrefix: '/archives/' },
+    { hostSuffix: '.atlassian.net', pathPrefix: '/browse/', vendor: 'jira' },
+    { hostSuffix: '.slack.com', pathPrefix: '/archives/', vendor: 'slack' },
   ];
 
   /** A composer wired to answer the two link verbs however a case needs. */
@@ -993,22 +993,43 @@ describe('a pasted link', () => {
     expect(readValue(brief())).not.toContain('Retry loop');
   });
 
-  it('keeps its fallback label when nothing answers', async () => {
+  /**
+   * The vendor comes from the PATTERN, so a pill nothing ever answers for is
+   * still Jira-blue and wearing Jira's mark, saying only that it is busy. That
+   * is also what the first frame of every paste looks like: the tint and the
+   * mark no longer arrive a subprocess later.
+   */
+  it('is the vendor’s already, and says it is loading, when nothing answers', async () => {
     await linkComposer(null);
     await pasteText(JIRA);
     const [pill] = linkPills();
-    expect(pill?.textContent).toBe('Link');
+    expect(pill?.dataset['link']).toBe('jira');
+    expect(pill?.querySelector('svg')).not.toBeNull();
+    expect(pill?.textContent).toBe('Loading…');
     expect(readValue(brief())).toContain(JIRA);
   });
 
-  it('draws nothing for an answer naming a vendor it cannot tint', async () => {
+  it('keeps what the pattern said for an answer naming a vendor it cannot tint', async () => {
     await linkComposer({ vendor: 'linear', label: 'ENG-1', resolved: true });
     await pasteText(JIRA);
     const [pill] = linkPills();
-    // Invisible rather than an untinted box — `CardFact`'s rule for a malformed
-    // contribution, applied one surface along.
-    expect(pill?.textContent).toBe('Link');
-    expect(pill?.dataset['link']).toBeUndefined();
+    // The malformed answer changes nothing rather than blanking a pill that was
+    // already drawn — `CardFact`'s rule, and now with something to fall back to.
+    expect(pill?.textContent).toBe('Loading…');
+    expect(pill?.dataset['link']).toBe('jira');
+  });
+
+  /**
+   * A pattern the renderer could not draw is one it must not match, because
+   * there is no untinted link pill to fall back to any more.
+   */
+  it('pastes as text when the only pattern names an undrawable vendor', async () => {
+    await linkComposer(null, {
+      patterns: [{ hostSuffix: '.atlassian.net', pathPrefix: '/browse/', vendor: 'linear' }],
+    });
+    await pasteText(JIRA);
+    expect(linkPills()).toHaveLength(0);
+    expect(inserted).toEqual([JIRA]);
   });
 
   it('pastes a url no pattern claims as ordinary text', async () => {

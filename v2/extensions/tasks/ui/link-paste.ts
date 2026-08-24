@@ -1,5 +1,5 @@
 import { glyphElement } from '@shepherd/ui';
-import type { PastedLink, PastedLinkPattern } from '../src/manifest.ts';
+import type { PastedLink, PastedLinkPattern, PastedLinkVendor } from '../src/manifest.ts';
 
 /**
  * The renderer's half of a pasted link: whether to swallow one, and the node it
@@ -17,12 +17,15 @@ import type { PastedLink, PastedLinkPattern } from '../src/manifest.ts';
 /**
  * What a link pill says before anything has answered.
  *
- * Deliberately vendor-free. At insert time all this side knows is that some
- * provider claimed the URL; which vendor arrives with the label. A pill that
- * guessed from the hostname would be the vendor knowledge the seam exists to
- * keep out, and it would guess wrong for every vendor added later.
+ * A STATE, not a noun. Naming the thing here answers the one question nobody is
+ * asking at this moment, and it makes a pill that never resolves indistinguishable
+ * from one still in flight — `Loading…` distinguishes them by disappearing.
+ *
+ * Vendor-free as a STRING on purpose: the tint and the mark beside it carry whose
+ * link this is, and a pill has too few words to spend one on a name the glyph
+ * already says.
  */
-export const LINK_PILL_FALLBACK = 'Link';
+export const LINK_PILL_FALLBACK = 'Loading…';
 
 /** A single unbroken token, or nothing. Whitespace around it is a copy artefact. */
 function lone(text: string): string | null {
@@ -42,7 +45,11 @@ function asUrl(text: string): URL | null {
 }
 
 /**
- * Should this paste be swallowed?
+ * Whose paste is this, or `null` for nobody's — which is also the answer to
+ * "should this paste be swallowed?".
+ *
+ * One function rather than a boolean and a lookup beside it, because the vendor
+ * is what the MATCH found and asking twice is how the two answers drift apart.
  *
  * A LONE url only: taking one out of the middle of a pasted sentence would
  * orphan the rest of it, and somebody pasting a sentence was pasting a sentence.
@@ -51,18 +58,24 @@ function asUrl(text: string): URL | null {
  * the browser is what keeps undo intact, so the set of pastes that give that up
  * should be the smallest the feature needs.
  */
-export function claimsPaste(text: string, patterns: readonly PastedLinkPattern[]): boolean {
+export function claimedVendor(
+  text: string,
+  patterns: readonly PastedLinkPattern[],
+): PastedLinkVendor | null {
   const single = lone(text);
-  if (single === null) return false;
+  if (single === null) return null;
   const url = asUrl(single);
-  if (url === null) return false;
-  return patterns.some(
+  if (url === null) return null;
+  const claimed = patterns.find(
     (pattern) =>
       // A SUFFIX test, which is why a pattern's host carries its leading dot.
       url.hostname.endsWith(pattern.hostSuffix) &&
       url.pathname.startsWith(pattern.pathPrefix) &&
       (pattern.query === undefined || url.searchParams.has(pattern.query)),
   );
+  // The FIRST match, and `linkPatterns` deduplicates by shape before this sees
+  // them — so two providers claiming one shape is one pill, not a race.
+  return claimed?.vendor ?? null;
 }
 
 /**
@@ -74,7 +87,7 @@ export function claimsPaste(text: string, patterns: readonly PastedLinkPattern[]
  * and would make the same paste submit differently depending on whether a
  * subprocess answered in time.
  */
-export function linkPill(url: string, id: string): HTMLElement {
+export function linkPill(url: string, id: string, vendor: PastedLinkVendor): HTMLElement {
   const pill = document.createElement('span');
   pill.className = 'sh-ui-pill sh-composer-link-pill';
   pill.contentEditable = 'false';
@@ -83,7 +96,10 @@ export function linkPill(url: string, id: string): HTMLElement {
   // position, because the caret keeps moving while the answer is in flight.
   pill.dataset['linkId'] = id;
   pill.title = url;
-  pill.append(LINK_PILL_FALLBACK);
+  // The vendor's already, mark and hue both, because the pattern that claimed
+  // the paste said whose it was. That leaves the answer only the WORD to change,
+  // so a pill that resolves is a label swap and not a box becoming another box.
+  dress(pill, vendor, LINK_PILL_FALLBACK);
   return pill;
 }
 
@@ -97,7 +113,7 @@ export function linkPill(url: string, id: string): HTMLElement {
  * hand-drawn `<svg>` here could not promise and an earlier version of this file
  * did not deliver.
  */
-const VENDOR_GLYPHS: Readonly<Record<PastedLink['vendor'], string>> = {
+const VENDOR_GLYPHS: Readonly<Record<PastedLinkVendor, string>> = {
   jira: 'brand-jira',
   // Not Slack's own mark: it is four interlocking lozenges whose counters close
   // at 13px, and a pill is 16px tall so it cannot have the room it needs. The
@@ -106,44 +122,64 @@ const VENDOR_GLYPHS: Readonly<Record<PastedLink['vendor'], string>> = {
 };
 
 /**
- * Fill in what a pill IS, once something has said.
+ * A vendor and a word, drawn.
  *
- * The label and the mark, never the token. `contentEditable=false` makes the node
- * atomic, so replacing its children cannot disturb a selection inside it — there
- * is no inside.
+ * The one place a pill's contents are built, used by both the insert and the
+ * answer — so `Loading…` and `SHEP-412 Retry loop` cannot end up as two
+ * different drawings of the same box.
+ *
+ * `contentEditable=false` makes the node atomic, so replacing its children cannot
+ * disturb a selection inside it — there is no inside.
  */
-export function dressPill(pill: HTMLElement, link: PastedLink): void {
-  pill.dataset['link'] = link.vendor;
+function dress(pill: HTMLElement, vendor: PastedLinkVendor, label: string): void {
+  pill.dataset['link'] = vendor;
   pill.replaceChildren();
-  const glyph = glyphElement(VENDOR_GLYPHS[link.vendor]);
+  const glyph = glyphElement(VENDOR_GLYPHS[vendor]);
   // A missing glyph is a missing MARK, not a missing pill: the label is the part
   // that has to be there.
   if (glyph !== null) pill.append(glyph);
-  pill.append(link.label);
+  pill.append(label);
+}
+
+/**
+ * Fill in what a pill SAYS, once something has said it.
+ *
+ * The label and the mark, never the token.
+ *
+ * It re-states the vendor rather than trusting the one the pattern gave, and the
+ * two can legitimately differ: a host claimed by one provider may be resolved by
+ * another, and the provider that answered is the one that actually read the URL.
+ */
+export function dressPill(pill: HTMLElement, link: PastedLink): void {
+  dress(pill, link.vendor, link.label);
 }
 
 /**
  * The answer to `tasks.linkPatterns`, read rather than cast.
  *
  * A pattern missing either half would match everything or nothing, and both are
- * worse than dropping it.
+ * worse than dropping it. A pattern naming a vendor this side cannot draw goes the
+ * same way, for `readLink`'s reason: a pill has to be drawn the moment the paste
+ * is swallowed, so a vendor with no drawing is a URL that must stay text.
  */
 export function readPatterns(value: unknown): readonly PastedLinkPattern[] {
   const rows = (value as { patterns?: unknown } | null)?.patterns;
   if (!Array.isArray(rows)) return [];
   return rows.flatMap((entry: unknown): PastedLinkPattern[] => {
     if (typeof entry !== 'object' || entry === null) return [];
-    const { hostSuffix, pathPrefix, query } = entry as {
+    const { hostSuffix, pathPrefix, query, vendor } = entry as {
       hostSuffix?: unknown;
       pathPrefix?: unknown;
       query?: unknown;
+      vendor?: unknown;
     };
     if (typeof hostSuffix !== 'string' || hostSuffix === '') return [];
     if (typeof pathPrefix !== 'string' || pathPrefix === '') return [];
+    if (vendor !== 'jira' && vendor !== 'slack') return [];
     return [
       typeof query === 'string' && query !== ''
-        ? { hostSuffix, pathPrefix, query }
-        : { hostSuffix, pathPrefix },
+        ? { hostSuffix, pathPrefix, query, vendor }
+        : { hostSuffix, pathPrefix, vendor },
     ];
   });
 }

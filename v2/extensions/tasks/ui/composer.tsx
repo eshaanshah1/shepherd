@@ -7,7 +7,7 @@ import type { PastedImage } from "../src/images.ts";
 import { readPastedImage } from "./paste-image.ts";
 import { findTrigger, isUnwritten, type DisplaySegment } from "./mention.ts";
 import {
-  claimsPaste,
+  claimedVendor,
   dressPill,
   linkPill,
   readLink,
@@ -750,10 +750,14 @@ export function TaskComposer({
           }}
           /*
             A pasted Jira or Slack link becomes a Pill where it was pasted. The
-            pill goes in IMMEDIATELY with the token already correct and a
-            vendor-free fallback label, and what it IS fills in behind it:
-            resolving spawns a subprocess, and a composer that stalled on paste
-            would be worse than a label that arrives a beat later.
+            pill goes in IMMEDIATELY with the token already correct, already the
+            vendor's colour and mark, and reading `Loading…`; resolving spawns a
+            subprocess, and a composer that stalled on paste would be worse than
+            a label that arrives a beat later.
+
+            The vendor comes from the PATTERN that claimed the paste, which is
+            why the box does not change shape when the answer lands — only the
+            word does.
 
             Only a lone URL matching a claimed pattern. Everything else falls
             through to the plain-text paste, which is what keeps the browser's
@@ -761,9 +765,10 @@ export function TaskComposer({
           */
           onPasteText={(text) => {
             const url = text.trim();
-            if (!claimsPaste(url, linkPatterns.current)) return false;
+            const vendor = claimedVendor(url, linkPatterns.current);
+            if (vendor === null) return false;
             const id = `link-${(linkSeq.current += 1)}`;
-            promptRef.current?.insert(linkPill(url, id), {
+            promptRef.current?.insert(linkPill(url, id, vendor), {
               // The same non-breaking space `pick` uses, and for the same
               // reason: the caret lands in text rather than against the pill.
               trailing: "\u00A0",

@@ -363,6 +363,18 @@ export const CARD_FACTS_POINT = 'tasks.cardFacts';
 export const PASTED_LINK_POINT = 'tasks.pastedLink';
 
 /**
+ * Every vendor a pill can be drawn as, and the whole of what a provider may say
+ * about how one looks.
+ *
+ * Closed on purpose, and closed on the RENDERER's terms: the hue and the mark
+ * live in `packages/ui` and in `link-paste.ts`, so adding Linear here is a
+ * conversation about two more lines of drawing rather than a provider shipping
+ * its own colour. Both halves of the port — the pattern and the answer — name a
+ * member of this union and nothing else.
+ */
+export type PastedLinkVendor = 'jira' | 'slack';
+
+/**
  * Which URLs a provider claims, as DATA rather than as an expression.
  *
  * A pattern crosses the port and is matched in the RENDERER, so a compiled regex
@@ -381,6 +393,19 @@ export interface PastedLinkPattern {
   readonly pathPrefix: string;
   /** A query parameter that must be present. Absent means any query. */
   readonly query?: string;
+  /**
+   * Whose URL this is, so the pill is that vendor from the frame it lands in.
+   *
+   * The pattern is the only thing that can say it in time. Resolving spawns a
+   * subprocess, and a tint and a mark that wait for that answer arrive as the box
+   * changing colour and growing a glyph under the reader's eyes — a paste
+   * flickering on the one surface that has to stay quiet.
+   *
+   * Not a colour and not an icon, which is the restraint `PastedLink` keeps: a
+   * closed union the renderer draws, so a provider names a vendor, never paints
+   * one.
+   */
+  readonly vendor: PastedLinkVendor;
 }
 
 /**
@@ -394,7 +419,7 @@ export interface PastedLinkPattern {
  * rather than by allow-listing.
  */
 export interface PastedLink {
-  readonly vendor: 'jira' | 'slack';
+  readonly vendor: PastedLinkVendor;
   /** What the pill reads. Already the fallback when nothing resolved. */
   readonly label: string;
   /** Whether a lookup actually answered. Read by tests; draws nothing. */
