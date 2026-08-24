@@ -111,6 +111,23 @@ export function menuTemplate({ appName, isDev }: MenuOptions): MenuItemSpec[] {
           accelerator: 'CmdOrCtrl+T',
           command: COMMANDS.newTab,
         },
+        {
+          id: COMMANDS.revealShell,
+          label: 'Shells',
+          /*
+           * ⌘0, and the digit is the point: it reads as tab zero, home, the thing
+           * before the work — and it leaves ⌘1–⌘9 free if per-tab switching is
+           * ever wanted. Free because no `resetZoom` role is registered anywhere
+           * in this menu, so the key most apps spend on zoom is unspent here.
+           *
+           * Read this file's opening note before moving it: AppKit resolves a
+           * menu key equivalent BEFORE the page sees the keystroke, so this item
+           * does not compete with a contributed overlay on the same key — it
+           * DELETES it, silently.
+           */
+          accelerator: 'CmdOrCtrl+0',
+          command: COMMANDS.revealShell,
+        },
         { type: 'separator' },
         {
           id: COMMANDS.splitRight,

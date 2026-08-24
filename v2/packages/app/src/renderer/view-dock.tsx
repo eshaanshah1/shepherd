@@ -182,12 +182,26 @@ export function ViewDock({
    * finished over there in a second DONE list underneath this one's.
    */
   const groups = new Map<string, ViewContributionDTO[]>();
-  for (const view of docked) {
+  /*
+   * A view that claims the head is drawn first, and ties keep the order they
+   * arrived in.
+   *
+   * The sort is HERE rather than in `mergeRows`, because `mergeRows` is called
+   * once PER SECTION below — it can order rows within a list and has no view to
+   * compare. Section order was otherwise `views.list()`'s order, which is
+   * registration order, which is activation order: a section sat above another
+   * by luck.
+   *
+   * `toSorted` rather than `sort`: `docked` is derived from state each render and
+   * mutating it in place is a render reordering its own input.
+   */
+  const ordered = docked.toSorted((a, b) => Number(b.head ?? false) - Number(a.head ?? false));
+  for (const view of ordered) {
     if (view.kind !== 'tree') continue;
     const base = unqualify(view.type);
     groups.set(base, [...(groups.get(base) ?? []), view]);
   }
-  const components = docked.filter((view) => view.kind === 'component');
+  const components = ordered.filter((view) => view.kind === 'component');
 
   /*
    * The search field, and there is at most ONE however many views ask for it.
@@ -332,7 +346,8 @@ function TreeView({
   bridge: ViewsApi | null;
   activeRoot: string | null;
   groupOfRoot: (root: string) => string;
-}): React.JSX.Element {
+  // `null` when the section is empty — a heading over blank space is not drawn.
+}): React.JSX.Element | null {
   const byType = new Map(views.map((view) => [view.type, view]));
   const merged = mergeRows(views.map((view) => ({ key: view.type, rows: rowsByType[view.type] ?? [] })));
   /*
@@ -411,6 +426,40 @@ function TreeView({
    * so the guess pinned the live resting tasks to the bottom of an otherwise
    * empty sidebar and left `In flight` floating above the gap.
    */
+  /**
+   * Which row is the one on screen — and an EXACT root match wins over its
+   * group's.
+   *
+   * The group comparison exists for a task: its row names `task:t1`, you switch
+   * to `task:t1/tab-2`, and the row must stay lit. But it answers TRUE for every
+   * row of the group, and that was fine only while one group meant one row. A
+   * region whose rows are all tabs of one group — the scratchpad's are all tabs
+   * of the home root — lit every row at once.
+   *
+   * So: if any drawn row of a group names the active root exactly, only that row
+   * lights. If none does, the group match stands, which is what keeps a task row
+   * lit (its tab rows are not drawn) and what lights the head row when the active
+   * tab is hidden behind an overflow row.
+   *
+   * Computed over `shown` rather than per row, because "does a sibling name it
+   * better than me" is a question about the list.
+   *
+   * One BOOLEAN and not a set of groups. An earlier version kept the matching
+   * group, which reads as though several could match — but `activeRoot` is one
+   * value and therefore in one group, so the set never held more than that
+   * group, and `has(group)` was true exactly when the group comparison below
+   * would have been. Same behaviour, and the boolean does not imply otherwise.
+   */
+  const named = shown.some((entry) => entry.row.root !== undefined && entry.row.root === activeRoot);
+  const selects = (row: TreeItem): boolean => {
+    if (row.root === undefined || activeRoot === null) return false;
+    if (row.root === activeRoot) return true;
+    // A sibling names it exactly, so this row is not the one on screen.
+    if (named) return false;
+    // A sibling names it exactly, so this row is not the one on screen.
+    return groupOfRoot(row.root) === groupOfRoot(activeRoot);
+  };
+
   const footAt = shown.findIndex((entry) => entry.row.foot === true);
   const top = footAt === -1 ? shown : shown.slice(0, footAt);
   const bottom = footAt === -1 ? [] : shown.slice(footAt);
@@ -516,8 +565,7 @@ function TreeView({
             runVerb(view?.type, chosen);
           };
 
-          const isSelected =
-            row.root !== undefined && activeRoot !== null && groupOfRoot(row.root) === groupOfRoot(activeRoot);
+          const isSelected = selects(row);
 
           /**
            * **The foot row is a drawer handle, not an entry.**
@@ -767,8 +815,50 @@ function TreeView({
     }
   };
 
+  /**
+   * What this list IS — the tree's own declared title, drawn as its heading.
+   *
+   * `ComponentView` has drawn its `title` since it shipped and a TREE's was read
+   * by nothing, so `tasks.tree`'s `Tasks` and every other tree's title were dead
+   * strings. That asymmetry was invisible while the rail held one list; with a
+   * second one above it, the top list had nothing naming it and its first row
+   * read as a sibling of the rows under it.
+   *
+   * The heading rather than a contributed row, because a heading is what this is:
+   * `SectionLabel` is deliberately not a button (a group that looked clickable
+   * and did nothing is the affordance lie `section` exists to avoid), and the
+   * navigation a region needs lives in its rows and in an accelerator.
+   *
+   * Falls back to the view type for the same reason `ComponentView` does: a
+   * contribution that declared no title still has a list, and an unnamed list is
+   * worse than one named by its id.
+   */
+  const heading = views[0];
+
+  /**
+   * A section with nothing in it is not drawn at all — no heading over blank
+   * space.
+   *
+   * This is narrower than it looks, and the distinction is worth keeping
+   * straight. The rule above it says every heading a CONTRIBUTION sends is
+   * drawn, including over an empty region: `Shipped` with nothing shipped still
+   * says what that region is, and it sits inside a list that has live rows above
+   * it. This is the whole SECTION being empty, where the heading has no list to
+   * name and the rail offers no way to put anything in it — which reads as
+   * broken rather than as quiet.
+   *
+   * After every hook, because an early return above one is a different component
+   * on the next render.
+   */
+  if (shown.length === 0) return null;
+
   return (
     <section className="sh-side-view" data-view-type={base}>
+      {heading === undefined ? null : (
+        <SectionLabel role="heading" aria-level={2} data-testid="view-title">
+          {heading.title ?? heading.type}
+        </SectionLabel>
+      )}
       {top.length === 0 ? null : <ul className="sh-rows">{top.map(renderRow)}</ul>}
       {/*
         The finished tasks, pinned to the FOOT of the sidebar rather than merely

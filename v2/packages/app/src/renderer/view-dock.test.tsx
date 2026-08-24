@@ -1158,3 +1158,168 @@ describe('the dock-s search field', () => {
     expect(last?.args).toEqual({ query: '' });
   });
 });
+
+/**
+ * Which SECTION goes first, and why the claim cannot be a row's.
+ *
+ * The dock renders one section per view and calls `mergeRows` once per section,
+ * so a row saying "I am first" reorders its own siblings and nothing else.
+ * Section order was `views.list()`'s order — registration order, which is
+ * activation order — so a section sat above another by luck.
+ */
+describe('a view that claims the head of the rail', () => {
+  const tree = (type: string, head?: boolean): ViewContributionDTO => ({
+    extension: type.split('.')[0] ?? type,
+    type,
+    kind: 'tree',
+    ...(head === undefined ? {} : { head }),
+  });
+
+  /** Per-view rows, which the shared `bridge` above cannot express. */
+  function perView(views: readonly ViewContributionDTO[], byType: Record<string, readonly TreeItem[]>): ViewsApi {
+    return {
+      list: () => Promise.resolve({ ok: true, value: views }),
+      children: (type: string) => Promise.resolve({ ok: true, value: byType[type] ?? [] }),
+      activate: () => Promise.resolve({ ok: true, value: undefined }),
+      invoke: () => Promise.resolve({ ok: true, value: undefined }),
+      present: () => Promise.resolve({ ok: true, value: undefined }),
+      onChanged: () => () => {},
+    } as unknown as ViewsApi;
+  }
+
+  const sections = (container: HTMLElement): (string | null)[] =>
+    [...container.querySelectorAll('.sh-side-view')].map((node) => node.getAttribute('data-view-type'));
+
+  it('is drawn above a section that claims nothing, whichever order they were registered in', async () => {
+    const views = [tree('tasks.tree'), tree('shell.tree', true)];
+    const view = mount(
+      <ViewDock
+        views={perView(views, { 'tasks.tree': [{ id: 't', label: 'One' }], 'shell.tree': [{ id: 's', label: 'Scratchpad' }] })}
+      />,
+    );
+    await settle();
+    expect(sections(view.container)).toEqual(['shell.tree', 'tasks.tree']);
+    view.unmount();
+  });
+
+  it('keeps registration order between two sections that both claim it', async () => {
+    // Ties must not swap under the reader, which is the whole reason this is a
+    // boolean and not a number two views can race on.
+    const views = [tree('a.tree', true), tree('b.tree', true)];
+    const view = mount(
+      <ViewDock views={perView(views, { 'a.tree': [{ id: 'a', label: 'A' }], 'b.tree': [{ id: 'b', label: 'B' }] })} />,
+    );
+    await settle();
+    expect(sections(view.container)).toEqual(['a.tree', 'b.tree']);
+    view.unmount();
+  });
+
+  it('leaves two sections that claim nothing exactly as they were', async () => {
+    const views = [tree('a.tree'), tree('b.tree')];
+    const view = mount(
+      <ViewDock views={perView(views, { 'a.tree': [{ id: 'a', label: 'A' }], 'b.tree': [{ id: 'b', label: 'B' }] })} />,
+    );
+    await settle();
+    expect(sections(view.container)).toEqual(['a.tree', 'b.tree']);
+    view.unmount();
+  });
+});
+
+/**
+ * An exact root match beats its group's.
+ *
+ * The group comparison exists for a task row, which names its anchor root and
+ * must stay lit on the task's second tab. It answers TRUE for every row of the
+ * group, which was fine only while one group meant one row — a region whose rows
+ * are all tabs of ONE group lit every row at once.
+ */
+describe('selection where many rows share one group', () => {
+  const groupOfRoot = (root: string) => root.split('/')[0] ?? root;
+
+  it('lights only the row that names the active root', async () => {
+    const rows: readonly TreeItem[] = [
+      { id: 'head', label: 'Scratchpad', root: 'window-1' },
+      { id: 'a', label: 'zsh', root: 'window-1/tab-1' },
+      { id: 'b', label: 'dev', root: 'window-1/tab-2' },
+    ];
+    const view = mount(
+      <ViewDock views={bridge(TREE_ONE, [], rows)} activeRoot="window-1/tab-2" groupOfRoot={groupOfRoot} />,
+    );
+    await settle();
+    expect(all(view.container, 'view-row').map((row) => row.dataset.selected)).toEqual([
+      undefined,
+      undefined,
+      'true',
+    ]);
+    view.unmount();
+  });
+
+  it('falls back to the group when no drawn row names the active root', async () => {
+    // The active tab is behind an overflow row, so nothing matches exactly — and
+    // the head row standing for the group is the honest answer.
+    const rows: readonly TreeItem[] = [
+      { id: 'head', label: 'Scratchpad', root: 'window-1' },
+      { id: 'a', label: 'zsh', root: 'window-1/tab-1' },
+    ];
+    const view = mount(
+      <ViewDock views={bridge(TREE_ONE, [], rows)} activeRoot="window-1/tab-9" groupOfRoot={groupOfRoot} />,
+    );
+    await settle();
+    expect(all(view.container, 'view-row').map((row) => row.dataset.selected)).toEqual(['true', 'true']);
+    view.unmount();
+  });
+
+});
+
+const TREE_ONE: ViewContributionDTO[] = [{ extension: 'shepherd.shell', type: 'shell.tree', kind: 'tree' }];
+
+/**
+ * A tree's declared title, drawn.
+ *
+ * `ComponentView` has drawn its `title` since it shipped and a TREE's was read by
+ * nothing — `tasks.tree` declares `Tasks` and nothing rendered it. Invisible
+ * while the rail held one list; with a second one above it, the top list had
+ * nothing naming it.
+ */
+describe('a tree section-s heading', () => {
+  const titled = (type: string, title?: string): ViewContributionDTO[] => [
+    { extension: 'shepherd.x', type, kind: 'tree', ...(title === undefined ? {} : { title }) },
+  ];
+
+  it('is the title the view declared', async () => {
+    const view = mount(<ViewDock views={bridge(titled('shell.tree', 'Scratchpad'), [], [{ id: 'a', label: 'zsh' }])} />);
+    await settle();
+    expect(one(view.container, 'view-title').textContent).toContain('Scratchpad');
+    view.unmount();
+  });
+
+  it('falls back to the view type, because an unnamed list is worse than one named by its id', async () => {
+    const view = mount(<ViewDock views={bridge(titled('shell.tree'), [], [{ id: 'a', label: 'zsh' }])} />);
+    await settle();
+    expect(one(view.container, 'view-title').textContent).toContain('shell.tree');
+    view.unmount();
+  });
+
+  it('is a heading and not a row, so nothing about it invites a click', async () => {
+    const view = mount(<ViewDock views={bridge(titled('shell.tree', 'Scratchpad'), [], [{ id: 'a', label: 'zsh' }])} />);
+    await settle();
+    const title = one(view.container, 'view-title');
+    expect(title.getAttribute('role')).toBe('heading');
+    expect(title.closest('[data-testid="view-row"]')).toBeNull();
+    expect(all(view.container, 'view-row')).toHaveLength(1);
+    view.unmount();
+  });
+
+  it('is not drawn at all when the whole section is empty', async () => {
+    // Narrower than the rule above it, which keeps a CONTRIBUTED heading over an
+    // empty region — `Shipped` with nothing shipped still names that region, and
+    // it sits inside a list with live rows above it. A heading over an empty
+    // SECTION names nothing and the rail offers no way to fill it, which reads as
+    // broken rather than as quiet.
+    const view = mount(<ViewDock views={bridge(titled('shell.tree', 'Scratchpad'), [], [])} />);
+    await settle();
+    expect(all(view.container, 'view-title')).toHaveLength(0);
+    expect(view.container.querySelector('[data-view-type="shell.tree"]')).toBeNull();
+    view.unmount();
+  });
+});

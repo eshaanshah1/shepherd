@@ -1,0 +1,60 @@
+{
+  "name": "@shepherd/ext-shell",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "shepherd.shell \u2014 the rail row for terminals that belong to no task.",
+  "//exports": "The split every extension makes: main imports ./manifest to register, the utility process imports the root. There is no ./ui \u2014 a tree is data, not a component.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./manifest": {
+      "types": "./src/manifest.ts",
+      "default": "./src/manifest.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -b",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@shepherd/sdk": "workspace:*"
+  },
+  "//agents-core": "A DEV dependency, and only a dev one, because the ONLY thing taken from it is the `AgentState` type \u2014 boundaries.js allows a type import of another extension and refuses a value import. A runtime dependency entry would claim an edge that does not exist.",
+  "devDependencies": {
+    "@shepherd/ext-agents-core": "workspace:*",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "//shepherd": "The manifest, as an extension declares it. `src/manifest.ts` is the typed copy the host loads, and `manifest.test.ts` asserts the two are identical.",
+  "shepherd": {
+    "id": "shepherd.shell",
+    "name": "Shell",
+    "version": "0.1.0",
+    "api": "^1.0.0",
+    "activation": [
+      "onStartup"
+    ],
+    "permissions": [
+      "views",
+      "layout"
+    ],
+    "contributes": {
+      "commands": [
+        {
+          "id": "shell.reveal",
+          "title": "Shell: Reveal"
+        },
+        {
+          "id": "shell.expand"
+        },
+        {
+          "id": "shell.promote"
+        }
+      ]
+    }
+  }
+}

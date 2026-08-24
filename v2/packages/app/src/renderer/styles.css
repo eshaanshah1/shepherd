@@ -693,7 +693,17 @@ body.sh-dragging {
   flex-direction: column;
 }
 
-.sh-side-view { display: flex; flex-direction: column; min-height: 0; }
+/*
+ * `flex: 0 0 auto` — a section keeps its content's height and is never squeezed.
+ *
+ * Without it a section shrinks (the flex default is `1`, and `min-height: 0`
+ * removes the floor), its `<ul>` overflows with nothing clipping it, and it
+ * paints straight over the section below. Measured: the scratchpad expanded to
+ * fifteen rows drew its last three on top of the first three task rows, because
+ * the rule below gives the growth to whichever section has a foot. The rail's
+ * scroll belongs to `.sh-side-scroll`, which already has it.
+ */
+.sh-side-view { display: flex; flex-direction: column; min-height: 0; flex: 0 0 auto; }
 
 /*
  * A view that has a foot list is the one that grows, so the foot can be pushed

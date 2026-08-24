@@ -36,6 +36,7 @@
     "@shepherd/ext-github": "workspace:*",
     "@shepherd/ext-links": "workspace:*",
     "@shepherd/ext-scratch": "workspace:*",
+    "@shepherd/ext-shell": "workspace:*",
     "@shepherd/ext-tasks": "workspace:*",
     "@shepherd/ext-transcripts": "workspace:*",
     "@shepherd/ext-worktree-hook": "workspace:*",

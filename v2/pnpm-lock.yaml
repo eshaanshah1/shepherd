@@ -340,6 +340,25 @@ importers:
         specifier: 'catalog:'
         version: 4.1.10(@types/node@26.1.2)(jsdom@30.0.1(@noble/hashes@2.3.0))(vite@8.2.0(@types/node@26.1.2)(esbuild@0.28.1)(jiti@2.7.0)(yaml@2.9.0))
 
+  extensions/shell:
+    dependencies:
+      '@shepherd/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+    devDependencies:
+      '@shepherd/ext-agents-core':
+        specifier: workspace:*
+        version: link:../agents-core
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.1.2
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.10(@types/node@26.1.2)(jsdom@30.0.1(@noble/hashes@2.3.0))(vite@8.2.0(@types/node@26.1.2)(esbuild@0.28.1)(jiti@2.7.0)(yaml@2.9.0))
+
   extensions/tasks:
     dependencies:
       '@shepherd/sdk':
@@ -459,6 +478,9 @@ importers:
       '@shepherd/ext-scratch':
         specifier: workspace:*
         version: link:../../extensions/scratch
+      '@shepherd/ext-shell':
+        specifier: workspace:*
+        version: link:../../extensions/shell
       '@shepherd/ext-tasks':
         specifier: workspace:*
         version: link:../../extensions/tasks

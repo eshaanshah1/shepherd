@@ -162,6 +162,31 @@ export type ViewProvider =
        * mechanism a row's click already uses to toggle extension state.
        */
       readonly search?: { readonly command: string; readonly placeholder?: string };
+      /**
+       * This section sits ABOVE every section that does not claim it.
+       *
+       * A view-level claim rather than a row-level one, and that distinction is
+       * the whole of it: the dock renders **one section per view** and merges
+       * rows only WITHIN a section, so a row saying "I am first" can only ever
+       * reorder its own siblings. Where a section goes is a fact about the
+       * section.
+       *
+       * It exists because that position was otherwise undeclarable. Section
+       * order is the order `views.list()` answers in, which is registration
+       * order, which is activation order — so a section sat above another by
+       * luck, and the luck changed whenever anything touched the activation
+       * list.
+       *
+       * Deliberately a boolean and deliberately only on a TREE. A number invites
+       * a second view picking a bigger one, which is the arithmetic race
+       * `REGIONS` is named as the scope-creep door for; and a tree is always a
+       * dock section, while a component may be an overlay or a pane. Widening it
+       * to a dock component is one line, when something wants it.
+       *
+       * Ties keep registration order, so two sections both claiming it stay in
+       * whatever order they were declared rather than swapping under you.
+       */
+      readonly head?: boolean;
     }
   | {
       readonly kind: 'component';

@@ -38,6 +38,9 @@
       "path": "extensions/tasks"
     },
     {
+      "path": "extensions/shell"
+    },
+    {
       "path": "packages/cli"
     }
   ]

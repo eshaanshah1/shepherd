@@ -187,6 +187,13 @@ export interface ViewContributionDTO {
    */
   readonly search?: { readonly command: string; readonly placeholder?: string };
   /**
+   * This section sits above every section that does not claim it.
+   *
+   * Carried as data like everything else here — see `ViewProvider`'s `head` for
+   * why the claim belongs to the view rather than to one of its rows.
+   */
+  readonly head?: boolean;
+  /**
    * Whose view this is, when it is not this Mac's.
    *
    * Present only for a view read off another member of the net. The page draws

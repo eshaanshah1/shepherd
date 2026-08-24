@@ -3,6 +3,8 @@ import { activate as diagnostics } from '@shepherd/ext-diagnostics';
 import { DIAGNOSTICS_ID } from '@shepherd/ext-diagnostics/manifest';
 import { activate as scratch } from '@shepherd/ext-scratch';
 import { SCRATCH_ID } from '@shepherd/ext-scratch/manifest';
+import { activate as shell } from '@shepherd/ext-shell';
+import { SHELL_ID } from '@shepherd/ext-shell/manifest';
 import { activate as agentsCore } from '@shepherd/ext-agents-core';
 import { AGENTS_CORE_ID } from '@shepherd/ext-agents-core/manifest';
 import { activate as tasks } from '@shepherd/ext-tasks';
@@ -36,6 +38,7 @@ import { LINKS_ID } from '@shepherd/ext-links/manifest';
 export const BUILTIN_MODULES: ReadonlyMap<string, ActivateFn> = new Map<string, ActivateFn>([
   [DIAGNOSTICS_ID, diagnostics],
   [SCRATCH_ID, scratch],
+  [SHELL_ID, shell],
   [AGENTS_CORE_ID, agentsCore],
   // Order here is cosmetic — `ExtensionRegistry` activates a manifest's declared
   // `dependencies` first, so claude-code cannot run before agents-core whatever

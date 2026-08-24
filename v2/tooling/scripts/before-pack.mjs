@@ -114,6 +114,7 @@ const PACKAGES = [
   'extensions/agents-core',
   'extensions/claude-code',
   'extensions/tasks',
+  'extensions/shell',
   'extensions/worktree-hook',
   'extensions/github',
   'extensions/transcripts',

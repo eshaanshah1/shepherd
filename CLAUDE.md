@@ -43,8 +43,12 @@ fight it.
    after that (ADR 0040): ⌘, takes over the window with a screen the app and every
    extension contribute pages to, declared in a manifest and held by the kernel —
    which is also how **light mode** finally reached the palette
-   `@shepherd/design-tokens` has always shipped. **Scratch (D9) and then M4, the
-   dogfood gate, are next.**
+   `@shepherd/design-tokens` has always shipped. The **scratch pane** (a leaf that is
+   a markdown document) landed after that, and then D9's **loose tab** as the
+   rail's `Scratchpad` section (ADR 0047): the shells are the HOME root's group, a
+   `shell` extension contributes a tree over it, ⌘0 reveals it, and the persisted
+   list D9 asked for turned out to already exist. **M4, the dogfood gate, is
+   next.**
 2. [`docs/superpowers/specs/2026-08-06-ade-minimal-core-sketch.md`](docs/superpowers/specs/2026-08-06-ade-minimal-core-sketch.md)
    — thesis and **every decision** (§7, §7b, §7c the headless-agent seam, §7d presence).
 3. [`docs/superpowers/specs/2026-08-06-ade-v2-core-design.md`](docs/superpowers/specs/2026-08-06-ade-v2-core-design.md)

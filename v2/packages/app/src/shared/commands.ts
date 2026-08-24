@@ -13,6 +13,7 @@
  */
 export const COMMANDS = {
   newTab: 'tab.new',
+  revealShell: 'shell.reveal',
   splitRight: 'pane.splitRight',
   splitDown: 'pane.splitDown',
   closePane: 'pane.close',

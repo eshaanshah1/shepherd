@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { diagnosticsManifest } from '@shepherd/ext-diagnostics/manifest';
 import { scratchManifest } from '@shepherd/ext-scratch/manifest';
+import { shellManifest } from '@shepherd/ext-shell/manifest';
 import { agentsCoreManifest } from '@shepherd/ext-agents-core/manifest';
 import { claudeCodeManifest } from '@shepherd/ext-claude-code/manifest';
 import { tasksManifest } from '@shepherd/ext-tasks/manifest';
@@ -28,6 +29,7 @@ import { BUILTIN_MODULES } from './builtins.ts';
 const REGISTERED = [
   diagnosticsManifest,
   scratchManifest,
+  shellManifest,
   agentsCoreManifest,
   claudeCodeManifest,
   tasksManifest,

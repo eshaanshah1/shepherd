@@ -57,9 +57,15 @@ PATH", the loop that makes this thing agent-native is the largest hole in the ga
    and is now moot rather than pending.
 
    So the zero-ceremony shell exists: `⌘T` opens a loose tab without creating a
-   task. What D9 still wants is the **persisted Scratch list** — its own section,
-   cwd and title only, never a resumed agent — and that is a store plus a
-   contributed view, not a keybinding problem.
+   task. **Done 2026-08-24** ([ADR 0047](../../../.claude/adr/0047-v2-a-rail-section-names-itself-and-loose-terminals-live-in-the-home-group.md)),
+   and this paragraph asked for the wrong thing: there is no store to build. The
+   persisted list was always there — `main/index.ts:1378` opens every persisted
+   root at launch and a restored pane reattaches to the session the daemon still
+   holds, so loose shells and their live processes already survived a relaunch.
+   What was missing was the rail surface: nothing named the home group, so a
+   shell was reachable only by closing a task's tabs until `closeRoot` fell back
+   to `homeRoot`. It is a section now, named by its view's own title, with ⌘0 to
+   reach it.
 
    **Read `menu-template.ts`'s opening note before binding any key.** AppKit
    resolves a menu key equivalent *before* the page sees the keystroke, so a menu
@@ -134,6 +140,15 @@ path to the app you use. And change the rule for new ones — a smoke exists to 
 The handoff is drifting in the direction that flatters the project, so these are
 worth correcting at the same time:
 
+- **The root `tsconfig.json` references are missing four packages.**
+  `extensions/scratch`, `extensions/github`, `extensions/worktree-hook` and
+  `extensions/transcripts` are all absent from the list, while `pnpm typecheck`
+  is `tsc -b` at the root — so **none of those four is typechecked by it**. This
+  is M3's `extensions/tasks` finding in four more places, and it is the same
+  silent kind: a planted type error produces no output. Found 2026-08-24 while
+  adding `extensions/shell`, which IS in the list and whose reference was
+  mutation-tested. Fixing it wants a planted error per package, one at a time —
+  each may be hiding real errors nothing has ever compiled.
 - **eight smokes → ten.**
 - **1011 tests → 2200+** across the workspace.
 - The design skill's own §3 claimed settings were "not designed yet" nine days after

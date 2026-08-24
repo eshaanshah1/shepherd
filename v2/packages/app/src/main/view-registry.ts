@@ -53,6 +53,11 @@ export interface Contribution {
   readonly title?: string;
   /** The glyph on the control that raises an overlay. Defaults to `plus`. */
   readonly icon?: string;
+  /**
+   * This section sits above every section that does not claim it — see
+   * `ViewProvider`'s own note for why the claim is the view's and not a row's.
+   */
+  readonly head?: boolean;
 }
 
 /** Everything a contribution declares beyond its kind. */
@@ -65,6 +70,8 @@ export interface ViewDeclaration {
   readonly icon?: string;
   /** A tree that wants a search field, and the verb its query goes to. */
   readonly search?: { readonly command: string; readonly placeholder?: string };
+  /** This section sits above every section that does not claim it. */
+  readonly head?: boolean;
 }
 
 const MODIFIERS = new Set(['command','cmd','control','ctrl','commandorcontrol','cmdorctrl','alt','option','altgr','shift','super','meta']);
@@ -129,6 +136,7 @@ export class ViewRegistry {
       // than the label beside it.
       ...(declaration.icon === undefined ? {} : { icon: declaration.icon }),
       ...(declaration.search === undefined ? {} : { search: declaration.search }),
+      ...(declaration.head === undefined ? {} : { head: declaration.head }),
     });
     this.#options.publish(type);
   }
