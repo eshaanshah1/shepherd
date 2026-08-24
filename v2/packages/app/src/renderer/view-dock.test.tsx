@@ -1323,18 +1323,35 @@ describe('a tree section-s heading', () => {
     view.unmount();
   });
 
-  it('is not drawn when the live list is empty and only the foot has rows', async () => {
-    // `Tasks` names the live list. The foot names itself and is pinned to the
-    // bottom of the rail, so with nothing live the heading sat over a hairline
-    // with nothing under it and read as a label for the shipped drawer.
+  it('is not drawn when a contributed heading is the first row, because it names nothing', async () => {
+    // The real shape of an empty rail: nothing live, and `Shipped` — a `section`
+    // row that FLOWS in the list rather than the `foot` it used to be — heading
+    // everything below it. The view title landed directly on top of `Shipped`
+    // and read as a label for the shipped work, the one region it does not name.
     const view = mount(
       <ViewDock
-        views={bridge(titled('shell.tree', 'Tasks'), [], [{ id: 'done', label: 'Shipped', foot: true }])}
+        views={bridge(titled('shell.tree', 'Tasks'), [], [
+          { id: 'shipped', label: 'Shipped', description: '25', section: true },
+          { id: 'a', label: 'a shipped task' },
+        ])}
       />,
     );
     await settle();
     expect(all(view.container, 'view-title')).toHaveLength(0);
-    expect(all(view.container, 'view-row')).toHaveLength(1);
+    view.unmount();
+  });
+
+  it('is drawn when a row precedes the first contributed heading', async () => {
+    const view = mount(
+      <ViewDock
+        views={bridge(titled('shell.tree', 'Tasks'), [], [
+          { id: 'live', label: 'a live task' },
+          { id: 'shipped', label: 'Shipped', description: '25', section: true },
+        ])}
+      />,
+    );
+    await settle();
+    expect(one(view.container, 'view-title').textContent).toContain('Tasks');
     view.unmount();
   });
 });

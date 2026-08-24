@@ -859,14 +859,26 @@ function TreeView({
    * contribution that declared no title still has a list, and an unnamed list is
    * worse than one named by its id.
    *
-   * Drawn only when the view's OWN list has rows in it. `Tasks` names the live
-   * list; the foot names itself (`Shipped`), and it is pinned to the bottom of
-   * the rail rather than sitting under the heading. With no live tasks the
-   * heading was a word floating over a hairline with nothing between it and the
-   * shipped drawer — it read as a label for the shipped work, which is the one
-   * thing it does not name.
+   * Drawn only when there is a row it actually NAMES — one that no contributed
+   * heading has already claimed.
+   *
+   * `Tasks` names the ungrouped rows a tree opens with. Everything from the
+   * first `section` row on is named by that row (`Shipped`, and the day labels
+   * under it), so with nothing live the view title sat directly on top of
+   * `Shipped` and read as a label for the shipped work — the one region it does
+   * not name.
+   *
+   * Keyed on the first CONTRIBUTED heading rather than on `top` being empty,
+   * which is where this went wrong the first time: `Shipped` is a `section` row
+   * that flows in the list, not the `foot` row it used to be, so `top` holds the
+   * whole shipped block and is never empty while anything has shipped. A tree
+   * with no headings at all keeps its title over whatever rows it has.
    */
   const heading = views[0];
+
+  /** Rows before the first contributed heading — the ones the view title names. */
+  const headingAt = top.findIndex((entry) => entry.row.section === true);
+  const namesRows = headingAt === -1 ? top.length > 0 : headingAt > 0;
 
   /**
    * A section with nothing in it is not drawn at all — no heading over blank
@@ -887,7 +899,7 @@ function TreeView({
 
   return (
     <section className="sh-side-view" data-view-type={base}>
-      {heading === undefined || top.length === 0 ? null : (
+      {heading === undefined || !namesRows ? null : (
         <SectionLabel role="heading" aria-level={2} data-testid="view-title">
           {heading.title ?? heading.type}
         </SectionLabel>
