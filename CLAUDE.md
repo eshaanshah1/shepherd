@@ -165,9 +165,15 @@ env -u NODE_OPTIONS pnpm ship --dev   # → /Applications/Shep Night.app, daily 
   that the two sides disagree in the app. **Run `pnpm smoke:m3` before calling any
   task/layout/composer work done** — it drives the real Electron app and asserts
   through the real bus.
-- **The app logs to stdout, so a Finder-launched build has no log.** Read the
-  running app instead, over its control socket (`~/.shepherd/v2/control.sock`,
-  `v2-dev` for Shep Night):
+- **The app logs to `~/.shepherd/v2/app.log`** (`v2-dev` for Shep Night), beside
+  the daemon's. stdout keeps `info` for `pnpm dev`; the FILE takes `debug`, and it
+  is what a Finder-launched build leaves behind — those lines used to go nowhere.
+  It carries all three processes: the extension host's `ctx.log` lines arrive over
+  the port, its own pre-handshake stderr arrives piped (`stdio: 'pipe'`), and the
+  page's console/load-failure/crash lines come through `renderer-diagnostics.ts`
+  under the `renderer` category. Rotates at 8 MB keeping one `.1`.
+- **Read the running app over its control socket**
+  (`~/.shepherd/v2/control.sock`, `v2-dev` for Shep Night):
   ```sh
   curl -s --unix-socket ~/.shepherd/v2/control.sock -X POST \
     -H 'content-type: application/json' \

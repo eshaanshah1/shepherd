@@ -3,6 +3,7 @@ import { MessageChannelMain, app, utilityProcess } from 'electron';
 import type { Logger } from '@shepherd/sdk';
 import type { HostFrame } from '../shared/ext-protocol.ts';
 import type { ExtChildProcess } from './ext-host.ts';
+import { forwardChildOutput } from './child-output.ts';
 
 /**
  * The only file that knows the extension host is a `utilityProcess`.
@@ -26,10 +27,10 @@ import type { ExtChildProcess } from './ext-host.ts';
  *   - **`fork` only works after `app.whenReady()`.** Electron says so; a fork
  *     before that throws, and the throw would land inside the first activation.
  *
- * `stdio: 'inherit'` on purpose. The child writes its own diagnostics to stderr
- * before the host has accepted its protocol — the one window in which it cannot
- * log through the port — and inheriting is what puts those lines in the same
- * terminal as everything else the app says.
+ * `stdio: 'pipe'`, not `'inherit'`. The child writes its own diagnostics to
+ * stderr before the host has accepted its protocol — the one window in which it
+ * cannot log through the port — and inheriting sent them to a terminal an
+ * installed app does not have. Piped, they go through the logger to the file.
  */
 
 /** Where the fourth build target lands, relative to `out/main/index.js`. */
@@ -52,8 +53,9 @@ export function forkExtensionHost(options: SpawnOptions): ExtChildProcess {
 
   const child = utilityProcess.fork(entry, [], {
     serviceName: 'Shepherd Extension Host',
-    stdio: 'inherit',
+    stdio: 'pipe',
   });
+  forwardChildOutput(child, log, 'the extension host');
   const channel = new MessageChannelMain();
   const port = channel.port1;
 

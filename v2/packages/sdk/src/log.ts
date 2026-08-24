@@ -47,6 +47,14 @@ export const LOG_CATEGORIES = [
    * what you grep for when the screen is missing a section.
    */
   'settings',
+  /**
+   * The page: its console, a load that failed, a renderer that died.
+   *
+   * Its own category because the process is its own — a line here was written
+   * somewhere main cannot see, and `grep ' renderer '` is how you find out
+   * whether an empty window was the page's fault or the kernel's.
+   */
+  'renderer',
 ] as const;
 export type LogCategory = (typeof LOG_CATEGORIES)[number];
 

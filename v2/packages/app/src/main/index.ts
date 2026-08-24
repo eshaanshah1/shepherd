@@ -42,6 +42,7 @@ import {
   createLogger,
   extensionId,
   paneId,
+  passes,
   rootId,
   sessionId,
   systemClock,
@@ -51,6 +52,8 @@ import {
 import { ExtensionHost } from './ext-host.ts';
 import { forkExtensionHost } from './ext-host-process.ts';
 import { IS_DEV } from './build-flags.ts';
+import { openLogFile } from './log-file.ts';
+import { attachRendererDiagnostics } from './renderer-diagnostics.ts';
 import {
   bootstrap,
   flagValue,
@@ -181,14 +184,39 @@ if (!boot.hasLock) {
 }
 
 // --- the kernel. All of it outlives every window and every view.
+
+/**
+ * Where the sockets live. Overridable per run — see `SUPPORT_FLAG`; a throwaway
+ * userData directory does not isolate a socket derived from `$HOME`.
+ *
+ * Declared HERE, at the top, because the daemon's socket is one of them and the
+ * log below is another. It was not, for one commit: the daemon bound
+ * `~/.shepherd/v2/session.sock` directly, so every smoke — and `pnpm dev` —
+ * would have driven the ptys of the daily app, which is the exact class of bug
+ * this flag exists to prevent.
+ */
+const support = resolveSupport(process.argv, resolveAppPaths(IS_DEV).support);
+
+/**
+ * The log, in two places with two bars: stdout keeps `info`, the file takes
+ * everything.
+ *
+ * A Finder-launched `.app` has nothing on the other end of stdout, so only a run
+ * started from a terminal could be explained — and by the time anybody asks, the
+ * answer is usually in `debug`. `createLogger` filters before the sink, so one
+ * logger cannot hold two bars: it is built at `debug` and the split is here.
+ */
+const logFile = openLogFile(`${support}/app.log`);
 const logger = createLogger({
   clock: systemClock,
-  level: IS_DEV ? 'debug' : 'info',
-  // stdout for now, prefixed like everything else this process says. The rotating
-  // file v1 had is a later, deliberate addition; what matters today is that a
-  // branch ending in "and then nothing happens" has somewhere to say so.
-  sink: (line) => process.stdout.write(`[shepherd] ${line}\n`),
+  level: 'debug',
+  sink: (line, record) => {
+    logFile?.(line, record);
+    if (IS_DEV || passes('info', record.level)) process.stdout.write(`[shepherd] ${line}\n`);
+  },
 });
+// Cannot go through the logger: it is about the logger.
+if (logFile === undefined) say(`could not open ${support}/app.log — logging to stdout only`);
 
 /**
  * Sessions live in `shepherdd`, not here (R1, ADR 0036).
@@ -208,17 +236,6 @@ const USE_DAEMON = process.env['SHEPHERD_SESSION_DAEMON'] !== '0';
 
 /** Assigned in `whenReady`; disposed with the app. */
 let remote: (RemoteAPI & { dispose(): void }) | undefined;
-
-/**
- * Where the sockets live. Overridable per run — see `SUPPORT_FLAG`; a throwaway
- * userData directory does not isolate a socket derived from `$HOME`.
- *
- * Declared HERE, above the host, because the daemon's socket is one of them. It
- * was not, for one commit: the daemon bound `~/.shepherd/v2/session.sock`
- * directly, so every smoke — and `pnpm dev` — would have driven the ptys of the
- * daily app, which is the exact class of bug this flag exists to prevent.
- */
-const support = resolveSupport(process.argv, resolveAppPaths(IS_DEV).support);
 
 /**
  * The store paired devices live in — beside the sockets rather than under
@@ -738,11 +755,13 @@ export function createWindow(): BrowserWindow {
   win.once('ready-to-show', () => win.show());
   captureIfAsked(win);
 
+  // Before the load, so a load that fails is still reported, and for every
+  // window: the shipped app is the one whose page nobody is watching.
+  attachRendererDiagnostics(win, logger);
+
   if (RENDERER_DEV_URL !== undefined) {
-    forwardRendererDiagnostics(win);
     void win.loadURL(SMOKE === undefined ? RENDERER_DEV_URL : `${RENDERER_DEV_URL}?smoke=1`);
   } else {
-    if (SMOKE !== undefined) forwardRendererDiagnostics(win);
     void win.loadFile(
       join(import.meta.dirname, '../renderer/index.html'),
       SMOKE === undefined ? {} : { query: { smoke: '1' } },
@@ -750,28 +769,6 @@ export function createWindow(): BrowserWindow {
   }
 
   return win;
-}
-
-/**
- * In dev, put the renderer's console on the terminal running `pnpm dev`.
- *
- * Without this the only place a renderer error appears is a DevTools window
- * nobody has open, so "the app looks fine" and "the app logged a React error on
- * every render" are the same observation. A load failure or a dead renderer is
- * worse: the window just stays empty, with no line anywhere saying why.
- */
-function forwardRendererDiagnostics(win: BrowserWindow): void {
-  const levels = ['debug', 'info', 'warn', 'error'] as const;
-  win.webContents.on('console-message', (details) => {
-    const level = levels[details.level as unknown as number] ?? String(details.level);
-    process.stdout.write(`[renderer:${level}] ${details.message}\n`);
-  });
-  win.webContents.on('did-fail-load', (_event, code, description, url) => {
-    process.stdout.write(`[renderer:load-failed] ${code} ${description} ${url}\n`);
-  });
-  win.webContents.on('render-process-gone', (_event, details) => {
-    process.stdout.write(`[renderer:gone] ${details.reason}\n`);
-  });
 }
 
 /**

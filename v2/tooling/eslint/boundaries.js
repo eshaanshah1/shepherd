@@ -402,6 +402,35 @@ export const boundaries = [
     },
   },
   {
+    // Main's TESTS may name a temp directory; main itself may not.
+    //
+    // The `boundary/core-tests` carve-out, for the same reason and with the same
+    // limits. `log-file.ts` opens a real file and rolls one aside, and there is
+    // no way to test that without a real directory to do it in — `node:os` is
+    // how you name one. The alternatives are reading `process.env.TMPDIR` off
+    // the global, which lint cannot see and which makes the rule theatre, or
+    // writing fixtures into the repo.
+    //
+    // `child_process` stays denied and that is the one that matters: main
+    // reaches the machine through `packages/platform/darwin`, and a test that
+    // spawned directly would prove nothing about that seam.
+    //
+    // Ordered AFTER boundary/app-main so it wins for the files it names.
+    name: 'boundary/app-main-tests',
+    files: ['packages/app/src/main/**/*.test.ts'],
+    rules: {
+      ...restrict(
+        deny(REACT, 'react belongs to packages/app/src/renderer.'),
+        deny(
+          OS_APIS.filter((api) => api !== 'os' && api !== 'node:os'),
+          'OS APIs live in packages/platform/darwin only; a test may name a temp directory and no more.',
+        ),
+        deny(WORKSPACE.ui, NO_PAGE),
+      ),
+      ...noDom,
+    },
+  },
+  {
     // Preload is the one file that legitimately sees both sides, so it keeps
     // the import restrictions without the DOM ban.
     name: 'boundary/app-preload',
