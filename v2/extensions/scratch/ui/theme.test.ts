@@ -10,6 +10,7 @@ import { cssVariables } from '@shepherd/design-tokens';
  */
 const source = readFileSync(join(import.meta.dirname, 'theme.ts'), 'utf8');
 const preview = readFileSync(join(import.meta.dirname, 'live-preview.ts'), 'utf8');
+const fm = readFileSync(join(import.meta.dirname, 'frontmatter.ts'), 'utf8');
 
 /**
  * Every token the design system actually publishes, GENERATED rather than
@@ -27,11 +28,20 @@ describe('the scratch theme', () => {
     expect(source).not.toMatch(/\b(rgba?|hsla?)\(/);
   });
 
-  it('styles every class live-preview.ts emits', () => {
-    const classes = [...preview.matchAll(/'(sh-scratch-[a-z0-9]+)'/g)].map((match) => match[1]);
-    expect(classes.length).toBeGreaterThan(0);
-    for (const cls of new Set(classes)) {
-      expect(source, `live-preview emits .${cls} and the theme does not style it`).toContain(cls);
+  /*
+   * Both decoration builders, and the pattern allows HYPHENS.
+   *
+   * It did not, and that was a hole rather than a choice: `sh-scratch-fm-fence`
+   * did not match `[a-z0-9]+`, so every class this feature added would have been
+   * exempt from the one assertion that catches an unstyled decoration.
+   */
+  it('styles every class the decoration builders emit', () => {
+    const emitted = [...`${preview}\n${fm}`.matchAll(/'(sh-scratch-[a-z0-9- ]+)'/g)].map((match) => match[1]);
+    // Two classes can share one string literal (`'a b'`), so each is split out.
+    const classes = new Set(emitted.flatMap((literal) => (literal ?? '').split(/\s+/)));
+    expect(classes.size).toBeGreaterThan(0);
+    for (const cls of classes) {
+      expect(source, `a decoration emits .${cls} and the theme does not style it`).toContain(cls);
     }
   });
 

@@ -20,6 +20,7 @@ import {
   IconMaximize,
   IconPlus,
   IconNotes,
+  IconPuzzle,
   IconSearch,
   IconShip,
   IconTrash,
@@ -68,6 +69,23 @@ export const NAMED_GLYPHS: Readonly<Record<string, ComponentType<TablerIconProps
    * is, which is what a tab with no agent has to fall back on.
    */
   notes: IconNotes,
+  /*
+   * A skill — a scratch pane whose document is a `SKILL.md`, and the tab it
+   * becomes.
+   *
+   * **Deliberately not paper.** The obvious glyph for a document that teaches an
+   * agent something is a book, and it is wrong here for a reason that is about
+   * this strip rather than about skills: `notes` is directly above, a skill tab
+   * sits beside scratch tabs, and two documents in one strip is a strip where the
+   * glyph has stopped telling you which is which. A puzzle piece says the other
+   * true thing about a skill — that it is a capability which slots into the agent
+   * — and it is the shape every plugin surface in the world already uses.
+   *
+   * It also survives the size. The Slack mark two entries down is the recorded
+   * failure: interior gaps under ~2px fill in against a 1.75px stroke at 13px.
+   * A puzzle piece is one closed outline with no counters at all.
+   */
+  skill: IconPuzzle,
   eye: IconEye,
   /*
    * Two folders, and the pair IS the fact a repo picker has to state: filled =

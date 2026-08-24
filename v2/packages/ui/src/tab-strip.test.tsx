@@ -204,15 +204,130 @@ describe('TabStrip', () => {
     // `Row`'s invariant, for the same reason: a strip that grew a taller state
     // would move the panes under it, and one rule is what keeps the band on the
     // app's single vertical rhythm.
+    //
+    // The BAND, which is why the sub-element selectors are filtered out rather
+    // than swept in: a control inside the strip has a control's height and is not
+    // a second opinion about how tall the band is. `__` is the whole test for
+    // that — every child of this component is named for it.
     const heights = rulesMentioning('sh-ui-tabs').filter(
       (rule) =>
-        rule.style.getPropertyValue('height') !== '' ||
-        rule.style.getPropertyValue('min-height') !== '' ||
-        rule.style.getPropertyValue('max-height') !== '',
+        !rule.selectorText.includes('__') &&
+        (rule.style.getPropertyValue('height') !== '' ||
+          rule.style.getPropertyValue('min-height') !== '' ||
+          rule.style.getPropertyValue('max-height') !== ''),
     );
     expect(heights).toHaveLength(1);
     // A fixed BAND, not the row rhythm: the row grew to 34 with the task card,
     // and the strip is furniture rather than a list.
     expect(heights[0]?.style.getPropertyValue('height')).toBe('var(--sh-band-tab-strip)');
+  });
+});
+
+/**
+ * The focused pane's actions, at the trailing edge.
+ *
+ * What these assert is the contract and the ordering: an id and a PART come back
+ * rather than a callback per half, the actions draw before the strip's own verb,
+ * and a strip with none is byte-for-byte the strip that existed before them.
+ */
+describe('TabStrip — pane actions', () => {
+  const INSTALL = { id: 'install', label: 'Install skill', glyph: IconGitPullRequest };
+
+  it('draws nothing extra when there are none', () => {
+    const view = mount(<TabStrip tabs={TABS} activeId="a" onSelect={() => {}} />);
+    expect(view.container.querySelector('.sh-ui-tabs__action')).toBeNull();
+    expect(view.container.querySelector('.sh-ui-tabs__trailing')).toBeNull();
+    view.unmount();
+  });
+
+  it('reports the id that was clicked', () => {
+    const hits: string[] = [];
+    const view = mount(
+      <TabStrip
+        tabs={TABS}
+        activeId="a"
+        onSelect={() => {}}
+        actions={[INSTALL]}
+        onAction={(id) => hits.push(id)}
+      />,
+    );
+    act(() => {
+      view.container.querySelector<HTMLElement>('[data-testid="tab-action-install"]')?.click();
+    });
+    expect(hits).toEqual(['install']);
+    view.unmount();
+  });
+
+  it('labels the action in text, not by its glyph alone', () => {
+    const view = mount(
+      <TabStrip tabs={TABS} activeId="a" onSelect={() => {}} actions={[INSTALL]} onAction={() => {}} />,
+    );
+    expect(view.container.querySelector('[data-testid="tab-action-install"]')?.textContent).toBe('Install skill');
+    view.unmount();
+  });
+
+  it('draws actions BEFORE the strip’s own verb', () => {
+    const view = mount(
+      <TabStrip
+        tabs={TABS}
+        activeId="a"
+        onSelect={() => {}}
+        onNew={() => {}}
+        newIcon={IconPlus}
+        actions={[INSTALL]}
+      />,
+    );
+    const trailing = view.container.querySelector('.sh-ui-tabs__trailing');
+    const drawn = [...(trailing?.children ?? [])].map((child) => child.getAttribute('data-testid'));
+    expect(drawn).toEqual(['tab-action-install', 'tab-new']);
+    view.unmount();
+  });
+
+  it('still draws the new-tab control with no actions beside it', () => {
+    const view = mount(
+      <TabStrip tabs={TABS} activeId="a" onSelect={() => {}} onNew={() => {}} newIcon={IconPlus} />,
+    );
+    expect(newTab(view.container)).not.toBeNull();
+    view.unmount();
+  });
+
+  /*
+   * ONE element holds the edge. With the auto margin on the `+`, an action
+   * appearing beside it would shove the `+` along — which is §10's control that
+   * moves under the cursor, on the gesture that makes it happen.
+   */
+  it('holds the trailing edge in one place, not per control', () => {
+    const pinned = rulesMentioning('sh-ui-tabs').filter(
+      (rule) => rule.style.getPropertyValue('margin-inline-start') === 'auto',
+    );
+    expect(pinned).toHaveLength(1);
+    expect(pinned[0]?.selectorText).toContain('__trailing');
+  });
+
+  /*
+   * The control's drawn height is the small control token, once. The
+   * coarse-pointer target is excluded because it is neither drawn nor in layout —
+   * `button.css` calls 44px a device fact rather than a design value, and it is
+   * the one literal length either file is allowed.
+   */
+  it('draws the control at one height, and it is the small control token', () => {
+    const heights = rulesMentioning('sh-ui-tabs__action').filter(
+      (rule) => rule.style.getPropertyValue('height') !== '' && !rule.selectorText.includes('::after'),
+    );
+    expect(heights).toHaveLength(1);
+    expect(heights[0]?.style.getPropertyValue('height')).toBe('var(--sh-control-sm)');
+  });
+
+  /*
+   * Secondary, never primary: `wool` is the one loud fill on a surface and a
+   * strip already has three tabs on it. The assertion is that nothing here
+   * declares a resting background at all — hover is what adds one.
+   */
+  it('rests with no fill of its own', () => {
+    const resting = rulesMentioning('sh-ui-tabs__action').filter(
+      (rule) => !rule.selectorText.includes(':') && rule.style.getPropertyValue('background') !== '',
+    );
+    expect(resting).toHaveLength(1);
+    expect(resting[0]?.style.getPropertyValue('background')).toBe('transparent');
   });
 });

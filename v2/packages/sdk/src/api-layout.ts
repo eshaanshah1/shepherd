@@ -127,6 +127,57 @@ export interface PaneView {
 }
 
 /**
+ * Something the pane is offering right now, drawn at the trailing edge of the tab
+ * strip while it is the focused pane.
+ *
+ * The point of it being on the PANE rather than on the view type: a scratch pane
+ * offers to install a skill only while a skill is what is written in it, and a
+ * contribution registered once cannot know that. The pane publishes the answer
+ * through `layout.rename` alongside its title and glyph, because that is one
+ * write of "here is what I am and what I offer" rather than three.
+ *
+ * `glyph` is a NAME, resolved by the renderer's own allow-list (ADR 0033) — an
+ * extension cannot reach the page with a picture the build never saw.
+ *
+ * **There is deliberately no command here.** The action is DECLARATIVE: the shell
+ * draws it and dispatches a `sh:pane-action` window event naming the pane and the
+ * id, and the pane's own component decides what that means. That is `TabStrip`'s
+ * contract ("an array in, an id out") applied one layer up, and it is what lets
+ * the answer be a dialog the pane owns — which a command invoked in the extension
+ * HOST could not open, because the host has no DOM.
+ *
+ * A verb that wants to be callable without the UI registers a command and says so
+ * in the palette; `scratch.installSkill` is both, and the two paths do not have to
+ * be the same path.
+ *
+ * Never persisted: an action belongs to a live pane's current contents, and a
+ * restored one would draw a button whose meaning nothing remembers.
+ */
+export interface PaneAction {
+  readonly id: string;
+  /** 1–3 words, sentence case. It is a button label, not a sentence. */
+  readonly label: string;
+  readonly glyph: string;
+}
+
+/*
+ * There was a `menuCommand` here, drawn before it was dropped.
+ *
+ * The design had a chevron fused to the button, opening the verb's options
+ * without the dialog — T3's split-button shape. Building it means a SHELL-level
+ * "a command answers with choices" protocol: the strip is the shell's, so the
+ * shell would have to invoke, read choices back, and render the menu. The
+ * convention exists (`extensions/github/ui/review.tsx`'s `readChoices`) but only
+ * inside an extension's own pane, where the thing that invoked is the thing that
+ * draws.
+ *
+ * One caller does not pay for that, and `Menu`'s own doc comment is the rule
+ * being followed: a primitive with no caller is a design nobody has tested. The
+ * dialog the button opens already asks both questions, so the fast path saves one
+ * click and costs a protocol. It arrives with a second caller that wants it.
+ */
+
+/**
  * A contributed view.
  *
  * M1's providers return **data**, not components. §7b decided community

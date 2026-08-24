@@ -16,6 +16,8 @@ interface FakeRoot {
   root: string;
   group: string;
   label: string;
+  /** What `listRoots` answers for the focused pane's glyph. `null` for a terminal. */
+  icon?: string | null;
   focusedSession: string | null;
   panes: { pane: string; cwd: string | null; session: string | null }[];
 }
@@ -348,5 +350,59 @@ describe('shell.promote', () => {
     expect(touched).not.toContain('layout.close');
     expect(touched).not.toContain('layout.closeRoot');
     expect(touched).not.toContain('layout.switchRoot');
+  });
+});
+
+/**
+ * The focused pane's glyph, carried across untouched.
+ *
+ * This extension resolves nothing and must not: it moves a NAME from `listRoots`
+ * to the row, and the shell matches it against the renderer's own allow-list
+ * (ADR 0033). What is worth asserting is that it neither invents one nor drops
+ * one — a scratch pane in the rail read as an empty slot for exactly as long as
+ * this field was missing.
+ */
+describe('the Scratchpad row-s glyph', () => {
+  it('carries the glyph listRoots reported', async () => {
+    const shells = [{ ...root('window-2', 'to-do'), icon: 'notes' }];
+    const { rows } = host(shells);
+    const [row] = await rows();
+    expect(row?.icon).toBe('notes');
+  });
+
+  it('sends none for a terminal, which reports null', async () => {
+    const { rows } = host([{ ...root('window-2', 'zsh'), icon: null }]);
+    const [row] = await rows();
+    expect('icon' in (row ?? {})).toBe(false);
+  });
+
+  it('sends none when listRoots omits the field entirely', async () => {
+    // An older kernel, or a malformed answer across the port. Absent is the
+    // honest reading; inventing `notes` would put a document glyph on a shell.
+    const { rows } = host([root('window-2', 'zsh')]);
+    const [row] = await rows();
+    expect('icon' in (row ?? {})).toBe(false);
+  });
+
+  it('ignores a glyph that is not a string', async () => {
+    const shells = [{ ...root('window-2', 'to-do'), icon: 7 as unknown as string }];
+    const { rows } = host(shells);
+    const [row] = await rows();
+    expect('icon' in (row ?? {})).toBe(false);
+  });
+
+  /*
+   * The glyph and the state are independent: the row sends both and the SHELL
+   * decides which occupies the slot. Deciding here would mean this extension knew
+   * how wide the slot is and what else competes for it.
+   */
+  it('sends the glyph alongside a state rather than instead of it', async () => {
+    const shells = [{ ...root('window-2', 'to-do', '/w', 'sess-1'), icon: 'notes' }];
+    const { rows, busListeners } = host(shells);
+    await rows();
+    busListeners.get('agents.stateChanged')?.({ session: 'sess-1', to: 'working' });
+    const [row] = await rows();
+    expect(row?.icon).toBe('notes');
+    expect(row?.tint).toBe('working');
   });
 });

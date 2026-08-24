@@ -1,4 +1,4 @@
-import type { PaneID, PaneView } from '@shepherd/sdk';
+import type { PaneAction, PaneID, PaneView } from '@shepherd/sdk';
 import { newPaneId, type RandomId } from '../identity.ts';
 
 /**
@@ -12,9 +12,12 @@ import { newPaneId, type RandomId } from '../identity.ts';
  * attention, tasks) hangs off the pane id in that extension's own store — which
  * is the whole point of M1's registry and is why the field never comes back.
  *
- * Of the four fields, two persist (`userTitle`, `cwd`) and two do not:
- * `title` is whatever the running program set by OSC, and `initialCommand` is
- * typed into the pty once on mount. `serialize.ts` is where that is enforced.
+ * The cut between the fields is what SURVIVES A RELAUNCH, not what is useful:
+ * `userTitle` and `cwd` persist because a person chose them; `title`,
+ * `initialCommand`, `icon` and `actions` do not, because a running thing
+ * produced them and will produce them again. `serialize.ts` is where that is
+ * enforced, and it is enforced by a separate DTO rather than by anyone
+ * remembering.
  */
 export interface Pane {
   readonly id: PaneID;
@@ -66,6 +69,35 @@ export interface Pane {
    * what keeps this field from being a component name — see `PaneView`.
    */
   readonly view: PaneView | null;
+  /**
+   * The glyph this pane is currently wearing, by NAME, or `null` for whatever its
+   * view type declared.
+   *
+   * A view type's `icon` is one glyph for every pane of that type, which is right
+   * for a pull request and wrong for a scratch pane: the same view is a notepad or
+   * a skill depending on what is written in it. So a pane may override it, and the
+   * renderer prefers this over the contribution's.
+   *
+   * **Live, never persisted** (`serialize.ts`), and that is the same cut `title`
+   * is on: a value derived from a running thing's contents, which the thing
+   * re-publishes when it mounts. `userTitle` persists because a person typed it.
+   *
+   * A NAME rather than anything drawable, for ADR 0033's reason: it resolves
+   * through the renderer's own allow-list, so a pane cannot reach the page with a
+   * glyph the build never saw.
+   */
+  readonly icon: string | null;
+  /**
+   * What this pane is offering right now, drawn at the trailing edge of the tab
+   * strip when it is the focused one.
+   *
+   * Live and never persisted, more strongly than `icon` is: an action names a
+   * command, and a command exists only while the extension that registered it is
+   * active. A restored action would draw a button that invokes nothing.
+   *
+   * Empty is the resting state, and the common one — a terminal offers nothing.
+   */
+  readonly actions: readonly PaneAction[];
 }
 
 export interface PaneInit {
@@ -77,6 +109,8 @@ export interface PaneInit {
   readOnly?: boolean;
   snapshotFile?: string | null;
   view?: PaneView | null;
+  icon?: string | null;
+  actions?: readonly PaneAction[];
 }
 
 export function makePane(init: PaneInit = {}, random?: RandomId): Pane {
@@ -89,6 +123,8 @@ export function makePane(init: PaneInit = {}, random?: RandomId): Pane {
     readOnly: init.readOnly ?? false,
     snapshotFile: init.snapshotFile ?? null,
     view: init.view ?? null,
+    icon: init.icon ?? null,
+    actions: init.actions ?? [],
   };
 }
 

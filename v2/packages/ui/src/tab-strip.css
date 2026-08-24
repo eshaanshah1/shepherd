@@ -107,11 +107,107 @@
  * Pinned to the trailing edge, so the control does not walk left and right as
  * tabs are added and removed — a button that moves under the cursor is one you
  * have to look for every time.
+ *
+ * The auto margin moved OUT to `__trailing` when actions arrived, for the same
+ * reason it was here: with it on the `+`, an action appearing beside it would
+ * have pushed the `+` along, which is the walk this rule exists to stop.
  */
 .sh-ui-tabs__new {
+  align-self: center;
+  flex: 0 0 auto;
+}
+
+/*
+ * The trailing group: the focused pane's actions, then the strip's own verb.
+ *
+ * That ordering is every window chrome's — what you act on, then the chrome
+ * itself — and it is why this element rather than a margin on each child: one
+ * thing holds the edge, and everything inside it keeps its place as the set
+ * changes.
+ */
+.sh-ui-tabs__trailing {
   margin-inline-start: auto;
   align-self: center;
   flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-sm);
   position: sticky;
   inset-inline-end: 0;
+}
+
+/*
+ * The action itself.
+ *
+ * `control-sm` (20) inside a 24px tab inside a 34px band, so it reads as
+ * subordinate to the tabs: a tab is what the window is showing and an action is a
+ * thing you may do to it. Bordered and unfilled — `secondary`, never `primary`,
+ * because one wool fill beside three tabs would be the loudest thing in the
+ * window and the one primary belongs to whatever this opens.
+ */
+.sh-ui-tabs__action {
+  appearance: none;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-sm);
+  flex: 0 0 auto;
+  height: var(--sh-control-sm);
+  padding: 0 var(--sh-space-md);
+
+  font-family: var(--sh-font-sans);
+  font-size: var(--sh-font-size-small);
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0;
+  white-space: nowrap;
+
+  background: transparent;
+  /* `lineStrong`, not `line`: a bordered CONTROL is a box with four edges, and at
+     `line` it disappears into the strip's own bottom seam. */
+  border: var(--sh-hairline) solid var(--sh-line-strong);
+  /* The chip corner, which is what a `sm` control takes — `button.css` says why. */
+  border-radius: var(--sh-radius-sm);
+  color: var(--sh-text-dim);
+  cursor: pointer;
+
+  /* Rule 7: the properties that actually change, and linear. */
+  transition:
+    color var(--sh-motion) linear,
+    background var(--sh-motion) linear;
+}
+
+.sh-ui-tabs__action:hover {
+  background: var(--sh-fill-hover);
+  color: var(--sh-text);
+}
+
+/* Compression, not a transform: rule 7 bans the spring, and a control that moves
+   under the cursor is one whose target moved mid-click. */
+.sh-ui-tabs__action:active {
+  background: color-mix(in srgb, var(--sh-text) 12%, transparent);
+}
+
+.sh-ui-tabs__action:focus-visible {
+  outline: var(--sh-hairline) solid var(--sh-focus-ring);
+  /* An OUTLINE at a negative offset, so a focused control is the same SIZE as an
+     unfocused one and stays inside the strip's 34px band. */
+  outline-offset: calc(-1 * var(--sh-hairline));
+}
+
+/*
+ * The coarse-pointer hit target, per `button.css`: 44px is a DEVICE fact and does
+ * not scale with the chrome. Invisible and out of layout, so a 20px control stays
+ * 20px on screen and merely becomes catchable.
+ */
+@media (pointer: coarse) {
+  .sh-ui-tabs__action::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 44px;
+    transform: translateY(-50%);
+  }
 }

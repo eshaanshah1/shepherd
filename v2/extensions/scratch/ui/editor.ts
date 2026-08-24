@@ -4,6 +4,7 @@ import { EditorView, keymap } from '@codemirror/view';
 import type { Extension } from '@codemirror/state';
 import { scratchMarkdown } from './markdown-parser.ts';
 import { livePreview } from './live-preview.ts';
+import { frontmatter } from './frontmatter.ts';
 import { scratchTheme } from './theme.ts';
 import { toggleAt } from './checkbox-widget.ts';
 
@@ -42,6 +43,15 @@ export function scratchExtensions(options: {
     history(),
     keymap.of([...defaultKeymap, ...historyKeymap]),
     livePreview,
+    /*
+     * AFTER `livePreview`, and the order is load-bearing.
+     *
+     * Lezer reads the opening `---` as a thematic break, so `livePreview` replaces
+     * it with a drawn rule. This extension collapses the whole line instead, and a
+     * later extension's decorations win — so the fence disappears rather than
+     * becoming a hairline followed by two more of them.
+     */
+    frontmatter,
     scratchTheme,
     EditorView.lineWrapping,
     EditorView.updateListener.of((update) => {

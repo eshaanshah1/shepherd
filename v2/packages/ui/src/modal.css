@@ -115,6 +115,26 @@
   overflow: visible;
 }
 
+/*
+ * The SECOND carve-out, and the rule above predicted it in as many words: "a
+ * future contribution that scrolls inside here has to scroll its own band rather
+ * than ask this element to do it."
+ *
+ * A modal that is a FORM has the same problem for the same reason — a `Select` in
+ * one of its rows opens a list past the card's padding edge, and a scroll
+ * container clips it. `:has()` on a marker class rather than on `.sh-ui-select`
+ * itself: a select in a row that does NOT open past the edge would opt this card
+ * out of scrolling for no benefit, and the card is the only thing that knows
+ * whether it can afford to.
+ *
+ * Affordable on the same terms: nothing in a form card grows without bound. Every
+ * row is a fixed-height control, and a contribution that needs to scroll a long
+ * list scrolls that list.
+ */
+.sh-ui-modal:has(.sh-ui-modal-form) {
+  overflow: visible;
+}
+
 /* The scrollbar, matching everything else in the app: a thumb and nothing else. */
 .sh-ui-modal {
   scrollbar-width: thin;

@@ -43,6 +43,8 @@ interface AgentStateChanged {
 interface MirroredRoot {
   readonly root: string;
   readonly label: string;
+  /** The focused pane's glyph, by name, or `null` for a terminal. */
+  readonly icon: string | null;
   readonly session: string | null;
   readonly cwd: string | null;
   readonly hasPanes: boolean;
@@ -102,6 +104,7 @@ export const activate: ActivateFn = (ctx, api) => {
       const row = raw as {
         root?: unknown;
         label?: unknown;
+        icon?: unknown;
         focusedSession?: unknown;
         panes?: unknown;
       };
@@ -123,6 +126,16 @@ export const activate: ActivateFn = (ctx, api) => {
          * Never the root id — `window-1/tab-2` in the sidebar is an internal name.
          */
         label: typeof row.label === 'string' && row.label !== '' ? row.label : 'term',
+        /*
+         * The focused pane's own glyph, straight from `listRoots` beside its
+         * label — the same single authority, for the same reason.
+         *
+         * This extension does not know what a scratch pane is and must not: it
+         * carries a NAME across and the shell resolves it against the renderer's
+         * allow-list (ADR 0033). A pane that publishes none answers `null`, which
+         * is every terminal — and a terminal's leading slot is its state.
+         */
+        icon: typeof row.icon === 'string' && row.icon !== '' ? row.icon : null,
         session: typeof row.focusedSession === 'string' ? row.focusedSession : null,
         cwd: typeof focused?.cwd === 'string' ? focused.cwd : null,
         hasPanes: panes.length > 0,
@@ -175,7 +188,12 @@ export const activate: ActivateFn = (ctx, api) => {
       .filter((root) => root.hasPanes)
       .map((root) => {
         const state = stateOf(root);
-        return { root: root.root, label: root.label, ...(state === undefined ? {} : { state }) };
+        return {
+          root: root.root,
+          label: root.label,
+          ...(root.icon === null ? {} : { icon: root.icon }),
+          ...(state === undefined ? {} : { state }),
+        };
       });
 
   /**
@@ -224,6 +242,18 @@ export const activate: ActivateFn = (ctx, api) => {
         label: row.label,
         root: row.root,
         ...(tinted === undefined ? {} : { tint: tinted }),
+        /*
+         * Sent whether or not there is a tint, and the SHELL decides which wins —
+         * the same division the tab strip makes, where a glyph shares the mark's
+         * slot and loses to it. Deciding here would mean this extension knew how
+         * wide the slot is and what else competes for it.
+         *
+         * `undefined`, not `null`: `ShellRow` carries the field ABSENT for a
+         * terminal, and a `=== null` guard here spread `{ icon: undefined }` — a
+         * key present on the wire with no value, which is a different answer from
+         * "this row has no glyph" to anything that asks whether the key is there.
+         */
+        ...(row.icon === undefined ? {} : { icon: row.icon }),
         command: { id: LAYOUT_SWITCH_ROOT, args: { root: row.root } },
         ...(repo === null
           ? {}

@@ -315,6 +315,9 @@ importers:
       '@shepherd/design-tokens':
         specifier: workspace:*
         version: link:../../packages/design-tokens
+      '@shepherd/ext-tasks':
+        specifier: workspace:*
+        version: link:../tasks
       '@types/node':
         specifier: 'catalog:'
         version: 26.1.2

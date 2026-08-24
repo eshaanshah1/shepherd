@@ -39,7 +39,28 @@ describe('the scratch manifest', () => {
       SCRATCH_COMMANDS.write,
       SCRATCH_COMMANDS.close,
       SCRATCH_COMMANDS.open,
+      SCRATCH_COMMANDS.skillTargets,
+      SCRATCH_COMMANDS.installSkill,
     ]);
+  });
+
+  /*
+   * `extensions.get` resolves only ids a manifest names, so a dependency this
+   * does not declare is a repo list that comes back empty at runtime and nowhere
+   * else — the target picker would silently offer the user level alone.
+   */
+  it('declares tasks, because that is where the repos come from', () => {
+    expect(scratchManifest.dependencies).toEqual(['shepherd.tasks']);
+  });
+
+  /*
+   * Two of the seven are verbs a person runs; the rest are the pane talking to its
+   * own service half. A title is what puts a command in ⌘K, so an untitled one is
+   * a deliberate absence rather than an oversight.
+   */
+  it('titles only the commands a person would look for', () => {
+    const titled = scratchManifest.contributes?.commands?.filter((command) => command.title !== undefined);
+    expect(titled?.map((command) => command.id)).toEqual([SCRATCH_COMMANDS.create, SCRATCH_COMMANDS.installSkill]);
   });
 
   it('asks for layout, because creating a scratch opens a tab', () => {

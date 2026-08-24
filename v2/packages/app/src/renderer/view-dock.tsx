@@ -769,7 +769,33 @@ function TreeView({
                     answer: a task being archived is resting, and the archiving is
                     not a state of the task.
                   */
-                    row.tint === undefined ? null : <StateMark state={markState(row.tint)} />
+                    /*
+                      A STATE if the row has one, else what the row IS.
+
+                      `TreeItem.icon` was declared in M3 and consumed by nothing
+                      until now, and the note below `ACTION_ICONS` records exactly
+                      why: the slot was the state's, and choosing between them was
+                      "a design decision, not a wiring one". The decision is the
+                      one the tab strip already made and documents — a glyph shares
+                      the mark's slot and LOSES to it, because identity is what a
+                      row falls back on once there is no state to report. A glyph
+                      displacing a blocked square would hide the one thing in the
+                      list you can act on.
+
+                      So a scratch row in the rail reads as a document and a skill
+                      row reads as a skill, while a shell with an agent in it still
+                      reports the agent. `contributedIcon` and not `raiseIcon`: a
+                      name this build does not carry draws NOTHING here, where the
+                      fallback dots would be a picture that means something else.
+                    */
+                    row.tint !== undefined ? (
+                      <StateMark state={markState(row.tint)} />
+                    ) : (
+                      (() => {
+                        const glyph = contributedIcon(row.icon);
+                        return glyph === undefined ? null : <Icon icon={glyph} size="sm" />;
+                      })()
+                    )
                   )
                 }
               >
@@ -956,11 +982,13 @@ function toMenuEntry(entry: TreeItemAction | TreeItemSeparator): MenuEntry {
  * line at a time, with the contribution that needs the glyph, which is the same
  * rule a thirteenth primitive follows.
  *
- * FINDING, reported with this wave: `TreeItem.icon` — the ROW's glyph, declared
- * in the SDK since M3 — is still consumed by nothing. It would resolve through
- * this same table; it is left alone because the row's leading slot is occupied by
- * its `StatusDot` and swapping one for the other is a design decision, not a
- * wiring one.
+ * That earlier FINDING is now closed: `TreeItem.icon` — the ROW's glyph, declared
+ * in the SDK since M3 — was consumed by nothing, and was left alone because the
+ * leading slot belonged to the state mark and choosing between them was a design
+ * decision rather than a wiring one. The decision arrived with the scratch pane's
+ * skill glyph and it is the tab strip's: the glyph shares the slot and loses to
+ * the mark. It resolves through `contributedIcon`, which consults this table and
+ * then `NAMED_GLYPHS`, so a row's glyph and a tab's are one vocabulary.
  */
 const ACTION_ICONS: Readonly<Record<string, ComponentType<TablerIconProps>>> = {
   check: IconCheck,

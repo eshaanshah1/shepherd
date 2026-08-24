@@ -79,6 +79,7 @@ export type {
   LayoutNode,
   LayoutRoot,
   LayoutSplit,
+  PaneAction,
   PaneView,
   Rect,
   SplitAxis,

@@ -1323,3 +1323,71 @@ describe('a tree section-s heading', () => {
     view.unmount();
   });
 });
+
+/**
+ * A row's own glyph in the leading slot.
+ *
+ * `TreeItem.icon` was declared in M3 and drawn by nothing until the scratch pane
+ * needed it. The rule is the tab strip's, and these assert it: the glyph fills the
+ * slot when the row has no state, and LOSES when it has one — a glyph displacing a
+ * blocked square would hide the one thing in the list you can act on.
+ */
+describe('a contributed row-s glyph', () => {
+  const TREE: ViewContributionDTO[] = [
+    { extension: 'shepherd.shell', type: 'shell.tree', kind: 'tree' },
+  ];
+
+  const draw = async (row: TreeItem) => {
+    const view = mount(<ViewDock views={bridge(TREE, [], [row])} />);
+    await settle();
+    return view;
+  };
+
+  /**
+   * The glyph inside the row's fixed 12px slot, or null.
+   *
+   * `.sh-ui-row__leading` and not `.sh-ui-mark`: the slot is `Row`'s, and only a
+   * `StateMark` inside it carries the mark's own class. Selecting on the mark
+   * would pass for a state and fail for a glyph, which is what it did.
+   */
+  const glyph = (container: HTMLElement): Element | null =>
+    container.querySelector('[data-testid="view-row"] .sh-ui-row__leading svg');
+
+  it('draws the glyph for a row with no state', async () => {
+    const view = await draw({ id: 'a', label: 'to-do', icon: 'notes' });
+    expect(glyph(view.container)).not.toBeNull();
+    view.unmount();
+  });
+
+  it('lets the state beat the glyph, never the other way round', async () => {
+    const view = await draw({ id: 'a', label: 'to-do', icon: 'notes', tint: 'working' });
+    const slot = view.container.querySelector('[data-testid="view-row"] .sh-ui-row__leading');
+    expect(slot?.querySelector('.sh-ui-mark')?.getAttribute('data-state')).toBe('working');
+    expect(slot?.querySelector('svg')).toBeNull();
+    view.unmount();
+  });
+
+  it('draws nothing for a row with neither', async () => {
+    const view = await draw({ id: 'a', label: 'to-do' });
+    expect(glyph(view.container)).toBeNull();
+    view.unmount();
+  });
+
+  /*
+   * A name this build does not carry draws NOTHING, where `raiseIcon`'s fallback
+   * would put a `+` on a row that creates nothing.
+   */
+  it('draws nothing for a glyph the allow-list does not carry', async () => {
+    const view = await draw({ id: 'a', label: 'to-do', icon: 'not-a-real-glyph' });
+    expect(glyph(view.container)).toBeNull();
+    view.unmount();
+  });
+
+  it('resolves the same vocabulary a tab does', async () => {
+    // `skill` is in `NAMED_GLYPHS`, not in the dock's older `ACTION_ICONS` table.
+    // Drawing it here is what proves the two tables are one lookup.
+    const view = await draw({ id: 'a', label: 'deploy-checks', icon: 'skill' });
+    expect(glyph(view.container)).not.toBeNull();
+    view.unmount();
+  });
+});

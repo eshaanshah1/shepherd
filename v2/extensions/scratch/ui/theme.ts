@@ -13,6 +13,20 @@ import type { Extension } from '@codemirror/state';
  * publish — that one fails silently at runtime, which is why it is asserted
  * rather than reviewed.
  */
+/**
+ * The key column's width, stated once.
+ *
+ * A JS constant rather than a CSS custom property, because this file IS
+ * JavaScript. A custom property of its own would be a variable name the design
+ * system does not publish, which `theme.test.ts` refuses for a good reason: a
+ * `var()` naming a token that does not exist fails silently at runtime. Three
+ * rules read this and they must agree, so it is one constant, not three literals.
+ *
+ * `control-lg * 3` is `select.css`'s own expression for "wide enough for a label
+ * column", borrowed rather than re-invented.
+ */
+const KEY_COLUMN = 'calc(var(--sh-control-lg) * 3)';
+
 export const scratchTheme: Extension = EditorView.theme({
   '&': {
     backgroundColor: 'var(--sh-surface)',
@@ -100,6 +114,54 @@ export const scratchTheme: Extension = EditorView.theme({
     display: 'inline-block',
     width: '1ch',
   },
+  /*
+   * The frontmatter, as a quiet field block.
+   *
+   * A grid without a box: a key column, a value column, and one hairline under
+   * the last row. No card, no fill, no tint — the block is a masthead on the
+   * document rather than a panel beside it, and this language draws that
+   * distinction with a rule rather than with a container.
+   */
+  '.sh-scratch-fm-fence': { display: 'none' },
+  '.sh-scratch-fm-row': {
+    // A negative hang, so a wrapped value lines up under itself rather than under
+    // the key. The key is an `inline-block` of exactly this width, which is why
+    // the two lengths are one constant.
+    paddingLeft: KEY_COLUMN,
+    textIndent: `calc(-1 * ${KEY_COLUMN})`,
+  },
+  '.sh-scratch-fm-cont': {
+    paddingLeft: KEY_COLUMN,
+    textIndent: '0',
+    color: 'var(--sh-text-dim)',
+  },
+  '.sh-scratch-fm-last': {
+    borderBottom: '1px solid var(--sh-line)',
+    paddingBottom: 'var(--sh-space-lg)',
+  },
+  '.sh-scratch-fm-key': {
+    display: 'inline-block',
+    width: KEY_COLUMN,
+    // A section label's step, and a section label is what this is: the name of
+    // the thing beside it, never the thing you read.
+    fontSize: 'var(--sh-font-size-small)',
+    color: 'var(--sh-text-mute)',
+    // The value's own indent must not apply to the key, which is the hang.
+    textIndent: '0',
+    verticalAlign: 'top',
+  },
+  '.sh-scratch-fm-value': { color: 'var(--sh-text-dim)' },
+  /*
+   * The one value set in mono: `name` becomes a directory, so it is something
+   * the machine reads back rather than something the document says. `styles.css`
+   * makes the same division everywhere else in the app.
+   */
+  '.sh-scratch-fm-id': {
+    fontFamily: 'var(--sh-font-mono)',
+    fontSize: '0.9em',
+    color: 'var(--sh-text)',
+  },
+
   '.sh-scratch-rule': {
     display: 'inline-block',
     width: '100%',

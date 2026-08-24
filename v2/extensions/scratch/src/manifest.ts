@@ -12,6 +12,17 @@ import type { Manifest } from '@shepherd/sdk';
  */
 export const SCRATCH_ID = 'shepherd.scratch';
 
+/**
+ * `tasks`' id, re-stated rather than imported.
+ *
+ * `boundaries.js`: an extension's `src/` may make TYPE-only imports of another
+ * extension, and values go through `extensions.get`. An id is a value, so it is
+ * written out here the way `index.ts` writes out `layout.newTab` — and for the
+ * same reason, which is that the alternative evaluates another extension's module
+ * to learn a string.
+ */
+const TASKS_ID = 'shepherd.tasks';
+
 export const SCRATCH_COMMANDS = {
   /** Mint a buffer and open a tab holding it. What ⌘⇧N runs. */
   create: 'scratch.create',
@@ -21,6 +32,17 @@ export const SCRATCH_COMMANDS = {
   close: 'scratch.close',
   /** ⌘-click on a link. http/https only; see `index.ts` for the guard. */
   open: 'scratch.open',
+  /**
+   * Where this buffer's skill could go — the user's home, plus the repos of the
+   * task that owns this tab.
+   *
+   * Takes a PANE rather than a task, because a scratch pane does not know it is in
+   * a task and must not have to: the extension walks `layout.listRoots` to find
+   * the tab holding the pane, then asks `tasks` which task claims that tab.
+   */
+  skillTargets: 'scratch.skillTargets',
+  /** Write this buffer to `<target>/.claude/skills/<name>/SKILL.md`. */
+  installSkill: 'scratch.installSkill',
 } as const;
 
 /**
@@ -53,6 +75,16 @@ export const scratchManifest: Manifest = {
    * `extensions/github/src/index.ts:461` says so and says what to do instead.
    */
   permissions: ['storage', 'views', 'layout', 'process.exec'],
+  /**
+   * `tasks`, for the repos a skill can be installed into.
+   *
+   * Declared because `extensions.get` resolves only ids a manifest names —
+   * reaching another extension is declared, not discovered (§7c). It is a SOFT
+   * dependency in behaviour: with no `tasks` the target list is the user's home
+   * and nothing else, which is the right answer for a scratch pane in a plain tab
+   * anyway.
+   */
+  dependencies: [TASKS_ID],
   contributes: {
     commands: [
       { id: SCRATCH_COMMANDS.create, title: 'Scratch: New' },
@@ -60,6 +92,8 @@ export const scratchManifest: Manifest = {
       { id: SCRATCH_COMMANDS.write },
       { id: SCRATCH_COMMANDS.close },
       { id: SCRATCH_COMMANDS.open },
+      { id: SCRATCH_COMMANDS.skillTargets },
+      { id: SCRATCH_COMMANDS.installSkill, title: 'Scratch: Install Skill' },
     ],
   },
 };

@@ -1,6 +1,11 @@
 import { s, type ActivateFn } from '@shepherd/sdk';
+import type { TasksAPI } from '@shepherd/ext-tasks';
 import { GC_MAX_AGE_MS, ScratchStore } from './store.ts';
 import { SCRATCH_COMMANDS, SCRATCH_KEY, SCRATCH_VIEWS } from './manifest.ts';
+import { readSkill } from './skill.ts';
+import { installSkill } from './install.ts';
+import { CLAUDE_CODE, isProvider, skillsDir } from './provider.ts';
+import { findTarget, skillTargets, type RepoLike } from './targets.ts';
 
 /**
  * `layout.newTab`, named here rather than imported: values do not cross between
@@ -8,6 +13,34 @@ import { SCRATCH_COMMANDS, SCRATCH_KEY, SCRATCH_VIEWS } from './manifest.ts';
  * travel. The same convention `github` follows for the same verb.
  */
 const LAYOUT_NEW_TAB = 'layout.newTab';
+
+/** `layout.listRoots` — the read an extension makes, for the same reason. */
+const LAYOUT_LIST_ROOTS = 'layout.listRoots';
+
+/** `tasks`' id, re-stated: only TYPES cross between extensions (`boundaries.js`). */
+const TASKS = 'shepherd.tasks';
+
+/**
+ * Which tab holds this pane.
+ *
+ * `layout.listRoots` rather than a field on the pane, because the pane genuinely
+ * does not know: a leaf is addressed by its own id and the root is its container.
+ * A miss is `undefined` and not an error — a pane can be asked about in the
+ * instant after it closes.
+ */
+function rootHolding(roots: unknown, pane: string): string | undefined {
+  if (!Array.isArray(roots)) return undefined;
+  for (const entry of roots) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const row = entry as { root?: unknown; panes?: unknown };
+    if (typeof row.root !== 'string' || !Array.isArray(row.panes)) continue;
+    const holds = row.panes.some(
+      (leaf) => typeof leaf === 'object' && leaf !== null && (leaf as { pane?: unknown }).pane === pane,
+    );
+    if (holds) return row.root;
+  }
+  return undefined;
+}
 
 /** What the tab strip calls a scratch pane. */
 const TAB_TITLE = 'scratch';
@@ -25,8 +58,30 @@ function mintId(now: number): string {
 }
 
 export const activate: ActivateFn = (ctx, api) => {
-  const { commands, views, process } = api.proposed;
+  const { commands, views, process, extensions } = api.proposed;
   const store = new ScratchStore(ctx.storage);
+
+  /**
+   * The repos of the task that owns a pane's tab, or none.
+   *
+   * Every step of it is allowed to come back empty, and none of them is a
+   * failure: a scratch pane in a plain tab belongs to no task, a build with no
+   * `tasks` extension resolves nothing, and a task with no repos is a real state.
+   * All three land on "the user level and nothing else", which is the honest
+   * answer rather than a refusal.
+   */
+  const reposForPane = async (pane: string): Promise<readonly RepoLike[]> => {
+    const tasks = extensions.get<TasksAPI>(TASKS);
+    if (tasks === undefined) return [];
+
+    const listed = await commands.invoke(LAYOUT_LIST_ROOTS, {});
+    if (!listed.ok) return [];
+    const root = rootHolding(listed.value, pane);
+    if (root === undefined) return [];
+
+    const owner = tasks.list().find((task) => task.sessions.some((session) => session.root === root));
+    return owner?.repos ?? [];
+  };
 
   /*
    * Housekeeping at activation, once. A closed buffer is kept for seven days
@@ -113,6 +168,98 @@ export const activate: ActivateFn = (ctx, api) => {
       handler: (args) => {
         store.close(args.id, ctx.clock.now());
         return { ok: true };
+      },
+    }),
+  );
+
+  ctx.subscriptions.push(
+    commands.register(SCRATCH_COMMANDS.skillTargets, {
+      schema: s.object({ pane: s.string() }),
+      handler: async (args) => ({ targets: skillTargets(ctx.homeDir, await reposForPane(args.pane)) }),
+    }),
+  );
+
+  ctx.subscriptions.push(
+    commands.register(SCRATCH_COMMANDS.installSkill, {
+      title: 'Scratch: Install Skill',
+      /*
+       * `layout`, and it is the honest grant. Writing a file needs no permission
+       * (fs is stdlib), but this command is reached through a control the shell
+       * draws from `layout.rename` — so it is already inside that grant, and
+       * declaring a narrower one here would be a claim about the blast radius
+       * that the pane's own presentation write does not honour.
+       */
+      permission: 'layout',
+      schema: s.object({
+        id: s.string(),
+        /** A target id from `scratch.skillTargets`. `user`, or `repo:<path>`. */
+        target: s.string(),
+        /** Empty means the default — see the refusal below, which says so. */
+        providers: s.optional(s.array(s.string())),
+        overwrite: s.optional(s.boolean()),
+      }),
+      /**
+       * Reads the buffer, parses it, and writes it once per provider.
+       *
+       * **The buffer is re-read here rather than passed in.** The pane has the
+       * text on screen already, and sending it would make the installed file a
+       * copy of what the renderer last thought was saved — this command's own
+       * `write` is the authority, and going through the store means an install is
+       * always of the document that would survive a relaunch.
+       *
+       * Every refusal is a `reason` rather than a throw, and each names the thing
+       * the user can change.
+       */
+      handler: (args) => {
+        const doc = store.read(args.id);
+        if (doc === undefined) return { ok: false, reason: 'no such scratch' };
+
+        const skill = readSkill(doc.text);
+        if (skill === undefined) {
+          return { ok: false, reason: 'this document needs a name and a description in its frontmatter' };
+        }
+
+        const chosen = args.providers === undefined || args.providers.length === 0 ? [CLAUDE_CODE] : args.providers;
+        const unknown = chosen.filter((provider) => !isProvider(provider));
+        if (unknown.length > 0) return { ok: false, reason: `no provider called ${unknown.join(', ')}` };
+
+        const target = findTarget(skillTargets(ctx.homeDir, []), args.target);
+        /*
+         * A repo target is not in the list built from an empty repo set, so it is
+         * taken from the id itself — which is what carrying the path in the id is
+         * FOR. Re-resolving the task here would be a second walk that could
+         * disagree with the one the picker was drawn from, and the picker's answer
+         * is the one the user actually chose.
+         */
+        const root = target?.root ?? (args.target.startsWith('repo:') ? args.target.slice('repo:'.length) : undefined);
+        if (root === undefined || root === '') return { ok: false, reason: 'no such install target' };
+
+        const written: string[] = [];
+        for (const provider of chosen) {
+          const outcome = installSkill({
+            skill,
+            dir: skillsDir(root, provider),
+            ...(args.overwrite === undefined ? {} : { overwrite: args.overwrite }),
+          });
+          /*
+           * The FIRST failure stops it, and what was already written stays. With
+           * one provider that is the whole story; with two, a half-install the
+           * user can see beats a rollback that deletes a directory this command
+           * did not create.
+           */
+          if (!outcome.ok) {
+            return {
+              ok: false,
+              reason: outcome.reason,
+              ...(outcome.exists === undefined ? {} : { exists: true }),
+              ...(written.length === 0 ? {} : { written }),
+            };
+          }
+          written.push(outcome.path);
+        }
+
+        ctx.log.info(`installed skill ${skill.name} to ${written.join(', ')}`);
+        return { ok: true, name: skill.name, paths: written };
       },
     }),
   );

@@ -1727,3 +1727,142 @@ describe('a given shape beats a persisted one', () => {
     expect(second.panes(rootId('r-9'))).toHaveLength(2);
   });
 });
+
+/**
+ * A pane's own glyph and actions.
+ *
+ * The three assertions that matter are about what does NOT happen: a title-only
+ * rename must not clear a glyph, and neither field may reach disk. The first is
+ * what ⌘⇧R does; the second is `serialize.ts`'s whole reason for being a separate
+ * DTO, and a field added to `Pane` without a thought is exactly what it catches.
+ */
+describe('LayoutStore — what a pane presents', () => {
+  const action = { id: 'install', label: 'Install skill', glyph: 'skill' };
+
+  it('carries neither a glyph nor an action by default', () => {
+    const store = build();
+    store.open();
+    expect(store.pane(paneId('p1'))?.icon).toBeNull();
+    expect(store.pane(paneId('p1'))?.actions).toEqual([]);
+  });
+
+  it('takes a glyph and an action alongside the title', () => {
+    const store = build();
+    store.open();
+    store.rename(paneId('p1'), 'deploy-checks', { icon: 'skill', actions: [action] });
+    const pane = store.pane(paneId('p1'));
+    expect(pane?.userTitle).toBe('deploy-checks');
+    expect(pane?.icon).toBe('skill');
+    expect(pane?.actions).toEqual([action]);
+  });
+
+  it('leaves both alone when a rename passes neither', () => {
+    const store = build();
+    store.open();
+    store.rename(paneId('p1'), 'deploy-checks', { icon: 'skill', actions: [action] });
+    store.rename(paneId('p1'), 'my notes');
+    const pane = store.pane(paneId('p1'));
+    expect(pane?.userTitle).toBe('my notes');
+    expect(pane?.icon).toBe('skill');
+    expect(pane?.actions).toEqual([action]);
+  });
+
+  it('clears a glyph on an explicit null and actions on an empty list', () => {
+    const store = build();
+    store.open();
+    store.rename(paneId('p1'), 'deploy-checks', { icon: 'skill', actions: [action] });
+    store.rename(paneId('p1'), null, { icon: null, actions: [] });
+    const pane = store.pane(paneId('p1'));
+    expect(pane?.icon).toBeNull();
+    expect(pane?.actions).toEqual([]);
+  });
+
+  it('refuses a pane it does not have', () => {
+    const store = build();
+    store.open();
+    expect(store.rename(paneId('nope'), 'x', { icon: 'skill' }).ok).toBe(false);
+  });
+
+  it('persists neither — a restored pane republishes them', () => {
+    const kv = fakeKV();
+    const first = build(kv);
+    first.open();
+    first.rename(paneId('p1'), 'deploy-checks', { icon: 'skill', actions: [action] });
+    first.flush();
+
+    const second = build(kv);
+    const restored = second.open();
+    const pane = second.pane(second.panes(restored)[0]!);
+    expect(pane?.userTitle).toBe('deploy-checks');
+    expect(pane?.icon).toBeNull();
+    expect(pane?.actions).toEqual([]);
+  });
+
+  /*
+   * The payload itself, not just the restored value: a glyph that reached disk
+   * under some other key would satisfy the test above and still be a field the
+   * persistence layer had silently started writing.
+   */
+  it('writes a payload byte-identical to one from before it existed', () => {
+    // `newPane` is a counter shared across this file, so each store's pane has
+    // its own id and the payloads are compared with those normalised away.
+    const write = (kv: KV & { readonly raw: Map<string, unknown> }, present: boolean): string => {
+      const store = build(kv);
+      const root = store.open();
+      const pane = store.panes(root)[0]!;
+      store.rename(pane, 'deploy-checks', present ? { icon: 'skill', actions: [action] } : {});
+      store.flush();
+      return JSON.stringify([...kv.raw]).replaceAll(pane, 'PANE');
+    };
+
+    expect(write(fakeKV(), true)).toBe(write(fakeKV(), false));
+  });
+});
+
+/**
+ * `layout.listRoots` carries the focused pane's glyph.
+ *
+ * Beside its label and for the label's own stated reason: the rail and the tab
+ * strip both draw a row for a root, and two consumers resolving it apart is the
+ * hand-synced pair this codebase keeps getting bitten by.
+ */
+describe('layout.listRoots — the focused pane’s glyph', () => {
+  const rootsFrom = async (store: LayoutStore, registry: CommandRegistry) => {
+    const answer = await registry.invoke(LAYOUT_COMMANDS.listRoots, {}, USER);
+    if (!answer.ok) throw new Error('listRoots refused');
+    return answer.value as readonly { root: string; icon: string | null }[];
+  };
+
+  function wired(): { store: LayoutStore; registry: CommandRegistry } {
+    const store = build();
+    const registry = new CommandRegistry({ logger, grants: () => emptyGrants() });
+    registerLayoutCommands({
+      store,
+      registry,
+      onLastPaneClosed: () => {},
+      activeRoot: () => rootId('window-1'),
+      homeRoot: rootId('window-1'),
+      onSwitchRoot: () => {},
+    });
+    store.open();
+    return { store, registry };
+  }
+
+  it('answers null for a pane that publishes none', async () => {
+    const { store, registry } = wired();
+    expect((await rootsFrom(store, registry))[0]?.icon).toBeNull();
+  });
+
+  it('answers the glyph the pane published', async () => {
+    const { store, registry } = wired();
+    store.rename(paneId('p1'), 'deploy-checks', { icon: 'skill' });
+    expect((await rootsFrom(store, registry))[0]?.icon).toBe('skill');
+  });
+
+  it('follows the glyph as the pane changes it', async () => {
+    const { store, registry } = wired();
+    store.rename(paneId('p1'), 'deploy-checks', { icon: 'skill' });
+    store.rename(paneId('p1'), 'to-do', { icon: 'notes' });
+    expect((await rootsFrom(store, registry))[0]?.icon).toBe('notes');
+  });
+});

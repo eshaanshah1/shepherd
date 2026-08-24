@@ -53,3 +53,118 @@
   color: var(--sh-text-dim);
   font-size: var(--sh-font-size-micro);
 }
+
+/* ---------------------------------------------------------- the install dialog */
+/*
+ * Where a skill goes, asked once — drawn by `@shepherd/ext-scratch/ui`, painted
+ * here, on the same division the rest of this file makes.
+ *
+ * The card owns its inset already (`modal.css`), so this file sets the RHYTHM
+ * between the rows and nothing else. It declares no width: `Modal`'s `md` is 460
+ * and a second opinion here would be the hand-synced pair this codebase keeps
+ * getting bitten by.
+ */
+.sh-scratch-install {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sh-space-huge);
+}
+
+.sh-scratch-install__head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sh-space-xs);
+  min-inline-size: 0;
+}
+
+/*
+ * `large`, not `title`: 19px is a panel's name once per panel, and a dialog is
+ * not a panel. Weight rather than size carries it, which is what every other
+ * heading in this app does.
+ */
+.sh-scratch-install__title {
+  margin: 0;
+  font-size: var(--sh-font-size-large);
+  font-weight: 600;
+  line-height: var(--sh-line-height-large);
+  color: var(--sh-text);
+}
+
+/*
+ * The path — the one line here that is machine output rather than something the
+ * app says, so it is mono and it is the quietest thing on the card.
+ *
+ * `direction: rtl` with `text-align: left` truncates from the HEAD: the tail
+ * names the skill and the leading directories are a prefix the reader already
+ * knows. `unicode-bidi: plaintext` keeps the slashes in their real order, which
+ * `direction` alone would reverse.
+ */
+.sh-scratch-install__path {
+  margin: 0;
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-small);
+  line-height: var(--sh-line-height);
+  color: var(--sh-text-ghost);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+  unicode-bidi: plaintext;
+}
+
+.sh-scratch-install__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sh-space-xs);
+  min-inline-size: 0;
+}
+
+/* A section label's spec: 11.5/600, sentence case, and no tracking at all. */
+.sh-scratch-install__label {
+  font-size: var(--sh-font-size-small);
+  font-weight: 600;
+  line-height: var(--sh-line-height);
+  letter-spacing: 0;
+  color: var(--sh-text-mute);
+}
+
+/* A column, because the set grows: a second provider is a row, not a reflow. */
+.sh-scratch-install__providers {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sh-space-sm);
+}
+
+.sh-scratch-install__provider {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-md);
+  /* The label is the box's hit target too — a name beside a box you cannot click
+     is two controls where the user sees one. */
+  cursor: pointer;
+  font-size: var(--sh-font-size-body);
+  line-height: var(--sh-line-height);
+  color: var(--sh-text);
+}
+
+/*
+ * A refusal, and it is a SENTENCE — §6: invalid state is a red edge and a
+ * sentence, never colour alone. There is no edge here to redden because nothing
+ * on this card is invalid: the failure is on the far side, and this is what it
+ * said.
+ */
+.sh-scratch-install__problem {
+  margin: 0;
+  font-size: var(--sh-font-size-small);
+  line-height: var(--sh-line-height);
+  color: var(--sh-red);
+  text-wrap: pretty;
+}
+
+.sh-scratch-install__foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sh-space-sm);
+}

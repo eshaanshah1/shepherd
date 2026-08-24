@@ -256,12 +256,42 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
       },
     }),
 
+    /**
+     * The pane's label, its glyph and what it currently offers.
+     *
+     * The verb is now wider than its name, and that is a deliberate trade rather
+     * than an oversight. A pane reporting on itself does all three in one write
+     * (`store.rename` says why a sibling `setIcon` would tear), and renaming this
+     * to `layout.present` is a migration across a palette entry, a keybinding and
+     * a CLI verb — worth doing, and not worth doing inside a feature.
+     *
+     * `icon` and `actions` are OPTIONAL and absent means leave alone, so ⌘⇧R's
+     * title-only call cannot wipe a glyph it knows nothing about.
+     */
     registry.register(LAYOUT_COMMANDS.rename, {
       title: 'Rename Pane',
       permission: 'layout',
-      schema: s.object({ pane: s.string(), title: s.union(s.string(), s.literal(null as unknown as string)) }),
+      schema: s.object({
+        pane: s.string(),
+        title: s.union(s.string(), s.literal(null as unknown as string)),
+        icon: s.optional(s.union(s.string(), s.literal(null as unknown as string))),
+        actions: s.optional(
+          s.array(
+            s.object({
+              id: s.string(),
+              label: s.string(),
+              glyph: s.string(),
+            }),
+          ),
+        ),
+      }),
       handler: (args) => {
-        unwrap(store.rename(toPaneId(args.pane), args.title));
+        unwrap(
+          store.rename(toPaneId(args.pane), args.title, {
+            ...(args.icon === undefined ? {} : { icon: args.icon }),
+            ...(args.actions === undefined ? {} : { actions: args.actions }),
+          }),
+        );
         return { ok: true };
       },
     }),
@@ -642,6 +672,21 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
              * `~` for it can say so; core does not read the environment.
              */
             label: found === null ? '' : displayTitle(found),
+            /*
+             * The focused pane's own glyph, beside its label and for the same
+             * reason.
+             *
+             * `label` is resolved HERE because two consumers drawing it apart
+             * would drift, and a glyph is the other half of that label — the rail
+             * and the tab strip both draw a row for a root, and both need the
+             * same answer. Whoever draws it resolves the NAME through their own
+             * allow-list, which is what keeps this a string.
+             *
+             * `null` for a pane that publishes none, which is every terminal:
+             * a glyph is what a pane falls back on when it has no state to
+             * report, and a terminal always has one.
+             */
+            icon: found === null ? null : found.icon,
             focusedPane: pane === null ? null : String(pane),
             focusedSession: pane === null ? null : (store.sessionFor(pane) ?? null),
             /*

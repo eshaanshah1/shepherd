@@ -45,7 +45,8 @@
     "react-dom": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:",
-    "@shepherd/design-tokens": "workspace:*"
+    "@shepherd/design-tokens": "workspace:*",
+    "@shepherd/ext-tasks": "workspace:*"
   },
   "//shepherd": "The manifest, as an extension declares it. `src/manifest.ts` is the typed copy the host loads, and `manifest.test.ts` asserts the two are identical.",
   "shepherd": {
@@ -79,9 +80,19 @@
         },
         {
           "id": "scratch.open"
+        },
+        {
+          "id": "scratch.skillTargets"
+        },
+        {
+          "id": "scratch.installSkill",
+          "title": "Scratch: Install Skill"
         }
       ]
-    }
+    },
+    "dependencies": [
+      "shepherd.tasks"
+    ]
   },
   "//ui": "The UI half, imported ONLY by the renderer (boundaries.js). A separate subpath because it is a separate PROCESS: `.` is the service half and runs in a utility process with no DOM.",
   "//tokens": "A DEV dependency, used only by theme.test.ts to assert that every var() the theme names is a token the design system actually publishes \u2014 a var() naming a token that does not exist fails silently at runtime. The theme itself names them as strings, the way every other view in the app does."

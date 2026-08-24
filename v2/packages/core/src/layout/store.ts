@@ -10,6 +10,7 @@ import {
   type LayoutNode as PublicNode,
   type LayoutRoot as PublicRoot,
   type Logger,
+  type PaneAction,
   type PaneID,
   type Rect,
   type Result,
@@ -1004,8 +1005,30 @@ export class LayoutStore {
     return ok(undefined);
   }
 
-  rename(pane: PaneID, userTitle: string | null): Result<void, string> {
-    return this.#editPane(pane, (current) => ({ ...current, userTitle }));
+  /**
+   * The pane's label, and what it is presenting.
+   *
+   * Three things in one write because they change together and their ONE caller
+   * is a pane reporting on itself: the scratch pane retitles from its heading on
+   * every save, and a sibling `setIcon` command would fire on that same edit and
+   * leave a frame where the tab wore a skill's glyph and a notepad's name.
+   *
+   * **Absent leaves; `null` and `[]` clear.** ⌘⇧R passes a title alone and must
+   * not wipe a glyph it knows nothing about, and an extension clearing its own
+   * action has to be able to say so. `userTitle` keeps its old shape — it has
+   * always been `string | null` and `null` has always meant "drop the name".
+   */
+  rename(
+    pane: PaneID,
+    userTitle: string | null,
+    present: { readonly icon?: string | null; readonly actions?: readonly PaneAction[] } = {},
+  ): Result<void, string> {
+    return this.#editPane(pane, (current) => ({
+      ...current,
+      userTitle,
+      icon: present.icon === undefined ? current.icon : present.icon,
+      actions: present.actions ?? current.actions,
+    }));
   }
 
   /**

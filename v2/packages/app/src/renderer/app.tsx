@@ -540,6 +540,29 @@ export function App({
     terminals === null || focusedPaneId === null ? null : (terminals.search(paneId(focusedPaneId)) ?? null);
 
   /**
+   * What the focused pane is offering, for the strip's trailing edge.
+   *
+   * The FOCUSED pane's and nobody else's: the strip draws one trailing group and a
+   * split holds several panes, so a union of them would put a button beside a tab
+   * for something you are not looking at. Same rule the tab's own glyph follows
+   * three hundred lines down, and the same rule `FindBar` follows for the grid it
+   * searches.
+   *
+   * Glyph names go through `contributedIcon` — the allow-list, not the extension's
+   * word — and an action whose glyph is not in it is DROPPED rather than drawn with
+   * the fallback dots: a button with no picture in a 20px box is a button nobody
+   * can read, and the pane still has the palette verb.
+   */
+  const paneActions = useMemo(
+    () =>
+      (focused?.actions ?? []).flatMap((action) => {
+        const glyph = contributedIcon(action.glyph);
+        return glyph === undefined ? [] : [{ id: action.id, label: action.label, glyph }];
+      }),
+    [focused],
+  );
+
+  /**
    * Which group a root is a tab of — the page's one answer to that question.
    *
    * Off the snapshot, so the sidebar's highlight, the tab strip and the stage
@@ -600,10 +623,23 @@ export function App({
        * declared no glyph, and for a name the allow-list does not carry, which
        * all draw the empty slot rather than a wrong picture.
        */
+      /*
+       * The PANE's own glyph wins over its view type's.
+       *
+       * A contribution registers one glyph per type, which is right for a pull
+       * request and wrong for a scratch pane: the same view is a notepad or a
+       * skill depending on what is written in it, and only the pane knows which.
+       * The type's glyph stays as the answer for every pane that has nothing to
+       * say — which is nearly all of them.
+       *
+       * Both names go through the same allow-list, so a pane cannot reach the page
+       * with a picture the build never saw any more than a manifest can.
+       */
       const icon =
         pane === null || pane.view === null
           ? undefined
-          : contributedIcon(contributions.find((view) => view.type === pane.view?.type)?.icon);
+          : (contributedIcon(pane.icon ?? undefined) ??
+            contributedIcon(contributions.find((view) => view.type === pane.view?.type)?.icon));
       // A root with no panes is a real state (its last pane was closed), and it
       // is still a tab you can switch to. It says so — a raw root id is an
       // internal name, and `window-1` on a tab teaches nothing.
@@ -752,6 +788,22 @@ export function App({
             onSelect={(root) => invoke(LAYOUT_COMMANDS.switchRoot, { root })}
             onNew={() => invoke(LAYOUT_COMMANDS.newTab, {})}
             newIcon={raiseIcon('plus')}
+            actions={paneActions}
+            /*
+              A window EVENT, not a command, and `sh:raise-view` is the precedent
+              one line up the same convention.
+              The pane that published the action is the pane that knows what it
+              means, and its component lives in this page — where a command
+              dispatched into the extension host could not open a dialog, because
+              the host has no DOM. So the shell draws the button and says which
+              pane was asked; nothing here learns what the verb is.
+            */
+            onAction={(id) => {
+              if (focusedPaneId === null) return;
+              window.dispatchEvent(
+                new CustomEvent('sh:pane-action', { detail: { pane: focusedPaneId, action: id } }),
+              );
+            }}
           />
           {/*
             TWO ways to have nothing on the stage, and they draw the same thing.

@@ -24,6 +24,15 @@ export interface ShellRow {
   /** Resolved by `layout.listRoots`, never derived here. */
   readonly label: string;
   /**
+   * The focused pane's glyph, by NAME — also `listRoots`', also never derived.
+   *
+   * Absent for a terminal, which is nearly every row here: a glyph is what a pane
+   * falls back on when it has no state to report, and a shell reports one. It is a
+   * name because this extension resolves nothing — the shell matches it against
+   * the renderer's own allow-list (ADR 0033).
+   */
+  readonly icon?: string;
+  /**
    * The state of whatever is running in it, absent when nothing is.
    *
    * A shell usually has none — that is what makes it a shell rather than an
