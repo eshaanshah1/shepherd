@@ -261,6 +261,21 @@ const apiCallSchema = s.union(
      * the page — see `ViewProvider`'s `search` for why it has to be.
      */
     search: s.optional(s.stored({ command: s.string(), placeholder: s.optional(s.string()) })),
+    /**
+     * This tree claims the top of the rail. Trees only.
+     *
+     * It was missing here AND unsent by `ext-host/api.ts`, which is why the gap
+     * was invisible: the SDK declares it, `view-registry.ts` forwards it and the
+     * dock sorts on it, so every layer but the wire agreed the feature worked.
+     * Section order silently fell back to activation order — the exact thing
+     * `shell`'s own comment says the field exists to prevent.
+     *
+     * Both halves are needed and neither is enough. This schema is a strict
+     * `s.object`: sending the field without naming it here costs the WHOLE
+     * registration, so the section would have disappeared rather than merely sat
+     * in the wrong place.
+     */
+    head: s.optional(s.boolean()),
   }),
   s.object({ kind: s.literal('view.unregister'), type: s.string() }),
   s.object({ kind: s.literal('view.changed'), type: s.string() }),

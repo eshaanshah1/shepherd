@@ -547,6 +547,58 @@ describe('the extension host runtime', () => {
         },
       });
     });
+
+    /**
+     * A TREE's `head` crosses the wire too, and it did not.
+     *
+     * The same defect as the pane command above, one branch along and with a
+     * worse failure mode: the SDK declares `head`, `view-registry.ts` forwards it
+     * and the dock sorts on it, so every layer but this one agreed the feature
+     * worked. Section order fell back to activation order instead — which is the
+     * exact thing `shell`'s comment says the field exists to prevent, and it
+     * surfaced only when a dependency added elsewhere reordered activation.
+     *
+     * Read through `childFrameSchema` for the reason stated above: the wire is a
+     * strict `s.object`, so sending a field it does not name costs the whole
+     * registration. That is why the fix is two halves and why this reads the
+     * frame rather than the object.
+     */
+    it("carries a tree's head claim across the wire", async () => {
+      h.seen.api?.proposed.views.registerViewType('one.tree', {
+        kind: 'tree',
+        title: 'Scratchpad',
+        head: true,
+        data: { children: () => Promise.resolve([]) },
+      });
+      await settle();
+
+      const frame = h.calls().find((sent) => sent.call.kind === 'view.register');
+      if (frame === undefined) throw new Error('the child never registered the view');
+      const read = readFrames(frame, childFrameSchema);
+      expect(read.skipped).toEqual([]);
+      expect(read.frames[0]).toMatchObject({
+        call: { kind: 'view.register', type: 'one.tree', viewKind: 'tree', title: 'Scratchpad', head: true },
+      });
+    });
+
+    /* A tree that claims nothing sends nothing — absent, never `false`. */
+    it('sends no head for a tree that does not claim one', async () => {
+      h.seen.api?.proposed.views.registerViewType('one.tree', {
+        kind: 'tree',
+        data: { children: () => Promise.resolve([]) },
+      });
+      await settle();
+
+      const frame = h.calls().find((sent) => sent.call.kind === 'view.register');
+      if (frame === undefined) throw new Error('the child never registered the view');
+      const read = readFrames(frame, childFrameSchema);
+      expect(read.skipped).toEqual([]);
+      // Narrowed rather than indexed: a decoded frame may be the `hello`, which
+      // carries no `call` at all.
+      const first = read.frames[0];
+      if (first?.kind !== 'call') throw new Error('expected a call frame');
+      expect('head' in first.call).toBe(false);
+    });
   });
 
   describe('the refusals', () => {

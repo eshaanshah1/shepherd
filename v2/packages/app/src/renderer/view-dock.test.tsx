@@ -1391,3 +1391,76 @@ describe('a contributed row-s glyph', () => {
     view.unmount();
   });
 });
+
+/**
+ * Section ORDER, which nothing asserted and which therefore broke silently.
+ *
+ * `head` reached the dock through four layers and was dropped by exactly one —
+ * the wire between the extension and main. Every other layer agreed the feature
+ * worked, so the only way to notice was to look at the rail: `Scratchpad` sat
+ * under `Shipped` because section order had fallen back to ACTIVATION order, and
+ * a dependency added in an unrelated extension had changed it.
+ *
+ * These assert the claim rather than the plumbing, so the next thing that
+ * silently reorders sections fails here instead of on screen.
+ */
+describe('the order of the dock-s sections', () => {
+  const labels = (container: HTMLElement): string[] =>
+    [...container.querySelectorAll('.sh-ui-section-label')].map((node) => node.textContent ?? '');
+
+  const two = (headed: 'first' | 'second' | 'neither'): ViewContributionDTO[] => [
+    {
+      extension: 'shepherd.tasks',
+      type: 'tasks.tree',
+      kind: 'tree',
+      title: 'Tasks',
+      ...(headed === 'first' ? { head: true } : {}),
+    },
+    {
+      extension: 'shepherd.shell',
+      type: 'shell.tree',
+      kind: 'tree',
+      title: 'Scratchpad',
+      ...(headed === 'second' ? { head: true } : {}),
+    },
+  ];
+
+  const draw = async (views: ViewContributionDTO[]) => {
+    const view = mount(<ViewDock views={bridge(views, [], [{ id: 'a', label: 'a row' }])} />);
+    await settle();
+    return view;
+  };
+
+  /* The shipped defect, in one assertion: declared second, drawn first. */
+  it('draws a view that claims the head above one that arrived before it', async () => {
+    const view = await draw(two('second'));
+    expect(labels(view.container)).toEqual(['Scratchpad', 'Tasks']);
+    view.unmount();
+  });
+
+  it('leaves registration order alone when nothing claims the head', async () => {
+    const view = await draw(two('neither'));
+    expect(labels(view.container)).toEqual(['Tasks', 'Scratchpad']);
+    view.unmount();
+  });
+
+  it('is a no-op when the first view is the one claiming it', async () => {
+    const view = await draw(two('first'));
+    expect(labels(view.container)).toEqual(['Tasks', 'Scratchpad']);
+    view.unmount();
+  });
+
+  /*
+   * Ties keep the order they arrived in, which is what `toSorted` buys and what
+   * the comment beside it promises. Two heads is a contradiction the shell must
+   * not resolve by shuffling.
+   */
+  it('keeps arrival order among views that all claim the head', async () => {
+    const view = await draw([
+      { extension: 'a', type: 'a.tree', kind: 'tree', title: 'First', head: true },
+      { extension: 'b', type: 'b.tree', kind: 'tree', title: 'Second', head: true },
+    ]);
+    expect(labels(view.container)).toEqual(['First', 'Second']);
+    view.unmount();
+  });
+});

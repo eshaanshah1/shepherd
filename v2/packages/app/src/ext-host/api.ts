@@ -672,6 +672,22 @@ function createViews(services: ExtHostServices, providers: Map<string, ViewProvi
           viewKind: 'tree',
           ...(provider.title === undefined ? {} : { title: provider.title }),
           ...(provider.search === undefined ? {} : { search: provider.search }),
+          /*
+           * `head`, which this message DROPPED — and dropping it was invisible at
+           * every other layer.
+           *
+           * The SDK declares it on a tree provider, `view-registry.ts` forwards
+           * it, and the dock sorts on it; only the hop between the extension and
+           * main left it behind. So a section that declared the head sat wherever
+           * ACTIVATION order put it, which is the exact failure `shell`'s comment
+           * says the field exists to prevent — and it stayed hidden until a
+           * dependency added elsewhere reordered activation and moved
+           * `Scratchpad` under `Shipped`.
+           *
+           * This is the `contributionsOf` trap in another costume: a serializer
+           * that names its fields silently discards the one nobody added to it.
+           */
+          ...(provider.head === undefined ? {} : { head: provider.head }),
         },
         `view.register ${type}`,
       );
