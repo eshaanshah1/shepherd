@@ -98,8 +98,41 @@ body {
   font-family: var(--sh-font-sans);
   font-size: var(--sh-font-size);
   line-height: var(--sh-line-height);
-  -webkit-font-smoothing: antialiased;
   overflow: hidden;
+}
+
+/*
+ * Thin the type on RETINA ONLY.
+ *
+ * `antialiased` is not "better antialiasing" — it is the *lighter* of macOS's two
+ * grayscale weights, and it was set unconditionally on `body`. At 2x that reads
+ * as crisp, because the extra device pixels put the weight back. At 1x — an
+ * external monitor at its native resolution — there are no extra pixels, so it
+ * only removes stem weight from a 13px glyph and leaves the patchy, washed-out
+ * type that made the app look broken on exactly one of a user's two displays.
+ *
+ * It reaches the GRID, not just the chrome: `xterm-terminal.ts` loads Fit and
+ * Search and no renderer addon, so the terminal is xterm's DOM renderer and every
+ * cell is a span inheriting this from `body`. A property set here is a property
+ * every character of agent output is drawn with.
+ *
+ * The default (`auto`) is what 1x wants and is what it now gets — this is the
+ * one place the app opts out of a browser default rather than into one, so the
+ * opt-out is scoped to the density that asked for it.
+ *
+ * NOTE: this is a media query, not a token, because the input is the DISPLAY the
+ * window happens to be on. Chromium re-evaluates it when the window is dragged
+ * between monitors; a token is resolved once at paint and would pin the app to
+ * whichever screen it opened on.
+ *
+ * `min-resolution`, not `-webkit-min-device-pixel-ratio`: the renderer is exactly
+ * one engine and it has supported the standard feature for a decade, so the
+ * prefixed spelling buys nothing and is the one a CSS parser is allowed to drop.
+ */
+@media (min-resolution: 2dppx) {
+  body {
+    -webkit-font-smoothing: antialiased;
+  }
 }
 
 body.sh-dragging {
