@@ -106,6 +106,18 @@ export interface PromptFieldProps
    * keeps it plain and keeps undo intact.
    */
   readonly onPasteFiles?: (files: readonly File[]) => boolean;
+  /**
+   * A paste carrying plain text. Return true to say it was handled, and the
+   * default insert is skipped for that event only.
+   *
+   * Offered AFTER `onPasteFiles`, because an image from the clipboard is not a
+   * text paste and a field that asked this first would hand it a filename.
+   *
+   * Claiming a paste costs the browser's own undo entry for it — that is what
+   * the note on `onPasteFiles` is about — so a consumer should claim the
+   * smallest set of pastes it needs rather than every one it is offered.
+   */
+  readonly onPasteText?: (text: string) => boolean;
 }
 
 /**
@@ -147,7 +159,7 @@ export const PromptField = forwardRef<PromptFieldHandle, PromptFieldProps>(funct
    * open: the composer's brief was passed over and the `#repo` button below it
    * took focus instead. Measured in Electron's Chromium, not assumed.
    */
-  { placeholder, onChange, onPasteFiles, className, tabIndex = 0, ...rest },
+  { placeholder, onChange, onPasteFiles, onPasteText, className, tabIndex = 0, ...rest },
   ref,
 ) {
   const host = useRef<HTMLDivElement>(null);
@@ -475,6 +487,12 @@ export const PromptField = forwardRef<PromptFieldHandle, PromptFieldProps>(funct
          */
         const text = event.clipboardData?.getData('text/plain');
         if (text === undefined || text === '') return;
+        // Claimed: the consumer has inserted whatever it wanted in place of this
+        // text, so the default insert would put the text there as well.
+        if (onPasteText?.(text) === true) {
+          event.preventDefault();
+          return;
+        }
         event.preventDefault();
         document.execCommand('insertText', false, text);
       }}

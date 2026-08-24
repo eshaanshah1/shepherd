@@ -35,6 +35,7 @@ import { claudeCodeManifest } from '@shepherd/ext-claude-code/manifest';
 import { tasksManifest } from '@shepherd/ext-tasks/manifest';
 import { worktreeHookManifest } from '@shepherd/ext-worktree-hook/manifest';
 import { githubManifest } from '@shepherd/ext-github/manifest';
+import { linksManifest } from '@shepherd/ext-links/manifest';
 import { transcriptsManifest } from '@shepherd/ext-transcripts/manifest';
 import {
   CORE_NAMESPACE,
@@ -1290,6 +1291,7 @@ void app.whenReady().then(async () => {
     worktreeHookManifest,
     githubManifest,
     transcriptsManifest,
+    linksManifest,
   ]) {
     const added = extensions.add(manifest, 'builtin');
     if (added.ok) {
@@ -1330,6 +1332,7 @@ void app.whenReady().then(async () => {
     worktreeHookManifest,
     githubManifest,
     transcriptsManifest,
+    linksManifest,
   ]) {
     if (extensions.state(extensionId(manifest.id)) === undefined) continue;
     await extensions.activate(extensionId(manifest.id));

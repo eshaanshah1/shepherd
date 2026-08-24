@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { IconPlus, IconTerminal2 } from '@tabler/icons-react';
 import { metrics } from '@shepherd/design-tokens';
 import { mount } from './test-dom.ts';
-import { ICON_STROKE, Icon, iconSizes } from './icon.tsx';
+import { ICON_STROKE, Icon, glyphElement, iconSizes } from './icon.tsx';
 import { cn } from './cn.ts';
 
 const svg = (container: HTMLElement): SVGSVGElement => {
@@ -101,5 +101,54 @@ describe('cn', () => {
     expect(cn('a', 'b')).toBe('a b');
     expect(cn('a', false, undefined, null, 'b')).toBe('a b');
     expect(cn()).toBe('');
+  });
+});
+
+/**
+ * The DOM-node form, for the pills the composer builds by hand.
+ *
+ * Its whole reason for existing is that those pills used to hand-write an
+ * `<svg>`, which `icon.tsx` calls a review flag — so the assertions are about the
+ * two things a hand-written one gets wrong: the size and the stroke.
+ */
+describe('glyphElement', () => {
+  it('draws a named glyph at the kit’s one stroke and one ramp', () => {
+    const drawn = glyphElement('hash');
+    expect(drawn?.tagName.toLowerCase()).toBe('svg');
+    expect(drawn?.getAttribute('stroke-width')).toBe(String(ICON_STROKE));
+    expect(drawn?.getAttribute('width')).toBe(String(iconSizes.sm));
+    expect(drawn?.getAttribute('height')).toBe(String(iconSizes.sm));
+    expect(drawn?.getAttribute('stroke')).toBe('currentColor');
+  });
+
+  it('carries the kit’s class, so a surface can colour it', () => {
+    expect(glyphElement('brand-jira')?.getAttribute('class')).toContain('sh-icon');
+  });
+
+  it('is decorative, because the pill it sits in has a label', () => {
+    expect(glyphElement('brand-jira')?.getAttribute('aria-hidden')).toBe('true');
+  });
+
+  it('takes a size from the ramp', () => {
+    expect(glyphElement('brand-jira', 'lg')?.getAttribute('width')).toBe(String(iconSizes.lg));
+  });
+
+  /**
+   * Null rather than `namedGlyph`'s dots fallback. That fallback keeps a hover
+   * action from being an invisible button; a pill has its label either way, and a
+   * wrong name should read as a missing mark rather than as a glyph that means
+   * something else.
+   */
+  it('is null for a name the allow-list does not have', () => {
+    expect(glyphElement('not-a-glyph')).toBeNull();
+  });
+
+  it('survives being asked twice, leaving no host behind', () => {
+    // It mounts a React root to render, and a root that outlived the call would
+    // leak one per pasted link.
+    const before = document.body.childElementCount;
+    expect(glyphElement('hash')).not.toBeNull();
+    expect(glyphElement('hash')).not.toBeNull();
+    expect(document.body.childElementCount).toBe(before);
   });
 });

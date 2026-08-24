@@ -46,7 +46,7 @@
  */
 
 export { cn, type ClassValue } from './cn.ts';
-export { ICON_STROKE, Icon, iconSizes, type IconProps, type IconSize } from './icon.tsx';
+export { ICON_STROKE, Icon, glyphElement, iconSizes, type IconProps, type IconSize } from './icon.tsx';
 
 // Controls
 export { Button, buttonVariants, type ButtonProps, type ButtonSize, type ButtonVariant } from './button.tsx';

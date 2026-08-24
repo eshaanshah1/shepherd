@@ -34,6 +34,7 @@
     "@shepherd/ext-claude-code": "workspace:*",
     "@shepherd/ext-diagnostics": "workspace:*",
     "@shepherd/ext-github": "workspace:*",
+    "@shepherd/ext-links": "workspace:*",
     "@shepherd/ext-scratch": "workspace:*",
     "@shepherd/ext-tasks": "workspace:*",
     "@shepherd/ext-transcripts": "workspace:*",

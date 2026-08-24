@@ -1,6 +1,7 @@
 import {
   IconArchive,
   IconArrowBackUp,
+  IconBrandJira,
   IconCheck,
   IconChevronDown,
   IconChevronLeft,
@@ -13,6 +14,7 @@ import {
   IconGitPullRequest,
   IconGitPullRequestClosed,
   IconGitPullRequestDraft,
+  IconHash,
   IconLayoutColumns,
   IconLayoutRows,
   IconMaximize,
@@ -104,6 +106,21 @@ export const NAMED_GLYPHS: Readonly<Record<string, ComponentType<TablerIconProps
   unship: IconArrowBackUp,
   trash: IconTrash,
   search: IconSearch,
+  /*
+   * The two marks a pasted link can wear.
+   *
+   * Jira's is its own — three open chevrons, which survive 13px because nothing
+   * in them closes. Slack's does NOT: its four interlocking lozenges have
+   * interior gaps of about 2px at that size against a 1.75px stroke, so they fill
+   * in and the mark reads as a smudge. It needs roughly double the room, and a
+   * pill is 16px tall.
+   *
+   * So Slack wears the HASH instead, which is its own word for the thing a
+   * permalink points at — a channel is `#name`. Four strokes, no counters,
+   * legible at any size, and the pill's aubergine already says whose link it is.
+   */
+  'brand-jira': IconBrandJira,
+  hash: IconHash,
   'split-right': IconLayoutColumns,
   'split-down': IconLayoutRows,
   zoom: IconMaximize,

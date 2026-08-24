@@ -6,6 +6,14 @@ import { repoName } from "../src/model/repo-name.ts";
 import type { PastedImage } from "../src/images.ts";
 import { readPastedImage } from "./paste-image.ts";
 import { findTrigger, isUnwritten, type DisplaySegment } from "./mention.ts";
+import {
+  claimsPaste,
+  dressPill,
+  linkPill,
+  readLink,
+  readPatterns,
+} from "./link-paste.ts";
+import { TASK_COMMANDS, type PastedLinkPattern } from "../src/manifest.ts";
 import { RepoPicker, rowId, type PickerRow } from "./repo-picker.tsx";
 
 /**
@@ -252,6 +260,18 @@ export function TaskComposer({
    */
   const pasted = useRef<PastedImage[]>([]);
   /**
+   * Which URLs to swallow, in a ref for `pasted`'s reason: nothing renders from
+   * it, and a paste handler reads it synchronously because it has to call
+   * `preventDefault`.
+   *
+   * Empty until the answer arrives, which is the honest state — a composer that
+   * swallowed pastes before it knew what to swallow would eat a URL it could not
+   * then draw.
+   */
+  const linkPatterns = useRef<readonly PastedLinkPattern[]>([]);
+  /** Rising, so a late answer can find its own pill after the caret has moved on. */
+  const linkSeq = useRef(0);
+  /**
    * Which ask is the newest. Every keystroke starts one and they are answered
    * out of order eventually — a `readdir` on a cold directory finishing after
    * the one for the next character is what would leave the list showing
@@ -316,6 +336,28 @@ export function TaskComposer({
       const answer = await invoke("tasks.machines", {});
       if (!live || !answer.ok) return;
       setMachines(readMachines(answer.value));
+    })();
+    return () => {
+      live = false;
+    };
+  }, [invoke]);
+
+  /**
+   * Which URLs a paste should be swallowed for.
+   *
+   * On MOUNT, which here is on open: the shell mounts this component when the
+   * composer is raised and unmounts it when it closes, so the two coincide. If
+   * that ever stops being true this read has to move — the machine list gets away
+   * with a stale answer because `tasks.create` reports on a machine that has gone
+   * away, and a stale intercept rule has no such catch. It silently changes what
+   * Cmd-V does.
+   */
+  useEffect(() => {
+    let live = true;
+    void (async () => {
+      const answer = await invoke(TASK_COMMANDS.linkPatterns, {});
+      if (!live || !answer.ok) return;
+      linkPatterns.current = readPatterns(answer.value);
     })();
     return () => {
       live = false;
@@ -703,6 +745,45 @@ export function TaskComposer({
                 pasted.current.push(image);
                 promptRef.current?.insert(imagePill(index));
               }
+            })();
+            return true;
+          }}
+          /*
+            A pasted Jira or Slack link becomes a Pill where it was pasted. The
+            pill goes in IMMEDIATELY with the token already correct and a
+            vendor-free fallback label, and what it IS fills in behind it:
+            resolving spawns a subprocess, and a composer that stalled on paste
+            would be worse than a label that arrives a beat later.
+
+            Only a lone URL matching a claimed pattern. Everything else falls
+            through to the plain-text paste, which is what keeps the browser's
+            own undo entry for it.
+          */
+          onPasteText={(text) => {
+            const url = text.trim();
+            if (!claimsPaste(url, linkPatterns.current)) return false;
+            const id = `link-${(linkSeq.current += 1)}`;
+            promptRef.current?.insert(linkPill(url, id), {
+              // The same non-breaking space `pick` uses, and for the same
+              // reason: the caret lands in text rather than against the pill.
+              trailing: "\u00A0",
+            });
+            void (async () => {
+              const answer = await invoke(TASK_COMMANDS.resolveLink, { url });
+              if (!answer.ok) return;
+              const link = readLink(answer.value);
+              if (link === null) return;
+              /*
+                Found by ID rather than by position: the person kept typing while
+                this was in flight, and a pill they deleted must not be
+                resurrected over whatever is there now. The picker's `asked` ref
+                guards the same class of bug from the other direction.
+              */
+              const pill = card.current?.querySelector<HTMLElement>(
+                `[data-link-id="${id}"]`,
+              );
+              if (pill === null || pill === undefined) return;
+              dressPill(pill, link);
             })();
             return true;
           }}

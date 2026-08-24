@@ -42,6 +42,9 @@ import { activate } from './index.ts';
 import {
   REPO_PROVISIONED_POINT,
   TASK_PROVISIONED_POINT,
+  PASTED_LINK_POINT,
+  TASK_COMMANDS,
+  type PastedLinkProvider,
   type RepoProvisioned,
   type RepoProvisionedFact,
   type TaskProvisioned,
@@ -4466,5 +4469,92 @@ describe('tasks.renameBranch', () => {
       { name: 'fix-login' },
     );
     expect(out.id).toBe(created.id);
+  });
+});
+
+/**
+ * The pasted-link seam — a question the composer asks and this extension does
+ * not answer itself.
+ *
+ * Both halves are here because they are one contract: what the renderer matches
+ * a paste against, and what it gets back for a URL that matched. The interesting
+ * cases are the empty ones. A point with no provider has to answer "no patterns"
+ * rather than fail, because that is the state the app ships in until `links`
+ * activates, and paste has to keep working through it.
+ */
+describe('the pasted-link point', () => {
+  const jiraPattern = { hostSuffix: '.atlassian.net', pathPrefix: '/browse/' };
+  const slackPattern = { hostSuffix: '.slack.com', pathPrefix: '/archives/' };
+
+  it('answers with no patterns when nothing provides any', async () => {
+    const h = harness();
+    expect(await h.run(TASK_COMMANDS.linkPatterns)).toEqual({ patterns: [] });
+    h.dispose();
+  });
+
+  it('offers every provider’s patterns, deduplicated', async () => {
+    const h = harness();
+    const point = h.point<PastedLinkProvider>(PASTED_LINK_POINT);
+    point.register({ patterns: [jiraPattern], resolve: () => Promise.resolve(null) });
+    // The same shape twice is a legitimate thing for two providers to have done,
+    // and this list is walked on every paste.
+    point.register({
+      patterns: [jiraPattern, slackPattern],
+      resolve: () => Promise.resolve(null),
+    });
+    expect(await h.run(TASK_COMMANDS.linkPatterns)).toEqual({
+      patterns: [jiraPattern, slackPattern],
+    });
+    h.dispose();
+  });
+
+  it('returns the first provider that claims the url', async () => {
+    const h = harness();
+    const point = h.point<PastedLinkProvider>(PASTED_LINK_POINT);
+    point.register({ patterns: [], resolve: () => Promise.resolve(null) });
+    point.register({
+      patterns: [],
+      resolve: () => Promise.resolve({ vendor: 'jira' as const, label: 'SHEP-412', resolved: false }),
+    });
+    expect(
+      await h.run(TASK_COMMANDS.resolveLink, {
+        url: 'https://x.atlassian.net/browse/SHEP-412',
+      }),
+    ).toEqual({ vendor: 'jira', label: 'SHEP-412', resolved: false });
+    h.dispose();
+  });
+
+  it('is null when no provider claims it', async () => {
+    const h = harness();
+    h.point<PastedLinkProvider>(PASTED_LINK_POINT).register({
+      patterns: [],
+      resolve: () => Promise.resolve(null),
+    });
+    expect(await h.run(TASK_COMMANDS.resolveLink, { url: 'https://example.com/x' })).toBeNull();
+    h.dispose();
+  });
+
+  it('skips a provider that throws, and says so', async () => {
+    const warnings: string[] = [];
+    const h = harness({ onWarn: (line) => warnings.push(line) });
+    const point = h.point<PastedLinkProvider>(PASTED_LINK_POINT);
+    point.register({
+      patterns: [],
+      resolve: () => {
+        throw new Error('boom');
+      },
+    });
+    point.register({
+      patterns: [],
+      resolve: () => Promise.resolve({ vendor: 'slack' as const, label: 'Slack thread', resolved: false }),
+    });
+    // A vendor that failed leaves a pill wearing its fallback label, which is a
+    // state the composer already draws. It is not worth a toast, but D15 says a
+    // degraded path reports itself.
+    expect(await h.run(TASK_COMMANDS.resolveLink, { url: 'https://x.slack.com/archives/C1/p1' })).toEqual(
+      { vendor: 'slack', label: 'Slack thread', resolved: false },
+    );
+    expect(warnings.some((line) => line.includes(PASTED_LINK_POINT))).toBe(true);
+    h.dispose();
   });
 });

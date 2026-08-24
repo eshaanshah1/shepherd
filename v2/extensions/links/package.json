@@ -1,0 +1,61 @@
+{
+  "name": "@shepherd/ext-links",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "shepherd.links — what a pasted Jira or Slack URL is, so the composer can draw it as a pill.",
+  "//exports": "Two of the three an extension usually has: main imports ./manifest to register, the utility process imports the root. There is no ./ui — the pill is drawn by the composer, which lives in tasks.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./manifest": {
+      "types": "./src/manifest.ts",
+      "default": "./src/manifest.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -b",
+    "test": "vitest run"
+  },
+  "//dependencies": "@shepherd/ext-tasks is TYPE-ONLY — `import type` and nothing else. The runtime relationship is the point id plus the manifest's `dependencies` entry, which is the gate the host can review; a value import would route around it. See extensions/README.md.",
+  "dependencies": {
+    "@shepherd/ext-tasks": "workspace:*",
+    "@shepherd/sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "//permissions": "process.exec is for acli. network is the REST fallback for when acli cannot answer, and secrets holds the token that fallback needs. Three grants, and the list is the argument for this being its own extension rather than two more permissions on `tasks` — whose own process.exec is argued there as being for git during provisioning.",
+  "//shepherd": "The manifest, as an extension declares it. `src/manifest.ts` is the typed copy the host loads, and `manifest.test.ts` asserts the two are identical.",
+  "shepherd": {
+    "id": "shepherd.links",
+    "name": "Links",
+    "version": "0.1.0",
+    "api": "^1.0.0",
+    "activation": [
+      "onStartup"
+    ],
+    "permissions": [
+      "process.exec",
+      "network",
+      "secrets"
+    ],
+    "dependencies": [
+      "shepherd.tasks"
+    ],
+    "contributes": {
+      "secrets": [
+        {
+          "key": "jiraToken",
+          "title": "Jira API token",
+          "description": "Only needed if `acli` cannot answer — this extension asks the Atlassian CLI first, and a machine where `acli jira auth status` reports Authenticated never needs this. Paste it as `your@email.com:token`: Atlassian Cloud authenticates an API token as a pair, and the account it belongs to is not something this app can know.",
+          "link": "https://id.atlassian.com/manage-profile/security/api-tokens"
+        }
+      ]
+    }
+  }
+}

@@ -310,3 +310,127 @@ describe('the handle', () => {
     expect(() => document.dispatchEvent(new Event('selectionchange'))).not.toThrow();
   });
 });
+
+/**
+ * The two paste hooks, and which of them a given paste belongs to.
+ *
+ * jsdom has no `execCommand`, so the INSERT half is unassertable here (see the
+ * note at the top of this file). What is assertable is the branch: whether the
+ * default insert was reached at all. So `execCommand` is stubbed and its being
+ * called is the claim — which is the field's own decision rather than the
+ * harness's behaviour.
+ */
+describe('pasting', () => {
+  const mount = (
+    props: {
+      onPasteText?: (text: string) => boolean;
+      onPasteFiles?: (files: readonly File[]) => boolean;
+    } = {},
+  ): { node: HTMLElement; inserted: string[]; cleanup: () => void } => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    act(() => root.render(<PromptField {...props} />));
+    const inserted: string[] = [];
+    const owner = document as unknown as { execCommand?: unknown };
+    const had = 'execCommand' in owner;
+    const previous = owner.execCommand;
+    owner.execCommand = (_name: string, _ui: boolean, value: string) => {
+      inserted.push(value);
+      return true;
+    };
+    return {
+      node: container.querySelector<HTMLElement>('[role="textbox"]')!,
+      inserted,
+      cleanup: () => {
+        if (had) owner.execCommand = previous;
+        else delete owner.execCommand;
+        act(() => root.unmount());
+        container.remove();
+      },
+    };
+  };
+
+  /**
+   * A paste, built by hand: jsdom's `ClipboardEvent` carries no `clipboardData`,
+   * so the one thing the handler reads has to be attached to the event.
+   */
+  const paste = (node: HTMLElement, data: { text?: string; files?: readonly File[] }): Event => {
+    const event = new Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'clipboardData', {
+      value: {
+        files: data.files ?? [],
+        getData: (type: string) => (type === 'text/plain' ? (data.text ?? '') : ''),
+      },
+    });
+    act(() => void node.dispatchEvent(event));
+    return event;
+  };
+
+  it('hands the plain text over and skips the default insert when it is claimed', () => {
+    const seen: string[] = [];
+    const dom = mount({
+      onPasteText: (text) => {
+        seen.push(text);
+        return true;
+      },
+    });
+    const event = paste(dom.node, { text: 'https://x.atlassian.net/browse/A-1' });
+    expect(seen).toEqual(['https://x.atlassian.net/browse/A-1']);
+    expect(dom.inserted).toEqual([]);
+    expect(event.defaultPrevented).toBe(true);
+    dom.cleanup();
+  });
+
+  it('falls through to the ordinary insert when the hook declines', () => {
+    const dom = mount({ onPasteText: () => false });
+    paste(dom.node, { text: 'plain words' });
+    expect(dom.inserted).toEqual(['plain words']);
+    dom.cleanup();
+  });
+
+  it('inserts plainly when there is no hook at all', () => {
+    const dom = mount();
+    paste(dom.node, { text: 'plain words' });
+    expect(dom.inserted).toEqual(['plain words']);
+    dom.cleanup();
+  });
+
+  /**
+   * Files win. An image from the clipboard is not a text paste, and a field that
+   * asked the text hook first would hand it a filename.
+   */
+  it('offers a paste carrying files to onPasteFiles, and never to onPasteText', () => {
+    const order: string[] = [];
+    const dom = mount({
+      onPasteFiles: () => {
+        order.push('files');
+        return true;
+      },
+      onPasteText: () => {
+        order.push('text');
+        return true;
+      },
+    });
+    paste(dom.node, { text: 'ignored', files: [new File(['x'], 'a.png', { type: 'image/png' })] });
+    expect(order).toEqual(['files']);
+    dom.cleanup();
+  });
+
+  it('reaches the text hook when the file hook declines the files it was given', () => {
+    const order: string[] = [];
+    const dom = mount({
+      onPasteFiles: () => {
+        order.push('files');
+        return false;
+      },
+      onPasteText: () => {
+        order.push('text');
+        return true;
+      },
+    });
+    paste(dom.node, { text: 'a.png', files: [new File(['x'], 'a.png', { type: 'image/png' })] });
+    expect(order).toEqual(['files', 'text']);
+    dom.cleanup();
+  });
+});

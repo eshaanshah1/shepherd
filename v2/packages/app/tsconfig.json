@@ -29,6 +29,7 @@
     { "path": "../../extensions/tasks" },
     { "path": "../../extensions/worktree-hook" },
     { "path": "../../extensions/github" }, { "path": "../../extensions/scratch" },
-    { "path": "../../extensions/transcripts" }
+    { "path": "../../extensions/transcripts" },
+    { "path": "../../extensions/links" }
   ]
 }

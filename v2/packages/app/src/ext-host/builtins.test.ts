@@ -7,6 +7,7 @@ import { tasksManifest } from '@shepherd/ext-tasks/manifest';
 import { worktreeHookManifest } from '@shepherd/ext-worktree-hook/manifest';
 import { githubManifest } from '@shepherd/ext-github/manifest';
 import { transcriptsManifest } from '@shepherd/ext-transcripts/manifest';
+import { linksManifest } from '@shepherd/ext-links/manifest';
 import { BUILTIN_MODULES } from './builtins.ts';
 
 /**
@@ -33,6 +34,7 @@ const REGISTERED = [
   worktreeHookManifest,
   githubManifest,
   transcriptsManifest,
+  linksManifest,
 ];
 
 describe('the built-in module table', () => {

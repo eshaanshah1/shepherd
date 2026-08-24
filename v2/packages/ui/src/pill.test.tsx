@@ -1,5 +1,6 @@
 import { IconPhoto } from '@tabler/icons-react';
 import { describe, expect, it } from 'vitest';
+import { palette, relativeLuminance } from '@shepherd/design-tokens';
 import { mount } from './test-dom.ts';
 import { rulesMentioning } from './css-rules.ts';
 import { Pill } from './pill.tsx';
@@ -219,5 +220,191 @@ describe('Pill', () => {
     );
     expect(pill(dom.container).getAttribute('data-testid')).toBe('attachment');
     expect(node).toBe(pill(dom.container));
+  });
+});
+
+/**
+ * A link pill's vendor tint, and the three things that keep it an exception
+ * rather than a precedent.
+ */
+describe('a link pill', () => {
+  /** Matched loosely on purpose: the CSSOM keeps the sheet's own quote style. */
+  const linkRule = (vendor: string): CSSStyleRule => {
+    const found = rulesMentioning('sh-ui-pill').find(
+      (rule) =>
+        rule.selectorText.startsWith('.sh-ui-pill[data-link=') &&
+        rule.selectorText.includes(vendor),
+    );
+    if (!found) throw new Error(`no rule for data-link=${vendor}`);
+    return found;
+  };
+
+  /**
+   * Every layer of the pill, from one property.
+   *
+   * The fill, the four edges and the mark, so a link pill is the same drawing as
+   * every other pill with one colour swapped — rather than a box in one hue with
+   * a mark in another, which is what it looked like at the halfway point.
+   */
+  it('paints the fill, all four edges and the mark from the vendor hue', () => {
+    const painted = rulesMentioning('sh-ui-pill').find(
+      (rule) => rule.selectorText === '.sh-ui-pill[data-link]',
+    );
+    for (const property of [
+      'background',
+      'border-top-color',
+      'border-right-color',
+      'border-bottom-color',
+      'border-left-color',
+    ]) {
+      expect(painted?.style.getPropertyValue(property), property).toContain(
+        'var(--sh-ui-link-hue)',
+      );
+    }
+    const mark = rulesMentioning('sh-ui-pill').find(
+      (rule) => rule.selectorText === '.sh-ui-pill[data-link] .sh-icon',
+    );
+    expect(mark?.style.color).toContain('var(--sh-ui-link-hue)');
+    // Never by shadowing the ROLE the ordinary pill paints from: that took all
+    // four layers at once and left no way to treat the mark differently from the
+    // fill, which is what the alphas below are for.
+    for (const rule of rulesMentioning('sh-ui-pill')) {
+      if (!rule.selectorText.includes('[data-link')) continue;
+      expect(rule.style.getPropertyValue('--sh-sky'), rule.selectorText).toBe('');
+    }
+  });
+
+  /**
+   * The mark is opaque where the box is a wash, and it is pulled toward the
+   * mode's ink. A hue chosen to survive as a 1px edge on the dark well is a light
+   * one, and a light mark on the pale fill that same hue makes in LIGHT mode is
+   * the weak case.
+   */
+  it('spends the hue at full strength on the mark, adapted to the mode', () => {
+    const mark = rulesMentioning('sh-ui-pill').find(
+      (rule) => rule.selectorText === '.sh-ui-pill[data-link] .sh-icon',
+    );
+    expect(mark?.style.color).not.toContain('transparent');
+    expect(mark?.style.color).toContain('var(--sh-text)');
+  });
+
+  /**
+   * The lit top edge is brighter than the sides, which is the one place a flat
+   * box says "lit from above" without a gradient. Losing that would make a link
+   * pill a differently-built box rather than the same box in another colour.
+   */
+  it('keeps the lit top edge brighter than the sides', () => {
+    const painted = rulesMentioning('sh-ui-pill').find(
+      (rule) => rule.selectorText === '.sh-ui-pill[data-link]',
+    );
+    const share = (property: string): number =>
+      Number(/(\d+)%/.exec(painted?.style.getPropertyValue(property) ?? '')?.[1] ?? '0');
+    expect(share('border-top-color')).toBeGreaterThan(share('border-left-color'));
+    expect(share('border-left-color')).toBeGreaterThan(share('background'));
+  });
+
+  it('names each vendor’s own published hue, as a property the paint reads', () => {
+    // A custom property, so the hex never appears in a `background` — which is
+    // what `paints in roles only` forbids, and rightly.
+    expect(linkRule('jira').style.getPropertyValue('--sh-ui-link-hue')).toContain('#2684FF');
+    expect(linkRule('slack').style.getPropertyValue('--sh-ui-link-hue')).toContain('#B98BD0');
+    for (const vendor of ['jira', 'slack']) {
+      expect(linkRule(vendor).style.background, vendor).toBe('');
+    }
+  });
+
+  /**
+   * Why both hues are lighter than the marks the vendors publish.
+   *
+   * This is the measurement the comment in `pill.css` cites, kept as a test so a
+   * later "use the real brand colour" cannot quietly undo it. A fill is 400px²
+   * and forgives a dark hue; a hairline is one device pixel and does not — Slack
+   * aubergine at the edge alpha lands at 1.12:1 on the dark well, which is a
+   * border that is in the stylesheet and not on the screen.
+   */
+  it('draws an edge that survives being one pixel wide', () => {
+    const channels = (value: string): number[] =>
+      [1, 3, 5].map((at) => parseInt(value.slice(at, at + 2), 16));
+    const washed = (hue: string, alpha: number, ground: string): string =>
+      `#${channels(hue)
+        .map((c, at) => Math.round(c * alpha + (channels(ground)[at] ?? 0) * (1 - alpha)))
+        .map((c) => c.toString(16).padStart(2, '0'))
+        .join('')}`;
+    const ratio = (a: string, b: string): number => {
+      const [high, low] = [relativeLuminance(a), relativeLuminance(b)].sort((x, y) => y - x) as [
+        number,
+        number,
+      ];
+      return (high + 0.05) / (low + 0.05);
+    };
+
+    // What an ordinary pill's hairline achieves, and the bar a link pill's has
+    // to clear to read as the same drawing.
+    const ordinary = ratio(washed(palette.sky.dark, 0.5, palette.well.dark), palette.well.dark);
+
+    for (const hue of ['#2684FF', '#B98BD0']) {
+      const edge = ratio(washed(hue, 0.5, palette.well.dark), palette.well.dark);
+      expect(edge, hue).toBeGreaterThan(ordinary * 0.6);
+    }
+
+    // The negative half, and the reason this test exists: the published marks
+    // are BELOW that, which is why neither is the value in the sheet.
+    for (const published of ['#0052CC', '#4A154B']) {
+      const edge = ratio(washed(published, 0.5, palette.well.dark), palette.well.dark);
+      expect(edge, published).toBeLessThan(ordinary * 0.6);
+    }
+  });
+
+  /**
+   * The mark, measured in the mode it is weak in.
+   *
+   * On the dark well the vendor hue is already bright and the mark is easy. In
+   * LIGHT mode the same hue makes a pale fill and the mark sits on it — unmixed
+   * that is 2.25:1 for Slack's, against the 4.2:1 an ordinary pill's mark gets
+   * from `sky`. The mix toward the mode's ink is what closes that, and this is
+   * where the number lives so a later "just use the hue" cannot quietly reopen it.
+   */
+  it('keeps the mark legible on the fill its own hue makes, in both modes', () => {
+    const channels = (value: string): number[] =>
+      [1, 3, 5].map((at) => parseInt(value.slice(at, at + 2), 16));
+    const blend = (top: string, share: number, under: string): string =>
+      `#${channels(top)
+        .map((c, at) => Math.round(c * share + (channels(under)[at] ?? 0) * (1 - share)))
+        .map((c) => c.toString(16).padStart(2, '0'))
+        .join('')}`;
+    const ratio = (a: string, b: string): number => {
+      const [high, low] = [relativeLuminance(a), relativeLuminance(b)].sort((x, y) => y - x) as [
+        number,
+        number,
+      ];
+      return (high + 0.05) / (low + 0.05);
+    };
+
+    for (const hue of ['#2684FF', '#B98BD0']) {
+      for (const mode of ['dark', 'light'] as const) {
+        const well = mode === 'dark' ? palette.well.dark : palette.well.light;
+        const ink = mode === 'dark' ? palette.ink.dark : palette.ink.light;
+        // The fill this hue makes, and the mark that has to read on it.
+        const fill = blend(hue, 0.22, well);
+        const mark = blend(hue, 0.78, ink);
+        expect(ratio(mark, fill), `${hue} ${mode}`).toBeGreaterThanOrEqual(3);
+      }
+    }
+
+    // The negative half: unmixed, the light case is the one that fails.
+    const paleFill = blend('#B98BD0', 0.22, palette.well.light);
+    expect(ratio('#B98BD0', paleFill)).toBeLessThan(3);
+  });
+
+  /**
+   * Scoped, and the negative half matters as much: an ordinary pill — a repo, an
+   * image — must still be the app's own accent. A vendor hue leaking onto those
+   * would make `sky` mean two things.
+   */
+  it('leaves every pill that is not a link alone', () => {
+    for (const rule of rulesMentioning('sh-ui-pill')) {
+      if (rule.selectorText.includes('[data-link=')) continue;
+      expect(rule.style.getPropertyValue('--sh-sky'), rule.selectorText).toBe('');
+    }
   });
 });

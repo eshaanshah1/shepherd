@@ -12,6 +12,7 @@ import {
 import {
   CARD_FACTS_CHANGED_TOPIC,
   CARD_FACTS_POINT,
+  PASTED_LINK_POINT,
   REPO_PROVISIONED_POINT,
   REPO_SUGGESTIONS_POINT,
   TASK_COMMANDS,
@@ -20,6 +21,8 @@ import {
   TRANSCRIPT_SEARCH_POINT,
   type CardFact,
   type CardFactProvider,
+  type PastedLinkPattern,
+  type PastedLinkProvider,
   type RepoProvisioned,
   type TaskProvisioned,
   type TranscriptHit,
@@ -133,6 +136,15 @@ export interface RepoSuggestion extends RepoRef {
 
 /** See the `suggestRepos` handler: a list you arrow through, not one you scroll. */
 const SUGGESTION_LIMIT = 10;
+
+/**
+ * How long a pasted link gets to say what it is.
+ *
+ * Long enough for a cold CLI spawn, short enough that nobody is waiting on it —
+ * the pill is already drawn with its fallback label by the time this starts, so
+ * running out is one more way of answering "nothing", not a failure.
+ */
+const RESOLVE_LINK_DEADLINE_MS = 4_000;
 
 export interface TasksAPI {
   list(): readonly TaskRecord[];
@@ -856,6 +868,16 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     order: 'priority',
   });
   ctx.subscriptions.push(transcripts);
+
+  /**
+   * Registration order, not priority: a URL belongs to at most one vendor, so
+   * "which provider wins" is not a question anybody is asking. The first to claim
+   * it answers, and the rest are never asked.
+   */
+  const pastedLinks = points.define<PastedLinkProvider>(PASTED_LINK_POINT, {
+    order: 'registration',
+  });
+  ctx.subscriptions.push(pastedLinks);
 
   /**
    * Registration order, not priority: these are side effects on a directory, so
@@ -3615,6 +3637,57 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         changed();
         searchTranscripts();
         return { query };
+      },
+    }),
+  );
+
+  ctx.subscriptions.push(
+    commands.register(TASK_COMMANDS.linkPatterns, {
+      // No title, for `filter`'s reason: it answers a page's question and is not
+      // a verb anybody would pick out of a palette.
+      schema: s.object({}),
+      handler: () => {
+        // Deduplicated: two providers claiming the same shape is a legitimate
+        // thing to have done, and this list is walked on every paste.
+        const seen = new Set<string>();
+        const patterns: PastedLinkPattern[] = [];
+        for (const provider of pastedLinks.all()) {
+          for (const pattern of provider.patterns) {
+            const key = `${pattern.hostSuffix}|${pattern.pathPrefix}|${pattern.query ?? ''}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            patterns.push(pattern);
+          }
+        }
+        return { patterns };
+      },
+    }),
+  );
+
+  ctx.subscriptions.push(
+    commands.register(TASK_COMMANDS.resolveLink, {
+      schema: s.object({ url: s.string() }),
+      handler: async (args) => {
+        const deadline = new AbortController();
+        const timer = setTimeout(() => deadline.abort(), RESOLVE_LINK_DEADLINE_MS);
+        try {
+          for (const provider of pastedLinks.all()) {
+            try {
+              const answer = await provider.resolve(args.url, deadline.signal);
+              if (answer !== null) return answer;
+            } catch (error: unknown) {
+              // A vendor that failed leaves a pill wearing its fallback label,
+              // which is a state the composer already draws — so this is a line
+              // in the log rather than anything the person writing a brief sees.
+              ctx.log.warn(
+                `a ${PASTED_LINK_POINT} provider threw and was skipped — ${String(error)}`,
+              );
+            }
+          }
+          return null;
+        } finally {
+          clearTimeout(timer);
+        }
       },
     }),
   );

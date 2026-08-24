@@ -1,7 +1,10 @@
 import type { ComponentType, ReactElement } from 'react';
+import { flushSync } from 'react-dom';
+import { createRoot } from 'react-dom/client';
 import type { IconProps as TablerIconProps } from '@tabler/icons-react';
 import { metrics } from '@shepherd/design-tokens';
 import { cn } from './cn.ts';
+import { NAMED_GLYPHS } from './glyphs.ts';
 
 /**
  * The icon primitive — the ONLY way a glyph reaches the screen.
@@ -100,4 +103,43 @@ export function Icon({ icon: Glyph, size = 'md', className, label }: IconProps):
       aria-hidden={label === undefined ? true : undefined}
     />
   );
+}
+
+/**
+ * The same glyph, as a detached DOM node.
+ *
+ * For the one consumer that cannot render React: a node built by hand and
+ * inserted into a `contenteditable`, because React does not own that subtree (see
+ * `PromptField` — rewriting it per keystroke is what breaks undo). The composer's
+ * three pill kinds are the whole of that set.
+ *
+ * It exists so those pills do not hand-write an `<svg>`, which this file calls a
+ * review flag and means it: the two that predate this draw at 14px and stroke
+ * 1.5, a fourth size and a second weight, and nothing catches it because a
+ * hand-rolled glyph passes every test a component would fail. Going through
+ * `Icon` is what makes a pill's mark the same mark as everything else.
+ *
+ * `flushSync` because the caller is a paste handler that must produce a node
+ * NOW, and a root renders asynchronously otherwise. The node is cloned before the
+ * root is torn down, since unmounting takes the original with it.
+ */
+export function glyphElement(name: string, size: IconSize = 'sm'): SVGElement | null {
+  const Glyph = NAMED_GLYPHS[name];
+  // Null rather than `namedGlyph`'s dots fallback: that fallback exists so a
+  // hover action is never an invisible button, and a pill has its label either
+  // way. Here a wrong name should show as a missing mark rather than as a glyph
+  // that means something else.
+  if (Glyph === undefined) return null;
+
+  const host = document.createElement('div');
+  const root = createRoot(host);
+  try {
+    flushSync(() => {
+      root.render(<Icon icon={Glyph} size={size} />);
+    });
+    const drawn = host.querySelector('svg');
+    return drawn === null ? null : (drawn.cloneNode(true) as SVGElement);
+  } finally {
+    root.unmount();
+  }
 }

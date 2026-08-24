@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fuzzyMatch } from '@shepherd/sdk';
-import { Modal } from '@shepherd/ui';
+import { Modal, readValue } from '@shepherd/ui';
 import { TaskComposer } from './composer.tsx';
 import { displayMatch } from '../src/model/match-display.ts';
 
@@ -900,5 +900,146 @@ describe('the machine picker', () => {
     });
     const created = spy.mock.calls.find((call) => call[0] === 'tasks.create');
     expect((created?.[1] as { member?: string }).member).toBe('mac-b');
+  });
+});
+
+/**
+ * A pasted link, and the two halves of what makes it safe: the pill lands with
+ * the token already correct, and the answer that arrives later changes only what
+ * a person reads.
+ */
+describe('a pasted link', () => {
+  const JIRA = 'https://x.atlassian.net/browse/SHEP-412';
+  const PATTERNS = [
+    { hostSuffix: '.atlassian.net', pathPrefix: '/browse/' },
+    { hostSuffix: '.slack.com', pathPrefix: '/archives/' },
+  ];
+
+  /** A composer wired to answer the two link verbs however a case needs. */
+  const linkComposer = async (
+    resolved: unknown,
+    opts: { patterns?: unknown } = {},
+  ): Promise<void> => {
+    const base = makeInvoke();
+    const spy = vi.fn(async (command: string, args?: unknown) => {
+      if (command === 'tasks.linkPatterns') {
+        return { ok: true as const, value: { patterns: opts.patterns ?? PATTERNS } };
+      }
+      if (command === 'tasks.resolveLink') return { ok: true as const, value: resolved };
+      return base(command, args);
+    });
+    mount(<TaskComposer invoke={spy as ReturnType<typeof makeInvoke>} done={makeDone()} />);
+    // The patterns are a round trip; without settling, every paste falls through.
+    await act(async () => {
+      await Promise.resolve();
+    });
+  };
+
+  const pasteText = async (text: string): Promise<void> => {
+    const event = new Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'clipboardData', {
+      value: { files: [], getData: () => text },
+    });
+    await act(async () => {
+      brief().dispatchEvent(event);
+      await Promise.resolve();
+    });
+  };
+
+  /**
+   * jsdom has no `execCommand`, and the fall-through cases below reach it — a
+   * paste this composer does NOT claim is handed to the browser's own insert,
+   * which is what keeps its undo entry. Stubbing it records what would have
+   * landed, so those cases assert the text arrived rather than only that no pill
+   * did.
+   */
+  let inserted: string[];
+  beforeEach(() => {
+    inserted = [];
+    (document as unknown as { execCommand: unknown }).execCommand = (
+      _name: string,
+      _ui: boolean,
+      value: string,
+    ) => {
+      inserted.push(value);
+      return true;
+    };
+  });
+  afterEach(() => {
+    delete (document as unknown as { execCommand?: unknown }).execCommand;
+  });
+
+  const linkPills = (): HTMLElement[] => [
+    ...brief().querySelectorAll<HTMLElement>('.sh-composer-link-pill'),
+  ];
+
+  it('becomes one atomic pill whose token is the url', async () => {
+    await linkComposer({ vendor: 'jira', label: 'SHEP-412 Retry loop', resolved: true });
+    await pasteText(JIRA);
+    const [pill] = linkPills();
+    expect(pill?.dataset['token']).toBe(JIRA);
+    expect(pill?.contentEditable).toBe('false');
+    expect(readValue(brief())).toContain(JIRA);
+  });
+
+  it('swaps the label in when the answer lands, and leaves the token alone', async () => {
+    await linkComposer({ vendor: 'jira', label: 'SHEP-412 Retry loop', resolved: true });
+    await pasteText(JIRA);
+    const [pill] = linkPills();
+    expect(pill?.textContent).toBe('SHEP-412 Retry loop');
+    expect(pill?.dataset['link']).toBe('jira');
+    // The brief an agent reads did not change when the label did.
+    expect(readValue(brief())).toContain(JIRA);
+    expect(readValue(brief())).not.toContain('Retry loop');
+  });
+
+  it('keeps its fallback label when nothing answers', async () => {
+    await linkComposer(null);
+    await pasteText(JIRA);
+    const [pill] = linkPills();
+    expect(pill?.textContent).toBe('Link');
+    expect(readValue(brief())).toContain(JIRA);
+  });
+
+  it('draws nothing for an answer naming a vendor it cannot tint', async () => {
+    await linkComposer({ vendor: 'linear', label: 'ENG-1', resolved: true });
+    await pasteText(JIRA);
+    const [pill] = linkPills();
+    // Invisible rather than an untinted box — `CardFact`'s rule for a malformed
+    // contribution, applied one surface along.
+    expect(pill?.textContent).toBe('Link');
+    expect(pill?.dataset['link']).toBeUndefined();
+  });
+
+  it('pastes a url no pattern claims as ordinary text', async () => {
+    await linkComposer(null);
+    await pasteText('https://example.com/x');
+    expect(linkPills()).toHaveLength(0);
+    expect(inserted).toEqual(['https://example.com/x']);
+  });
+
+  it('pastes a sentence containing a url as ordinary text', async () => {
+    await linkComposer(null);
+    await pasteText(`see ${JIRA} please`);
+    expect(linkPills()).toHaveLength(0);
+    expect(inserted).toEqual([`see ${JIRA} please`]);
+  });
+
+  it('claims nothing while the patterns are still in flight', async () => {
+    // A composer that swallowed pastes before it knew what to swallow would eat
+    // a URL it could not draw.
+    await linkComposer(null, { patterns: [] });
+    await pasteText(JIRA);
+    expect(linkPills()).toHaveLength(0);
+    expect(inserted).toEqual([JIRA]);
+  });
+
+  it('gives each pill its own id, so two answers cannot cross', async () => {
+    await linkComposer({ vendor: 'jira', label: 'SHEP-412', resolved: true });
+    await pasteText(JIRA);
+    await pasteText('https://x.slack.com/archives/C1/p1724500000123456');
+    const ids = linkPills().map((pill) => pill.dataset['linkId']);
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2);
   });
 });

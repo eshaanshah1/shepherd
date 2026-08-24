@@ -119,6 +119,21 @@ export const TASK_COMMANDS = {
    * learn how. So it asks its own extension, which asks the provider.
    */
   transcriptHits: 'tasks.transcriptHits',
+  /**
+   * Which URLs a paste should be swallowed for — asked when the composer OPENS.
+   *
+   * A command for the reason `suggestRepos` is one (D5): the providers are
+   * registered against a point in the utility process, and the renderer cannot
+   * consult one.
+   *
+   * On open rather than once on mount, and the difference is not fussiness. A
+   * stale machine is caught where it matters — `tasks.create` forwards to it and
+   * reports what it said. A stale intercept rule is caught nowhere: it silently
+   * changes what ⌘V does.
+   */
+  linkPatterns: 'tasks.linkPatterns',
+  /** What a claimed URL should be drawn as, or `null` if nobody claims it. */
+  resolveLink: 'tasks.resolveLink',
 } as const;
 
 /** The composer's UI module, resolved by the renderer's table (ADR 0033). */
@@ -331,6 +346,72 @@ export type TaskProvisioned = (
  * a row with no glyph rather than a rail that will not draw.
  */
 export const CARD_FACTS_POINT = 'tasks.cardFacts';
+
+/**
+ * What is this pasted URL? — asked of a brief being written.
+ *
+ * It publishes a question rather than a step, the rule `REPO_SUGGESTIONS_POINT`
+ * states, and it clears ADR 0039's bar the same way `CARD_FACTS_POINT` does: a
+ * different SUBJECT. A pasted URL is neither a repo nor a task.
+ *
+ * The DIRECTION is the other half of why it is a point. The composer lives here
+ * and the vendor grammars do not, so the alternative was `tasks` naming a vendor
+ * extension in its own `dependencies` — the generic extension declaring the
+ * specific one, which is backwards from every other pairing in this tree and is
+ * the rule an extension never naming a vendor exists to prevent.
+ */
+export const PASTED_LINK_POINT = 'tasks.pastedLink';
+
+/**
+ * Which URLs a provider claims, as DATA rather than as an expression.
+ *
+ * A pattern crosses the port and is matched in the RENDERER, so a compiled regex
+ * here would be a provider handing the composer something to run.
+ *
+ * Host **and** path, and that pairing is what makes the paste one-way. Host alone
+ * would claim every `atlassian.net` URL, so a wiki page would be swallowed,
+ * resolve to nothing, and have to be put back as text — a flicker on the one
+ * surface that has to stay quiet. With the path in the pattern, a claimed URL is
+ * one some grammar can read, and the composer never un-draws a pill.
+ */
+export interface PastedLinkPattern {
+  /** Matched against the end of the hostname. `.atlassian.net`. */
+  readonly hostSuffix: string;
+  /** Matched against the start of the pathname. `/browse/`. */
+  readonly pathPrefix: string;
+  /** A query parameter that must be present. Absent means any query. */
+  readonly query?: string;
+}
+
+/**
+ * What the pill should be drawn as.
+ *
+ * Note the three things it does not carry. **No token**: the token is the URL the
+ * composer already has, and a resolved title substituted into the brief would put
+ * text written in another system into the prompt an agent reads. **No icon and no
+ * colour**: `vendor` is a closed union and the renderer owns both, which is the
+ * rule `CardFact` states for the rail, met here by having nothing to allow-list
+ * rather than by allow-listing.
+ */
+export interface PastedLink {
+  readonly vendor: 'jira' | 'slack';
+  /** What the pill reads. Already the fallback when nothing resolved. */
+  readonly label: string;
+  /** Whether a lookup actually answered. Read by tests; draws nothing. */
+  readonly resolved: boolean;
+}
+
+export interface PastedLinkProvider {
+  readonly patterns: readonly PastedLinkPattern[];
+  /**
+   * `null` when this provider does not claim the URL, which is the common answer.
+   *
+   * A real `AbortSignal`, sound for the reason `TranscriptQuery` records for its
+   * own: a point's providers run in this same process, so there is no port to
+   * flatten it into a plain value.
+   */
+  resolve(url: string, signal: AbortSignal): Promise<PastedLink | null>;
+}
 
 /** The task a provider is being asked about — enough to answer, and no more. */
 export interface CardFactSubject {

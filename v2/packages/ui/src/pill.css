@@ -191,3 +191,78 @@
    */
   align-self: center;
 }
+
+/*
+ * A link pill's vendor tint — the one place in this kit a literal colour is
+ * right, and it is worth saying why it is barely an exception.
+ *
+ * These are not theme colours and must not become roles. They are two vendors'
+ * identity, they mean nothing anywhere else in the app, and the palette's rule
+ * against a saturated value without a job is exactly what a `sky` that could be
+ * Jira blue would break: `sky` means live · focus · send, and a pill wearing it
+ * would be claiming to be one of those. Tier 3, declared beside its owner — the
+ * same mechanism `--sh-ui-pill-height` above uses, which is why the hue is a
+ * PROPERTY and every paint below reads it through `var()` rather than naming a
+ * hex (a rule `pill.test.tsx` enforces on every rule in this file).
+ *
+ * ── the hues are LIGHTER than each vendor's darkest mark, deliberately ────────
+ *
+ * Slack ships `#4A154B` and Jira `#0052CC`, and both are too dark to survive as
+ * an EDGE. The measurement: the app's own pill draws its hairline at 3.0:1
+ * against the dark well, where a 50% wash of `#4A154B` lands at 1.12:1 — present
+ * in the stylesheet and absent on the screen, which is exactly how it looked.
+ * A fill is 400px² and forgives a dark hue; one device pixel does not. So each
+ * vendor is represented by a lighter member of its own family — Atlassian's own
+ * Blue 400, and an aubergine opened up until its edge reads — and the fill
+ * follows the edge rather than the other way round.
+ */
+.sh-ui-pill[data-link='jira'] {
+  --sh-ui-link-hue: #2684FF;
+}
+
+.sh-ui-pill[data-link='slack'] {
+  --sh-ui-link-hue: #B98BD0;
+}
+
+/*
+ * The fill, the hairline and the lit top edge, at the three alphas
+ * `fillAccent` / `lineAccent` / `glintAccent` already use — so a link pill is the
+ * same drawing as every other pill with one colour swapped, rather than a second
+ * idea about what a pill looks like.
+ *
+ * A wash over `transparent` rather than a mix into a surface, so a pill
+ * composites onto whatever is behind it — and it is what lets ONE number per
+ * layer serve both modes: the alpha does the adapting. Mode has no selector in
+ * this app, only the values injected at `:root`, so the per-mode alphas those
+ * roles carry are not available to reach for; these are their dark values, which
+ * is the side an edge disappears on.
+ *
+ * Four border longhands rather than `border-color`, for the reason stated above:
+ * jsdom's CSSOM drops a shorthand holding a `var()`, so the test that reads these
+ * would see nothing. Do not fold them up.
+ */
+.sh-ui-pill[data-link] {
+  background: color-mix(in srgb, var(--sh-ui-link-hue) 22%, transparent);
+  border-top-color: color-mix(in srgb, var(--sh-ui-link-hue) 72%, transparent);
+  border-right-color: color-mix(in srgb, var(--sh-ui-link-hue) 50%, transparent);
+  border-bottom-color: color-mix(in srgb, var(--sh-ui-link-hue) 50%, transparent);
+  border-left-color: color-mix(in srgb, var(--sh-ui-link-hue) 50%, transparent);
+}
+
+/*
+ * The mark, in the same hue as the box it sits in.
+ *
+ * Opaque rather than a wash — a glyph is the one place in this drawing the
+ * accent is spent at full strength, and that is as true of a vendor's hue as of
+ * the app's own.
+ *
+ * Mixed toward `--sh-text` because a hue chosen to survive as a 1px EDGE on the
+ * dark well is, by construction, a light one — and a light mark on the pale fill
+ * this same hue makes in light mode is the weak case: 2.25:1 unmixed, against
+ * the 4.2:1 an ordinary pill's mark gets. Pulling the mode's own ink in fixes
+ * that end without touching the dark one, which is the trick `send-button.css`
+ * already uses on `sky`. Measured both ways in `pill.test.tsx`.
+ */
+.sh-ui-pill[data-link] .sh-icon {
+  color: color-mix(in srgb, var(--sh-ui-link-hue) 78%, var(--sh-text));
+}
