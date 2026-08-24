@@ -1003,22 +1003,24 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * How long the ASK may take, and so how long a task's first `worktree add` may
    * be held for a name (D20) — this is the only clock.
    *
-   * Measured: a real naming call — this prompt, the whole brief — is ~10.5s, so
-   * this is headroom over that rather than a round number. It is a ceiling and not
-   * an expectation: a model that is absent or signed out fails in about two
-   * seconds, and the composer's speculative ask (D21) means Create usually joins
-   * one already most of the way through.
+   * Measured over eight real naming calls — this prompt, the whole brief — the
+   * spread is 11.5s to 28.3s, and the top of it is what this has to clear.
+   * Nothing here joins an ask already in flight: the composer does not ask while
+   * you type, so the whole of that latency falls inside this window, from a
+   * standing start. It is a ceiling and not an expectation — a model that is
+   * absent or signed out fails in about two seconds.
    */
-  const NAME_ASK_TIMEOUT_MS = 30_000;
+  const NAME_ASK_TIMEOUT_MS = 60_000;
 
   /**
    * The last naming ask, and the brief it was about.
    *
-   * ONE entry, not a map: the composer asks about a brief that is growing, and
-   * every earlier answer is about text nobody has on screen any more. Keeping this
-   * is what makes the composer's ask and provisioning's ask the same ask (D21) —
-   * Create pressed while one is in flight awaits it instead of starting a second
-   * and paying for the model twice.
+   * ONE entry, not a map: a brief that is growing gets asked about more than
+   * once, and every earlier answer is about text nobody has on screen any more.
+   * What this buys is that two asks about the same brief are the same ask (D21) —
+   * a second caller awaits the one in flight instead of paying for the model
+   * twice. `tasks.suggestName` is the other caller; the composer is not one of
+   * them, and does not ask while you type.
    */
   let pending: { brief: string; answer: Promise<string | undefined> } | undefined;
 

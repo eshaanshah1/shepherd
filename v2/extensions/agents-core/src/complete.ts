@@ -24,15 +24,16 @@ import type { QuickTarget } from './quick-model.ts';
 /**
  * Long enough for a cold vendor CLI; short enough that nothing waits forever.
  *
- * 30s rather than 15s, from a measurement rather than a feeling: a real naming
- * prompt — the whole brief, not a one-line probe — took **10.5s** end to end
- * against `claude-haiku-4-5`. 15s left 1.4x headroom over a call that is mostly
- * network, which is the kind of margin that turns into an intermittent
- * `timeout` on a bad connection. Nothing is waiting on this deadline (a
- * consumer's own patience is separate and much shorter), so the cost of the
- * larger number is only that a hung call holds its concurrency slot longer.
+ * From the SPREAD, not from an average, because the average is the number that
+ * misleads here. Eight measured naming calls — the whole brief, against
+ * `claude-haiku-4-5` — ran 11.5s, 13.2s, 13.2s, 15.1s, 15.2s, 15.3s, 25.9s,
+ * 28.3s. A deadline set from the 10.5s median leaves the top of that range no
+ * room at all, and the tail is where a real brief lands often enough to notice.
+ * Nothing is waiting on this deadline (a consumer's own patience is separate and
+ * much shorter), so the cost of the larger number is only that a hung call holds
+ * its concurrency slot longer.
  */
-export const QUICK_TIMEOUT_MS = 30_000;
+export const QUICK_TIMEOUT_MS = 60_000;
 
 /** A quick answer is a handful of words. Anything more is a runaway. */
 export const MAX_STDOUT_BYTES = 4_096;
@@ -126,6 +127,14 @@ export async function runComplete(
     cwd: deps.dataDir,
     timeoutMs,
     env: childEnv(deps.homeDir, deps.userName),
+    /*
+     * EOF, immediately. The prompt travels in the argv, so there is nothing to
+     * send — but a child spawned without this gets an open, silent pipe, and
+     * `claude` waits 3s on it before warning and carrying on. That is ~3.4s of
+     * every call, and the warning lands in `stderr`, where a timing failure then
+     * reports it as its own cause.
+     */
+    stdin: '',
   });
 
   if (!run.ok) {

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Clock, ExecErr, ExecOk, ExecOptions, ProcessAPI } from '@shepherd/sdk';
 import type { HeadlessHalf } from './kind.ts';
-import { childEnv, limiter, runComplete, MAX_STDOUT_BYTES } from './complete.ts';
+import { childEnv, limiter, runComplete, MAX_STDOUT_BYTES, QUICK_TIMEOUT_MS } from './complete.ts';
 import type { QuickTarget } from './quick-model.ts';
 
 /**
@@ -108,7 +108,16 @@ describe('runComplete', () => {
     expect(seen.cmd).toEqual(['fake-agent', '-p', 'name this', '--model', 'model-q']);
     expect(seen.opts?.cwd).toBe(dataDir);
     expect(seen.opts?.env).toEqual({ HOME: '/Users/ada', USER: 'ada' });
-    expect(seen.opts?.timeoutMs).toBe(30_000);
+    expect(seen.opts?.timeoutMs).toBe(60_000);
+  });
+
+  it('closes the child stdin', async () => {
+    const seen = seenNow();
+    await runComplete(deps(fakeProcess({ ok: true, stdout: 'x', stderr: '' }, seen)), target(), { prompt: 'p' });
+    // Measured: left open, `claude` waits 3s for input that is never coming and
+    // then warns, which is ~11% of the deadline and a stderr line that reads
+    // like the cause when a slow call times out.
+    expect(seen.opts?.stdin).toBe('');
   });
 
   it('creates its own dataDir, which the host does not create for it', async () => {
@@ -151,7 +160,7 @@ describe('runComplete', () => {
     // worth telling apart: one means "the model is slow", the other "the binary
     // is broken".
     const slow = await runComplete(
-      { ...deps(fakeProcess({ ok: false, code: -1, stdout: '', stderr: '' }, seenNow())), clock: clockAt([0, 30_000]) },
+      { ...deps(fakeProcess({ ok: false, code: -1, stdout: '', stderr: '' }, seenNow())), clock: clockAt([0, QUICK_TIMEOUT_MS]) },
       target(),
       { prompt: 'p' },
     );
