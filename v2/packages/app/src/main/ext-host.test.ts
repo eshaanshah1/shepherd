@@ -132,6 +132,8 @@ interface Harness {
   /** Every child this host has forked, in order. */
   readonly children: FakeChild[];
   readonly child: () => FakeChild;
+  /** What reached the view registry, in order — the declaration as the host passed it on. */
+  readonly views: { extension: string; type: string; declaration: Record<string, unknown> }[];
 }
 
 function harness(options: { isDev?: boolean; spawnThrows?: boolean } = {}): Harness {
@@ -149,6 +151,7 @@ function harness(options: { isDev?: boolean; spawnThrows?: boolean } = {}): Harn
     grants: () => ({ ...permissions.grantSet(), devices: new Map([['local-cli', PERMISSIONS]]) }),
   });
   const children: FakeChild[] = [];
+  const views: Harness['views'] = [];
 
   let extensions: ExtensionRegistry;
   const host = new ExtensionHost({
@@ -160,6 +163,13 @@ function harness(options: { isDev?: boolean; spawnThrows?: boolean } = {}): Harn
     homeDir: '/tmp/shepherd-test-home',
     userName: 'ada',
     kv: (namespace) => store.namespace(namespace),
+    views: {
+      register: (extension, type, _kind, _component, declaration) =>
+        void views.push({ extension, type, declaration: { ...declaration } }),
+      unregister: () => {},
+      changed: () => {},
+      forget: () => {},
+    },
     logger,
     clock,
     isDev: options.isDev ?? true,
@@ -185,6 +195,7 @@ function harness(options: { isDev?: boolean; spawnThrows?: boolean } = {}): Harn
     logger,
     lines,
     children,
+    views,
     child: () => {
       const last = children.at(-1);
       if (last === undefined) throw new Error('nothing has been forked yet');
@@ -310,6 +321,52 @@ describe('the extension host', () => {
       const { result, ask } = await activate(h, manifestFor('third.party', []));
       expect(result.ok).toBe(true);
       expect(ask.ask).toMatchObject({ proposed: true, source: 'user' });
+    });
+  });
+
+  describe('contributed views', () => {
+    /**
+     * The other half of `runtime.test.ts`'s wire assertion. The child sends a
+     * pane's `command`, the schema carries it, and this is where it stops being
+     * a message and becomes a registration — `view-registry.ts` keeps it only
+     * alongside a modified key, and `pane-keys.ts` binds nothing without it.
+     *
+     * Written on this side too because a test that supplies BOTH halves of a
+     * correlation cannot discover that the two halves disagree, and this one
+     * disagreed silently: ⌘⇧N did nothing and no line anywhere said why.
+     */
+    it("passes a pane view's command to the registry beside its key", async () => {
+      h.extensions.add(manifestFor('shepherd.one', ['views']), 'builtin');
+      const { ask } = await activate(h, manifestFor('shepherd.one', ['views']));
+      const handle = (ask.ask as Extract<HostAsk, { kind: 'activate' }>).handle;
+
+      h.child().send({
+        kind: 'call',
+        id: 'c-1',
+        handle,
+        call: {
+          kind: 'view.register',
+          type: 'one.pad',
+          viewKind: 'component',
+          component: 'one.pad',
+          surface: 'pane',
+          key: 'CmdOrCtrl+Shift+N',
+          command: 'one.create',
+        },
+      });
+      await settle();
+
+      expect(h.views).toEqual([
+        {
+          extension: 'shepherd.one',
+          type: 'one.pad',
+          declaration: {
+            surface: 'pane',
+            key: 'CmdOrCtrl+Shift+N',
+            command: 'one.create',
+          },
+        },
+      ]);
     });
   });
 

@@ -187,7 +187,14 @@ export interface ExtensionHostOptions {
       type: string,
       kind: 'tree' | 'component',
       component?: string,
-      declaration?: { surface?: 'dock' | 'overlay' | 'pane'; key?: string; title?: string },
+      declaration?: {
+        surface?: 'dock' | 'overlay' | 'pane';
+        key?: string;
+        command?: string;
+        title?: string;
+        icon?: string;
+        search?: { command: string; placeholder?: string };
+      },
     ): void;
     unregister(type: string): void;
     changed(type: string): void;
@@ -898,6 +905,7 @@ export class ExtensionHost {
         this.#options.views?.register(record.id, call.type, call.viewKind, call.component, {
           ...(call.surface === undefined ? {} : { surface: call.surface }),
           ...(call.key === undefined ? {} : { key: call.key }),
+          ...(call.command === undefined ? {} : { command: call.command }),
           ...(call.title === undefined ? {} : { title: call.title }),
           ...(call.icon === undefined ? {} : { icon: call.icon }),
           ...(call.search === undefined ? {} : { search: call.search }),

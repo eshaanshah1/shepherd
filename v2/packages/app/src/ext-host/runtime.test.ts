@@ -12,6 +12,8 @@ import {
 } from '@shepherd/sdk';
 import {
   EXT_PROTOCOL_VERSION,
+  childFrameSchema,
+  readFrames,
   wireErr,
   wireOk,
   type ChildFrame,
@@ -501,6 +503,49 @@ describe('the extension host runtime', () => {
       });
       expect(h.seen.api?.proposed.settings.get('one.model', s.string())).toBe('sonnet');
       expect(h.calls().some((frame) => frame.call.kind === 'log')).toBe(true);
+    });
+  });
+
+  describe('api.proposed.views', () => {
+    beforeEach(async () => {
+      h.runtime.start();
+      await h.receive(helloOk);
+      await h.receive(activateAsk({ permissions: ['views'] }));
+    });
+
+    /**
+     * A contributed PANE's accelerator is worth nothing without the verb it runs.
+     * `pane-keys.ts` binds a key only for a view declaring BOTH, so a `command`
+     * dropped between here and the page disables the key and reports nothing —
+     * which is exactly what happened to scratch's ⌘⇧N.
+     *
+     * Asserted through `childFrameSchema`, not just on the object: the wire is a
+     * strict `s.object`, so a field the child sends and the schema does not name
+     * costs the whole registration rather than one accelerator.
+     */
+    it("carries a pane view's command across the wire beside its key", async () => {
+      h.seen.api?.proposed.views.registerViewType('one.pad', {
+        kind: 'component',
+        component: 'one.pad',
+        surface: 'pane',
+        key: 'CmdOrCtrl+Shift+N',
+        command: 'one.create',
+      });
+      await settle();
+
+      const frame = h.calls().find((sent) => sent.call.kind === 'view.register');
+      if (frame === undefined) throw new Error('the child never registered the view');
+      const read = readFrames(frame, childFrameSchema);
+      expect(read.skipped).toEqual([]);
+      expect(read.frames[0]).toMatchObject({
+        call: {
+          kind: 'view.register',
+          type: 'one.pad',
+          surface: 'pane',
+          key: 'CmdOrCtrl+Shift+N',
+          command: 'one.create',
+        },
+      });
     });
   });
 

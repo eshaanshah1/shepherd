@@ -249,6 +249,8 @@ const apiCallSchema = s.union(
     /** Where the shell draws it, and what raises it. Components only. */
     surface: s.optional(s.enumOf(['dock', 'overlay', 'pane'] as const)),
     key: s.optional(s.string()),
+    /** The verb a PANE's `key` runs — see `ViewDeclaration.command` in the SDK. */
+    command: s.optional(s.string()),
     title: s.optional(s.string()),
     /** The glyph on the control that raises an overlay. A NAME, resolved in the renderer. */
     icon: s.optional(s.string()),
