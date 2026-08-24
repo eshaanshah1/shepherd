@@ -118,6 +118,7 @@ const PACKAGES = [
   'extensions/worktree-hook',
   'extensions/github',
   'extensions/transcripts',
+  'extensions/links',
 ];
 
 /** `./src/index.ts` → `./dist/index.js`, and the entry that produces it. */
