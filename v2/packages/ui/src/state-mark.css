@@ -100,7 +100,20 @@
 
 .sh-ui-mark__bars {
   display: flex;
-  align-items: flex-end;
+  /*
+   * CENTRED, not sitting on a baseline.
+   *
+   * `flex-end` is what an audio meter does, and it is wrong here for a reason
+   * that only shows at 12px: bottom-aligned, three bars of different heights put
+   * all their mass along the lower edge, so the mark reads as bottom-heavy
+   * against the 8px square and the 7px ring it shares a column with — both of
+   * which are centred in their slot. In a list the working rows looked a pixel
+   * low.
+   *
+   * Centred, the varied heights read as a shape that grows out from the middle,
+   * and the mark's optical centre matches every other mark's.
+   */
+  align-items: center;
   /* 1.5px, so three 2px bars and their gaps come to 9 — centred in the 12px
      slot with a hair either side, which is what keeps the mark optically the
      same size as the 8px square and the 7px ring beside it in a list. */
@@ -109,74 +122,87 @@
 
 .sh-ui-mark__bars > i {
   inline-size: 2px;
+  /*
+   * **All three are 9px, and the silhouette comes from a SCALE.**
+   *
+   * The wave used to animate `block-size`, which is a layout property: smoothing
+   * it means a layout pass per bar per frame, and this file's own note is about
+   * exactly that cost ("twelve open panes of continuously-repainting indicators
+   * peg the GPU"). `steps(1, end)` was how that was paid for, and stepping is
+   * what made the motion jitter — the fix for the jitter and the fix for the cost
+   * are the same fix, not a trade between them.
+   *
+   * `scaleY` runs on the compositor: no layout, no paint, cheap at 60fps. The bar
+   * is 2px wide with no radius and no border, so scaling it vertically has
+   * nothing to blur.
+   *
+   * The resting scale is a fraction of THIS height, which is what keeps the
+   * numbers readable: 0.67 is 6 of 9, 0.56 is 5 of 9. The silhouette is the same
+   * 6 / 9 / 5 it was.
+   */
+  block-size: 9px;
   background: var(--sh-mark-working);
+  transform: scaleY(var(--sh-bar-rest));
+  /*
+   * `ease-in-out`, not `steps`. A wave that eases is a wave; one that steps is a
+   * counter. The perf argument that put `steps` here is answered by the property
+   * above rather than by the timing function.
+   */
+  animation: sh-mark-working 1.05s ease-in-out infinite;
 }
 
 /*
- * **Three heights, not three of one.**
+ * **The wave travels right to left**, so the three delays run 3 → 2 → 1.
  *
- * Equal bars are the shape of a loading spinner — the thing that means "wait,
- * something is happening somewhere". A skyline means a meter, and a meter is
- * what this is: it says work is going on, at a glance, without asking to be
- * watched. The animation was already carrying that idea alone ("three bars all
- * pulsing is a loading spinner; three bars with one moving is a thing that is
- * working"); the silhouette now carries it too, so the mark still reads as
- * working in a screenshot, in a still, and under `prefers-reduced-motion`.
- *
- * Tallest in the middle, and the animated one shortest: the eye lands on the
- * peak and the movement happens beside it rather than under it.
+ * The direction is a real choice at this size and not a coincidence: the mark
+ * sits at the LEFT edge of a row, with the title to its right. A wave moving
+ * away from the text carries the eye off the row it is meant to introduce; one
+ * moving toward it hands off. Reversing the two outer bars is the whole change.
  */
 .sh-ui-mark__bars > i:nth-child(1) {
-  block-size: 6px;
+  --sh-bar-rest: 0.67;
+  animation-delay: -0.7s;
 }
 
 .sh-ui-mark__bars > i:nth-child(2) {
-  block-size: 9px;
+  --sh-bar-rest: 1;
+  animation-delay: -0.35s;
 }
 
 .sh-ui-mark__bars > i:nth-child(3) {
-  block-size: 5px;
+  --sh-bar-rest: 0.56;
+  animation-delay: 0s;
 }
 
 /*
- * `steps(1, end)` rather than a fade, and 1.1s rather than something snappier.
+ * Every bar takes its neighbour's height each third of a cycle, so the shape
+ * moves rather than one corner of it flickering — and the tint travels with the
+ * trough, dimming to `markWorkingOff` at the bottom and lighting as it rises, so
+ * the two channels say one thing instead of two.
  *
- * The reason is measured rather than aesthetic: a stepped cycle repaints twice a
- * second instead of every frame, and twelve open panes of continuously-repainting
- * indicators peg the GPU. It is also more legible — a meter that eases is a meter
- * you have to watch rather than glance at.
- *
- * Only the THIRD bar animates. Three bars all pulsing is a loading spinner; three
- * bars with one moving is a thing that is working.
- */
-/*
- * **The off beat is a TOKEN, not an opacity.**
- *
- * This faded to `opacity: 0.18`, and `markWorkingOff` has existed the whole time
- * with its job written out — "the working meter's third bar on its off beat" —
- * unused by anything. The role was right and the stylesheet had drifted off it.
- *
- * An opacity over a surface produces a colour that is in no palette, and then a
- * DIFFERENT colour in light mode, where the same 0.18 lands against paper rather
- * than against near-black. The Shipped region's own note says this in as many
- * words about its dimming; the same argument governs here.
+ * The frames are exactly the three resting scales, in order. Colour interpolates
+ * too, which costs a paint and no layout.
  */
 @keyframes sh-mark-working {
   0% {
+    transform: scaleY(0.67);
     background: var(--sh-mark-working);
   }
 
-  50% {
+  33% {
+    transform: scaleY(1);
+    background: var(--sh-mark-working);
+  }
+
+  66% {
+    transform: scaleY(0.56);
     background: var(--sh-mark-working-off);
   }
 
   100% {
+    transform: scaleY(0.67);
     background: var(--sh-mark-working);
   }
-}
-
-.sh-ui-mark__bars > i:last-child {
-  animation: sh-mark-working 1.1s steps(1, end) infinite;
 }
 
 /*
@@ -188,12 +214,14 @@
  * the animation, not the meaning.
  */
 @media (prefers-reduced-motion: reduce) {
-  .sh-ui-mark__bars > i:last-child {
+  .sh-ui-mark__bars > i {
     /*
-     * `animation: none` alone. The `opacity: 1` beside it was undoing the fade
-     * this used to be, and with the cycle switching a BACKGROUND the bar already
-     * rests at its declared `--sh-mark-working` — so the reset became a no-op
-     * that still looked load-bearing.
+     * `animation: none` alone, and it leaves the mark COMPLETE rather than frozen
+     * mid-cycle: each bar falls back to `scaleY(var(--sh-bar-rest))` and its
+     * declared `--sh-mark-working`, which is the 6 / 9 / 5 skyline lit. That is
+     * the whole reason the resting scale is a property on the element rather
+     * than only a keyframe — the static silhouette is not a leftover, it is the
+     * reduced-motion rendering.
      */
     animation: none;
   }

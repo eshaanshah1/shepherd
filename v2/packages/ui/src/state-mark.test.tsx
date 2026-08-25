@@ -60,14 +60,29 @@ describe('StateMark', () => {
      * thing that is working." The silhouette carries it too now, so the mark
      * still reads as working in a screenshot and under `prefers-reduced-motion`.
      */
-    const heights = [1, 2, 3].map(
-      (n) =>
-        rulesMentioning('sh-ui-mark__bars')
-          .find((rule) => rule.selectorText === `.sh-ui-mark__bars > i:nth-child(${n})`)
-          ?.style.getPropertyValue('block-size'),
+    const bar = (n: number): CSSStyleRule | undefined =>
+      rulesMentioning('sh-ui-mark__bars').find(
+        (rule) => rule.selectorText === `.sh-ui-mark__bars > i:nth-child(${n})`,
+      );
+    /*
+     * A FRACTION of the tallest, because what animates is a scale rather than a
+     * size — 0.67 is 6 of 9, 0.56 is 5 of 9, so the silhouette is the same
+     * 6 / 9 / 5 it has always been.
+     */
+    const rest = [1, 2, 3].map((n) => bar(n)?.style.getPropertyValue('--sh-bar-rest'));
+    expect(rest).toEqual(['0.67', '1', '0.56']);
+    expect(new Set(rest).size, 'three bars, three heights').toBe(3);
+
+    /*
+     * And CENTRED, not on a baseline. `flex-end` is what an audio meter does,
+     * and at 12px it puts all three bars' mass along the lower edge — so the
+     * mark read bottom-heavy beside the 8px square and the 7px ring, which are
+     * centred in the same slot.
+     */
+    const bars = rulesMentioning('sh-ui-mark__bars').find(
+      (rule) => rule.selectorText === '.sh-ui-mark__bars',
     );
-    expect(heights).toEqual(['6px', '9px', '5px']);
-    expect(new Set(heights).size, 'three bars, three heights').toBe(3);
+    expect(bars?.style.alignItems).toBe('center');
   });
 
   it('switches the off beat to a TOKEN, never to an opacity', () => {
@@ -97,6 +112,63 @@ describe('StateMark', () => {
     // …and it has not merely moved into a rule beside them.
     const styled = rulesMentioning('sh-ui-mark').flatMap((rule) => [...rule.style]);
     expect(styled).not.toContain('opacity');
+  });
+
+  it('waves — all three animate, a third of a cycle apart', () => {
+    /*
+     * It was one bar blinking in place. A wave is the skyline TRAVELLING: every
+     * bar takes its neighbour's height each step, so the shape moves rather than
+     * one corner of it flickering.
+     *
+     * The delays are NEGATIVE, so every bar is mid-phase on the first frame. A
+     * positive stagger would start the mark flat and fill it in over a second —
+     * the one moment a reader is most likely to be looking at it, spent watching
+     * it assemble.
+     */
+    const animated = rulesMentioning('sh-ui-mark__bars').filter(
+      (rule) => rule.style.animation !== '' || rule.style.animationDelay !== '',
+    );
+    const every = animated.find((rule) => rule.selectorText === '.sh-ui-mark__bars > i');
+    expect(every?.style.animation, 'every bar animates, not just one').toContain('sh-mark-working');
+    /*
+     * EASED, not stepped. Stepping is what made the motion jitter, and it was
+     * there to pay for animating `block-size` — a layout property. Scaling on the
+     * compositor answers the cost instead, so the timing function is free to be
+     * a curve. The two fixes are the same fix, not a trade.
+     */
+    expect(every?.style.animation).toContain('ease-in-out');
+    expect(every?.style.animation).not.toContain('steps');
+    expect(every?.style.animation, 'no layout property in the cycle').not.toContain('block-size');
+
+    /*
+     * **Right to left**, so the delays run 3 → 2 → 1. The direction matters at
+     * this size: the mark sits at the LEFT edge of a row with the title to its
+     * right, so a wave moving away from the text carries the eye off the row it
+     * is meant to introduce. This one hands off.
+     */
+    const delays = [1, 2, 3].map(
+      (n) =>
+        rulesMentioning('sh-ui-mark__bars').find(
+          (rule) => rule.selectorText === `.sh-ui-mark__bars > i:nth-child(${n})`,
+        )?.style.animationDelay,
+    );
+    expect(delays).toEqual(['-0.7s', '-0.35s', '0s']);
+  });
+
+  it('leaves the skyline COMPLETE under reduced motion, not frozen mid-wave', () => {
+    /*
+     * A frozen partial mark reads as broken — the app looks like it stopped
+     * mid-repaint. `animation: none` alone gets there because the heights and the
+     * lit colour are declared on the elements as well as in the frames: the
+     * static silhouette is not a leftover, it is the reduced-motion rendering.
+     */
+    const reduced = rulesMentioning('sh-ui-mark__bars').filter(
+      (rule) => rule.style.animation === 'none',
+    );
+    expect(reduced).toHaveLength(1);
+    expect(reduced[0]?.selectorText).toBe('.sh-ui-mark__bars > i');
+    // Every bar, not the one that used to be the only animated one.
+    expect(reduced[0]?.selectorText).not.toContain('last-child');
   });
 
   it('draws three bars for working, and NOTHING else does', () => {
