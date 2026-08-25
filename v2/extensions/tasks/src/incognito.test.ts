@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -109,6 +109,72 @@ describe('seedIncognitoProfile', () => {
     // Degraded, not broken: the task provisions and the agent asks for a login.
     expect(seeded.ok).toBe(true);
     expect(existsSync(join(dir, '.credentials.json'))).toBe(false);
+  });
+
+  it('carries the Shepherd plugin, or the rail never learns what the agent is doing', () => {
+    /*
+     * Shepherd tracks an agent through the hooks this plugin declares — the
+     * kernel injects `SHEPHERD_SESSION_ID` and the socket paths, and the
+     * plugin's `report.sh` is what posts back. A profile without it runs a
+     * perfectly good Claude that Shepherd cannot see: no state mark, no
+     * attention, no notification. Incognito is about what is KEPT, not about
+     * opting out of the terminal you are sitting in.
+     */
+    const root = base();
+    const dir = incognitoProfileDir(root, 'task-p');
+    const plugin = join(root, 'real', 'skills', 'shepherd-v2');
+    mkdirSync(plugin, { recursive: true });
+
+    seedIncognitoProfile({ dir, dirs: ['/t'], realpath: (p) => p, plugin });
+
+    // A LINK, not a copy: the plugin is the app's own and is read, never
+    // written, so a copy per task would be a copy to keep in step.
+    const linked = join(dir, 'skills', 'shepherd-v2');
+    expect(lstatSync(linked).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(linked)).toBe(plugin);
+  });
+
+  it('carries the statusline, and nothing else out of the real settings', () => {
+    const root = base();
+    const dir = incognitoProfileDir(root, 'task-s');
+
+    seedIncognitoProfile({
+      dir,
+      dirs: ['/t'],
+      realpath: (p) => p,
+      statusLine: { type: 'command', command: '~/.claude/statusline-command.sh' },
+    });
+
+    const settings = JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8')) as Record<string, unknown>;
+    // Not the model, not the permissions, not the other hooks — the one key
+    // that was asked for. Everything else is still new.
+    expect(settings).toEqual({ statusLine: { type: 'command', command: '~/.claude/statusline-command.sh' } });
+  });
+
+  it('writes no settings at all when there is no statusline to carry', () => {
+    const root = base();
+    const dir = incognitoProfileDir(root, 'task-n');
+
+    seedIncognitoProfile({ dir, dirs: ['/t'], realpath: (p) => p });
+
+    expect(existsSync(join(dir, 'settings.json'))).toBe(false);
+  });
+
+  it('seeds anyway when the plugin is not where it was said to be', () => {
+    const root = base();
+    const dir = incognitoProfileDir(root, 'task-m');
+
+    const seeded = seedIncognitoProfile({
+      dir,
+      dirs: ['/t'],
+      realpath: (p) => p,
+      plugin: join(root, 'nothing', 'here'),
+    });
+
+    // Degraded, not broken: the task provisions and the agent runs untracked,
+    // which is visible in the rail rather than silent.
+    expect(seeded.ok).toBe(true);
+    expect(existsSync(join(dir, '.claude.json'))).toBe(true);
   });
 
   it('carries nothing else — no identity, no history, no settings from the real profile', () => {

@@ -1852,6 +1852,9 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     );
   }
 
+  /** What the Shepherd Claude plugin is called where Claude Code loads it from. */
+  const SHEPHERD_PLUGIN = 'shepherd-v2';
+
   /** Where a task's worktrees live. `ctx.dataDir` is the host's answer to D1b. */
   const rootOf = (task: TaskRecord): string => `${ctx.dataDir}/${task.slug}`;
 
@@ -1894,6 +1897,39 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       return typeof value === 'string' ? value : undefined;
     } catch {
       // No config, or one that will not parse. Nothing to mirror.
+      return undefined;
+    }
+  };
+
+  /**
+   * Where the Shepherd plugin is installed, if it is.
+   *
+   * The plugin whose hooks report an agent's state back to this app. Found where
+   * the user's own profile keeps it rather than shipped from inside the bundle,
+   * because the installed copy IS the one the tracking is known to work with —
+   * a second copy in the app would be a second thing to keep in step, and would
+   * silently disagree with the real profile the day they drifted.
+   */
+  const shepherdPlugin = (): string | undefined => {
+    const path = `${ctx.homeDir}/.claude/skills/${SHEPHERD_PLUGIN}`;
+    try {
+      realpathSync(path);
+      return path;
+    } catch {
+      // Not installed. The agent still runs; the rail simply will not track it,
+      // and the warning at the seed says so.
+      return undefined;
+    }
+  };
+
+  /** The `statusLine` the user's own settings declare, if any. */
+  const statusLine = (): unknown => {
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(`${ctx.homeDir}/.claude/settings.json`, 'utf8'));
+      if (typeof parsed !== 'object' || parsed === null) return undefined;
+      return (parsed as Record<string, unknown>)['statusLine'];
+    } catch {
+      // No settings, or ones that will not parse. Nothing to mirror.
       return undefined;
     }
   };
@@ -2778,6 +2814,12 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
        * refreshed since the window opened is the one this profile should get.
        */
       const credentials = task.incognito === true ? await claudeCredentials(api.proposed.process) : undefined;
+      if (task.incognito === true && shepherdPlugin() === undefined) {
+        ctx.log.warn(
+          `task ${task.id}: the Shepherd Claude plugin is not installed at ` +
+            `~/.claude/skills/${SHEPHERD_PLUGIN}, so its incognito agent will run untracked`,
+        );
+      }
       if (task.incognito === true && credentials === undefined) {
         ctx.log.warn(
           `task ${task.id}: the Keychain would not give up the Claude credential — ` +
@@ -2790,6 +2832,14 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
             dirs,
             realpath: realpathSync,
             ...(credentials === undefined ? {} : { credentials }),
+            ...(() => {
+              const plugin = shepherdPlugin();
+              return plugin === undefined ? {} : { plugin };
+            })(),
+            ...(() => {
+              const line = statusLine();
+              return line === undefined ? {} : { statusLine: line };
+            })(),
             // An onboarding flag, mirrored rather than invented — it is about
             // the app's first-run screens, not about the user. Absent when the
             // real config cannot be read, since a version we made up is worse

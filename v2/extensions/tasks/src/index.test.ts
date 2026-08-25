@@ -1,5 +1,6 @@
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -2941,6 +2942,50 @@ describe('incognito tasks', () => {
     await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
 
     expect(existsSync(join(h.dataDir, '.incognito', created.id))).toBe(false);
+  });
+
+  it('links the Shepherd plugin in, so the rail still tracks the agent', async () => {
+    /*
+     * The one thing incognito must NOT hide is the agent from the terminal it is
+     * running in. Shepherd reads an agent's state from this plugin's hooks, so a
+     * profile without it draws a pane with no state mark and no attention.
+     */
+    const h = (live = harness());
+    const installed = join(h.homeDir, '.claude', 'skills', 'shepherd-v2');
+    mkdirSync(installed, { recursive: true });
+
+    const created = await h.run<{ id: string }>('tasks.create', { title: 'Quiet', repos: [], incognito: true });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    const linked = join(h.dataDir, '.incognito', created.id, 'skills', 'shepherd-v2');
+    expect(lstatSync(linked).isSymbolicLink()).toBe(true);
+  });
+
+  it('carries the statusline over, and nothing else out of the real settings', async () => {
+    const h = (live = harness());
+    mkdirSync(join(h.homeDir, '.claude'), { recursive: true });
+    writeFileSync(
+      join(h.homeDir, '.claude', 'settings.json'),
+      JSON.stringify({ statusLine: { type: 'command', command: 'line.sh' }, model: 'opus', permissions: {} }),
+    );
+
+    const created = await h.run<{ id: string }>('tasks.create', { title: 'Quiet', repos: [], incognito: true });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    const settings = JSON.parse(
+      readFileSync(join(h.dataDir, '.incognito', created.id, 'settings.json'), 'utf8'),
+    ) as Record<string, unknown>;
+    expect(settings).toEqual({ statusLine: { type: 'command', command: 'line.sh' } });
+  });
+
+  it('says so when the plugin is missing, rather than shipping an untracked agent silently', async () => {
+    const warnings: string[] = [];
+    const h = (live = harness({ onWarn: (line) => warnings.push(line) }));
+
+    await h.run('tasks.create', { title: 'Quiet', repos: [], incognito: true });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    expect(warnings.some((line) => line.includes('untracked'))).toBe(true);
   });
 
   it('takes the profile with it when the task is shipped', async () => {

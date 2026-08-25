@@ -1,4 +1,5 @@
-import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { basename } from 'node:path';
+import { mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import type { ProcessAPI } from '@shepherd/sdk';
 import { planTrust, trustKeys } from './trust.ts';
 
@@ -19,6 +20,14 @@ import { planTrust, trustKeys } from './trust.ts';
  * on purpose (see `credentials` below), because an agent that opens on *"Please
  * run /login"* is not an agent. This is privacy from the *machine*, not
  * anonymity from Anthropic, and describing it as the latter would be a lie.
+ *
+ * **Two things are carried in besides the flags, and they are not history.**
+ * The Shepherd plugin, because its hooks are how the rail learns what the agent
+ * is doing — a session Shepherd cannot see is not what "incognito" was asking
+ * for, and the plugin reads the kernel's env and posts back rather than reading
+ * anything of the user's. And the statusline, because a pane that loses its
+ * model and its rate limits looks broken rather than private. Neither carries a
+ * transcript, a skill, a permission or a preference.
  *
  * **Two flags are seeded, and only two.** A profile this new hits Claude Code's
  * trust dialog and its onboarding screen, and an agent that is waiting on a
@@ -102,6 +111,32 @@ export function seedIncognitoProfile(options: {
    * for a login, which is a task the user can still see and still fix.
    */
   readonly credentials?: string;
+  /**
+   * The Shepherd Claude plugin, linked in so the agent reports itself.
+   *
+   * Shepherd tracks an agent through this plugin's hooks: the kernel injects
+   * `SHEPHERD_SESSION_ID` and the socket paths into every session, and the
+   * plugin's `report.sh` is what posts back. Without it an incognito task runs a
+   * perfectly good Claude that the rail cannot see — no state mark, no
+   * attention, no notification — which is a different feature from the one
+   * anybody asked for.
+   *
+   * A SYMLINK rather than a copy. The plugin is read and never written, it
+   * belongs to the app rather than to the profile, and a copy per task is a copy
+   * to keep in step with the app it reports to.
+   */
+  readonly plugin?: string;
+  /**
+   * The user's `statusLine` setting, and nothing else out of their settings.
+   *
+   * Carried for the reason the plugin is: a pane whose status line has gone
+   * blank reads as broken, not as private. It is a command that reads the JSON
+   * Claude Code hands it on stdin — it neither reads nor writes a profile — so
+   * carrying it leaks nothing. The rest of `settings.json` (the model, the
+   * permissions, every other hook) stays behind, which is what "everything else
+   * is new" means.
+   */
+  readonly statusLine?: unknown;
 }): IncognitoOutcome {
   const file = `${options.dir}/.claude.json`;
 
@@ -133,6 +168,22 @@ export function seedIncognitoProfile(options: {
         encoding: 'utf8',
         mode: 0o600,
       });
+    }
+    if (options.statusLine !== undefined) {
+      writeFileSync(`${options.dir}/settings.json`, `${JSON.stringify({ statusLine: options.statusLine }, null, 2)}\n`, {
+        encoding: 'utf8',
+        mode: 0o600,
+      });
+    }
+    if (options.plugin !== undefined) {
+      const skills = `${options.dir}/skills`;
+      mkdirSync(skills, { recursive: true, mode: 0o700 });
+      try {
+        symlinkSync(options.plugin, `${skills}/${basename(options.plugin)}`);
+      } catch {
+        // Already linked by an earlier seed of this same profile — a restore
+        // re-provisions, and a link that is already right is not a failure.
+      }
     }
   } catch (error) {
     return {
