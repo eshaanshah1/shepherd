@@ -791,3 +791,27 @@ button.sh-task-card__fact::after {
   }
 }
 
+
+/* ── incognito: the one tenant of the meta line's reserved gutter ──────────── */
+
+/*
+ * The glyph sits in the indent the meta line already pays for, directly under
+ * the state mark — negative start margin equal to the gutter, then the gutter
+ * given back as width, so the summary beside it begins exactly where it began
+ * before and nothing downstream moves.
+ *
+ * `flex: none` and a fixed inline size, because the line's whole contract is
+ * that its height and its text's left edge do not depend on its contents.
+ */
+.sh-task-card__incognito {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  flex: none;
+  margin-inline-start: calc(var(--sh-task-gutter) * -1);
+  inline-size: var(--sh-task-gutter);
+  /* One step down the ink ramp: it is a standing property of the row, not an
+     event on it, and a mode that drew at title weight would out-shout the state
+     mark it sits under. Never an opacity — §5. */
+  color: var(--sh-text-mute);
+}

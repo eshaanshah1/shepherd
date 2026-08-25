@@ -4456,6 +4456,15 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
             return {
             mark: markFor(task, state),
             /*
+             * Which of your tasks is the quiet one.
+             *
+             * A property of the task rather than a state of it, so it rides
+             * BESIDE the mark and never as one — the card draws it in the meta
+             * line's reserved gutter, and §5's five states stay five. Absent on
+             * an ordinary task, so the row carries no key for the common case.
+             */
+            ...(task.incognito === true ? { incognito: true } : {}),
+            /*
              * The step this task is on, while it is being built.
              *
              * BESIDE the label rather than replacing it — a row that said

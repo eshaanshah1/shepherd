@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { NAMED_GLYPHS } from './glyphs.ts';
 import { IconPlus, IconTerminal2 } from '@tabler/icons-react';
 import { metrics } from '@shepherd/design-tokens';
 import { mount } from './test-dom.ts';
@@ -150,5 +151,11 @@ describe('glyphElement', () => {
     expect(glyphElement('hash')).not.toBeNull();
     expect(glyphElement('hash')).not.toBeNull();
     expect(document.body.childElementCount).toBe(before);
+  });
+});
+
+describe('the incognito glyph', () => {
+  it('is in the allow-list, since a contributed row can only send a name', () => {
+    expect(NAMED_GLYPHS['spy']).toBeDefined();
   });
 });

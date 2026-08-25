@@ -174,6 +174,17 @@ export interface CardData {
    */
   readonly shipped?: boolean;
   /**
+   * This task's agents run in a Claude profile that is deleted with the task.
+   *
+   * A property of the task, not a state of it — a working incognito task still
+   * reads as working — so it never touches the mark. It is drawn in the meta
+   * line's leading gutter, which means a SHIPPED row does not carry it, and that
+   * is right rather than incidental: shipping deletes the profile, so a mark
+   * still claiming the history is hidden would be claiming something that is no
+   * longer true of anything.
+   */
+  readonly incognito?: boolean;
+  /**
    * What OTHER extensions say about this task — a PR's state, a deploy, a
    * check.
    *
@@ -297,6 +308,7 @@ export function readCardData(value: unknown): CardData | null {
     question: readQuestion(value['question']),
     exitCode: int(value['exitCode']),
     ...(shipped ? { shipped: true as const } : {}),
+    ...(value['incognito'] === true ? { incognito: true as const } : {}),
     ...(facts.length === 0 ? {} : { facts }),
   };
 }

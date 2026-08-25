@@ -187,3 +187,13 @@ describe('facts, which come from an extension this code has never seen', () => {
     expect(read('not an array')).toBeUndefined();
   });
 });
+
+describe('an incognito task', () => {
+  it('reads the flag through, so the card can say the session leaves nothing behind', () => {
+    expect(readCardData({ mark: 'resting', incognito: true })?.incognito).toBe(true);
+  });
+
+  it('is absent on an ordinary task rather than false', () => {
+    expect(readCardData({ mark: 'resting' })).not.toHaveProperty('incognito');
+  });
+});

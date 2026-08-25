@@ -131,6 +131,19 @@ function Facts({
   );
 }
 
+/**
+ * The incognito glyph, resolved once.
+ *
+ * Read out of the allow-list rather than imported, because the import
+ * boundaries keep Tabler out of an extension — a view reaching the icon package
+ * directly could ship a glyph at a fourth size and a second stroke weight.
+ * `namedGlyph` is the wrong door for this one: its fallback is `IconDots`, and
+ * dots in the state column would be a picture that means something else. A build
+ * whose `@shepherd/ui` predates the name draws nothing, which is the same
+ * failure `contributedIcon` chooses in the shell, for the same reason.
+ */
+const INCOGNITO_GLYPH = NAMED_GLYPHS['spy'];
+
 export function TaskCard({ item, selected, invoke }: ExtensionRowProps): ReactElement {
   const data = useMemo(() => readCardData(item.data), [item.data]);
 
@@ -403,6 +416,34 @@ export function TaskCard({ item, selected, invoke }: ExtensionRowProps): ReactEl
       */}
       {!meta ? null : (
         <div className="sh-task-card__meta">
+          {/*
+            **Incognito, in the one place on the card that is reserved and empty.**
+
+            `task-card.css` keeps the meta line indented past the mark's slot and
+            says why — "the mark's slot is a column the eye uses to find state; a
+            second line starting in it would put the meta text where a mark
+            belongs". That argument is about TEXT, and this is the exception it
+            leaves: a glyph in the gutter starts no second column of prose, costs
+            no row height (the line's block-size is fixed), and does not move the
+            summary, which keeps its own indent whether or not this is here.
+
+            Deliberately NOT the state mark. Incognito is a property of the task
+            and not a state of it — a working incognito task is still working —
+            and §5's five marks stay five. It is also not a `Fact`: a fact
+            finishes the sentence the mark started, and this one answers a
+            different question, about where the session's history goes.
+          */}
+          {card.incognito !== true || INCOGNITO_GLYPH === undefined ? null : (
+            <span className="sh-task-card__incognito" title="Incognito — this task's Claude profile is deleted with it">
+              <Icon icon={INCOGNITO_GLYPH} size="sm" />
+              {/*
+                The word travels, because §5 refuses a fact encoded only in a
+                picture: a glyph alone cannot be read out, searched, or asserted
+                on by anything but a screenshot.
+              */}
+              <span className="sh-ui-sr-only">Incognito — this task&rsquo;s Claude profile is deleted with it</span>
+            </span>
+          )}
           {card.stage !== undefined ? (
             <span className="sh-task-card__stage">{card.stage}</span>
           ) : card.summary === undefined ? null : (

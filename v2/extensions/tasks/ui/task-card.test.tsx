@@ -520,3 +520,44 @@ describe('a fact another extension contributed', () => {
     expect(cell?.textContent).toContain('#7');
   });
 });
+
+/**
+ * The incognito mark — a task whose agents run in a Claude profile that is
+ * deleted with them.
+ *
+ * It is a property of the TASK and not a state of it, so it does not touch the
+ * state mark: a working incognito task still reads as working. It sits in the
+ * meta line's leading gutter, directly under the mark, which is the one place on
+ * the card that is reserved and empty.
+ */
+describe('the incognito mark', () => {
+  const glyph = (): Element | null => host.querySelector('.sh-task-card__incognito');
+
+  it('draws under the state mark on an incognito task', () => {
+    draw(item('Quiet work', { mark: 'working', incognito: true }));
+    expect(glyph()).not.toBeNull();
+  });
+
+  it('draws nothing on an ordinary task', () => {
+    draw(item('Ordinary work', { mark: 'working' }));
+    expect(glyph()).toBeNull();
+  });
+
+  it('leaves the state mark alone — incognito is not a sixth state', () => {
+    draw(item('Quiet work', { mark: 'waiting', incognito: true }));
+    expect(host.querySelector('.sh-task-card')?.getAttribute('data-mark')).toBe('waiting');
+  });
+
+  it('says what it is, since a glyph alone cannot be read out or searched', () => {
+    draw(item('Quiet work', { mark: 'working', incognito: true }));
+    expect(glyph()?.textContent).toContain('Incognito');
+  });
+
+  it('is gone once the task ships, because the profile it stood for is deleted', () => {
+    // A shipped row has no meta line at all, and the profile went with the ship.
+    // A mark still claiming the history is hidden would be claiming something
+    // that is no longer true of anything.
+    draw(shippedRow({ incognito: true }));
+    expect(glyph()).toBeNull();
+  });
+});

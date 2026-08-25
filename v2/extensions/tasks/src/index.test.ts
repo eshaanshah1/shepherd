@@ -2988,6 +2988,26 @@ describe('incognito tasks', () => {
     expect(warnings.some((line) => line.includes('untracked'))).toBe(true);
   });
 
+  it('tells the rail, so a row says which of your tasks is the quiet one', async () => {
+    const h = (live = harness());
+    const created = await h.run<{ id: string }>('tasks.create', { title: 'Quiet', repos: [], incognito: true });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    const rows = await h.tree().children?.(undefined);
+    const row = (rows ?? []).find((entry) => (entry as { id?: string }).id === created.id);
+    expect((row as { data?: { incognito?: boolean } } | undefined)?.data?.incognito).toBe(true);
+  });
+
+  it('says nothing on an ordinary task\u2019s row', async () => {
+    const h = (live = harness());
+    const created = await h.run<{ id: string }>('tasks.create', { title: 'Normal', repos: [] });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    const rows = await h.tree().children?.(undefined);
+    const row = (rows ?? []).find((entry) => (entry as { id?: string }).id === created.id);
+    expect((row as { data?: Record<string, unknown> } | undefined)?.data).not.toHaveProperty('incognito');
+  });
+
   it('takes the profile with it when the task is shipped', async () => {
     const h = (live = harness());
     const created = await h.run<{ id: string }>('tasks.create', { title: 'Quiet', repos: [], incognito: true });

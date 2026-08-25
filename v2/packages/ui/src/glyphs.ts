@@ -23,6 +23,7 @@ import {
   IconNotes,
   IconPuzzle,
   IconSearch,
+  IconSpy,
   IconShip,
   IconTrash,
   IconX,
@@ -131,6 +132,14 @@ export const NAMED_GLYPHS: Readonly<Record<string, ComponentType<TablerIconProps
   ship: IconShip,
   unship: IconArrowBackUp,
   trash: IconTrash,
+  /*
+   * Incognito — a task whose Claude profile is deleted with it.
+   *
+   * Tabler's `spy`, the hat-and-glasses every browser's private window has
+   * taught people to read, which is the whole argument for it: a mode this
+   * quiet needs a glyph nobody has to be told the meaning of once.
+   */
+  spy: IconSpy,
   search: IconSearch,
   /*
    * The two marks a pasted link can wear.
