@@ -86,6 +86,49 @@ describe('listStatus', () => {
     // A failure here costs decoration, never the tree.
     expect(await listStatus(runner({}), '/repo')).toEqual([]);
   });
+
+  it('given a base, reports work that has already been COMMITTED', async () => {
+    // The defect this exists for: an agent commits, and a view of "what has
+    // this task changed" that only reads `git status` empties itself at the
+    // moment the work becomes worth looking at.
+    const git = runner({
+      'status --porcelain': { stdout: '' },
+      'diff --name-status': { stdout: 'M\0src/a.ts\0A\0src/b.ts\0' },
+    });
+    expect(await listStatus(git, '/repo', 'abc123')).toEqual([
+      { path: 'src/a.ts', status: 'modified' },
+      { path: 'src/b.ts', status: 'added' },
+    ]);
+  });
+
+  it('reports a path touched in a commit AND since as one row', async () => {
+    // `git diff <base>` already compares the base to the WORKING TREE, so both
+    // answers name it. Two rows would draw the same file's diff twice.
+    const git = runner({
+      'status --porcelain': { stdout: ' M src/a.ts\0' },
+      'diff --name-status': { stdout: 'M\0src/a.ts\0' },
+    });
+    expect(await listStatus(git, '/repo', 'abc123')).toEqual([
+      { path: 'src/a.ts', status: 'modified' },
+    ]);
+  });
+
+  it('keeps an untracked file, which no commit can name', async () => {
+    const git = runner({
+      'status --porcelain': { stdout: '?? new.ts\0' },
+      'diff --name-status': { stdout: 'M\0src/a.ts\0' },
+    });
+    expect(await listStatus(git, '/repo', 'abc123')).toEqual([
+      { path: 'src/a.ts', status: 'modified' },
+      { path: 'new.ts', status: 'untracked' },
+    ]);
+  });
+
+  it('asks nothing extra without a base — the tree pane is unchanged', async () => {
+    const git = runner({ 'status --porcelain': { stdout: '' } });
+    await listStatus(git, '/repo');
+    expect(git.seen.some((args) => args.includes('--name-status'))).toBe(false);
+  });
 });
 
 describe('filePatch', () => {
@@ -107,6 +150,21 @@ describe('filePatch', () => {
   it('diffs an untracked file from /dev/null', async () => {
     const git = runner({ 'diff --no-index': { stdout: 'x', ok: false, code: 1 } });
     await filePatch(git, '/repo', 'new.ts', true);
+    expect(git.seen[0]).toEqual(['diff', '--no-index', '--', '/dev/null', 'new.ts']);
+  });
+
+  it('diffs against the base it is given rather than HEAD', async () => {
+    // Against HEAD a committed change has no patch, and the file would be
+    // listed with nothing to draw.
+    const patch = 'diff --git a/a.ts b/a.ts\n@@ -1 +1 @@\n-one\n+two\n';
+    const git = runner({ 'diff abc123': { stdout: patch } });
+    expect(await filePatch(git, '/repo', 'a.ts', false, 'abc123')).toBe(patch);
+    expect(git.seen[0]).toEqual(['diff', 'abc123', '--', 'a.ts']);
+  });
+
+  it('ignores the base for an untracked file, which no commit holds', async () => {
+    const git = runner({ 'diff --no-index': { stdout: 'x', ok: false, code: 1 } });
+    await filePatch(git, '/repo', 'new.ts', true, 'abc123');
     expect(git.seen[0]).toEqual(['diff', '--no-index', '--', '/dev/null', 'new.ts']);
   });
 
@@ -146,5 +204,34 @@ describe('listStatus, from a subdirectory', () => {
   it('falls back to no prefix when git cannot answer', async () => {
     const git = runner({ 'status --porcelain': { stdout: ' M a.ts\0' } });
     expect(await listStatus(git, '/repo')).toEqual([{ path: 'a.ts', status: 'modified' }]);
+  });
+});
+
+/**
+ * The one case a stub can get wrong: git's own `--name-status -z` layout.
+ *
+ * These two strings are MEASURED, not imagined — git 2.55 in a temp repo with a
+ * file added in a commit, one modified since, one renamed in that commit and one
+ * never added. An extension may not spawn git even in a test
+ * (`boundary/extension-tests`), so the capture is pasted rather than re-run, and
+ * the shape is what the test is about: a status letter, then its path, and a
+ * rename spending three fields where porcelain status spends two.
+ */
+describe('a task an agent has worked in, as git reports it', () => {
+  const NAME_STATUS = 'A\0committed.txt\0M\0kept.txt\0R100\0renamed.txt\0moved.txt\0';
+  const PORCELAIN = ' M kept.txt\0?? untracked.txt\0';
+
+  it('lists committed work, uncommitted work and a new file at once', async () => {
+    const git = runner({
+      'status --porcelain': { stdout: PORCELAIN },
+      'diff --name-status': { stdout: NAME_STATUS },
+    });
+    const entries = [...(await listStatus(git, '/repo', 'abc123'))];
+    expect(entries.sort((a, b) => a.path.localeCompare(b.path))).toEqual([
+      { path: 'committed.txt', status: 'added' },
+      { path: 'kept.txt', status: 'modified' },
+      { path: 'moved.txt', status: 'renamed' },
+      { path: 'untracked.txt', status: 'untracked' },
+    ]);
   });
 });

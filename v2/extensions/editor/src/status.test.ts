@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readStatus } from './status.ts';
+import { readNameStatus, readStatus } from './status.ts';
 
 /*
  * `--porcelain -z`: NUL-separated, and a rename is TWO NUL-separated fields —
@@ -89,5 +89,40 @@ describe('readStatus, under a prefix', () => {
   it('does not mistake a sibling whose name merely starts with the prefix', () => {
     // `v2-old/` shares five characters with `v2/` and is a different directory.
     expect(readStatus(' M v2-old/a.ts\0', 'v2/')).toEqual([]);
+  });
+});
+
+/*
+ * `git diff --name-status -z` is a DIFFERENT shape from porcelain status: the
+ * status letter is a field of its own, the path is the next one, and a rename
+ * spends three fields. Read with the porcelain parser it produces nothing but
+ * garbage rows, which is why it has a parser rather than a cast.
+ */
+describe('readNameStatus', () => {
+  it('reads the letter and the path as separate fields', () => {
+    expect(readNameStatus('M\0src/a.ts\0A\0src/b.ts\0D\0src/c.ts\0')).toEqual([
+      { path: 'src/a.ts', status: 'modified' },
+      { path: 'src/b.ts', status: 'added' },
+      { path: 'src/c.ts', status: 'deleted' },
+    ]);
+  });
+
+  it('takes the NEW path of a rename, and stays aligned after it', () => {
+    // The old path no longer exists to draw a row for, and consuming only one
+    // of the rename's three fields would read `new.ts` as the next status.
+    expect(readNameStatus('R100\0src/old.ts\0src/new.ts\0M\0after.ts\0')).toEqual([
+      { path: 'src/new.ts', status: 'renamed' },
+      { path: 'after.ts', status: 'modified' },
+    ]);
+  });
+
+  it('rebases onto the directory the pane was opened on, dropping what is outside', () => {
+    expect(readNameStatus('M\0v2/src/a.ts\0M\0docs/x.md\0', 'v2/')).toEqual([
+      { path: 'src/a.ts', status: 'modified' },
+    ]);
+  });
+
+  it('is empty for an empty answer', () => {
+    expect(readNameStatus('')).toEqual([]);
   });
 });

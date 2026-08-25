@@ -1,6 +1,6 @@
 import type { ExecErr, ExecOk } from '@shepherd/sdk';
 import { treePaths } from './paths.ts';
-import { readStatus, type StatusEntry } from './status.ts';
+import { readNameStatus, readStatus, type StatusEntry } from './status.ts';
 import { walk, type Walked } from './walk.ts';
 
 /**
@@ -62,14 +62,46 @@ export async function listPaths(git: GitRunner, root: string): Promise<Walked> {
  * A failed prefix read falls back to `''`, which is right for the common case
  * (a pane on the repo root) and merely restores the old behaviour otherwise.
  */
-export async function listStatus(git: GitRunner, root: string): Promise<readonly StatusEntry[]> {
+export async function listStatus(
+  git: GitRunner,
+  root: string,
+  base?: string,
+): Promise<readonly StatusEntry[]> {
   const opts = { cwd: root, timeoutMs: LIST_MS };
-  const [result, prefix] = await Promise.all([
+  const [result, prefix, since] = await Promise.all([
     git.gitRead(['status', '--porcelain', '-z'], opts),
     git.gitRead(['rev-parse', '--show-prefix'], opts),
+    /*
+     * `git diff <base>` compares the base commit to the WORKING TREE, so one
+     * call covers committed, staged and unstaged work — a file touched in a
+     * commit and again since is one row, not two disagreeing ones. Untracked
+     * files are still status' alone to report, which is why both run.
+     */
+    base === undefined
+      ? undefined
+      : git.gitRead(['diff', '--name-status', '-z', base], opts),
   ]);
   if (!result.ok) return [];
-  return readStatus(result.stdout, prefix.ok ? prefix.stdout.trim() : '');
+  const at = prefix.ok ? prefix.stdout.trim() : '';
+  const working = readStatus(result.stdout, at);
+  if (since === undefined || !since.ok) return working;
+  return mergeEntries(readNameStatus(since.stdout, at), working);
+}
+
+/**
+ * The committed answer first, then whatever the working tree says on top.
+ *
+ * One row per path, because the pane draws one diff per path. Where both have
+ * something to say the working tree wins: it is the later fact, and it is the
+ * one that carries `untracked`.
+ */
+function mergeEntries(
+  since: readonly StatusEntry[],
+  working: readonly StatusEntry[],
+): readonly StatusEntry[] {
+  const byPath = new Map<string, StatusEntry>();
+  for (const entry of [...since, ...working]) byPath.set(entry.path, entry);
+  return [...byPath.values()];
 }
 
 /**
@@ -85,16 +117,21 @@ export async function listStatus(git: GitRunner, root: string): Promise<readonly
  * against `/dev/null` is always. So a not-ok result carrying output is the
  * success case here, and reading `ok` alone would mean no new file ever
  * renders. The answer is therefore taken from `stdout` in both branches.
+ *
+ * `base` moves the comparison off HEAD and onto the commit this checkout forked
+ * from, so a file changed in a commit still has a patch. An untracked file
+ * ignores it — nothing in any commit is its other side.
  */
 export async function filePatch(
   git: GitRunner,
   root: string,
   rel: string,
   untracked: boolean,
+  base?: string,
 ): Promise<string | null> {
   const args = untracked
     ? ['diff', '--no-index', '--', '/dev/null', rel]
-    : ['diff', 'HEAD', '--', rel];
+    : ['diff', base ?? 'HEAD', '--', rel];
   const result = await git.gitRead(args, { cwd: root, timeoutMs: DIFF_MS });
   return result.stdout === '' ? null : result.stdout;
 }

@@ -78,6 +78,43 @@ export function readStatus(out: string, prefix = ''): readonly StatusEntry[] {
 }
 
 /**
+ * `git diff --name-status -z <base>` → the same marks, for work already
+ * committed.
+ *
+ * A DIFFERENT shape from porcelain status and not a second spelling of it: here
+ * the status letter is a field of its own and the path is the next one, so the
+ * two-character-code parse above would read every letter as a path. A rename is
+ * THREE fields (`R100`, old, new) and the row belongs to the new path — the old
+ * one no longer exists to draw.
+ *
+ * A similarity score rides on the letter (`R100`, `C75`), so the letter is read
+ * from the first character rather than compared whole.
+ */
+export function readNameStatus(out: string, prefix = ''): readonly StatusEntry[] {
+  const fields = out.split('\0').filter((field) => field !== '');
+  const entries: StatusEntry[] = [];
+
+  for (let i = 0; i + 1 < fields.length; i += 2) {
+    const code = fields[i]?.[0];
+    if (code === undefined) continue;
+    if (code === 'R' || code === 'C') {
+      // Old path, new path. The extra step is what keeps every later pair
+      // aligned; without it the new path is read as the next status code.
+      const rebased = rebase(fields[i + 2] ?? '', prefix);
+      i += 1;
+      if (rebased !== undefined) entries.push({ path: rebased, status: 'renamed' });
+      continue;
+    }
+    const rebased = rebase(fields[i + 1] ?? '', prefix);
+    if (rebased === undefined) continue;
+    const kind = mark(code);
+    if (kind !== undefined) entries.push({ path: rebased, status: kind });
+  }
+
+  return entries;
+}
+
+/**
  * A repo-root path, as the pane's root sees it — or nothing, if it is elsewhere.
  *
  * The prefix always ends in `/` (git's own form), which is what keeps a sibling

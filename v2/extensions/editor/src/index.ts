@@ -140,16 +140,27 @@ export const activate: ActivateFn = (ctx, api) => {
 
   ctx.subscriptions.push(
     commands.register(EDITOR_COMMANDS.changes, {
-      schema: s.object({ root: s.string() }),
-      handler: async (args) => ({ entries: await listStatus(process, args.root) }),
+      schema: s.object({ root: s.string(), base: s.optional(s.string()) }),
+      /**
+       * `base` widens the question from "what is uncommitted" to "what has this
+       * checkout changed since it forked" — which is what the review pane asks,
+       * because an agent commits and the answer must not empty itself when it
+       * does. The tree pane omits it and is unaffected.
+       */
+      handler: async (args) => ({ entries: await listStatus(process, args.root, args.base) }),
     }),
   );
 
   ctx.subscriptions.push(
     commands.register(EDITOR_COMMANDS.diff, {
-      schema: s.object({ root: s.string(), path: s.string(), untracked: s.boolean() }),
+      schema: s.object({
+        root: s.string(),
+        path: s.string(),
+        untracked: s.boolean(),
+        base: s.optional(s.string()),
+      }),
       handler: async (args) => ({
-        patch: await filePatch(process, args.root, args.path, args.untracked),
+        patch: await filePatch(process, args.root, args.path, args.untracked, args.base),
       }),
     }),
   );

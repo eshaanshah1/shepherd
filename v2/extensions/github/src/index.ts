@@ -1,4 +1,4 @@
-import { s, type ExtensionContext, type Shepherd } from '@shepherd/sdk';
+import { s, type ExtensionContext, type ProcessAPI, type Shepherd } from '@shepherd/sdk';
 import type { CardFact, CardFactProvider } from '@shepherd/ext-tasks/manifest';
 import {
   CARD_FACTS_CHANGED_TOPIC_ID,
@@ -73,6 +73,29 @@ function readChangeEntries(value: unknown): readonly { path: string; status: str
       ? [{ path: row.path, status: row.status }]
       : [];
   });
+}
+
+/**
+ * The commit this task's work forked from, or `null` when nothing local says.
+ *
+ * Resolved from the refs already on this disk and NEVER from GitHub's answer to
+ * "what is your default branch", even though that answer is a few lines away and
+ * more authoritative: it is a network call, this runs on every draw of the pane,
+ * and nobody should wait on api.github.com to look at their own diff. The three
+ * candidates are checked for EXISTENCE rather than assumed — a guessed `main` on
+ * a repo whose trunk is `master` resolves to nothing, and a diff against nothing
+ * is the whole history drawn as this task's work.
+ *
+ * `null` costs the committed half, which is the same trade `tasks` makes for the
+ * diff line on a card, and a far smaller lie than a hang.
+ */
+async function forkPoint(git: { gitRead: ProcessAPI['gitRead'] }, cwd: string): Promise<string | null> {
+  for (const ref of ['origin/HEAD', 'origin/main', 'origin/master']) {
+    const found = await git.gitRead(['merge-base', ref, 'HEAD'], { cwd, timeoutMs: 2_000 });
+    const sha = found.ok ? found.stdout.trim() : '';
+    if (sha !== '') return sha;
+  }
+  return null;
 }
 
 /** What `editor.diff` answered. `null` for a file with nothing to draw. */
@@ -353,6 +376,19 @@ export function activate(ctx: ExtensionContext, api: Shepherd): void {
   );
 
   /**
+   * Where a task's copy of a repo lives.
+   *
+   * `repo.path` is the checkout the user PICKED — their own, on their own
+   * branch, and not what this task changed. The work is in the worktree, at
+   * `<task root>/<repo name>`, which is the same join `sync.ts` makes to read a
+   * task's branch. Asking git in `repo.path` answered about the user's day-to-day
+   * checkout instead: an empty diff, and a refusal saying the worktree "is on
+   * main" — for every task, always.
+   */
+  const worktreeOf = (task: ListedTask, repo: { readonly name: string }): string =>
+    `${task.root}/${repo.name}`;
+
+  /**
    * What the review pane draws when a task has NO pull request: the working
    * tree, per repo, and whether each could open one.
    *
@@ -360,16 +396,25 @@ export function activate(ctx: ExtensionContext, api: Shepherd): void {
    * changed" is one question, and duplicating it would give the app two
    * implementations that disagree the first time one of them learned something
    * — which is exactly what happened to `git status`' path base.
+   *
+   * Measured against `base` — the merge base with the branch a PR would open
+   * against — rather than against HEAD, because an agent COMMITS. Against HEAD
+   * this pane emptied itself the moment the work was committed, which is the
+   * moment it becomes worth looking at, and told the reader to commit something.
    */
-  const changesOf = async (repo: { readonly path: string; readonly name: string }) => {
-    const listed = await commands.invoke(EDITOR_CHANGES_COMMAND, { root: repo.path });
+  const changesOf = async (worktree: string, base: string | null) => {
+    const listed = await commands.invoke(EDITOR_CHANGES_COMMAND, {
+      root: worktree,
+      ...(base === null ? {} : { base }),
+    });
     const entries = readChangeEntries(listed.ok ? listed.value : undefined);
     const files = await Promise.all(
       entries.map(async (entry) => {
         const answer = await commands.invoke(EDITOR_DIFF_COMMAND, {
-          root: repo.path,
+          root: worktree,
           path: entry.path,
           untracked: entry.status === 'untracked',
+          ...(base === null ? {} : { base }),
         });
         const patch = answer.ok ? readPatchAnswer(answer.value) : null;
         return { path: entry.path, status: entry.status, patch };
@@ -379,15 +424,15 @@ export function activate(ctx: ExtensionContext, api: Shepherd): void {
   };
 
   /** Branch, base and how far ahead — the three inputs `refuseReason` weighs. */
-  const prReadiness = async (repoPath: string) => {
-    const branch = await readBranch(process, repoPath);
-    const slug = await remotes.of(repoPath);
+  const prReadiness = async (worktree: string) => {
+    const branch = await readBranch(process, worktree);
+    const slug = await remotes.of(worktree);
     const client = await ensureClient();
     const base = slug === null || client === null ? null : await client.defaultBranch(slug);
     if (branch === null || base === null) return { branch, base, ahead: 0, subjects: [] };
 
     const log = await process.gitRead(['log', `origin/${base}..HEAD`, '--format=%s'], {
-      cwd: repoPath,
+      cwd: worktree,
       timeoutMs: 5_000,
     });
     const subjects = log.ok ? log.stdout.split('\n').filter((line) => line !== '') : [];
@@ -402,7 +447,16 @@ export function activate(ctx: ExtensionContext, api: Shepherd): void {
         if (task === undefined) return { ok: false, reason: 'no such task' };
         const repos = await Promise.all(
           task.repos.map(async (repo) => {
-            const [files, ready] = await Promise.all([changesOf(repo), prReadiness(repo.path)]);
+            const worktree = worktreeOf(task, repo);
+            /*
+             * In parallel, and the diff does not wait on the readiness: that one
+             * asks GitHub for the default branch, and a slow — or absent —
+             * network would otherwise hold up a purely local answer.
+             */
+            const [files, ready] = await Promise.all([
+              forkPoint(process, worktree).then((base) => changesOf(worktree, base)),
+              prReadiness(worktree),
+            ]);
             return {
               name: repo.name,
               path: repo.path,
@@ -434,14 +488,17 @@ export function activate(ctx: ExtensionContext, api: Shepherd): void {
       handler: async (args) => {
         const task = await taskById(args.task);
         const repo = task?.repos.find((entry) => entry.path === args.repo);
-        if (repo === undefined) return { ok: false, reason: 'no such repo on this task' };
+        if (task === undefined || repo === undefined) {
+          return { ok: false, reason: 'no such repo on this task' };
+        }
 
-        const ready = await prReadiness(repo.path);
+        const worktree = worktreeOf(task, repo);
+        const ready = await prReadiness(worktree);
         const refused = refuseReason(ready);
         if (refused !== null) return { ok: false, reason: refused };
 
         const client = await ensureClient();
-        const slug = await remotes.of(repo.path);
+        const slug = await remotes.of(worktree);
         if (client === null || slug === null) return { ok: false, reason: 'not signed in to GitHub' };
 
         /*
@@ -450,7 +507,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): void {
          * about the push, which is the wrong sentence to show somebody.
          */
         const pushed = await process.gitWrite(['push', '-u', 'origin', 'HEAD'], {
-          cwd: repo.path,
+          cwd: worktree,
           timeoutMs: 60_000,
         });
         if (!pushed.ok) return { ok: false, reason: pushed.stderr.trim() || 'could not push' };

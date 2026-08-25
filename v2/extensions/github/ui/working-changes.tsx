@@ -17,6 +17,10 @@ import { SHEPHERD_DIFF_CSS, SHEPHERD_DIFF_THEME } from './diff-theme.ts';
  *
  * Every diff here is `editor`'s answer, fetched by `github.changes`. "What have
  * I changed" is one question and the app answers it in one place.
+ *
+ * Measured in the task's WORKTREE and against the commit it forked from, which
+ * is what makes the answer this task's rather than the user's own checkout's,
+ * and what keeps it from emptying the moment an agent commits.
  */
 
 /** One repo's working tree, as `github.changes` reports it. */
@@ -116,7 +120,7 @@ export function WorkingChanges({ task, signedIn, invoke }: WorkingChangesProps):
   const dirty = repos.filter((repo) => repo.files.length > 0);
   if (dirty.length === 0) {
     return (
-      <Empty hint="Commit something, and a pull request can be opened from here.">
+      <Empty hint="Anything this task changes — committed or not — shows up here.">
         No pull request yet, and nothing changed in this task’s worktrees.
       </Empty>
     );
