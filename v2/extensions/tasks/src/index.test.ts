@@ -3092,6 +3092,44 @@ describe('incognito tasks', () => {
     expect(actions.filter((entry) => entry.label === 'Delete')).toHaveLength(1);
   });
 
+  it('deletes the local branch too, so nothing of the task is left in the repo', async () => {
+    /*
+     * The last thing that outlived an incognito task. The remote keeps whatever
+     * was pushed — that is the user's copy and not Shepherd's to touch — but the
+     * local branch is a name in their repo saying this task existed.
+     */
+    const h = (live = harness({
+      tasks: [task({ id: 'q7', slug: 'quiet', incognito: true, repos: [{ name: 'api', path: '/src/api' }] })],
+      // The worktree's own HEAD — what `removeWorktree` reads before it deletes
+      // the directory, and the only place the branch name can come from.
+      git: (call) =>
+        call.args[0] === 'rev-parse'
+          ? { ok: true as const, stdout: 'fix-login\n', stderr: '' }
+          : { ok: true as const, stdout: '', stderr: '' },
+    }));
+
+    await h.run('tasks.delete', { task: 'q7' });
+
+    const deletion = h.git.find((call) => call.args[0] === 'branch');
+    expect(deletion?.args).toEqual(['branch', '-D', 'fix-login']);
+    expect(deletion?.opts.cwd).toBe('/src/api');
+  });
+
+  it('leaves an ordinary task’s branch exactly where it was', async () => {
+    // It lives in the user's repo and may carry commits nothing else names.
+    const h = (live = harness({
+      tasks: [task({ id: 'n7', slug: 'normal', repos: [{ name: 'api', path: '/src/api' }] })],
+      git: (call) =>
+        call.args[0] === 'rev-parse'
+          ? { ok: true as const, stdout: 'fix-login\n', stderr: '' }
+          : { ok: true as const, stdout: '', stderr: '' },
+    }));
+
+    await h.run('tasks.delete', { task: 'n7' });
+
+    expect(h.git.some((call) => call.args[0] === 'branch' && call.args[1] === '-D')).toBe(false);
+  });
+
   it('takes the profile with it when the task is shipped', async () => {
     const h = (live = harness());
     const created = await h.run<{ id: string }>('tasks.create', { title: 'Quiet', repos: [], incognito: true });

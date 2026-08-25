@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ExecErr, ExecOk, ExecOptions, ProcessAPI } from '@shepherd/sdk';
-import { addWorktree, materializeTaskRoot, provisionRepo, readRepoRefs, removeWorktree } from './provision.ts';
+import { addWorktree, deleteBranch, materializeTaskRoot, provisionRepo, readRepoRefs, removeWorktree } from './provision.ts';
 import { synthTaskRoot } from './model/root-synth.ts';
 
 /**
@@ -388,5 +388,53 @@ describe('provisionRepo', () => {
     expect(outcome).toMatchObject({ ok: true, worktree: '/d/x/api' });
     expect(git.calls[0]?.args).toEqual(['fetch', '--quiet', 'origin']);
     expect(git.calls.at(-1)?.fn).toBe('gitWrite');
+  });
+});
+
+/**
+ * Deleting the branch an incognito task worked on.
+ *
+ * The counterpart to `removeWorktree`, and deliberately NOT part of it: an
+ * ordinary task keeps its branch — it lives in the user's own repo and may
+ * carry commits — and only a task that asked to leave nothing behind gets this.
+ */
+describe('deleteBranch', () => {
+  it('deletes it in the SOURCE repo, where a branch actually lives', async () => {
+    const git = fakeGit({ write: { ok: true, stdout: '', stderr: '' } });
+
+    const out = await deleteBranch(git, '/src/api', 'fix-login');
+
+    expect(out.ok).toBe(true);
+    const call = git.calls.find((entry) => entry.fn === 'gitWrite');
+    expect(call?.args).toEqual(['branch', '-D', 'fix-login']);
+    expect(call?.opts.cwd).toBe('/src/api');
+  });
+
+  it('forces it, because unmerged is the ordinary case here', async () => {
+    /*
+     * `-d` refuses a branch that is not merged into HEAD, which is exactly what
+     * a task's branch is — so the safe flag would leave the branch behind on
+     * every task that did any work. The user asked for this knowing it: pushed
+     * work survives on the remote, unpushed work does not.
+     */
+    const git = fakeGit({ write: { ok: true, stdout: '', stderr: '' } });
+    await deleteBranch(git, '/src/api', 'fix-login');
+    expect(git.calls.find((entry) => entry.fn === 'gitWrite')?.args).toContain('-D');
+  });
+
+  it('reports why rather than throwing, so one repo cannot abort a delete', async () => {
+    const git = fakeGit({ write: { ok: false, code: 1, stdout: '', stderr: 'branch is checked out\n' } });
+
+    expect(await deleteBranch(git, '/src/api', 'fix-login')).toEqual({
+      ok: false,
+      reason: 'branch is checked out',
+    });
+  });
+
+  it('does nothing for a detached head, which names no branch to delete', async () => {
+    const git = fakeGit({ write: { ok: true, stdout: '', stderr: '' } });
+
+    expect((await deleteBranch(git, '/src/api', null)).ok).toBe(true);
+    expect(git.calls).toHaveLength(0);
   });
 });

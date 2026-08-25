@@ -121,6 +121,7 @@ import { writePastedImages, type PastedImage } from './images.ts';
 
 import {
   archiveWorktree,
+  deleteBranch,
   materializeTaskRoot,
   addWorktree,
   readRepoRefs,
@@ -4242,7 +4243,29 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           for (const repo of task.repos) {
             const out = await removeWorktree(api.proposed.process, repo.path, `${root}/${repo.name}`);
             if (out.ok) {
-              if (out.branch !== null) kept.push(`${repo.name}: ${out.branch}`);
+              /*
+               * **An incognito task's branch goes too; every other task keeps
+               * its own.**
+               *
+               * The branch was the last thing that outlived such a task — a name
+               * sitting in the user's repo saying this work happened. What is
+               * NOT touched is the remote: anything pushed is the user's own
+               * copy, on a machine that is not this one, and Shepherd deleting
+               * it would be reaching well past the task it was asked to remove.
+               * So pushed work survives and unpushed work does not, which is the
+               * trade `deleteBranch`'s `-D` states outright.
+               *
+               * Reported, never fatal: a branch that will not come off (checked
+               * out somewhere else, most likely) leaves the task deleted and the
+               * branch named in the answer, exactly as an ordinary task's is.
+               */
+              if (task.incognito === true) {
+                const branch = await deleteBranch(api.proposed.process, repo.path, out.branch);
+                if (!branch.ok) failed.push(`${repo.name}: ${branch.reason}`);
+                else if (out.branch !== null) ctx.log.info(`task ${task.id}: deleted branch ${out.branch} in ${repo.path}`);
+              } else if (out.branch !== null) {
+                kept.push(`${repo.name}: ${out.branch}`);
+              }
             } else {
               failed.push(`${repo.name}: ${out.reason}`);
               stranded.push(repo.path);

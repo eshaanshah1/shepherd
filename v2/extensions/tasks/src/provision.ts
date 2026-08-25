@@ -299,6 +299,38 @@ export async function removeWorktree(
 }
 
 /**
+ * Delete the branch a task worked on, in the repo that owns it.
+ *
+ * **Only an incognito task gets this**, and it is deliberately a separate
+ * function rather than a step of `removeWorktree`: an ordinary task keeps its
+ * branch on purpose — it lives in the user's own repo, it may carry commits
+ * nothing else references, and destroying it is a larger act than "remove this
+ * task's entry". A task that asked to leave nothing behind is the exception.
+ *
+ * **`-D`, not `-d`, and that is the whole decision.** `-d` refuses a branch not
+ * merged into HEAD, which is precisely what a task branch is — so the safe flag
+ * would leave the branch behind on every task that did any work, which is to say
+ * always. The trade is stated rather than hidden: work that was PUSHED survives
+ * on the remote, and work that was not is gone. That is what incognito was asked
+ * to mean.
+ *
+ * A `null` branch is a detached head, which names nothing to delete, and a
+ * failure is REPORTED rather than thrown — one repo refusing must not abort the
+ * delete of the others.
+ */
+export async function deleteBranch(
+  process_: ProcessAPI,
+  repoPath: string,
+  branch: string | null,
+  timeoutMs = 60_000,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  if (branch === null || branch === '') return { ok: true };
+  const out = await process_.gitWrite(['branch', '-D', branch], { cwd: repoPath, timeoutMs });
+  if (out.ok) return { ok: true };
+  return { ok: false, reason: out.stderr.trim() || `git exited ${out.code}` };
+}
+
+/**
  * Put the uncommitted work back — the half `worktree add` cannot do.
  *
  * Re-provisioning gives you the branch; it gives you a CLEAN tree, which is not
