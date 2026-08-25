@@ -4811,7 +4811,23 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
                 : {
                     id: TASK_COMMANDS.archive,
                     label: 'Ship',
-                    icon: 'ship',
+                    /*
+                     * A TRASH glyph on an incognito task, and the same verb.
+                     *
+                     * Shipping an ordinary task shelves work you can come back
+                     * to — that is what a ship's wheel promises, and on an
+                     * incognito task it promises the wrong thing: shipping
+                     * deletes the profile, so the transcript, the history and
+                     * the whole session go with it. The command, the label and
+                     * the one click are unchanged, because it IS the same verb;
+                     * only the picture stops saying "safely stowed".
+                     *
+                     * Not `danger: true`. Red is for the verb that destroys the
+                     * TASK, and this one still leaves a row in Shipped — a
+                     * second red action on the row would make the two look
+                     * equally final when only one of them is.
+                     */
+                    icon: task.incognito === true ? 'trash' : 'ship',
                     args: { task: task.id },
                     /*
                      * Instant when nothing is running, and a question when
@@ -4887,7 +4903,9 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
                   : {
                       id: TASK_COMMANDS.archive,
                       label: 'Ship',
-                      icon: 'ship',
+                      // The same swap the hover button makes, so the two doors
+                      // onto one verb do not disagree about what it does.
+                      icon: task.incognito === true ? 'trash' : 'ship',
                       args: { task: task.id },
                     },
                 {

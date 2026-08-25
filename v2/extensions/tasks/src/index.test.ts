@@ -3008,6 +3008,41 @@ describe('incognito tasks', () => {
     expect((row as { data?: Record<string, unknown> } | undefined)?.data).not.toHaveProperty('incognito');
   });
 
+  it('offers Ship as a TRASH glyph, because shipping this one throws the session away', async () => {
+    /*
+     * Shipping an ordinary task shelves work you can come back to. Shipping an
+     * incognito one deletes its profile — the transcript, the history, the
+     * whole session — and a ship's-wheel over that gesture promises the wrong
+     * thing. Same verb, same command, same one click; the glyph is what says
+     * this one does not come back.
+     */
+    const h = (live = harness({ tasks: [task({ id: 'q1', incognito: true })] }));
+
+    const rows = await h.tree().children?.(undefined);
+    const row = (rows ?? []).find((entry) => (entry as { id?: string }).id === 'q1');
+    expect((row as { primaryAction?: { icon?: string; label?: string } }).primaryAction).toMatchObject({
+      label: 'Ship',
+      icon: 'trash',
+    });
+  });
+
+  it('leaves an ordinary task’s Ship a ship', async () => {
+    const h = (live = harness({ tasks: [task({ id: 'n1' })] }));
+
+    const rows = await h.tree().children?.(undefined);
+    const row = (rows ?? []).find((entry) => (entry as { id?: string }).id === 'n1');
+    expect((row as { primaryAction?: { icon?: string } }).primaryAction?.icon).toBe('ship');
+  });
+
+  it('says the same thing in the menu, so the two doors do not disagree', async () => {
+    const h = (live = harness({ tasks: [task({ id: 'q2', incognito: true })] }));
+
+    const rows = await h.tree().children?.(undefined);
+    const row = (rows ?? []).find((entry) => (entry as { id?: string }).id === 'q2');
+    const actions = (row as { actions?: { label?: string; icon?: string }[] }).actions ?? [];
+    expect(actions.find((entry) => entry.label === 'Ship')?.icon).toBe('trash');
+  });
+
   it('takes the profile with it when the task is shipped', async () => {
     const h = (live = harness());
     const created = await h.run<{ id: string }>('tasks.create', { title: 'Quiet', repos: [], incognito: true });
