@@ -19,6 +19,13 @@ export const TOKEN_SECRET_KEY = 'token';
 export const TASKS_ID = 'shepherd.tasks';
 export const AGENTS_CORE_ID = 'shepherd.agents-core';
 
+/** `editor`'s id, re-stated: only TYPES cross between extensions. */
+const EDITOR_ID = 'shepherd.editor';
+
+/** Its two reads, named here for the same reason a layout verb is. */
+export const EDITOR_CHANGES_COMMAND = 'editor.changes';
+export const EDITOR_DIFF_COMMAND = 'editor.diff';
+
 /**
  * `tasks.cardFacts`, spelled out rather than imported.
  *
@@ -148,6 +155,17 @@ export const GITHUB_COMMANDS = {
    * sentence a developer can read.
    */
   seed: 'github.seed',
+  /**
+   * The working-tree diff of every repo in this task — what the rail's icon
+   * opens when there is no PR yet.
+   *
+   * Assembled from `editor.changes` / `editor.diff` rather than re-derived
+   * here: "what have I changed" is one question, and the editor already
+   * answers it. This command is the shape the review pane wants it in.
+   */
+  changes: 'github.changes',
+  /** Push this repo's branch and open a pull request for it. */
+  createPr: 'github.createPr',
 } as const;
 
 /** The review pane's UI module, resolved by the renderer's table (ADR 0033). */
@@ -195,7 +213,13 @@ export const githubManifest: Manifest = {
    * worth having in the manifest even where the dispatcher would allow it
    * anyway. It also fixes the activation order rather than leaving it to luck.
    */
-  dependencies: [TASKS_ID, AGENTS_CORE_ID],
+  /*
+   * `editor` joins the list because the working-tree diff is its answer, not a
+   * second one written here — `github.changes` invokes its commands. Soft in
+   * behaviour: without it the no-PR view says it cannot read the changes, and
+   * every PR view is unaffected.
+   */
+  dependencies: [TASKS_ID, AGENTS_CORE_ID, EDITOR_ID],
   contributes: {
     commands: [
       { id: GITHUB_COMMANDS.review, title: 'GitHub: Review' },
@@ -208,6 +232,8 @@ export const githubManifest: Manifest = {
       { id: GITHUB_COMMANDS.merge, title: 'GitHub: Merge' },
       { id: GITHUB_COMMANDS.land, title: 'GitHub: Land Task' },
       { id: GITHUB_COMMANDS.seed, title: 'GitHub: Seed Fake PRs (dev)' },
+      { id: GITHUB_COMMANDS.changes },
+      { id: GITHUB_COMMANDS.createPr, title: 'GitHub: Create Pull Request' },
     ],
     /**
      * The credential, declared so the Secrets screen can offer it before this

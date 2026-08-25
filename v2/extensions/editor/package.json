@@ -1,0 +1,90 @@
+{
+  "name": "@shepherd/ext-editor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "shepherd.editor — the files of a task's worktrees, editable, and what you changed in them.",
+  "//exports": "The split every extension makes: main imports ./manifest to register, the utility process imports the root (which pulls in `activate`), and ./ui is the half the renderer mounts.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./manifest": {
+      "types": "./src/manifest.ts",
+      "default": "./src/manifest.ts"
+    },
+    "./ui": {
+      "types": "./ui/index.ts",
+      "default": "./ui/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -b",
+    "test": "vitest run"
+  },
+  "//pierre": "The same buy `github` made, for the same two panels — and the reason this extension needs no editor of its own. `@pierre/trees` is the file list; `@pierre/diffs` is BOTH halves of the right-hand panel, because it ships a real editor (`/edit`, and `<File edit>`) as well as the diff renderer. One vendor means the file and its diff are the same surface under the same registered theme. A vendor dependency an extension owns privately: the boundary lint is about which SHEPHERD packages an extension may reach.",
+  "//dependencies": "@shepherd/ext-tasks and @shepherd/ext-scratch are TYPE-ONLY — `import type` and nothing else. The runtime relationship is the command id plus the manifest's `dependencies` entry, which is the gate the host can review; a value import would route around it. See extensions/README.md.",
+  "dependencies": {
+    "@shepherd/ext-scratch": "workspace:*",
+    "@shepherd/ext-tasks": "workspace:*",
+    "@shepherd/sdk": "workspace:*",
+    "@shepherd/ui": "workspace:*",
+    "@pierre/diffs": "catalog:",
+    "@pierre/trees": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "jsdom": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "//shepherd": "The manifest, as an extension declares it. `src/manifest.ts` is the typed copy the host loads, and `manifest.test.ts` asserts the two are identical.",
+  "shepherd": {
+    "id": "shepherd.editor",
+    "name": "Editor",
+    "version": "0.1.0",
+    "api": "^1.0.0",
+    "activation": [
+      "onStartup"
+    ],
+    "permissions": [
+      "storage",
+      "process.exec",
+      "views",
+      "layout"
+    ],
+    "dependencies": [
+      "shepherd.tasks",
+      "shepherd.scratch"
+    ],
+    "contributes": {
+      "commands": [
+        {
+          "id": "editor.open",
+          "title": "Editor: Open"
+        },
+        {
+          "id": "editor.tree"
+        },
+        {
+          "id": "editor.read"
+        },
+        {
+          "id": "editor.write"
+        },
+        {
+          "id": "editor.changes"
+        },
+        {
+          "id": "editor.diff"
+        }
+      ]
+    }
+  },
+  "//ui": "The UI half, imported ONLY by the renderer (boundaries.js). A separate subpath because it is a separate PROCESS: `.` is the service half and runs in a utility process with no DOM."
+}

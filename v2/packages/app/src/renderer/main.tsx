@@ -33,6 +33,7 @@ import './settings.css';
 import './task-card.css';
 import './review-pane.css';
 import './scratch-pane.css';
+import './editor-pane.css';
 import './sky-strip.css';
 
 /**

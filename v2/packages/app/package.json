@@ -33,6 +33,7 @@
     "@shepherd/ext-agents-core": "workspace:*",
     "@shepherd/ext-claude-code": "workspace:*",
     "@shepherd/ext-diagnostics": "workspace:*",
+    "@shepherd/ext-editor": "workspace:*",
     "@shepherd/ext-github": "workspace:*",
     "@shepherd/ext-links": "workspace:*",
     "@shepherd/ext-scratch": "workspace:*",

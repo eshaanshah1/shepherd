@@ -4,6 +4,8 @@ import {
   CARD_FACTS_CHANGED_TOPIC_ID,
   CARD_FACTS_POINT_ID,
   GITHUB_COMMANDS,
+  EDITOR_CHANGES_COMMAND,
+  EDITOR_DIFF_COMMAND,
   GITHUB_VIEWS,
   AGENTS_LIST_COMMAND,
   SESSIONS_LIST_COMMAND,
@@ -19,6 +21,8 @@ import { readPaneTitles, readRoots, readTasks, type ListedTask } from './tasks-r
 import { agentName, handingMeans, markFor, pickAgent, readLive, readStates, type TaskAgent } from './model/agent-pick.ts';
 import { resolveToken } from './token.ts';
 import { fixturePrs } from './fixture.ts';
+import { cardFact } from './model/card-fact.ts';
+import { bodyFrom, refuseReason } from './model/new-pr.ts';
 import {
   canMerge,
   checkPrompt,
@@ -57,6 +61,27 @@ import {
  * And deliberately no attention: a failing check is a condition, not an event,
  * and is always downstream of something that already alerted. See the manifest.
  */
+/** What `editor.changes` answered, read rather than cast: it crossed a port. */
+function readChangeEntries(value: unknown): readonly { path: string; status: string }[] {
+  if (typeof value !== 'object' || value === null) return [];
+  const entries = (value as { entries?: unknown }).entries;
+  if (!Array.isArray(entries)) return [];
+  return entries.flatMap((entry): { path: string; status: string }[] => {
+    if (typeof entry !== 'object' || entry === null) return [];
+    const row = entry as { path?: unknown; status?: unknown };
+    return typeof row.path === 'string' && typeof row.status === 'string'
+      ? [{ path: row.path, status: row.status }]
+      : [];
+  });
+}
+
+/** What `editor.diff` answered. `null` for a file with nothing to draw. */
+function readPatchAnswer(value: unknown): string | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const patch = (value as { patch?: unknown }).patch;
+  return typeof patch === 'string' && patch !== '' ? patch : null;
+}
+
 export function activate(ctx: ExtensionContext, api: Shepherd): void {
   const { commands, events, points, process, views } = api.proposed;
   // Injected time — nothing an extension writes may call `Date.now()`.
@@ -184,40 +209,14 @@ export function activate(ctx: ExtensionContext, api: Shepherd): void {
    * which is the honest answer — a glyph drawn before anything is known would
    * claim a state.
    */
-  const factFor: CardFactProvider = (task): CardFact | null => {
-    const prs = sync.prsOf(task.id);
-    if (prs.length === 0) return null;
-    const title = rollUpSaid(prs);
-    if (title === null) return null;
-    const state = rollUp(prs);
-
+  const factFor: CardFactProvider = (task): CardFact | null =>
     /*
-     * A shipped row says the NUMBER, a live row says the glyph.
-     *
-     * The two are different questions. On live work you want to know whether
-     * anything needs you, which is a state and reads faster as a mark; on
-     * finished work the state is always "merged" and the useful fact is which PR
-     * it was — the record of what shipped.
+     * The decision is in `model/card-fact.ts` and tested there. `sync.get`
+     * rather than `prsOf`, because the two answers this needs to tell apart —
+     * "synced, and there is no PR" and "never synced" — are the same empty
+     * array to `prsOf`, and only the first of them may draw a glyph.
      */
-    if (task.shipped) {
-      const merged = prs.filter((pr) => pr.state === 'merged');
-      const only = merged.length === 1 ? merged[0] : undefined;
-      if (only === undefined) return null;
-      return {
-        label: `${only.repoKey} #${only.number}`,
-        tone: 'quiet',
-        title,
-        command: { id: GITHUB_COMMANDS.open, args: { url: only.url } },
-      };
-    }
-
-    return {
-      icon: 'pull-request',
-      tone: TONES[state],
-      title,
-      command: { id: GITHUB_COMMANDS.review, args: { task: task.id } },
-    };
-  };
+    cardFact(task, sync.prsOf(task.id), sync.get(task.id) !== undefined);
 
   const point = points.get<CardFactProvider>(CARD_FACTS_POINT_ID);
   if (point === undefined) {
@@ -349,6 +348,125 @@ export function activate(ctx: ExtensionContext, api: Shepherd): void {
           taskTitle: task?.title ?? '',
           ...(await branchAgent(task, states)),
         };
+      },
+    }),
+  );
+
+  /**
+   * What the review pane draws when a task has NO pull request: the working
+   * tree, per repo, and whether each could open one.
+   *
+   * Every diff here is `editor`'s answer, invoked across the port. "What have I
+   * changed" is one question, and duplicating it would give the app two
+   * implementations that disagree the first time one of them learned something
+   * — which is exactly what happened to `git status`' path base.
+   */
+  const changesOf = async (repo: { readonly path: string; readonly name: string }) => {
+    const listed = await commands.invoke(EDITOR_CHANGES_COMMAND, { root: repo.path });
+    const entries = readChangeEntries(listed.ok ? listed.value : undefined);
+    const files = await Promise.all(
+      entries.map(async (entry) => {
+        const answer = await commands.invoke(EDITOR_DIFF_COMMAND, {
+          root: repo.path,
+          path: entry.path,
+          untracked: entry.status === 'untracked',
+        });
+        const patch = answer.ok ? readPatchAnswer(answer.value) : null;
+        return { path: entry.path, status: entry.status, patch };
+      }),
+    );
+    return files.filter((file) => file.patch !== null);
+  };
+
+  /** Branch, base and how far ahead — the three inputs `refuseReason` weighs. */
+  const prReadiness = async (repoPath: string) => {
+    const branch = await readBranch(process, repoPath);
+    const slug = await remotes.of(repoPath);
+    const client = await ensureClient();
+    const base = slug === null || client === null ? null : await client.defaultBranch(slug);
+    if (branch === null || base === null) return { branch, base, ahead: 0, subjects: [] };
+
+    const log = await process.gitRead(['log', `origin/${base}..HEAD`, '--format=%s'], {
+      cwd: repoPath,
+      timeoutMs: 5_000,
+    });
+    const subjects = log.ok ? log.stdout.split('\n').filter((line) => line !== '') : [];
+    return { branch, base, ahead: subjects.length, subjects };
+  };
+
+  ctx.subscriptions.push(
+    commands.register(GITHUB_COMMANDS.changes, {
+      schema: s.object({ task: s.string() }),
+      handler: async (args) => {
+        const task = await taskById(args.task);
+        if (task === undefined) return { ok: false, reason: 'no such task' };
+        const repos = await Promise.all(
+          task.repos.map(async (repo) => {
+            const [files, ready] = await Promise.all([changesOf(repo), prReadiness(repo.path)]);
+            return {
+              name: repo.name,
+              path: repo.path,
+              branch: ready.branch,
+              base: ready.base,
+              files,
+              /* Said BEFORE the push, so a button that cannot work is absent
+                 with a reason rather than present and failing. */
+              refuse: refuseReason(ready),
+            };
+          }),
+        );
+        return { repos, taskTitle: task.title };
+      },
+    }),
+  );
+
+  ctx.subscriptions.push(
+    commands.register(GITHUB_COMMANDS.createPr, {
+      title: 'GitHub: Create Pull Request',
+      schema: s.object({ task: s.string(), repo: s.string() }),
+      /**
+       * Push the branch, then open the pull request.
+       *
+       * `gitWrite` and octokit rather than `gh pr create`: this extension
+       * already holds an authenticated client and already resolves the slug, so
+       * shelling out would add a second way to be signed in.
+       */
+      handler: async (args) => {
+        const task = await taskById(args.task);
+        const repo = task?.repos.find((entry) => entry.path === args.repo);
+        if (repo === undefined) return { ok: false, reason: 'no such repo on this task' };
+
+        const ready = await prReadiness(repo.path);
+        const refused = refuseReason(ready);
+        if (refused !== null) return { ok: false, reason: refused };
+
+        const client = await ensureClient();
+        const slug = await remotes.of(repo.path);
+        if (client === null || slug === null) return { ok: false, reason: 'not signed in to GitHub' };
+
+        /*
+         * `-u origin HEAD`, and the push is FIRST: GitHub refuses a PR whose
+         * head it has never seen, with a message about the branch rather than
+         * about the push, which is the wrong sentence to show somebody.
+         */
+        const pushed = await process.gitWrite(['push', '-u', 'origin', 'HEAD'], {
+          cwd: repo.path,
+          timeoutMs: 60_000,
+        });
+        if (!pushed.ok) return { ok: false, reason: pushed.stderr.trim() || 'could not push' };
+
+        const made = await client.createPr(slug, {
+          head: ready.branch ?? '',
+          base: ready.base ?? '',
+          title: task?.title ?? ready.branch ?? 'Changes',
+          body: bodyFrom(ready.subjects),
+        });
+        if (!made.ok) return made;
+
+        // The sync is what the pane redraws from, so ask for one rather than
+        // inventing a PR record here that the next poll would replace.
+        sweep();
+        return { ok: true, url: made.url };
       },
     }),
   );

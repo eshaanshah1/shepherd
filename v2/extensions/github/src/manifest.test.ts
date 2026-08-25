@@ -66,10 +66,15 @@ describe('the github manifest', () => {
     expect(githubManifest.permissions).not.toContain('attention');
   });
 
-  it('declares both extensions whose verbs it invokes', () => {
+  it('declares every extension whose verbs it invokes', () => {
     // `tasks` owns the point and the task model; `agents-core` answers what each
-    // agent is doing, which is what the picker's rows report.
-    expect(githubManifest.dependencies).toEqual(['shepherd.tasks', 'shepherd.agents-core']);
+    // agent is doing, which is what the picker's rows report; `editor` answers
+    // what the working tree has changed, which is the no-PR view.
+    expect(githubManifest.dependencies).toEqual([
+      'shepherd.tasks',
+      'shepherd.agents-core',
+      'shepherd.editor',
+    ]);
   });
 
   it('spells the cardFacts point exactly as tasks defines it', () => {
@@ -108,18 +113,25 @@ describe('the github manifest', () => {
       GITHUB_COMMANDS.merge,
       GITHUB_COMMANDS.land,
       GITHUB_COMMANDS.seed,
+      GITHUB_COMMANDS.changes,
+      GITHUB_COMMANDS.createPr,
     ]);
   });
 
   it('keeps the answer-a-question verbs out of the palette', () => {
-    // `prs`, `pr` and `diff` are what the pane asks on its way to drawing
-    // something.
+    // `prs`, `pr`, `diff` and `changes` are what the pane asks on its way to
+    // drawing something.
     // An untitled command is not in the palette (the SDK documents `title` as
     // exactly that filter), and a "GitHub: Prs" row would run a verb whose whole
     // effect is a return value.
     const untitled = (githubManifest.contributes?.commands ?? [])
       .filter((command) => command.title === undefined)
       .map((command) => command.id);
-    expect(untitled).toEqual([GITHUB_COMMANDS.prs, GITHUB_COMMANDS.pr, GITHUB_COMMANDS.diff]);
+    expect(untitled).toEqual([
+      GITHUB_COMMANDS.prs,
+      GITHUB_COMMANDS.pr,
+      GITHUB_COMMANDS.diff,
+      GITHUB_COMMANDS.changes,
+    ]);
   });
 });

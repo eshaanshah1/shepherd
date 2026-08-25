@@ -31,6 +31,7 @@
   "//octokit": "@octokit/rest is a plain npm dependency, not a workspace one: the boundary lint is about which SHEPHERD packages an extension may reach, and a vendor client is exactly the kind of thing an extension is supposed to own privately. It is the only place in the repo that knows GitHub's wire shapes.",
   "dependencies": {
     "@octokit/rest": "^22.0.0",
+    "@shepherd/ext-editor": "workspace:*",
     "@shepherd/ext-tasks": "workspace:*",
     "@shepherd/sdk": "workspace:*",
     "@shepherd/ui": "workspace:*",
@@ -69,7 +70,8 @@
     ],
     "dependencies": [
       "shepherd.tasks",
-      "shepherd.agents-core"
+      "shepherd.agents-core",
+      "shepherd.editor"
     ],
     "contributes": {
       "commands": [
@@ -109,6 +111,13 @@
         {
           "id": "github.seed",
           "title": "GitHub: Seed Fake PRs (dev)"
+        },
+        {
+          "id": "github.changes"
+        },
+        {
+          "id": "github.createPr",
+          "title": "GitHub: Create Pull Request"
         }
       ],
       "secrets": [

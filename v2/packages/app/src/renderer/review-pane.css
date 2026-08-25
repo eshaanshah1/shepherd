@@ -1526,3 +1526,49 @@
 .sh-pr-card[data-resolved] .sh-md {
   color: var(--sh-text-ghost);
 }
+
+/* ── the working tree, when there is no pull request yet ──────────────────── */
+
+/*
+ * Drawn by `WorkingChanges`, which the review pane shows in place of its old
+ * empty state. It reuses `.sh-pr-diff__view` for the diff itself — same
+ * component, same metrics — so only the per-repo header is new here.
+ */
+.sh-changes__repo {
+  display: flex;
+  flex-direction: column;
+  min-block-size: 0;
+}
+
+.sh-changes__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-sm);
+  padding-inline: var(--sh-space-md);
+}
+
+.sh-changes__spacer {
+  flex: 1;
+}
+
+.sh-changes__branch {
+  color: var(--sh-text-ghost);
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-small);
+}
+
+/*
+ * A reason rather than a disabled button: "nothing committed on this branch
+ * yet" is something the reader can act on, and a greyed control says only that
+ * they cannot.
+ */
+.sh-changes__refuse {
+  color: var(--sh-text-ghost);
+  font-size: var(--sh-font-size-medium);
+}
+
+.sh-changes__said {
+  padding: var(--sh-space-sm) var(--sh-space-md);
+  color: var(--sh-text);
+  font-size: var(--sh-font-size-medium);
+}

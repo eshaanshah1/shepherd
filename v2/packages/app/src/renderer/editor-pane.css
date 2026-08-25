@@ -1,0 +1,208 @@
+/*
+ * The editor pane — drawn by `@shepherd/ext-editor/ui`, painted here.
+ *
+ * The same division `review-pane.css` and `scratch-pane.css` make: a
+ * contribution supplies data and a token name and sets neither a colour nor a
+ * length. §7.
+ *
+ * A view pane gets no head, no padding and no border from the shell (ADR 0044)
+ * — the view owns the rectangle — so the two columns and the seam between them
+ * are this file's job and nothing above it contributes any chrome.
+ *
+ * Both packages are styled through custom properties rather than descendant
+ * selectors, because both draw into a SHADOW ROOT. Custom properties inherit
+ * through the boundary; a `.sh-editor__tree .something` rule does not, and
+ * silently does nothing. `review-pane.css` records the same thing at length.
+ */
+
+.sh-editor {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  block-size: 100%;
+  min-block-size: 0;
+  inline-size: 100%;
+  background: var(--sh-canvas);
+  color: var(--sh-text);
+  overflow: hidden;
+}
+
+.sh-editor--none {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sh-space-xl);
+  color: var(--sh-text-dim);
+  font-size: var(--sh-font-size-body);
+}
+
+/* ─────────────────────────────────────────────────────────────── the rail ── */
+
+.sh-editor__rail {
+  display: flex;
+  flex-direction: column;
+  min-block-size: 0;
+  overflow: hidden;
+  background: var(--sh-surface);
+  box-shadow: inset calc(-1 * var(--sh-hairline)) 0 0 var(--sh-line);
+}
+
+.sh-editor__search {
+  margin: var(--sh-space-xs);
+  padding: var(--sh-space-xs) var(--sh-space-sm);
+  border: var(--sh-hairline) solid var(--sh-line);
+  border-radius: var(--sh-radius-sm);
+  background: var(--sh-canvas);
+  color: var(--sh-text);
+  font-family: var(--sh-font-sans);
+  font-size: var(--sh-font-size-medium);
+}
+
+.sh-editor__search::placeholder {
+  color: var(--sh-text-ghost);
+}
+
+.sh-editor__search:focus-visible {
+  outline: none;
+  border-color: var(--sh-edge-selected);
+}
+
+/*
+ * The tree, whose palette is otherwise NOT ours: the package ships `#009fff` as
+ * its accent and `#141415` as its ground. Neither is a bug — they are its
+ * defaults, and defaults are what a contributed surface replaces. The set below
+ * is the one `review-pane.css` arrived at, for the same component at the same
+ * density; keep the two in step, or a file list will read differently depending
+ * on which tab it is in.
+ */
+.sh-editor__tree {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  overflow: auto;
+
+  --trees-font-size-override: var(--sh-font-size-medium);
+  --trees-font-family-override: var(--sh-font-sans);
+
+  --trees-padding-inline-override: var(--sh-space-md);
+  --trees-level-gap-override: 2px;
+  --trees-item-row-gap-override: var(--sh-space-xs);
+  --trees-icon-width-override: 14px;
+
+  --trees-bg-override: var(--sh-surface);
+  --trees-fg-override: var(--sh-text-dim);
+  --trees-fg-muted-override: var(--sh-text-ghost);
+  --trees-bg-muted-override: var(--sh-fill-hover);
+  --trees-border-color-override: var(--sh-line);
+  --trees-selected-bg-override: var(--sh-fill-selected);
+  --trees-selected-fg-override: var(--sh-text);
+  --trees-selected-focused-border-color-override: var(--sh-edge-selected);
+  --trees-focus-ring-color-override: var(--sh-edge-selected);
+  --trees-accent-override: var(--sh-sky);
+}
+
+.sh-editor__truncated {
+  padding: var(--sh-space-sm) var(--sh-space-md);
+  color: var(--sh-text-ghost);
+  font-size: var(--sh-font-size-small);
+  box-shadow: inset 0 var(--sh-hairline) 0 var(--sh-line);
+}
+
+/* ──────────────────────────────────────────────────────────── the document ── */
+
+.sh-editor__panel {
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 0;
+  min-block-size: 0;
+  overflow: hidden;
+  background: var(--sh-surface);
+}
+
+.sh-editor__empty {
+  padding: var(--sh-space-xl);
+  color: var(--sh-text-dim);
+  font-size: var(--sh-font-size-body);
+}
+
+.sh-editor__file {
+  display: flex;
+  flex-direction: column;
+  min-block-size: 0;
+  flex: 1 1 auto;
+}
+
+.sh-editor__file-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-xs);
+  padding: var(--sh-space-xs) var(--sh-space-md);
+  color: var(--sh-text-dim);
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-small);
+  box-shadow: inset 0 calc(-1 * var(--sh-hairline)) 0 var(--sh-line);
+}
+
+.sh-editor__file-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * Unsaved. A dot rather than the word, because the tab strip is the other place
+ * this is said and a dot is what fits in both.
+ *
+ * `wool` is "waiting on YOU, and the ONE action on a surface" — which is what
+ * an unsaved buffer is: ⌘S is the only thing this pane is asking for, and there
+ * is exactly one of these at a time.
+ */
+.sh-editor__dirty {
+  color: var(--sh-wool);
+  font-size: var(--sh-font-size-small);
+  line-height: 1;
+}
+
+/*
+ * The stale-save refusal, and the one message in this pane that has to be read
+ * rather than glanced at: it is the moment the user finds out somebody else's
+ * version is on disk and theirs is not lost.
+ */
+.sh-editor__note {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-sm);
+  padding: var(--sh-space-sm) var(--sh-space-md);
+  background: var(--sh-fill-hover);
+  color: var(--sh-text);
+  font-size: var(--sh-font-size-medium);
+  box-shadow: inset 0 calc(-1 * var(--sh-hairline)) 0 var(--sh-line);
+}
+
+.sh-editor__note button {
+  padding: var(--sh-space-xs) var(--sh-space-sm);
+  border: var(--sh-hairline) solid var(--sh-line);
+  border-radius: var(--sh-radius-sm);
+  background: var(--sh-canvas);
+  color: var(--sh-text);
+  font-family: var(--sh-font-sans);
+  font-size: var(--sh-font-size-medium);
+  cursor: pointer;
+}
+
+/*
+ * The editor and the diff list, at the same metrics — they are the same
+ * package drawing the same file two ways, and a half-point difference between
+ * them reads as a rendering bug rather than as two views.
+ */
+.sh-editor__scroll,
+.sh-editor__changes {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  overflow: auto;
+
+  --diffs-font-size: var(--sh-font-size-medium);
+  --diffs-line-height: 18px;
+  --diffs-gap-block: var(--sh-space-xs);
+  --diffs-gap-inline: var(--sh-space-sm);
+  --diffs-font-family: var(--sh-font-mono);
+  --diffs-header-font-family: var(--sh-font-sans);
+}

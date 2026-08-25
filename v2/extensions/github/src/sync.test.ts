@@ -92,6 +92,9 @@ function harness(
       return Promise.resolve(answer);
     },
     merge: () => Promise.resolve({ ok: true }),
+    // The two writes `sync` never makes: it polls, and opening a PR is a verb.
+    defaultBranch: () => Promise.resolve('main'),
+    createPr: () => Promise.resolve({ ok: true, url: 'https://example.invalid/pr/1' }),
     commit: () => Promise.resolve([]),
     files: () => Promise.resolve([]),
   };

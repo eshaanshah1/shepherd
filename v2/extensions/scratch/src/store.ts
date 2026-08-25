@@ -10,6 +10,13 @@ import { s, type KV } from '@shepherd/sdk';
  */
 export const GC_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
+/** One row of the list — what a tree of notes is drawn from. */
+export interface ScratchListing {
+  readonly id: string;
+  readonly title: string;
+  readonly updatedAt: number;
+}
+
 export interface ScratchDoc {
   readonly text: string;
   readonly updatedAt: number;
@@ -60,6 +67,28 @@ export class ScratchStore {
     this.#kv.set<ScratchDoc>(id, { ...doc, closedAt: now });
   }
 
+  /**
+   * Every LIVE document, newest first.
+   *
+   * The KV is keyed by id and nothing ever needed to enumerate it — a pane
+   * always arrived already holding one. `editor`'s `Notes` root is the first
+   * caller, and the reason this exists.
+   *
+   * Closed rows are OMITTED. Close is a soft delete kept for seven days so that
+   * `closeGroup` cannot lose a buffer (see `GC_MAX_AGE_MS`), but a closed
+   * buffer is not a note you have, and a row that reopens a tombstone is worse
+   * than no row at all.
+   */
+  list(): readonly ScratchListing[] {
+    const rows: ScratchListing[] = [];
+    for (const id of this.#kv.keys()) {
+      const doc = this.read(id);
+      if (doc === undefined || doc.closedAt !== undefined) continue;
+      rows.push({ id, title: titleOf(doc.text), updatedAt: doc.updatedAt });
+    }
+    return rows.sort((left, right) => right.updatedAt - left.updatedAt);
+  }
+
   /** Removes closed rows older than `maxAgeMs`. Returns how many went. */
   collect(now: number, maxAgeMs: number): number {
     let removed = 0;
@@ -74,4 +103,22 @@ export class ScratchStore {
     }
     return removed;
   }
+}
+
+/**
+ * What a note is CALLED in a list.
+ *
+ * The first non-empty line with its heading marks stripped — the same answer
+ * `scratch-pane.tsx`'s `presentation()` gives the tab, for the same reason: a
+ * document names itself in its first line or it has no name at all. Not shared
+ * with that function because it is the halves of two different decisions —
+ * that one also picks a glyph and an action from a parsed skill head, and this
+ * one must stay cheap enough to run over every row.
+ */
+function titleOf(text: string): string {
+  for (const line of text.split('\n')) {
+    const trimmed = line.replace(/^#+\s*/, '').trim();
+    if (trimmed !== '') return trimmed;
+  }
+  return 'untitled';
 }

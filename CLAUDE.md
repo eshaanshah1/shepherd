@@ -47,15 +47,38 @@ fight it.
    a markdown document) landed after that, and then D9's **loose tab** as the
    rail's `Scratchpad` section (ADR 0047): the shells are the HOME root's group, a
    `shell` extension contributes a tree over it, ⌘0 reveals it, and the persisted
-   list D9 asked for turned out to already exist. **M4, the dogfood gate, is
-   next.**
+   list D9 asked for turned out to already exist. The **editor pane** landed
+   after that (ADR 0048): a tab whose subject is a DIRECTORY — `@pierre/trees`'
+   file tree beside `@pierre/diffs`, which turns out to ship a real editor
+   (`/edit`, `<File edit>`) as well as the diff renderer, so a file and its diff
+   are one surface under one theme and no second engine. It saves on **⌘S and
+   refuses a save whose file moved on disk**, because an agent is editing that
+   worktree while you are; and its tree lists ignored FILES (`.env`) while
+   dropping ignored DIRECTORIES (`node_modules/`), which is the line
+   `git ls-files --others --ignored --directory` already draws with a trailing
+   slash. ADR 0049 is the other half: **a scratchpad is a document that has not
+   chosen a path yet**, so `scratch.saveAs` gives it one and the editor's `Notes`
+   root lists the ones without. **M4, the dogfood gate, is next.**
 2. [`docs/superpowers/specs/2026-08-06-ade-minimal-core-sketch.md`](docs/superpowers/specs/2026-08-06-ade-minimal-core-sketch.md)
    — thesis and **every decision** (§7, §7b, §7c the headless-agent seam, §7d presence).
 3. [`docs/superpowers/specs/2026-08-06-ade-v2-core-design.md`](docs/superpowers/specs/2026-08-06-ade-v2-core-design.md)
    — the API and the M0–M4 milestones.
 4. [`docs/superpowers/specs/2026-08-06-architecture-review.md`](docs/superpowers/specs/2026-08-06-architecture-review.md)
    — what v1 got wrong; **its Rebuild checklist is normative for v2**.
-5. ADRs [0021](.claude/adr/0021-v2-store-is-node-sqlite.md)–[0045](.claude/adr/0045-v2-the-apps-path-is-harvested-from-the-login-shell.md).
+5. ADRs [0021](.claude/adr/0021-v2-store-is-node-sqlite.md)–[0049](.claude/adr/0049-v2-a-scratchpad-is-a-document-without-a-path.md).
+   **0048–0049** are the editor's. 0048 is why the save is EXPLICIT and why it
+   can refuse: `scratch` debounces at 400ms and t3code does the same, and both
+   are right for what they hold — a surface with one writer. This one has two, so
+   a read stamps mtime+size and a save whose stamp moved answers `stale` rather
+   than clobbering an agent's work. It also records the ignored-FILE /
+   ignored-DIRECTORY line, why `git diff --no-index` exiting 1 is the SUCCESS
+   case for an untracked file, and — worth reading twice — how 800 green unit
+   tests hid an extension that was registered in `main/index.ts` but had no
+   module in `builtins.ts`, past the very test written for that failure, because
+   that test's list is a third hand-maintained copy. **0049** is the
+   scratchpad's reconciliation, and what it defers: a document-surface
+   contribution point (a third table beside `EXTENSION_PANE_UI`) that a SECOND
+   consumer buys.
    **0045** is the app's `PATH`: startup runs the user's **login shell** once and
    merges its `PATH` into `process.env`, because a Finder-launched `.app` is a
    child of launchd and inherits `/usr/bin:/bin:/usr/sbin:/sbin` — so the same

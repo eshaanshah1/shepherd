@@ -36,6 +36,7 @@ import { claudeCodeManifest } from '@shepherd/ext-claude-code/manifest';
 import { tasksManifest } from '@shepherd/ext-tasks/manifest';
 import { worktreeHookManifest } from '@shepherd/ext-worktree-hook/manifest';
 import { githubManifest } from '@shepherd/ext-github/manifest';
+import { editorManifest } from '@shepherd/ext-editor/manifest';
 import { linksManifest } from '@shepherd/ext-links/manifest';
 import { transcriptsManifest } from '@shepherd/ext-transcripts/manifest';
 import {
@@ -1291,6 +1292,11 @@ void app.whenReady().then(async () => {
     // After `tasks`: both declare that dependency, and the points they register
     // into have to exist before they activate.
     worktreeHookManifest,
+    // Before `github`, which declares it: the registry activates a dependency
+    // before its dependent whatever this order says, and listing them the way
+    // round they actually run is the difference between reading this list and
+    // having to remember that rule.
+    editorManifest,
     githubManifest,
     transcriptsManifest,
     linksManifest,
@@ -1333,6 +1339,11 @@ void app.whenReady().then(async () => {
     // After `tasks`: both declare that dependency, and the points they register
     // into have to exist before they activate.
     worktreeHookManifest,
+    // Before `github`, which declares it: the registry activates a dependency
+    // before its dependent whatever this order says, and listing them the way
+    // round they actually run is the difference between reading this list and
+    // having to remember that rule.
+    editorManifest,
     githubManifest,
     transcriptsManifest,
     linksManifest,

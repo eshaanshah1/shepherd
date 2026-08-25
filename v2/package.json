@@ -27,6 +27,7 @@
     "smoke:m1": "node tooling/scripts/smoke-m1.mjs",
     "smoke:m2": "node tooling/scripts/smoke-m2.mjs",
     "smoke:m3": "node tooling/scripts/smoke-m3.mjs",
+    "smoke:editor": "node tooling/scripts/smoke-editor.mjs",
     "smoke:mirror": "node tooling/scripts/smoke-mirror.mjs",
     "smoke:daemon": "node tooling/scripts/smoke-daemon.mjs",
     "ship": "node tooling/scripts/ship.mjs"

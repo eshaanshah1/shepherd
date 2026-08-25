@@ -19,6 +19,8 @@ import { activate as transcripts } from '@shepherd/ext-transcripts';
 import { TRANSCRIPTS_ID } from '@shepherd/ext-transcripts/manifest';
 import { activate as links } from '@shepherd/ext-links';
 import { LINKS_ID } from '@shepherd/ext-links/manifest';
+import { activate as editor } from '@shepherd/ext-editor';
+import { EDITOR_ID } from '@shepherd/ext-editor/manifest';
 
 /**
  * Which built-ins this build contains, by id.
@@ -49,4 +51,5 @@ export const BUILTIN_MODULES: ReadonlyMap<string, ActivateFn> = new Map<string, 
   [GITHUB_ID, github],
   [TRANSCRIPTS_ID, transcripts],
   [LINKS_ID, links],
+  [EDITOR_ID, editor],
 ]);

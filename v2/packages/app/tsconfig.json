@@ -24,6 +24,7 @@
     { "path": "../ui" },
     { "path": "../platform/darwin" },
     { "path": "../../extensions/diagnostics" },
+    { "path": "../../extensions/editor" },
     { "path": "../../extensions/agents-core" },
     { "path": "../../extensions/claude-code" },
     { "path": "../../extensions/tasks" },

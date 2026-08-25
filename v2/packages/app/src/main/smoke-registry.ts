@@ -72,6 +72,16 @@ export async function runSmoke(
       return runM3Smoke(win, host, kernel);
     }
 
+    case 'editor': {
+      const { runEditorSmoke } = await import('./smoke-editor.ts');
+      if (typeof kernel.controlSocket !== 'string') {
+        return die('the editor smoke needs the control socket');
+      }
+      // Only the control socket: the editor is driven entirely through
+      // commands, so it needs no window handle and no session host.
+      return runEditorSmoke(win, kernel);
+    }
+
     default:
       return die(`unknown smoke '${name}'`);
   }

@@ -50,6 +50,20 @@ export interface GitHubClient {
    * renderer a PR already uses rather than a second one.
    */
   commit(slug: RepoSlug, sha: string): Promise<readonly ChangedFile[]>;
+  /** The branch a PR should be opened against — the repo's own default. */
+  defaultBranch(slug: RepoSlug): Promise<string | null>;
+  /**
+   * Open a pull request.
+   *
+   * The one WRITE here besides `merge`, and it answers the same way: a refusal
+   * is an ordinary outcome carrying GitHub's own words — a branch that was
+   * never pushed, a PR that already exists for it, a base that has gone. Each
+   * of those is something the user can act on, and none of them is a crash.
+   */
+  createPr(
+    slug: RepoSlug,
+    input: { readonly head: string; readonly base: string; readonly title: string; readonly body: string },
+  ): Promise<{ readonly ok: true; readonly url: string } | { readonly ok: false; readonly reason: string }>;
 }
 
 /**
@@ -136,6 +150,33 @@ export function octokitClient(token: string): GitHubClient {
         ...(file.previous_filename === undefined ? {} : { previousPath: file.previous_filename }),
         ...(file.patch === undefined || file.patch === '' ? {} : { patch: file.patch }),
       }));
+    },
+
+    async defaultBranch(slug) {
+      try {
+        const answer = await octokit.rest.repos.get({ owner: slug.owner, repo: slug.repo });
+        return answer.data.default_branch;
+      } catch {
+        // Not knowing the base is "cannot open a PR yet", not a failure worth a
+        // word of its own — the caller says that sentence once.
+        return null;
+      }
+    },
+
+    async createPr(slug, input) {
+      try {
+        const answer = await octokit.rest.pulls.create({
+          owner: slug.owner,
+          repo: slug.repo,
+          head: input.head,
+          base: input.base,
+          title: input.title,
+          body: input.body,
+        });
+        return { ok: true, url: answer.data.html_url };
+      } catch (error: unknown) {
+        return { ok: false, reason: message(error) };
+      }
     },
 
     async merge(slug, number) {

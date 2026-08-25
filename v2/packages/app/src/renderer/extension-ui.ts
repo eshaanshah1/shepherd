@@ -3,6 +3,7 @@ import type { ExtensionPaneProps, ExtensionRowProps, ExtensionViewProps } from '
 import { SessionSearchView, TaskCard, TaskComposer, TranscriptCountRow } from '@shepherd/ext-tasks/ui';
 import { DiagnosticsCard } from '@shepherd/ext-diagnostics/ui';
 import { WorktreeHookEditor } from '@shepherd/ext-worktree-hook/ui';
+import { EditorPane } from '@shepherd/ext-editor/ui';
 import { ReviewPane } from '@shepherd/ext-github/ui';
 import { ScratchPane } from '@shepherd/ext-scratch/ui';
 
@@ -83,6 +84,7 @@ export function resolveExtensionRowUi(
  * list should be says nothing about why.
  */
 export const EXTENSION_PANE_UI: Readonly<Record<string, ComponentType<ExtensionPaneProps>>> = {
+  'editor.workspace': EditorPane,
   'github.review': ReviewPane,
   'scratch.pad': ScratchPane,
 };

@@ -87,3 +87,45 @@ describe('ScratchStore', () => {
     expect(GC_MAX_AGE_MS).toBe(7 * 24 * 60 * 60 * 1000);
   });
 });
+
+describe('ScratchStore.list', () => {
+  it('answers the LIVE documents, newest first', () => {
+    const store = new ScratchStore(fakeKv());
+    store.create('scr_a', 1_000);
+    store.write('scr_a', 'first note', 1_000);
+    store.create('scr_b', 2_000);
+    store.write('scr_b', 'second note', 2_000);
+
+    expect(store.list().map((doc) => doc.id)).toEqual(['scr_b', 'scr_a']);
+  });
+
+  it('omits a closed document', () => {
+    // Close is a SOFT delete kept for seven days so `closeGroup` cannot lose a
+    // buffer — but a closed buffer is not a note you HAVE, and a row that
+    // reopens a tombstone is worse than no row.
+    const store = new ScratchStore(fakeKv());
+    store.create('scr_a', 1_000);
+    store.close('scr_a', 2_000);
+    expect(store.list()).toEqual([]);
+  });
+
+  it('titles a document by its first non-empty line, heading marks stripped', () => {
+    const store = new ScratchStore(fakeKv());
+    store.create('scr_a', 1_000);
+    store.write('scr_a', '\n\n# Deploy checks\n\nbody\n', 1_000);
+    expect(store.list()[0]?.title).toBe('Deploy checks');
+  });
+
+  it('titles an empty document `untitled` rather than leaving a blank row', () => {
+    const store = new ScratchStore(fakeKv());
+    store.create('scr_a', 1_000);
+    expect(store.list()[0]?.title).toBe('untitled');
+  });
+
+  it('carries updatedAt, so a caller can order or age a row itself', () => {
+    const store = new ScratchStore(fakeKv());
+    store.create('scr_a', 1_000);
+    store.write('scr_a', 'x', 5_000);
+    expect(store.list()[0]).toEqual({ id: 'scr_a', title: 'x', updatedAt: 5_000 });
+  });
+});

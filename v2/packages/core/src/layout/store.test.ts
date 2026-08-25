@@ -1429,6 +1429,28 @@ describe('the group commands', () => {
     expect(rows.every((row) => row.group === 'task:t1')).toBe(true);
   });
 
+  /*
+   * Without this field a palette verb cannot act on "the tab I am in": an
+   * extension can find the root holding a PANE it owns, but a command invoked
+   * from ⌘K has no pane to start from.
+   */
+  it('listRoots marks exactly the root the user is on, and follows a switch', async () => {
+    const { registry, store, home } = wiredRoots();
+    store.open('task:t1', {}, { group: 'task:t1' });
+
+    const before = await registry.invoke(LAYOUT_COMMANDS.listRoots, {}, USER);
+    if (!before.ok) throw new Error('listRoots refused');
+    const first = before.value as readonly { root: string; active: boolean }[];
+    expect(first.filter((row) => row.active).map((row) => row.root)).toEqual([String(home)]);
+
+    await registry.invoke(LAYOUT_COMMANDS.switchRoot, { root: 'task:t1' }, USER);
+
+    const after = await registry.invoke(LAYOUT_COMMANDS.listRoots, {}, USER);
+    if (!after.ok) throw new Error('listRoots refused');
+    const second = after.value as readonly { root: string; active: boolean }[];
+    expect(second.filter((row) => row.active).map((row) => row.root)).toEqual(['task:t1']);
+  });
+
   it('listRoots reports the session each tab is showing', async () => {
     const { registry, store } = wiredRoots();
     store.open('task:t1', {}, { group: 'task:t1' });

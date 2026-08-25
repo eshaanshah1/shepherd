@@ -43,6 +43,28 @@ export const SCRATCH_COMMANDS = {
   skillTargets: 'scratch.skillTargets',
   /** Write this buffer to `<target>/.claude/skills/<name>/SKILL.md`. */
   installSkill: 'scratch.installSkill',
+  /**
+   * Every live buffer — what `editor`'s `Notes` root is drawn from.
+   *
+   * The KV is keyed by id and nothing needed to enumerate it before: a pane
+   * always arrived already holding one. Another extension asking "what notes
+   * are there" is the first caller.
+   */
+  list: 'scratch.list',
+  /**
+   * Open, or go to, the tab holding this buffer.
+   *
+   * NOT `open`, which is the ⌘-click-a-link verb and takes a URL. A note is its
+   * own PLACE, and something that lists notes needs a way to send you to one.
+   */
+  reveal: 'scratch.reveal',
+  /**
+   * Give this buffer a path: write it into a repo and close the KV row.
+   *
+   * The moment a note stops being a note. A scratchpad is a document that has
+   * not chosen a path yet; after this it is a file, and `editor` owns it.
+   */
+  saveAs: 'scratch.saveAs',
 } as const;
 
 /**
@@ -94,6 +116,9 @@ export const scratchManifest: Manifest = {
       { id: SCRATCH_COMMANDS.open },
       { id: SCRATCH_COMMANDS.skillTargets },
       { id: SCRATCH_COMMANDS.installSkill, title: 'Scratch: Install Skill' },
+      { id: SCRATCH_COMMANDS.list },
+      { id: SCRATCH_COMMANDS.reveal },
+      { id: SCRATCH_COMMANDS.saveAs, title: 'Scratch: Save to Repo' },
     ],
   },
 };

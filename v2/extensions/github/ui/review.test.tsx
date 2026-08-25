@@ -71,10 +71,29 @@ function answer(prs: readonly Record<string, unknown>[], over: Record<string, un
   };
 }
 
-function draw(prs: readonly Record<string, unknown>[], options: { focused?: boolean; over?: Record<string, unknown> } = {}): void {
+/** One repo with something uncommitted, for the no-PR view. */
+const DIRTY_REPO = {
+  name: 'v2',
+  path: '/task/v2',
+  branch: 'feature',
+  base: 'main',
+  files: [{ path: 'a.ts', status: 'modified', patch: 'diff --git a/a.ts b/a.ts\n' }],
+  refuse: null,
+};
+
+function draw(
+  prs: readonly Record<string, unknown>[],
+  options: {
+    focused?: boolean;
+    over?: Record<string, unknown>;
+    /** What `github.changes` answers — only the no-PR view asks. */
+    changes?: Record<string, unknown>;
+  } = {},
+): void {
   const invoke = async (command: string, args?: unknown): Promise<Result<unknown, { code: string; message: string }>> => {
     calls.push({ command, args });
     if (command === 'github.prs') return { ok: true, value: answer(prs, options.over ?? {}) };
+    if (command === 'github.changes') return { ok: true, value: options.changes ?? { repos: [] } };
     return { ok: true, value: { ok: true } };
   };
   act(() => {
@@ -156,10 +175,46 @@ describe('the home page (7a)', () => {
     expect(host.querySelector('.sh-review__foot')).toBeNull();
   });
 
-  it('says so when there is nothing, and says the two different nothings apart', async () => {
-    draw([], { over: { signedIn: false } });
+  /*
+   * No PR is the state BEFORE one, not an empty page — so the pane shows what
+   * the task has CHANGED, and offers to open the PR from there. It used to draw
+   * "They appear here as soon as one is opened", which was true, useless, and
+   * unreachable: the rail drew no icon for a task with no PR at all.
+   */
+  it('shows the working tree, not an empty page, when there is no PR', async () => {
+    draw([], { changes: { repos: [] } });
     await settle();
-    expect(host.textContent).toContain('Not signed in to GitHub');
+    expect(host.textContent).toContain('No pull request yet');
+  });
+
+  it('still says which nothing it is when GitHub is not signed in', async () => {
+    // Being signed out is a different answer from having no PR, and the create
+    // button must not be offered for it.
+    draw([], { over: { signedIn: false }, changes: { repos: [DIRTY_REPO] } });
+    await settle();
+    expect(host.textContent).toContain('not signed in');
+    expect([...host.querySelectorAll('button')].some((b) => b.textContent?.includes('Create'))).toBe(
+      false,
+    );
+  });
+
+  it('offers Create pull request for a repo that can have one', async () => {
+    draw([], { changes: { repos: [DIRTY_REPO] } });
+    await settle();
+    expect([...host.querySelectorAll('button')].some((b) => b.textContent?.includes('Create'))).toBe(
+      true,
+    );
+  });
+
+  it('gives a REASON rather than a dead button when a repo cannot', async () => {
+    draw([], {
+      changes: { repos: [{ ...DIRTY_REPO, refuse: 'nothing committed on this branch yet' }] },
+    });
+    await settle();
+    expect(host.textContent).toContain('nothing committed');
+    expect([...host.querySelectorAll('button')].some((b) => b.textContent?.includes('Create'))).toBe(
+      false,
+    );
   });
 });
 

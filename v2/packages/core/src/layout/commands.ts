@@ -655,6 +655,7 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
       schema: s.object({ group: s.optional(s.string()) }),
       handler: (args) => {
         const roots = args.group === undefined ? store.roots() : store.rootsInGroup(args.group);
+        const here = activeRoot();
         return roots.map((root) => {
           const pane = store.focused(root);
           const found = pane === null ? null : store.pane(pane);
@@ -662,6 +663,20 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
           return {
             root: String(root),
             group: store.groupOf(root) ?? String(root),
+            /*
+             * "You are here."
+             *
+             * Every other field describes a root; this is the only one that
+             * says which of them the user is looking at, and without it a
+             * palette verb cannot act on "the tab I am in". An extension can
+             * derive the active root for a PANE it owns (walk the list for the
+             * one holding it, the way `scratch` does) — but a command invoked
+             * from ⌘K has no pane to start from, and the alternative was
+             * inventing an answer. Core already knows: `activeRoot` is the same
+             * value `layout.newTab` defaults its group to, so a caller reading
+             * this and a caller passing nothing land in the same place.
+             */
+            active: root === here,
             /*
              * ONE label, resolved HERE.
              *

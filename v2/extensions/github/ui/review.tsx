@@ -6,6 +6,7 @@ import { agoText, readFiles, readReview, type ReviewData } from './review-data.t
 import { ClosedPrRow, PrRow } from './pr-row.tsx';
 import { PrDetail, type PrActions, type WrapHand } from './pr-detail.tsx';
 import { HandMenu, HAND_COPY, HAND_MORE, HAND_NEW_AGENT, type AgentChoice } from './hand-menu.tsx';
+import { WorkingChanges } from './working-changes.tsx';
 
 /**
  * The review tab — every pull request this task has, and then one of them in
@@ -286,7 +287,14 @@ export function ReviewPane({ state, focused, invoke }: ExtensionPaneProps): Reac
           }}
         />
       ) : (
-        <Home data={data} onOpen={setOpenPr} busy={busy} onLand={() => void run('github.land', { task: taskId })} />
+        <Home
+          data={data}
+          taskId={taskId}
+          invoke={invoke}
+          onOpen={setOpenPr}
+          busy={busy}
+          onLand={() => void run('github.land', { task: taskId })}
+        />
       )}
     </div>
   );
@@ -380,11 +388,15 @@ const positionOf = (selected: PullRequest | undefined, data: ReviewData | null):
 
 function Home({
   data,
+  taskId,
+  invoke,
   onOpen,
   busy,
   onLand,
 }: {
   readonly data: ReviewData;
+  readonly taskId: string;
+  readonly invoke: ExtensionPaneProps['invoke'];
   readonly onOpen: (key: string) => void;
   readonly busy: boolean;
   readonly onLand: () => void;
@@ -401,11 +413,15 @@ function Home({
   const repoOrder = [...new Set(ordered.map((pr) => pr.repo))];
 
   if (data.open.length === 0 && data.closed.length === 0) {
-    return (
-      <Empty hint={data.signedIn ? 'They appear here as soon as one is opened.' : 'Run gh auth login, then sync.'}>
-        {data.signedIn ? 'No pull requests on this branch yet.' : 'Not signed in to GitHub.'}
-      </Empty>
-    );
+    /*
+     * No pull request is not an empty page — it is the state BEFORE one, and
+     * what you want to see there is what you have changed.
+     *
+     * This used to be an `Empty` reading "They appear here as soon as one is
+     * opened", which was true and useless: it was also unreachable, because the
+     * rail drew no icon for a task with no PR. Both halves changed together.
+     */
+    return <WorkingChanges task={taskId} signedIn={data.signedIn} invoke={invoke} />;
   }
 
   return (

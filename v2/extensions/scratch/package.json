@@ -87,6 +87,16 @@
         {
           "id": "scratch.installSkill",
           "title": "Scratch: Install Skill"
+        },
+        {
+          "id": "scratch.list"
+        },
+        {
+          "id": "scratch.reveal"
+        },
+        {
+          "id": "scratch.saveAs",
+          "title": "Scratch: Save to Repo"
         }
       ]
     },

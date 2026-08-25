@@ -4,6 +4,7 @@ import { GC_MAX_AGE_MS, ScratchStore } from './store.ts';
 import { SCRATCH_COMMANDS, SCRATCH_KEY, SCRATCH_VIEWS } from './manifest.ts';
 import { readSkill } from './skill.ts';
 import { installSkill } from './install.ts';
+import { saveAs } from './save-as.ts';
 import { CLAUDE_CODE, isProvider, skillsDir } from './provider.ts';
 import { findTarget, skillTargets, type RepoLike } from './targets.ts';
 
@@ -16,6 +17,9 @@ const LAYOUT_NEW_TAB = 'layout.newTab';
 
 /** `layout.listRoots` — the read an extension makes, for the same reason. */
 const LAYOUT_LIST_ROOTS = 'layout.listRoots';
+
+/** `layout.switchRoot` — how `scratch.reveal` goes to a tab already open. */
+const LAYOUT_SWITCH_ROOT = 'layout.switchRoot';
 
 /** `tasks`' id, re-stated: only TYPES cross between extensions (`boundaries.js`). */
 const TASKS = 'shepherd.tasks';
@@ -40,6 +44,43 @@ function rootHolding(roots: unknown, pane: string): string | undefined {
     if (holds) return row.root;
   }
   return undefined;
+}
+
+/**
+ * The root whose tree holds a pad on this buffer, if one is open.
+ *
+ * `unknown` all the way down: this crossed a port, and `ok` says a call
+ * succeeded rather than that a value has a shape. A row that does not read is
+ * skipped — an invented root would switch the user to somebody else's tab.
+ */
+function rootShowingScratch(roots: unknown, id: string): string | undefined {
+  if (!Array.isArray(roots)) return undefined;
+  for (const entry of roots) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const row = entry as { root?: unknown; tree?: unknown };
+    if (typeof row.root !== 'string') continue;
+    if (treeHoldsScratch(row.tree, id)) return row.root;
+  }
+  return undefined;
+}
+
+function treeHoldsScratch(node: unknown, id: string): boolean {
+  if (typeof node !== 'object' || node === null) return false;
+  const shape = node as { kind?: unknown; pane?: unknown; first?: unknown; second?: unknown };
+  if (shape.kind === 'leaf') {
+    const pane = shape.pane;
+    if (typeof pane !== 'object' || pane === null) return false;
+    const view = (pane as { view?: unknown }).view;
+    if (typeof view !== 'object' || view === null) return false;
+    const held = view as { type?: unknown; state?: unknown };
+    if (held.type !== SCRATCH_VIEWS.pad) return false;
+    const state = held.state;
+    return typeof state === 'object' && state !== null && (state as { id?: unknown }).id === id;
+  }
+  if (shape.kind === 'split') {
+    return treeHoldsScratch(shape.first, id) || treeHoldsScratch(shape.second, id);
+  }
+  return false;
 }
 
 /** What the tab strip calls a scratch pane. */
@@ -137,6 +178,75 @@ export const activate: ActivateFn = (ctx, api) => {
           title: TAB_TITLE,
         });
         return created.ok ? { id } : { ok: false, reason: created.error.message };
+      },
+    }),
+  );
+
+  /*
+   * What notes exist, and how to get to one.
+   *
+   * Two verbs rather than one because they answer different questions and only
+   * the second touches the layout: `editor` draws its `Notes` root from `list`
+   * on every tree refresh, and calls `reveal` once, when a row is clicked.
+   */
+  ctx.subscriptions.push(
+    commands.register(SCRATCH_COMMANDS.list, {
+      schema: s.nothing(),
+      handler: () => ({ docs: store.list() }),
+    }),
+  );
+
+  ctx.subscriptions.push(
+    commands.register(SCRATCH_COMMANDS.reveal, {
+      permission: 'layout',
+      schema: s.object({ id: s.string() }),
+      /**
+       * Go to this buffer's tab, opening one if it has none.
+       *
+       * The open tab is found by asking the LAYOUT what it holds rather than by
+       * remembering what we opened — a record of our own would be wrong the
+       * moment the user closed the tab, and wrong again across a relaunch. The
+       * same shape `scratch.create` uses to open one, and the same rule
+       * `github.review` established.
+       */
+      handler: async (args) => {
+        if (store.read(args.id) === undefined) return { ok: false, reason: 'no such scratch' };
+
+        const listed = await commands.invoke(LAYOUT_LIST_ROOTS, {});
+        const on = listed.ok ? rootShowingScratch(listed.value, args.id) : undefined;
+        if (on !== undefined) {
+          const switched = await commands.invoke(LAYOUT_SWITCH_ROOT, { root: on });
+          if (switched.ok) return { ok: true, opened: false };
+        }
+
+        const created = await commands.invoke(LAYOUT_NEW_TAB, {
+          view: { type: SCRATCH_VIEWS.pad, state: { id: args.id } },
+          title: TAB_TITLE,
+        });
+        return created.ok ? { ok: true, opened: true } : { ok: false, reason: created.error.message };
+      },
+    }),
+  );
+
+  ctx.subscriptions.push(
+    commands.register(SCRATCH_COMMANDS.saveAs, {
+      title: 'Scratch: Save to Repo',
+      schema: s.object({ id: s.string(), root: s.string(), path: s.string() }),
+      /**
+       * The note becomes a file.
+       *
+       * The KV row goes only AFTER the file exists. Dropping it first and then
+       * failing the write would lose the note entirely, which is the one
+       * outcome this verb must not have — and `close` rather than `delete`,
+       * so even a mistake here is recoverable for seven days.
+       */
+      handler: (args) => {
+        const doc = store.read(args.id);
+        if (doc === undefined) return { ok: false, reason: 'no such scratch' };
+        const wrote = saveAs(args.root, args.path, doc.text);
+        if (!wrote.ok) return wrote;
+        store.close(args.id, ctx.clock.now());
+        return { ok: true };
       },
     }),
   );

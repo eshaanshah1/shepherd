@@ -41,6 +41,9 @@ describe('the scratch manifest', () => {
       SCRATCH_COMMANDS.open,
       SCRATCH_COMMANDS.skillTargets,
       SCRATCH_COMMANDS.installSkill,
+      SCRATCH_COMMANDS.list,
+      SCRATCH_COMMANDS.reveal,
+      SCRATCH_COMMANDS.saveAs,
     ]);
   });
 
@@ -54,13 +57,20 @@ describe('the scratch manifest', () => {
   });
 
   /*
-   * Two of the seven are verbs a person runs; the rest are the pane talking to its
-   * own service half. A title is what puts a command in ⌘K, so an untitled one is
-   * a deliberate absence rather than an oversight.
+   * Three of the ten are verbs a person runs; the rest are a pane — or another
+   * extension — talking to this service half. A title is what puts a command in
+   * ⌘K, so an untitled one is a deliberate absence rather than an oversight.
+   *
+   * `list` and `reveal` are untitled because they are `editor`'s: one is a read
+   * with no effect, and the other only makes sense with an id nobody can type.
    */
   it('titles only the commands a person would look for', () => {
     const titled = scratchManifest.contributes?.commands?.filter((command) => command.title !== undefined);
-    expect(titled?.map((command) => command.id)).toEqual([SCRATCH_COMMANDS.create, SCRATCH_COMMANDS.installSkill]);
+    expect(titled?.map((command) => command.id)).toEqual([
+      SCRATCH_COMMANDS.create,
+      SCRATCH_COMMANDS.installSkill,
+      SCRATCH_COMMANDS.saveAs,
+    ]);
   });
 
   it('asks for layout, because creating a scratch opens a tab', () => {

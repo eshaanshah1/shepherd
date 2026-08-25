@@ -9,6 +9,7 @@ import { worktreeHookManifest } from '@shepherd/ext-worktree-hook/manifest';
 import { githubManifest } from '@shepherd/ext-github/manifest';
 import { transcriptsManifest } from '@shepherd/ext-transcripts/manifest';
 import { linksManifest } from '@shepherd/ext-links/manifest';
+import { editorManifest } from '@shepherd/ext-editor/manifest';
 import { BUILTIN_MODULES } from './builtins.ts';
 
 /**
@@ -24,6 +25,13 @@ import { BUILTIN_MODULES } from './builtins.ts';
  * The manifest list here is deliberately a literal rather than an import from
  * `main/index.ts`: the loops there are inline, so there is nothing to import,
  * and a test that derived both sides from one source would pass no matter what.
+ *
+ * **The cost of that, paid once already:** this list is a THIRD hand-maintained
+ * copy, so an extension added to neither `builtins.ts` nor here passes. That is
+ * exactly how `shepherd.editor` shipped its first build with no module compiled
+ * in — the same failure as `worktree-hook`, through the one door this test left
+ * open. If you are adding an extension, the three places are `main/index.ts`
+ * (twice), `builtins.ts`, and this literal.
  */
 
 const REGISTERED = [
@@ -37,6 +45,7 @@ const REGISTERED = [
   githubManifest,
   transcriptsManifest,
   linksManifest,
+  editorManifest,
 ];
 
 describe('the built-in module table', () => {
