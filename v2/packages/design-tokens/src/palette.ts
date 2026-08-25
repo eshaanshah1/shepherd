@@ -21,10 +21,19 @@
 //     one step BRIGHTER than its canvas; a light one is one step DARKER. That is
 //     why these are named for the surface they are, not `ramp-0…n` — an index
 //     would assert an order that only one mode has.
-//   - **The five hues each have one job** (§2), and a sixth is not a decision
-//     this file gets to make. When you are tempted to add one, you are usually
-//     missing a luminance step — and the steps below are the ones the screens
-//     actually use, read off the prototypes rather than invented.
+//   - **Every hue has one job** (§2), and adding one is not a decision this file
+//     gets to make alone. When you are tempted to, you are usually missing a
+//     luminance step — and the steps below are the ones the screens actually use,
+//     read off the prototypes rather than invented.
+//
+//     §2's five became seven exactly once, and the bar it had to clear is the bar
+//     the next one has to clear: a surface stopped being able to say what it knew.
+//     The PR fact went from hover-revealed to drawn at rest, and five states that
+//     the tooltip used to separate had to separate by sight — with `running`
+//     borrowing `sky` from `open` and `merged` sitting in grey ink beside work
+//     that had not started. `honey` and `plum` are those two, and their `notFor`
+//     clauses in `roles.ts` are the fence: honey is in-flight and not a warning,
+//     plum is terminal and not a second way of saying quiet.
 
 export type ThemeMode = 'dark' | 'light';
 
@@ -51,12 +60,21 @@ export type ColorToken =
   | 'inkFaint'
   | 'inkMute'
   | 'inkGhost'
-  // The four hues that carry a job. (`wool` is `ink`; see the type below.)
+  // The hues that carry a job. (`wool` is `ink`; see the type below.)
+  //
+  // `honey` and `plum` arrived with the always-drawn PR fact: five states that
+  // have to separate at rest need five hues, and before them `running` borrowed
+  // `sky` while `merged` was left as grey ink. Their `notFor` clauses in
+  // `roles.ts` are what keep them from becoming a warning colour and a second
+  // way of saying quiet.
   | 'sky'
   | 'skyDim'
   | 'grass'
   | 'clay'
   | 'red'
+  | 'honey'
+  | 'plum'
+  | 'git'
   // Repo identity — a sixth axis with its own fixed marks.
   | 'repoSky'
   | 'repoStone'
@@ -127,6 +145,33 @@ export const palette: Readonly<Record<ColorToken, TokenSpec>> = {
   grass: { dark: '#86C06A', light: '#3F7A50', job: 'passed · done · git added' },
   clay: { dark: '#C4796B', light: '#A8483A', job: 'git removed' },
   red: { dark: '#E05C4F', light: '#C4392C', job: 'a run that failed' },
+  // **Not a warning.** `honey` means IN FLIGHT — a check that is running, a gate
+  // that has reported it needs a click. The distinction the palette has always
+  // refused is "this might be bad"; the one it now admits is "this is not
+  // finished", which is a fact about time rather than a hedge about severity.
+  //
+  // It exists because the PR fact went from hover-revealed to always-drawn, and
+  // five states scanning at rest need five hues. Before this, `running` borrowed
+  // `sky` — which left "checks in flight" and "nobody has looked yet" the same
+  // colour, the two states you most need to tell apart.
+  honey: { dark: '#D9A441', light: '#9A6F1A', job: 'in flight · pending on you' },
+  // Terminal, and the only hue that is. Merged work read `inkMute` before this,
+  // which made finished and unstarted the same grey.
+  plum: { dark: '#A47FD0', light: '#6B4A9E', job: 'merged · the one terminal state' },
+  /*
+   * **A BRAND colour, and the only one in here.** Git's own orange, on git's own
+   * mark and nowhere else.
+   *
+   * It does not carry a state and it is not competing with the five that do —
+   * which is the exemption it needs, because §2's rule is that a saturated value
+   * without a job is banned and "identity" was not previously a job. It is the
+   * same argument the repo-identity marks make one block down: a sixth axis,
+   * sharing no meaning with the states.
+   *
+   * The light value is darkened from git's `#F05032`, which sits at about 3:1 on
+   * paper and fails a 13px glyph.
+   */
+  git: { dark: '#F05032', light: '#C43B1D', job: 'git’s own mark, in git’s own colour' },
 
   // ── repo identity ───────────────────────────────────────────────────────────
   //

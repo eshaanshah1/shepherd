@@ -56,3 +56,29 @@ export function allRules(): CSSStyleRule[] {
 export function rulesMentioning(needle: string): CSSStyleRule[] {
   return allRules().filter((rule) => rule.selectorText.includes(needle));
 }
+
+/**
+ * The frames of one `@keyframes`, which `allRules` cannot reach.
+ *
+ * A keyframes block looks like a grouping rule to the walk above — it has
+ * `cssRules` — so it is recursed into, and the percentage rules inside carry
+ * `keyText` rather than `selectorText`, matching neither branch. They are
+ * silently dropped, and an invariant about what an animation DECLARES had no
+ * way to be asserted.
+ *
+ * It has one: the working mark's off beat is a palette token rather than an
+ * `opacity`, because an opacity over a surface is a colour in no palette and a
+ * different colour again in light mode. That is exactly the class of thing this
+ * file exists to pin, and it lived in a keyframe where nothing could see it.
+ */
+export function keyframesNamed(name: string): CSSKeyframeRule[] {
+  const found: CSSKeyframeRule[] = [];
+  for (const sheet of Array.from(document.styleSheets)) {
+    for (const rule of Array.from(sheet.cssRules)) {
+      const frames = rule as CSSKeyframesRule;
+      if (frames.name !== name || frames.cssRules === undefined) continue;
+      for (const frame of Array.from(frames.cssRules)) found.push(frame as CSSKeyframeRule);
+    }
+  }
+  return found;
+}

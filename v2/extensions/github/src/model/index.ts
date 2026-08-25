@@ -19,6 +19,7 @@ export {
   reviewSaid,
   rollUp,
   rollUpSaid,
+  REASONS,
   stackLabel,
   stackOf,
   stateWord,

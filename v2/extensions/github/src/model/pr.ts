@@ -22,8 +22,22 @@
  */
 export type PrState = 'draft' | 'open' | 'merged' | 'closed';
 
-/** How a check ended, reduced from the several vocabularies GitHub uses. */
-export type CheckState = 'passed' | 'failed' | 'running' | 'skipped';
+/**
+ * How a check ended, reduced from the several vocabularies GitHub uses.
+ *
+ * **`queued` and `running` are two states because a manual check makes them
+ * two.** This was one — anything not `COMPLETED` was `running` — and a repo
+ * whose required checks are triggered by hand therefore said `checks running`
+ * for as long as the PR was open, with nothing running. `IN_PROGRESS` is a
+ * runner executing; `QUEUED`/`WAITING`/`REQUESTED` is a job that may never
+ * start, and a state nothing will clear must not drive a colour.
+ *
+ * **`blocked` is `ACTION_REQUIRED`**, which used to sit in `skipped`. It is a
+ * COMPLETED conclusion — GitHub finished and reported that a human must act —
+ * so unlike a queued job it is an affirmative signal with a subject, and it does
+ * clear once you clear it.
+ */
+export type CheckState = 'passed' | 'failed' | 'running' | 'queued' | 'blocked' | 'skipped';
 
 export interface CheckRun {
   readonly name: string;
@@ -221,7 +235,12 @@ export interface CheckCount {
   readonly total: number;
   readonly passed: number;
   readonly failed: number;
+  /** A runner is executing. NOT a job sitting in the queue — see `queued`. */
   readonly running: number;
+  /** Accepted but not started. May never start; nothing here clears itself. */
+  readonly queued: number;
+  /** `ACTION_REQUIRED` — finished, and waiting on a human at GitHub. */
+  readonly blocked: number;
 }
 
 /**
@@ -238,6 +257,8 @@ export function countChecks(checks: readonly CheckRun[]): CheckCount {
     passed: counted.filter((check) => check.state === 'passed').length,
     failed: counted.filter((check) => check.state === 'failed').length,
     running: counted.filter((check) => check.state === 'running').length,
+    queued: counted.filter((check) => check.state === 'queued').length,
+    blocked: counted.filter((check) => check.state === 'blocked').length,
   };
 }
 
@@ -251,10 +272,13 @@ export const firstFailure = (pr: PullRequest): CheckRun | undefined =>
  * How loud a fact is, in words the palette can resolve.
  *
  * Never a colour and never a hex: a contributed surface supplies data and a
- * token NAME (§7). Four tones because the design has four — the failure, the
- * good outcome, the ordinary fact and the thing that is not asking for anything.
+ * token NAME (§7). The failure, the good outcome, the ordinary fact, the thing
+ * that is not asking for anything — and two the always-drawn PR glyph added:
+ * `pending` (in flight; it will clear itself) and `done` (merged, the one
+ * terminal state). They are named for the JOB, not the hue, which is what keeps
+ * an extension from reaching for a colour by the back door.
  */
-export type Tone = 'negative' | 'positive' | 'neutral' | 'quiet';
+export type Tone = 'negative' | 'positive' | 'neutral' | 'pending' | 'done' | 'quiet';
 
 export interface Said {
   readonly text: string;
@@ -273,9 +297,16 @@ export interface Said {
  *   3. a check failed — the only state that names the check, because "1 check
  *      failed" sends you to the PR to find out which
  *   4. changes were requested — a person is waiting
- *   5. checks are still running
- *   6. it is approved
- *   7. none of the above: it is open and nobody has looked
+ *   5. a check finished asking for a human — the gate, and it names itself
+ *   6. checks are still running
+ *   7. it is approved
+ *   8. none of the above: it is open and nobody has looked
+ *
+ * **Queued checks appear nowhere in that order**, deliberately. A job that has
+ * not started has reported nothing, and on a repo whose checks are triggered by
+ * hand it never will — so it is drawn as the difference between `passed` and
+ * `total` (`1 of 3 checks`) and given no phrase of its own. A phrase that never
+ * changes is one you stop reading, and this one used to say `checks running`.
  *
  * 3 above 4 is deliberate and is the one worth arguing about. A reviewer's
  * comment is the more human signal, but a red check is the one that blocks the
@@ -292,7 +323,13 @@ export function stateWord(pr: PullRequest): Said {
   if (pr.changesRequested.length > 0) return { text: 'changes requested', tone: 'negative' };
 
   const counts = countChecks(pr.checks);
-  if (counts.running > 0) return { text: 'checks running', tone: 'neutral' };
+  if (counts.blocked > 0) {
+    const gate = pr.checks.find((check) => check.state === 'blocked');
+    // Named, for `firstFailure`'s reason: "a check needs you" sends you to the
+    // PR to find out which one, and the name is the whole answer.
+    return { text: `${gate?.name ?? 'a check'} needs you`, tone: 'pending' };
+  }
+  if (counts.running > 0) return { text: 'checks running', tone: 'pending' };
   if (pr.approvals.length > 0) return { text: 'approved', tone: 'positive' };
   return { text: 'open', tone: 'neutral' };
 }
@@ -471,15 +508,42 @@ export function blockedBy(prs: readonly PullRequest[]): PullRequest | null {
  * PRs are all merged is `merged`, and one merged PR among four open ones says
  * nothing about the task.
  */
-export type TaskPrState = 'failed' | 'waiting' | 'running' | 'approved' | 'open' | 'merged' | 'none';
+export type TaskPrState =
+  | 'failed'
+  | 'waiting'
+  | 'blocked'
+  | 'running'
+  | 'approved'
+  | 'open'
+  | 'merged'
+  | 'closed'
+  | 'none';
 
 export function rollUp(prs: readonly PullRequest[]): TaskPrState {
   if (prs.length === 0) return 'none';
   const live = prs.filter(isLive);
-  if (live.length === 0) return prs.some((pr) => pr.state === 'merged') ? 'merged' : 'none';
+  if (live.length === 0) {
+    if (prs.some((pr) => pr.state === 'merged')) return 'merged';
+    // Every PR closed and none merged. It used to answer `none`, which drew no
+    // glyph at all and made "this task's work was abandoned" look identical to
+    // "this task has no PRs" — the one distinction a record is for.
+    return prs.some((pr) => pr.state === 'closed') ? 'closed' : 'none';
+  }
 
   if (live.some((pr) => firstFailure(pr) !== undefined)) return 'failed';
   if (live.some((pr) => pr.changesRequested.length > 0)) return 'waiting';
+  /*
+   * A gate above a running check, for `stateWord`'s reason one level up: both
+   * are pending, and the one you can DO something about wins the slot.
+   */
+  if (live.some((pr) => countChecks(pr.checks).blocked > 0)) return 'blocked';
+  /*
+   * `running`, never `queued`. A job that has not started may never start, and
+   * this used to be `status !== 'COMPLETED'` — so a repo with hand-triggered
+   * required checks sat at "checks running" for the life of every PR. See
+   * `CheckState`; the fix is in `query.ts` and this line is the reason it
+   * matters.
+   */
   if (live.some((pr) => countChecks(pr.checks).running > 0)) return 'running';
   // Approved only when EVERY live one is: "this task is approved" is a claim
   // about the task, and one approved PR beside two unreviewed ones is not it.
@@ -494,6 +558,15 @@ export function rollUpSaid(prs: readonly PullRequest[]): string | null {
   const live = prs.filter(isLive);
   if (live.length === 0) {
     const merged = prs.filter((pr) => pr.state === 'merged');
+    // `0 PRs merged` was reachable the moment `closed` became a state of its
+    // own: nothing live and nothing merged is a task whose PRs were all closed,
+    // and the merged branch below would have counted zero of them.
+    if (merged.length === 0) {
+      const closed = prs.filter((pr) => pr.state === 'closed');
+      return closed.length === 1 && closed[0] !== undefined
+        ? `#${closed[0].number} closed unmerged`
+        : `${closed.length} PRs closed unmerged`;
+    }
     return merged.length === 1 && merged[0] !== undefined
       ? `#${merged[0].number} merged`
       : `${merged.length} PRs merged`;
@@ -502,11 +575,22 @@ export function rollUpSaid(prs: readonly PullRequest[]): string | null {
   return `${count} · ${REASONS[state]}`;
 }
 
-const REASONS: Readonly<Record<Exclude<TaskPrState, 'none'>, string>> = {
+/**
+ * Why the glyph is the colour it is, in words — the tail of its tooltip and of
+ * its accessible name.
+ *
+ * Exported because it is the half of §5 that carries the two states the glyph
+ * cannot separate on its own: `failed`/`waiting` share a shape and a tone, as do
+ * `blocked`/`running`, and these sentences are what tell them apart. A test
+ * asserts they are all distinct for exactly that reason.
+ */
+export const REASONS: Readonly<Record<Exclude<TaskPrState, 'none'>, string>> = {
   failed: 'a check failed',
   waiting: 'changes requested',
+  blocked: 'a check needs you',
   running: 'checks running',
   approved: 'approved',
   open: 'no review yet',
   merged: 'merged',
+  closed: 'closed unmerged',
 };

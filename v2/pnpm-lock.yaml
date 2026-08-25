@@ -265,6 +265,9 @@ importers:
       '@pierre/trees':
         specifier: 'catalog:'
         version: 1.0.0-beta.6(@pierre/theme@2.0.0)(@shikijs/themes@4.4.3)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(shiki@4.4.3)
+      '@shepherd/ext-editor':
+        specifier: workspace:*
+        version: link:../editor
       '@shepherd/ext-tasks':
         specifier: workspace:*
         version: link:../tasks

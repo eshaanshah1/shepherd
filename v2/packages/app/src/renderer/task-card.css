@@ -11,13 +11,49 @@
  */
 
 .sh-task-card {
+  /*
+   * The title's left edge, as one declaration.
+   *
+   * What is local is that the second line, the suite row and the foot all start
+   * where the TITLE starts rather than where the mark does. A line beginning in
+   * the mark's column would put text where the eye goes looking for state.
+   *
+   * The mark's own width is a TOKEN, not a number copied in. It was written here
+   * as `12px`, which is precisely what this file's header forbids — "the marks'
+   * own dimensions live in `@shepherd/ui` and are not repeated here" — and the
+   * copy would have gone stale silently the day the mark changed size.
+   */
+  --sh-task-gutter: calc(var(--sh-mark-slot) + var(--sh-space-md));
+  /*
+   * The second line's height, fixed rather than left to its tallest child: it
+   * carries the row's verb on some rows and only mono text on others, and a line
+   * that measured its content would make a task's height depend on whether it
+   * has an action.
+   *
+   * `line-height`, not a number of its own. It was `18px` — a literal, which §7
+   * does not allow anywhere outside the token package, and which was also just
+   * wrong: the verb is a `sm` control at 20px, so an 18px line had it overflowing
+   * by 2 and sitting a shade low against the glyph above it. The two faults were
+   * the same fault.
+   */
+  --sh-task-meta: var(--sh-line-height);
+
   display: flex;
   flex-direction: column;
   gap: var(--sh-space-md);
   padding: var(--sh-space-lg) var(--sh-space-lg);
+  /* The containing block for the trailing column, which spans the title's line
+     and the meta line under it — see `__trail`. */
+  position: relative;
   border: var(--sh-hairline) solid var(--sh-line);
   border-radius: var(--sh-radius-card);
   background: var(--sh-surface);
+  /*
+   * The whole card is the click target — see the component. The cursor stays the
+   * arrow: §10 refuses a pointer cursor on app chrome, and a rail row is chrome
+   * rather than a link.
+   */
+  cursor: default;
   /* Colour only, and never `all` — a card that animated its height would move
      the row under the cursor every time an agent finished a turn. */
   transition:
@@ -63,29 +99,26 @@
   display: flex;
   align-items: center;
   gap: var(--sh-space-md);
-  /* The containing block for the trailing action, which is taken OUT of this
-     flex line so it stops charging the title for space it does not use at rest —
-     see the trailing cell below. */
+  /* No longer the trailing column's containing block — the CARD is, so the verb
+     can sit under the glyph rather than beside it. Kept `relative` because the
+     head still owns its own stacking for the title's truncation. */
   position: relative;
-  /* A bare control: the card supplies the surface, and a nested box with its own
-     background would be a box inside a box. (It is a div with `role="button"` —
-     see the component — so these resets are belt-and-braces rather than the
-     UA-stylesheet undo they were.) */
-  padding: 0;
-  border: 0;
-  background: none;
-  font: inherit;
-  color: inherit;
-  text-align: start;
-  cursor: default;
 }
 
-.sh-task-card__head:focus-visible {
-  /* An outline, not a border, so a focused card is the same SIZE as an
-     unfocused one. */
+/*
+ * **The focus ring is the CARD's**, because the card is the target.
+ *
+ * It sat on the head, which was the only clickable part — so the ring drew round
+ * the title line and left the rest of the card outside it, describing a hit area
+ * that was real then and is not now. A focus ring that outlines less than what
+ * Enter will activate is a ring that lies about where you are.
+ *
+ * An outline rather than a border, so a focused card is the same SIZE as an
+ * unfocused one, and the card's own radius rather than a smaller one.
+ */
+.sh-task-card:focus-visible {
   outline: 2px solid var(--sh-focus-ring);
   outline-offset: 2px;
-  border-radius: var(--sh-radius-sm);
 }
 
 .sh-task-card__title {
@@ -94,44 +127,122 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /*
+   * **The loudest thing on the card, and by a clear step.**
+   *
+   * A row is scanned by its title and read by everything else, so the two lines
+   * must not be siblings in weight — a card whose second line competes with its
+   * first is one you have to parse rather than glance at. `text` over
+   * `text-mute`, 600 over 400, `card` over `nano`: three axes, all pointing the
+   * same way, which is what makes the hierarchy survive a squint.
+   */
   font-size: var(--sh-font-size-card);
-  font-weight: 500;
-  letter-spacing: -0.01em;
-  color: var(--sh-text-dim);
-}
-
-.sh-task-card[data-selected] .sh-task-card__title,
-.sh-task-card[data-open] .sh-task-card__title {
   font-weight: 600;
+  letter-spacing: -0.01em;
   color: var(--sh-text);
 }
 
-
-/* ── the sentence ──────────────────────────────────────────────────────────── */
-
-.sh-task-card__summary {
-  margin: 0;
-  font-size: var(--sh-font-size-body);
-  line-height: var(--sh-line-height);
-  color: var(--sh-text-mute);
-  /* Two lines, then ellipsis. One sentence of what is happening is the brief;
-     a card that grew with its summary would break the one-height rule through
-     a side door. */
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+/*
+ * Selection is a fill and an edge (the card's own), so the title has nothing
+ * left to say here — it is already at the top of its own scale. Kept as a rule
+ * with no weight change so the intent is on the record rather than looking like
+ * an omission.
+ */
+.sh-task-card[data-selected] .sh-task-card__title,
+.sh-task-card[data-open] .sh-task-card__title {
+  color: var(--sh-text);
 }
 
-/* ── the diff line: NUMBERS, not a bar ─────────────────────────────────────── */
+/*
+ * ── the sentence ──────────────────────────────────────────────────────────
+ *
+ * What the agent last said, or — while it is working — what it was asked to do.
+ * It shares the meta line's changing slot with the provisioning step, and is
+ * styled with it rather than like the paragraph it used to be: this moved from
+ * its own two-line block under the title onto the second line, because the two
+ * were the same idea drawn twice at different sizes.
+ *
+ * ONE line, ellipsised. Two lines was right for a paragraph and is wrong for
+ * this: a summary that needs a second line is not a summary, and the rail's whole
+ * argument is that a row you scan must be one height.
+ */
+.sh-task-card__summary,
+.sh-task-card__stage {
+  flex: 0 1 auto;
+  min-inline-size: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: var(--sh-font-size-nano);
+  color: var(--sh-text-mute);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 
-.sh-task-card__diff {
+/*
+ * ── the meta line ─────────────────────────────────────────────────────────
+ *
+ * A live row's second line, drawn when it has something on it. See the component
+ * for why it is not unconditional: it shipped that way on a §10 argument, and a
+ * rail of titles each trailed by an empty reserved strip is what that cost. It
+ * is what the rail went from 264px to 320px to pay for.
+ *
+ * `min-inline-size: 0` on a flex child that ellipsises, which is every one of
+ * them — without it the line refuses to shrink below its content and the card
+ * grows a horizontal overflow instead of truncating.
+ */
+.sh-task-card__meta {
   display: flex;
   align-items: center;
+  gap: var(--sh-space-md);
+  min-inline-size: 0;
+  /* Aligned under the title, not under the mark. The mark's slot is a column the
+     eye uses to find state; a second line starting in it would put the meta text
+     where a mark belongs. */
+  padding-inline-start: var(--sh-task-gutter);
+  /* Fixed rather than left to its tallest child: it carries a glyph on some rows
+     and only mono text on others, and a line that measured its content would
+     make a task's height depend on whether it has a pull request. */
+  block-size: var(--sh-task-meta);
+  /*
+   * **The head and this are ONE two-line block**, so the card's own gap does not
+   * belong between them.
+   *
+   * Two things were pushing them apart and each is correct alone. The card gaps
+   * its children by `md`, which is the right distance between a title and a
+   * question — separate things that happen to be stacked. A dense head is
+   * `--sh-row-height`, which is the right height for a row whose whole content
+   * is one title centred in it. Together they put 9px of nothing under a title
+   * floating in 34px, and the pair read as two rows rather than as one task
+   * saying two things.
+   *
+   * `calc(sm - md)` rather than a literal negative: the number is whatever the
+   * two tokens say it is, so a density change moves it and it cannot drift.
+   *
+   * It was `hair - md`, which closed the pair to 2px. That was right when the two
+   * lines were only words — and wrong once each of them carried a glyph at its
+   * right edge, because two marks 2px apart read as one smudged control rather
+   * than as two things you can do. The text sets the floor for this gap; the
+   * marks set the ceiling, and the marks need more.
+   */
+  margin-block-start: calc(var(--sh-space-sm) - var(--sh-space-md));
+}
+
+/* The other half of it: there is no single line left to centre. */
+.sh-task-card[data-dense]:has(> .sh-task-card__meta) .sh-task-card__head {
+  block-size: auto;
+}
+
+/* ── the diff: NUMBERS, not a bar ──────────────────────────────────────────── */
+
+.sh-task-card__diff {
+  display: inline-flex;
+  align-items: center;
   gap: var(--sh-space-sm);
+  min-inline-size: 0;
   font-family: var(--sh-font-mono);
   font-size: var(--sh-font-size-nano);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .sh-task-card__added {
@@ -152,6 +263,16 @@
   color: var(--sh-text-ghost);
 }
 
+/*
+ * The suite meter's own row, now that the diff numbers it used to share a line
+ * with live on the meta line above.
+ */
+.sh-task-card__suiteRow {
+  display: flex;
+  align-items: center;
+  padding-inline-start: var(--sh-task-gutter);
+}
+
 .sh-task-card__suite {
   /* Pushed right, so the meter is in the same place on every card and the eye
      can run down the column without re-finding it. */
@@ -166,11 +287,54 @@
 
 /* ── repo chips and the tab marks ──────────────────────────────────────────── */
 
+/*
+ * The foot is the mark strip alone now. The repo chips moved up to the meta
+ * line, which a dense row has too — see the component: which repos a task
+ * touches is not a property of how much trouble it is in.
+ */
 .sh-task-card__foot {
   display: flex;
   align-items: center;
   gap: var(--sh-space-sm);
-  flex-wrap: wrap;
+  padding-inline-start: var(--sh-task-gutter);
+}
+
+/*
+ * At the trailing edge of the meta line, and `flex: none` so the slot beside it
+ * (the step, or the diff) truncates first. The chips are short and whole; the
+ * step is a word that reads fine ellipsised.
+ */
+/*
+ * The duration, at the trailing edge — what the diff numbers were replaced by.
+ *
+ * `text-ghost`, which is the ink §2 gives a timestamp, and deliberately the
+ * quietest thing on the line: it is a number you notice when it gets big, not
+ * one you read on every row. Mono and tabular so a column of them lines up,
+ * which is the whole reason to have a column of numbers at all.
+ *
+ * **Beside the sentence, not at the far edge.** It was pushed right, which put
+ * it in the row's right-hand slot — and that slot belongs to the verb. `idle`
+ * and `6m` are one statement anyway: the duration alone names no subject, and
+ * the word alone does not say how long. Together they are the sentence the line
+ * exists to carry.
+ *
+ * `flex: none`, so the words beside it give up their width first — a duration is
+ * three characters and whole, where a sentence ellipsises fine.
+ */
+.sh-task-card__elapsed {
+  flex: none;
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-nano);
+  font-variant-numeric: tabular-nums;
+  color: var(--sh-text-ghost);
+}
+
+.sh-task-card__repos {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sh-space-sm);
+  margin-inline-start: auto;
 }
 
 .sh-task-card__repo {
@@ -200,7 +364,6 @@
   display: inline-flex;
   align-items: center;
   gap: var(--sh-space-hair);
-  margin-inline-start: auto;
 }
 
 /* ── the question, and the two answers ─────────────────────────────────────── */
@@ -288,9 +451,15 @@
   block-size: var(--sh-row-height);
 }
 
+/*
+ * A shipped row is a record, not a card: one dimmed line, and the whole reason
+ * the Shipped region can live permanently in the rail. It steps back down out of
+ * the card title's scale.
+ */
 .sh-task-card[data-dense] .sh-task-card__title {
   font-size: var(--sh-font-size-body);
   font-weight: 400;
+  color: var(--sh-text-dim);
 }
 
 /*
@@ -381,20 +550,18 @@
  * `text-mute` rather than a hue. The mark already carries the state, and a second
  * coloured thing on the line would be a status word beside a status mark.
  *
- * It shrinks before it overflows. `flex: 0 1 auto` still never GROWS, so the rule
- * above holds — the title (`flex: 1`) gives up its width first and only a rail too
- * narrow for both reaches this — but the word then ellipsises instead of running
- * past the row's edge.
+ * **It sits on the meta line now, not beside the title.** Beside the title it was
+ * charging the name for the room, which is the trade the old note here defended
+ * ("the title gives up its width first") — correct while the row had one line and
+ * unnecessary once it has two. It takes the meta line's changing slot, and the
+ * diff numbers take that slot back the moment the step ends.
+ *
+ * It still shrinks before it overflows: `flex: 0 1 auto` never GROWS, so the repo
+ * chips beside it keep their whole width and the word ellipsises rather than
+ * running past the row's edge.
  */
-.sh-task-card__stage {
-  flex: 0 1 auto;
-  min-inline-size: 0;
-  overflow: hidden;
-  font-size: var(--sh-font-size-nano);
-  color: var(--sh-text-mute);
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
+/* Declared with `__summary` above — the two share the slot, so they share the
+   shape. A rule of its own here is how they would drift. */
 
 /*
  * ── a fact another extension contributed (`tasks.cardFacts`) ──────────────
@@ -413,17 +580,22 @@
  * `quiet` is the default and is deliberately the same ink as `dupe`: a fact that
  * is not asking for anything should be no louder than the count beside it.
  */
+/*
+ * There is deliberately no entrance animation on a fact.
+ *
+ * It carried one — `translateX`, sliding in from the row's edge beside the verb
+ * — which is right for something revealed on hover and meaningless for something
+ * drawn at rest. Worse, the `transform: none` that cancels it lives on the hover
+ * rule, so once facts stopped being hover-revealed every glyph on the rail sat
+ * 4px right of where it belonged, permanently, with nothing to ever put it back.
+ * That happened twice, one scope apart, which is why it is written down.
+ */
+
 .sh-task-card__fact {
   flex: none;
   display: inline-flex;
   align-items: center;
   gap: var(--sh-space-hair);
-  /* From the right, with the verb beside it — see the reveal below. */
-  transform: translateX(var(--sh-space-xs));
-  transition:
-    opacity var(--sh-motion) linear,
-    transform var(--sh-motion) linear,
-    visibility var(--sh-motion) linear;
   /* A button here must not look like one, and must not be a different height
      from the span it replaces when a fact has no command. */
   padding: 0;
@@ -448,6 +620,39 @@
   color: var(--sh-sky);
 }
 
+/*
+ * `pending` — in flight, and it will clear itself.
+ *
+ * It used to be `neutral`, which is to say `sky`, which is to say the same
+ * colour as a PR nobody has looked at. Those are the two live states you most
+ * need to tell apart — one is moving and one is waiting on a human — and while
+ * the glyph was hover-revealed the tooltip covered for it. Drawn at rest it does
+ * not.
+ */
+.sh-task-card__fact[data-tone='pending'] {
+  color: var(--sh-honey);
+}
+
+/*
+ * `done` — merged, the one terminal state.
+ *
+ * `quiet` before this, which put finished work in the same ink as a fact that is
+ * not asking for anything, and made merged indistinguishable from unstarted at a
+ * glance. The glyph differs too (`git-merge`), so this is a second signal rather
+ * than the only one.
+ */
+.sh-task-card__fact[data-tone='done'] {
+  color: var(--sh-plum);
+}
+
+/*
+ * `brand` — identity, not state. Git's own orange on git's own mark, and the one
+ * tone here that says nothing about whether the row needs you.
+ */
+.sh-task-card__fact[data-tone='brand'] {
+  color: var(--sh-git);
+}
+
 /* A clickable fact is a target, and a 12px glyph is not one. The hit area grows
    through an invisible pseudo-element so the drawn cell never changes size —
    §9's coarse-pointer rule, and the reason it is not `padding`. */
@@ -463,87 +668,42 @@ button.sh-task-card__fact::after {
 }
 
 /*
- * ── the trailing action: over the title, never beside it ──────────────────
- *
- * §6 refuses "a row that grows to reveal hover actions", and the mechanism that
- * bought that was a shared grid cell: the elapsed stamp and the button sat in one
- * track, so the track was already as wide as the wider of them and revealing the
- * button moved nothing.
- *
- * **The stamp paid for that track, and the stamp is gone.** Left in the flow, the
- * cell went on reserving the button's width plus its gap on every row — 33px of
- * title track, on every title, for something invisible until you point at it. The
- * region had just won 21px back by dropping the state column; this quietly spent
- * more than that on the other edge.
- *
- * So the action leaves the flow. The title gets the whole line, and the button
- * paints OVER its tail when revealed — which is precisely what it already did to
- * the stamp when there was one. Nothing reflows, because nothing in the flow
- * changed: no width is reserved and none is taken.
- *
- * The backing is what makes the overlap legible rather than a button dropped on
- * text, and it is the row's OWN fill rather than a new colour — `fillHover` and
- * `fillSelected` are opaque tokens (a `wash` and a luminance step, not
- * color-mixes), so the chip is the same value as the row it sits on and reads as
- * the row ending early rather than as something laid on top.
- *
- * It fades at the card's own rate. `.sh-task-card` transitions its background over
- * `--sh-motion`, and a chip that switched instantly over a fill still easing read
- * as a second surface arriving rather than as one row waking up.
+ * The glyph's row, matched to the TITLE's line box so the two sit on one
+ * baseline. The verb below it takes the meta line's height for the same reason —
+ * a column whose cells were sized by their contents would put the mark and the
+ * title a pixel or two apart, which is the kind of misalignment you see without
+ * being able to name.
  */
-.sh-task-card__trail {
-  position: absolute;
-  inset-block: 0;
-  inset-inline-end: 0;
-  display: flex;
-  align-items: center;
-  /* A margin of backing before the glyph, so the text it covers ends at a gap
-     rather than against the button's edge. */
-  padding-inline-start: var(--sh-space-md);
-  transition: background var(--sh-motion) linear;
-}
 
 /*
- * The one thing on the line it may NOT paint over: a word that is not the title.
+ * **The trailing column is reserved for, and that is new.**
  *
- * Painting over the tail works because the title ellipsises — it is already a
- * truncation, so the chip lands on one that was going to happen anyway. `stage`
- * and `dupe` are not: they are short, whole, and sit at the very edge the chip
- * occupies, so the chip guillotines them mid-glyph. Shipping a task drew
- * `Archiving` and the hovered row read `Arc`, which is not a truncated word, it is
- * a different one — and `dupe`'s note two blocks up says out loud that a badge
- * which vanished under the pointer would take the row's disclosure with it.
+ * Every rule this file used to carry said the opposite: the verb must charge the
+ * title nothing, because it is invisible until you point at the row, and 33px of
+ * dead track on every row for a button nobody can see is what made every title
+ * truncate early.
  *
- * So the chip rejoins the flow for exactly those rows and reserves exactly its own
- * width — no magic number to keep in step with the button's size, and no
- * reservation on the rows that have neither, which is what taking it out of the
- * flow bought. `stage` is transient and `dupe` is rare, so the title track is
- * unchanged on essentially every row in the rail.
+ * That argument turned on the cell being EMPTY at rest. It is not any more — the
+ * state glyph is drawn there always, which is the whole point of moving it out
+ * of the hover. A column with something in it has to be given room, or the title
+ * runs under a mark and the mark stops being legible against it.
  *
- * `align-self: stretch` because `inset-block: 0` is what gave the chip full row
- * height and a static box does not have it.
+ * So the reservation is back, deliberately, and it is the column's own width
+ * rather than a number copied from a button: `--sh-task-trail` is declared once
+ * on the card and both lines read it.
  */
-.sh-task-card__head:has(> .sh-task-card__stage, > .sh-task-card__dupe) .sh-task-card__trail {
-  position: static;
-  align-self: stretch;
-}
-
 /*
- * The chip, in the row's own fill and ONLY while the button is drawn.
+ * **Nothing is reserved for any more, because nothing floats.**
  *
- * At rest the button is `visibility: hidden`, and this must be transparent or every
- * row would carry a rectangle of hover colour at its right edge.
+ * The glyph and the verb sit IN their lines now, so the space they take is the
+ * space they occupy — there is no number here to keep in step with a control's
+ * size, and no way for the two to disagree. The three rounds of misalignment
+ * this file went through were all one bug wearing different clothes: a box told
+ * where a line was, by hand, instead of being put in it.
  */
-.sh-task-card:hover .sh-task-card__trail,
-.sh-task-card:focus-within .sh-task-card__trail {
-  background: var(--sh-fill-hover);
+.sh-task-card__action {
+  margin-inline-start: auto;
 }
-
-.sh-task-card[data-selected]:hover .sh-task-card__trail,
-.sh-task-card[data-selected]:focus-within .sh-task-card__trail {
-  background: var(--sh-fill-selected);
-}
-
 
 /*
  * ── a contributed fact is a VERB, so it lives with the other one ─────────────
@@ -586,8 +746,17 @@ button.sh-task-card__fact::after {
  * move: the glyph settles before a pointer that has just entered the row can reach
  * it.
  */
-.sh-task-card__action,
-.sh-task-card__fact {
+/*
+ * **The VERB alone.** The fact used to be hidden with it, and once every fact
+ * moved into this column that one line was hiding every glyph on the rail at
+ * rest — the exact thing taking them out of the hover was meant to fix.
+ *
+ * A fact is not a verb. It is what the row SAYS, and the argument for drawing it
+ * at rest is the one the component records: a state you have to point at is a
+ * state you find out about from somewhere else. Only the thing you DO stays
+ * hidden until you reach for it.
+ */
+.sh-task-card__action {
   visibility: hidden;
   opacity: 0;
   /* From the right, which is where it comes from — the row's own edge. */
@@ -599,9 +768,7 @@ button.sh-task-card__fact::after {
 }
 
 .sh-task-card:hover .sh-task-card__action,
-.sh-task-card:hover .sh-task-card__fact,
-.sh-task-card:focus-within .sh-task-card__action,
-.sh-task-card:focus-within .sh-task-card__fact {
+.sh-task-card:focus-within .sh-task-card__action {
   visibility: visible;
   opacity: 1;
   transform: none;
@@ -613,16 +780,13 @@ button.sh-task-card__fact::after {
  * accommodation is that the verb is simply there.
  */
 @media (prefers-reduced-motion: reduce) {
-  .sh-task-card__trail,
-  .sh-task-card__action,
-  .sh-task-card__fact {
+  .sh-task-card__action {
     transition: none;
   }
 
   /* And it does not travel at all, rather than travelling instantly — the slide is
      decoration, so the honest accommodation is that the verb is simply there. */
-  .sh-task-card__action,
-  .sh-task-card__fact {
+  .sh-task-card__action {
     transform: none;
   }
 }

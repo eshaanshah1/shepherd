@@ -17,6 +17,8 @@ export const AGENTS_COMMANDS = {
    * vendor by name would be a task that knows which vendor it hired.
    */
   resumeTarget: 'agents.resumeTarget',
+  /** What this agent last said, for a surface that wants to show it. */
+  lastSaid: 'agents.lastSaid',
   /**
    * A stored resume target -> the command line that reattaches to it.
    *
@@ -211,6 +213,7 @@ export const agentsCoreManifest: Manifest = {
     commands: [
       { id: AGENTS_COMMANDS.list, title: 'Agents: List Tracked Sessions' },
       { id: AGENTS_COMMANDS.resumeTarget, title: 'Agents: Resume Target' },
+      { id: AGENTS_COMMANDS.lastSaid, title: 'Agents: Last Said' },
       { id: AGENTS_COMMANDS.resumeCommand, title: 'Agents: Resume Command' },
       { id: AGENTS_COMMANDS.complete, title: 'Agents: Ask the Quick Model' },
       { id: AGENTS_COMMANDS.quickModel, title: 'Agents: Quick Model' },

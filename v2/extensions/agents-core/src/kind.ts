@@ -192,6 +192,31 @@ export interface AgentKind {
   resumeTargetOf?(slot: unknown): string | null;
 
   /**
+   * **The last thing this agent SAID** — one short sentence, or null.
+   *
+   * The rail's task rows draw it as the line that finishes the sentence the
+   * state mark starts: ready → *with what result*, failed → *why*. `tasks` asks
+   * `agents.lastSaid` and never learns what a transcript is, which is the same
+   * reason it asks `agents.resumeTarget` rather than `claudeCode.resumeTarget`
+   * (D11).
+   *
+   * **Async, unlike `resumeTargetOf`, and that is the honest difference between
+   * them.** A resume target is a token the kind was handed and kept; this is a
+   * fact about a file on disk that only the vendor knows the shape of. A kind
+   * that answers it does its own IO and its own caching — `reduce` stays pure,
+   * and nothing here is on a path a user waits on.
+   *
+   * `null` is a real answer and means several true things at once: the agent has
+   * not spoken yet, the transcript cannot be read, or what it last said was not
+   * a summary. All of them draw nothing, so none of them is distinguished and
+   * none of them throws.
+   *
+   * Optional. A kind that cannot produce one simply does not implement it, and
+   * the row is the same row it was before this existed.
+   */
+  lastSaidOf?(slot: unknown): Promise<string | null>;
+
+  /**
    * The command line that reattaches to `target` — the vendor's binary, its
    * flag, and the target quoted for a shell.
    *

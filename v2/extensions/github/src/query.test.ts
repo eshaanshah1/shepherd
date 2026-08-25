@@ -114,6 +114,42 @@ describe('checks', () => {
     expect(one(rollup([run({ conclusion: 'TIMED_OUT' })])).checks[0]?.state).toBe('failed');
   });
 
+  it('does NOT call a queued run a running one — the manual-check bug', () => {
+    /*
+     * This line was `if (status !== 'COMPLETED') return 'running'`, and it is why
+     * a repo whose required checks are triggered by hand read `checks running`
+     * for the entire life of every pull request: the job sits in `QUEUED`
+     * forever and nothing ever moves it. A state that cannot clear itself must
+     * not drive a colour.
+     */
+    for (const status of ['QUEUED', 'WAITING', 'PENDING', 'REQUESTED']) {
+      expect(one(rollup([run({ status, conclusion: null })])).checks[0]?.state, status).toBe('queued');
+    }
+    // And the one that IS a runner executing still is.
+    expect(one(rollup([run({ status: 'IN_PROGRESS', conclusion: null })])).checks[0]?.state).toBe('running');
+  });
+
+  it('calls ACTION_REQUIRED a gate, not a skip', () => {
+    // It sat in `skipped` with a comment calling it "the arguable one". It is a
+    // COMPLETED conclusion — GitHub ran, finished, and reported that a human
+    // must act — which is the opposite of a job that never started and the
+    // opposite of one that was never going to happen.
+    expect(one(rollup([run({ conclusion: 'ACTION_REQUIRED' })])).checks[0]?.state).toBe('blocked');
+  });
+
+  it('reads the older API’s PENDING as queued, which is the reading that cannot lie', () => {
+    // A commit status has one `state` and cannot tell accepted from executing.
+    // A third-party CI that posts `PENDING` and never posts again is the shape
+    // this whole change exists for, so it must leave nothing claiming work is in
+    // flight.
+    const pr = one(
+      rollup([
+        { __typename: 'StatusContext', context: 'ci/circleci', state: 'PENDING', targetUrl: null, description: null },
+      ]),
+    );
+    expect(pr.checks[0]?.state).toBe('queued');
+  });
+
   it('does not call a cancelled or stale run a failure', () => {
     // A run that did not happen is not a broken build, and colouring the task
     // red for one makes the two indistinguishable.

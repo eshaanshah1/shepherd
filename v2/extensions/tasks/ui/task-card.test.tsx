@@ -51,6 +51,101 @@ const title = (): string | undefined => host.querySelector('.sh-task-card__title
 const shippedRow = (over: Record<string, unknown> = {}): TreeItem =>
   item('Fix the login redirect', { mark: 'shipped', shipped: true, ...over });
 
+describe('activating a task card', () => {
+  /** Draw a card and record every command the click reaches. */
+  const clicking = (
+    row: TreeItem,
+    selector: string,
+  ): readonly string[] => {
+    const calls: string[] = [];
+    act(() => {
+      root.render(
+        <TaskCard
+          item={row}
+          selected={false}
+          invoke={async (command) => {
+            calls.push(command);
+            return { ok: true, value: undefined };
+          }}
+        />,
+      );
+    });
+    act(() => host.querySelector<HTMLElement>(selector)?.click());
+    return calls;
+  };
+
+  const opener = { id: 'tasks.reveal', args: { task: 't1' } };
+
+  it('opens from ANYWHERE on the card, not just its title line', () => {
+    /*
+     * The whole defect: the target was the head, so the half of the card below
+     * the title — the sentence, the duration, the diff, the chips — looked
+     * exactly as clickable as the half above it and did nothing. A row you have
+     * to aim at the top of is a row you miss.
+     */
+    const row = item('Fix the login redirect', {
+      mark: 'working',
+      summary: 'working',
+      elapsed: '14m',
+      diff: { added: 12, removed: 4, files: 3 },
+    });
+    for (const selector of [
+      '.sh-task-card',
+      '.sh-task-card__head',
+      '.sh-task-card__title',
+      '.sh-task-card__meta',
+      '.sh-task-card__summary',
+      '.sh-task-card__elapsed',
+    ]) {
+      expect(clicking({ ...row, command: opener }, selector), selector).toEqual(['tasks.reveal']);
+    }
+  });
+
+  it('answers a question WITHOUT also opening the task', () => {
+    /*
+     * The cost of making the whole card a target, and the thing that would have
+     * broken silently: `Allow` bubbles to the card, so without a stop it answers
+     * the question and then moves the window to the pane you answered from.
+     */
+    const row = item('Fix the login redirect', {
+      mark: 'waiting',
+      question: {
+        text: 'Allow',
+        answers: [
+          { label: 'Allow', command: 'claude.allow' },
+          { label: 'Deny', command: 'claude.deny' },
+        ],
+      },
+    });
+    const calls = clicking({ ...row, command: opener }, '.sh-task-card__answers button');
+    expect(calls).toEqual(['claude.allow']);
+  });
+
+  it('runs the row’s verb WITHOUT also opening the task', () => {
+    const row = item('Fix the login redirect', {
+      mark: 'working',
+      summary: 'working',
+    });
+    const withAction: TreeItem = {
+      ...row,
+      command: opener,
+      primaryAction: { id: 'tasks.ship', icon: 'ship', label: 'Ship' },
+    };
+    expect(clicking(withAction, '.sh-task-card__action')).toEqual(['tasks.ship']);
+  });
+
+  it('is one tab stop, and it is the CARD', () => {
+    // The head used to hold the role and the tab stop, so Tab landed on the
+    // title line and Enter activated something smaller than the ring drew round.
+    draw(item('Fix the login redirect', { mark: 'working', summary: 'working' }));
+    expect(host.querySelectorAll('[tabindex="0"]')).toHaveLength(1);
+    const card = host.querySelector('.sh-task-card');
+    expect(card?.getAttribute('role')).toBe('button');
+    expect(card?.getAttribute('tabindex')).toBe('0');
+    expect(host.querySelector('.sh-task-card__head')?.getAttribute('role')).toBeNull();
+  });
+});
+
 describe('a task card mid-build', () => {
   it('draws the step as the row’s name, so a provisioning task is not a silent row', () => {
     draw(item('Creating the worktree', { mark: 'working' }));
@@ -62,18 +157,22 @@ describe('a task card mid-build', () => {
     expect(title()).toBe('Fix the login redirect');
   });
 
-  it('draws no time stamp, on either side of the divider', () => {
+  it('draws the stamp on the meta line, and never back beside the title', () => {
     /*
-     * A task row carried `4m` / `2h` / `3d`, and it is gone from live work as well as
-     * from the archive. On finished work it reported the wrong subject; corrected to a
-     * ship clock it was true and still a number beside every title. The trailing cell
-     * holds the row's one verb, which is the thing you can actually do to it.
+     * A stamp lived beside the title once — `4m` / `2h` / `3d` — and was removed
+     * from both sides of the divider. It reported task AGE, which on finished
+     * work is the wrong subject, and even corrected to a ship clock it was a
+     * number charged against every title in the rail.
      *
-     * Asserted for a WORKING card, because that is where a duration had the strongest
-     * case — the number climbing is real there, and it still did not earn the column.
+     * What came back is a different measurement in a different place: how long
+     * the task has been in the state its MARK reports, on the second line, where
+     * the diff numbers used to be. The trailing cell still holds the row's one
+     * verb and nothing else, which is what the removal was protecting.
      */
-    draw(item('Linking agent files', { mark: 'working', elapsed: '0m' }));
-    expect(host.querySelector('.sh-task-card__elapsed')).toBeNull();
+    draw(item('Linking agent files', { mark: 'working', elapsed: '4m' }));
+    expect(host.querySelector('.sh-task-card__meta .sh-task-card__elapsed')?.textContent).toContain('4m');
+    expect(host.querySelector('.sh-task-card__head .sh-task-card__elapsed')).toBeNull();
+    expect(host.querySelector('.sh-task-card__trail .sh-task-card__elapsed')).toBeNull();
   });
 
   it('does NOT grow the card, because only a waiting one may change height', () => {
@@ -173,9 +272,118 @@ describe('a shipped task card', () => {
     expect(host.querySelector('.sh-task-card__stage')?.textContent).toBe('Creating the worktree');
   });
 
-  it('draws the step in the head, so the row keeps one height (§10)', () => {
+  it('draws the step on the meta line, not in the head beside the title', () => {
+    /*
+     * It WAS in the head, and the assertion was "so the row keeps one height".
+     * The row still keeps one height — the meta line is permanent, so nothing
+     * appears or disappears when a step starts — and the step no longer charges
+     * the title for the room.
+     */
     draw(item('Fix the login redirect', { mark: 'working', stage: 'Setting up' }));
-    expect(host.querySelector('.sh-task-card__head .sh-task-card__stage')).not.toBeNull();
+    expect(host.querySelector('.sh-task-card__meta .sh-task-card__stage')).not.toBeNull();
+    expect(host.querySelector('.sh-task-card__head .sh-task-card__stage')).toBeNull();
+  });
+
+  it('gives every LIVE row a second line, whatever it has to say', () => {
+    /*
+     * It took three goes to land here, so the losers are worth naming.
+     *
+     * Unconditional first, on §10's "a row must not grow to say something" — and
+     * a rail of quiet tasks was a column of titles each trailed by a reserved
+     * empty strip, which reads as a rendering fault. Then conditional, and a row
+     * would simply lose its second line whenever it had nothing to say: a row
+     * changing height for a reason nothing on screen states.
+     *
+     * Both treated the emptiness as a layout problem. It is a CONTENT problem —
+     * the writer always has something true to put there, down to the state in
+     * words. With a floor under it the line can be unconditional and never be
+     * empty, which is what a card is.
+     */
+    draw(item('Fix the login redirect', { mark: 'resting', summary: 'idle' }));
+    expect(host.querySelector('.sh-task-card__meta')?.textContent).toContain('idle');
+  });
+
+  it('draws no repo chips for ONE repo, which every row in the rail would repeat', () => {
+    // §6 refuses repeating a name down the hierarchy, and one chip in a
+    // single-repo workspace is the same word on every row.
+    draw(item('Fix the login redirect', { mark: 'resting', repos: [{ name: 'sdk', mark: 'repo1' }] }));
+    expect(host.querySelector('.sh-task-card__repos')).toBeNull();
+  });
+
+  it('draws them as soon as a task spans TWO, where they tell rows apart', () => {
+    draw(item('Fix the login redirect', {
+      mark: 'resting',
+      repos: [
+        { name: 'sdk', mark: 'repo1' },
+        { name: 'app', mark: 'repo2' },
+      ],
+    }));
+    expect(host.querySelector('.sh-task-card__repos')?.textContent).toContain('sdk');
+  });
+
+  it('never draws one on a shipped row, which is one dimmed line by design', () => {
+    draw(item('Fix the login redirect', shipped({ diff: { added: 9, removed: 2, files: 2 } })));
+    expect(host.querySelector('.sh-task-card__meta')).toBeNull();
+  });
+
+  it('draws the duration instead of a diff, and never a diff at all', () => {
+    /*
+     * The replacement this change is about. `+12 −4 · 3 files` answers "how big
+     * is this" — a review-time question, asked once, by somebody who has already
+     * decided to look. The rail is scanned, and the question it exists to answer
+     * is "which of these is my fault". The numbers are gone from the rail
+     * entirely, not demoted to a hover.
+     */
+    draw(item('Fix the login redirect', { mark: 'waiting', elapsed: '14m', diff: { added: 12, removed: 4, files: 3 } }));
+    expect(host.querySelector('.sh-task-card__elapsed')?.textContent).toContain('14m');
+    expect(host.querySelector('.sh-task-card__diff')).toBeNull();
+    expect(host.querySelector('.sh-task-card__added')).toBeNull();
+  });
+
+  it('gives the slot to the step while building, and the duration keeps its own edge', () => {
+    draw(item('Fix the login redirect', { mark: 'working', stage: 'Setting up', elapsed: '1m' }));
+    expect(host.querySelector('.sh-task-card__meta .sh-task-card__stage')?.textContent).toBe('Setting up');
+    expect(host.querySelector('.sh-task-card__elapsed')?.textContent).toContain('1m');
+  });
+
+  it('gives the slot to the summary when there is no step', () => {
+    draw(item('Fix the login redirect', { mark: 'ready', summary: 'Tests pass. Ready for review.' }));
+    expect(host.querySelector('.sh-task-card__meta .sh-task-card__summary')?.textContent).toBe(
+      'Tests pass. Ready for review.',
+    );
+  });
+
+  it('lets the STEP win the slot while the task is being built', () => {
+    // One slot, never two things competing. The step is transient, and its
+    // disappearance is still the signal that the work has begun.
+    draw(item('Fix the login redirect', { mark: 'working', stage: 'Setting up', summary: 'Something older' }));
+    expect(host.querySelector('.sh-task-card__stage')?.textContent).toBe('Setting up');
+    expect(host.querySelector('.sh-task-card__summary')).toBeNull();
+  });
+
+  it('draws the summary on ONE line, not as the paragraph it used to be', () => {
+    // It lived under the title as a two-line block, which was the same idea
+    // drawn twice at two sizes. A summary that needs a second line is not one.
+    draw(item('Fix the login redirect', { mark: 'ready', summary: 'Done.' }));
+    expect(host.querySelector('.sh-task-card__meta .sh-task-card__summary')).not.toBeNull();
+    expect(host.querySelector('p.sh-task-card__summary')).toBeNull();
+  });
+
+  it('says the duration in WORDS too, since a stamp alone names no subject', () => {
+    // §5: a mark whose only content is a number cannot be read out or asserted
+    // on. `14m` beside a title does not say fourteen minutes of what.
+    draw(item('Fix the login redirect', { mark: 'waiting', elapsed: '14m' }));
+    const stamp = host.querySelector('.sh-task-card__elapsed');
+    expect(stamp?.getAttribute('title')).toBe('14m in this state');
+    expect(stamp?.textContent).toContain('14m in this state');
+  });
+
+  it('draws no duration on first sighting, rather than claiming zero', () => {
+    // A task already waiting when the app started has been waiting longer than
+    // anyone can say, and `0s` would be a confident lie. The writer sends no
+    // field at all the first time it sees a state.
+    draw(item('Fix the login redirect', { mark: 'waiting' }));
+    expect(host.querySelector('.sh-task-card__elapsed')).toBeNull();
   });
 
   it('draws no step once there is nothing left to do', () => {

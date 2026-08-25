@@ -117,6 +117,20 @@ export const ratios = {
    */
   row: 2.62, //      34px
   /**
+   * The state mark's slot — 12px, and DENSITY-EXEMPT like the chrome bands.
+   *
+   * It is a drawing, not rhythm: `state-mark.css` places a 8×8 square, a 7×7
+   * ring and a three-bar meter inside a fixed box so a row never reflows when a
+   * state changes, and a box that scaled with the density mode would leave those
+   * shapes centred in the wrong amount of space.
+   *
+   * It is a token because two files need the number — the mark that draws in it,
+   * and anything that has to line a second line up under the TITLE rather than
+   * under the mark. `task-card.css` wrote `12px` for exactly that and thereby
+   * broke the rule its own header states, which is what this exists to prevent.
+   */
+  markSlot: 0.92, //  12px
+  /**
    * Control heights. `lg` shares the row ratio on purpose — a control matches the
    * row height around it, and expressing that as one shared number is how the two
    * cannot drift when the base moves.
@@ -133,7 +147,17 @@ export const ratios = {
    * acting on it**: "a titlebar is 44 because the traffic lights are, and a rail
    * is 264 because that is how much of the window a list of tasks may take
    * before it costs the grid" — an OS constant and a layout budget. Neither is a spacing
-   * preference, so neither follows one. The sky strip joins them because it is a
+   * preference, so neither follows one.
+   *
+   * **The rail's budget was re-spent twice, and it is 360 now.** 264 was set when a task row said a
+   * title and a mark. It now carries a second line — an always-drawn PR state, the
+   * step while one is building, the diff numbers once it is not — and that line was
+   * being paid for out of the title's truncation. 320 is the width at which the
+   * common case fits without the title giving anything up. 320 then turned out
+   * to be the width at which a two-line row reads as a cramped one rather than
+   * as a card — the sentence on the second line had room for four or five words
+   * before it ellipsised, which is not a sentence. It is still a budget, just a
+   * twice-measured one. The sky strip joins them because it is a
    * DRAWING: `sky-strip.tsx` places its stars, hills and sheep at literal px in
    * a 124px box and says in as many words that "a scene that reflowed with the
    * density mode would not be the same scene" — at 0.85 the box became 105 and
@@ -149,7 +173,7 @@ export const ratios = {
     tabStrip: 3.08, // 40px
     titlebar: 3.38, // 44px
     skyStrip: 9.54, // 124px — the one decorative surface in the app
-    rail: 20.31, //    264px
+    rail: 27.69, //    360px
   },
   /**
    * Padding and gap: `2 4 6 7 9 10 12 14 16 20`. Multiplies both inputs, because
@@ -283,6 +307,8 @@ export interface Metrics {
   readonly lineHeight: number;
   readonly lineHeightLarge: number;
   readonly rowHeight: number;
+  /** The state mark's fixed box. Density-exempt — it is a drawing. */
+  readonly markSlot: number;
 
   /**
    * The ONE surviving uppercase label: a ⌘K palette group heading, 10.5/600 at
@@ -367,6 +393,8 @@ export function deriveMetrics(inputs: ScaleInputs = defaultScaleInputs): Metrics
     lineHeight: px(base, ratios.lineHeight),
     lineHeightLarge: px(base, ratios.lineHeightLarge),
     rowHeight: px(base, ratios.row, density),
+    // Density-exempt — see the ratio's note.
+    markSlot: px(base, ratios.markSlot),
     microLabel: {
       fontSize: type.nano,
       trackingMin: 0.05,

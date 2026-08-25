@@ -362,8 +362,23 @@ function readChecks(raw: RawPullRequest): readonly CheckRun[] {
   });
 }
 
+/**
+ * **`IN_PROGRESS` is running; everything else short of `COMPLETED` is queued.**
+ *
+ * This line was `if (status !== 'COMPLETED') return 'running'`, and it is the
+ * reason a repo whose required checks are triggered by hand read `checks
+ * running` for the entire life of every PR — the job sits in `QUEUED` forever
+ * and nothing ever moves it. A state that cannot clear itself must not drive a
+ * colour, so `queued` is its own answer and the rollup ignores it (`rollUp`).
+ *
+ * An automatic run passes through `QUEUED` on its way to `IN_PROGRESS` in
+ * seconds, so the cost of getting this right is that a genuinely-starting check
+ * reads as not-yet-running until the next sweep. That is the correct order to be
+ * wrong in: briefly understating work that is about to happen beats permanently
+ * overstating work that never will.
+ */
 function checkRunState(status: string, conclusion: string | null): CheckState {
-  if (status !== 'COMPLETED') return 'running';
+  if (status !== 'COMPLETED') return status === 'IN_PROGRESS' ? 'running' : 'queued';
   switch (conclusion) {
     case 'SUCCESS':
       return 'passed';
@@ -371,24 +386,41 @@ function checkRunState(status: string, conclusion: string | null): CheckState {
     case 'TIMED_OUT':
     case 'STARTUP_FAILURE':
       return 'failed';
+    case 'ACTION_REQUIRED':
+      /*
+       * Out of `skipped`, where the old comment put it while calling it "the
+       * arguable one". The argument that moved it: this is a COMPLETED
+       * conclusion. GitHub ran, finished, and reported that a human must act —
+       * an affirmative signal with a name attached, and one that clears when you
+       * clear it. That is the opposite of a `QUEUED` job, and the opposite of a
+       * skip, which reports that nothing was ever going to happen.
+       */
+      return 'blocked';
     case 'SKIPPED':
     case 'NEUTRAL':
     case 'CANCELLED':
-    case 'ACTION_REQUIRED':
     case 'STALE':
       // Not `failed`, and this is the judgement call in the file. A cancelled or
       // stale run is a run that did not happen, and colouring the task red for
       // one would make a cancelled workflow indistinguishable from a broken
-      // build. `ACTION_REQUIRED` is the arguable one and goes here because the
-      // action it requires is on GitHub, not in the code.
+      // build.
       return 'skipped';
     default:
       return 'skipped';
   }
 }
 
+/**
+ * The older commit-status API, which has one `state` and cannot tell a job that
+ * is executing from one that is merely accepted.
+ *
+ * `PENDING` therefore answers `queued` — the reading that cannot lie in the
+ * direction that matters. A third-party CI that posts `PENDING` and then never
+ * posts again (the shape this whole change exists for) leaves nothing behind
+ * that claims work is in flight.
+ */
 const statusContextState = (state: string): CheckState =>
-  state === 'SUCCESS' ? 'passed' : state === 'FAILURE' || state === 'ERROR' ? 'failed' : state === 'PENDING' ? 'running' : 'skipped';
+  state === 'SUCCESS' ? 'passed' : state === 'FAILURE' || state === 'ERROR' ? 'failed' : state === 'PENDING' ? 'queued' : 'skipped';
 
 function duration(startedAt: string | null, completedAt: string | null): { durationMs?: number } {
   if (startedAt === null || completedAt === null) return {};

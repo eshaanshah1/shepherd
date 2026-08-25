@@ -437,6 +437,39 @@ export const activate: ActivateFn<AgentsAPI> = async (ctx: ExtensionContext, api
         };
       },
     }),
+    commands.register(AGENTS_COMMANDS.lastSaid, {
+      title: 'Agents: Last Said',
+      schema: s.object({ sessionId: s.string() }),
+      /**
+       * Ask whichever kind adopted this session what its agent last said.
+       *
+       * The same delegation `resumeTarget` does, with one difference worth
+       * naming: this one is AWAITED, because the answer is a fact about a file
+       * rather than a token the kind was already holding. The kind owns the
+       * reading and the caching of it; this extension learns nothing about
+       * transcripts, and neither does the caller (D11).
+       *
+       * `null` is a real answer several times over — nothing adopted the
+       * session, the kind cannot produce one, the agent has not spoken, or what
+       * it said last was not a summary. A consumer draws nothing for all of
+       * them, so none is distinguished and none throws.
+       */
+      handler: async (args) => {
+        const record = registry.get(args.sessionId);
+        const kind = kinds.all().find((candidate) => candidate.id === record?.kindId);
+        const slot = registry.slotOf(args.sessionId);
+        let text: string | null = null;
+        try {
+          text = (await kind?.lastSaidOf?.(slot)) ?? null;
+        } catch (error) {
+          // A kind's IO failing is not this command's failure. The consumer
+          // wanted a line for a sidebar; it gets none, and asks again next beat.
+          ctx.log.warn(`${record?.kindId ?? 'a kind'} threw reading what it last said — ${String(error)}`);
+        }
+        return { sessionId: args.sessionId, kindId: record?.kindId ?? null, text };
+      },
+    }),
+
     commands.register(AGENTS_COMMANDS.resumeCommand, {
       title: 'Agents: Resume Command',
       schema: s.object({ target: s.string(), kindId: s.optional(s.string()) }),

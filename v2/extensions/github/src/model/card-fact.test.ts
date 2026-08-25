@@ -29,13 +29,24 @@ const pr = (over: Partial<PullRequest> = {}): PullRequest =>
   }) as PullRequest;
 
 describe('cardFact, with no pull request', () => {
-  it('draws a quiet draft mark that opens the review pane', () => {
-    // Was `null`, so a task with no PR had no icon — and with no icon there was
-    // no way in to the one view that says what you actually changed.
+  it('draws GIT’s own mark, not a pull-request one, and opens the review pane', () => {
+    /*
+     * Was `null`, so a task with no PR had no icon — and with no icon there was
+     * no way in to the one view that says what you actually changed.
+     *
+     * It was then `pull-request-draft`, which is wrong on its own terms: there
+     * is no pull request here, that being the whole point of this branch, so a
+     * glyph from that family names a thing that does not exist. `pull-request-
+     * draft` is GitHub's mark for a PR opened AS a draft.
+     *
+     * What exists is a worktree with changes in it. `brand-git` is the noun for
+     * that, and `brand` is identity rather than state — git's orange says whose
+     * mark it is and nothing about whether the row needs you.
+     */
     const fact = cardFact(task(), [], true);
     expect(fact).toMatchObject({
-      icon: 'pull-request-draft',
-      tone: 'quiet',
+      icon: 'brand-git',
+      tone: 'brand',
       command: { id: REVIEW_COMMAND, args: { task: 't1' } },
     });
     expect(fact?.title).toContain('No pull request yet');

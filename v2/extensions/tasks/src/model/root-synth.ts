@@ -234,6 +234,34 @@ function renderClaudeMd(input: SynthInput): string {
     '',
   );
 
+  lines.push(
+    /*
+     * **The rail reads the last line, so the last line has to be worth reading.**
+     *
+     * A task row's second line finishes the sentence its state mark starts —
+     * ready → with what result, failed → why. The only place that sentence can
+     * come from is the agent, and left alone an agent ends a turn with whatever
+     * it happened to be saying: a sign-off, a question, half a list.
+     *
+     * Asked for as a rule about the LAST LINE rather than as a heading or a
+     * marker, because this is read by a human in a terminal first and by the
+     * rail second. `TL;DR:` in every response is a machine affordance showing
+     * through; a closing sentence is how a person would end anyway.
+     *
+     * It is a session-start instruction — this file is written once and read
+     * into the system prompt when the agent boots — so it WILL lapse on a long
+     * session, and the reader is built for that: a last line that does not look
+     * like a summary yields no summary rather than being shown as one.
+     */
+    '## Ending a turn',
+    '',
+    'End every response with one short sentence summarising what changed or what you',
+    'need — a single line, no heading, no label. Shepherd shows that line on this',
+    "task's row in the sidebar, so it is what someone scanning a dozen agents reads",
+    'to decide whether you need them. Say the outcome, not the activity.',
+    '',
+  );
+
   const brief = quoteBrief(input.brief);
   if (brief.length > 0) {
     lines.push(

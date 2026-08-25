@@ -5,7 +5,9 @@ import type {
   AgentSlot,
   HeadlessInput,
 } from '@shepherd/ext-agents-core';
+import { closeSync, openSync, readSync, statSync } from 'node:fs';
 import { applyEvent, backgroundTaskCount, sessionEventAccepted } from './stop-policy.ts';
+import { TAIL_BYTES, lastSaid } from './last-said.ts';
 
 /**
  * Claude Code as one *kind* — no privileged path, the same seam `codex` would
@@ -143,6 +145,17 @@ export function parseQuick(stdout: string): string | undefined {
 export type ClaudeSlot = AgentSlot & {
   ownerClaudeSessionID?: string;
   resumeSessionID?: string;
+  /**
+   * Where this session's transcript is, as Claude Code itself reported it.
+   *
+   * **Taken from the hook payload rather than derived.** `report.sh` splices the
+   * payload in verbatim and every hook carries `transcript_path`, so the path is
+   * simply told to us on every event — where computing it would mean encoding a
+   * cwd into a directory name the way the vendor happens to this month.
+   */
+  transcriptPath?: string;
+  /** The last read's answer, and the file size it was read at. See `lastSaidOf`. */
+  lastSaid?: { readonly at: number; readonly text: string | null };
 };
 
 /** The envelope `report.sh` posts: an event name and the hook's own payload. */
@@ -203,6 +216,7 @@ export function claudeKind(): AgentKind {
      * transcript instead of starting a fresh agent on the brief.
      */
     resumeTargetOf: (slot) => (slot as ClaudeSlot | undefined)?.resumeSessionID ?? null,
+    lastSaidOf: (slot) => Promise.resolve(readLastSaid(slot as ClaudeSlot | undefined)),
 
     /**
      * `claude --resume <target>` — and this package is the ONLY place that
@@ -228,6 +242,59 @@ export function claudeKind(): AgentKind {
   };
 }
 
+/**
+ * The last thing this agent said, read from the tail of its transcript.
+ *
+ * **Cached on the file's SIZE**, which is the whole reason this is affordable.
+ * `tasks` asks for every live task on a beat, and a transcript only ever grows —
+ * so a file that has not grown cannot have a newer answer, and the common case
+ * is a `stat` and nothing else. The read that follows a change is bounded to the
+ * last `TAIL_BYTES` however large the file has become.
+ *
+ * A shrinking file is a rewritten one (`/clear`, a compaction), and re-reading
+ * it is exactly right — the cache is keyed on the size, not on it having grown.
+ *
+ * **Every failure is `null`, and none of them throws.** A path that no longer
+ * exists, a permission error, a file being written as we open it: all of them
+ * mean "we do not know what it last said", the row draws nothing, and the next
+ * beat tries again. There is nothing here worth taking a sidebar down for.
+ */
+function readLastSaid(slot: ClaudeSlot | undefined): string | null {
+  const path = slot?.transcriptPath;
+  if (slot === undefined || path === undefined || path === '') return null;
+
+  let size: number;
+  try {
+    size = statSync(path).size;
+  } catch {
+    return null;
+  }
+
+  const cached = slot.lastSaid;
+  if (cached !== undefined && cached.at === size) return cached.text;
+
+  let text: string | null = null;
+  try {
+    const start = Math.max(0, size - TAIL_BYTES);
+    const length = size - start;
+    const buffer = Buffer.allocUnsafe(length);
+    const fd = openSync(path, 'r');
+    try {
+      const read = readSync(fd, buffer, 0, length, start);
+      text = lastSaid(buffer.subarray(0, read).toString('utf8'));
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    // Left null, and still cached below: a file we cannot read now is one we
+    // should not re-attempt every beat until it changes.
+    text = null;
+  }
+
+  slot.lastSaid = { at: size, text };
+  return text;
+}
+
 export function reduce(input: AgentEventInput): AgentDecision {
   const payload = input.payload as ClaudeHookPayload;
   if (typeof payload?.event !== 'string' || payload.event === '') {
@@ -249,6 +316,15 @@ export function reduce(input: AgentEventInput): AgentDecision {
       why: `${event} came from a nested claude (${claudeSession}), not this pane's agent (${slot.ownerClaudeSessionID ?? 'none'})`,
     };
   }
+
+  /*
+   * Every hook carries it, so it is recorded on every hook rather than on
+   * `SessionStart` alone: a session adopted mid-flight (the app restarting under
+   * a running agent) never sees a `SessionStart` and would otherwise have no
+   * path for the rest of its life.
+   */
+  const transcript = stringField(hook, 'transcript_path');
+  if (transcript !== '') slot.transcriptPath = transcript;
 
   if (event === 'SessionStart' && claudeSession !== '') {
     // Claiming the lock and recording the resume target are the same moment and

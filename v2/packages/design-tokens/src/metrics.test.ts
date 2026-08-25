@@ -85,7 +85,7 @@ describe('the derived scale at the approved density', () => {
       tabStrip: 40,
       titlebar: 44,
       skyStrip: 124,
-      rail: 264,
+      rail: 360,
     });
   });
 
@@ -119,7 +119,10 @@ describe('the derived scale at the approved density', () => {
    * The ratio table said as much long before anything read it — "a titlebar is
    * 44 because the traffic lights are, and a rail is 264 because that is how
    * much of the window a list of tasks may take" — and then scaled both
-   * anyway, which nothing noticed while the only density in use was 1. The sky
+   * anyway, which nothing noticed while the only density in use was 1. (The rail
+   * is 360 now. The budget was RE-MEASURED when a task row gained a permanent
+   * second line; what this test pins is that it does not move with the density,
+   * which is a different claim from what the number is.) The sky
    * strip is the one that would have shown first: it is a DRAWING with literal
    * px coordinates (`sky-strip.tsx`), so a 105px box would have held a scene
    * built for 124 and the sheep would have grazed off the bottom of it.
@@ -127,12 +130,12 @@ describe('the derived scale at the approved density', () => {
   it('holds the OS constant, the drawing and the content measurement still', () => {
     expect(metrics.band.titlebar).toBe(44);
     expect(metrics.band.skyStrip).toBe(124);
-    expect(metrics.band.rail).toBe(264);
+    expect(metrics.band.rail).toBe(360);
     for (const density of Object.values(densities)) {
       const at = deriveMetrics({ baseFontSize: 13, density });
       expect(at.band.titlebar, `titlebar moved at ${String(density)}`).toBe(44);
       expect(at.band.skyStrip, `sky strip moved at ${String(density)}`).toBe(124);
-      expect(at.band.rail, `rail moved at ${String(density)}`).toBe(264);
+      expect(at.band.rail, `rail moved at ${String(density)}`).toBe(360);
     }
   });
 
@@ -204,7 +207,7 @@ describe('the derivation under other inputs', () => {
     expect(spacious.band.paneHead).toBe(44);
     expect(spacious.band.tabStrip).toBe(46);
     expect(spacious.band.titlebar).toBe(44);
-    expect(spacious.band.rail).toBe(264);
+    expect(spacious.band.rail).toBe(360);
   });
 
   it('leaves TYPE alone when only density moves', () => {

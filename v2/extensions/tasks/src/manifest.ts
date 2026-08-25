@@ -471,8 +471,15 @@ export interface CardFact {
    * A fact may be an icon, a label, or both. One with neither is dropped.
    */
   readonly label?: string;
-  /** Which of the palette's four readings this is. Defaults to `quiet`. */
-  readonly tone?: 'positive' | 'negative' | 'neutral' | 'quiet';
+  /**
+   * Which of the palette's readings this is. Defaults to `quiet`.
+   *
+   * Named for the JOB, never the hue. `pending` is in flight — it will clear
+   * itself — and `done` is terminal. Both arrived when the fact stopped being
+   * hover-revealed: a glyph you have to point at can lean on its tooltip, and
+   * one drawn at rest has to separate five states by sight.
+   */
+  readonly tone?: 'positive' | 'negative' | 'neutral' | 'pending' | 'done' | 'brand' | 'quiet';
   /**
    * What it MEANS, in words. Required, and the one field with no default: a
    * mark whose only content is a colour cannot be read out, searched, or

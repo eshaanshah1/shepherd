@@ -53,7 +53,7 @@ describe('countChecks', () => {
     // A conditional job that did not match its path filter would otherwise make
     // `12 of 13` the healthy state — a number that is never green.
     const counts = countChecks([check('lint', 'passed'), check('typecheck', 'failed'), check('test', 'skipped')]);
-    expect(counts).toEqual({ total: 2, passed: 1, failed: 1, running: 0 });
+    expect(counts).toEqual({ total: 2, passed: 1, failed: 1, running: 0, queued: 0, blocked: 0 });
   });
 });
 
@@ -222,6 +222,29 @@ describe('the task-level rollup', () => {
     expect(rollUp([approved, pr({ number: 9, checks: [check('t', 'running')] })])).toBe('running');
   });
 
+  it('ignores a QUEUED check entirely — it may never start', () => {
+    /*
+     * The manual-check case, at the level that decides the rail's colour. A job
+     * that has not started has reported nothing, and on a repo whose checks are
+     * triggered by hand it never will, so it must not hold the task at "in
+     * flight" for the life of the PR.
+     */
+    const approved = pr({ number: 301, approvals: ['jane'], checks: [check('deploy', 'queued')] });
+    expect(rollUp([approved])).toBe('approved');
+    expect(rollUp([pr({ number: 9, checks: [check('deploy', 'queued')] })])).toBe('open');
+    // A check that IS executing still wins, which is the whole point of splitting
+    // the two apart rather than dropping the state.
+    expect(rollUp([pr({ number: 9, checks: [check('t', 'running')] })])).toBe('running');
+  });
+
+  it('puts a gate above a running check — one of them you can act on', () => {
+    const gate = pr({ number: 9, checks: [check('deploy', 'blocked'), check('t', 'running')] });
+    expect(rollUp([gate])).toBe('blocked');
+    // But still under a failure and under a human asking for changes.
+    expect(rollUp([pr({ number: 9, checks: [check('deploy', 'blocked'), check('t', 'failed')] })])).toBe('failed');
+    expect(rollUp([pr({ number: 9, checks: [check('deploy', 'blocked')], changesRequested: ['sam'] })])).toBe('waiting');
+  });
+
   it('is approved only when EVERY live PR is', () => {
     const approved = pr({ number: 301, approvals: ['jane'] });
     expect(rollUp([approved])).toBe('approved');
@@ -235,7 +258,13 @@ describe('the task-level rollup', () => {
     expect(rollUp([merged])).toBe('merged');
     expect(rollUp([merged, pr({ number: 301 })])).toBe('open');
     expect(rollUp([])).toBe('none');
-    expect(rollUp([pr({ state: 'closed' })])).toBe('none');
+    /*
+     * `closed` rather than `none`. It answered `none` before, which drew no
+     * glyph at all — so a task whose work was abandoned looked exactly like a
+     * task with no pull requests, and that is the one distinction a record of
+     * finished work exists to make.
+     */
+    expect(rollUp([pr({ state: 'closed' })])).toBe('closed');
   });
 
   it('says the count and the reason, or nothing when there is no PR', () => {

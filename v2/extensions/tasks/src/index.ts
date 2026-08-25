@@ -61,11 +61,46 @@ const ARCHIVED_LINE = 'Archived — this is what was on screen when the task was
  * would be a task that knows which agent it hired (D11).
  */
 const AGENTS_RESUME_TARGET = 'agents.resumeTarget';
+const AGENTS_LAST_SAID = 'agents.lastSaid';
+
+/**
+ * The floor of the second line — what it says when the task has said nothing.
+ *
+ * **A word, beside a mark that means the same thing**, which is the one place
+ * §6's no-duplication rule is knowingly bent. Three things pay for it:
+ *
+ *   - the line is UNCONDITIONAL, so the alternative is not a shorter row, it is
+ *     a reserved empty strip under every quiet title — and reserved emptiness
+ *     reads as a rendering fault, which is the shape this already shipped as
+ *     once and was pulled for;
+ *   - it is what makes the duration beside it mean anything. `6m` alone names no
+ *     subject; `idle · 6m` is a sentence, and the sentence is the whole job of
+ *     the line;
+ *   - the mark is a colour and a shape. This is its accessible name, drawn — so
+ *     a rail read by somebody who cannot separate the hues says the same thing
+ *     as one read by somebody who can.
+ *
+ * It is the FLOOR, never a competitor: anything the task actually said wins, and
+ * on a working task the brief wins. A row reaches this only when there is
+ * nothing truer to put there.
+ */
+const STATE_WORDS: Readonly<Record<string, string>> = {
+  blocked: 'waiting on you',
+  error: 'failed',
+  needsCheck: 'ready to read',
+  working: 'working',
+  idle: 'idle',
+  archived: 'shipped',
+};
+
+const STATE_WORD_OF = (state: string): { summary?: string } => {
+  const word = STATE_WORDS[state];
+  return word === undefined ? {} : { summary: word };
+};
 const AGENTS_RESUME_COMMAND = 'agents.resumeCommand';
+import { formatElapsed } from './model/elapsed.ts';
 import { displayState } from './model/lifecycle.ts';
 import { isTaskAgentState, rollUp, tintFor } from './model/agent-rollup.ts';
-import { collectTaskDiff } from './model/diff-collect.ts';
-import type { DiffStats } from './model/diff-stats.ts';
 import { fuzzyFilter } from '@shepherd/sdk';
 import { SHIPPED_CAP, activeOrder, capShipped, shippedOrder } from './model/order.ts';
 import { hitsByTask, totalMatches } from './model/transcript-rollup.ts';
@@ -1351,99 +1386,147 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    */
 
   /**
-   * What each task has CHANGED — read from git, cached, never per render.
+   * **When each task last CHANGED STATE** — the clock behind `waiting 14m`.
    *
-   * Transient like `busy` above and for a stronger reason: this is a fact about
-   * a WORKTREE, and a worktree can be edited by anything on the machine. A value
-   * persisted into the store would be a claim about disk that survives the disk
-   * changing, and it would be wrong from the first commit made in a terminal.
+   * This is what replaced the diff line, and the reason is what the diff line
+   * could not answer. `+12 −4 · 3 files` says work happened; it does not say
+   * whether you are needed, and "am I the bottleneck" is the only question a
+   * rail of six parallel agents exists to answer. A task that has been waiting
+   * on you for a quarter of an hour should itch, and nothing on the row said so.
    *
-   * **Refreshed on a beat, not on a render.** `rowFor` runs on every tree
-   * change, and a `git diff` per row per change is a subprocess storm — v1 spent
-   * a third of a core learning that lesson with `RepoSignals`. So the tree reads
-   * whatever is in this map (drawing no diff line when there is nothing yet) and
-   * the refresh below fills it and nudges the tree once, which is the same
-   * shape v1 landed on for PR status.
+   * The mark already says a task is WAITING. Only a clock says how long you have
+   * been the one holding it up, which is what turns the rail from a status list
+   * into a priority queue.
+   *
+   * **Stamped here rather than in `agents-core`**, whose registry is deliberately
+   * pure — no clock, no IO — so that the ordering guard and the sweep's
+   * hysteresis can be tested as values. A timestamp is exactly the impurity that
+   * design keeps out, so the consumer that wants one keeps it.
+   *
+   * Transient, like every map around it: a duration measured from a moment in a
+   * previous run of the app is not a duration, and a restart honestly showing no
+   * elapsed time is better than one showing a number that counted while nothing
+   * was running.
    */
-  const diffs = new Map<string, DiffStats>();
+  const stateSince = new Map<string, { readonly state: string; readonly at: number }>();
+
+  /**
+   * How long this task has been in the state it is in, or undefined the first
+   * time we see it.
+   *
+   * Called from `rowFor`, which runs on every tree change — so it is pure map
+   * work and a clock read, never IO. The FIRST sighting records and returns
+   * nothing rather than claiming zero: a task that was already waiting when the
+   * app started has been waiting longer than we know, and `0m` would be a lie
+   * told with confidence.
+   */
+  /**
+   * The DRAWN stamp, spreadable — `{ elapsed: '14m' }` or `{}`.
+   *
+   * Formatted here rather than in the card, and that is load-bearing: a raw
+   * duration is a different number on every render, the renderer diffs rows to
+   * decide what to redraw, and a field that never compares equal is an infinite
+   * render loop. It was one. See `formatElapsed`.
+   */
+  function elapsedFor(taskId: string, state: string): { elapsed?: string } {
+    const since = sinceOf(taskId, state);
+    if (since === undefined) return {};
+    const text = formatElapsed(since);
+    return text === undefined ? {} : { elapsed: text };
+  }
+
+  function sinceOf(taskId: string, state: string): number | undefined {
+    const seen = stateSince.get(taskId);
+    if (seen === undefined || seen.state !== state) {
+      stateSince.set(taskId, { state, at: ctx.clock.now() });
+      return undefined;
+    }
+    return ctx.clock.now() - seen.at;
+  }
+
+  /**
+   * **What each task's agent last said** — the rail's second line.
+   *
+   * The line finishes the sentence the state mark starts: ready → *with what
+   * result*, failed → *why*. The write half is the instruction `root-synth`
+   * puts in every task root's `CLAUDE.md`; this is the read.
+   *
+   * **Asked of `agents.lastSaid`, never of a transcript.** A task must not learn
+   * that its agent keeps a JSONL file anywhere — that is the vendor's, and the
+   * command is the same D11 seam `agents.resumeTarget` is. What comes back is
+   * already gated: a sentence, or nothing.
+   *
+   * **Refreshed on a beat, not on a render**, exactly as the diff read it
+   * replaces was, and for the reason that read recorded: `rowFor` runs on every
+   * tree change, and IO per row per change is how v1 spent a third of a core.
+   * The kind caches on the transcript's size, so a quiet task costs a `stat`.
+   *
+   * Transient. A sentence describes the turn that just ended; one restored from
+   * disk would describe a turn from a previous run of the app.
+   */
+  const saids = new Map<string, string>();
+  const saidsInFlight = new Set<string>();
+
+  /**
+   * One task's line, re-read.
+   *
+   * The ORCHESTRATOR's session and no other. A task's workstream agents are
+   * saying things about their own piece of it, and a row that showed whichever
+   * spoke last would change subject without saying so.
+   */
+  async function refreshSaid(task: TaskRecord): Promise<void> {
+    const session = task.sessions.find((entry) => entry.role === 'orchestrator') ?? task.sessions[0];
+    if (session === undefined) return;
+    if (saidsInFlight.has(task.id)) return;
+    saidsInFlight.add(task.id);
+    try {
+      const answer = await commands.invoke<{ text?: unknown }>(AGENTS_LAST_SAID, {
+        sessionId: session.id,
+      });
+      // `ok` says the call succeeded, never that the value has a shape.
+      const text = answer.ok && typeof answer.value?.text === 'string' ? answer.value.text : undefined;
+      const before = saids.get(task.id);
+      if (text === undefined) {
+        /*
+         * UNKNOWN, not empty — the same rule the diff read followed. An agent
+         * mid-turn has said nothing NEW, and blanking the row would make the
+         * line flicker away every time work started and back when it stopped.
+         */
+        return;
+      }
+      saids.set(task.id, text);
+      // Only nudge when the ANSWER moved: this runs on a beat, and a tree change
+      // per tick would re-render the rail for nothing.
+      if (before !== text) changed();
+    } catch (error) {
+      ctx.log.warn(`could not read what ${task.id} last said — ${String(error)}`);
+    } finally {
+      saidsInFlight.delete(task.id);
+    }
+  }
+
+  /**
+   * Every live task. Archived ones have no agent to have said anything.
+   *
+   * Demand-driven, hung off the tree read, for the reason the diff read was: a
+   * rail that is never drawn should do no work at all, and the surface that
+   * wants the line pays for it.
+   */
+  function refreshSaids(): void {
+    for (const task of store.list()) {
+      if (task.lifecycle === 'archived') continue;
+      void refreshSaid(task);
+    }
+  }
 
   /**
    * The last suite result reported for a task — see `TASK_COMMANDS.reportSuite`.
    *
-   * Transient for the same reason `diffs` is: a result describes a moment, and
+   * Transient for the same reason `stateSince` is: a result describes a moment, and
    * one persisted into the store would outlive the code it measured. A restart
    * showing no meter is correct — nothing has run yet in this session.
    */
   const suites = new Map<string, { readonly total: number; readonly passed: number }>();
-
-  /**
-   * One task's diff, re-read.
-   *
-   * `inFlight` exists because the triggers overlap: a turn finishing, a pane
-   * being focused and the periodic refresh can all fire within a second of each
-   * other, and without it that is three `git diff` processes racing to write the
-   * same key. One read per task at a time; the later callers get the earlier
-   * read's answer on the next beat, which is soon enough for a number that
-   * changes when a human types.
-   */
-  const inFlight = new Set<string>();
-
-  async function refreshDiff(task: TaskRecord): Promise<void> {
-    if (inFlight.has(task.id)) return;
-    inFlight.add(task.id);
-    try {
-      const stats = await collectTaskDiff(api.proposed.process, task.repos.map((repo) => repo.path));
-      const before = diffs.get(task.id);
-      if (stats === null) {
-        // UNKNOWN, not zero — and an unreadable repo does not erase the last
-        // number we did read. A worktree mid-`git worktree remove` would
-        // otherwise blank a card and then restore it a second later.
-        return;
-      }
-      diffs.set(task.id, stats);
-      // Only nudge the tree when the ANSWER moved. The refresh runs on a timer,
-      // and a tree change per tick would re-render the rail twice a minute for
-      // nothing.
-      if (
-        before === undefined ||
-        before.added !== stats.added ||
-        before.removed !== stats.removed ||
-        before.files !== stats.files
-      ) {
-        changed();
-      }
-    } catch (error) {
-      // A git failure is not a reason to take the sidebar down. The card simply
-      // draws no diff line, which is the honest rendering of "we do not know".
-      ctx.log.warn(`diff read failed for ${task.id} — ${String(error)}`);
-    } finally {
-      inFlight.delete(task.id);
-    }
-  }
-
-  /**
-   * Every live task. Archived ones have no worktree to read.
-   *
-   * **Demand-driven, not fired at activate.** Two reasons, and the second is the
-   * one that matters:
-   *
-   *   - Startup is already provisioning worktrees, which is git work the user is
-   *     actually waiting on. Racing it with reads for a number nobody has looked
-   *     at yet spends the same subprocess budget on the wrong thing.
-   *   - A rail that is never drawn should do no git AT ALL. Hanging this off the
-   *     tree read means the cost is paid by the surface that wants it, which is
-   *     also why an app with the sidebar closed is silent.
-   *
-   * It is safe to call from `getChildren`: `inFlight` bounds it to one read per
-   * task, and the nudge below only fires when the ANSWER moved — so read →
-   * refresh → changed → read settles after one round instead of spinning.
-   */
-  function refreshDiffs(): void {
-    for (const task of store.list()) {
-      if (task.lifecycle === 'archived') continue;
-      void refreshDiff(task);
-    }
-  }
 
   /** The foot row's own expansion key — not a task id, and never colliding. */
   const SHIPPED_KEY = 'group:shipped';
@@ -3041,7 +3124,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
          * soundness rests on there being one (`store.ts`).
          */
         store.recordRepoUses(
-          task.repos.map((repo) => repo.path),
+          task.repos.map((repo) => `${rootOf(task)}/${repo.name}`),
           ctx.clock.now(),
         );
         ctx.log.info(`created task ${task.id} (${slug}) with ${task.repos.length} repo(s)`);
@@ -4131,10 +4214,53 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
            * we do not actually know.
            *
            * A card that omits a fact is honest; one that invents a zero is not.
-           * The diff is whatever the last read put in `diffs`, which is nothing
-           * at all until the first refresh lands — so a freshly-opened app draws
-           * cards with no diff line for a beat rather than a row of `+0 −0`.
+           * `elapsedMs` is the sharpest case: the first time a task is seen it is
+           * absent rather than zero, because a task that was already waiting when
+           * the app started has been waiting longer than we know.
            */
+          /**
+           * Which line the row's slot gets, per state. See the note at the call.
+           *
+           * Returns a SPREADABLE object rather than a string, so "there is no
+           * summary" is a field that is absent rather than one that is empty —
+           * the card's own rule, and what stops an empty string drawing a blank
+           * meta line.
+           */
+          const summaryFor = (task: TaskRecord, state: string): { summary?: string } => {
+            /*
+             * `blocked`, not `waiting` — the writer's vocabulary, not the mark's.
+             * This read `state === 'waiting'` and so never fired at all: the mark
+             * is `waiting`, the STATE is `blocked`, and `markFor` is the map
+             * between them. It looked correct because the branch it fell through
+             * to also answered nothing.
+             *
+             * The word rather than the last thing said: an agent that is asking
+             * you something last SPOKE at the end of its previous turn, which is
+             * stale, and the question itself is the card's own block below.
+             */
+            if (state === 'blocked') return STATE_WORD_OF(state);
+            if (state === 'working') {
+              const brief = task.brief.trim();
+              return brief === '' ? STATE_WORD_OF(state) : { summary: brief };
+            }
+            const said = saids.get(task.id);
+            if (said === undefined || said === '') return STATE_WORD_OF(state);
+            /*
+             * **Never the row's own label.** §6 refuses repeating a name down the
+             * hierarchy, and a summary identical to the title is that: the same
+             * words drawn twice, one under the other, in a rail whose whole
+             * argument is that a row says one thing.
+             *
+             * Not hypothetical — measured against eight real transcripts, two
+             * ended on a line that was exactly the task's title. A short session
+             * whose last assistant record is the title Claude Code minted for it
+             * is indistinguishable, from here, from one that said something.
+             */
+            return said.trim().toLowerCase() === task.title.trim().toLowerCase()
+              ? STATE_WORD_OF(state)
+              : { summary: said };
+          };
+
           const cardFor = (task: TaskRecord, state: string, count?: number, stage?: string): unknown => {
             const factsOf = factsFor(task);
             return {
@@ -4203,8 +4329,31 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
              * is told (`CardFactSubject.shipped`) and answers `null`.
              */
             ...(factsOf.length === 0 ? {} : { facts: factsOf }),
-            diff: diffs.get(task.id),
             suite: suites.get(task.id),
+            /*
+             * **The second line's changing slot** — the one that finishes the
+             * sentence the mark starts.
+             *
+             * WORKING shows the brief, not the last line. Mid-turn the last line
+             * is the PREVIOUS turn's ending, which is stale exactly while the
+             * task is most active; the brief is what you asked for and cannot go
+             * stale. Working answers "on what", and the brief is that answer.
+             *
+             * WAITING shows nothing. A waiting card opens with the question and
+             * its two answers inline, so saying it again above them would be the
+             * same words twice in one card.
+             *
+             * Everything else shows what the agent last said, which is where
+             * "with what result" and "why" live.
+             */
+            ...summaryFor(task, state),
+            /*
+             * Suppressed on a shipped row with everything else that describes
+             * live work — "archived 3d" is a fact about a record, not about
+             * something you could act on, and the Shipped region already answers
+             * "when" once per day in its own headers.
+             */
+            ...(task.lifecycle === 'archived' ? {} : elapsedFor(task.id, state)),
             repos: task.repos.map((repo, index) => ({
               name: repo.name,
               /*
@@ -4221,8 +4370,8 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
             };
           };
 
-          // The surface that wants the numbers pays for them — see `refreshDiffs`.
-          refreshDiffs();
+          // The surface that wants the line pays for it — see `refreshSaids`.
+          refreshSaids();
 
           const all = store.list();
           if (all.length === 0) {
@@ -4744,8 +4893,20 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * there was that a debounce only cancels PENDING work, so the bound has to be
    * on the rate itself.
    */
-  const diffTimer = setInterval(refreshDiffs, 20_000);
-  ctx.subscriptions.push(toDisposable(() => clearInterval(diffTimer)));
+  /*
+   * The minute hand.
+   *
+   * `waiting 14m` is a number that moves with no event behind it, so something
+   * has to nudge the tree or the rail would show the duration a task had when it
+   * last changed for some other reason. A minute is the cadence the number is
+   * drawn at, so anything faster repaints for nothing.
+   *
+   * This REPLACED a 20s `git diff` across every repo of every live task. The
+   * rail is cheaper than it was: a nudge is a re-render, where the thing it
+   * replaced was a subprocess per repo per beat.
+   */
+  const minuteTimer = setInterval(() => changed(), 60_000);
+  ctx.subscriptions.push(toDisposable(() => clearInterval(minuteTimer)));
 
   ctx.log.info(`ready — ${store.list().length} task(s), data in ${ctx.dataDir}`);
   return { list: () => store.list(), get: (id) => store.get(id) };

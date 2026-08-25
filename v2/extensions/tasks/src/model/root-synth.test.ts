@@ -218,3 +218,24 @@ describe('the branch section', () => {
     expect(synth([]).claudeMd).not.toMatch(/random|placeholder|minted|temporary/i);
   });
 });
+
+describe('the turn-ending rule', () => {
+  it('asks for a closing sentence, because the rail reads the last line', () => {
+    /*
+     * A task row's second line finishes the sentence its state mark starts, and
+     * the only place that sentence can come from is the agent. Left alone an
+     * agent ends a turn with whatever it happened to be saying.
+     */
+    const text = synth([repo({ name: 'api' })]).claudeMd;
+    expect(text).toContain('## Ending a turn');
+    expect(text).toMatch(/one short sentence/i);
+  });
+
+  it('asks for a LINE, not a label — this is read by a person first', () => {
+    // `TL;DR:` on every response is a machine affordance showing through. A
+    // closing sentence is how somebody would end anyway.
+    const text = synth([repo({ name: 'api' })]).claudeMd;
+    expect(text).not.toMatch(/TL;DR/i);
+    expect(text).toMatch(/no heading, no label/i);
+  });
+});

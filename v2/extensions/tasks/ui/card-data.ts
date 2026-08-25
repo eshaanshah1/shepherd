@@ -65,7 +65,11 @@ export interface CardFact {
   readonly icon?: string;
   /** A few characters of mono text. Never a colour, never a length. */
   readonly label?: string;
-  readonly tone: 'positive' | 'negative' | 'neutral' | 'quiet';
+  /**
+   * Named for the job, never the hue — `pending` clears itself, `done` is
+   * terminal. See the writer's copy in `src/manifest.ts`.
+   */
+  readonly tone: 'positive' | 'negative' | 'neutral' | 'pending' | 'done' | 'brand' | 'quiet';
   /** What it means, in words — the tooltip and the accessible name. */
   readonly title: string;
   readonly command?: { readonly id: string; readonly args?: unknown };
@@ -107,6 +111,32 @@ export interface CardData {
   readonly stage?: string;
   /** One sentence of what is happening. */
   readonly summary?: string;
+  /**
+   * How long this task has been in the state its mark reports.
+   *
+   * **This is what the diff numbers were replaced by.** `+12 −4 · 3 files`
+   * answered "how big is this", which is a review-time question asked once, by
+   * somebody who has already decided to look. The rail is scanned, not read, and
+   * the question it exists to answer is "which of these is my fault" — which
+   * lines changed cannot address at all, and misrepresent as progress besides:
+   * an agent that wrote 400 lines is not further along than one that wrote 40.
+   *
+   * The mark says a task is waiting. This says how long you have been the one
+   * holding it up, which is the tiebreaker when three of them are waiting at
+   * once.
+   *
+   * Absent on first sighting rather than zero — see `sinceOf` on the writer's
+   * side. A task already waiting when the app started has been waiting longer
+   * than anyone can say, and `0m` would be a confident lie.
+   *
+   * **The DRAWN string, not a duration, and the difference is load-bearing.**
+   * This carried milliseconds once, and a raw duration is a different number on
+   * every render: the renderer diffs rows to decide what to redraw, so a field
+   * that never compares equal is an infinite render loop. It was one, thousands
+   * of times a minute, for a number nobody could see moving. Two renders a
+   * second apart inside the same minute now carry the identical `14m`.
+   */
+  readonly elapsed?: string;
   readonly diff?: CardDiff;
   readonly suite?: { readonly total: number; readonly passed: number };
   readonly repos?: readonly CardRepo[];
@@ -260,6 +290,7 @@ export function readCardData(value: unknown): CardData | null {
     stage: str(value['stage']),
     summary: str(value['summary']),
     diff: readDiff(value['diff']),
+    elapsed: str(value['elapsed']),
     suite,
     repos: repos !== undefined && repos.length > 0 ? repos : undefined,
     tabs: tabs !== undefined && tabs.length > 0 ? tabs : undefined,
@@ -283,7 +314,7 @@ export function readCardData(value: unknown): CardData | null {
  * `quiet` rather than being refused — an unrecognised tone is a spelling
  * mistake, and the quiet reading is the one that claims nothing.
  */
-const TONES = ['positive', 'negative', 'neutral', 'quiet'] as const;
+const TONES = ['positive', 'negative', 'neutral', 'pending', 'done', 'brand', 'quiet'] as const;
 
 function readFacts(value: unknown): readonly CardFact[] {
   if (!Array.isArray(value)) return [];

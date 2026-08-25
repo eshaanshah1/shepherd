@@ -50,12 +50,17 @@ export type RoleName =
   | 'textFaint'
   | 'textMute'
   | 'textGhost'
-  // the five that mean something (§2)
+  // the five that mean something (§2), plus the two the always-drawn PR fact
+  // added — see `honey` and `plum` below for why they are not a sixth and
+  // seventh "meaning" so much as time and terminality.
   | 'sky'
   | 'grass'
   | 'wool'
   | 'clay'
   | 'red'
+  | 'honey'
+  | 'plum'
+  | 'git'
   // the state mark (§3)
   | 'markWorking'
   | 'markWorkingOff'
@@ -291,6 +296,27 @@ export const roles: Readonly<Record<RoleName, RoleSpec>> = {
     job: 'a run that failed.',
     notFor: 'a back-out path. Cancel, Dismiss, Close and Discard are ghost — they are not destructive.',
   },
+  honey: {
+    kind: 'token',
+    token: 'honey',
+    job: 'in flight — a check that is running, a gate that has said it needs a click.',
+    notFor:
+      'a warning. `markFailed` still says there is no warning state, and that stands: this is not "might be bad", it is "not finished yet". The test is whether the colour would go away on its own. A running check does; a risky one does not.',
+  },
+  git: {
+    kind: 'token',
+    token: 'git',
+    job: 'git’s own mark — the glyph on a task whose changes are not a pull request yet.',
+    notFor:
+      'a state. It is identity, like the repo marks, and shares no meaning with the five that mean something: a row is not more or less urgent for being drawn in it.',
+  },
+  plum: {
+    kind: 'token',
+    token: 'plum',
+    job: 'merged — the one terminal state.',
+    notFor:
+      'anything still live. A task with one merged PR among four open ones is not merged, and `rollUp` treats merged as a floor rather than a step for exactly this reason.',
+  },
 
   // ── the state mark (§3) ─────────────────────────────────────────────────────
   //
@@ -334,7 +360,8 @@ export const roles: Readonly<Record<RoleName, RoleSpec>> = {
     kind: 'alias',
     of: 'red',
     job: 'the solid 8×8 square of a run that failed.',
-    notFor: 'a warning. There is no warning state; a thing either needs you or it does not.',
+    notFor:
+      'a warning. There is no warning state; a thing either needs you or it does not. `honey` is not the exception it looks like — it means IN FLIGHT, which is a fact about time rather than a hedge about severity, and it clears itself.',
   },
   meterPass: {
     kind: 'alias',

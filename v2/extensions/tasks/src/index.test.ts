@@ -523,6 +523,13 @@ const listedState = async (h: Harness): Promise<string> =>
 const rowOf = async (h: Harness, id: string): Promise<TreeItem | undefined> =>
   (await h.tree().children(undefined)).find((row) => row.id === id);
 
+/** The card payload a row carries — what `TaskCard` reads. */
+const cardOf = async (
+  h: Harness,
+  id: string,
+): Promise<{ elapsed?: string; summary?: string } | undefined> =>
+  (await rowOf(h, id))?.data as { elapsed?: string; summary?: string } | undefined;
+
 /**
  * The STEP a row is on, which is a field of its card and not its label.
  *
@@ -665,6 +672,133 @@ describe('tasks.delete', () => {
       await h.run('tasks.delete', { task: 't1' });
       expect(h.git.filter((call) => call.args[1] === 'prune').map((call) => call.opts.cwd)).toEqual(['/src/api']);
     });
+  });
+
+  it('shows the BRIEF while working, never the previous turn’s ending', async () => {
+    /*
+     * Mid-turn, the last thing an agent said is the ending of the turn BEFORE —
+     * stale exactly while the task is most active. The brief is what you asked
+     * for and cannot go stale, and "working → on what" is the sentence the slot
+     * is there to finish.
+     */
+    const h = (live = harness({ tasks: [task({ sessions: [{ id: 's1', role: 'orchestrator', pane: 'p1' }] })] }));
+    h.emit('agents.stateChanged', { sessionId: 's1', kindId: 'claude-code', pane: 'p1', from: 'idle', to: 'working' });
+    expect((await cardOf(h, 't1'))?.summary).toBe('Make it work.');
+  });
+
+  it('says the WORD while blocked, not a stale line from the previous turn', async () => {
+    /*
+     * An agent that is asking you something last SPOKE at the end of its
+     * previous turn, and the question itself is the card's own block below. So
+     * the line says what the row is, and nothing that could be out of date.
+     *
+     * This branch read `state === 'waiting'` for a while and so never fired at
+     * all: the MARK is `waiting`, the state is `blocked`, and `markFor` is the
+     * map between them. It looked right because what it fell through to also
+     * answered nothing.
+     */
+    const h = (live = harness({ tasks: [task({ sessions: [{ id: 's1', role: 'orchestrator', pane: 'p1' }] })] }));
+    h.emit('agents.stateChanged', { sessionId: 's1', kindId: 'claude-code', pane: 'p1', from: 'idle', to: 'blocked' });
+    expect((await cardOf(h, 't1'))?.summary).toBe('waiting on you');
+  });
+
+  it('never repeats the row’s own title back underneath it', async () => {
+    /*
+     * §6 refuses repeating a name down the hierarchy, and a summary equal to the
+     * title is exactly that — the same words twice, one under the other.
+     *
+     * Measured, not hypothetical: of eight real transcripts, two ended on a line
+     * that was precisely the task's title. From here that is indistinguishable
+     * from an agent having said something.
+     */
+    const h = (live = harness({
+      tasks: [task({ title: 'Fix login', sessions: [{ id: 's1', role: 'orchestrator', pane: 'p1' }] })],
+      invoke: (id) =>
+        id === 'agents.lastSaid' ? ({ ok: true, value: { text: '  fix LOGIN  ' } } as Result<unknown, CommandError>) : undefined,
+    }));
+    await h.tree().children(undefined);
+    await Promise.resolve();
+    await Promise.resolve();
+    // The floor, not nothing: the line is unconditional, so it must never be
+    // empty — see `STATE_WORDS`.
+    expect((await cardOf(h, 't1'))?.summary).toBe('idle');
+  });
+
+  it('asks agents.lastSaid, and never learns what a transcript is', async () => {
+    /*
+     * D11, the same seam `agents.resumeTarget` is: a task asks the AGENTS api
+     * what its agent said. If this ever became a file read, `tasks` would have
+     * learned which vendor it hired and the second kind would not fit.
+     */
+    const h = (live = harness({ tasks: [task({ sessions: [{ id: 's1', role: 'orchestrator', pane: 'p1' }] })] }));
+    await h.tree().children(undefined);
+    await Promise.resolve();
+    expect(h.invoked.filter((call) => call.id === 'agents.lastSaid')).toEqual([
+      { id: 'agents.lastSaid', args: { sessionId: 's1' } },
+    ]);
+  });
+
+  it('times a task from when its STATE changed, not from when it was created', async () => {
+    /*
+     * An elapsed stamp lived on this row once and was deleted because it reported
+     * the wrong subject: task AGE, which says nothing about whether you are
+     * needed. This one measures the state the MARK reports, which is the number
+     * that makes a rail a priority queue — how long you have been the one holding
+     * a task up.
+     */
+    const h = (live = harness({ tasks: [task()] }));
+
+    // First sighting records and says nothing: a task already waiting when the
+    // app started has been waiting longer than we can know, and 0 is a lie.
+    expect((await cardOf(h, 't1'))?.elapsed).toBeUndefined();
+
+    h.clock.advance(14 * 60_000);
+    expect((await cardOf(h, 't1'))?.elapsed).toBe('14m');
+  });
+
+  it('sends the DRAWN stamp, so two renders in the same minute compare equal', async () => {
+    /*
+     * MUTATION TARGET, and a shipped defect: this field carried raw
+     * milliseconds, which is a different number on every render because `now()`
+     * moves between one and the next. The renderer diffs rows to decide what to
+     * redraw, so a field that never compares equal is an infinite render loop —
+     * and it was one, logging `Maximum update depth exceeded` thousands of times
+     * a minute for a number nobody could see moving.
+     *
+     * Sending the string the row draws fixes it by construction. The assertion
+     * is EQUALITY ACROSS TIME, because that is the property that was violated;
+     * asserting the format would have passed throughout.
+     */
+    const h = (live = harness({ tasks: [task()] }));
+    await cardOf(h, 't1');
+
+    h.clock.advance(60_000);
+    const first = (await cardOf(h, 't1'))?.elapsed;
+    h.clock.advance(5_000);
+    const second = (await cardOf(h, 't1'))?.elapsed;
+
+    expect(first).toBe('1m');
+    expect(second).toBe(first);
+  });
+
+  it('runs NO git to draw the rail — the diff read that used to is gone', () => {
+    /*
+     * Drawing the rail cost a `git diff` per repo of every live task, on a 20s
+     * timer, for a number that answered "how big is this" — a review-time
+     * question asked once by somebody who has already decided to look. The row
+     * says how long a task has been in its state instead, which is a clock read.
+     *
+     * The lesson the deleted read leaves behind, because it applies to whatever
+     * consumes a repo next: **`TaskRepo.path` is the SOURCE repo**, the directory
+     * `git worktree add` runs *inside*. It is not where the work is. That read
+     * passed it straight to `git diff` and so measured whatever the user
+     * happened to have dirty in their own checkout — and since a clean checkout
+     * is `+0 −0`, which the card draws as nothing at all, the bug never looked
+     * wrong. It looked absent. The worktree is `${rootOf(task)}/${repo.name}`.
+     */
+    const h = (live = harness({ tasks: [task()] }));
+    void h.tree().children(undefined);
+    expect(h.git).toEqual([]);
   });
 
   it('runs NO git at all for an archived task, whose worktrees the archive already removed', async () => {
@@ -1810,9 +1944,17 @@ describe('a long operation', () => {
 
       const row = await rowOf(h, created.id);
       expect(row?.label).toBe('Ship it');
-      // And it carries no time stamp. A task row had one on both sides of the
-      // divider; it reported task age on finished work, and a corrected ship clock
-      // was true without earning a column. The trailing cell holds the row's verb.
+      /*
+       * It carries no stamp YET, and the reason is the rule rather than this
+       * moment: the first sighting of a state records it and reports nothing,
+       * because a task already in a state when we started looking has been there
+       * longer than we can know and `0s` would be a confident lie.
+       *
+       * A stamp on this row used to be banned outright — it reported task AGE,
+       * which on finished work is the wrong subject entirely. What replaced it
+       * measures the state the MARK reports, which is a different question and
+       * the one a rail of parallel agents is scanned for.
+       */
       expect((row?.data as { elapsed?: unknown } | undefined)?.elapsed).toBeUndefined();
     });
 

@@ -45,6 +45,9 @@ export function cssVariables(mode: ThemeMode, scale: Metrics = metrics): Record<
   vars[cssVarName('line-height')] = `${scale.lineHeight}px`;
   vars[cssVarName('line-height-large')] = `${scale.lineHeightLarge}px`;
   vars[cssVarName('row-height')] = `${scale.rowHeight}px`;
+  // The state mark's fixed box, emitted because a second line has to align under
+  // the TITLE rather than under the mark — see `task-card.css`.
+  vars[cssVarName('mark-slot')] = `${scale.markSlot}px`;
   vars[cssVarName('hairline')] = `${scale.hairline}px`;
   for (const [step, size] of Object.entries(scale.type)) {
     vars[cssVarName(`font-size-${step}`)] = `${size}px`;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { mount } from './test-dom.ts';
-import { rulesMentioning } from './css-rules.ts';
+import { keyframesNamed, rulesMentioning } from './css-rules.ts';
 import { StateMark, markSlot, markWords, type MarkState } from './state-mark.tsx';
 import { SUITE_METER_MAX_CELLS, SuiteMeter } from './suite-meter.tsx';
 // Loaded for the `markSlot` case below, which asserts what the stylesheet does NOT
@@ -50,6 +50,55 @@ describe('StateMark', () => {
     expect(el.className).toBe('sh-ui-mark');
   });
 
+  it('gives the three bars three HEIGHTS, so the still reads as a meter', () => {
+    /*
+     * Equal bars are the shape of a loading spinner — "wait, something is
+     * happening somewhere". A skyline is a meter, which is what this is.
+     *
+     * The animation used to carry that idea alone, and the file said so: "three
+     * bars all pulsing is a loading spinner; three bars with one moving is a
+     * thing that is working." The silhouette carries it too now, so the mark
+     * still reads as working in a screenshot and under `prefers-reduced-motion`.
+     */
+    const heights = [1, 2, 3].map(
+      (n) =>
+        rulesMentioning('sh-ui-mark__bars')
+          .find((rule) => rule.selectorText === `.sh-ui-mark__bars > i:nth-child(${n})`)
+          ?.style.getPropertyValue('block-size'),
+    );
+    expect(heights).toEqual(['6px', '9px', '5px']);
+    expect(new Set(heights).size, 'three bars, three heights').toBe(3);
+  });
+
+  it('switches the off beat to a TOKEN, never to an opacity', () => {
+    /*
+     * It faded to `opacity: 0.18`, while `markWorkingOff` sat unused with its job
+     * written out — "the working meter's third bar on its off beat". The role was
+     * right and the stylesheet had drifted off it.
+     *
+     * An opacity over a surface produces a colour in no palette, and a DIFFERENT
+     * one in light mode where the same 0.18 lands against paper rather than
+     * near-black. The Shipped region's dimming carries the same argument.
+     */
+    /*
+     * Through `keyframesNamed`, which exists because of this assertion: the
+     * walk behind `rulesMentioning` treats a `@keyframes` block as a grouping
+     * rule and recurses into it, and the percentage rules inside carry `keyText`
+     * rather than `selectorText` — so they match neither branch and are dropped.
+     * The declaration that matters lived where nothing could see it.
+     */
+    const frames = keyframesNamed('sh-mark-working');
+    expect(frames.length).toBeGreaterThan(0);
+    const declared = frames.flatMap((frame) => [...frame.style]);
+    expect(declared).not.toContain('opacity');
+    expect(declared).toContain('background');
+    expect(frames.map((frame) => frame.style.background)).toContain('var(--sh-mark-working-off)');
+
+    // …and it has not merely moved into a rule beside them.
+    const styled = rulesMentioning('sh-ui-mark').flatMap((rule) => [...rule.style]);
+    expect(styled).not.toContain('opacity');
+  });
+
   it('draws three bars for working, and NOTHING else does', () => {
     // Only the third bar animates, which is why they are three real elements
     // rather than one pseudo-element: a pseudo cannot be addressed on its own.
@@ -88,10 +137,17 @@ describe('StateMark', () => {
     for (const property of ['background', 'border', 'content', 'transform']) {
       expect(bare?.style.getPropertyValue(property), `.sh-ui-mark declares ${property}`).toBe('');
     }
-    // …and it is still the fixed 12px box, which is the whole reason to reuse it:
-    // the label's x position must not depend on whether its row has a status.
-    expect(bare?.style.getPropertyValue('inline-size')).toBe('12px');
-    expect(bare?.style.getPropertyValue('block-size')).toBe('12px');
+    /*
+     * …and it is still the fixed box, which is the whole reason to reuse it: a
+     * label's x position must not depend on whether its row has a status.
+     *
+     * A TOKEN, not `12px`. The number was written out here and in `state-mark
+     * .css`, and then a third time in `task-card.css` so a second line could
+     * align under the title rather than under the mark — at which point one of
+     * the three was going to go stale without anything failing.
+     */
+    expect(bare?.style.getPropertyValue('inline-size')).toBe('var(--sh-mark-slot)');
+    expect(bare?.style.getPropertyValue('block-size')).toBe('var(--sh-mark-slot)');
   });
 });
 

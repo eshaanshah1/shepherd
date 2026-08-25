@@ -17,8 +17,8 @@
    */
   display: inline-grid;
   place-items: center;
-  inline-size: 12px;
-  block-size: 12px;
+  inline-size: var(--sh-mark-slot);
+  block-size: var(--sh-mark-slot);
   flex: none;
   position: relative;
 }
@@ -101,13 +101,41 @@
 .sh-ui-mark__bars {
   display: flex;
   align-items: flex-end;
+  /* 1.5px, so three 2px bars and their gaps come to 9 — centred in the 12px
+     slot with a hair either side, which is what keeps the mark optically the
+     same size as the 8px square and the 7px ring beside it in a list. */
   gap: 1.5px;
 }
 
 .sh-ui-mark__bars > i {
   inline-size: 2px;
-  block-size: 8px;
   background: var(--sh-mark-working);
+}
+
+/*
+ * **Three heights, not three of one.**
+ *
+ * Equal bars are the shape of a loading spinner — the thing that means "wait,
+ * something is happening somewhere". A skyline means a meter, and a meter is
+ * what this is: it says work is going on, at a glance, without asking to be
+ * watched. The animation was already carrying that idea alone ("three bars all
+ * pulsing is a loading spinner; three bars with one moving is a thing that is
+ * working"); the silhouette now carries it too, so the mark still reads as
+ * working in a screenshot, in a still, and under `prefers-reduced-motion`.
+ *
+ * Tallest in the middle, and the animated one shortest: the eye lands on the
+ * peak and the movement happens beside it rather than under it.
+ */
+.sh-ui-mark__bars > i:nth-child(1) {
+  block-size: 6px;
+}
+
+.sh-ui-mark__bars > i:nth-child(2) {
+  block-size: 9px;
+}
+
+.sh-ui-mark__bars > i:nth-child(3) {
+  block-size: 5px;
 }
 
 /*
@@ -121,17 +149,29 @@
  * Only the THIRD bar animates. Three bars all pulsing is a loading spinner; three
  * bars with one moving is a thing that is working.
  */
+/*
+ * **The off beat is a TOKEN, not an opacity.**
+ *
+ * This faded to `opacity: 0.18`, and `markWorkingOff` has existed the whole time
+ * with its job written out — "the working meter's third bar on its off beat" —
+ * unused by anything. The role was right and the stylesheet had drifted off it.
+ *
+ * An opacity over a surface produces a colour that is in no palette, and then a
+ * DIFFERENT colour in light mode, where the same 0.18 lands against paper rather
+ * than against near-black. The Shipped region's own note says this in as many
+ * words about its dimming; the same argument governs here.
+ */
 @keyframes sh-mark-working {
   0% {
-    opacity: 1;
+    background: var(--sh-mark-working);
   }
 
   50% {
-    opacity: 0.18;
+    background: var(--sh-mark-working-off);
   }
 
   100% {
-    opacity: 1;
+    background: var(--sh-mark-working);
   }
 }
 
@@ -149,7 +189,12 @@
  */
 @media (prefers-reduced-motion: reduce) {
   .sh-ui-mark__bars > i:last-child {
+    /*
+     * `animation: none` alone. The `opacity: 1` beside it was undoing the fade
+     * this used to be, and with the cycle switching a BACKGROUND the bar already
+     * rests at its declared `--sh-mark-working` — so the reset became a no-op
+     * that still looked load-bearing.
+     */
     animation: none;
-    opacity: 1;
   }
 }

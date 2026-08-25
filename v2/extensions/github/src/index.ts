@@ -1029,13 +1029,3 @@ const GITHUB_LAYOUT = {
   listRoots: 'layout.listRoots',
 } as const;
 
-/** How a rollup state reads, in the palette's four tones. */
-const TONES: Readonly<Record<TaskPrState, CardFact['tone']>> = {
-  failed: 'negative',
-  waiting: 'negative',
-  running: 'neutral',
-  approved: 'positive',
-  open: 'quiet',
-  merged: 'quiet',
-  none: 'quiet',
-};

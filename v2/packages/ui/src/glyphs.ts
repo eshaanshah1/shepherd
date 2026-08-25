@@ -10,6 +10,7 @@ import {
   IconEye,
   IconFolder,
   IconFolderFilled,
+  IconBrandGit,
   IconGitMerge,
   IconGitPullRequest,
   IconGitPullRequestClosed,
@@ -109,6 +110,13 @@ export const NAMED_GLYPHS: Readonly<Record<string, ComponentType<TablerIconProps
    * fifth pull-request variant, because that is the shape the arrow actually
    * makes when it lands.
    */
+  /*
+   * GIT ITSELF, which is a different noun from a pull request and is drawn where
+   * there is not one: the mark on a task whose changes exist only in a worktree.
+   * The pull-request family is about a thing on a server with a state; this is
+   * about what you have changed, and clicking it opens exactly that.
+   */
+  'brand-git': IconBrandGit,
   'pull-request': IconGitPullRequest,
   'pull-request-closed': IconGitPullRequestClosed,
   'pull-request-draft': IconGitPullRequestDraft,

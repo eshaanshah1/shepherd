@@ -35,159 +35,132 @@ const ruleCarrying = (selector: string): CSSStyleRule | undefined =>
   rulesMentioning(selector)
     .find((rule) => rule.selectorText.split(',').some((part) => part.trim() === selector));
 
+describe('the meta line', () => {
+  it('closes the card’s own gap, so the title and the numbers read as one block', () => {
+    /*
+     * The regression this pins: a dense head is `--sh-row-height` (right for a
+     * row whose whole content is one centred title) and the card gaps its
+     * children by `md` (right between a title and a question). Together they put
+     * 9px of nothing under a title floating in 34px, and the pair read as two
+     * rows rather than as one task saying two things.
+     */
+    const meta = ruleFor('.sh-task-card__meta');
+    expect(meta?.style.getPropertyValue('margin-block-start')).toBe(
+      'calc(var(--sh-space-sm) - var(--sh-space-md))',
+    );
+
+    // And the head stops being a fixed row when it is only half of one.
+    const head = rulesMentioning('sh-task-card__head').find((rule) =>
+      rule.selectorText.includes(':has(> .sh-task-card__meta)'),
+    );
+    expect(head?.style.getPropertyValue('block-size')).toBe('auto');
+  });
+
+  it('draws the elapsed stamp on the META line, never back in the title track', () => {
+    /*
+     * A stamp lived here once and was deleted for a good reason: it reported
+     * task AGE, which on finished work is the wrong subject, and a corrected
+     * ship clock was true without earning a column beside every title.
+     *
+     * What came back is a different measurement — how long the task has been in
+     * the state its MARK reports — and it came back on the second line, where
+     * the diff numbers used to be. The regression this guards is it creeping
+     * back into the head, which is the arrangement that charged every title for
+     * it.
+     */
+    const stamp = ruleFor('.sh-task-card__elapsed');
+    // jsdom expands the `none` shorthand; what matters is that it never grows.
+    expect(stamp?.style.flexGrow).toBe('0');
+    expect(stamp?.style.flexShrink).toBe('0');
+    expect(stamp?.style.color).toBe('var(--sh-text-ghost)');
+
+    const inHead = rulesMentioning('sh-task-card__elapsed').filter((rule) =>
+      rule.selectorText.includes('__head'),
+    );
+    expect(inHead).toEqual([]);
+  });
+
+  it('starts under the TITLE, not under the mark', () => {
+    // The mark's slot is the column the eye uses to find state. A second line
+    // beginning in it puts text where a mark belongs.
+    for (const selector of ['.sh-task-card__meta', '.sh-task-card__foot', '.sh-task-card__suiteRow']) {
+      expect(ruleFor(selector)?.style.getPropertyValue('padding-inline-start'), selector).toBe(
+        'var(--sh-task-gutter)',
+      );
+    }
+  });
+});
+
 describe('the task card’s trailing action', () => {
   /**
-   * MUTATION TARGET. The hover verb must not charge the title for space it does
-   * not occupy at rest.
+   * MUTATION TARGET. The glyph and the verb sit IN their lines, not over them.
    *
-   * The shared grid cell was paid for by the elapsed stamp: the track was as wide
-   * as the wider of the two, so the button was free because the stamp already held
-   * that space. Removing the stamp left the reservation behind — 33px of dead track
-   * on every row, for a button invisible until you point at it — and every title in
-   * the rail began truncating early. The region had just won 21px back by dropping
-   * its state column, and this spent more than that on the other edge.
+   * They spent three rounds as an absolutely positioned column spanning both
+   * rows, told where those rows were by a grid whose track sizes had to be kept
+   * in step with the card's padding and line heights by hand. Each time one of
+   * those numbers moved, the glyph landed on the wrong line or the verb fell out
+   * through the bottom of the card onto the row below. Every one of those was
+   * the same bug wearing different clothes: a box told where a line was, instead
+   * of being put in it.
+   *
+   * So the invariant is now structural, and this is what guards it: nothing in
+   * this file may position either of them.
    */
-  it('is out of the flow, so the title gets the whole line', () => {
-    expect(ruleFor('.sh-task-card__trail')?.style.position).toBe('absolute');
-    expect(ruleFor('.sh-task-card__trail')?.style.getPropertyValue('inset-inline-end')).toBe('0px');
-  });
-
-  it('is positioned against the head, which is its containing block', () => {
-    // Absolute with no positioned ancestor escapes to the page — the button would
-    // land in the window's top-left corner rather than the row's right edge.
-    expect(ruleFor('.sh-task-card__head')?.style.position).toBe('relative');
-  });
-
-  it('reserves NO width in the flow, on any of its rules', () => {
-    // The point of the whole change: a declaration here is the reservation coming
-    // back, whatever it is called.
-    for (const rule of rulesMentioning('sh-task-card__trail')) {
-      for (const property of ['width', 'inline-size', 'min-inline-size', 'flex', 'margin-inline-end']) {
-        expect(rule.style.getPropertyValue(property), `${rule.selectorText} declares ${property}`).toBe('');
+  it('positions neither the glyph nor the verb — they are IN their lines', () => {
+    for (const selector of ['sh-task-card__fact', 'sh-task-card__action']) {
+      // Pseudo-elements excluded: a clickable fact grows its hit area with an
+      // absolutely positioned `::after` (§9's coarse-pointer rule), which is a
+      // box inside the element rather than the element being placed on a line.
+      const rules = rulesMentioning(selector).filter((rule) => !rule.selectorText.includes('::'));
+      for (const rule of rules) {
+        // `position: relative` is allowed — a clickable fact grows its hit area
+        // through a pseudo-element and needs to be its own containing block.
+        // What is banned is being PLACED: taken out of flow and given a spot.
+        expect(rule.style.position, `${rule.selectorText} is positioned`).not.toBe('absolute');
+        for (const property of ['inset-block', 'inset-inline-end', 'top', 'bottom']) {
+          expect(rule.style.getPropertyValue(property), `${rule.selectorText} sets ${property}`).toBe('');
+        }
       }
     }
   });
 
-  /**
-   * MUTATION TARGET. The chip may paint over the title and over nothing else.
-   *
-   * The overlap is only honest against text that was going to be truncated
-   * anyway: the title ellipsises, so a chip landing on its tail reads as the row
-   * ending early. `stage` and `dupe` are short, whole and pinned to the same edge,
-   * so the chip cuts them mid-glyph — shipping a task drew `Archiving` and the
-   * hovered row said `Arc`, which is not a truncated word but a different one.
-   *
-   * The fix reserves the chip's own width instead of a number copied from the
-   * button's size, and only on the rows that have something to protect — which is
-   * why the reservation this file bans everywhere else does not come back with it.
-   */
-  it('rejoins the flow beside a stage or a dupe, so it covers neither', () => {
-    const exception = rulesMentioning('sh-task-card__trail').find((rule) =>
-      rule.selectorText.includes(':has('),
-    );
-    expect(exception?.selectorText).toContain('.sh-task-card__stage');
-    expect(exception?.selectorText).toContain('.sh-task-card__dupe');
-    expect(exception?.style.position).toBe('static');
-    // `inset-block: 0` is what gave the chip full row height; a static box needs
-    // this instead, or the backing shrinks to the button and reads as a floating pill.
-    expect(exception?.style.getPropertyValue('align-self')).toBe('stretch');
+  it('has no positioned column left to go wrong', () => {
+    // The wrapper is gone entirely, not merely unstyled: a rule naming it would
+    // be the apparatus growing back.
+    expect(rulesMentioning('sh-task-card__trail')).toEqual([]);
   });
 
-  it('lets the stage ellipsise rather than run past the row’s edge', () => {
-    // It still never GROWS — the title (`flex: 1`) gives up its width first — but a
-    // rail too narrow for both must truncate the word, not overflow it.
-    const stage = ruleFor('.sh-task-card__stage');
-    expect(stage?.style.getPropertyValue('text-overflow')).toBe('ellipsis');
-    expect(stage?.style.overflow).toBe('hidden');
-    expect(stage?.style.getPropertyValue('min-inline-size')).toBe('0px');
-    expect(stage?.style.flexGrow).toBe('0');
+  it('sends the verb to the end of its line, without naming a width', () => {
+    // `margin-inline-start: auto` rather than a reserved track: the element IS
+    // the reservation, so there is no number to keep in step with a control's
+    // size and no way for the two to disagree.
+    expect(ruleFor('.sh-task-card__action')?.style.getPropertyValue('margin-inline-start')).toBe('auto');
   });
 
-  it('backs the revealed button with the row’s OWN fill, never a new colour', () => {
-    // `fillHover` and `fillSelected` are opaque (a `wash` token and a luminance
-    // step), so the chip under the button is the same value as the row it sits on
-    // and reads as the row ending early rather than as something dropped on the
-    // text. A colour of its own would be a hue used for decoration, which §10 bans.
-    const fills = rulesMentioning('sh-task-card__trail')
-      .map((rule) => rule.style.background)
-      .filter((value) => value !== '');
-    expect(fills.length).toBeGreaterThan(0);
-    for (const fill of fills) {
-      expect(['var(--sh-fill-hover)', 'var(--sh-fill-selected)']).toContain(fill);
-    }
-  });
-
-  it('paints that backing only while the button is drawn', () => {
-    // At rest the button is `visibility: hidden`. A backing that did not wait for
-    // hover would put a rectangle of hover colour at the right edge of every row.
-    expect(ruleFor('.sh-task-card__trail')?.style.background).toBe('');
-    for (const rule of rulesMentioning('sh-task-card__trail')) {
-      if (rule.style.background === '') continue;
-      expect(rule.selectorText).toMatch(/:hover|:focus-within/);
-    }
-  });
-
-  it('slides the verb in from the right, at the row entrance’s own distance', () => {
+  it('reserves ONE width, whether or not a row happens to have a fact', () => {
     /*
-     * §8 refuses motion that translates a control, because a control that moves
-     * under the cursor is a control whose target moved mid-click. Two things bound
-     * it: the distance and duration are the row ENTRANCE's own (`row.css` animates
-     * an arriving row by opacity and a 4px slide), so this is that precedent applied
-     * to a control that is also arriving; and 4px sits inside the button's own hit
-     * target, so the target does not meaningfully move.
+     * A `data-has-fact` variant would make the title's run depend on whether a
+     * task's repo has a GitHub remote, so two rows in one list would truncate at
+     * different places for a reason nothing on screen states.
      */
-    const action = ruleCarrying('.sh-task-card__action');
-    expect(action?.style.transform).toBe('translateX(var(--sh-space-xs))');
-    expect(action?.style.transition).toContain('transform var(--sh-motion)');
-
-    const revealed = rulesMentioning('sh-task-card__action').find((rule) =>
-      rule.selectorText.includes(':hover'),
-    );
-    expect(revealed?.style.transform).toBe('none');
+    expect(rulesMentioning('sh-task-card').some((rule) => rule.selectorText.includes('data-has-fact'))).toBe(false);
   });
 
-  /**
-   * MUTATION TARGET. The verb and its backing must arrive at the same speed as the
-   * row they arrive on.
-   *
-   * The card fades its own fill over `--sh-motion`. The button toggled
-   * `visibility` and the chip switched `background` with no transition, so both
-   * snapped in over a background that was still easing — one element instant, the
-   * one behind it moving, which reads as two unrelated events rather than as one
-   * row waking up.
-   */
-  it('fades the verb and its backing over the row’s own duration', () => {
-    expect(ruleCarrying('.sh-task-card__action')?.style.transition).toContain('opacity var(--sh-motion)');
-    expect(ruleFor('.sh-task-card__trail')?.style.transition).toContain('background var(--sh-motion)');
-  });
-
-  it('keeps visibility in the transition, so the fade works in both directions', () => {
+  it('lets the slot ellipsise rather than run past the row’s edge', () => {
     /*
-     * `visibility` is discrete, and a transition whose endpoints include `visible`
-     * holds `visible` for the whole duration. That is what makes the button
-     * hit-testable the moment it starts to appear, and keeps it painted while it
-     * fades out — `opacity` alone would leave a control you cannot see but CAN
-     * click and tab to, which is worse than no control.
+     * The step and the summary SHARE the slot, so they share one rule — a
+     * declaration of its own for either is how the two would drift. Neither ever
+     * GROWS: the duration beside them keeps its whole width, since a duration is
+     * three characters and whole where a sentence truncates fine.
      */
-    const action = ruleCarrying('.sh-task-card__action');
-    expect(action?.style.visibility).toBe('hidden');
-    expect(action?.style.opacity).toBe('0');
-    expect(action?.style.transition).toContain('visibility var(--sh-motion)');
-  });
-
-  it('removes the fade under reduced motion rather than shortening it', () => {
-    // The same accommodation the row's entrance makes: there is no information in a
-    // cross-fade, so the honest answer is that the verb is simply there.
-    const reduced = rulesMentioning('sh-task-card__action').filter(
-      (rule) => rule.style.transition === 'none',
-    );
-    expect(reduced.length).toBeGreaterThan(0);
-  });
-
-  it('draws no elapsed stamp, because there is no longer one to draw', () => {
-    // Deleted rather than left unused: it reported task AGE on finished work, and a
-    // corrected ship clock was true without earning a column beside every title.
-    expect(rulesMentioning('sh-task-card__elapsed')).toHaveLength(0);
+    for (const selector of ['.sh-task-card__stage', '.sh-task-card__summary']) {
+      const rule = ruleCarrying(selector);
+      expect(rule?.style.getPropertyValue('text-overflow'), selector).toBe('ellipsis');
+      expect(rule?.style.overflow, selector).toBe('hidden');
+      expect(rule?.style.getPropertyValue('min-inline-size'), selector).toBe('0px');
+      expect(rule?.style.flexGrow, selector).toBe('0');
+      expect(rule?.style.getPropertyValue('white-space'), selector).toBe('nowrap');
+    }
   });
 });
 
@@ -205,24 +178,70 @@ describe('a contributed fact', () => {
    * The regression this guards is the reservation coming back: it charges every
    * fact-bearing title for space that is empty at rest.
    */
-  it('is hidden at rest and revealed with the row’s verb', () => {
-    // The one that DECLARES visibility: `.sh-task-card__fact` also has an
-    // earlier block for its own type and colour, and finding that one first
-    // would make this assert about the wrong rule.
-    const resting = rulesMentioning('sh-task-card__fact').find(
-      (rule) => rule.style.visibility !== '' && rule.selectorText.includes('.sh-task-card__fact'),
+  it('has no entrance animation — it is drawn, not revealed', () => {
+    /*
+     * It carried a `translateX`, sliding in from the row's edge beside the verb.
+     * That is right for something revealed on hover and meaningless for
+     * something drawn at rest — and the `transform: none` that cancels it lives
+     * on the hover rule, so a fact that no longer hovers sat 4px right of where
+     * it belonged, permanently, with nothing to put it back. Twice, one scope
+     * apart.
+     */
+    const shifted = rulesMentioning('sh-task-card__fact').filter(
+      (rule) => rule.style.transform !== '' && rule.style.transform !== 'none',
     );
-    expect(resting?.style.visibility).toBe('hidden');
-
-    const revealed = rulesMentioning('sh-task-card__fact').find((rule) =>
-      rule.selectorText.includes(':hover .sh-task-card__fact'),
-    );
-    expect(revealed?.style.visibility).toBe('visible');
+    expect(shifted.map((rule) => rule.selectorText)).toEqual([]);
   });
 
-  it('charges the title nothing at rest', () => {
-    // No reserved slot anywhere: the head's trailing inset is the regression.
-    expect(ruleFor('.sh-task-card__head')?.style.getPropertyValue('padding-inline-end')).toBe('');
+  it('is drawn at REST — nothing hides a fact unconditionally', () => {
+    /*
+     * The inversion this whole change turns on. A fact used to be hidden until
+     * you pointed at the row, and the component said the cost out loud: "the
+     * rail stops saying *this task's PR is red* at a glance."
+     *
+     * So the invariant is about the UNCONDITIONAL rules: a `visibility: hidden`
+     * on the fact with no state in its selector takes every glyph off the rail.
+     * Rules that hide it under `:hover` are the row's swap and are asserted
+     * below.
+     */
+    const alwaysHidden = rulesMentioning('sh-task-card__fact').filter(
+      (rule) =>
+        rule.style.visibility === 'hidden' &&
+        !rule.selectorText.includes(':hover') &&
+        !rule.selectorText.includes(':focus-within'),
+    );
+    expect(alwaysHidden.map((rule) => rule.selectorText)).toEqual([]);
+  });
+
+  it('needs no swap, because nothing shares a cell any more', () => {
+    /*
+     * A row used to hide its glyph on hover so the verb could take the single
+     * slot they shared. In flow they simply sit next to each other and both fit,
+     * so hiding one would be taking a state off the rail for no reason.
+     */
+    const swap = rulesMentioning('sh-task-card__fact').filter(
+      (rule) => rule.style.visibility === 'hidden',
+    );
+    expect(swap.map((rule) => rule.selectorText)).toEqual([]);
+  });
+
+  it('gives pending and done their own hues, so five states separate at rest', () => {
+    // Never colour ALONE — `github` varies the glyph too — but a tone that was
+    // shared is a distinction the eye cannot make. `running` used to be `sky`,
+    // the same as `open`; `merged` used to be the quiet grey of a fact that is
+    // not asking for anything.
+    expect(ruleFor(".sh-task-card__fact[data-tone='pending']")?.style.color).toBe('var(--sh-honey)');
+    expect(ruleFor(".sh-task-card__fact[data-tone='done']")?.style.color).toBe('var(--sh-plum)');
+  });
+
+  it('reserves ONE width, whether or not a row happens to have a fact', () => {
+    /*
+     * The half of the old rule that still stands. Reserving for the column is
+     * honest — something is always in it — but reserving CONDITIONALLY is not:
+     * a `data-has-fact` variant would make the title's left-to-right run depend
+     * on whether a task's repo has a GitHub remote, so two rows in one list
+     * would truncate at different places for a reason nothing on screen states.
+     */
     expect(rulesMentioning('sh-task-card').some((rule) => rule.selectorText.includes('data-has-fact'))).toBe(false);
   });
 });
