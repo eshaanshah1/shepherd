@@ -3008,20 +3008,14 @@ describe('incognito tasks', () => {
     expect((row as { data?: Record<string, unknown> } | undefined)?.data).not.toHaveProperty('incognito');
   });
 
-  it('offers Ship as a TRASH glyph, because shipping this one throws the session away', async () => {
-    /*
-     * Shipping an ordinary task shelves work you can come back to. Shipping an
-     * incognito one deletes its profile — the transcript, the history, the
-     * whole session — and a ship's-wheel over that gesture promises the wrong
-     * thing. Same verb, same command, same one click; the glyph is what says
-     * this one does not come back.
-     */
+  it('offers a TRASH glyph, because the button does not shelve anything', async () => {
+    // The glyph and the label have to agree with the verb: this press deletes.
     const h = (live = harness({ tasks: [task({ id: 'q1', incognito: true })] }));
 
     const rows = await h.tree().children?.(undefined);
     const row = (rows ?? []).find((entry) => (entry as { id?: string }).id === 'q1');
     expect((row as { primaryAction?: { icon?: string; label?: string } }).primaryAction).toMatchObject({
-      label: 'Ship',
+      label: 'Delete',
       icon: 'trash',
     });
   });
@@ -3040,7 +3034,62 @@ describe('incognito tasks', () => {
     const rows = await h.tree().children?.(undefined);
     const row = (rows ?? []).find((entry) => (entry as { id?: string }).id === 'q2');
     const actions = (row as { actions?: { label?: string; icon?: string }[] }).actions ?? [];
-    expect(actions.find((entry) => entry.label === 'Ship')?.icon).toBe('trash');
+    // No `Ship` in the menu at all — the row offers one destructive verb, and a
+    // second entry saying Ship would be a door onto the same command promising
+    // something it does not do.
+    expect(actions.some((entry) => entry.label === 'Ship')).toBe(false);
+    expect(actions.filter((entry) => entry.icon === 'trash')).not.toHaveLength(0);
+  });
+
+  it('is DELETED by Ship, not shelved — a shipped row is the residue it exists to avoid', async () => {
+    /*
+     * Shipping an ordinary task shelves work you can come back to and leaves a
+     * row in Today forever, carrying its title and its repo paths. For an
+     * incognito task that row IS the leftover: the profile is gone, the
+     * transcript is gone, and what survives is a permanent note in the store
+     * saying this task happened and which folders it touched. So Ship on an
+     * incognito task performs the delete instead — one verb, every door.
+     */
+    const h = (live = harness());
+    const created = await h.run<{ id: string }>('tasks.create', { title: 'Quiet', repos: [], incognito: true });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    await h.run('tasks.archive', { task: created.id });
+
+    expect((await h.run<TaskRecord[]>('tasks.list')).some((entry) => entry.id === created.id)).toBe(false);
+  });
+
+  it('still shelves an ordinary task rather than deleting it', async () => {
+    const h = (live = harness());
+    const created = await h.run<{ id: string }>('tasks.create', { title: 'Normal', repos: [] });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    await h.run('tasks.archive', { task: created.id });
+
+    const still = (await h.run<TaskRecord[]>('tasks.list')).find((entry) => entry.id === created.id);
+    expect(still?.lifecycle).toBe('archived');
+  });
+
+  it('names the verb Delete, since that is what the button now does', async () => {
+    const h = (live = harness({ tasks: [task({ id: 'q9', incognito: true })] }));
+
+    const rows = await h.tree().children?.(undefined);
+    const row = (rows ?? []).find((entry) => (entry as { id?: string }).id === 'q9');
+    expect((row as { primaryAction?: { label?: string; icon?: string } }).primaryAction).toMatchObject({
+      label: 'Delete',
+      icon: 'trash',
+    });
+  });
+
+  it('offers ONE destructive verb, not two rows both saying Delete', async () => {
+    // The ordinary row carries Ship and, under it, Delete. On an incognito task
+    // Ship IS delete, so leaving both draws the same act twice under one word.
+    const h = (live = harness({ tasks: [task({ id: 'q8', incognito: true })] }));
+
+    const rows = await h.tree().children?.(undefined);
+    const row = (rows ?? []).find((entry) => (entry as { id?: string }).id === 'q8');
+    const actions = (row as { actions?: { label?: string }[] }).actions ?? [];
+    expect(actions.filter((entry) => entry.label === 'Delete')).toHaveLength(1);
   });
 
   it('takes the profile with it when the task is shipped', async () => {

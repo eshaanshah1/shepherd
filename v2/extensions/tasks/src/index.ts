@@ -3695,6 +3695,29 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         const found = store.get(args.task);
         if (found === undefined) throw new Error(`no task ${args.task}`);
         /*
+         * **An incognito task is DELETED by this verb, not shelved.**
+         *
+         * Shipping is "shelve the work and record that you are done with it",
+         * and the record is the problem: a shipped row lives in Today forever
+         * carrying the task's title and its repo paths. On an incognito task
+         * that row IS the leftover — the profile is gone, the transcript is
+         * gone, and what survives is a permanent note saying this task happened
+         * and which folders it touched. Deleting the profile while keeping the
+         * row was a mode that cleaned up everything except the evidence.
+         *
+         * Routed through the delete verb rather than reimplemented, so the
+         * worktrees come off through git (an `rm -rf` strands a registration in
+         * the source repo) and there is one description of what "gone" means.
+         * The branch is still left, as `tasks.delete` documents: it lives in the
+         * source repo and may carry commits, and destroying that is a larger act
+         * than either verb was asked for.
+         */
+        if (found.incognito === true) {
+          const gone = await commands.invoke(TASK_COMMANDS.delete, { task: found.id });
+          if (!gone.ok) throw new Error(`could not delete incognito task ${found.id}: ${gone.error.message}`);
+          return gone.value;
+        }
+        /*
          * Its work may ALREADY be on the shelf, and then this is the flip alone.
          *
          * The ordinary path for a task you have stopped looking at: closing its
@@ -4810,7 +4833,11 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
                   }
                 : {
                     id: TASK_COMMANDS.archive,
-                    label: 'Ship',
+                    // The verb says what the press DOES. On an incognito task
+                    // this command deletes rather than shelves, and a button
+                    // labelled Ship over that is the same lie the ship's-wheel
+                    // glyph was.
+                    label: task.incognito === true ? 'Delete' : 'Ship',
                     /*
                      * A TRASH glyph on an incognito task, and the same verb.
                      *
@@ -4902,19 +4929,30 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
                     }
                   : {
                       id: TASK_COMMANDS.archive,
-                      label: 'Ship',
+                      label: task.incognito === true ? 'Delete' : 'Ship',
                       // The same swap the hover button makes, so the two doors
                       // onto one verb do not disagree about what it does.
                       icon: task.incognito === true ? 'trash' : 'ship',
                       args: { task: task.id },
                     },
-                {
-                  id: TASK_COMMANDS.delete,
-                  label: 'Delete',
-                  icon: 'trash',
-                  danger: true,
-                  args: { task: task.id },
-                },
+                /*
+                 * ONE destructive verb on an incognito row.
+                 *
+                 * The row above already IS the delete for such a task, so
+                 * listing this too would draw the same act twice under one
+                 * word — and the two would differ only in that one is red.
+                 */
+                ...(task.incognito === true
+                  ? []
+                  : [
+                      {
+                        id: TASK_COMMANDS.delete,
+                        label: 'Delete',
+                        icon: 'trash',
+                        danger: true,
+                        args: { task: task.id },
+                      },
+                    ]),
               ],
             };
           };
