@@ -179,10 +179,16 @@ function harness(
      * spawned) produces no line at all, and only a recorder can show that.
      */
     onWarn?: (line: string) => void;
+    /**
+     * Reuse a previous harness's data dir — which is how a RELAUNCH is played.
+     * The incognito sweep runs at activation over what a prior run left on disk,
+     * and a fresh temp dir every time would leave it nothing to find.
+     */
+    dataDir?: string;
   } = {},
 ): Harness {
   const clock = manualClock(opts.now ?? 1);
-  const dataDir = mkdtempSync(join(tmpdir(), 'shepherd-tasks-'));
+  const dataDir = opts.dataDir ?? mkdtempSync(join(tmpdir(), 'shepherd-tasks-'));
   // A home of its own, so the trust seeding in `provision` reads and writes a
   // throwaway `.claude.json` and can never reach the developer's real one.
   const homeDir = mkdtempSync(join(tmpdir(), 'shepherd-tasks-home-'));
@@ -347,7 +353,18 @@ function harness(
   const git: GitCall[] = [];
   const answer = opts.git ?? (() => OK);
   const process_: ProcessAPI = {
-    exec: () => Promise.resolve(OK),
+    /*
+     * A machine whose Keychain HAS the Claude credential — which is the ordinary
+     * one, and the only one where an incognito profile is worth asserting. A
+     * harness answering an empty stdout would seed a profile with no credential
+     * and the test would pass for the wrong reason.
+     */
+    exec: (cmd) =>
+      Promise.resolve(
+        cmd.includes('find-generic-password')
+          ? { ok: true as const, stdout: `${KEYCHAIN_ANSWER}\n`, stderr: '' }
+          : OK,
+      ),
     gitRead: (args, opts_) => record('gitRead', args, opts_),
     gitWrite: (args, opts_) => record('gitWrite', args, opts_),
   };
@@ -462,7 +479,10 @@ function harness(
     homeDir,
     dispose: () => {
       for (const sub of ctx.subscriptions) sub.dispose();
-      rmSync(dataDir, { recursive: true, force: true });
+      // A data dir the CALLER supplied is the caller's to remove — a relaunch
+      // test hands the same one to two harnesses, and the first disposing it
+      // would delete the very state the second exists to find.
+      if (opts.dataDir === undefined) rmSync(dataDir, { recursive: true, force: true });
       rmSync(homeDir, { recursive: true, force: true });
     },
   };
@@ -554,6 +574,9 @@ async function until(holds: () => boolean | Promise<boolean>, ticks = 50): Promi
   }
   throw new Error(`the condition never held after ${ticks} ticks`);
 }
+
+/** What the fake Keychain hands back — shaped like the real item's payload. */
+const KEYCHAIN_ANSWER = '{"claudeAiOauth":{"accessToken":"a-token"}}';
 
 let live: Harness | undefined;
 afterEach(() => {
@@ -2790,6 +2813,184 @@ describe('pre-trusting the directories it generates', () => {
   });
 });
 
+/**
+ * Incognito: a task whose agents run out of a Claude profile that is born with
+ * the task and deleted with it.
+ *
+ * The claim is two-sided and both sides are asserted here, because either alone
+ * would be a lie. Nothing of the user's real profile reaches the session
+ * (no skills, no settings, no plugins, no identity), and nothing of the session
+ * reaches the user's real profile (its history and transcripts are written
+ * inside the profile, and the profile is removed).
+ *
+ * What it is NOT is anonymity: the OAuth credential lives in the macOS Keychain
+ * rather than in the config dir, so the session is still signed in as the same
+ * person. See `incognito.ts`.
+ */
+describe('incognito tasks', () => {
+  const lineOf = (h: Harness): string =>
+    (h.invoked.find((call) => call.id === 'layout.openRoot')?.args as { initialCommand: string })
+      .initialCommand;
+
+  it('runs its agents out of a profile of its own', async () => {
+    const h = (live = harness());
+
+    const created = await h.run<{ id: string }>('tasks.create', { title: 'Quiet', repos: [], incognito: true });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    expect(lineOf(h)).toContain(`export CLAUDE_CONFIG_DIR='${join(h.dataDir, '.incognito', created.id)}'`);
+  });
+
+  it('leaves an ordinary task in the user’s own profile', async () => {
+    const h = (live = harness());
+
+    await h.run('tasks.create', { title: 'Normal', repos: [] });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    expect(lineOf(h)).not.toContain('CLAUDE_CONFIG_DIR');
+  });
+
+  it('seeds the profile with the trust its own agent needs, and never the user’s config', async () => {
+    // The trust record has to go where the session will look for it, which is
+    // the incognito profile — writing it into `~/.claude.json` would leave the
+    // agent on the dialog AND leave a record of the task in the real profile.
+    const h = (live = harness());
+    writeFileSync(join(h.homeDir, '.claude.json'), '{}', 'utf8');
+
+    const created = await h.run<{ id: string; slug: string }>('tasks.create', {
+      title: 'Quiet',
+      repos: [{ name: 'api', path: '/src/api' }],
+      incognito: true,
+    });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    const profile = join(h.dataDir, '.incognito', created.id);
+    const config = JSON.parse(readFileSync(join(profile, '.claude.json'), 'utf8')) as Record<string, unknown>;
+    const projects = config['projects'] as Record<string, unknown>;
+    expect(projects[join(h.dataDir, created.slug)]).toEqual({ hasTrustDialogAccepted: true });
+    expect(projects[join(h.dataDir, created.slug, 'api')]).toEqual({ hasTrustDialogAccepted: true });
+
+    const real = JSON.parse(readFileSync(join(h.homeDir, '.claude.json'), 'utf8')) as Record<string, unknown>;
+    expect(real).toEqual({});
+  });
+
+  it('marks onboarding done, so the agent does not open on the theme picker', async () => {
+    const h = (live = harness());
+
+    const created = await h.run<{ id: string }>('tasks.create', { title: 'Quiet', repos: [], incognito: true });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    const config = JSON.parse(
+      readFileSync(join(h.dataDir, '.incognito', created.id, '.claude.json'), 'utf8'),
+    ) as Record<string, unknown>;
+    expect(config['hasCompletedOnboarding']).toBe(true);
+  });
+
+  it('records none of its repos in the picker\u2019s history', async () => {
+    /*
+     * The history is what the composer offers you next time you open it, and an
+     * incognito task's repos in that list would name the work on the very
+     * surface the mode exists to keep it off. Nothing about which folders were
+     * touched is stored, so the picker cannot suggest them and nobody reading
+     * the store can reconstruct them.
+     */
+    const h = (live = harness());
+
+    await h.run('tasks.create', {
+      title: 'Quiet',
+      repos: [{ name: 'api', path: '/src/api' }],
+      incognito: true,
+    });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    const suggested = await h.run<{ path: string }[]>('tasks.suggestRepos', { query: '' });
+    expect(suggested).toEqual([]);
+  });
+
+  it('still records an ordinary task\u2019s repos, which is what the picker is for', async () => {
+    const h = (live = harness());
+
+    await h.run('tasks.create', { title: 'Normal', repos: [{ name: 'api', path: '/src/api' }] });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    const suggested = await h.run<{ path: string }[]>('tasks.suggestRepos', { query: '' });
+    expect(suggested.length).toBeGreaterThan(0);
+  });
+
+  it('carries the credential in, so the agent does not open on a login prompt', async () => {
+    /*
+     * Measured against Claude Code 2.1.245: the Keychain is read only for the
+     * DEFAULT config dir, so a profile without `.credentials.json` is signed out
+     * however much of `~/.claude.json` is copied into it. `incognito.ts` has the
+     * measurement; this asserts the wiring reaches the file.
+     */
+    const h = (live = harness());
+
+    const created = await h.run<{ id: string }>('tasks.create', { title: 'Quiet', repos: [], incognito: true });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    expect(readFileSync(join(h.dataDir, '.incognito', created.id, '.credentials.json'), 'utf8')).toBe(
+      KEYCHAIN_ANSWER,
+    );
+  });
+
+  it('writes no credential file for an ordinary task', async () => {
+    const h = (live = harness());
+
+    const created = await h.run<{ id: string; slug: string }>('tasks.create', { title: 'Normal', repos: [] });
+    await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
+
+    expect(existsSync(join(h.dataDir, '.incognito', created.id))).toBe(false);
+  });
+
+  it('takes the profile with it when the task is shipped', async () => {
+    const h = (live = harness());
+    const created = await h.run<{ id: string }>('tasks.create', { title: 'Quiet', repos: [], incognito: true });
+    await until(() => existsSync(join(h.dataDir, '.incognito', created.id)));
+
+    await h.run('tasks.archive', { task: created.id });
+
+    expect(existsSync(join(h.dataDir, '.incognito', created.id))).toBe(false);
+  });
+
+  it('takes the profile with it when the task is deleted', async () => {
+    const h = (live = harness());
+    const created = await h.run<{ id: string }>('tasks.create', { title: 'Quiet', repos: [], incognito: true });
+    await until(() => existsSync(join(h.dataDir, '.incognito', created.id)));
+
+    await h.run('tasks.delete', { task: created.id });
+
+    expect(existsSync(join(h.dataDir, '.incognito', created.id))).toBe(false);
+  });
+
+  it('sweeps a profile no task claims — the force-quit that ran no teardown', async () => {
+    // Teardown on ship and on delete is not a guarantee: a crash or a `kill -9`
+    // runs neither, and what is left behind is exactly the transcript the user
+    // asked not to keep. So the invariant is restated at activation.
+    const dataDir = mkdtempSync(join(tmpdir(), 'shepherd-relaunch-'));
+    const orphan = join(dataDir, '.incognito', 'task-from-a-previous-life');
+    mkdirSync(orphan, { recursive: true });
+    writeFileSync(join(orphan, 'history.jsonl'), '{"display":"whatever they typed"}\n');
+
+    live = harness({ dataDir });
+
+    await until(() => !existsSync(orphan));
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it('sweeps nothing belonging to a task that is still here', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'shepherd-relaunch-'));
+    const mine = join(dataDir, '.incognito', 'kept');
+    mkdirSync(mine, { recursive: true });
+
+    const h = (live = harness({ dataDir, tasks: [task({ id: 'kept', incognito: true })] }));
+    await h.run('tasks.list');
+
+    expect(existsSync(mine)).toBe(true);
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+});
+
 describe('finished work', () => {
   // Closing a task archives it (its own test above). This is what the sidebar
   // then does with it, and what clicking it does — the two halves of the
@@ -3854,7 +4055,10 @@ describe('naming a task at create', () => {
     // candidate always collides and a second has to be minted. Read off the
     // record rather than off a variable set after `create` returns: provisioning
     // starts before it does, and the refs read would win that race.
-    let live: Harness | undefined;
+    /** What the fake Keychain hands back — shaped like the real item's payload. */
+const KEYCHAIN_ANSWER = '{"claudeAiOauth":{"accessToken":"a-token"}}';
+
+let live: Harness | undefined;
     const h = harness({
       git: async (call) => {
         if (call.args[0] === 'for-each-ref' && call.args[2] === 'refs/heads') {
@@ -3881,7 +4085,10 @@ describe('naming a task at create', () => {
   it('picks one branch for a task, free in every one of its repos', async () => {
     // Only the SECOND repo holds the minted name, and both worktrees still land
     // on one branch: `taskProvisioned` publishes a single branch for the task.
-    let live: Harness | undefined;
+    /** What the fake Keychain hands back — shaped like the real item's payload. */
+const KEYCHAIN_ANSWER = '{"claudeAiOauth":{"accessToken":"a-token"}}';
+
+let live: Harness | undefined;
     const h = harness({
       git: async (call) => {
         if (call.args[0] === 'for-each-ref' && call.args[2] === 'refs/heads' && call.opts.cwd === '/src/web') {

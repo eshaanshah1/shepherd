@@ -186,6 +186,25 @@ function readSuggestions(value: unknown): readonly RepoSuggestion[] {
  */
 const PLACEMENTS = [{ value: 'worktree', label: 'worktree' }] as const;
 
+/**
+ * Which Claude profile the task's agents run in.
+ *
+ * Two options and no third, because the third would be a state to explain. The
+ * DEFAULT is the one that keeps behaving as it always has: a privacy control you
+ * can end up in without choosing it is one you cannot trust in either direction
+ * — you would never be sure whether the last task kept its history.
+ *
+ * `Incognito` gives the task a config dir of its own, deleted when the task is
+ * shipped or deleted, so the session starts with no skills, settings, plugins or
+ * history and leaves none behind. It does not sign the agent out: the credential
+ * is in the Keychain, not the profile, so the work still bills the same account.
+ * The label promises privacy from the machine and nothing more.
+ */
+const PROFILES = [
+  { value: 'default', label: 'Default profile' },
+  { value: 'incognito', label: 'Incognito' },
+] as const;
+
 export function TaskComposer({
   invoke,
   done,
@@ -240,6 +259,11 @@ export function TaskComposer({
    * task picks the same repo, which is why it is not the default.
    */
   const [placement, setPlacement] = useState<string>('worktree');
+  /**
+   * Which profile the task's agents run in. Creation-time only — `store.ts` says
+   * why a task cannot be made incognito after it has written a transcript.
+   */
+  const [profile, setProfile] = useState<string>('default');
 
   const [pickingMachine, setPickingMachine] = useState(false);
   const listId = useId();
@@ -646,6 +670,9 @@ export function TaskComposer({
       // default is not overwritten by a value the composer invented.
       ...(model === null ? {} : { model }),
       ...(placement === 'worktree' ? {} : { placement }),
+      // Absent for the ordinary task: `false` is a second spelling of the
+      // default, and the verb's schema only ever stores `true`.
+      ...(profile === 'incognito' ? { incognito: true } : {}),
       ...(pasted.current.length === 0 ? {} : { images: pasted.current }),
       repos: scope.map((repo) => ({ path: repo.path, name: repo.name })),
       member: machine,
@@ -886,6 +913,19 @@ export function TaskComposer({
               if (next !== null) setModel(next);
             }}
           />
+          {/*
+            The PROFILE picker this row's comment above has been waiting for.
+            Same row, same shape as the two beside it — a privacy control that
+            announced itself with a louder treatment would be the one control on
+            the card competing with the brief.
+          */}
+          <Select
+            className="sh-composer-select sh-composer-select--profile"
+            label="Profile"
+            value={profile}
+            options={PROFILES}
+            onChange={(next) => setProfile(next ?? 'default')}
+          />
           <Select
             className="sh-composer-select sh-composer-select--placement"
             label="Where the work happens"
@@ -897,9 +937,6 @@ export function TaskComposer({
             Drawn only when there is a choice. One machine is not a decision, and
             a picker that always says "This Mac" is a control that teaches nothing
             and takes room in the one row that has to stay readable.
-
-            This is where the PROFILE picker will land too — same row, same
-            shape, once profiles exist.
           */}
           {machines.length < 2 ? null : (
             <Select

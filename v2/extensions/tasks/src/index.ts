@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import {
   fuzzyMatch,
@@ -129,6 +129,14 @@ import {
   restoreWorktree,
 } from './provision.ts';
 import { seedClaudeTrust } from './trust.ts';
+import {
+  claudeCredentials,
+  incognitoCommand,
+  incognitoProfileDir,
+  orphanProfiles,
+  removeIncognitoProfile,
+  seedIncognitoProfile,
+} from './incognito.ts';
 
 /**
  * `tasks` — the extension M3 exists for, and the one that has to prove the ADE
@@ -1582,7 +1590,13 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     },
   ): Promise<string> {
     const root = taskRootId(task.id);
-    const { cwd, command, title } = input;
+    const { cwd, title } = input;
+    /*
+     * An incognito task's agent runs out of the task's own profile — every
+     * launch and every resume, because they go through here and a resume that
+     * missed it would reattach the agent to the user's real history.
+     */
+    const command = task.incognito === true ? incognitoCommand(input.command, profileOf(task)) : input.command;
 
     const opened = await commands.invoke<{ root: string; pane: string | null; created: boolean }>(
       'layout.openRoot',
@@ -1840,6 +1854,49 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
 
   /** Where a task's worktrees live. `ctx.dataDir` is the host's answer to D1b. */
   const rootOf = (task: TaskRecord): string => `${ctx.dataDir}/${task.slug}`;
+
+  /**
+   * Where an incognito task's Claude profile lives.
+   *
+   * Keyed on the task ID rather than the slug, unlike everything else here: a
+   * slug is renameable and this directory is a secret's container, so a rename
+   * that left one profile orphaned and started a second would silently keep the
+   * history the feature exists to delete.
+   */
+  const profileOf = (task: TaskRecord): string => incognitoProfileDir(ctx.dataDir, task.id);
+
+  /**
+   * Take an incognito task's profile — and with it every transcript, prompt and
+   * `history.jsonl` line the task ever wrote.
+   *
+   * A no-op for an ordinary task, and safe to call twice: ship, delete and the
+   * startup sweep all reach for it, and any of the three may legitimately be
+   * second.
+   */
+  const forgetProfile = (task: TaskRecord): void => {
+    if (task.incognito !== true) return;
+    const removed = removeIncognitoProfile(profileOf(task));
+    if (removed.ok) ctx.log.info(`task ${task.id}: ${removed.detail}`);
+    else ctx.log.warn(`task ${task.id}: ${removed.detail}`);
+  };
+
+  /**
+   * The user's own `lastOnboardingVersion`, if it can be read.
+   *
+   * Read fresh rather than cached: it changes when Claude Code updates, and a
+   * value captured at activation would go stale inside a long-running window.
+   */
+  const onboardingVersion = (): string | undefined => {
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(`${ctx.homeDir}/.claude.json`, 'utf8'));
+      if (typeof parsed !== 'object' || parsed === null) return undefined;
+      const value = (parsed as Record<string, unknown>)['lastOnboardingVersion'];
+      return typeof value === 'string' ? value : undefined;
+    } catch {
+      // No config, or one that will not parse. Nothing to mirror.
+      return undefined;
+    }
+  };
 
   /**
    * End the task's pane group — every agent in it, through the one terminator.
@@ -2702,11 +2759,51 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
      * keeps the last label on screen until a pane actually appears.
      */
     await whileBusy(task.id, 'starting', async () => {
-      const seeded = seedClaudeTrust({
-        homeDir: ctx.homeDir,
-        dirs: [root, ...landed.map((repo) => repo.worktree)],
-        nonce: ctx.clock.now(),
-      });
+      /*
+       * An INCOGNITO task is trusted in its own profile and nowhere else.
+       *
+       * Both halves matter. The session will read its trust record out of
+       * `CLAUDE_CONFIG_DIR`, so a record in `~/.claude.json` would leave the
+       * agent sitting on the dialog this exists to skip; and a record in
+       * `~/.claude.json` is itself a durable note that this task happened, in
+       * the file the user asked Shepherd to stay out of. One directory, one
+       * write, deleted with the task.
+       */
+      const dirs = [root, ...landed.map((repo) => repo.worktree)];
+      /*
+       * The credential, carried over so the agent does not open on a login.
+       *
+       * Read HERE rather than inside the seed so the seed stays a pure write —
+       * and read per provision rather than once at activation, because a token
+       * refreshed since the window opened is the one this profile should get.
+       */
+      const credentials = task.incognito === true ? await claudeCredentials(api.proposed.process) : undefined;
+      if (task.incognito === true && credentials === undefined) {
+        ctx.log.warn(
+          `task ${task.id}: the Keychain would not give up the Claude credential — ` +
+            `its incognito agent will open on a login prompt`,
+        );
+      }
+      const seeded = task.incognito === true
+        ? seedIncognitoProfile({
+            dir: profileOf(task),
+            dirs,
+            realpath: realpathSync,
+            ...(credentials === undefined ? {} : { credentials }),
+            // An onboarding flag, mirrored rather than invented — it is about
+            // the app's first-run screens, not about the user. Absent when the
+            // real config cannot be read, since a version we made up is worse
+            // than none.
+            ...(() => {
+              const version = onboardingVersion();
+              return version === undefined ? {} : { onboardingVersion: version };
+            })(),
+          })
+        : seedClaudeTrust({
+            homeDir: ctx.homeDir,
+            dirs,
+            nonce: ctx.clock.now(),
+          });
       if (seeded.ok) ctx.log.info(`task ${task.id}: ${seeded.detail}`);
       else ctx.log.warn(`task ${task.id}: agents may open on Claude Code's trust prompt — ${seeded.detail}`);
 
@@ -3070,6 +3167,15 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
          * a clipboard exists and this side is where a filesystem does.
          */
         images: s.optional(s.array(s.object({ mediaType: s.string(), data: s.string() }))),
+        /**
+         * Run this task's agents out of a Claude profile of their own, deleted
+         * when the task is.
+         *
+         * Creation-time only, and `store.ts` says why: a task that has already
+         * written a transcript into the user's real profile cannot be made
+         * incognito after the fact.
+         */
+        incognito: s.optional(s.boolean()),
       }),
       handler: async (args) => {
         const elsewhere = await forwardToMember(TASK_COMMANDS.create, args);
@@ -3104,6 +3210,9 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           lifecycle: 'draft',
           // Absent stays absent, so the vendor's default keeps deciding.
           ...(args.model === undefined ? {} : { model: args.model }),
+          // Only ever `true` on the record: an explicit `false` is the ordinary
+          // task, and storing it would be a second spelling of the default.
+          ...(args.incognito === true ? { incognito: true as const } : {}),
           // Expanded HERE rather than in the composer, so the CLI's `--repo`
           // gets it too — the field and the flag are two doors into one verb.
           repos: (args.repos ?? []).map((repo) => ({
@@ -3123,10 +3232,25 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
          * maintained would be a second writer of a namespace whose whole
          * soundness rests on there being one (`store.ts`).
          */
-        store.recordRepoUses(
-          task.repos.map((repo) => `${rootOf(task)}/${repo.name}`),
-          ctx.clock.now(),
-        );
+        /*
+         * An INCOGNITO task records nothing here.
+         *
+         * The history is what the composer offers on its next open, so an
+         * incognito task's repos in it would name the work on the very surface
+         * the mode exists to keep it off — and unlike the profile, this store
+         * survives the task, so there would be nothing left to delete it with.
+         * Not-writing is the only version of this that is actually private.
+         *
+         * The cost is a real one and it is the right trade: picking the same repo
+         * for an incognito task does not move it up the list, so the ranking
+         * behaves as though that task never happened. Which is the promise.
+         */
+        if (task.incognito !== true) {
+          store.recordRepoUses(
+            task.repos.map((repo) => `${rootOf(task)}/${repo.name}`),
+            ctx.clock.now(),
+          );
+        }
         ctx.log.info(`created task ${task.id} (${slug}) with ${task.repos.length} repo(s)`);
 
         // OPTIMISTIC (D12): the record exists and is answerable NOW, and the
@@ -3533,6 +3657,18 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         const warnings = isShelved(found) ? [] : (await shelve(found)).warnings;
         const latest = store.get(found.id) ?? found;
         store.put({ ...latest, lifecycle: 'archived', archivedAt: ctx.clock.now() });
+        /*
+         * Shipping an incognito task is the end of its session, so its profile
+         * goes now rather than at delete.
+         *
+         * The consequence is deliberate and is the feature: **an incognito task
+         * cannot be restored with its agents resumed.** A resume replays a
+         * transcript, the transcript lived in the profile, and keeping the
+         * profile so that Restore could work would mean keeping exactly what the
+         * user asked to have deleted. Restore still returns the worktrees and the
+         * branch — the work — and opens a fresh agent on them.
+         */
+        forgetProfile(latest);
         changed();
         return { id: found.id, lifecycle: 'archived', warnings };
       },
@@ -4070,6 +4206,10 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
             .catch(() => undefined);
         }
 
+        // Before the record goes: the record is the only thing that knows this
+        // task was incognito, and a profile whose task has been forgotten is
+        // findable only by the startup sweep.
+        forgetProfile(task);
         store.remove(task.id);
         changed();
 
@@ -4907,6 +5047,25 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    */
   const minuteTimer = setInterval(() => changed(), 60_000);
   ctx.subscriptions.push(toDisposable(() => clearInterval(minuteTimer)));
+
+  /**
+   * Every incognito profile no task claims, deleted at startup.
+   *
+   * Teardown on ship and on delete is the ordinary path and it is not a
+   * guarantee: a crash, a force-quit or a `kill -9` runs neither handler, and
+   * what survives is precisely the transcript the user asked not to keep. So the
+   * invariant is RESTATED here rather than trusted — a profile outlives its task
+   * by at most one launch.
+   *
+   * Keyed on the record rather than on the lifecycle: an archived task still has
+   * a record and its profile is already gone, so the sweep finds nothing for it
+   * and the second `rm` never runs.
+   */
+  for (const dir of orphanProfiles(ctx.dataDir, store.list().map((entry) => entry.id))) {
+    const removed = removeIncognitoProfile(dir);
+    if (removed.ok) ctx.log.info(`swept an incognito profile no task claims: ${dir}`);
+    else ctx.log.warn(removed.detail);
+  }
 
   ctx.log.info(`ready — ${store.list().length} task(s), data in ${ctx.dataDir}`);
   return { list: () => store.list(), get: (id) => store.get(id) };

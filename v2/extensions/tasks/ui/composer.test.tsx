@@ -697,6 +697,66 @@ describe('the name ask', () => {
 });
 
 /**
+ * The profile a task's agents run in.
+ *
+ * A `Select` on the same control row as the model and the placement, which is
+ * where the composer's own comment said a profile picker would land. Two
+ * options, and the default one is the one that keeps behaving as it always has —
+ * a privacy control that is on by accident is a control nobody can trust either
+ * way.
+ */
+describe('the profile picker', () => {
+  const profile = (): HTMLElement | null =>
+    container.querySelector<HTMLElement>('.sh-composer-select--profile');
+  const choose = async (label: string): Promise<void> => {
+    await act(async () => {
+      profile()?.querySelector<HTMLElement>('.sh-ui-select__trigger')?.click();
+    });
+    const item = [...(profile()?.querySelectorAll<HTMLElement>('[role="option"]') ?? [])].find(
+      (element) => element.textContent === label,
+    );
+    if (item === undefined) throw new Error(`the profile select has no ${label} option`);
+    await act(async () => {
+      item.click();
+    });
+  };
+
+  it('opens on the ordinary profile', () => {
+    expect(profile()?.querySelector('.sh-ui-select__value')?.textContent).toBe('Default profile');
+  });
+
+  it('offers exactly two, and no third state to explain', async () => {
+    await act(async () => {
+      profile()?.querySelector<HTMLElement>('.sh-ui-select__trigger')?.click();
+    });
+    expect(
+      [...(profile()?.querySelectorAll<HTMLElement>('[role="option"]') ?? [])].map((o) => o.textContent),
+    ).toEqual(['Default profile', 'Incognito']);
+  });
+
+  it('sends nothing when the ordinary profile is left alone', async () => {
+    await type('a task like any other');
+    await act(async () => {
+      container.querySelector<HTMLElement>('[data-testid="composer-create"]')!.click();
+    });
+
+    const [, args] = invoke.mock.calls.find(([command]) => command === 'tasks.create')!;
+    expect(args).not.toHaveProperty('incognito');
+  });
+
+  it('asks for incognito when it is picked', async () => {
+    await choose('Incognito');
+    await type('something I would rather not keep');
+    await act(async () => {
+      container.querySelector<HTMLElement>('[data-testid="composer-create"]')!.click();
+    });
+
+    const [, args] = invoke.mock.calls.find(([command]) => command === 'tasks.create')!;
+    expect(args).toMatchObject({ incognito: true });
+  });
+});
+
+/**
  * WHICH model the task's agents open on.
  *
  * Asserted on the OPTIONS rather than on the ask: an empty select is

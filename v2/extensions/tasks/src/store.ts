@@ -164,6 +164,19 @@ export interface TaskRecord {
    * `archives` and still needs its generated root re-materialized.
    */
   readonly shelvedAt?: number;
+  /**
+   * This task's agents run out of a Claude profile of their own, deleted with it.
+   *
+   * On the record rather than passed to the first spawn, for the reason `model`
+   * is: a task outlives its first agent, and a workstream joining later has to
+   * open in the same profile or the task quietly becomes two different things —
+   * one of them writing into the user's real history.
+   *
+   * Set at creation and never after. A task that has already written a
+   * transcript into the real profile cannot be made incognito retroactively, and
+   * a flag that pretended otherwise would be the worst kind of privacy control.
+   */
+  readonly incognito?: true;
 }
 
 const repoSchema = s.stored({ path: s.string(), name: s.string() });
@@ -192,6 +205,7 @@ const taskSchema = s.stored({
   archivedAt: s.optional(s.int()),
   activatedAt: s.optional(s.int()),
   shelvedAt: s.optional(s.int()),
+  incognito: s.optional(s.literal(true)),
   archives: s.optional(
     s.array(
       s.stored({
