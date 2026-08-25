@@ -117,6 +117,7 @@ const PACKAGES = [
   'extensions/shell',
   'extensions/worktree-hook',
   'extensions/github',
+  'extensions/editor',
   'extensions/transcripts',
   'extensions/links',
 ];
