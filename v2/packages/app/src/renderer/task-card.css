@@ -810,6 +810,16 @@ button.sh-task-card__fact::after {
   flex: none;
   margin-inline-start: calc(var(--sh-task-gutter) * -1);
   inline-size: var(--sh-task-gutter);
+  /*
+   * And the line's own gap back too — the half that was missing.
+   *
+   * `.sh-task-card__meta` is a flex line with `gap: --sh-space-md`, and that gap
+   * falls between this glyph and the summary. Giving back the gutter alone still
+   * left an incognito row's text one `md` right of every other row's, so the rail
+   * had two left edges and the mode had quietly reindented the list. The
+   * reservation has to be exactly the gutter, gap included.
+   */
+  margin-inline-end: calc(var(--sh-space-md) * -1);
   /* One step down the ink ramp: it is a standing property of the row, not an
      event on it, and a mode that drew at title weight would out-shout the state
      mark it sits under. Never an opacity — §5. */

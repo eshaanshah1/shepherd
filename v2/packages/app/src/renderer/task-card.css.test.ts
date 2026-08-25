@@ -245,3 +245,39 @@ describe('a contributed fact', () => {
     expect(rulesMentioning('sh-task-card').some((rule) => rule.selectorText.includes('data-has-fact'))).toBe(false);
   });
 });
+
+/**
+ * The incognito glyph, which sits in the meta line's reserved gutter.
+ *
+ * The whole claim of that placement is that the row beside it does not move: the
+ * summary on an incognito row has to start exactly where the summary on an
+ * ordinary row starts, or the mode has quietly reindented the rail. That is a
+ * property of the RULE — jsdom lays nothing out — so it is asserted here rather
+ * than in the component's suite, which cannot see geometry at all.
+ */
+describe('the incognito glyph', () => {
+  const glyph = (): CSSStyleRule | undefined => ruleFor('.sh-task-card__incognito');
+
+  it('takes back exactly the gutter it sits in', () => {
+    expect(glyph()?.style.getPropertyValue('margin-inline-start')).toBe('calc(var(--sh-task-gutter) * -1)');
+    expect(glyph()?.style.getPropertyValue('inline-size')).toBe('var(--sh-task-gutter)');
+  });
+
+  it('cancels the meta line’s gap as well, or the summary beside it shifts right', () => {
+    /*
+     * THE DEFECT THIS PINS, seen in the running app: giving the gutter back as a
+     * negative start margin is only half of it. `.sh-task-card__meta` is a flex
+     * line with `gap: --sh-space-md`, and that gap lands between this glyph and
+     * the summary — so an incognito row's `idle` sat one `md` to the right of
+     * every other row's, and the rail had two left edges.
+     */
+    expect(glyph()?.style.getPropertyValue('margin-inline-end')).toBe('calc(var(--sh-space-md) * -1)');
+  });
+
+  it('never grows the line it sits on', () => {
+    // The meta line's contract is a fixed height and a fixed text edge. A glyph
+    // that could stretch would make a task's height depend on its mode.
+    // `none` as the sheet writes it, which is `0 0 auto` once parsed.
+    expect(glyph()?.style.getPropertyValue('flex')).toBe('0 0 auto');
+  });
+});
