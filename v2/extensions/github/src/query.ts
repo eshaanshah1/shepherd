@@ -48,6 +48,9 @@ query($owner: String!, $name: String!, $head: String!, $prs: Int!, $checks: Int!
         updatedAt
         mergeable
         mergeStateStatus
+        # Branch protection's answer, which an approval count cannot stand in for:
+        # it says whether a review is REQUIRED, not merely absent.
+        reviewDecision
         reviews(last: 50) {
           nodes { state author { login } }
         }
@@ -179,6 +182,7 @@ interface RawPullRequest {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly mergeStateStatus?: string | null;
+  readonly reviewDecision?: string | null;
   readonly reviews: { readonly nodes: readonly RawReview[] | null } | null;
   readonly reviewThreads: { readonly nodes: readonly RawThread[] | null } | null;
   readonly comments?: { readonly nodes: readonly RawIssueComment[] | null } | null;
@@ -322,6 +326,7 @@ function readPullRequest(raw: RawPullRequest, identity: RepoIdentity): PullReque
     openedAt: Date.parse(raw.createdAt),
     updatedAt: Date.parse(raw.updatedAt),
     mergeState: readMergeState(raw.mergeStateStatus),
+    reviewDecision: readReviewDecision(raw.reviewDecision),
     dependsOn: readDependsOn(raw.body ?? ''),
   };
 }
@@ -594,6 +599,20 @@ const MERGE_STATES = ['clean', 'blocked', 'dirty', 'behind', 'unknown'] as const
 function readMergeState(status: string | null | undefined): PullRequest['mergeState'] {
   const lower = status?.toLowerCase() ?? '';
   return MERGE_STATES.find((candidate) => candidate === lower) ?? 'unknown';
+}
+
+/**
+ * `REVIEW_REQUIRED` / `CHANGES_REQUESTED` / `APPROVED`, or nothing.
+ *
+ * Nothing is the ordinary answer for a repo with no review rule, and it must
+ * stay distinct from `required` — reading a missing verdict as "needs a review"
+ * would put a demand on every PR in an unprotected repo.
+ */
+function readReviewDecision(raw: string | null | undefined): PullRequest['reviewDecision'] {
+  if (raw === 'APPROVED') return 'approved';
+  if (raw === 'CHANGES_REQUESTED') return 'changes';
+  if (raw === 'REVIEW_REQUIRED') return 'required';
+  return 'none';
 }
 
 /**

@@ -18,6 +18,7 @@ const PR: PullRequest = {
   checks: [],
   approvals: [],
   changesRequested: [],
+  reviewDecision: 'none' as const,
   threads: [],
   comments: [],
   commits: [],

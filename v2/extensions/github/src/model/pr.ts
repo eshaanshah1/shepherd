@@ -222,6 +222,21 @@ export interface PullRequest {
   readonly approvals: readonly string[];
   /** Logins that asked for changes. */
   readonly changesRequested: readonly string[];
+  /**
+   * GitHub's own verdict on the REVIEW requirement, which no count of approvals
+   * can be derived into.
+   *
+   * `approvals.length === 0` says nobody has approved; it does not say whether
+   * anybody has to. That is branch protection, and only the server knows it —
+   * so a PR waiting on its first review was indistinguishable here from one
+   * nobody needed to look at, and the pane said "GitHub has not said why" about
+   * the single commonest reason a PR cannot merge.
+   *
+   * `none` is both "no rule" and "a server that did not answer", because
+   * nothing downstream should treat a missing field as a demand for a review
+   * that may not be required.
+   */
+  readonly reviewDecision: 'approved' | 'changes' | 'required' | 'none';
   readonly threads: readonly ReviewThread[];
   /** What was said on the PR rather than on a line of it, oldest first. */
   readonly comments: readonly Comment[];
@@ -612,7 +627,14 @@ function whyBlocked(pr: PullRequest): string {
   const counts = countChecks(pr.checks);
   if (counts.queued > 0) reasons.push(`${counts.queued === 1 ? 'a required check has' : `${counts.queued} checks have`} not reported`);
   if (counts.blocked > 0) reasons.push(`${counts.blocked === 1 ? 'a check is' : `${counts.blocked} checks are`} waiting on a person`);
-  if (pr.changesRequested.length > 0) reasons.push('a reviewer asked for changes');
+  /*
+   * The review, LAST, and from GitHub's decision rather than from the approval
+   * count. It comes last because it is the reason that clears by somebody else
+   * acting: everything above it is yours to go and fix.
+   */
+  if (pr.reviewDecision === 'changes') reasons.push('a reviewer asked for changes');
+  else if (pr.reviewDecision === 'required') reasons.push('it needs an approving review');
+  else if (pr.changesRequested.length > 0) reasons.push('a reviewer asked for changes');
 
   if (reasons.length === 0) {
     // `unknown` is GitHub still deciding; anything else here is a mergeState we

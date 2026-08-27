@@ -126,6 +126,7 @@ export function readPr(value: unknown): PullRequest | null {
     openedAt: int(value['openedAt']) ?? 0,
     updatedAt: int(value['updatedAt']) ?? 0,
     mergeState: readMergeState(value['mergeState']),
+    reviewDecision: readReviewDecision(value['reviewDecision']),
     dependsOn: strings(value['dependsOn']),
   };
 }
@@ -268,6 +269,12 @@ function readComments(value: unknown): readonly Comment[] {
     return [{ id, author: str(entry['author']) ?? 'someone', body, at: int(entry['at']) ?? 0 }];
   });
 }
+
+const REVIEW_DECISIONS: readonly PullRequest['reviewDecision'][] = ['approved', 'changes', 'required', 'none'];
+
+/** Anything unrecognised is `none`, which asks nothing of anybody. */
+const readReviewDecision = (value: unknown): PullRequest['reviewDecision'] =>
+  REVIEW_DECISIONS.find((candidate) => candidate === value) ?? 'none';
 
 const MERGE_STATES: readonly PullRequest['mergeState'][] = ['clean', 'blocked', 'dirty', 'behind', 'unknown'];
 

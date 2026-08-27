@@ -23,6 +23,7 @@ function pr(overrides: Partial<PullRequest> = {}): PullRequest {
     checks: [],
     approvals: [],
     changesRequested: [],
+    reviewDecision: 'none' as const,
     threads: [],
     comments: [],
     commits: [],

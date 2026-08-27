@@ -68,6 +68,7 @@ export function fixturePrs(now: number): readonly PullRequest[] {
       ],
       approvals: [],
       changesRequested: [],
+      reviewDecision: 'none',
       threads: [
         {
           id: 'T-1',
@@ -144,6 +145,7 @@ export function fixturePrs(now: number): readonly PullRequest[] {
       })),
       approvals: ['jane'],
       changesRequested: [],
+      reviewDecision: 'none',
       comments: [],
       threads: [
         {
@@ -196,6 +198,7 @@ export function fixturePrs(now: number): readonly PullRequest[] {
       checks: [],
       approvals: [],
       changesRequested: [],
+      reviewDecision: 'none',
       threads: [],
       comments: [],
       files: [{ path: 'ui/src/tab-strip.tsx', added: 58, removed: 4 }],
@@ -224,6 +227,7 @@ export function fixturePrs(now: number): readonly PullRequest[] {
       checks: [],
       approvals: ['jane'],
       changesRequested: [],
+      reviewDecision: 'none',
       threads: [],
       comments: [],
       files: [],

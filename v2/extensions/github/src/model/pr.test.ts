@@ -35,6 +35,7 @@ function pr(overrides: Partial<PullRequest> = {}): PullRequest {
     checks: [],
     approvals: [],
     changesRequested: [],
+    reviewDecision: 'none' as const,
     threads: [],
     comments: [],
     commits: [],
@@ -87,6 +88,35 @@ describe('authorHue', () => {
 });
 
 describe('mergeGate', () => {
+  it('says a review is needed when that is what GitHub is waiting for', () => {
+    /*
+     * The commonest blocked PR there is, and it fell through every branch to
+     * "GitHub has not said why" — true of the fields this model had, and useless
+     * to a reader, because GitHub says it plainly on the same PR: "at least 1
+     * approving review is required by reviewers with write access."
+     *
+     * Nothing else is wrong here: the checks passed, there are no conflicts and
+     * nobody asked for changes. It is waiting for a person.
+     */
+    const gate = mergeGate(
+      pr({ mergeState: 'blocked', reviewDecision: 'required', checks: [check('lint', 'passed')] }),
+    );
+    expect(gate.ok).toBe(false);
+    expect(gate.because).toBe('it needs an approving review.');
+  });
+
+  it('names the review alongside whatever else is wrong', () => {
+    const gate = mergeGate(
+      pr({ mergeState: 'blocked', reviewDecision: 'required', checks: [check('audit', 'queued')] }),
+    );
+    expect(gate.because).toBe('a required check has not reported and it needs an approving review.');
+  });
+
+  it('does not ask for a review GitHub has already had', () => {
+    // `approved` and `changes` are both decisions; only `required` is a gap.
+    expect(mergeGate(pr({ mergeState: 'blocked', reviewDecision: 'approved' })).because).not.toContain('review');
+  });
+
   it('names EVERY reason, not the first — the old sentence named one', () => {
     /*
      * A PR held up by a missing review AND a check that never ran told you about
