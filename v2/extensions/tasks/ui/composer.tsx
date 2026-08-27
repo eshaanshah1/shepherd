@@ -662,10 +662,24 @@ export function TaskComposer({
     return pill;
   };
 
-  const create = async (): Promise<void> => {
+  /**
+   * Send the form.
+   *
+   * `opens` is the ONE thing the two gestures differ by — ⏎ starts the agent,
+   * ⌘⏎ opens a terminal in the same task — so it is a parameter rather than a
+   * piece of state. State would make it a MODE: a value set on Tuesday that
+   * turns Thursday's carefully typed brief into a silent shell, which is the
+   * kind of thing you can end up in without choosing it. The machine picker
+   * already re-defaults for that reason (see `machine`), and this never has a
+   * value to re-default because it never has one between keystrokes.
+   */
+  const create = async (opens: 'agent' | 'terminal' = 'agent'): Promise<void> => {
     setBusy(true);
     const result = await invoke("tasks.create", {
       brief,
+      // Absent for the ordinary task, as `incognito` is: `agent` is the verb's
+      // own default and sending it would be a second spelling of it.
+      ...(opens === 'terminal' ? { open: 'terminal' } : {}),
       // Absent when the user left the default alone, so the extension's own
       // default is not overwritten by a value the composer invented.
       ...(model === null ? {} : { model }),
@@ -687,7 +701,12 @@ export function TaskComposer({
         ? (result.value as { slug?: unknown })
         : {};
     setStatus(
-      `created ${typeof created.slug === "string" ? created.slug : "a task"}`,
+      `created ${typeof created.slug === "string" ? created.slug : "a task"}` +
+        // Which of the two things it did. The composer closes on `done()`, so
+        // this is read in the half-second before it goes — worth spending,
+        // because the two gestures are one keystroke apart and the difference is
+        // whether an agent is now running.
+        (opens === 'terminal' ? " — opening a terminal in it" : ""),
     );
     // Cleared only on success. A failed create keeps everything typed — the
     // form is the only copy of it.
@@ -719,6 +738,30 @@ export function TaskComposer({
       onSubmit={(event) => {
         event.preventDefault();
         void create();
+      }}
+      /*
+        ⌘⏎ — the same form, opened on a TERMINAL instead of an agent.
+
+        On the form rather than on the text field so the gesture works wherever
+        focus is, and because there is exactly one implementation of it. A modifier
+        on submit is vocabulary this card already teaches (⇧⏎ newlines), which is
+        why it is this and not a second button: a button is chrome every open pays
+        for, presenting a 95/5 split as two peer verbs, and a select would be a
+        sticky mode.
+
+        The same gate as ⏎, and deliberately not a looser one. A terminal task
+        opened before you can say what the work is still says `#repo`, and a pill
+        carries its name into the brief — so "nothing typed" is not a state this
+        card can be submitted in by either gesture, and a branch for it would be
+        one nothing can reach. `tasks.create` accepts a genuinely empty brief for
+        the CLI's sake, and `untitled` is what names that task.
+      */
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" || event.shiftKey) return;
+        if (!event.metaKey && !event.ctrlKey) return;
+        event.preventDefault();
+        if (busy || brief.trim() === "") return;
+        void create('terminal');
       }}
     >
       {/*
@@ -852,8 +895,15 @@ export function TaskComposer({
               // Escape is handled by the window-capture listener above, because
               // Radix would otherwise close the whole composer first.
             }
-            // ⏎ submits and ⇧⏎ newlines — the chat convention.
+            /*
+              ⏎ submits and ⇧⏎ newlines — the chat convention. ⌘⏎ is neither: it
+              is handled on the FORM, so the gesture works wherever focus is
+              rather than only in the text. Bailing here is what lets it get
+              there — without this, a held ⌘ would submit as an agent and the
+              terminal gesture would be a key that silently does the other thing.
+            */
             if (event.key !== "Enter" || event.shiftKey) return;
+            if (event.metaKey || event.ctrlKey) return;
             event.preventDefault();
             if (brief.trim() !== "") void create();
           }}
@@ -987,6 +1037,18 @@ export function TaskComposer({
           <SendButton
             type="submit"
             label="Start this task"
+            /*
+              Where ⌘⏎ is taught, and the only place it is.
+
+              `title` rather than a line of text beside the control: §4 gives a
+              well one weighted element, and the rail's own buttons already put
+              the keystroke in the tooltip on the argument that a control which
+              says what it does need not also paint its shortcut. It overrides
+              `SendButton`'s own `title={label}` — deliberately, and `label` stays
+              the accessible name, because a screen reader announcing a keycap
+              strip is worse than one announcing the verb.
+            */
+            title="Start this task (⏎) · ⌘⏎ opens a terminal in it instead"
             data-testid="composer-create"
             disabled={brief.trim() === "" || busy}
           />

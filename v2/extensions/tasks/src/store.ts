@@ -177,6 +177,26 @@ export interface TaskRecord {
    * a flag that pretended otherwise would be the worst kind of privacy control.
    */
   readonly incognito?: true;
+  /**
+   * `'none'` — this task was asked for WITHOUT an agent, and no later
+   * provisioning may invent one.
+   *
+   * The tail of `runProvision` starts an orchestrator for a task with no
+   * sessions, and a task the user opened as a terminal satisfies that condition
+   * for as long as it exists. `provision`'s `spawn: false` cannot carry this: it
+   * is an argument, so it only binds the call sites that exist today, and the
+   * next caller — a repair verb, a machine migration — would start the agent the
+   * user declined with nothing on the record to say they had.
+   *
+   * Absent is `auto`, which is every task written before this and every ordinary
+   * one since. Only the non-default value is ever stored, for `incognito`'s
+   * reason: an explicit `'auto'` would be a second spelling of the default.
+   *
+   * It says `orchestrator` rather than naming the gesture that produced it,
+   * because what it governs is that one spawn — a terminal task's own
+   * `tasks.spawn` still works, and is how you hire an agent into it later.
+   */
+  readonly orchestrator?: 'none';
 }
 
 const repoSchema = s.stored({ path: s.string(), name: s.string() });
@@ -206,6 +226,7 @@ const taskSchema = s.stored({
   activatedAt: s.optional(s.int()),
   shelvedAt: s.optional(s.int()),
   incognito: s.optional(s.literal(true)),
+  orchestrator: s.optional(s.literal('none')),
   archives: s.optional(
     s.array(
       s.stored({

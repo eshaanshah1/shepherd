@@ -293,3 +293,21 @@ describe('claudeCredentials', () => {
     expect(await claudeCredentials(proc({ ok: true, stdout: 'password: \n', stderr: '' }))).toBeUndefined();
   });
 });
+
+describe('incognitoCommand with no line', () => {
+  /**
+   * A terminal task opens a pane with nothing typed into it, and it still needs
+   * the export — a shell without it sends the `claude` you type by hand into the
+   * user's real profile, which is the one thing the mode promises not to do.
+   */
+  it('is the export alone, with no trailing separator', () => {
+    expect(incognitoCommand('', '/data/incognito/task-1')).toBe(
+      "export CLAUDE_CONFIG_DIR='/data/incognito/task-1'",
+    );
+    expect(incognitoCommand('   ', '/d/p')).toBe("export CLAUDE_CONFIG_DIR='/d/p'");
+  });
+
+  it('still refuses a path it cannot quote', () => {
+    expect(() => incognitoCommand('', "/d/it's")).toThrow(/quote/);
+  });
+});

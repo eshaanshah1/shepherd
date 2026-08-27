@@ -264,7 +264,15 @@ export function incognitoCommand(line: string, dir: string): string {
   if (dir.includes("'")) {
     throw new Error(`an incognito profile path may not contain a single quote: ${dir}`);
   }
-  return `export CLAUDE_CONFIG_DIR='${dir}'; ${line}`;
+  const target = `export CLAUDE_CONFIG_DIR='${dir}'`;
+  /*
+   * No line to run is a real case, not a caller's mistake: a terminal task opens
+   * a pane with nothing typed into it, and it still needs the export — a shell
+   * without it would send the `claude` you type by hand into the profile this
+   * whole mode exists to stay out of. The export alone is what that pane gets,
+   * rather than a trailing `; ` nobody wrote.
+   */
+  return line.trim() === '' ? target : `${target}; ${line}`;
 }
 
 /**

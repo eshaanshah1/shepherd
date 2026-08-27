@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { firstLine, namingPrompt, readName, stillTheSameBrief } from './naming.ts';
+import { firstLine, namingPrompt, readName, stillTheSameBrief, untitled } from './naming.ts';
 import { slugify } from './slug.ts';
 
 /**
@@ -175,5 +175,24 @@ describe('firstLine', () => {
   it('leaves a line of exactly the cap alone', () => {
     const exact = 'b'.repeat(72);
     expect(firstLine(exact)).toBe(exact);
+  });
+});
+
+/**
+ * The fallback a task with no brief lands on — reachable since a terminal task
+ * can legitimately be opened before there is anything to say about it.
+ */
+describe('untitled', () => {
+  it('names the task after the repos it scopes', () => {
+    expect(untitled({ repos: ['app', 'api'], slug: 'umber-lacaune' })).toBe('app, api');
+  });
+
+  it('falls back to the slug, which is at least the branch and the directory', () => {
+    expect(untitled({ repos: [], slug: 'umber-lacaune' })).toBe('umber-lacaune');
+  });
+
+  it('ignores a blank name rather than joining an empty string into the title', () => {
+    expect(untitled({ repos: ['', ' ', 'api'], slug: 'umber-lacaune' })).toBe('api');
+    expect(untitled({ repos: ['', ' '], slug: 'umber-lacaune' })).toBe('umber-lacaune');
   });
 });

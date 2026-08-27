@@ -1124,3 +1124,104 @@ describe('a pasted link', () => {
     expect(new Set(ids).size).toBe(2);
   });
 });
+
+/**
+ * ⌘⏎ — the same form, opened on a TERMINAL instead of an agent.
+ *
+ * A modifier on submit rather than a second button or a select, and these tests
+ * are what keeps it from quietly becoming the other two: a mode you can be left
+ * in, or a control every open pays for.
+ */
+describe('the terminal gesture', () => {
+  /** ⏎ with a modifier held, as a real event — the handler under test is a real one. */
+  const submitWith = async (
+    modifiers: { meta?: boolean; shift?: boolean } = {},
+    target: HTMLElement = brief(),
+  ): Promise<void> => {
+    const event = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      bubbles: true,
+      cancelable: true,
+      metaKey: modifiers.meta === true,
+      shiftKey: modifiers.shift === true,
+    });
+    await act(async () => {
+      target.dispatchEvent(event);
+    });
+  };
+
+  const created = (): unknown =>
+    invoke.mock.calls.find(([command]) => command === 'tasks.create')?.[1];
+
+  it('asks for a terminal', async () => {
+    await type('poke around the worktree first');
+    await submitWith({ meta: true });
+
+    expect(created()).toMatchObject({ open: 'terminal' });
+  });
+
+  /**
+   * The control, and the point of the whole design: the 95% path is a keystroke
+   * away and unchanged, with nothing to remember between the two.
+   */
+  it('while plain ⏎ sends nothing, so `agent` stays the verb’s own default', async () => {
+    await type('fix the login redirect loop');
+    await submitWith();
+
+    expect(created()).not.toHaveProperty('open');
+  });
+
+  it('is not a mode — the next submit is an agent again', async () => {
+    await type('poke around');
+    await submitWith({ meta: true });
+    await type('now actually fix it');
+    await submitWith();
+
+    const opens = invoke.mock.calls
+      .filter(([command]) => command === 'tasks.create')
+      .map(([, args]) => (args as { open?: unknown }).open);
+    expect(opens).toEqual(['terminal', undefined]);
+  });
+
+  /**
+   * A mention on its own is the "I cannot say what this is yet" case, and it is
+   * enough — the pill carries its repo name into the brief, so this submits with
+   * a brief of `shepherd` rather than an empty one. Which is why the gesture's
+   * gate is ⏎'s and not a looser one: there is no reachable state where the card
+   * holds a repo and no text.
+   */
+  it('goes on a repo mention alone', async () => {
+    await type('#she');
+    await press('Enter');
+    expect(pills()).toEqual([`${HOME}/dev/shepherd`]);
+
+    await submitWith({ meta: true });
+    expect(created()).toMatchObject({
+      open: 'terminal',
+      repos: [{ path: `${HOME}/dev/shepherd`, name: 'shepherd' }],
+    });
+    // Trimmed, because `pick` leaves the non-breaking space that puts the caret
+    // in text rather than against the pill — asserting the raw value would pin
+    // invisible whitespace that belongs to the picker, not to this gesture.
+    expect((created() as { brief: string }).brief.trim()).toBe('shepherd');
+  });
+
+  it('and does nothing on an empty card, so a stray ⌘⏎ provisions nothing', async () => {
+    await submitWith({ meta: true });
+    expect(created()).toBeUndefined();
+  });
+
+  it('leaves ⇧⏎ to the text, modifier or not', async () => {
+    await type('a brief');
+    await submitWith({ meta: true, shift: true });
+    expect(created()).toBeUndefined();
+  });
+
+  it('teaches the keystroke on the send button rather than beside it', () => {
+    const send = container.querySelector<HTMLElement>('[data-testid="composer-create"]')!;
+    expect(send.getAttribute('title')).toContain('⌘⏎');
+    // …and the accessible name stays the VERB. A screen reader announcing a
+    // keycap strip is worse than one announcing what the control does.
+    expect(send.getAttribute('aria-label')).toBe('Start this task');
+  });
+});

@@ -55,6 +55,26 @@ export function firstLine(brief: string): string {
 }
 
 /**
+ * A title for a task nobody wrote a brief for.
+ *
+ * A terminal task can legitimately have no prose — you open one to look around a
+ * worktree before you can say what the work is — and `firstLine('')` is the empty
+ * string, which draws as a row with a blank where its name goes. So the repos it
+ * scopes name it, and a task with no repos falls back to its slug: not a name
+ * anybody chose, but the one string that is already on screen as the branch and
+ * the directory, so it addresses something.
+ *
+ * Not run through the model. `nameLater` asks a model to name a BRIEF, and there
+ * is nothing here to name — a guess about an empty string is a guess about
+ * nothing, and it would arrive seconds later to overwrite a title that was at
+ * least true.
+ */
+export function untitled(input: { readonly repos: readonly string[]; readonly slug: string }): string {
+  const named = input.repos.filter((name) => name.trim() !== '');
+  return named.length === 0 ? input.slug : named.join(', ');
+}
+
+/**
  * Is `next` the brief `asked` was about, a little further along?
  *
  * The prefix half is what makes this a question about a brief rather than about a

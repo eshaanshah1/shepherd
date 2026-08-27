@@ -32,7 +32,7 @@ import {
 import { TaskStore, type RepoArchive, type RepoRef, type TaskRecord, type TaskSession } from './store.ts';
 import { uniqueSlug } from './model/slug.ts';
 import { branchTaken, mintName, pickBranch } from './model/mint.ts';
-import { firstLine, namingPrompt, readName, stillTheSameBrief } from './model/naming.ts';
+import { firstLine, namingPrompt, readName, stillTheSameBrief, untitled } from './model/naming.ts';
 import { expandHome, collapseHome } from './model/repo-path.ts';
 import { displayMatch, segmentsOf, type DisplaySegment } from './model/match-display.ts';
 import { orderSuggestions, rankScored } from './model/pick-order.ts';
@@ -1182,7 +1182,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * A pane is named once, when it opens, and its `userTitle` beats the OSC title
    * a program sets — so a name that lands after the panes do reaches them only
    * because this says so. A failure is logged and stepped over, for the reason
-   * the call in `openAgentPane` gives: a title is the decorative part of a spawn,
+   * the call in `openTaskPane` gives: a title is the decorative part of a spawn,
    * and losing one is not worth an exception on a task that is otherwise fine.
    */
   async function relabelPanes(task: TaskRecord): Promise<void> {
@@ -1639,19 +1639,24 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * milestone's architecture, deliberately not widened here.
    */
   /**
-   * Open a pane in the task's root and type one line into it.
+   * Open a pane in the task's root, and type one line into it if there is one.
    *
-   * The half `startSession` and `resumeSession` share: which layout verb opens
-   * the pane (mint the root, or split the live one) and naming it. What differs
-   * between them is the LINE — a fresh agent reads a prompt file, a resumed one
-   * names a session — and that is the whole of the difference, which is why it
-   * is the only parameter.
+   * The half `startSession`, `resumeSession` and `startTerminal` share: which
+   * layout verb opens the pane (mint the root, or split the live one) and naming
+   * it. What differs between them is the LINE — a fresh agent reads a prompt
+   * file, a resumed one names a session, a terminal has none — and that is the
+   * whole of the difference, which is why it is the only parameter.
+   *
+   * **An absent command is a plain shell**, and it is absent rather than empty
+   * for a reason the layout can see: `initialCommand` is typed into the pty, so
+   * an empty string would be a bare Enter at somebody's prompt.
    */
-  async function openAgentPane(
+  async function openTaskPane(
     task: TaskRecord,
     input: {
       readonly cwd: string;
-      readonly command: string;
+      /** The one line to type. Absent opens the pane on a shell and types nothing. */
+      readonly command?: string;
       readonly title: string;
       /** Undo whatever was staged for the line that will now never run. */
       readonly onFailure: () => void;
@@ -1663,8 +1668,16 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
      * An incognito task's agent runs out of the task's own profile — every
      * launch and every resume, because they go through here and a resume that
      * missed it would reattach the agent to the user's real history.
+     *
+     * A TERMINAL gets the export too, with nothing after it. The `claude` you
+     * type into that shell yourself is the point of a terminal task, and a shell
+     * without the export would send it into the user's real profile — the one
+     * thing incognito promises it will not touch.
      */
-    const command = task.incognito === true ? incognitoCommand(input.command, profileOf(task)) : input.command;
+    const command =
+      task.incognito === true
+        ? incognitoCommand(input.command ?? '', profileOf(task))
+        : input.command;
 
     const opened = await commands.invoke<{ root: string; pane: string | null; created: boolean }>(
       'layout.openRoot',
@@ -1673,7 +1686,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
        * group, and every later tab of it joins that group. One string, two
        * roles, which is exactly what `taskRootId`'s note is about.
        */
-      { root, group: root, cwd, initialCommand: command, title },
+      { root, group: root, cwd, ...(command === undefined ? {} : { initialCommand: command }), title },
     );
     if (!opened.ok) {
       input.onFailure();
@@ -1701,7 +1714,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         axis: 'row',
         root,
         cwd,
-        initialCommand: command,
+        ...(command === undefined ? {} : { initialCommand: command }),
       });
       if (!split.ok) {
         input.onFailure();
@@ -1783,7 +1796,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     // session exists, and a `cat` that loses the race reads an empty prompt.
     writeFileSync(plan.promptFile, written.brief, 'utf8');
 
-    const pane = await openAgentPane(task, {
+    const pane = await openTaskPane(task, {
       cwd,
       command: plan.command,
       // Off the CURRENT record: naming runs beside provisioning, so a name can
@@ -1802,7 +1815,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       /*
        * Which TAB it went into, so the sidebar can give that tab its own dot.
        *
-       * The anchor, because that is where `openAgentPane` puts every agent — it
+       * The anchor, because that is where `openTaskPane` puts every agent — it
        * mints the anchor root or splits it, and never opens a second tab.
        * Spawning into whichever tab is on screen is a nicer gesture and a
        * different decision; recording the truth of today is what keeps this
@@ -1815,6 +1828,48 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       ctx.log.error(`task ${task.id}: correlating ${session.pane ?? '?'} threw — ${String(error)}`);
     });
     return session;
+  }
+
+  /**
+   * Open the task on a SHELL, and record nothing.
+   *
+   * The whole of what `open: 'terminal'` means once the worktrees are down. It
+   * goes through `openTaskPane` so a terminal task's pane is the same pane in the
+   * same root of the same group as an agent's — the sidebar reads its state from
+   * the layout, so it rolls up, tabs, shelves and restores with no case of its
+   * own (`panesOf` is the note that says why).
+   *
+   * **No `TaskSession` is written, and that is deliberate.** A `TaskSession` is
+   * an agent: it carries a `role`, an id `correlate` fills in from
+   * `sessions.list`, and a `resumeTarget` the agent kind captured. A shell has
+   * none of those, so a record for it would be a row of absences that every
+   * reader — `refreshSaid`, the archive's resume capture, `agentStatesOf` — has
+   * to learn to skip. `panesOf` already sees the pane through the layout, which
+   * is the half that was missing when the record was the only source.
+   *
+   * The consequence to know: `sessions` stays empty, so `orchestrator: 'none'` on
+   * the record is the ONLY thing standing between this task and a later
+   * provisioning starting the agent it declined.
+   */
+  async function startTerminal(task: TaskRecord): Promise<string> {
+    const pane = await openTaskPane(task, {
+      cwd: rootOf(task),
+      /*
+       * The task's own name, which is what `paneTitle` gives the anchor pane for
+       * an orchestrator too — not a drift from it. Spelled directly rather than
+       * asking `paneTitle` for a `role` this pane does not have: the two agree
+       * today, and a shell passed off as an orchestrator to borrow a string is
+       * the kind of small lie that outlives the reason for it.
+       *
+       * Off the CURRENT record, because naming runs beside provisioning and an
+       * answer can land between the task being handed over and its pane opening.
+       */
+      title: (store.get(task.id) ?? task).title,
+      // Nothing was staged on disk — there is no prompt file and no line.
+      onFailure: () => undefined,
+    });
+    ctx.log.info(`task ${task.id}: opened a terminal in pane ${pane}, started no agent`);
+    return pane;
   }
 
   /**
@@ -1858,7 +1913,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       return;
     }
     const cwd = session.repo === undefined ? rootOf(task) : `${rootOf(task)}/${session.repo}`;
-    const pane = await openAgentPane(task, {
+    const pane = await openTaskPane(task, {
       cwd,
       command,
       title: session.role === 'orchestrator' ? task.title : `${task.title} · ${session.repo ?? 'workstream'}`,
@@ -2940,20 +2995,44 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       const now = store.get(task.id);
       if (opts?.spawn !== false && now !== undefined && now.sessions.length === 0) {
         try {
-          const session = await startSession(now, {
-            prompt: orchestratorPrompt(now),
-            role: 'orchestrator',
-            ...(images === undefined || images.length === 0 ? {} : { images }),
-          });
-          const latest = store.get(task.id) ?? now;
-          store.put({ ...latest, sessions: [...latest.sessions, session], lifecycle: 'running' });
-          changed();
+          /**
+           * A task asked for as a terminal gets a shell here, not an agent.
+           *
+           * Read off the RECORD rather than an argument, which is the whole point
+           * of `orchestrator` existing: `spawn: false` binds the call sites that
+           * exist today, and this condition — no sessions — is one a terminal
+           * task satisfies for as long as it lives. The next caller of
+           * `provision` inherits the refusal instead of having to remember it.
+           *
+           * Both branches then write `lifecycle: 'running'`. A terminal task is
+           * live work, and `draft` with no sessions is exactly what `stalledLine`
+           * reads as "setting up this task did not finish" — so leaving it there
+           * would paint a failure over a shell that opened correctly. Nothing is
+           * lost by calling it running: `displayState` ignores every lifecycle
+           * value but `archived` and tints from the agent rollup, which folds a
+           * pane with no agent to grey.
+           */
+          if (now.orchestrator === 'none') {
+            await startTerminal(now);
+            const latest = store.get(task.id) ?? now;
+            store.put({ ...latest, lifecycle: 'running' });
+            changed();
+          } else {
+            const session = await startSession(now, {
+              prompt: orchestratorPrompt(now),
+              role: 'orchestrator',
+              ...(images === undefined || images.length === 0 ? {} : { images }),
+            });
+            const latest = store.get(task.id) ?? now;
+            store.put({ ...latest, sessions: [...latest.sessions, session], lifecycle: 'running' });
+            changed();
+          }
         } catch (error: unknown) {
-          // A task with no agent is degraded, not broken — the worktrees and the
+          // A task with no pane is degraded, not broken — the worktrees and the
           // root are real and `tasks.spawn` still works. Reported for the same
-          // reason a failed repo is: silence here reads as "there was no agent to
+          // reason a failed repo is: silence here reads as "there was nothing to
           // start".
-          ctx.log.warn(`task ${task.id}: no orchestrator started — ${String(error)}`);
+          ctx.log.warn(`task ${task.id}: nothing started — ${String(error)}`);
         }
       }
     });
@@ -3297,10 +3376,57 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
          * incognito after the fact.
          */
         incognito: s.optional(s.boolean()),
+        /**
+         * What OPENS once the worktrees are down — `agent` (the default) or
+         * `terminal`.
+         *
+         * `terminal` provisions the whole task and then drops you at a shell in
+         * it instead of starting the orchestrator. It is not "a task without an
+         * agent": the brief still reaches the synthesized root's `CLAUDE.md`
+         * (`synthTaskRoot` writes it under "What was asked for"), so typing
+         * `claude` in that shell yourself opens an agent that already has the
+         * brief. Deferred, not declined.
+         *
+         * A field on `tasks.create` rather than a `tasks.createShell` verb,
+         * because this IS creating a task — same worktrees, same trust seed, same
+         * row — and a second verb would fork the table that `member`, `model`,
+         * `placement` and `incognito` all already flow through, so every
+         * parameter added after it would have to be mirrored in two places.
+         */
+        open: s.optional(s.string()),
       }),
       handler: async (args) => {
         const elsewhere = await forwardToMember(TASK_COMMANDS.create, args);
         if (elsewhere !== undefined) return elsewhere;
+        /**
+         * WHAT opens, read once and refused if it is a word we do not have.
+         *
+         * A typo lands here as `open: 'termnial'`, and defaulting an unread value
+         * to `agent` would start the very agent the caller was trying not to
+         * start — silently, and only visible as a pane nobody asked for.
+         */
+        const opens = args.open ?? 'agent';
+        if (opens !== 'agent' && opens !== 'terminal') {
+          throw new Error(`open must be "agent" or "terminal", not "${opens}"`);
+        }
+        const terminal = opens === 'terminal';
+        /*
+         * Images ride the ORCHESTRATOR's first prompt, and a terminal task has
+         * no first prompt to carry them.
+         *
+         * Refused rather than dropped. `writePastedImages` is called from
+         * `startSession` and nowhere else, so accepting them here would take
+         * bytes off somebody's clipboard, answer `ok`, and write them nowhere —
+         * a gesture that visibly worked and did nothing. The composer suppresses
+         * the paste for the same reason; this is the CLI's and a remote caller's
+         * half of it.
+         */
+        if (terminal && args.images !== undefined && args.images.length > 0) {
+          throw new Error(
+            'a terminal task has no first prompt to attach images to — start it as an agent, ' +
+              'or paste them to the agent you open in it',
+          );
+        }
         /**
          * Minted, resolved ONCE against what is taken, and then stored (D8).
          *
@@ -3321,7 +3447,18 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
          */
         const chosen = args.title?.trim();
         const authored = chosen !== undefined && chosen !== '';
-        const title = authored ? chosen : firstLine(args.brief ?? '');
+        /*
+         * A brief nobody wrote leaves `firstLine` with nothing, which draws as a
+         * row with a blank where its name goes. `untitled` is the fallback, and
+         * it is reached by a task with no brief whatever opens in it — a terminal
+         * task is where that became REACHABLE, not where it became possible.
+         */
+        const fromBrief = firstLine(args.brief ?? '');
+        const title = authored
+          ? chosen
+          : fromBrief !== ''
+            ? fromBrief
+            : untitled({ repos: (args.repos ?? []).map((repo) => repo.name), slug });
         const task: TaskRecord = {
           schemaVersion: 1,
           id: nextId(),
@@ -3334,6 +3471,9 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           // Only ever `true` on the record: an explicit `false` is the ordinary
           // task, and storing it would be a second spelling of the default.
           ...(args.incognito === true ? { incognito: true as const } : {}),
+          // Only the non-default value is stored — `store.ts` says why, and why
+          // this is on the RECORD rather than an argument to `provision`.
+          ...(terminal ? { orchestrator: 'none' as const } : {}),
           // Expanded HERE rather than in the composer, so the CLI's `--repo`
           // gets it too — the field and the flag are two doors into one verb.
           repos: (args.repos ?? []).map((repo) => ({
@@ -3391,7 +3531,13 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
          * second opinion about a name a person has been reading for a week is
          * not an improvement.
          */
-        if (!authored) {
+        /*
+         * `authored` suppresses the ask, and so does an EMPTY brief: `nameLater`
+         * asks a model to name a brief, and there is nothing here to name. The
+         * answer would arrive seconds later and overwrite `untitled`'s repo names
+         * with a guess about the empty string.
+         */
+        if (!authored && task.brief.trim() !== '') {
           void nameLater(task).catch((error: unknown) => {
             ctx.log.error(`task ${task.id}: naming threw — ${String(error)}`);
           });
@@ -3628,7 +3774,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
          * is its directory. It is wrong for one whose directory is still being
          * cut: the pane mounts in a folder that may not be there yet, under a
          * slug that may still change, and — the part that outlives the wait —
-         * **it is the pane the agent then splits beside.** `openAgentPane` asks
+         * **it is the pane the agent then splits beside.** `openTaskPane` asks
          * `layout.openRoot` and branches on whether the root already has one;
          * finding this shell, it appends the agent next to it and nothing ever
          * reclaims it. So the fix is upstream of the split: do not mint the shell.

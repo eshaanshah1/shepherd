@@ -182,6 +182,22 @@ describe('parseArgv', () => {
     expect(parsed.ok === false && parsed.error).toContain('get, set, clear, test-run');
   });
 
+  /**
+   * `open` needs no entry here, and that is the file's whole design working: a
+   * noun/verb pair maps to a command id and every flag becomes an argument, so a
+   * field added to `tasks.create` is reachable the day it is registered. Pinned
+   * because the tempting alternative — a valueless `--terminal` — would be this
+   * transport inventing a spelling the command does not have, which is the drift
+   * the header warns about.
+   */
+  it('carries --open through to tasks.create with no table entry of its own', () => {
+    expect(parseArgv(['task', 'new', '--repo', '/src/app', '--open', 'terminal'])).toMatchObject({
+      ok: true,
+      command: 'tasks.create',
+      args: { open: 'terminal', repos: [{ path: '/src/app', name: 'app' }] },
+    });
+  });
+
   it('passes a bare command id straight through, so a new verb needs no CLI release', () => {
     // The registry is the verb table; this is a transport. An agent that knows a
     // command id must not have to wait for this file to learn it.

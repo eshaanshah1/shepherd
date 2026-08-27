@@ -1337,7 +1337,7 @@ describe('a task owns a layout root', () => {
      * The shell above is right for a task that exists. For one whose worktrees
      * are still being cut it mounts in a directory that may not be there, under a
      * slug that may still change — and, the part that outlives the wait, it is
-     * the pane `openAgentPane` then splits beside. Nothing reclaims it, so the
+     * the pane `openTaskPane` then splits beside. Nothing reclaims it, so the
      * fix is upstream of the split: do not mint it.
      */
     describe('while the task is still being built', () => {
@@ -5234,5 +5234,169 @@ describe('the pasted-link point', () => {
     );
     expect(warnings.some((line) => line.includes(PASTED_LINK_POINT))).toBe(true);
     h.dispose();
+  });
+});
+
+/**
+ * `open: 'terminal'` — the whole task, and then a shell in it instead of an agent.
+ *
+ * The claims worth pinning are the three the feature can silently lose. The pane
+ * must carry NO line (an `initialCommand` is typed into a pty, so an agent that
+ * came back would come back invisibly, as one extra process nobody asked for);
+ * the record must carry the refusal, because `sessions.length === 0` is a
+ * condition a terminal task satisfies forever and the next caller of `provision`
+ * inherits the field rather than remembering an argument; and the lifecycle must
+ * leave `draft`, because `draft` with no sessions is exactly what `stalledLine`
+ * paints "Setting up this task did not finish" over.
+ */
+describe('a task opened as a terminal', () => {
+  let live: Harness | undefined;
+  afterEach(() => {
+    live?.dispose();
+    live = undefined;
+  });
+
+  const REPO = { path: '/src/app', name: 'app' };
+
+  /** Every `initialCommand` the layout was asked to type, in order. */
+  const typedLines = (h: Harness): string[] =>
+    h.invoked
+      .filter((call) => call.id === 'layout.openRoot' || call.id === 'layout.split')
+      .map((call) => (call.args as { initialCommand?: unknown }).initialCommand)
+      .filter((line): line is string => typeof line === 'string');
+
+  const recordOf = async (h: Harness, id: string): Promise<TaskRecord> => {
+    const rows = await h.run<readonly TaskRecord[]>('tasks.list');
+    const found = rows.find((row) => row.id === id);
+    if (found === undefined) throw new Error(`no task ${id} in tasks.list`);
+    return found;
+  };
+
+  it('opens a pane and types nothing into it', async () => {
+    const h = (live = harness());
+    const created = await h.run<{ id: string }>('tasks.create', {
+      brief: 'poke around before I can say what this is',
+      repos: [REPO],
+      open: 'terminal',
+    });
+    await until(async () => (await recordOf(h, created.id)).lifecycle === 'running');
+
+    // Both halves. Without the first this passes for a build that opens no pane
+    // at all, which is what `provision`'s `spawn: false` already did and is a
+    // different feature; without the second it passes for one that starts an agent.
+    expect(h.invoked.filter((call) => call.id === 'layout.openRoot')).toHaveLength(1);
+    expect(typedLines(h)).toEqual([]);
+  });
+
+  /**
+   * The control. Without it the assertion above passes for a build that opens no
+   * pane at all, which is what `provision`'s existing `spawn: false` already did
+   * and is a different feature.
+   */
+  it('and the default still launches an agent, so the assertion above means something', async () => {
+    const h = (live = harness());
+    await h.run('tasks.create', { brief: 'fix the login redirect loop', repos: [REPO] });
+    await until(() => typedLines(h).length > 0);
+
+    expect(typedLines(h)[0]).toContain('claude');
+  });
+
+  it('records the refusal, so a later provisioning cannot invent the agent', async () => {
+    const h = (live = harness());
+    const created = await h.run<{ id: string }>('tasks.create', {
+      brief: 'poke around',
+      repos: [REPO],
+      open: 'terminal',
+    });
+
+    expect((await recordOf(h, created.id)).orchestrator).toBe('none');
+  });
+
+  it('stores nothing on an ordinary task, so absent stays the default', async () => {
+    const h = (live = harness());
+    const created = await h.run<{ id: string }>('tasks.create', { brief: 'ship it', repos: [REPO] });
+
+    expect((await recordOf(h, created.id)).orchestrator).toBeUndefined();
+  });
+
+  it('leaves draft, and so is never painted as a build that died', async () => {
+    const h = (live = harness());
+    const created = await h.run<{ id: string }>('tasks.create', {
+      brief: 'poke around',
+      repos: [REPO],
+      open: 'terminal',
+    });
+    await until(async () => (await recordOf(h, created.id)).lifecycle === 'running');
+
+    const stalled = h.invoked
+      .filter((call) => call.id === 'layout.setPlaceholder')
+      .map((call) => (call.args as { placeholder?: { line?: unknown } }).placeholder?.line);
+    expect(stalled).not.toContain('Setting up this task did not finish.');
+  });
+
+  it('records no session, because a shell is not an agent', async () => {
+    const h = (live = harness());
+    const created = await h.run<{ id: string }>('tasks.create', {
+      brief: 'poke around',
+      repos: [REPO],
+      open: 'terminal',
+    });
+    await until(async () => (await recordOf(h, created.id)).lifecycle === 'running');
+
+    expect((await recordOf(h, created.id)).sessions).toEqual([]);
+  });
+
+  it('names itself after its repos when nobody wrote a brief', async () => {
+    const h = (live = harness());
+    const created = await h.run<{ id: string; title: string }>('tasks.create', {
+      repos: [REPO, { path: '/src/api', name: 'api' }],
+      open: 'terminal',
+    });
+
+    expect(created.title).toBe('app, api');
+  });
+
+  it('refuses a word it does not have, rather than starting the agent anyway', async () => {
+    const h = (live = harness());
+    await expect(h.run('tasks.create', { brief: 'x', open: 'termnial' })).rejects.toThrow(
+      /open must be "agent" or "terminal"/,
+    );
+  });
+
+  /**
+   * Images ride the orchestrator's first prompt and a terminal task has none, so
+   * accepting them would take bytes off a clipboard, answer `ok`, and write them
+   * nowhere.
+   */
+  it('refuses pasted images instead of dropping them', async () => {
+    const h = (live = harness());
+    await expect(
+      h.run('tasks.create', {
+        brief: 'look at this',
+        repos: [REPO],
+        open: 'terminal',
+        images: [{ mediaType: 'image/png', data: 'AAAA' }],
+      }),
+    ).rejects.toThrow(/no first prompt/);
+  });
+
+  /**
+   * The `claude` you type in that shell yourself is the whole point of a terminal
+   * task, and without the export it would write into the profile incognito exists
+   * to stay out of.
+   */
+  it('still exports the incognito profile, with nothing after it', async () => {
+    const h = (live = harness());
+    const created = await h.run<{ id: string }>('tasks.create', {
+      brief: 'poke around',
+      repos: [REPO],
+      open: 'terminal',
+      incognito: true,
+    });
+    await until(async () => (await recordOf(h, created.id)).lifecycle === 'running');
+
+    const lines = typedLines(h);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/^export CLAUDE_CONFIG_DIR='[^']+'$/);
   });
 });
