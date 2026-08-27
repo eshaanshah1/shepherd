@@ -21,11 +21,16 @@ import { SHEPHERD_DIFF_CSS, SHEPHERD_DIFF_THEME } from './diff-theme.ts';
  * Measured in the task's WORKTREE and against the commit it forked from, which
  * is what makes the answer this task's rather than the user's own checkout's,
  * and what keeps it from emptying the moment an agent commits.
+ *
+ * The worktrees are the ones under the task ROOT, which is not the same list as
+ * the repos its record names — `src/worktrees.ts` says why that difference is
+ * the whole point.
  */
 
 /** One repo's working tree, as `github.changes` reports it. */
 export interface RepoChanges {
   readonly name: string;
+  /** The WORKTREE — where the diff was measured, and what a PR would push. */
   readonly path: string;
   readonly branch: string | null;
   readonly base: string | null;
@@ -72,6 +77,21 @@ export function readChanges(value: unknown): readonly RepoChanges[] {
   });
 }
 
+/**
+ * Why the command would not answer, when it would not.
+ *
+ * `github.changes` refuses with `{ ok: false, reason }` in the value, and
+ * `readChanges` reads any such shape as no repos — which drew the same
+ * "nothing changed" as a task that genuinely had nothing changed. A refusal
+ * that renders as an answer is the worst of the two, because there is nothing
+ * on screen to suggest looking further.
+ */
+export function readRefusal(value: unknown): string | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const row = value as { ok?: unknown; reason?: unknown };
+  return row.ok === false && typeof row.reason === 'string' ? row.reason : null;
+}
+
 type Invoke = (
   command: string,
   args?: unknown,
@@ -87,11 +107,18 @@ export function WorkingChanges({ task, signedIn, invoke }: WorkingChangesProps):
   const [repos, setRepos] = useState<readonly RepoChanges[] | undefined>(undefined);
   const [busy, setBusy] = useState<string | undefined>(undefined);
   const [said, setSaid] = useState<string | undefined>(undefined);
+  const [failed, setFailed] = useState<string | undefined>(undefined);
 
   const load = useMemo(
     () => async (): Promise<void> => {
       const answer = await invoke(GITHUB_COMMANDS.changes, { task });
-      setRepos(answer.ok ? readChanges(answer.value) : []);
+      if (!answer.ok) {
+        setFailed('the changes could not be read');
+        setRepos([]);
+        return;
+      }
+      setFailed(readRefusal(answer.value) ?? undefined);
+      setRepos(readChanges(answer.value));
     },
     [invoke, task],
   );
@@ -119,6 +146,9 @@ export function WorkingChanges({ task, signedIn, invoke }: WorkingChangesProps):
 
   const dirty = repos.filter((repo) => repo.files.length > 0);
   if (dirty.length === 0) {
+    if (failed !== undefined) {
+      return <Empty hint={failed}>This task’s changes could not be read.</Empty>;
+    }
     return (
       <Empty hint="Anything this task changes — committed or not — shows up here.">
         No pull request yet, and nothing changed in this task’s worktrees.

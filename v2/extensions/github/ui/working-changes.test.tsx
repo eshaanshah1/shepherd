@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
-import { readChanges } from './working-changes.tsx';
+import { readChanges, readRefusal } from './working-changes.tsx';
 
 /**
  * What `github.changes` answered, read rather than cast — it crossed a port to
@@ -54,5 +54,23 @@ describe('readChanges', () => {
     const row = readChanges({ repos: [repo({ branch: undefined, base: undefined })] })[0];
     expect(row?.branch).toBeNull();
     expect(row?.base).toBeNull();
+  });
+});
+
+describe('readRefusal', () => {
+  it('reads the reason a refusal carries', () => {
+    // Without this the pane drew "nothing changed" over a task it had failed to
+    // look at, and there was nothing on screen to say so.
+    expect(readRefusal({ ok: false, reason: 'no such task' })).toBe('no such task');
+  });
+
+  it('is null for an answer that is not a refusal', () => {
+    expect(readRefusal({ repos: [] })).toBeNull();
+    expect(readRefusal({ ok: true })).toBeNull();
+    expect(readRefusal(undefined)).toBeNull();
+  });
+
+  it('is null for a refusal with no reason to show', () => {
+    expect(readRefusal({ ok: false })).toBeNull();
   });
 });

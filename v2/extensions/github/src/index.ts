@@ -18,6 +18,7 @@ import { Remotes } from './remotes.ts';
 import { readBranch, readHead } from './heads.ts';
 import { Sync } from './sync.ts';
 import { readPaneTitles, readRoots, readTasks, type ListedTask } from './tasks-read.ts';
+import { worktreesOf } from './worktrees.ts';
 import { agentName, handingMeans, markFor, pickAgent, readLive, readStates, type TaskAgent } from './model/agent-pick.ts';
 import { resolveToken } from './token.ts';
 import { fixturePrs } from './fixture.ts';
@@ -376,19 +377,6 @@ export function activate(ctx: ExtensionContext, api: Shepherd): void {
   );
 
   /**
-   * Where a task's copy of a repo lives.
-   *
-   * `repo.path` is the checkout the user PICKED — their own, on their own
-   * branch, and not what this task changed. The work is in the worktree, at
-   * `<task root>/<repo name>`, which is the same join `sync.ts` makes to read a
-   * task's branch. Asking git in `repo.path` answered about the user's day-to-day
-   * checkout instead: an empty diff, and a refusal saying the worktree "is on
-   * main" — for every task, always.
-   */
-  const worktreeOf = (task: ListedTask, repo: { readonly name: string }): string =>
-    `${task.root}/${repo.name}`;
-
-  /**
    * What the review pane draws when a task has NO pull request: the working
    * tree, per repo, and whether each could open one.
    *
@@ -446,8 +434,8 @@ export function activate(ctx: ExtensionContext, api: Shepherd): void {
         const task = await taskById(args.task);
         if (task === undefined) return { ok: false, reason: 'no such task' };
         const repos = await Promise.all(
-          task.repos.map(async (repo) => {
-            const worktree = worktreeOf(task, repo);
+          worktreesOf(task).map(async (repo) => {
+            const worktree = repo.worktree;
             /*
              * In parallel, and the diff does not wait on the readiness: that one
              * asks GitHub for the default branch, and a slow — or absent —
@@ -459,7 +447,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): void {
             ]);
             return {
               name: repo.name,
-              path: repo.path,
+              path: worktree,
               branch: ready.branch,
               base: ready.base,
               files,
@@ -487,12 +475,21 @@ export function activate(ctx: ExtensionContext, api: Shepherd): void {
        */
       handler: async (args) => {
         const task = await taskById(args.task);
-        const repo = task?.repos.find((entry) => entry.path === args.repo);
+        /*
+         * Addressed by the WORKTREE, which is what `github.changes` reported and
+         * what the push actually runs in. It used to be the checkout the user
+         * picked, read back off the task record — which cannot name a worktree
+         * an agent cut for itself, so the one repo most in need of a first PR
+         * was the one that could not have one.
+         */
+        const repo = task === undefined
+          ? undefined
+          : worktreesOf(task).find((entry) => entry.worktree === args.repo);
         if (task === undefined || repo === undefined) {
           return { ok: false, reason: 'no such repo on this task' };
         }
 
-        const worktree = worktreeOf(task, repo);
+        const worktree = repo.worktree;
         const ready = await prReadiness(worktree);
         const refused = refuseReason(ready);
         if (refused !== null) return { ok: false, reason: refused };
