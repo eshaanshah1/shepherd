@@ -706,6 +706,32 @@ button.sh-task-card__fact::after {
 }
 
 /*
+ * **The verb is a BOX at the trailing edge; the glyph above it is a GLYPH.**
+ *
+ * `IconButton` is a `--sh-control-sm` square with an `sm` glyph centred in it, so
+ * flushing its box against the card's padding leaves the mark inside it inset by
+ * half the difference — while the fact on the line above, which is the bare glyph
+ * with no box round it, sits flush. Two marks in one column, a few pixels apart,
+ * which is the misalignment you see without being able to name.
+ *
+ * The correction is that half-difference, given back as a negative end margin, so
+ * the two MARKS share an edge and the button's hit area is the only thing that
+ * overhangs — into 12px of card padding, where it costs nothing.
+ *
+ * `:last-child`, because the correction is about being the trailing edge: with
+ * repo chips after it the verb is mid-line, there is nothing above to line up
+ * with, and the shift would only eat the line's gap.
+ *
+ * `--sh-font-size-medium` stands in for `iconSizes.sm`, which lives in TypeScript
+ * and deliberately has no variable of its own — it is the value that ramp is
+ * derived FROM, so the two move together when the base size moves. Same finding
+ * `row.css` records, and the same caveat: closest available, not exact.
+ */
+.sh-task-card__action:last-child {
+  margin-inline-end: calc((var(--sh-font-size-medium) - var(--sh-control-sm)) / 2);
+}
+
+/*
  * ── a contributed fact is a VERB, so it lives with the other one ─────────────
  *
  * The PR glyph opens the review tab. It is not metadata about the row, it is a
