@@ -935,26 +935,51 @@
  * paths: the comment and the line it is about are one thing, and a list of
  * comments somewhere else makes you hold the file in your head.
  */
+/*
+ * A review comment, among the lines it is about.
+ *
+ * This one KEEPS its border, and it is the only thing in the pane that still
+ * has one. Everywhere else a box was decoration around something already
+ * separated by being a row; here the note sits between lines of code in a mono
+ * grid, and the boundary is what says "a person wrote this, the machine wrote
+ * the rest". A border earns its place when it separates two kinds of thing.
+ *
+ * A COLUMN, not a row. It was a row with `align-items: center`, which is what a
+ * one-line strip wants — and one line is what it was: `nowrap` plus an ellipsis,
+ * so the pane told you a comment existed and then refused to show it to you.
+ */
 .sh-pr-diff__note {
   flex: none;
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: var(--sh-space-sm);
   margin: var(--sh-space-sm) var(--sh-space-lg);
-  padding: var(--sh-space-sm) var(--sh-space-md);
+  padding: var(--sh-space-md);
   border: var(--sh-hairline) solid var(--sh-line-active);
   border-radius: var(--sh-radius-md);
   background: var(--sh-surface);
 }
 
-.sh-pr-diff__note-text {
+.sh-pr-diff__note-who {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-sm);
+}
+
+.sh-pr-diff__note-spacer {
   flex: 1;
-  min-inline-size: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--sh-font-mono);
-  font-size: var(--sh-font-size-micro);
+}
+
+/*
+ * Prose, in the prose face.
+ *
+ * It was `--sh-font-mono` at `micro`, which is the voice the CODE around it
+ * speaks — so a reviewer's sentence read as another line of the file. Sans at
+ * `medium` is what every other thing somebody said in this pane is set in.
+ */
+.sh-pr-diff__note-body {
+  font-family: var(--sh-font-sans);
+  font-size: var(--sh-font-size-medium);
   color: var(--sh-text-dim);
 }
 

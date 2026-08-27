@@ -636,19 +636,14 @@ function DiffList({
   const undiffable = pending ? [] : files.filter((file) => unifiedPatch(file) === null);
 
   const note = (thread: ReviewThread, adriftMark: boolean): ReactElement => (
-    <div key={thread.id} className="sh-pr-diff__note" data-adrift={adriftMark ? 'true' : undefined}>
-      <span className="sh-pr-card__mark" data-state="waiting" aria-hidden="true" />
-      <span className="sh-pr-diff__note-text">
-        <span className="sh-pr-card__login">@{thread.author}</span> · {thread.body}
-      </span>
-      {adriftMark ? <span className="sh-pr-diff__adrift">not on this diff</span> : null}
-      {wrapHand(
-        `thread:${thread.id}`,
-        <Button variant="ghost" size="sm" disabled={busy} onClick={() => onHandThread(thread)}>
-          Hand to agent
-        </Button>,
-      )}
-    </div>
+    <DiffNote
+      key={thread.id}
+      thread={thread}
+      adrift={adriftMark}
+      busy={busy}
+      wrapHand={wrapHand}
+      onHandThread={onHandThread}
+    />
   );
 
   return (
@@ -758,6 +753,56 @@ function DiffList({
  * all of them as "nothing to show" a beat before the patches arrived — a wrong
  * answer drawn confidently and then corrected, which is what the flash was.
  */
+/**
+ * A review comment, where it was written — beside the line it is about.
+ *
+ * It drew `thread.body` as TEXT on ONE LINE, mono, ellipsised. Every part of
+ * that was wrong for what a review comment is:
+ *
+ *   - it is markdown, and a reviewer writes it as markdown, so `**[Low] …**`
+ *     and a fenced snippet arrived as their own source;
+ *   - it is prose, so a mono face is the wrong voice and the wrong measure;
+ *   - and it is as long as it needs to be. `white-space: nowrap` with an
+ *     ellipsis meant the pane showed you that a comment EXISTED and then
+ *     refused to show you the comment. The one thing this surface is for.
+ *
+ * Exported so it can be tested on its own: `CodeView` calls it back through
+ * `renderAnnotation` and there is no DOM in jsdom to reach it through.
+ */
+export function DiffNote({
+  thread,
+  adrift,
+  busy,
+  wrapHand,
+  onHandThread,
+}: {
+  readonly thread: ReviewThread;
+  readonly adrift: boolean;
+  readonly busy: boolean;
+  readonly wrapHand: WrapHand;
+  readonly onHandThread: (thread: ReviewThread) => void;
+}): ReactElement {
+  return (
+    <div className="sh-pr-diff__note" data-adrift={adrift ? 'true' : undefined}>
+      <header className="sh-pr-diff__note-who">
+        <span className="sh-pr-card__mark" data-state="waiting" aria-hidden="true" />
+        <span className="sh-pr-card__login">{thread.author}</span>
+        {adrift ? <span className="sh-pr-diff__adrift">not on this diff</span> : null}
+        <span className="sh-pr-diff__note-spacer" />
+        {wrapHand(
+          `thread:${thread.id}`,
+          <Button variant="ghost" size="sm" disabled={busy} onClick={() => onHandThread(thread)}>
+            Hand to agent
+          </Button>,
+        )}
+      </header>
+      <div className="sh-pr-diff__note-body">
+        <Markdown text={thread.body} />
+      </div>
+    </div>
+  );
+}
+
 function stillFetching(files: readonly ChangedFile[]): boolean {
   return !files.some((file) => file.patch !== undefined) && files.some((file) => file.added + file.removed > 0);
 }
