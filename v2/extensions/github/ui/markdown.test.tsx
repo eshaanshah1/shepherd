@@ -66,6 +66,68 @@ describe('Markdown', () => {
     expect(out.textContent).toContain('wrap it in <details> when the log is long');
   });
 
+  it('deletes an HTML comment, which is addressed to a machine', () => {
+    /*
+     * A bot's comment is bracketed by them — CodeRabbit's opens with two and
+     * closes with two more — and rendered as text they were four lines of
+     * `<!-- tips_start -->` above the sentence anybody wanted. Nobody has ever
+     * written one meaning it to be read, which is what makes this the one tag
+     * that can be dropped without losing something.
+     */
+    const out = draw('<!-- audit-stack-pr-gate -->\nThis PR needs a stack audit.');
+    expect(out.textContent).not.toContain('audit-stack-pr-gate');
+    expect(out.textContent).toContain('This PR needs a stack audit.');
+  });
+
+  it('strips a comment that shares a line with real text', () => {
+    // The shape a task-list item takes: one node carrying the marker AND the
+    // words. Dropping the node whole would take the words with it.
+    const out = draw('- [ ] <!-- {"checkboxId":"e9bb"} --> Trigger review');
+    expect(out.textContent).toContain('Trigger review');
+    expect(out.textContent).not.toContain('checkboxId');
+  });
+
+  it('collapses a <details>, which is what its author asked for', () => {
+    const out = draw(
+      ['<details>', '<summary>Run configuration</summary>', '', '**Plan**: Enterprise', '', '</details>'].join('\n'),
+    );
+    const details = out.querySelector('details');
+    expect(details?.querySelector('summary')?.textContent).toBe('Run configuration');
+    // Closed, because a disclosure drawn open is the opposite of the tag.
+    expect(details?.hasAttribute('open')).toBe(false);
+    // And the markdown inside it is still markdown.
+    expect(details?.querySelector('strong')?.textContent).toBe('Plan');
+    expect(out.textContent).not.toContain('<summary>');
+  });
+
+  it('honours an open <details>, because a bot that asks has a reason', () => {
+    const out = draw(['<details open>', '<summary>Findings</summary>', '', 'two', '', '</details>'].join('\n'));
+    expect(out.querySelector('details')?.hasAttribute('open')).toBe(true);
+  });
+
+  it('makes an inline tag the element it names', () => {
+    const out = draw('<sub>Comment @coderabbitai help for the commands.</sub>');
+    expect(out.querySelector('sub')?.textContent).toContain('Comment');
+    expect(out.textContent).not.toContain('</sub>');
+  });
+
+  it('leaves an unclosed tag as the text it was', () => {
+    // A malformed body should lose its tag, never the rest of its paragraph —
+    // so an opening half with no closing half falls back to the old answer.
+    const out = draw('wrap it in <details> when the log is long');
+    expect(out.querySelector('details')).toBeNull();
+    expect(out.textContent).toContain('wrap it in <details> when the log is long');
+  });
+
+  it('reads GitHub\u2019s alert syntax as a callout, not as a line saying [!IMPORTANT]', () => {
+    const out = draw('> [!IMPORTANT]\n> Review skipped.');
+    const quote = out.querySelector('blockquote');
+    expect(quote?.getAttribute('data-alert')).toBe('important');
+    // The marker is a token that means nothing to a reader, so it goes.
+    expect(out.textContent).not.toContain('[!IMPORTANT]');
+    expect(out.textContent).toContain('Review skipped.');
+  });
+
   it('gives a link no href, so a click cannot navigate the app away', () => {
     // This is a pane, not a browser: replacing the app's own document would be
     // unrecoverable, and there is no back.

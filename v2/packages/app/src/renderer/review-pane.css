@@ -1462,6 +1462,75 @@
   color: var(--sh-text-dim);
 }
 
+/*
+ * GitHub's alert, drawn as a callout WITHOUT a hue of its own.
+ *
+ * The obvious rendering is GitHub's — blue note, green tip, purple important,
+ * yellow warning, red caution — and it is five saturated values carrying a
+ * sixth axis of meaning. `markFailed` already refuses that axis in as many
+ * words: "there is no warning state; a thing either needs you or it does not",
+ * and honey is called out there as not the exception it looks like. An alert is
+ * an author's emphasis inside their own prose, not a fact about this PR, so it
+ * gets no state colour.
+ *
+ * What it gets instead is a NAME. The kind is drawn as its own word above the
+ * quote, which is the part of GitHub's callout that survives being read aloud
+ * or printed in grey — and a brighter rule than an ordinary quotation, so the
+ * two are told apart by weight rather than by hue.
+ */
+.sh-md blockquote[data-alert] {
+  border-inline-start-color: var(--sh-line-active);
+  color: var(--sh-text);
+}
+
+.sh-md blockquote[data-alert]::before {
+  content: attr(data-alert);
+  display: block;
+  margin-block-end: var(--sh-space-xs);
+  font-size: var(--sh-font-size-micro);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--sh-text-dim);
+}
+
+/*
+ * A disclosure, closed — which is the whole reason its author reached for the
+ * tag, and what this pane used to throw away by drawing the markup as text.
+ */
+.sh-md details {
+  border: var(--sh-hairline) solid var(--sh-line);
+  border-radius: var(--sh-radius-row);
+  padding: var(--sh-space-sm) var(--sh-space-md);
+}
+
+.sh-md details[open] {
+  padding-block-end: var(--sh-space-md);
+}
+
+.sh-md summary {
+  cursor: pointer;
+  color: var(--sh-text-dim);
+  /* The marker is the disclosure's only affordance, so it keeps the default
+     triangle rather than a drawn one nobody has been taught. */
+  list-style-position: outside;
+}
+
+.sh-md summary:hover {
+  color: var(--sh-text);
+}
+
+.sh-md details[open] > summary {
+  margin-block-end: var(--sh-space-sm);
+}
+
+/* A bot signs off in `<sub>`, and it means it — the line is a footnote. */
+.sh-md sub,
+.sh-md sup {
+  font-size: var(--sh-font-size-micro);
+  color: var(--sh-text-dim);
+}
+
 .sh-md hr {
   margin: 0;
   border: 0;

@@ -25,33 +25,219 @@ import remarkGfm from 'remark-gfm';
  * make it safe again.
  *
  * Three things are ours rather than the library's, each below with its reason:
- * raw HTML renders as text, links do not navigate, and images do not load.
+ * raw HTML is read rather than shown, links do not navigate, and images do not
+ * load.
  */
 
 /**
- * Raw HTML in a body renders as TEXT.
+ * What raw HTML in a body becomes — and it is three different answers.
  *
- * remark parses `<script>` into an `html` node, and the only shipped way to
- * render one is `rehype-raw`, which parses it as real markup — so the library's
- * default is to drop it in silence. Neither is right here. Dropping it deletes
- * whatever sentence the tag was in, and a PR body that says "wrap it in
- * `<details>`" is a normal thing for an agent to write.
+ * This file used to have one: every `html` node was rewritten to `text`, so a
+ * body that mentioned `<details>` said `<details>` and no sanitiser existed
+ * anywhere. That is still the right answer for the case it was written for, a
+ * human or an agent writing prose about markup. It is the wrong one for the
+ * case that arrived later, which is a BOT.
  *
- * Rewriting the node to `text` in mdast, before `remark-rehype` ever sees it,
- * gets the third answer: a body containing `<script>` is a body that SAYS
- * `<script>`, with no sanitiser anywhere, because nothing was ever markup.
+ * A bot's comment is mostly machine HTML. CodeRabbit's opens with two marker
+ * comments, wraps its configuration in a `<details>` and closes with `<sub>`,
+ * and rendered as text that is nine lines of tag soup around the two sentences
+ * anybody wanted — with the `<details>` drawn EXPANDED, which is the opposite
+ * of what its author asked for.
+ *
+ * So, in order:
+ *
+ *   1. **A comment is deleted.** `<!-- tips_start -->` is addressed to a
+ *      machine. Nobody has ever written one meaning it to be read, which is
+ *      what makes this the one tag that can be dropped without losing a
+ *      sentence.
+ *   2. **A tag on the short list becomes that element.** `<details>` collapses,
+ *      `<sub>` is small. Reached by rewriting mdast so `remark-rehype` builds
+ *      the element itself — NOT by parsing the string as markup, so there is
+ *      still no `rehype-raw`, no HTML string and nothing to sanitise. The list
+ *      is what bots actually emit, and it grows one line at a time.
+ *   3. **Everything else is still text**, exactly as before.
  */
-function htmlAsText() {
-  return (tree: { children?: unknown[] }): void => {
-    const walk = (node: { type?: string; value?: string; children?: unknown[] }): void => {
-      if (node.type === 'html') {
-        node.type = 'text';
-        return;
-      }
-      for (const child of node.children ?? []) walk(child as { type?: string; children?: unknown[] });
-    };
-    walk(tree);
+
+/** An mdast node, to the shallow extent this file needs one. */
+interface Node {
+  type?: string;
+  value?: string;
+  children?: Node[];
+  data?: Record<string, unknown>;
+}
+
+const COMMENT = /<!--[\s\S]*?-->/g;
+
+/**
+ * The inline tags worth promoting — what a bot's sign-off is made of.
+ *
+ * Each one is a pair that WRAPS text, which is the property that matters: the
+ * transform below has to find the closing half, and a tag with no closing half
+ * would swallow the rest of the paragraph. `<br>` is handled separately for
+ * exactly that reason.
+ */
+const INLINE = new Set(['sub', 'sup', 'kbd', 'small', 'ins', 'del', 'b', 'i', 'u']);
+
+/** GitHub's alert syntax: a blockquote whose first line names its kind. */
+const ALERT = /^\[!(note|tip|important|warning|caution)\]\s*/i;
+
+function readHtml() {
+  return (tree: Node): void => walk(tree);
+}
+
+function walk(node: Node): void {
+  if (node.children !== undefined) {
+    node.children = fold(dropComments(node.children));
+    for (const child of node.children) walk(child);
+  }
+  readAlert(node);
+  // Whatever survived every rule above was markup this build does not know, and
+  // it goes back to being what it has always been here: the text it says.
+  if (node.type === 'html') node.type = 'text';
+}
+
+/**
+ * Comments out, and a node that was ONLY comments out with them.
+ *
+ * Stripped from the value rather than matched whole, because a bot writes them
+ * both ways — `<!-- tips_end -->` alone on a line, and
+ * `<!-- {"checkboxId":"…"} --> 🔍 Trigger review` sharing one node with the
+ * text of a task-list item.
+ */
+function dropComments(children: readonly Node[]): Node[] {
+  return children.flatMap((child) => {
+    if (child.type !== 'html') return [child];
+    const left = (child.value ?? '').replace(COMMENT, '').trim();
+    if (left === '') return [];
+    return [{ ...child, value: left }];
+  });
+}
+
+/**
+ * The paired tags, folded into the elements they describe.
+ *
+ * One pass over a parent's children, because that is where both halves of a
+ * pair live: remark gives `<details>` and `</details>` as SIBLINGS with the
+ * real markdown blocks between them, and the same for `<sub>` inside a
+ * paragraph. An opening tag whose closing half never arrives is left exactly as
+ * it was and falls through to text — a malformed body should lose its tag, not
+ * the rest of its paragraph.
+ */
+function fold(children: readonly Node[]): Node[] {
+  const out: Node[] = [];
+  for (let at = 0; at < children.length; at += 1) {
+    const child = children[at] as Node;
+    const value = child.type === 'html' ? (child.value ?? '') : '';
+
+    if (/^<br\s*\/?>$/i.test(value)) {
+      out.push({ type: 'break' });
+      continue;
+    }
+
+    const tag = /^<(details|sub|sup|kbd|small|ins|del|b|i|u)(\s[^>]*)?>/i.exec(value)?.[1]?.toLowerCase();
+    if (tag === undefined || (tag !== 'details' && !INLINE.has(tag))) {
+      out.push(child);
+      continue;
+    }
+
+    const close = closes(children, at, tag);
+    if (close === -1) {
+      out.push(child);
+      continue;
+    }
+
+    const inner = children.slice(at + 1, close) as Node[];
+    out.push(tag === 'details' ? disclosure(value, inner) : wrap(tag, inner));
+    at = close;
+  }
+  return out;
+}
+
+/**
+ * Where this tag's own closing half is.
+ *
+ * Depth-counted rather than first-match, so a `<details>` inside a `<details>`
+ * closes the inner one first — which bots do write, and which a first-match
+ * search gets wrong in the direction that swallows the rest of the comment.
+ */
+function closes(children: readonly Node[], from: number, tag: string): number {
+  const open = new RegExp(`<${tag}(\\s[^>]*)?>`, 'gi');
+  const shut = new RegExp(`</${tag}\\s*>`, 'gi');
+  let depth = 0;
+  for (let at = from; at < children.length; at += 1) {
+    const child = children[at] as Node;
+    if (child.type !== 'html') continue;
+    const value = child.value ?? '';
+    depth += (value.match(open) ?? []).length - (value.match(shut) ?? []).length;
+    if (at > from && depth <= 0) return at;
+  }
+  return -1;
+}
+
+/**
+ * `hName` rather than a node type of our own.
+ *
+ * `mdast-util-to-hast` drops a type it has no handler for, so a `details` node
+ * invented here would delete everything inside it. Borrowing a container that
+ * already passes its children through and renaming the element it builds is the
+ * documented way to add one, and it keeps the whole path in mdast.
+ */
+function disclosure(value: string, inner: Node[]): Node {
+  const summary = /<summary(?:\s[^>]*)?>([\s\S]*?)<\/summary>/i.exec(value)?.[1] ?? '';
+  return {
+    type: 'blockquote',
+    data: {
+      hName: 'details',
+      // `open` is honoured because a bot that asks for one has a reason — it is
+      // saying this part is the point. Absent, a disclosure is closed, which is
+      // the whole reason its author reached for the tag.
+      ...(/<details\s[^>]*\bopen\b/i.test(value) ? { hProperties: { open: true } } : {}),
+    },
+    children: [
+      {
+        type: 'paragraph',
+        data: { hName: 'summary' },
+        children: [{ type: 'text', value: summary.replace(/<[^>]*>/g, '').trim() || 'Details' }],
+      },
+      ...inner,
+    ],
   };
+}
+
+/** The same trick for a phrasing tag, on a container that is phrasing. */
+const wrap = (tag: string, inner: Node[]): Node => ({
+  type: 'emphasis',
+  data: { hName: tag },
+  children: inner,
+});
+
+/**
+ * `> [!IMPORTANT]` is a callout, not a line of text saying `[!IMPORTANT]`.
+ *
+ * GitHub's own extension to blockquotes, and the shape every bot reaches for
+ * when it wants the first thing you read to be the point. Unhandled, the marker
+ * renders as its own literal paragraph at the top of the quote — which is worse
+ * than not supporting it, because it puts a token on screen that means nothing
+ * to a reader.
+ *
+ * The kind goes on the element as data and the stylesheet decides what it looks
+ * like, for the reason every other tone here does: a renderer supplies the fact
+ * and never the colour.
+ */
+function readAlert(node: Node): void {
+  if (node.type !== 'blockquote' || node.data?.['hName'] !== undefined) return;
+  const first = node.children?.[0];
+  if (first?.type !== 'paragraph') return;
+  const lead = first.children?.[0];
+  if (lead?.type !== 'text') return;
+  const found = ALERT.exec(lead.value ?? '');
+  if (found === null) return;
+
+  lead.value = (lead.value ?? '').slice(found[0].length).replace(/^\n/, '');
+  // The marker is usually a paragraph of its own, and an empty one left behind
+  // draws as a blank line above the callout's first real sentence.
+  if (lead.value === '' && first.children?.length === 1) node.children?.shift();
+  node.data = { ...node.data, hProperties: { 'data-alert': (found[1] ?? '').toLowerCase() } };
 }
 
 /**
@@ -195,7 +381,7 @@ function onlyHttp(url: string): string {
 export function Markdown({ text }: { readonly text: string }): ReactElement {
   return (
     <div className="sh-md">
-      <ReactMarkdown remarkPlugins={[remarkGfm, htmlAsText]} components={COMPONENTS} urlTransform={onlyHttp}>
+      <ReactMarkdown remarkPlugins={[remarkGfm, readHtml]} components={COMPONENTS} urlTransform={onlyHttp}>
         {text}
       </ReactMarkdown>
     </div>
