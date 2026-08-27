@@ -302,7 +302,37 @@
   padding: var(--sh-space-huge) var(--sh-space-huge) calc(var(--sh-space-huge) * 4);
 }
 
-.sh-pr-doc > * {
+/*
+ * TWO edges, and each answers a different question.
+ *
+ * The document's own edge is the outer one: headings, their rules and the rows
+ * run to it, so the surface has a right boundary you can see. Prose stops
+ * earlier, because past roughly 76 characters a line stops being scannable and
+ * the eye loses its place on the return sweep.
+ *
+ * One cap for both was the mistake. Everything ended at the measure, including
+ * the rules — so on a wide pane the document appeared to stop in the middle of
+ * the window for no reason a reader could name, with nothing at the edge to say
+ * the column had a width at all.
+ */
+/*
+ * Nothing. The document's edge IS the pane's edge, so a heading's rule and a
+ * row of files run the whole width and the surface has a boundary you can see.
+ * Only PROSE is measured, below.
+ *
+ * A cap here was the mistake: with one applied to everything, the whole document
+ * ended at the measure — rules included — and on a wide pane it appeared to stop
+ * in the middle of the window for no reason a reader could name. A measure is
+ * invisible; a container edge is not, and only one of them can be the thing that
+ * stops.
+ */
+
+.sh-pr-brief__title-line,
+.sh-pr-brief__says,
+.sh-pr-brief__facts,
+.sh-pr-brief__verdict,
+.sh-pr-body,
+.sh-pr-talk {
   max-inline-size: 76ch;
 }
 
@@ -1146,6 +1176,29 @@
   color: var(--sh-clay);
 }
 
+/*
+ * The block rhythm, and `.sh-md p` has no margin because THIS supplies it.
+ *
+ * The two are one mechanism: a gap on the column rather than margins on the
+ * children, so a heading followed by a list is spaced the same as two
+ * paragraphs and nothing collapses. Delete this and every block in a PR body
+ * closes up against the next one — which is exactly what happened, and it read
+ * as a wall of text with the parsing apparently gone.
+ *
+ * Measure is NOT capped here. `.sh-pr-doc` caps the column, and a second cap on
+ * the same text would be a second authority on one question — whichever is
+ * tighter silently wins and the other reads as live code that does nothing.
+ */
+.sh-md {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sh-space-xxl);
+  font-size: var(--sh-font-size-card);
+  line-height: 1.55;
+  color: var(--sh-text);
+  overflow-wrap: anywhere;
+}
+
 .sh-md p {
   margin: 0;
 }
@@ -1368,6 +1421,33 @@
 .sh-md strong {
   color: var(--sh-text);
   font-weight: 600;
+}
+
+/*
+ * The task-level footer: one verb, the order it would take, and what is stopping
+ * it.
+ *
+ * Drawn only when there are two or more PRs. With one, the sequence IS the PR
+ * and a footer naming a one-item order is a row of furniture.
+ *
+ * It shared a selector list with the PR detail's own footer, which is gone — so
+ * removing that one took this with it. Named alone now, because a rule that
+ * dresses two surfaces dies with whichever of them goes first.
+ */
+.sh-review__foot {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-xs);
+  flex: none;
+  padding: var(--sh-space-md) var(--sh-space-xl);
+  box-shadow: inset 0 var(--sh-hairline) 0 var(--sh-line);
+}
+
+.sh-review__order,
+.sh-review__blocked {
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-nano);
+  color: var(--sh-text-ghost);
 }
 
 /* ── tables ─────────────────────────────────────────────────────────────── */
