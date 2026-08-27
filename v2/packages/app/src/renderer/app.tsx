@@ -456,6 +456,21 @@ export function App({
    */
   const contributions = useContributions(viewsApi);
 
+  /**
+   * Closing a pane, as ONE callback for every pane on the stage.
+   *
+   * Written out here rather than inline at the call site, and that is the whole
+   * point: the panes come out of a `map`, so a per-pane arrow cannot be
+   * memoized, and a fresh one each render replaces every contributed pane's
+   * props. `extension-pane.tsx` records what that cost in commands per minute.
+   */
+  const closePane = useCallback(
+    (paneId: string) => {
+      invoke(LAYOUT_COMMANDS.close, { pane: paneId });
+    },
+    [invoke],
+  );
+
   const makeRenderPane = useCallback(
     (visible: boolean) =>
     (pane: Pane, focused: boolean): ReactNode => {
@@ -482,7 +497,7 @@ export function App({
             // kernel's own verb, off `LAYOUT_COMMANDS` — the same door ⌘W uses,
             // so a view cannot end its own life by a path that skips the one
             // terminator (ADR 0022).
-            onDone={() => invoke(LAYOUT_COMMANDS.close, { pane: pane.id })}
+            onClose={closePane}
           />
         );
       }

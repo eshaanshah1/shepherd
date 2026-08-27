@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import type { Pane } from '@shepherd/core/layout';
 import type { ViewContributionDTO, ViewsApi } from '../shared/index.ts';
 import { resolveExtensionPaneUi } from './extension-ui.ts';
@@ -35,7 +35,7 @@ export function ExtensionPane({
   views,
   bridge,
   focused,
-  onDone,
+  onClose,
 }: {
   readonly pane: Pane;
   /** The pane's own view ref — `type` plus whatever subject it names. */
@@ -44,16 +44,51 @@ export function ExtensionPane({
   readonly views: readonly ViewContributionDTO[];
   readonly bridge: ViewsApi | null;
   readonly focused: boolean;
-  /** The component reported it is finished. For a pane, that means close it. */
-  readonly onDone: () => void;
+  /**
+   * The component reported it is finished. For a pane, that means close it.
+   *
+   * Takes the pane's OWN id rather than closing over it, so one callback serves
+   * every pane on the stage. A caller building `() => close(pane.id)` per row
+   * cannot memoize it — the rows come out of a `map` and a hook cannot — so it
+   * would be a fresh function on every render of the stage, which is the memo
+   * below defeated from outside. See the note on that memo for what it cost.
+   */
+  readonly onClose: (paneId: string) => void;
 }): React.JSX.Element {
   const contribution = views.find((candidate) => candidate.type === view.type);
   const Component = resolveExtensionPaneUi(contribution?.component);
 
-  // Memoized on the identities that actually change, for `ComponentView`'s
-  // reason one level up: a pane's component is long-lived and holds state (which
-  // PR is open, where you scrolled), and fresh props on every parent render
-  // would cancel the asks it made on mount, forever.
+  /*
+   * Memoized on the identities that actually change, for `ComponentView`'s
+   * reason one level up: a pane's component is long-lived and holds state (which
+   * PR is open, where you scrolled), and fresh props on every parent render
+   * would cancel the asks it made on mount, forever.
+   *
+   * **It was defeated from outside for months, and the bill was legible in the
+   * log.** The stage passed `onDone={() => invoke(close, { pane: pane.id })}` —
+   * an inline arrow, so a new identity on every render of the app — which put a
+   * new identity on `invoke` here, which re-ran every effect in every pane keyed
+   * on it. The review pane both refetched AND restarted its 3s poll on each one,
+   * so a poll that should run 20 times a minute ran 162; each of those fanned out
+   * to a `tasks.list`, an `agents.list` and a `layout.listRoots`; and the changes
+   * pane's share was ten `git` spawns and one uncached GitHub request apiece. The
+   * editor pane re-walked its repo the same way, 194 times in two minutes, and
+   * the queue behind that is what made unrelated commands time out at ten
+   * seconds. Every number here is off `app.log`, not a model.
+   *
+   * So the dependencies are load-bearing, and none of them may be a thing a
+   * caller can hand over fresh. `onClose` is therefore held in a REF and is not
+   * a dependency at all: it is read inside the click it belongs to and never
+   * drawn, which is the same reason `review.tsx` keeps `asking` in one. Taking
+   * the pane id rather than closing over it is what lets the stage keep a single
+   * callback for every pane; the ref is what makes a stage that forgets to
+   * cost nothing.
+   */
+  const closing = useRef(onClose);
+  useEffect(() => {
+    closing.current = onClose;
+  }, [onClose]);
+
   const props = useMemo(
     () => ({
       state: view.state,
@@ -64,9 +99,9 @@ export function ExtensionPane({
         const result = await bridge.invoke(view.type, command, args);
         return result.ok ? { ok: true as const, value: result.value } : { ok: false as const, error: result.error };
       },
-      done: onDone,
+      done: () => closing.current(String(pane.id)),
     }),
-    [bridge, view.type, view.state, focused, onDone, pane.id],
+    [bridge, view.type, view.state, focused, pane.id],
   );
 
   return (

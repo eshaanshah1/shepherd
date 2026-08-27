@@ -82,16 +82,32 @@ function bridge(calls: string[]): ViewsApi {
 
 const pane = makePane({ view: { type: 'github.review', state: { task: 't-1' } } });
 
-function render(overrides: { focused?: boolean; onDone?: () => void; calls?: string[] } = {}) {
+function render(
+  overrides: {
+    focused?: boolean;
+    onClose?: (paneId: string) => void;
+    calls?: string[];
+    /*
+     * The bridge, when the caller needs the SAME one across renders.
+     *
+     * It is a memoized dependency like every other prop here, and the stage
+     * holds one `viewsApi` for the app's life. A test that built a fresh one per
+     * render would be varying two things and learning about the wrong one, which
+     * is how the first draft of the stage test below failed for a reason that
+     * had nothing to do with what it was asserting.
+     */
+    bridge?: ViewsApi;
+  } = {},
+) {
   const view = pane.view ?? { type: 'github.review' };
   return (
     <ExtensionPane
       pane={pane}
       view={view}
       views={[CONTRIBUTION]}
-      bridge={bridge(overrides.calls ?? [])}
+      bridge={overrides.bridge ?? bridge(overrides.calls ?? [])}
       focused={overrides.focused ?? true}
-      onDone={overrides.onDone ?? (() => {})}
+      onClose={overrides.onClose ?? (() => {})}
     />
   );
 }
@@ -125,9 +141,9 @@ describe('ExtensionPane', () => {
     // asks the pane made on mount, and the stage re-renders on every layout and
     // agent snapshot.
     mounts = 0;
-    const onDone = (): void => {};
+    const onClose = (): void => {};
     const calls: string[] = [];
-    const node = render({ onDone, calls });
+    const node = render({ onClose, calls });
     const { rerender, unmount } = mount(node);
     expect(mounts).toBe(1);
     rerender(node);
@@ -137,11 +153,43 @@ describe('ExtensionPane', () => {
     unmount();
   });
 
-  it('reports done() to the shell, which is what closes the pane', () => {
-    let closed = 0;
-    const { container, unmount } = mount(render({ onDone: () => (closed += 1) }));
+  /*
+   * The one above supplies BOTH sides of the correlation — the same element,
+   * re-rendered — so it cannot discover the two disagreeing, which is the trap
+   * `CLAUDE.md` names and which this pane fell into for months. The stage does
+   * not re-render the same element: it rebuilds one, and every callback written
+   * inline in that rebuild is a new identity.
+   *
+   * Measured cost before this test existed, off `app.log`: a 3s poll running 162
+   * times a minute, each fanning out to three more commands, plus ten `git`
+   * spawns and an uncached GitHub request from the changes pane, plus an editor
+   * pane re-walking its repo 194 times in two minutes. Unrelated commands timed
+   * out at ten seconds behind the queue.
+   */
+  it('does not re-ask when the stage rebuilds the element with a fresh callback', () => {
+    mounts = 0;
+    const calls: string[] = [];
+    // A NEW arrow each time, which is what a `map` over panes produces and what
+    // a hook cannot memoize away at the call site.
+    const stable = bridge(calls);
+    const stageRender = () =>
+      render({ bridge: stable, onClose: (paneId: string) => void paneId, calls });
+    const { rerender, unmount } = mount(stageRender());
+    expect(mounts).toBe(1);
+    rerender(stageRender());
+    rerender(stageRender());
+    expect(calls).toEqual(['github.prs']);
+    expect(mounts).toBe(1);
+    unmount();
+  });
+
+  it('reports done() to the shell with the pane it belongs to, which closes it', () => {
+    const closed: string[] = [];
+    const { container, unmount } = mount(render({ onClose: (paneId) => closed.push(paneId) }));
     one(container, 'review-done').click();
-    expect(closed).toBe(1);
+    // The ID, not a bare call: one callback serves every pane, so it has to say
+    // which one finished.
+    expect(closed).toEqual([String(pane.id)]);
     unmount();
   });
 
@@ -155,7 +203,7 @@ describe('ExtensionPane', () => {
         views={[]}
         bridge={bridge([])}
         focused
-        onDone={() => {}}
+        onClose={() => {}}
       />,
     );
     expect(one(container, 'pane-view-missing').textContent).toContain('Waiting for');
@@ -172,7 +220,7 @@ describe('ExtensionPane', () => {
         views={[{ ...CONTRIBUTION, component: 'github.somethingelse' }]}
         bridge={bridge([])}
         focused
-        onDone={() => {}}
+        onClose={() => {}}
       />,
     );
     expect(one(container, 'pane-view-missing').textContent).toContain('no UI for');
