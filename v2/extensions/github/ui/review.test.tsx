@@ -587,7 +587,11 @@ describe('the PR as one document (11)', () => {
      * so the checks and the conversation lead, and the description, which is
      * the agent's account of its own work, closes.
      */
-    expect(headings()).toEqual(['Checks', 'Conversation', 'Files', 'Commits', 'Description']);
+    expect(headings()).toEqual(['Checks', 'Conversation', 'Files', 'Commits']);
+    // The description has no heading: it is the document's opening prose, not a
+    // section of it, and it is CLAMPED — which is what stops a hundred-line body
+    // deciding where the files sit, and is why it need not be moved to do so.
+    expect(host.querySelector('.sh-pr-clamp .sh-pr-body')).not.toBeNull();
   });
 
   it('shows the description and the checks together, which two tabs could not', async () => {

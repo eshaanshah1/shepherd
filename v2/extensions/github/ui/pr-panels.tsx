@@ -115,7 +115,7 @@ export function timelineOf(pr: PullRequest): readonly TimelineEntry[] {
  * The button appears ONLY when there is something behind it — measured, because
  * a control that reveals nothing is worse than no control.
  */
-function Clamp({ children }: { readonly children: ReactElement }): ReactElement {
+export function Clamp({ children }: { readonly children: ReactElement }): ReactElement {
   const [open, setOpen] = useState(false);
   const [over, setOver] = useState(false);
   const box = useRef<HTMLDivElement | null>(null);
