@@ -48,6 +48,7 @@
     "@tabler/icons-react": "catalog:",
     "@xterm/addon-fit": "catalog:",
     "@xterm/addon-search": "catalog:",
+    "@xterm/addon-webgl": "catalog:",
     "@xterm/xterm": "catalog:",
     "qrcode": "^1.5.4",
     "react": "catalog:",

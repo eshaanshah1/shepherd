@@ -12,10 +12,10 @@ import { describe, expect, it } from 'vitest';
  * no extra pixels and it only strips stem weight off a 13px glyph. The app
  * looked broken on exactly one of a user's two displays.
  *
- * It reaches the GRID, not just the chrome: `xterm-terminal.ts` loads Fit and
- * Search and no renderer addon, so the terminal is xterm's DOM renderer and every
- * cell is a span inheriting this from `body`. An unconditional declaration is one
- * every character of agent output is drawn with.
+ * It reaches the app's own type. The grid is out of its reach — `xterm-terminal.ts`
+ * loads the WebGL addon, and a cell is a quad textured from an atlas xterm
+ * rasterizes on an offscreen canvas, which inherits nothing from `body` because
+ * it is parented to nothing.
  *
  * ---------------------------------------------------------- why the SOURCE text
  *
@@ -69,7 +69,7 @@ describe('font smoothing is scoped to the density that asked for it', () => {
     expect(declarationsOf(block ?? '')).toHaveLength(1);
   });
 
-  it('smooths `body`, which is what the grid inherits from', () => {
+  it('smooths `body`, which is the app’s own type', () => {
     expect(block).toMatch(/body\s*\{[^}]*-webkit-font-smoothing:\s*antialiased/);
   });
 

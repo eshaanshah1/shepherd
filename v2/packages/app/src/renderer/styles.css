@@ -111,10 +111,11 @@ body {
  * only removes stem weight from a 13px glyph and leaves the patchy, washed-out
  * type that made the app look broken on exactly one of a user's two displays.
  *
- * It reaches the GRID, not just the chrome: `xterm-terminal.ts` loads Fit and
- * Search and no renderer addon, so the terminal is xterm's DOM renderer and every
- * cell is a span inheriting this from `body`. A property set here is a property
- * every character of agent output is drawn with.
+ * It reaches the chrome and NOT the grid. `xterm-terminal.ts` loads the WebGL
+ * addon, so a cell is a quad textured from an atlas that xterm rasterizes on its
+ * own offscreen canvas — and canvas text takes no font smoothing from an
+ * ancestor, because it has no ancestor. The grid's weight is xterm's to answer
+ * for; this declaration is the app's own type.
  *
  * The default (`auto`) is what 1x wants and is what it now gets — this is the
  * one place the app opts out of a browser default rather than into one, so the

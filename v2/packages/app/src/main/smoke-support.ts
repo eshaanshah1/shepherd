@@ -19,6 +19,8 @@ export interface PaneDiagnostics {
   readonly cols: number;
   readonly rows: number;
   readonly text: string;
+  /** The grid is drawn by xterm's WebGL renderer rather than its DOM one. */
+  readonly accelerated: boolean;
 }
 
 export interface Outline {

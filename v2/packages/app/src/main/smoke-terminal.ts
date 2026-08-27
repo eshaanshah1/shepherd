@@ -79,6 +79,15 @@ export async function runTerminalSmoke(win: BrowserWindow, host: SessionHostLike
     pane0.cols > 80 && pane0.rows > 24,
     `xterm measured the pane rather than keeping its 80x24 default (${pane0.cols}x${pane0.rows})`,
   );
+  /*
+   * The grid is on the GPU.
+   *
+   * Nothing a vitest run can see: the fall back to xterm's DOM renderer is
+   * silent and correct, so the only symptom is cost — the renderer's main
+   * thread doing style, layout and paint for every cell of every streaming
+   * pane. This is the one place a real WebGL context exists to be asked.
+   */
+  check(pane0.accelerated, 'the grid is drawn by the WebGL renderer, not xterm’s DOM one');
   check(host.list().length === 1, 'main holds exactly one live session');
   check(
     host.list()[0]?.id === pane0.sessionId,

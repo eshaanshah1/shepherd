@@ -92,6 +92,16 @@ export interface TerminalLike {
    */
   setTheme?(mode: ThemeMode): void;
   /**
+   * Whether the grid is being drawn on the GPU.
+   *
+   * Optional for the reason `setTheme` is: a lifecycle fake is a terminal with
+   * no renderer at all. It is here because the fall back to xterm's DOM renderer
+   * is SILENT — a pane that lost its WebGL context keeps drawing, correctly and
+   * at several times the cost — so the terminal smoke asserts on this rather
+   * than on a claim no run can check.
+   */
+  accelerated?(): boolean;
+  /**
    * Find, when the terminal has one. Optional because this interface is what
    * makes the lifecycle tests runnable in jsdom — a fake that has no addon is
    * still a terminal, and the find bar simply has nothing to drive.
@@ -169,6 +179,8 @@ export interface PaneDiagnostics {
   readonly cols: number;
   readonly rows: number;
   readonly text: string;
+  /** The grid is on the GPU. False for a pane holding no terminal. */
+  readonly accelerated: boolean;
 }
 
 export interface PaneSessionRegistryOptions {
@@ -417,6 +429,7 @@ export class PaneSessionRegistry implements PaneTerminals {
       cols: entry.terminal?.cols ?? 0,
       rows: entry.terminal?.rows ?? 0,
       text: entry.terminal?.text() ?? '',
+      accelerated: entry.terminal?.accelerated?.() ?? false,
     };
   }
 
