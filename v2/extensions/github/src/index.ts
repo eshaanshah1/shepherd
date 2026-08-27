@@ -15,6 +15,7 @@ import {
 } from './manifest.ts';
 import { FILE_PAGE, message, octokitClient, type GitHubClient } from './client.ts';
 import { Remotes } from './remotes.ts';
+import { Bases } from './bases.ts';
 import { readBranch, readHead } from './heads.ts';
 import { Sync } from './sync.ts';
 import { readPaneTitles, readRoots, readTasks, type ListedTask } from './tasks-read.ts';
@@ -112,6 +113,18 @@ export function activate(ctx: ExtensionContext, api: Shepherd): void {
   const clock = ctx.clock;
 
   const remotes = new Remotes(process);
+  /*
+   * The default branch, cached. `ensureClient` is resolved per lookup rather
+   * than captured, because the client is dropped and rebuilt on an auth failure
+   * and a `Bases` holding the dead one would answer `null` forever.
+   */
+  const bases = new Bases(async (slug) => {
+    const live = await ensureClient();
+    // `undefined`, not `null`: nobody is signed in, so the question was never
+    // put and there is nothing about this repo to remember. `bases.ts` says why
+    // the difference is load-bearing.
+    return live === null ? undefined : live.defaultBranch(slug);
+  });
 
   /**
    * The client, resolved on first need and dropped when a credential stops
@@ -167,6 +180,9 @@ export function activate(ctx: ExtensionContext, api: Shepherd): void {
       // picks up a `gh auth login` done in the meantime without a relaunch.
       client = null;
       signedIn = null;
+      // A credential that stopped working may have been the only one that could
+      // see a repo, so what it told us about one is no longer a fact.
+      bases.forget();
     },
     log: (message) => ctx.log.warn(message),
   });
@@ -326,6 +342,9 @@ export function activate(ctx: ExtensionContext, api: Shepherd): void {
       handler: async () => {
         // The remotes too: this is the verb somebody runs after adding one.
         remotes.forget();
+        // And the bases, for the same reason one line up: a repo whose trunk was
+        // renamed is exactly what somebody presses this after.
+        bases.forget();
         client = null;
         signedIn = null;
         await pass(true);
@@ -415,8 +434,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): void {
   const prReadiness = async (worktree: string) => {
     const branch = await readBranch(process, worktree);
     const slug = await remotes.of(worktree);
-    const client = await ensureClient();
-    const base = slug === null || client === null ? null : await client.defaultBranch(slug);
+    const base = slug === null ? null : await bases.of(slug);
     if (branch === null || base === null) return { branch, base, ahead: 0, subjects: [] };
 
     const log = await process.gitRead(['log', `origin/${base}..HEAD`, '--format=%s'], {
