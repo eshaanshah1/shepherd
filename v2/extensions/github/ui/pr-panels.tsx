@@ -12,6 +12,7 @@ import {
   unifiedPatch,
   type ChangedFile,
   type CheckRun,
+  type Comment,
   type PullRequest,
   type ReviewThread,
 } from '../src/model/index.ts';
@@ -70,6 +71,34 @@ export interface PanelProps {
 
 // ------------------------------------------------------------- conversation
 
+type TimelineEntry =
+  | { readonly kind: 'comment'; readonly at: number; readonly comment: Comment }
+  | { readonly kind: 'thread'; readonly at: number; readonly thread: ReviewThread };
+
+/**
+ * One list, in the order things were said.
+ *
+ * The two halves of a PR's conversation arrive as separate collections and mean
+ * nothing apart: a line comment answered on the PR, or a bot's gate posted
+ * between two threads, reads as a non-sequitur in either list alone. GitHub
+ * merges them and so does this.
+ *
+ * Ties keep comments ahead of threads, which is arbitrary and only has to be
+ * stable — `sort` is not, and a list that reshuffles on every repaint is worse
+ * than one whose ties are in the wrong order.
+ */
+export function timelineOf(pr: PullRequest): readonly TimelineEntry[] {
+  const entries: TimelineEntry[] = [
+    ...pr.comments.map((comment) => ({ kind: 'comment' as const, at: comment.at, comment })),
+    ...pr.threads.map((thread) => ({ kind: 'thread' as const, at: thread.at, thread })),
+  ];
+  return entries
+    .map((entry, index) => ({ entry, index }))
+    .sort((a, b) => a.entry.at - b.entry.at || a.index - b.index)
+    .map(({ entry }) => entry);
+}
+
+
 export function Conversation({
   pr,
   now,
@@ -116,45 +145,34 @@ export function Conversation({
           </article>
         )}
 
-        {pr.threads.map((thread) => (
-          <article key={thread.id} className="sh-pr-card" data-resolved={thread.resolved ? 'true' : undefined}>
-            <header className="sh-pr-card__who">
-              <span className="sh-pr-card__mark" data-state={thread.resolved ? 'resolved' : 'waiting'} aria-hidden="true">
-                {thread.resolved ? <Icon icon={namedGlyph('check')} size="sm" /> : null}
-              </span>
-              <span className="sh-pr-card__login">@{thread.author}</span>
-              <span>on</span>
-              <span className="sh-pr-card__where">
-                {thread.path}
-                {thread.line === null ? '' : `:${thread.line}`}
-              </span>
-            </header>
-            {/* A review comment is markdown too, and an agent's is code more often than not. */}
-            <Markdown text={thread.body} />
-            {thread.resolved ? null : (
-              <div className="sh-pr-card__verbs">
-                {wrapHand(
-                  `thread:${thread.id}`,
-                  <Button variant="primary" size="sm" disabled={busy} onClick={() => onHandThread(thread)}>
-                    Hand to agent
-                    <KeyCap>H</KeyCap>
-                  </Button>,
-                )}
-                {/*
-                  Reply goes OUT. Writing a comment needs an editor, a draft, a
-                  submit and a failure state, and none of that is what this pane
-                  is for — the pane exists to get a comment to an agent. The
-                  arrow says it leaves.
-                */}
-                <Button variant="ghost" size="sm" onClick={() => window.open(pr.url, '_blank')}>
-                  Reply ↗
-                </Button>
-              </div>
-            )}
-          </article>
-        ))}
+        {timelineOf(pr).map((entry) =>
+          entry.kind === 'comment' ? (
+            <article key={entry.comment.id} className="sh-pr-card">
+              <header className="sh-pr-card__who">
+                <span className="sh-pr-card__login">@{entry.comment.author}</span>
+                <span className="sh-pr-card__when">{agoText(entry.comment.at, now) ?? ''}</span>
+              </header>
+              {/*
+                Markdown, and a bot's comment is the reason. The one that matters
+                most on this surface is a gate reporting itself, which it does in
+                fenced commands and bold status names — flattened, the command
+                you are meant to run is a sentence.
+              */}
+              <Markdown text={entry.comment.body} />
+            </article>
+          ) : (
+            <ThreadCard
+              key={entry.thread.id}
+              thread={entry.thread}
+              url={pr.url}
+              busy={busy}
+              wrapHand={wrapHand}
+              onHandThread={onHandThread}
+            />
+          ),
+        )}
 
-        {pr.threads.length === 0 && pr.body === '' ? (
+        {pr.threads.length === 0 && pr.comments.length === 0 && pr.body === '' ? (
           <p className="sh-pr-panel__none">Nothing has been said about this yet.</p>
         ) : null}
       </div>
@@ -224,6 +242,64 @@ const saidBy = (reviewer: { verdict: string; comments: number }): string => {
   if (reviewer.verdict === 'changes') return 'changes requested';
   return `${reviewer.comments} ${reviewer.comments === 1 ? 'comment' : 'comments'}`;
 };
+
+/**
+ * One thread of the diff, as it appears in the conversation.
+ *
+ * Its own component because the timeline is a ternary over two card shapes, and
+ * a branch that long written inline is one nobody can see the ends of.
+ */
+function ThreadCard({
+  thread,
+  url,
+  busy,
+  wrapHand,
+  onHandThread,
+}: {
+  readonly thread: ReviewThread;
+  readonly url: string;
+  readonly busy: boolean;
+  readonly wrapHand: WrapHand;
+  readonly onHandThread: (thread: ReviewThread) => void;
+}): ReactElement {
+  return (
+    <article className="sh-pr-card" data-resolved={thread.resolved ? 'true' : undefined}>
+      <header className="sh-pr-card__who">
+        <span className="sh-pr-card__mark" data-state={thread.resolved ? 'resolved' : 'waiting'} aria-hidden="true">
+          {thread.resolved ? <Icon icon={namedGlyph('check')} size="sm" /> : null}
+        </span>
+        <span className="sh-pr-card__login">@{thread.author}</span>
+        <span>on</span>
+        <span className="sh-pr-card__where">
+          {thread.path}
+          {thread.line === null ? '' : `:${thread.line}`}
+        </span>
+      </header>
+      {/* A review comment is markdown too, and an agent's is code more often than not. */}
+      <Markdown text={thread.body} />
+      {thread.resolved ? null : (
+        <div className="sh-pr-card__verbs">
+          {wrapHand(
+            `thread:${thread.id}`,
+            <Button variant="primary" size="sm" disabled={busy} onClick={() => onHandThread(thread)}>
+              Hand to agent
+              <KeyCap>H</KeyCap>
+            </Button>,
+          )}
+          {/*
+            Reply goes OUT. Writing a comment needs an editor, a draft, a
+            submit and a failure state, and none of that is what this pane
+            is for — the pane exists to get a comment to an agent. The
+            arrow says it leaves.
+          */}
+          <Button variant="ghost" size="sm" onClick={() => window.open(url, '_blank')}>
+            Reply ↗
+          </Button>
+        </div>
+      )}
+    </article>
+  );
+}
 
 // ----------------------------------------------------------------- commits
 

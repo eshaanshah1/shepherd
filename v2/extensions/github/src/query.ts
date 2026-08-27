@@ -1,4 +1,4 @@
-import type { CheckRun, CheckState, PullRequest, PrState, ReviewThread } from './model/pr.ts';
+import type { CheckRun, CheckState, Comment, PullRequest, PrState, ReviewThread } from './model/pr.ts';
 
 /**
  * One GraphQL round-trip per repo, and everything a review tab draws comes out
@@ -21,7 +21,7 @@ import type { CheckRun, CheckState, PullRequest, PrState, ReviewThread } from '.
  */
 
 export const PR_QUERY = `
-query($owner: String!, $name: String!, $head: String!, $prs: Int!, $checks: Int!, $files: Int!, $commits: Int!) {
+query($owner: String!, $name: String!, $head: String!, $prs: Int!, $checks: Int!, $files: Int!, $commits: Int!, $comments: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequests(headRefName: $head, first: $prs, orderBy: { field: UPDATED_AT, direction: DESC }) {
       nodes {
@@ -76,8 +76,16 @@ query($owner: String!, $name: String!, $head: String!, $prs: Int!, $checks: Int!
             diffSide
             path
             line
-            comments(first: 1) { nodes { body author { login } } }
+            comments(first: 1) { nodes { body author { login } createdAt } }
           }
+        }
+        # What was said on the PR rather than on a line of it — a bot reporting
+        # that a required check has not run, a reviewer's reply, the sentence
+        # saying what to do next. reviewThreads above is the diff's conversation
+        # and contains none of it. Asked for LAST-first, because the recent end
+        # of a long conversation is the half worth drawing.
+        comments(last: $comments) {
+          nodes { id body author { login } createdAt }
         }
         files(first: $files) {
           nodes { path additions deletions }
@@ -129,7 +137,7 @@ query($owner: String!, $name: String!, $head: String!, $prs: Int!, $checks: Int!
 export const PR_QUERY_MEDIA_TYPE = 'application/vnd.github.merge-info-preview+json';
 
 /** Bounds, so one enormous PR cannot make a poll expensive. */
-export const PR_QUERY_LIMITS = { prs: 20, checks: 50, files: 100, commits: 50 } as const;
+export const PR_QUERY_LIMITS = { prs: 20, checks: 50, files: 100, commits: 50, comments: 50 } as const;
 
 // ------------------------------------------------------------ what comes back
 
@@ -173,6 +181,7 @@ interface RawPullRequest {
   readonly mergeStateStatus?: string | null;
   readonly reviews: { readonly nodes: readonly RawReview[] | null } | null;
   readonly reviewThreads: { readonly nodes: readonly RawThread[] | null } | null;
+  readonly comments?: { readonly nodes: readonly RawIssueComment[] | null } | null;
   readonly files: { readonly nodes: readonly RawFile[] | null } | null;
   /** The PR's commits, oldest first — what the Commits tab lists. */
   readonly commits: {
@@ -212,6 +221,15 @@ interface RawThread {
 interface RawComment {
   readonly body: string;
   readonly author: RawAuthor | null;
+  readonly createdAt?: string | null;
+}
+
+/** A comment on the PR itself. Optional in the interface so a fixture may omit it. */
+interface RawIssueComment {
+  readonly id: string;
+  readonly body: string;
+  readonly author: RawAuthor | null;
+  readonly createdAt: string;
 }
 
 interface RawFile {
@@ -293,6 +311,7 @@ function readPullRequest(raw: RawPullRequest, identity: RepoIdentity): PullReque
     approvals: latestByAuthor(reviews, 'APPROVED'),
     changesRequested: latestByAuthor(reviews, 'CHANGES_REQUESTED'),
     threads: readThreads(raw, identity),
+    comments: readComments(raw),
     files: (raw.files?.nodes ?? []).map((file) => ({
       path: file.path,
       added: file.additions,
@@ -469,6 +488,7 @@ function readThreads(raw: RawPullRequest, identity: RepoIdentity): readonly Revi
       {
         id: thread.id,
         author: first.author?.login ?? 'someone',
+        at: Date.parse(first.createdAt ?? '') || 0,
         path: thread.path ?? '',
         line: thread.line,
         // `RIGHT` is GitHub's own default and the overwhelming case: a comment
@@ -480,6 +500,23 @@ function readThreads(raw: RawPullRequest, identity: RepoIdentity): readonly Revi
       },
     ];
   });
+}
+
+/**
+ * The PR's own comments, oldest first — the order a conversation is read in.
+ *
+ * `someone` for a deleted account rather than a drop, which is the opposite call
+ * from `readThreads`: a thread whose comments have all been deleted has nothing
+ * left to draw, where a comment whose AUTHOR was deleted still has its text, and
+ * that text is often the only thing on the PR saying why it cannot merge.
+ */
+function readComments(raw: RawPullRequest): readonly Comment[] {
+  return (raw.comments?.nodes ?? []).map((comment) => ({
+    id: comment.id,
+    author: comment.author?.login ?? 'someone',
+    body: comment.body,
+    at: Date.parse(comment.createdAt) || 0,
+  }));
 }
 
 /**

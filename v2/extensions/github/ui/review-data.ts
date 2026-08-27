@@ -1,7 +1,8 @@
+import { CHECK_STATES } from '../src/model/index.ts';
 import type {
   ChangedFile,
   CheckRun,
-  CheckState,
+  Comment,
   Commit,
   PrState,
   PullRequest,
@@ -81,7 +82,6 @@ function readList(value: unknown): readonly PullRequest[] {
 }
 
 const STATES: readonly PrState[] = ['draft', 'open', 'merged', 'closed'];
-const CHECK_STATES: readonly CheckState[] = ['passed', 'failed', 'running', 'skipped'];
 
 export function readPr(value: unknown): PullRequest | null {
   if (!isRecord(value)) return null;
@@ -117,6 +117,7 @@ export function readPr(value: unknown): PullRequest | null {
     approvals: strings(value['approvals']),
     changesRequested: strings(value['changesRequested']),
     threads: readThreads(value['threads']),
+    comments: readComments(value['comments']),
     files: Array.isArray(value['files'])
       ? readFiles(value['files'])
       : [],
@@ -238,6 +239,7 @@ function readThreads(value: unknown): readonly ReviewThread[] {
       {
         id,
         author: str(entry['author']) ?? 'someone',
+        at: int(entry['at']) ?? 0,
         path: str(entry['path']) ?? '',
         line: int(entry['line']) ?? null,
         side: entry['side'] === 'left' ? 'left' : 'right',
@@ -246,6 +248,24 @@ function readThreads(value: unknown): readonly ReviewThread[] {
         ...(entry['resolvedByYou'] === true ? { resolvedByYou: true as const } : {}),
       },
     ];
+  });
+}
+
+/**
+ * The PR's own comments, off the port.
+ *
+ * An id is what makes one addressable and is the one field with no honest
+ * default; everything else says less rather than guessing, the same as
+ * `readThreads`.
+ */
+function readComments(value: unknown): readonly Comment[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry): Comment[] => {
+    if (!isRecord(entry)) return [];
+    const id = str(entry['id']);
+    const body = str(entry['body']);
+    if (id === undefined || body === undefined) return [];
+    return [{ id, author: str(entry['author']) ?? 'someone', body, at: int(entry['at']) ?? 0 }];
   });
 }
 

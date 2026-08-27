@@ -72,13 +72,25 @@ export function fixturePrs(now: number): readonly PullRequest[] {
         {
           id: 'T-1',
           author: 'sam',
+          at: minutes(40),
           path: 'src/tree.ts',
           line: 61,
           side: 'right',
           resolved: false,
           body: 'use the token, not the literal',
         },
-        { id: 'T-2', author: 'sam', path: 'src/tree.ts', line: 12, side: 'right', resolved: true, resolvedByYou: true, body: 'ok' },
+        { id: 'T-2', author: 'sam', at: minutes(20), path: 'src/tree.ts', line: 12, side: 'right', resolved: true, resolvedByYou: true, body: 'ok' },
+      ],
+      // A gate reporting itself, which is the comment this pane most has to
+      // draw: it is the only thing on the PR saying why a required check is
+      // pending, and it is written in markdown because it carries a command.
+      comments: [
+        {
+          id: 'C-1',
+          author: 'bsautomation',
+          at: minutes(45),
+          body: 'This PR needs a stack audit before it can merge.\n\n```\n/stack:audit-stack --pr 44\n```',
+        },
       ],
       files: [
         {
@@ -132,10 +144,12 @@ export function fixturePrs(now: number): readonly PullRequest[] {
       })),
       approvals: ['jane'],
       changesRequested: [],
+      comments: [],
       threads: [
         {
           id: 'T-3',
           author: 'sam',
+          at: minutes(90),
           path: 'ui/src/tab-strip.css',
           line: 88,
           side: 'right',
@@ -183,6 +197,7 @@ export function fixturePrs(now: number): readonly PullRequest[] {
       approvals: [],
       changesRequested: [],
       threads: [],
+      comments: [],
       files: [{ path: 'ui/src/tab-strip.tsx', added: 58, removed: 4 }],
       commits: [{ sha: 'd41a7c8', subject: 'Overflow the strip at eight', author: 'claude', at: minutes(9), added: 0, removed: 0 }],
       reviewers: [],
@@ -210,6 +225,7 @@ export function fixturePrs(now: number): readonly PullRequest[] {
       approvals: ['jane'],
       changesRequested: [],
       threads: [],
+      comments: [],
       files: [],
       commits: [{ sha: '9a20e17', subject: 'Tab strip primitive', author: 'claude', at: minutes(130), added: 0, removed: 0 }],
       reviewers: [{ login: 'jane', verdict: 'approved', comments: 0 }],

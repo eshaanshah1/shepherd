@@ -26,6 +26,7 @@ const raw = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   approvals: [],
   changesRequested: [],
   threads: [],
+  comments: [],
   files: [],
   openedAt: 1,
   updatedAt: 2,
@@ -50,7 +51,7 @@ describe('readPr', () => {
 
   it('says less rather than guessing for everything else', () => {
     const pr = readPr({ repo: 'a/b', number: 1, state: 'open' });
-    expect(pr).toMatchObject({ title: '#1', added: 0, removed: 0, checks: [], threads: [], files: [] });
+    expect(pr).toMatchObject({ title: '#1', added: 0, removed: 0, checks: [], threads: [], comments: [], files: [] });
   });
 
   it('drops a check with no name or no state, and keeps its neighbours', () => {
@@ -58,6 +59,41 @@ describe('readPr', () => {
       raw({ checks: [{ name: 'lint' }, { state: 'passed' }, { name: 'typecheck', state: 'failed' }] }),
     );
     expect(pr?.checks).toEqual([{ name: 'typecheck', state: 'failed' }]);
+  });
+
+  it('keeps a queued or blocked check, which are states this reader used to drop', () => {
+    /*
+     * The list of accepted states was `passed`/`failed`/`running`/`skipped`,
+     * three of the six `CheckState` names — so the two added later fell through
+     * the `find` and the check was dropped whole. A required status a repo posts
+     * as PENDING is exactly that shape, and the pane it drew said `1 of 1
+     * passed` for a PR that could not merge.
+     */
+    const pr = readPr(
+      raw({
+        checks: [
+          { name: 'audit', state: 'queued' },
+          { name: 'deploy', state: 'blocked' },
+        ],
+      }),
+    );
+    expect(pr?.checks).toEqual([
+      { name: 'audit', state: 'queued' },
+      { name: 'deploy', state: 'blocked' },
+    ]);
+  });
+
+  it('reads the conversation\u2019s comments, and drops one with no body', () => {
+    const pr = readPr(
+      raw({
+        comments: [
+          { id: 'c1', author: 'bsautomation', body: 'needs a stack audit', at: 9 },
+          { id: 'c2', author: 'jane' },
+          { body: 'no id' },
+        ],
+      }),
+    );
+    expect(pr?.comments).toEqual([{ id: 'c1', author: 'bsautomation', body: 'needs a stack audit', at: 9 }]);
   });
 
   it('reads an unrecognised merge state as unknown, which forbids Merge', () => {

@@ -19,6 +19,7 @@ const PR: PullRequest = {
   approvals: [],
   changesRequested: [],
   threads: [],
+  comments: [],
   commits: [],
   reviewers: [],
   body: '',
@@ -32,6 +33,7 @@ const PR: PullRequest = {
 const thread = (over: Partial<ReviewThread> = {}): ReviewThread => ({
   id: 'T1',
   author: 'sam',
+  at: 0,
   path: 'src/tree.ts',
   line: 61,
   side: 'right',

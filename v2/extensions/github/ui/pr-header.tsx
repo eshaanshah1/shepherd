@@ -40,7 +40,10 @@ const LABELS: Readonly<Record<PrTab, string>> = {
 export function tabCount(tab: PrTab, pr: PullRequest): { text: string; failed: boolean } {
   switch (tab) {
     case 'conversation':
-      return { text: String(pr.threads.length), failed: false };
+      // Both halves of it. Threads alone read `0` on a PR whose whole
+      // conversation is on the PR rather than on its diff — which is every PR
+      // whose reviewer is a bot posting a gate.
+      return { text: String(pr.threads.length + pr.comments.length), failed: false };
     case 'commits':
       return { text: String(pr.commits.length), failed: false };
     case 'checks': {

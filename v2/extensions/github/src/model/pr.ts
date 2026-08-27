@@ -37,7 +37,15 @@ export type PrState = 'draft' | 'open' | 'merged' | 'closed';
  * so unlike a queued job it is an affirmative signal with a subject, and it does
  * clear once you clear it.
  */
-export type CheckState = 'passed' | 'failed' | 'running' | 'queued' | 'blocked' | 'skipped';
+export const CHECK_STATES = ['passed', 'failed', 'running', 'queued', 'blocked', 'skipped'] as const;
+
+/**
+ * The list is the type, rather than the type being a union a list is kept in
+ * step with by hand. `ui/review-data.ts` had that second arrangement and its
+ * list was three names short, so a check in either state added since it was
+ * written was dropped at the port and drawn nowhere.
+ */
+export type CheckState = (typeof CHECK_STATES)[number];
 
 export interface CheckRun {
   readonly name: string;
@@ -65,6 +73,8 @@ export interface CheckRun {
 export interface ReviewThread {
   readonly id: string;
   readonly author: string;
+  /** Epoch ms of its first comment — where it sits in the conversation. */
+  readonly at: number;
   readonly path: string;
   readonly line: number | null;
   /**
@@ -116,6 +126,25 @@ export interface ChangedFile {
    * a second request, made once, when somebody looks.
    */
   readonly patch?: string;
+}
+
+/**
+ * One comment on the pull request ITSELF, which is not a review thread.
+ *
+ * The distinction GitHub draws and this model did not: a `ReviewThread` is
+ * anchored to a line of the diff, and a `Comment` is written on the PR. The
+ * things that arrive as the second are a bot reporting why a required check has
+ * not run, a reviewer's reply, the sentence saying what to do next — and with
+ * only threads read, the Conversation tab said `0` on a PR with a conversation.
+ */
+export interface Comment {
+  readonly id: string;
+  /** `someone` when GitHub has no account to name — a deleted user. */
+  readonly author: string;
+  /** Markdown SOURCE, for the same reason `body` is — the pane renders it. */
+  readonly body: string;
+  /** Epoch ms. */
+  readonly at: number;
 }
 
 /** One commit of a PR — what the Commits tab lists. */
@@ -194,6 +223,8 @@ export interface PullRequest {
   /** Logins that asked for changes. */
   readonly changesRequested: readonly string[];
   readonly threads: readonly ReviewThread[];
+  /** What was said on the PR rather than on a line of it, oldest first. */
+  readonly comments: readonly Comment[];
   /** Populated only for the PR being looked at — the list does not need it. */
   readonly files?: readonly ChangedFile[];
   /** Its commits, newest first. The header counts them; a tab lists them. */

@@ -410,6 +410,7 @@ function fingerprint(prs: readonly PullRequest[]): string {
         pr.changesRequested.join(','),
         pr.checks.map((check) => `${check.name}:${check.state}`).join(','),
         pr.threads.map((thread) => `${thread.id}:${thread.resolved ? 'r' : 'o'}`).join(','),
+        pr.comments.map((comment) => comment.id).join(','),
       ].join('|'),
     )
     .join('\n');

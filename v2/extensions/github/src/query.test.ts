@@ -32,6 +32,7 @@ function response(overrides: Record<string, unknown> = {}): PrQueryResponse {
             mergeStateStatus: 'CLEAN',
             reviews: { nodes: [] },
             reviewThreads: { nodes: [] },
+            comments: { nodes: [] },
             files: { nodes: [] },
             commits: { totalCount: 0, nodes: [] },
             statusOn: { nodes: [] },
@@ -48,6 +49,35 @@ const one = (overrides: Record<string, unknown> = {}) => {
   if (pr === undefined) throw new Error('expected one PR');
   return pr;
 };
+
+describe('the conversation\u2019s comments', () => {
+  it('is asked for at all \u2014 reviewThreads are the diff\u2019s, not the conversation\u2019s', () => {
+    /*
+     * The query asked for `reviewThreads` and nothing else, and those are only
+     * the threads anchored to a line of the diff. Everything written on the PR
+     * itself — a bot saying a required audit has not run, a reviewer's reply,
+     * the reason a check is red — lives in `comments` and reached the pane
+     * nowhere, so the Conversation tab counted 0 on a PR with a conversation.
+     */
+    expect(PR_QUERY).toContain('comments(last: $comments)');
+  });
+
+  it('keeps a comment whose author has been deleted \u2014 the text is the point', () => {
+    const pr = one({
+      comments: {
+        nodes: [
+          { id: 'c1', body: 'needs a stack audit', author: { login: 'bsautomation' }, createdAt: '2026-08-24T09:00:00Z' },
+          { id: 'c2', body: 'orphaned', author: null, createdAt: '2026-08-24T10:00:00Z' },
+        ],
+      },
+    });
+    expect(pr.comments).toEqual([
+      { id: 'c1', author: 'bsautomation', body: 'needs a stack audit', at: Date.parse('2026-08-24T09:00:00Z') },
+      { id: 'c2', author: 'someone', body: 'orphaned', at: Date.parse('2026-08-24T10:00:00Z') },
+    ]);
+  });
+
+});
 
 describe('the query itself', () => {
   it('asks by head branch, which is the join a task already provides', () => {
@@ -227,7 +257,7 @@ describe('review threads', () => {
           diffSide: 'RIGHT',
           path: 'src/tree.ts',
           line: 61,
-          comments: { nodes: [{ body: 'this drops a case', author: { login: 'sam' } }] },
+          comments: { nodes: [{ body: 'this drops a case', author: { login: 'sam' }, createdAt: '2026-08-14T11:00:00Z' }] },
           ...over,
         },
       ],
@@ -238,6 +268,7 @@ describe('review threads', () => {
     expect(one(thread({})).threads[0]).toEqual({
       id: 'T1',
       author: 'sam',
+      at: Date.parse('2026-08-14T11:00:00Z'),
       path: 'src/tree.ts',
       line: 61,
       side: 'right',

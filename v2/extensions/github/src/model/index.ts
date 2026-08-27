@@ -10,6 +10,7 @@
 export {
   blockedBy,
   canMerge,
+  CHECK_STATES,
   checksSaid,
   countChecks,
   firstFailure,
@@ -24,6 +25,7 @@ export {
   stackOf,
   stateWord,
   type ChangedFile,
+  type Comment,
   type Commit,
   type Reviewer,
   type CheckCount,
