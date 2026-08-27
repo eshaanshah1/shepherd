@@ -59,7 +59,7 @@ import { taskRootId } from './model/root-id.ts';
  *
  * Everything this verb gets wrong is wrong in the ORDER it does things: panes
  * closed before the directory they are running in vanishes, `worktree prune`
- * after the `rmSync` rather than before, the record removed last so a failure
+ * after the delete rather than before, the record removed last so a failure
  * halfway through still names its leftovers. None of that survives being tested
  * one function at a time — `removeWorktree` is pinned in `provision.test.ts` and
  * every one of those tests passed while the handler around it was stranding
@@ -665,7 +665,7 @@ describe('tasks.delete', () => {
     });
 
     it('prunes the SOURCE repo afterwards, because git only prunes a registration whose directory is gone', async () => {
-      // The ordering is the fix, not the prune: run before the `rmSync` the
+      // The ordering is the fix, not the prune: run before the delete and the
       // directory still answers, git keeps the registration, and the next
       // `worktree add` on that branch fails pointing at a path that no longer
       // exists.
@@ -1606,6 +1606,44 @@ describe('a task owns a layout root', () => {
       const closed = h.trace.lastIndexOf('invoke layout.closeGroup');
       expect(removed).toBeGreaterThanOrEqual(0);
       expect(closed).toBeGreaterThan(removed);
+    });
+
+    it('gives the loop a turn while the task root is deleted', async () => {
+      /*
+       * The host has one thread, and a live task root measured 838 MB. Deleting
+       * it synchronously held that thread for eleven seconds — past the deadline
+       * on every command routed through the host — so a click on another tab did
+       * nothing at all until the delete finished, and then six of them fired at
+       * once.
+       *
+       * The tree has to be big enough that removing it is not instant, or a
+       * blocking delete and a yielding one finish in the same tick and the
+       * ordering below is a coin toss rather than a claim.
+       */
+      const h = (live = harness({
+        tasks: [task()],
+        git: archivable,
+        // Queued as the panes close, which is the call immediately before the
+        // delete. A delete that holds the thread runs the phase AFTER it first.
+        invoke: (id) => {
+          if (id === 'layout.closeGroup') setTimeout(() => h.trace.push('loop turned'), 0);
+          return undefined;
+        },
+      }));
+      await h.run('tasks.spawn', { task: 't1', prompt: 'go' });
+      const bulk = join(h.dataDir, 'fix-login', 'bulk');
+      mkdirSync(bulk, { recursive: true });
+      for (let i = 0; i < 4000; i += 1) writeFileSync(join(bulk, `f${i}`), 'x');
+
+      await h.run('tasks.archive', { task: 't1' });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(existsSync(bulk)).toBe(false);
+      const closing = h.trace.indexOf('invoke layout.closeGroup');
+      const turned = h.trace.indexOf('loop turned');
+      const settled = h.trace.indexOf('invoke layout.setPlaceholder', closing);
+      expect(turned).toBeGreaterThan(closing);
+      expect(settled).toBeGreaterThan(turned);
     });
 
     it('REFUSES a conflicted worktree before it closes anything', async () => {

@@ -1,4 +1,5 @@
 import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import {
   fuzzyMatch,
@@ -3090,8 +3091,11 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
        * snapshotted into `refs/shepherd/*`. Materializing re-provisions and
        * re-writes it, which is the same path that built it the first time — one
        * code path for "make this task real", not two.
+       *
+       * Asynchronously: the host has one thread, and this directory is the
+       * biggest thing in the app — 838 MB on the machine this was written for.
        */
-      rmSync(root, { recursive: true, force: true });
+      await rm(root, { recursive: true, force: true });
 
       const latest = store.get(task.id) ?? current;
       store.put({ ...latest, archives, shelvedAt: ctx.clock.now() });
@@ -4339,7 +4343,9 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           }
         }
 
-        rmSync(root, { recursive: true, force: true });
+        // Asynchronously: the host has one thread, and a task's worktrees are
+        // the biggest thing on its disk.
+        await rm(root, { recursive: true, force: true });
 
         /*
          * And the archived SCREENS, which live outside the task root on purpose
@@ -4349,17 +4355,17 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
          * in the app could ever mention those files again, and `.archives` would
          * grow by a task's worth of scrollback every time one expired.
          */
-        rmSync(`${archiveDir()}/${task.id.replace(/[^A-Za-z0-9_-]/g, '_')}`, {
+        await rm(`${archiveDir()}/${task.id.replace(/[^A-Za-z0-9_-]/g, '_')}`, {
           recursive: true,
           force: true,
         });
 
-        // The rmSync just took directories out from under any registration git
+        // The delete just took directories out from under any registration git
         // still holds (finding #1) — exactly the state this handler's comment
         // warns about, where the next `worktree add` on that branch fails
         // pointing at a directory that no longer exists. `worktree prune` is
         // git's own repair for a registration whose directory is gone, and it
-        // only works AFTER the directory is gone — pruning before the rmSync is
+        // only works AFTER the directory is gone — pruning before the delete is
         // a no-op, because the directory still answers. Best-effort: a source
         // repo that is itself gone has no registration to strand.
         for (const repoPath of stranded) {
