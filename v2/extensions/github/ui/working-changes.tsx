@@ -3,7 +3,7 @@ import { CodeView } from '@pierre/diffs/react';
 import { processFile } from '@pierre/diffs';
 import { Button, Empty, SectionLabel } from '@shepherd/ui';
 import { GITHUB_COMMANDS } from '../src/manifest.ts';
-import { SHEPHERD_DIFF_CSS, SHEPHERD_DIFF_THEME } from './diff-theme.ts';
+import { SHEPHERD_DIFF_CSS, SHEPHERD_DIFF_SIZING, SHEPHERD_DIFF_THEME } from './diff-theme.ts';
 
 /**
  * What a task has changed, before there is a pull request to change it in.
@@ -223,6 +223,7 @@ function Diffs({ repo }: { readonly repo: RepoChanges }): ReactElement {
         // halved, wrapped so a line ends where the pane does.
         diffStyle: 'unified',
         overflow: 'wrap',
+        ...SHEPHERD_DIFF_SIZING,
       }}
       disableWorkerPool
     />

@@ -5,7 +5,7 @@ import { FileTree, useFileTree, useFileTreeSelection } from '@pierre/trees/react
 import { Button, Icon, KeyCap, namedGlyph } from '@shepherd/ui';
 import { agoText } from './review-data.ts';
 import { Markdown } from './markdown.tsx';
-import { SHEPHERD_DIFF_CSS, SHEPHERD_DIFF_THEME } from './diff-theme.ts';
+import { SHEPHERD_DIFF_CSS, SHEPHERD_DIFF_SIZING, SHEPHERD_DIFF_THEME } from './diff-theme.ts';
 import type { WrapHand } from './pr-detail.tsx';
 import {
   isLineInDiff,
@@ -590,18 +590,6 @@ function ChangeMark({ file }: { readonly file: ChangedFile }): ReactElement {
 }
 
 /**
- * The two heights the virtualiser has to be told, because it reserves space
- * before there is anything to measure.
- *
- * `DIFF_HEAD_HEIGHT` is `.sh-pr-diff__head` rendered — 12.5px text, two
- * `space-sm` of padding and a hairline. `DIFF_LINE_HEIGHT` is
- * `--diffs-line-height` from `diff-theme.ts`. Both are measured values kept in
- * step by hand; there is no way to ask the DOM before the DOM exists.
- */
-const DIFF_HEAD_HEIGHT = 29;
-const DIFF_LINE_HEIGHT = 18;
-
-/**
  * A file's review threads, split by whether the diff can actually show them.
  *
  * **A thread naming a file is not the same as a thread the diff can show.** Its
@@ -764,21 +752,9 @@ function DiffList({
            */
           diffStyle: 'unified',
           overflow: 'wrap',
-          /*
-           * What the virtualiser RESERVES, which has to match what we draw. It
-           * sizes the scroll before a file is built, from these numbers rather
-           * than from the DOM — so a value too large leaves a band of nothing
-           * above every file. The defaults describe the package's own chrome, a
-           * 44px header and 20px lines, against our 29 and 18.
-           */
-          itemMetrics: {
-            diffHeaderHeight: DIFF_HEAD_HEIGHT,
-            lineHeight: DIFF_LINE_HEIGHT,
-            spacing: 4,
-            paddingTop: 0,
-            paddingBottom: 4,
-          },
-          layout: { paddingTop: 0, paddingBottom: 0, gap: 0 },
+          // What the virtualiser reserves, kept beside the stylesheet it has to
+          // match — `diff-theme.ts` says what happens when they drift.
+          ...SHEPHERD_DIFF_SIZING,
         }}
         disableWorkerPool
         renderCodeViewHeader={() =>

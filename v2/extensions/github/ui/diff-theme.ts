@@ -86,6 +86,37 @@ registerCustomCSSVariableTheme(SHEPHERD_DIFF_THEME, {
  * low on purpose: a diff row's colour has to be legible under code without
  * competing with it.
  */
+/**
+ * What the virtualiser RESERVES, which has to match what the CSS above draws.
+ *
+ * `CodeView` sizes its scroll before a file is built, from these numbers rather
+ * than from the DOM — there is nothing to measure yet. So the two are kept in
+ * step by hand, and when they disagree the reserved boxes and the painted rows
+ * end up in different places: a band of nothing above every file, and a drag
+ * that selects the text your pointer is nowhere near, because selection hit-tests
+ * the real boxes while your eye reads the paint.
+ *
+ * They live HERE, beside the stylesheet whose values they restate, and they ship
+ * as ONE object so a caller cannot take half. `WorkingChanges` took none of it
+ * for as long as it existed, which is the bug this shape exists to prevent: the
+ * defaults describe the package's own chrome, a 44px header over 20px lines,
+ * against our 29 and 18.
+ *
+ * `diffHeaderHeight` is `.sh-pr-diff__head` rendered — 12.5px text, two
+ * `space-sm` of padding and a hairline. `lineHeight` is `--diffs-line-height`
+ * from `review-pane.css`.
+ */
+export const SHEPHERD_DIFF_SIZING = {
+  itemMetrics: {
+    diffHeaderHeight: 29,
+    lineHeight: 18,
+    spacing: 4,
+    paddingTop: 0,
+    paddingBottom: 4,
+  },
+  layout: { paddingTop: 0, paddingBottom: 0, gap: 0 },
+};
+
 export const SHEPHERD_DIFF_CSS = `
 /*
  * :host, and that is the load-bearing part.

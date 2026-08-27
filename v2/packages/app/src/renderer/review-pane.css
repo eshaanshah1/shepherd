@@ -1554,8 +1554,14 @@
 
 /*
  * Drawn by `WorkingChanges`, which the review pane shows in place of its old
- * empty state. It reuses `.sh-pr-diff__view` for the diff itself — same
- * component, same metrics — so only the per-repo header is new here.
+ * empty state. It reuses `.sh-pr-diff__view` for the diff itself, so only the
+ * per-repo header is new here.
+ *
+ * The metrics under that class are half the answer and the comment used to
+ * claim they were all of it. `CodeView` reserves its scroll from NUMBERS PASSED
+ * IN JS, before there is a DOM to measure, and this pane passed none — so it
+ * reserved the package's 44px header over 20px lines while the rules below drew
+ * 29 over 18. `diff-theme.ts` holds both callers' copy now.
  */
 .sh-changes__repo {
   display: flex;
