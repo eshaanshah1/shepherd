@@ -6,6 +6,7 @@ import {
   IconChevronDown,
   IconChevronLeft,
   IconChevronRight,
+  IconCircleDashed,
   IconDots,
   IconEye,
   IconFolder,
@@ -64,6 +65,21 @@ export const NAMED_GLYPHS: Readonly<Record<string, ComponentType<TablerIconProps
   'chevron-right': IconChevronRight,
   'chevron-left': IconChevronLeft,
   close: IconX,
+  /*
+   * A check that is EXPECTED and has not run — the required status a repo posts
+   * as pending and nothing has answered yet.
+   *
+   * A ring that is drawn but not continuous, which is the picture of the state:
+   * the check exists, its outline is reserved, and there is nothing in it. A
+   * solid ring is the running one two states along, and a filled mark would
+   * claim something had been reported.
+   *
+   * It survives the size, which the Slack mark below did not. Eight arcs of
+   * 22.5° at r=9 leave gaps of 3.5 viewBox units — 1.9px once a 13px `sm` scales
+   * them — against a stroke that renders at 0.95px. Slack's counters are 2 units
+   * and close up; these are nearly double, and there are no counters at all.
+   */
+  'circle-dashed': IconCircleDashed,
   dots: IconDots,
   /*
    * A page of notes, for the scratch pane. The one glyph here that stands for a

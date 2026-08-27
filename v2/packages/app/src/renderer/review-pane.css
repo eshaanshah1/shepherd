@@ -827,6 +827,29 @@
   background: var(--sh-red);
 }
 
+/*
+ * The two honey states, which drew NOTHING before this — no rule here matched
+ * them, so a required check holding the merge got an empty slot and the tab
+ * beside it said every check had passed.
+ *
+ * `honey` is the palette's "in flight · pending on you", and these are its two
+ * cases. They are told apart by SHAPE, not by hue: a dashed ring for a check
+ * that is reserved and unreported, and the failed square for one GitHub has
+ * finished and handed to a human. The square is deliberate — blocked is the
+ * other state that actually stops you, so it wears the silhouette that says so.
+ */
+.sh-pr-list__row[data-state='queued'] .sh-pr-list__mark,
+.sh-pr-list__row[data-state='blocked'] .sh-pr-list__mark {
+  color: var(--sh-honey);
+}
+
+.sh-pr-list__row[data-state='blocked'] .sh-pr-list__mark::before {
+  content: '';
+  inline-size: 8px;
+  block-size: 8px;
+  background: var(--sh-honey);
+}
+
 .sh-pr-list__row[data-state='running'] .sh-pr-list__mark::before,
 .sh-pr-list__row[data-state='skipped'] .sh-pr-list__mark::before {
   content: '';

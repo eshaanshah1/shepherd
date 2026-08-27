@@ -610,6 +610,26 @@ describe('the PR’s four sub-views (11)', () => {
     expect(openTab()).toContain('Conversation');
   });
 
+  it('gives a queued check a mark, which is the state that used to draw nothing', async () => {
+    /*
+     * No rule in the checks list matched `queued` or `blocked`, so a required
+     * status holding the merge got an empty 12px slot — the row was there and
+     * said nothing, while the tab beside it counted every check as passed.
+     *
+     * The dashed ring is the picture of the state: the check is reserved and
+     * nothing has reported into it. `passed` keeps its tick and every other
+     * state stays a CSS shape on the slot.
+     */
+    draw([rich({ checks: [{ name: 'AI Harness / Audit Stack', state: 'queued' }] })]);
+    await settle();
+    clickTab('Checks');
+    const row = all('.sh-pr-list__row').find((node) => node.dataset['state'] === 'queued');
+    expect(row?.querySelector('.sh-pr-list__mark svg')).not.toBeNull();
+    // And the state is still readable without the colour, for a screen reader
+    // and for anyone the hue does not reach.
+    expect(row?.textContent).toContain('queued');
+  });
+
   it('says the direction of the change in GitHub’s own sentence', async () => {
     draw([rich()]);
     await settle();

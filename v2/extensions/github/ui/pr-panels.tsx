@@ -428,7 +428,7 @@ export function Checks({ pr, busy, wrapHand, onHandCheck, onOpenExternal }: Pane
             onClick={() => setAt(check.name)}
           >
             <span className="sh-pr-list__mark" aria-hidden="true">
-              {check.state === 'passed' ? <Icon icon={namedGlyph('check')} size="sm" /> : null}
+              <CheckMark state={check.state} />
             </span>
             <span className="sh-pr-list__name">{check.name}</span>
             <span className="sh-pr-list__meta">
@@ -464,6 +464,26 @@ export function Checks({ pr, busy, wrapHand, onHandCheck, onOpenExternal }: Pane
       </div>
     </div>
   );
+}
+
+/**
+ * The mark for one check, for the two states that carry a glyph.
+ *
+ * Everything else in this column is a CSS shape on the slot — a filled square
+ * for a failure, a ring for a run in flight — and stays there. A glyph is spent
+ * on the two states a shape cannot say: `passed`, which is the tick every forge
+ * draws, and `queued`, which is a ring with holes in it because the check has
+ * been reserved and nothing has reported.
+ *
+ * `blocked` deliberately has no glyph. It is honey's other case — GitHub
+ * finished and a human must act — and it wears the FAILED shape in honey,
+ * because it is the other state that is actually stopping you and the column
+ * should say so with the same silhouette.
+ */
+function CheckMark({ state }: { readonly state: CheckRun['state'] }): ReactElement | null {
+  if (state === 'passed') return <Icon icon={namedGlyph('check')} size="sm" />;
+  if (state === 'queued') return <Icon icon={namedGlyph('circle-dashed')} size="sm" />;
+  return null;
 }
 
 const durationText = (ms: number | undefined): string => {
