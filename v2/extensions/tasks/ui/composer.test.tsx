@@ -722,7 +722,7 @@ describe('the profile picker', () => {
   };
 
   it('opens on the ordinary profile', () => {
-    expect(profile()?.querySelector('.sh-ui-select__value')?.textContent).toBe('Default profile');
+    expect(profile()?.querySelector('.sh-ui-select__value')?.textContent).toBe('default');
   });
 
   it('offers exactly two, and no third state to explain', async () => {
@@ -731,7 +731,7 @@ describe('the profile picker', () => {
     });
     expect(
       [...(profile()?.querySelectorAll<HTMLElement>('[role="option"]') ?? [])].map((o) => o.textContent),
-    ).toEqual(['Default profile', 'Incognito']);
+    ).toEqual(['default', 'incognito']);
   });
 
   it('sends nothing when the ordinary profile is left alone', async () => {
@@ -745,7 +745,7 @@ describe('the profile picker', () => {
   });
 
   it('asks for incognito when it is picked', async () => {
-    await choose('Incognito');
+    await choose('incognito');
     await type('something I would rather not keep');
     await act(async () => {
       container.querySelector<HTMLElement>('[data-testid="composer-create"]')!.click();
