@@ -8,6 +8,7 @@ import { Markdown } from './markdown.tsx';
 import { SHEPHERD_DIFF_CSS, SHEPHERD_DIFF_SIZING, SHEPHERD_DIFF_THEME } from './diff-theme.ts';
 import type { WrapHand } from './pr-detail.tsx';
 import {
+  authorTint,
   firstFailure,
   isLineInDiff,
   unifiedPatch,
@@ -101,6 +102,51 @@ export function timelineOf(pr: PullRequest): readonly TimelineEntry[] {
 
 
 /**
+ * A section that cannot grow without bound.
+ *
+ * In a single scroll, one verbose section pushes everything under it past the
+ * fold — and the sections here are exactly the ones whose length nobody
+ * controls: an agent's description runs to a hundred lines, a bot's audit
+ * report to forty. Left alone, where Files sits depends on how talkative the
+ * agent was that day, and the order stops being a table of contents you can
+ * learn.
+ *
+ * So each one is capped at a share of the pane and grows in place when asked.
+ * The button appears ONLY when there is something behind it — measured, because
+ * a control that reveals nothing is worse than no control.
+ */
+function Clamp({ children }: { readonly children: ReactElement }): ReactElement {
+  const [open, setOpen] = useState(false);
+  const [over, setOver] = useState(false);
+  const box = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const node = box.current;
+    if (node === null) return;
+    const measure = (): void => setOver(node.scrollHeight > node.clientHeight + 4);
+    measure();
+    // A body re-flows when the pane resizes and when its images and fences lay
+    // out, so one measurement on mount is one measurement too few.
+    const watch = new ResizeObserver(measure);
+    watch.observe(node);
+    return () => watch.disconnect();
+  }, [children]);
+
+  return (
+    <div className="sh-pr-clamp" data-open={open ? 'true' : undefined} data-over={over ? 'true' : undefined}>
+      <div className="sh-pr-clamp__box" ref={box}>
+        {children}
+      </div>
+      {over || open ? (
+        <button type="button" className="sh-pr-clamp__more" onClick={() => setOpen(!open)}>
+          {open ? 'Show less' : 'Show more'}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/**
  * The description, as the document's opening prose.
  *
  * No card and no byline: the brief above already says who opened it and when,
@@ -110,6 +156,7 @@ export function timelineOf(pr: PullRequest): readonly TimelineEntry[] {
 export function Description({ pr }: { readonly pr: PullRequest }): ReactElement | null {
   if (pr.body === '') return null;
   return (
+    <Clamp>
     <div className="sh-pr-body">
       {/*
         Markdown, because an AGENT writes this field. It used to split on blank
@@ -119,6 +166,7 @@ export function Description({ pr }: { readonly pr: PullRequest }): ReactElement 
       */}
       <Markdown text={pr.body} />
     </div>
+    </Clamp>
   );
 }
 
@@ -140,13 +188,19 @@ export function Talk({ pr, now, busy, wrapHand, onHandThread }: PanelProps): Rea
       {entries.map((entry) =>
         entry.kind === 'comment' ? (
           <article key={entry.comment.id} className="sh-pr-said">
-            <span className="sh-pr-said__mark" aria-hidden="true" />
+            <span
+              className="sh-pr-said__mark"
+              style={{ background: authorTint(entry.comment.author) }}
+              aria-hidden="true"
+            />
             <div className="sh-pr-said__body">
               <header className="sh-pr-said__who">
                 <span className="sh-pr-said__login">{entry.comment.author}</span>
                 <span className="sh-pr-said__when">{agoText(entry.comment.at, now) ?? ''}</span>
               </header>
-              <Markdown text={entry.comment.body} />
+              <Clamp>
+                <Markdown text={entry.comment.body} />
+              </Clamp>
             </div>
           </article>
         ) : (
@@ -189,7 +243,11 @@ function ThreadCard({
 }): ReactElement {
   return (
     <article className="sh-pr-said" data-resolved={thread.resolved ? 'true' : undefined}>
-      <span className="sh-pr-said__mark" aria-hidden="true">
+      <span
+        className="sh-pr-said__mark"
+        {...(thread.resolved ? {} : { style: { background: authorTint(thread.author) } })}
+        aria-hidden="true"
+      >
         {thread.resolved ? <Icon icon={namedGlyph('check')} size="sm" /> : null}
       </span>
       <div className="sh-pr-said__body">

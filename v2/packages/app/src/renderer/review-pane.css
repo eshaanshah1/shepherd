@@ -281,6 +281,93 @@
   flex-direction: column;
   flex: 1 1 auto;
   min-block-size: 0;
+  /*
+   * The query below asks about THIS, not the window.
+   *
+   * A pane can be split, so its width and the window's are different numbers —
+   * a viewport media query would give a half-width pane the full-width layout
+   * and put a 248px column into 600px of room. It is the first container query
+   * in this codebase, and this is the first surface whose own width is the
+   * question.
+   */
+  container-type: inline-size;
+}
+
+/*
+ * The document, and the room the measure leaves over.
+ *
+ * Prose stops at 76 characters because a longer line stops being scannable;
+ * on a wide pane that leaves half the surface blank. The blank half was the
+ * argument for the meta column the old pane had — deleting the column did not
+ * delete the argument, it just left the space empty.
+ */
+.sh-pr-spread {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  display: flex;
+}
+
+/*
+ * Absent by default, which is the honest default: most panes here are split,
+ * and a pane narrower than the query has no room to spare.
+ */
+.sh-pr-side {
+  display: none;
+}
+
+@container (min-inline-size: 1040px) {
+  .sh-pr-side {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sh-space-huge);
+    flex: none;
+    inline-size: 248px;
+    overflow-y: auto;
+    padding: var(--sh-space-huge);
+    border-inline-start: var(--sh-hairline) solid var(--sh-line);
+  }
+
+  /* The same facts, one line long, in the brief. Exactly one of the two is in
+     the document at any width — including for a screen reader, since
+     `display: none` takes it out of the tree as well as off the screen. */
+  .sh-pr-brief__facts {
+    display: none;
+  }
+}
+
+.sh-pr-side__label {
+  margin: 0 0 var(--sh-space-snug);
+  font-size: var(--sh-font-size-small);
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--sh-text-mute);
+}
+
+.sh-pr-side__row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sh-space-snug);
+  margin: 0;
+  font-size: var(--sh-font-size-medium);
+  color: var(--sh-text-dim);
+}
+
+/* A verdict sitting on the same line as the login, so it needs the gap the
+   row supplies rather than the margin the block-level note carries. */
+.sh-pr-side__row .sh-pr-side__note {
+  margin: 0;
+}
+
+.sh-pr-side__who {
+  font-family: var(--sh-font-mono);
+  color: var(--sh-text-dim);
+}
+
+.sh-pr-side__note,
+.sh-pr-side__none {
+  margin: var(--sh-space-hair) 0 0;
+  font-size: var(--sh-font-size-micro);
+  color: var(--sh-text-ghost);
 }
 
 /*
@@ -295,6 +382,7 @@
  */
 .sh-pr-doc {
   flex: 1 1 auto;
+  min-inline-size: 0;
   min-block-size: 0;
   overflow-y: auto;
   /* One measure. Prose past ~80 characters stops being scannable, and the pane
@@ -754,8 +842,49 @@
  * nothing to be bounded against. It holds the rendered body and nothing else,
  * so it sets no rhythm of its own; `.sh-md` owns that.
  */
-.sh-pr-doc > .sh-pr-body {
-  margin-block-start: var(--sh-space-huge);
+/*
+ * ── the clamp ───────────────────────────────────────────────────────────────
+ *
+ * A third of the pane, so a verbose section cannot decide where the sections
+ * under it sit. `overflow: hidden` rather than `line-clamp`, because the
+ * content is a document — headings, fences, lists — and clamping by LINES on a
+ * block that has none would take a whole fenced command off at the knees.
+ */
+.sh-pr-clamp__box {
+  max-block-size: 34cqb;
+  overflow: hidden;
+}
+
+.sh-pr-clamp[data-open] .sh-pr-clamp__box {
+  max-block-size: none;
+}
+
+/*
+ * The fade says the text continues, so the button confirms rather than being
+ * the only clue.
+ *
+ * Gated on `data-over`, which is MEASURED — a mask keyed only on "not open"
+ * veiled the last 40px of every short comment too, and a one-line remark is
+ * entirely inside that band. The component knows whether anything is actually
+ * hidden; the stylesheet cannot, so it is told.
+ */
+.sh-pr-clamp[data-over]:not([data-open]) .sh-pr-clamp__box {
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 40px), transparent);
+}
+
+.sh-pr-clamp__more {
+  margin-block-start: var(--sh-space-md);
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: var(--sh-font-sans);
+  font-size: var(--sh-font-size-medium);
+  color: var(--sh-text-mute);
+  cursor: default;
+}
+
+.sh-pr-clamp__more:hover {
+  color: var(--sh-text);
 }
 
 .sh-pr-body {

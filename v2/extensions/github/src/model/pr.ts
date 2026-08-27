@@ -257,6 +257,38 @@ export interface PullRequest {
   readonly dependsOn: readonly string[];
 }
 
+/**
+ * An author's colour, derived from their login.
+ *
+ * The comment marks were one flat grey square, so three people saying three
+ * things looked like one person saying them three times. A byline you have to
+ * READ to tell apart is a byline doing no work in a scan.
+ *
+ * DERIVED, not random. A random hue would be a different person on every render
+ * and a different person in two panes showing the same thread — the whole value
+ * of an identity mark is that it is the same mark next time. This is a hash, so
+ * `coderabbitai` is the same colour in every PR, in every task, forever.
+ *
+ * Hue only. Saturation and lightness are fixed at values that sit in this
+ * palette rather than on top of it — §2's rule that a saturated value needs a
+ * job, honoured by giving all of them the same weight and letting only the angle
+ * carry the identity. The five hues that MEAN something are unaffected: this is
+ * a sixth axis, the same exemption the repo marks take.
+ */
+export function authorHue(login: string): number {
+  // FNV-1a, because it is four lines and has no collisions worth caring about
+  // over a handful of logins on one screen.
+  let hash = 0x811c9dc5;
+  for (let at = 0; at < login.length; at += 1) {
+    hash ^= login.charCodeAt(at);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash % 360;
+}
+
+/** The mark's fill, as a CSS colour a stylesheet can use directly. */
+export const authorTint = (login: string): string => `oklch(0.62 0.11 ${authorHue(login)})`;
+
 /** `owner/repo#123` — the identity every cross-reference uses. */
 export const prKey = (pr: Pick<PullRequest, 'repo' | 'number'>): string => `${pr.repo}#${pr.number}`;
 

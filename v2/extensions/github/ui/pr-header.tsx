@@ -150,3 +150,69 @@ export function PrBrief({
 function authorOf(pr: PullRequest): string {
   return pr.author === '' ? (pr.commits[0]?.author ?? 'someone') : pr.author;
 }
+
+/**
+ * The facts, in the room the measure leaves over.
+ *
+ * Prose is capped at 76 characters because past that a line stops being
+ * scannable — which on a wide pane leaves half the surface empty. That space was
+ * the argument for the meta column the old pane had, and removing it did not
+ * remove the argument; it just left the space blank.
+ *
+ * So they are here AND in the brief's one dim line, and the container query
+ * picks. A CONTAINER query, not a viewport one: this pane can be split, so its
+ * width is not the window's, and a media query would give a half-width pane the
+ * full-width layout. It is the first in this codebase; it is also the first
+ * surface whose own width is the question.
+ *
+ * On the RIGHT, which is the whole reason a second column is legal here at all —
+ * the app's rail is on the left, and two lists shoulder to shoulder is the thing
+ * that made the first attempt at this wrong.
+ */
+export function PrSide({
+  pr,
+  agent,
+  task,
+}: {
+  readonly pr: PullRequest;
+  readonly agent?: { readonly title: string; readonly state: string };
+  readonly task?: { readonly title: string; readonly others: readonly string[] };
+}): ReactElement {
+  return (
+    <aside className="sh-pr-side">
+      <section className="sh-pr-side__block">
+        <h3 className="sh-pr-side__label">Reviewers</h3>
+        {pr.reviewers.length === 0 ? (
+          <p className="sh-pr-side__none">Nobody yet</p>
+        ) : (
+          pr.reviewers.map((reviewer) => (
+            <p key={reviewer.login} className="sh-pr-side__row">
+              <span className="sh-pr-side__who">{reviewer.login}</span>
+              <span className="sh-pr-side__note">{reviewer.verdict}</span>
+            </p>
+          ))
+        )}
+      </section>
+
+      {agent === undefined ? null : (
+        <section className="sh-pr-side__block">
+          <h3 className="sh-pr-side__label">Agent</h3>
+          <p className="sh-pr-side__row">
+            <span className="sh-pr-side__who">{agent.title}</span>
+          </p>
+          <p className="sh-pr-side__note">{agent.state} · owns this branch</p>
+        </section>
+      )}
+
+      {task === undefined ? null : (
+        <section className="sh-pr-side__block">
+          <h3 className="sh-pr-side__label">Task</h3>
+          <p className="sh-pr-side__row">{task.title}</p>
+          {task.others.length === 0 ? null : (
+            <p className="sh-pr-side__note">lands with {task.others.join(', ')}</p>
+          )}
+        </section>
+      )}
+    </aside>
+  );
+}

@@ -581,7 +581,13 @@ describe('the PR as one document (11)', () => {
     draw([rich()]);
     await settle();
     expect(all('.sh-pr-head__tab')).toHaveLength(0);
-    expect(headings()).toEqual(['Conversation', 'Checks', 'Commits', 'Files']);
+    /*
+     * The order is the READER's. The verdict at the top says whether this can
+     * land; when it cannot, the detail of the blocker is what is wanted next —
+     * so the checks and the conversation lead, and the description, which is
+     * the agent's account of its own work, closes.
+     */
+    expect(headings()).toEqual(['Checks', 'Conversation', 'Files', 'Commits', 'Description']);
   });
 
   it('shows the description and the checks together, which two tabs could not', async () => {
@@ -593,6 +599,27 @@ describe('the PR as one document (11)', () => {
     expect(host.textContent).toContain('typecheck');
   });
 
+  it('gives each author their own colour, and the same one every time', async () => {
+    /*
+     * The marks were one flat grey square, so three people saying three things
+     * looked like one person saying them three times.
+     *
+     * Derived from the login rather than random: an identity mark whose colour
+     * changes per render is not an identity mark.
+     */
+    draw([rich({ comments: [
+      { id: 'c1', author: 'coderabbitai', body: 'skipped', at: 1 },
+      { id: 'c2', author: 'bsautomation', body: 'audit', at: 2 },
+    ] })]);
+    await settle();
+    // Three marks, not two: the fixture's unresolved thread is somebody saying
+    // something too, and it is tinted for the same reason.
+    const tints = all('.sh-pr-said__mark').map((node) => node.style.background).filter((c) => c !== '');
+    expect(tints).toHaveLength(3);
+    expect(new Set(tints).size).toBe(3);
+    expect(tints[0]).toMatch(/^oklch/);
+  });
+
   it('counts a section on its own heading, past the rule', async () => {
     // SectionLabel puts the count at the far end so a column of headings has its
     // numbers in one place — and it is sentence case with no tracking, which is
@@ -600,7 +627,7 @@ describe('the PR as one document (11)', () => {
     draw([rich()]);
     await settle();
     const counts = all('.sh-ui-section-label__count').map((node) => node.textContent);
-    expect(counts).toEqual(['1', '1/2', '2', '12']);
+    expect(counts).toEqual(['1/2', '1', '12', '2']);
   });
 
   it('gives a queued check a mark, which is the state that used to draw nothing', async () => {

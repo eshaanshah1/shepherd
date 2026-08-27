@@ -1,6 +1,6 @@
 import { useState, type ReactElement } from 'react';
 import { Button, SectionLabel } from '@shepherd/ui';
-import { PrBrief } from './pr-header.tsx';
+import { PrBrief, PrSide } from './pr-header.tsx';
 import {
   CommitDiff,
   Description,
@@ -123,7 +123,13 @@ export function PrDetail({
 
   return (
     <div className="sh-pr-detail">
-      <div className="sh-pr-doc">
+      {/*
+        A row, so the facts can take the room the prose measure leaves over. The
+        aside draws only when this pane is wide enough for it — see PrSide for
+        why that question is asked of the CONTAINER rather than the window.
+      */}
+      <div className="sh-pr-spread">
+        <div className="sh-pr-doc">
         <PrBrief
           pr={pr}
           now={now}
@@ -136,19 +142,45 @@ export function PrDetail({
           onOpenExternal={actions.onOpenExternal}
         />
 
-        <Description pr={pr} />
+        {/*
+          ORDER, and it is the READER's rather than the document's.
 
-        <section className="sh-pr-sec">
-          <SectionLabel count={pr.comments.length + pr.threads.length}>Conversation</SectionLabel>
-          <Talk {...shared} />
-        </section>
+          The verdict at the top says whether this can land. When it cannot, the
+          next thing wanted is the DETAIL of the blocker — so the checks and the
+          conversation come first, and the cost is asymmetric: burying an
+          objection hurts every blocked PR, while a green one pays one flick of
+          the wheel to pass two near-empty sections.
 
+          Checks before the conversation because a check row is one line and a
+          bot's audit report is forty, and the commonest blocker should not sit
+          under the longest thing that might be one.
+
+          Files before commits because "what did it change" is answered by
+          paths. How an agent chose to slice its own work is the least-read fact
+          on this surface.
+
+          The description is LAST, which is the counter-intuitive half. It is the
+          agent's account of its own work — the CLAIM, where everything else here
+          is evidence — and at a hundred lines it was what actually interrupted
+          the pane, pushing the files two screens down. Clamped as well, so its
+          length cannot decide where anything above it sits.
+        */}
         {pr.checks.length === 0 ? null : (
           <section className="sh-pr-sec">
             <SectionLabel count={`${checks.passed}/${checks.total}`}>Checks</SectionLabel>
             <Checks {...shared} />
           </section>
         )}
+
+        <section className="sh-pr-sec">
+          <SectionLabel count={pr.comments.length + pr.threads.length}>Conversation</SectionLabel>
+          <Talk {...shared} />
+        </section>
+
+        <section className="sh-pr-sec">
+          <SectionLabel count={pr.changedFiles}>Files</SectionLabel>
+          <FilesList {...shared} onOpen={() => setOpen({ kind: 'files' })} />
+        </section>
 
         {pr.commits.length === 0 ? null : (
           <section className="sh-pr-sec">
@@ -157,10 +189,14 @@ export function PrDetail({
           </section>
         )}
 
-        <section className="sh-pr-sec">
-          <SectionLabel count={pr.changedFiles}>Files</SectionLabel>
-          <FilesList {...shared} onOpen={() => setOpen({ kind: 'files' })} />
-        </section>
+        {pr.body === '' ? null : (
+          <section className="sh-pr-sec">
+            <SectionLabel>Description</SectionLabel>
+            <Description pr={pr} />
+          </section>
+        )}
+        </div>
+        <PrSide pr={pr} {...(agent === undefined ? {} : { agent })} {...(task === undefined ? {} : { task })} />
       </div>
 
       {/*

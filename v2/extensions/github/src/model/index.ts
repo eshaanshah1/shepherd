@@ -8,6 +8,8 @@
  * else in `src/`.
  */
 export {
+  authorHue,
+  authorTint,
   blockedBy,
   canMerge,
   CHECK_STATES,

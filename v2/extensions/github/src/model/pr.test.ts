@@ -5,6 +5,8 @@ import {
   checksSaid,
   countChecks,
   landOrder,
+  authorHue,
+  authorTint,
   mergeGate,
   prKey,
   reviewSaid,
@@ -56,6 +58,31 @@ describe('countChecks', () => {
     // `12 of 13` the healthy state — a number that is never green.
     const counts = countChecks([check('lint', 'passed'), check('typecheck', 'failed'), check('test', 'skipped')]);
     expect(counts).toEqual({ total: 2, passed: 1, failed: 1, running: 0, queued: 0, blocked: 0 });
+  });
+});
+
+describe('authorHue', () => {
+  it('is the same colour for the same person, every time', () => {
+    // The point of an identity mark is that it is the same mark next time. A
+    // random hue would make one author two people across a re-render, and two
+    // people across two panes showing the same thread.
+    expect(authorHue('coderabbitai')).toBe(authorHue('coderabbitai'));
+    expect(authorTint('sam')).toBe(authorTint('sam'));
+  });
+
+  it('tells neighbours apart', () => {
+    // Not a guarantee — a hash has none — but the logins actually on a PR
+    // together should not collide, and these are the ones that do sit together.
+    const hues = ['coderabbitai', 'bsautomation', 'eshaanshah-bs', 'claude', 'sam'].map(authorHue);
+    expect(new Set(hues).size).toBe(hues.length);
+  });
+
+  it('carries identity in the ANGLE, so nothing competes with the five that mean something', () => {
+    // A sixth axis, on the exemption the repo marks already take: same weight
+    // for everyone, only the hue differs.
+    for (const login of ['a', 'zzzzz', 'bsautomation']) {
+      expect(authorTint(login)).toMatch(/^oklch\(0\.62 0\.11 \d{1,3}\)$/);
+    }
   });
 });
 
