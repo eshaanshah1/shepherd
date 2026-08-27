@@ -1,3 +1,4 @@
+import { AVATAR_PX } from './model/pr.ts';
 import type { CheckRun, CheckState, Comment, PullRequest, PrState, ReviewThread } from './model/pr.ts';
 
 /**
@@ -79,7 +80,7 @@ query($owner: String!, $name: String!, $head: String!, $prs: Int!, $checks: Int!
             diffSide
             path
             line
-            comments(first: 1) { nodes { body author { login } createdAt } }
+            comments(first: 1) { nodes { body author { login avatarUrl(size: ${AVATAR_PX}) } createdAt } }
           }
         }
         # What was said on the PR rather than on a line of it — a bot reporting
@@ -88,7 +89,7 @@ query($owner: String!, $name: String!, $head: String!, $prs: Int!, $checks: Int!
         # and contains none of it. Asked for LAST-first, because the recent end
         # of a long conversation is the half worth drawing.
         comments(last: $comments) {
-          nodes { id body author { login } createdAt }
+          nodes { id body author { login avatarUrl(size: ${AVATAR_PX}) } createdAt }
         }
         files(first: $files) {
           nodes { path additions deletions }
@@ -162,6 +163,14 @@ export interface PrQueryResponse {
 
 interface RawAuthor {
   readonly login: string;
+  /**
+   * The account's picture, asked for at `AVATAR_PX`.
+   *
+   * On `Actor`, so it costs nothing beyond the field — the same node `login`
+   * already comes from. Optional here because only the two selections a byline
+   * is drawn from ask for it, and because a fixture need not carry one.
+   */
+  readonly avatarUrl?: string | null;
 }
 
 interface RawPullRequest {
@@ -493,6 +502,7 @@ function readThreads(raw: RawPullRequest, identity: RepoIdentity): readonly Revi
       {
         id: thread.id,
         author: first.author?.login ?? 'someone',
+        ...avatarOf(first.author),
         at: Date.parse(first.createdAt ?? '') || 0,
         path: thread.path ?? '',
         line: thread.line,
@@ -519,9 +529,22 @@ function readComments(raw: RawPullRequest): readonly Comment[] {
   return (raw.comments?.nodes ?? []).map((comment) => ({
     id: comment.id,
     author: comment.author?.login ?? 'someone',
+    ...avatarOf(comment.author),
     body: comment.body,
     at: Date.parse(comment.createdAt) || 0,
   }));
+}
+
+/**
+ * The author's picture, or nothing.
+ *
+ * Spread rather than assigned, so an author GitHub cannot name carries no key
+ * rather than an explicit `undefined` — which is what the rest of this file does
+ * with an absent field, and what keeps a deleted account out of the fact.
+ */
+function avatarOf(author: RawAuthor | null | undefined): { readonly avatar?: string } {
+  const url = author?.avatarUrl;
+  return url === null || url === undefined || url === '' ? {} : { avatar: url };
 }
 
 /**

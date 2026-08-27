@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PR_QUERY, readDependsOn, readPullRequests, type PrQueryResponse } from './query.ts';
+import { AVATAR_PX } from './model/pr.ts';
 
 /**
  * The mapping, tested without a network — which is the reason it is a separate
@@ -77,6 +78,58 @@ describe('the conversation\u2019s comments', () => {
     ]);
   });
 
+  it('asks for the author\u2019s picture at the width the byline judges by', () => {
+    /*
+     * The size is not a preference. GitHub honours it for a picture somebody
+     * uploaded and ignores it for one GitHub drew, which is the only signal it
+     * gives that an account has none — so asking for a specific width IS the
+     * test, and the byline's half of it reads the width back.
+     */
+    expect(PR_QUERY).toContain(`avatarUrl(size: ${AVATAR_PX})`);
+  });
+
+  it('carries the picture through, and no key at all for a deleted account', () => {
+    const pr = one({
+      comments: {
+        nodes: [
+          {
+            id: 'c1',
+            body: 'skipped',
+            author: { login: 'coderabbitai', avatarUrl: 'https://avatars.githubusercontent.com/u/132028505?s=64&v=4' },
+            createdAt: '2026-08-24T09:00:00Z',
+          },
+          { id: 'c2', body: 'orphaned', author: null, createdAt: '2026-08-24T10:00:00Z' },
+        ],
+      },
+    });
+    expect(pr.comments[0]?.avatar).toBe('https://avatars.githubusercontent.com/u/132028505?s=64&v=4');
+    expect(pr.comments[1]).not.toHaveProperty('avatar');
+  });
+
+  it('carries it on a diff thread too \u2014 a thread is somebody saying something', () => {
+    const pr = one({
+      reviewThreads: {
+        nodes: [
+          {
+            id: 'T1',
+            isResolved: false,
+            path: 'src/tree.ts',
+            line: 61,
+            comments: {
+              nodes: [
+                {
+                  body: 'use the token',
+                  author: { login: 'sam', avatarUrl: 'https://avatars.githubusercontent.com/u/7?s=64&v=4' },
+                  createdAt: '2026-08-24T09:00:00Z',
+                },
+              ],
+            },
+          },
+        ],
+      },
+    });
+    expect(pr.threads[0]?.avatar).toBe('https://avatars.githubusercontent.com/u/7?s=64&v=4');
+  });
 });
 
 describe('the query itself', () => {

@@ -737,6 +737,20 @@
   background: var(--sh-line-active);
 }
 
+/* The account's own picture, over the square rather than instead of it: it is
+   laid on top only once the byline has judged it real, so the square is what
+   shows while the request is out and what stays if it never arrives. */
+.sh-pr-said__face {
+  display: none;
+  inline-size: 100%;
+  block-size: 100%;
+  border-radius: inherit;
+}
+
+.sh-pr-said__face[data-face] {
+  display: block;
+}
+
 .sh-pr-said__body {
   flex: 1;
   min-inline-size: 0;

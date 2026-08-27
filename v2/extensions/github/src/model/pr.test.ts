@@ -7,6 +7,8 @@ import {
   landOrder,
   authorHue,
   authorTint,
+  avatarIsReal,
+  AVATAR_PX,
   mergeGate,
   prKey,
   reviewSaid,
@@ -84,6 +86,31 @@ describe('authorHue', () => {
     for (const login of ['a', 'zzzzz', 'bsautomation']) {
       expect(authorTint(login)).toMatch(/^oklch\(0\.62 0\.11 \d{1,3}\)$/);
     }
+  });
+});
+
+describe('avatarIsReal', () => {
+  /*
+   * The whole of it: an image at the width we asked for is one somebody
+   * uploaded, and a wider one is one GitHub drew because they had not.
+   *
+   * Measured against the live host rather than assumed. `?s=64` returns 64x64
+   * for coderabbitai and octocat, and 420x420 for an account with no picture —
+   * the block identicon — and for an id with nobody behind it, the grey octocat.
+   * GitHub caps at what is stored and never upscales, which is why the rule is
+   * an upper bound rather than an equality: a 32px upload is still theirs.
+   */
+  it('accepts the width it asked for, and anything under it', () => {
+    expect(avatarIsReal(AVATAR_PX)).toBe(true);
+    expect(avatarIsReal(32)).toBe(true);
+  });
+
+  it('refuses the 420px identicon GitHub draws for an account with no picture', () => {
+    expect(avatarIsReal(420)).toBe(false);
+  });
+
+  it('refuses an image that never loaded, which reports zero', () => {
+    expect(avatarIsReal(0)).toBe(false);
   });
 });
 

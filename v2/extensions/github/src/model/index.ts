@@ -10,6 +10,8 @@
 export {
   authorHue,
   authorTint,
+  avatarIsReal,
+  AVATAR_PX,
   blockedBy,
   canMerge,
   CHECK_STATES,

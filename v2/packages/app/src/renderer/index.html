@@ -4,13 +4,14 @@
     <meta charset="UTF-8" />
     <title>Shepherd</title>
     <!--
-      No remote origins, no inline script, no eval. The renderer loads its own
-      bundle and talks to main through the preload bridge; anything else is a
-      way for page content to reach the machine.
+      No inline script, no eval, and one remote origin: GitHub's avatar host,
+      which `img-src` names so a review byline can draw the face that wrote the
+      comment. It is images only, on a host that answers nothing else, and
+      `connect-src` still refuses every fetch the renderer could make itself.
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://avatars.githubusercontent.com; font-src 'self' data:; connect-src 'self'"
     />
   </head>
   <body>

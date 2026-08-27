@@ -9,6 +9,7 @@ import { SHEPHERD_DIFF_CSS, SHEPHERD_DIFF_SIZING, SHEPHERD_DIFF_THEME } from './
 import type { WrapHand } from './pr-detail.tsx';
 import {
   authorTint,
+  avatarIsReal,
   firstFailure,
   isLineInDiff,
   unifiedPatch,
@@ -188,11 +189,7 @@ export function Talk({ pr, now, busy, wrapHand, onHandThread }: PanelProps): Rea
       {entries.map((entry) =>
         entry.kind === 'comment' ? (
           <article key={entry.comment.id} className="sh-pr-said">
-            <span
-              className="sh-pr-said__mark"
-              style={{ background: authorTint(entry.comment.author) }}
-              aria-hidden="true"
-            />
+            <AuthorMark login={entry.comment.author} avatar={entry.comment.avatar} />
             <div className="sh-pr-said__body">
               <header className="sh-pr-said__who">
                 <span className="sh-pr-said__login">{entry.comment.author}</span>
@@ -215,6 +212,44 @@ export function Talk({ pr, now, busy, wrapHand, onHandThread }: PanelProps): Rea
         ),
       )}
     </div>
+  );
+}
+
+/**
+ * Who said it — their picture when they have one, `authorTint`'s square when they
+ * do not.
+ *
+ * The square is always painted and the picture lies over it, so the two ways
+ * this can fail — no network, no uploaded avatar — both land on the square, and
+ * neither flashes an image on the way there. `avatarIsReal` reads the loaded
+ * WIDTH to tell those apart, for the reason `AVATAR_PX` gives: GitHub answers
+ * for an account with no picture by drawing one, and what it draws is a pale
+ * block tile that would say nothing about who wrote the comment.
+ *
+ * The image is `aria-hidden` with an empty `alt` because the login is the next
+ * element, and a face with a name on it would be read out twice.
+ */
+function AuthorMark({
+  login,
+  avatar,
+}: {
+  readonly login: string;
+  readonly avatar: string | undefined;
+}): ReactElement {
+  const [face, setFace] = useState(false);
+  return (
+    <span className="sh-pr-said__mark" style={{ background: authorTint(login) }} aria-hidden="true">
+      {avatar === undefined ? null : (
+        <img
+          className="sh-pr-said__face"
+          src={avatar}
+          alt=""
+          data-face={face ? 'true' : undefined}
+          onLoad={(event) => setFace(avatarIsReal(event.currentTarget.naturalWidth))}
+          onError={() => setFace(false)}
+        />
+      )}
+    </span>
   );
 }
 
@@ -243,13 +278,13 @@ function ThreadCard({
 }): ReactElement {
   return (
     <article className="sh-pr-said" data-resolved={thread.resolved ? 'true' : undefined}>
-      <span
-        className="sh-pr-said__mark"
-        {...(thread.resolved ? {} : { style: { background: authorTint(thread.author) } })}
-        aria-hidden="true"
-      >
-        {thread.resolved ? <Icon icon={namedGlyph('check')} size="sm" /> : null}
-      </span>
+      {thread.resolved ? (
+        <span className="sh-pr-said__mark" aria-hidden="true">
+          <Icon icon={namedGlyph('check')} size="sm" />
+        </span>
+      ) : (
+        <AuthorMark login={thread.author} avatar={thread.avatar} />
+      )}
       <div className="sh-pr-said__body">
         <header className="sh-pr-said__who">
           <span className="sh-pr-said__login">{thread.author}</span>

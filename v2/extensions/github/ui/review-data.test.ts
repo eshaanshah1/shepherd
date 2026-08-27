@@ -104,6 +104,27 @@ describe('readPr', () => {
     const pr = readPr(raw({ threads: [{ id: 'T1', author: 'sam', path: 'a.ts', body: 'hm' }] }));
     expect(pr?.threads[0]).toMatchObject({ id: 'T1', line: null, resolved: false });
   });
+
+  it('takes an avatar only from the host that serves them', () => {
+    /*
+     * The one field on this port that becomes a `src`, so it is the one field
+     * where a bad value would reach the network instead of the screen. `img-src`
+     * refuses any other host as well, and a reader whose whole job is to
+     * distrust this shape should not be leaving the check to a stylesheet.
+     */
+    const pr = readPr(
+      raw({
+        comments: [
+          { id: 'c1', author: 'coderabbitai', body: 'skipped', at: 9, avatar: 'https://avatars.githubusercontent.com/u/1?s=64&v=4' },
+          { id: 'c2', author: 'sam', body: 'and this', at: 10, avatar: 'https://elsewhere.example/track.gif' },
+          { id: 'c3', author: 'jane', body: 'and this', at: 11, avatar: 42 },
+        ],
+      }),
+    );
+    expect(pr?.comments[0]?.avatar).toBe('https://avatars.githubusercontent.com/u/1?s=64&v=4');
+    expect(pr?.comments[1]).not.toHaveProperty('avatar');
+    expect(pr?.comments[2]).not.toHaveProperty('avatar');
+  });
 });
 
 describe('readReview', () => {

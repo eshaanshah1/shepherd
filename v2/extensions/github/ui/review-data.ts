@@ -240,6 +240,7 @@ function readThreads(value: unknown): readonly ReviewThread[] {
       {
         id,
         author: str(entry['author']) ?? 'someone',
+        ...avatar(entry['avatar']),
         at: int(entry['at']) ?? 0,
         path: str(entry['path']) ?? '',
         line: int(entry['line']) ?? null,
@@ -266,8 +267,25 @@ function readComments(value: unknown): readonly Comment[] {
     const id = str(entry['id']);
     const body = str(entry['body']);
     if (id === undefined || body === undefined) return [];
-    return [{ id, author: str(entry['author']) ?? 'someone', body, at: int(entry['at']) ?? 0 }];
+    return [
+      { id, author: str(entry['author']) ?? 'someone', ...avatar(entry['avatar']), body, at: int(entry['at']) ?? 0 },
+    ];
   });
+}
+
+/**
+ * An avatar URL, and only from the host that serves them.
+ *
+ * The one field on this port that becomes a `src`, so it is the one field where
+ * a bad value reaches the network rather than the screen. `img-src` names that
+ * host too and would refuse anything else, but a reader whose job is to distrust
+ * this shape should not be leaving the second check to a stylesheet.
+ */
+const AVATAR_ORIGIN = 'https://avatars.githubusercontent.com/';
+
+function avatar(value: unknown): { readonly avatar?: string } {
+  const url = str(value);
+  return url === undefined || !url.startsWith(AVATAR_ORIGIN) ? {} : { avatar: url };
 }
 
 const REVIEW_DECISIONS: readonly PullRequest['reviewDecision'][] = ['approved', 'changes', 'required', 'none'];

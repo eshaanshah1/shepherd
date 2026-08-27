@@ -73,6 +73,8 @@ export interface CheckRun {
 export interface ReviewThread {
   readonly id: string;
   readonly author: string;
+  /** Their picture, at `AVATAR_PX`. Absent for a deleted account. */
+  readonly avatar?: string;
   /** Epoch ms of its first comment — where it sits in the conversation. */
   readonly at: number;
   readonly path: string;
@@ -141,6 +143,8 @@ export interface Comment {
   readonly id: string;
   /** `someone` when GitHub has no account to name — a deleted user. */
   readonly author: string;
+  /** Their picture, at `AVATAR_PX`. Absent for a deleted account. */
+  readonly avatar?: string;
   /** Markdown SOURCE, for the same reason `body` is — the pane renders it. */
   readonly body: string;
   /** Epoch ms. */
@@ -303,6 +307,27 @@ export function authorHue(login: string): number {
 
 /** The mark's fill, as a CSS colour a stylesheet can use directly. */
 export const authorTint = (login: string): string => `oklch(0.62 0.11 ${authorHue(login)})`;
+
+/**
+ * The width an avatar is asked for, and the test for whether one exists.
+ *
+ * GitHub answers `avatarUrl(size:)` two different ways, and the difference is
+ * the only signal it gives that an account has no picture. A picture somebody
+ * UPLOADED comes back at the requested width (or narrower — it caps at what is
+ * stored and never upscales). A picture GitHub GENERATED ignores the size
+ * entirely and comes back 420px: the block identicon for a real account, the
+ * grey octocat for an id with nobody behind it.
+ *
+ * So an image WIDER than this was not the one asked for, which makes it one
+ * GitHub drew, and the byline keeps `authorTint`'s square instead. Stated as
+ * "wider than asked for" rather than "exactly 420" so that a 32px upload still
+ * draws and a future default size still does not.
+ */
+export const AVATAR_PX = 64;
+
+/** Whether a loaded avatar is the account's own rather than one GitHub drew. */
+export const avatarIsReal = (naturalWidth: number): boolean =>
+  naturalWidth > 0 && naturalWidth <= AVATAR_PX;
 
 /** `owner/repo#123` — the identity every cross-reference uses. */
 export const prKey = (pr: Pick<PullRequest, 'repo' | 'number'>): string => `${pr.repo}#${pr.number}`;

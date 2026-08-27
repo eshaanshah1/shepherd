@@ -20,10 +20,14 @@ import type { PullRequest } from './model/pr.ts';
  *     absent rather than "no review yet";
  *   - **an approval and a requested change**, which are the two review verdicts;
  *   - **an unresolved thread and a resolved one**, so both marks appear;
+ *   - **three kinds of byline**: an author with a real picture, one whose only
+ *     picture is the identicon GitHub drew, and one with no avatar at all — the
+ *     three cases `AVATAR_PX` distinguishes and the only ones a load can produce;
  *   - **a merged PR**, so the `Merged` section and the shipped-row fact exist.
  *
- * Nothing here is persisted and nothing reaches GitHub. `github.seed` refuses
- * outside a dev build.
+ * Nothing here is persisted and the only thing that reaches GitHub is the two
+ * avatar images, which is the point of carrying them: a byline that draws a face
+ * cannot be looked at without one. `github.seed` refuses outside a dev build.
  */
 
 /** Times are relative to `now` so the pane's ages read sensibly whenever it runs. */
@@ -73,6 +77,9 @@ export function fixturePrs(now: number): readonly PullRequest[] {
         {
           id: 'T-1',
           author: 'sam',
+          // An account with no picture of its own, so the byline has to read the
+          // width back and keep the square. See `AVATAR_PX`.
+          avatar: 'https://avatars.githubusercontent.com/u/196956451?s=64&v=4',
           at: minutes(40),
           path: 'src/tree.ts',
           line: 61,
@@ -91,6 +98,13 @@ export function fixturePrs(now: number): readonly PullRequest[] {
           author: 'bsautomation',
           at: minutes(45),
           body: 'This PR needs a stack audit before it can merge.\n\n```\n/stack:audit-stack --pr 44\n```',
+        },
+        {
+          id: 'C-2',
+          author: 'coderabbitai',
+          avatar: 'https://avatars.githubusercontent.com/u/132028505?s=64&v=4',
+          at: minutes(30),
+          body: '**Review skipped**\n\nAuto reviews are disabled on this repository.',
         },
       ],
       files: [

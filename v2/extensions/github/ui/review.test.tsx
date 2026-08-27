@@ -108,6 +108,26 @@ function draw(
 const text = (selector: string): string | undefined => host.querySelector(selector)?.textContent ?? undefined;
 const all = (selector: string): HTMLElement[] => [...host.querySelectorAll<HTMLElement>(selector)];
 
+const one = (selector: string): HTMLElement => {
+  const found = host.querySelector<HTMLElement>(selector);
+  if (found === null) throw new Error(`no ${selector}`);
+  return found;
+};
+
+/**
+ * An image that finished loading at a given width.
+ *
+ * jsdom fetches nothing, so `naturalWidth` is 0 forever and `load` never fires.
+ * Both are defined here because the width IS the assertion: it is how the byline
+ * tells a picture somebody uploaded from one GitHub drew.
+ */
+const loaded = (image: HTMLImageElement, naturalWidth: number): void => {
+  Object.defineProperty(image, 'naturalWidth', { value: naturalWidth, configurable: true });
+  act(() => {
+    image.dispatchEvent(new Event('load', { bubbles: false }));
+  });
+};
+
 // jsdom resolves promises between acts; one flush is enough for these.
 const settle = async (): Promise<void> => {
   await act(async () => {
@@ -622,6 +642,69 @@ describe('the PR as one document (11)', () => {
     expect(tints).toHaveLength(3);
     expect(new Set(tints).size).toBe(3);
     expect(tints[0]).toMatch(/^oklch/);
+  });
+
+  it('draws the account\u2019s own picture over the square once it has loaded', async () => {
+    /*
+     * The ask this answers: coderabbitai has a logo, and a byline drawing a
+     * coloured square beside its name is drawing the one thing about the comment
+     * that GitHub already has a picture for.
+     *
+     * `data-face` is what the stylesheet shows on, and it is absent until the
+     * load reports a width — so the square is what is on screen while the
+     * request is out, and there is no frame where a half-loaded image is.
+     */
+    draw([rich({ comments: [
+      { id: 'c1', author: 'coderabbitai', body: 'skipped', at: 1, avatar: 'https://avatars.githubusercontent.com/u/132028505?s=64&v=4' },
+    ] })]);
+    await settle();
+    const face = one('.sh-pr-said__face') as HTMLImageElement;
+    expect(face.getAttribute('src')).toBe('https://avatars.githubusercontent.com/u/132028505?s=64&v=4');
+    expect(face.dataset['face']).toBeUndefined();
+
+    loaded(face, 64);
+    expect(face.dataset['face']).toBe('true');
+  });
+
+  it('keeps the square when GitHub answers with the identicon it drew', async () => {
+    /*
+     * An account with no picture gets one from GitHub, 420px wide whatever width
+     * was asked for, and it is pale blocks on near-white. Drawing it would put
+     * that tile in every byline on a dark pane and say nothing about who wrote
+     * the comment, so the width is read back and the square stays.
+     */
+    draw([rich({ comments: [
+      { id: 'c1', author: 'eshaanshah-bs', body: 'ship it', at: 1, avatar: 'https://avatars.githubusercontent.com/u/196956451?s=64&v=4' },
+    ] })]);
+    await settle();
+    const face = one('.sh-pr-said__face') as HTMLImageElement;
+
+    loaded(face, 420);
+    expect(face.dataset['face']).toBeUndefined();
+    expect(one('.sh-pr-said__mark').style.background).toMatch(/^oklch/);
+  });
+
+  it('keeps the square when the picture never arrives', async () => {
+    // Offline, or a host that answered 404. Either way the byline is the one it
+    // was before the avatar existed rather than a hole where a face would be.
+    draw([rich({ comments: [
+      { id: 'c1', author: 'coderabbitai', body: 'skipped', at: 1, avatar: 'https://avatars.githubusercontent.com/u/132028505?s=64&v=4' },
+    ] })]);
+    await settle();
+    const face = one('.sh-pr-said__face') as HTMLImageElement;
+
+    act(() => {
+      face.dispatchEvent(new Event('error', { bubbles: false }));
+    });
+    expect(face.dataset['face']).toBeUndefined();
+  });
+
+  it('draws no picture at all for an author GitHub cannot name', async () => {
+    // A deleted account carries no avatar key, so there is no `src` to request
+    // and nothing to fail — the square is the whole byline.
+    draw([rich({ comments: [{ id: 'c1', author: 'someone', body: 'orphaned', at: 1 }] })]);
+    await settle();
+    expect(all('.sh-pr-said__face')).toHaveLength(0);
   });
 
   it('counts a section on its own heading, past the rule', async () => {
