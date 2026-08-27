@@ -1,57 +1,57 @@
 import { useState, type ReactElement } from 'react';
-import { Button, KeyCap } from '@shepherd/ui';
-import { canMerge, firstFailure, type CheckRun, type PullRequest, type ReviewThread } from '../src/model/index.ts';
-import { PrHeader, type PrTab } from './pr-header.tsx';
-import { Checks, Commits, Conversation, Files, type PanelProps } from './pr-panels.tsx';
+import { Button, SectionLabel } from '@shepherd/ui';
+import { PrBrief } from './pr-header.tsx';
+import {
+  CommitDiff,
+  Description,
+  FilesDiff,
+  FilesList,
+  Checks,
+  Commits,
+  Talk,
+  type PanelProps,
+} from './pr-panels.tsx';
+import { canMerge, countChecks, firstFailure, type ChangedFile, type PullRequest } from '../src/model/index.ts';
 
 /**
- * One pull request, in full — and the same component is the whole tab when a
- * task has only one.
+ * One pull request, as ONE DOCUMENT.
  *
- * **Four sub-views, not one column.** Everything a PR has does not fit in a
- * stack: the description, the threads, the commits, twelve checks and their
- * logs, and a diff. Stacked, the useful thing is always below the fold and the
- * pane reads as noise. Split, each tab is one job — and the tab row carries
- * counts, so you can see what is in a tab before opening it.
+ * It was four tabs over a fixed header and a footer. Tabs are a good answer when
+ * their contents compete for the same rectangle and you only ever want one; they
+ * are the wrong answer here, because the four things a PR is — what it says, what
+ * was said about it, what ran, what changed — are read together. Three quarters
+ * of a pull request being one click away is three quarters of it you do not look
+ * at, and the counts on the tabs existed to paper over exactly that.
  *
- * The header and the footer stay put across all four. The header is the thing
- * you are looking at and the tabs are jobs on it; a header that re-rendered per
- * tab would make each tab feel like a different page.
+ * So everything is in one scroll and the headings are the navigation. Five
+ * sections do not need a control strip to move between them, and removing it
+ * took a whole band out of a surface that had three.
  *
- * The footer's primary is **whatever this PR needs**, which is the one rule
- * worth reading before changing anything here. `Merge` is never offered while it
- * cannot merge — a disabled primary is a button that teaches you nothing, and
- * the footer says the reason in words instead.
+ * **Two things still take the pane over**, and both are the same kind of thing:
+ * a diff. A file's patch and a commit's are the largest objects here by an order
+ * of magnitude, they carry their own tree, and they are a place you GO rather
+ * than a section you scroll past. The Commits tab already worked this way and
+ * already had the way back; this generalises it rather than inventing it.
  */
 
-export interface PrActions {
-  readonly onHandCheck: (check: CheckRun) => void;
-  readonly onHandThread: (thread: ReviewThread) => void;
-  readonly onHandReview: () => void;
-  readonly onMerge: () => void;
-  readonly onOpenExternal: (url: string) => void;
-}
+type Open = { readonly kind: 'doc' } | { readonly kind: 'files' } | { readonly kind: 'commit'; readonly sha: string };
 
 /**
- * Every `Hand to agent` button, wrapped by whoever owns the menu.
+ * The hand menu's wrapper — see `review.tsx`.
  *
- * A function rather than a `menu` node, because the menu is ANCHORED: Radix
- * hangs it off its trigger, so the trigger has to be the real button and the
- * wrapping has to happen at each site. The `at` key is which button asked —
- * `check`, `footer`, `thread:<id>` — so only the one you pressed opens.
- *
- * Identity, not decoration: a menu that opened under the footer when you pressed
- * a thread's button would point at the wrong thing, which is the entire reason
- * this is a menu rather than a modal.
+ * The `at` key is which button asked (`check`, `brief`, `thread:<id>`), so only
+ * the one you pressed opens. Identity, not decoration: a menu that opened under
+ * the brief when you pressed a thread's button would point at the wrong thing.
  */
 export type WrapHand = (at: string, button: ReactElement) => ReactElement;
 
-const PANELS: Readonly<Record<PrTab, (props: PanelProps) => ReactElement>> = {
-  conversation: Conversation,
-  commits: Commits,
-  checks: Checks,
-  files: Files,
-};
+export interface PrActions {
+  readonly onMerge: () => void;
+  readonly onHandCheck: PanelProps['onHandCheck'];
+  readonly onHandThread: PanelProps['onHandThread'];
+  readonly onHandReview: (check?: string) => void;
+  readonly onOpenExternal: (url: string) => void;
+}
 
 export function PrDetail({
   pr,
@@ -73,88 +73,120 @@ export function PrDetail({
   readonly agent?: PanelProps['agent'];
   readonly task?: PanelProps['task'];
   readonly onNeedDiff: () => void;
-  readonly onNeedCommit?: PanelProps['onNeedCommit'];
+  readonly onNeedCommit?: (sha: string) => Promise<readonly ChangedFile[] | null>;
 }): ReactElement {
-  /**
-   * Which tab, and it opens on the one that needs you.
+  /*
+   * Where you are, as ONE value.
    *
-   * A failing check is the reason you came, so landing on Conversation and
-   * making you find it would be the pane knowing something and not saying it.
-   * State rather than derived, so it stops moving the moment you choose.
+   * It was `useState<PrTab>` seeded from `firstFailure` — the pane opened on
+   * Checks when something was red, because landing on Conversation and making
+   * you find it would be the pane knowing something and not saying it. With one
+   * document that seed is unnecessary: a failing check is in the same scroll as
+   * everything else, and `mergeGate` says so in the first sentence.
    */
-  const [tab, setTab] = useState<PrTab>(firstFailure(pr) === undefined ? 'conversation' : 'checks');
-
+  const [open, setOpen] = useState<Open>({ kind: 'doc' });
   const failure = firstFailure(pr);
-  const open = pr.threads.filter((thread) => !thread.resolved);
-  const mergeable = canMerge(pr);
-  const Panel = PANELS[tab];
+  const threads = pr.threads.filter((thread) => !thread.resolved);
+  const checks = countChecks(pr.checks);
+
+  const shared = {
+    pr,
+    now,
+    busy,
+    wrapHand,
+    onHandCheck: actions.onHandCheck,
+    onHandThread: actions.onHandThread,
+    onOpenExternal: actions.onOpenExternal,
+    onNeedDiff,
+    ...(onNeedCommit === undefined ? {} : { onNeedCommit }),
+    ...(agent === undefined ? {} : { agent }),
+    ...(task === undefined ? {} : { task }),
+  } satisfies PanelProps;
+
+  if (open.kind === 'files') {
+    return (
+      <div className="sh-pr-detail">
+        <Away what={`${pr.changedFiles} files`} onBack={() => setOpen({ kind: 'doc' })} />
+        <FilesDiff {...shared} />
+      </div>
+    );
+  }
+
+  if (open.kind === 'commit') {
+    return (
+      <div className="sh-pr-detail">
+        <Away what="the commit" onBack={() => setOpen({ kind: 'doc' })} />
+        <CommitDiff {...shared} sha={open.sha} />
+      </div>
+    );
+  }
 
   return (
     <div className="sh-pr-detail">
-      <PrHeader pr={pr} tab={tab} onTab={setTab} now={now} />
-
-      <div className="sh-pr-detail__body">
-        <Panel
+      <div className="sh-pr-doc">
+        <PrBrief
           pr={pr}
           now={now}
           busy={busy}
           wrapHand={wrapHand}
-          onHandCheck={actions.onHandCheck}
-          onHandThread={actions.onHandThread}
-          onOpenExternal={actions.onOpenExternal}
-          onNeedDiff={onNeedDiff}
-          {...(onNeedCommit === undefined ? {} : { onNeedCommit })}
           {...(agent === undefined ? {} : { agent })}
           {...(task === undefined ? {} : { task })}
+          onMerge={actions.onMerge}
+          onHand={() => actions.onHandReview(failure?.name)}
+          onOpenExternal={actions.onOpenExternal}
         />
+
+        <Description pr={pr} />
+
+        <section className="sh-pr-sec">
+          <SectionLabel count={pr.comments.length + pr.threads.length}>Conversation</SectionLabel>
+          <Talk {...shared} />
+        </section>
+
+        {pr.checks.length === 0 ? null : (
+          <section className="sh-pr-sec">
+            <SectionLabel count={`${checks.passed}/${checks.total}`}>Checks</SectionLabel>
+            <Checks {...shared} />
+          </section>
+        )}
+
+        {pr.commits.length === 0 ? null : (
+          <section className="sh-pr-sec">
+            <SectionLabel count={pr.commits.length}>Commits</SectionLabel>
+            <Commits {...shared} onOpen={(sha) => setOpen({ kind: 'commit', sha })} />
+          </section>
+        )}
+
+        <section className="sh-pr-sec">
+          <SectionLabel count={pr.changedFiles}>Files</SectionLabel>
+          <FilesList {...shared} onOpen={() => setOpen({ kind: 'files' })} />
+        </section>
       </div>
 
-      <div className="sh-pr-detail__foot">
-        {mergeable ? (
-          <Button variant="primary" size="sm" disabled={busy} onClick={actions.onMerge}>
-            Merge {pr.repoKey} #{pr.number}
-            <KeyCap>M</KeyCap>
-          </Button>
-        ) : (
-          wrapHand(
-            'footer',
-            <Button
-              variant="primary"
-              size="sm"
-              disabled={busy || (open.length === 0 && failure === undefined)}
-              onClick={failure === undefined ? actions.onHandReview : () => actions.onHandCheck(failure)}
-            >
-              Hand to agent
-              <KeyCap>H</KeyCap>
-            </Button>,
-          )
-        )}
-        <Button variant="ghost" size="sm" onClick={() => actions.onOpenExternal(pr.url)}>
-          Open on GitHub ↗
-        </Button>
-        <span className="sh-pr-detail__spacer" />
-        <span className="sh-pr-detail__why">{whyNot(pr)}</span>
-      </div>
+      {/*
+        `canMerge` and the open threads are read here only to keep the keys
+        honest — the verbs themselves live in the brief now, at the top of the
+        document where the verdict is.
+      */}
+      <span hidden data-mergeable={canMerge(pr) ? 'true' : 'false'} data-threads={threads.length} />
     </div>
   );
 }
 
 /**
- * Why this cannot merge, in words, in the footer.
+ * The way back from a surface that replaced the pane.
  *
- * It is the other half of hiding the Merge button: the button's absence says
- * "not yet" and this says which "not yet". Empty for a PR that CAN merge, since
- * the button is then the answer.
+ * It names what you left rather than saying `Back`, so the row says where you
+ * are as well as how to leave — the same line the Commits tab already drew, now
+ * that two places need it.
  */
-function whyNot(pr: PullRequest): string {
-  if (canMerge(pr)) return '';
-  if (pr.state === 'merged') return 'merged';
-  if (pr.state === 'closed') return 'closed without merging';
-  if (pr.state === 'draft') return 'draft — mark it ready on GitHub';
-  const failure = firstFailure(pr);
-  if (failure !== undefined) return `merge blocked · ${failure.name}`;
-  if (pr.mergeState === 'dirty') return 'merge blocked · conflicts';
-  if (pr.mergeState === 'behind') return 'merge blocked · behind the base branch';
-  if (pr.mergeState === 'unknown') return 'GitHub is still working out whether this can merge';
-  return 'merge blocked';
+function Away({ what, onBack }: { readonly what: string; readonly onBack: () => void }): ReactElement {
+  return (
+    <div className="sh-pr-away">
+      <Button variant="ghost" size="sm" onClick={onBack}>
+        ‹ Back to the pull request
+      </Button>
+      <span className="sh-pr-away__what">{what}</span>
+    </div>
+  );
 }

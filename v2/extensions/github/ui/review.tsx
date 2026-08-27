@@ -186,9 +186,21 @@ export function ReviewPane({ state, focused, invoke }: ExtensionPaneProps): Reac
       asking.current = `thread:${thread.id}`;
       void run('github.handToAgent', { task: taskId, pr: prKey(pr), thread: thread.id });
     },
-    onHandReview: () => {
-      asking.current = 'footer';
-      void run('github.handToAgent', { task: taskId, pr: prKey(pr) });
+    /*
+     * The brief's own hand-off, and it may name a check.
+     *
+     * `asking.current` is the ANCHOR the menu hangs off, and this used to say
+     * `footer` while the button that named a check said `check` — so the brief's
+     * menu tried to anchor to the Checks panel's button, which on the old tabbed
+     * surface was not even mounted. One button, one key.
+     */
+    onHandReview: (check?: string) => {
+      asking.current = 'brief';
+      void run('github.handToAgent', {
+        task: taskId,
+        pr: prKey(pr),
+        ...(check === undefined ? {} : { check }),
+      });
     },
     onMerge: () => void run('github.merge', { task: taskId, pr: prKey(pr) }),
     onOpenExternal: (url: string) => void run('github.open', { url }),

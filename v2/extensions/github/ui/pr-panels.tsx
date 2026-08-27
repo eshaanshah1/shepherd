@@ -8,6 +8,7 @@ import { Markdown } from './markdown.tsx';
 import { SHEPHERD_DIFF_CSS, SHEPHERD_DIFF_SIZING, SHEPHERD_DIFF_THEME } from './diff-theme.ts';
 import type { WrapHand } from './pr-detail.tsx';
 import {
+  firstFailure,
   isLineInDiff,
   unifiedPatch,
   type ChangedFile,
@@ -99,155 +100,79 @@ export function timelineOf(pr: PullRequest): readonly TimelineEntry[] {
 }
 
 
-export function Conversation({
-  pr,
-  now,
-  busy,
-  wrapHand,
-  onHandThread,
-  agent,
-  task,
-}: PanelProps): ReactElement {
+/**
+ * The description, as the document's opening prose.
+ *
+ * No card and no byline: the brief above already says who opened it and when,
+ * and this is the thing that sentence is about. Boxed, it read as the first of
+ * several equal things.
+ */
+export function Description({ pr }: { readonly pr: PullRequest }): ReactElement | null {
+  if (pr.body === '') return null;
   return (
-    <div className="sh-pr-panel sh-pr-panel--split">
-      <div className="sh-pr-thread">
-        {pr.body === '' ? null : (
-          /*
-            The description: no card, and no byline.
-
-            NOT A CARD, though the threads under it are. A card is a boundary,
-            and a boundary answers "where does this one end and the next begin" —
-            a real question about a list of comments and no question at all
-            about the one description. Boxed, it read as the first of several
-            equal things; it is the thing the several are about. It is also the
-            longest thing on this surface, and an inset border down a hundred
-            lines is a frame around a page.
-
-            NO BYLINE, because the header already is one. It says `<author>
-            wants to merge N commits into <base> · <age>` — built from
-            `pr.commits[0].author` and `agoText(pr.openedAt)`, the same
-            expression this line called and the same field it read. Two facts,
-            twice, one screen apart, and this copy was the one with nothing
-            around it to make it mean anything.
-          */
-          <article className="sh-pr-body">
-            {/*
-              Markdown, because an AGENT writes this field.
-              
-              It used to split on blank lines and emit paragraphs, on the
-              argument that a body is usually two sentences. That is a human's
-              PR. The bodies this app exists to show are written by an agent, and
-              they are headings, fenced commands and lists — flattened, a real
-              one is a wall of prose with the description, the reproduction and
-              the test plan indistinguishable. Measured on `cli/cli#14136`.
-            */}
-            <Markdown text={pr.body} />
-          </article>
-        )}
-
-        {timelineOf(pr).map((entry) =>
-          entry.kind === 'comment' ? (
-            <article key={entry.comment.id} className="sh-pr-card">
-              <header className="sh-pr-card__who">
-                <span className="sh-pr-card__login">@{entry.comment.author}</span>
-                <span className="sh-pr-card__when">{agoText(entry.comment.at, now) ?? ''}</span>
-              </header>
-              {/*
-                Markdown, and a bot's comment is the reason. The one that matters
-                most on this surface is a gate reporting itself, which it does in
-                fenced commands and bold status names — flattened, the command
-                you are meant to run is a sentence.
-              */}
-              <Markdown text={entry.comment.body} />
-            </article>
-          ) : (
-            <ThreadCard
-              key={entry.thread.id}
-              thread={entry.thread}
-              url={pr.url}
-              busy={busy}
-              wrapHand={wrapHand}
-              onHandThread={onHandThread}
-            />
-          ),
-        )}
-
-        {pr.threads.length === 0 && pr.comments.length === 0 && pr.body === '' ? (
-          <p className="sh-pr-panel__none">Nothing has been said about this yet.</p>
-        ) : null}
-      </div>
-
+    <div className="sh-pr-body">
       {/*
-        The meta column, and it is NOT a nav rail — every line in it is a fact
-        about this PR, and none of them moves you anywhere. That distinction is
-        what makes a second column legal here at all.
+        Markdown, because an AGENT writes this field. It used to split on blank
+        lines and emit paragraphs, on the argument that a body is usually two
+        sentences. That is a human's PR. The bodies this app exists to show are
+        headings, fenced commands and lists.
       */}
-      <aside className="sh-pr-meta">
-        <section>
-          <h3 className="sh-pr-meta__label">Reviewers</h3>
-          {pr.reviewers.length === 0 ? (
-            <p className="sh-pr-meta__none">Nobody yet</p>
-          ) : (
-            pr.reviewers.map((reviewer) => (
-              <div key={reviewer.login} className="sh-pr-meta__row">
-                <span className="sh-pr-card__mark" data-state={markFor(reviewer.verdict)} aria-hidden="true">
-                  {reviewer.verdict === 'approved' ? <Icon icon={namedGlyph('check')} size="sm" /> : null}
-                </span>
-                <span className="sh-pr-card__login">@{reviewer.login}</span>
-                <span className="sh-pr-meta__said">{saidBy(reviewer)}</span>
-              </div>
-            ))
-          )}
-        </section>
-
-        {/*
-          The one block on this surface that GitHub could not draw: which agent
-          is in this branch's worktree, and what it is doing. It is the answer to
-          "who do I hand this to" before you press the button — and the reason
-          the review tab is in this app rather than a browser tab.
-        */}
-        {agent === undefined ? null : (
-          <section>
-            <h3 className="sh-pr-meta__label">Agent</h3>
-            <div className="sh-pr-meta__row">
-              <span className="sh-pr-card__mark" data-state="resting" aria-hidden="true" />
-              <span className="sh-pr-meta__agent">{agent.title}</span>
-              <span className="sh-pr-meta__said">{agent.state}</span>
-            </div>
-            <p className="sh-pr-meta__note">owns this branch’s worktree</p>
-          </section>
-        )}
-
-        {task === undefined ? null : (
-          <section>
-            <h3 className="sh-pr-meta__label">Task</h3>
-            <p className="sh-pr-meta__task">{task.title}</p>
-            {task.others.length === 0 ? null : (
-              <p className="sh-pr-meta__note">
-                {task.others.length} more {task.others.length === 1 ? 'PR' : 'PRs'} · {task.others.join(' ')}
-              </p>
-            )}
-          </section>
-        )}
-      </aside>
+      <Markdown text={pr.body} />
     </div>
   );
 }
 
-const markFor = (verdict: 'approved' | 'changes' | 'commented'): string =>
-  verdict === 'approved' ? 'approved' : verdict === 'changes' ? 'waiting' : 'resting';
-
-const saidBy = (reviewer: { verdict: string; comments: number }): string => {
-  if (reviewer.verdict === 'approved') return 'approved';
-  if (reviewer.verdict === 'changes') return 'changes requested';
-  return `${reviewer.comments} ${reviewer.comments === 1 ? 'comment' : 'comments'}`;
-};
+/**
+ * What was said — the PR's own comments and its diff threads, in one timeline.
+ *
+ * The meta column that used to sit beside this is gone: reviewers, the agent and
+ * the task were three labelled blocks holding one line each, and they are one
+ * dim line in the brief now. A second column for eleven words is a column that
+ * exists to be a column.
+ */
+export function Talk({ pr, now, busy, wrapHand, onHandThread }: PanelProps): ReactElement {
+  const entries = timelineOf(pr);
+  if (entries.length === 0) {
+    return <p className="sh-pr-none">Nothing has been said about this yet.</p>;
+  }
+  return (
+    <div className="sh-pr-talk">
+      {entries.map((entry) =>
+        entry.kind === 'comment' ? (
+          <article key={entry.comment.id} className="sh-pr-said">
+            <span className="sh-pr-said__mark" aria-hidden="true" />
+            <div className="sh-pr-said__body">
+              <header className="sh-pr-said__who">
+                <span className="sh-pr-said__login">{entry.comment.author}</span>
+                <span className="sh-pr-said__when">{agoText(entry.comment.at, now) ?? ''}</span>
+              </header>
+              <Markdown text={entry.comment.body} />
+            </div>
+          </article>
+        ) : (
+          <ThreadCard
+            key={entry.thread.id}
+            thread={entry.thread}
+            url={pr.url}
+            busy={busy}
+            wrapHand={wrapHand}
+            onHandThread={onHandThread}
+          />
+        ),
+      )}
+    </div>
+  );
+}
 
 /**
- * One thread of the diff, as it appears in the conversation.
+ * One thread of the diff, drawn as what was SAID.
  *
- * Its own component because the timeline is a ternary over two card shapes, and
- * a branch that long written inline is one nobody can see the ends of.
+ * It was a bordered card sitting next to comments that were not, which made two
+ * remarks about the same pull request look like two kinds of object. They are
+ * one kind: somebody said something. The only thing a thread has that a comment
+ * does not is a place, so the place goes in the byline and the box goes away —
+ * `Chip`'s reasoning again, that a bordered box beside a 13px row is louder than
+ * the row.
  */
 function ThreadCard({
   thread,
@@ -263,207 +188,206 @@ function ThreadCard({
   readonly onHandThread: (thread: ReviewThread) => void;
 }): ReactElement {
   return (
-    <article className="sh-pr-card" data-resolved={thread.resolved ? 'true' : undefined}>
-      <header className="sh-pr-card__who">
-        <span className="sh-pr-card__mark" data-state={thread.resolved ? 'resolved' : 'waiting'} aria-hidden="true">
-          {thread.resolved ? <Icon icon={namedGlyph('check')} size="sm" /> : null}
-        </span>
-        <span className="sh-pr-card__login">@{thread.author}</span>
-        <span>on</span>
-        <span className="sh-pr-card__where">
-          {thread.path}
-          {thread.line === null ? '' : `:${thread.line}`}
-        </span>
-      </header>
-      {/* A review comment is markdown too, and an agent's is code more often than not. */}
-      <Markdown text={thread.body} />
-      {thread.resolved ? null : (
-        <div className="sh-pr-card__verbs">
-          {wrapHand(
-            `thread:${thread.id}`,
-            <Button variant="primary" size="sm" disabled={busy} onClick={() => onHandThread(thread)}>
-              Hand to agent
-              <KeyCap>H</KeyCap>
-            </Button>,
-          )}
-          {/*
-            Reply goes OUT. Writing a comment needs an editor, a draft, a
-            submit and a failure state, and none of that is what this pane
-            is for — the pane exists to get a comment to an agent. The
-            arrow says it leaves.
-          */}
-          <Button variant="ghost" size="sm" onClick={() => window.open(url, '_blank')}>
-            Reply ↗
-          </Button>
-        </div>
-      )}
+    <article className="sh-pr-said" data-resolved={thread.resolved ? 'true' : undefined}>
+      <span className="sh-pr-said__mark" aria-hidden="true">
+        {thread.resolved ? <Icon icon={namedGlyph('check')} size="sm" /> : null}
+      </span>
+      <div className="sh-pr-said__body">
+        <header className="sh-pr-said__who">
+          <span className="sh-pr-said__login">{thread.author}</span>
+          <span className="sh-pr-said__where">
+            {thread.path}
+            {thread.line === null ? '' : `:${thread.line}`}
+          </span>
+        </header>
+        {/* A review comment is markdown too, and an agent's is code more often than not. */}
+        <Markdown text={thread.body} />
+        {thread.resolved ? null : (
+          <div className="sh-pr-said__verbs">
+            {wrapHand(
+              `thread:${thread.id}`,
+              <Button variant="ghost" size="sm" disabled={busy} onClick={() => onHandThread(thread)}>
+                Hand to agent
+                <KeyCap>H</KeyCap>
+              </Button>,
+            )}
+            {/*
+              Reply goes OUT. Writing a comment needs an editor, a draft, a
+              submit and a failure state, and none of that is what this pane is
+              for — the pane exists to get a comment to an agent.
+            */}
+            <Button variant="ghost" size="sm" onClick={() => window.open(url, '_blank')}>
+              Reply ↗
+            </Button>
+          </div>
+        )}
+      </div>
     </article>
   );
 }
 
 // ----------------------------------------------------------------- commits
 
-export function Commits({ pr, now, busy, wrapHand, onHandThread, onNeedCommit }: PanelProps): ReactElement {
-  /*
-   * Which commit is open, and what it changed.
-   *
-   * A sha rather than an index, because the list re-sorts under a sync and an
-   * index would then point at a different commit than the one that was clicked.
-   * `files` is `undefined` while the fetch is out and `[]` for a commit that
-   * genuinely touched nothing — two states a single empty array cannot hold.
-   */
-  const [open, setOpen] = useState<string | null>(null);
-  const [files, setFiles] = useState<readonly ChangedFile[] | undefined>(undefined);
-
-  useEffect(() => {
-    if (open === null) return;
-    let live = true;
-    setFiles(undefined);
-    void (async () => {
-      const answer = await onNeedCommit?.(open);
-      // The component may have moved on — closed, or opened another commit —
-      // while this was in flight, and writing then would show one commit's
-      // diff under another's heading.
-      if (live) setFiles(answer ?? []);
-    })();
-    return () => {
-      live = false;
-    };
-  }, [open, onNeedCommit]);
-
-  if (pr.commits.length === 0) {
-    return <p className="sh-pr-panel__none">No commits on this branch yet.</p>;
-  }
-
-  const shown = pr.commits.find((commit) => commit.sha === open);
-  if (shown !== undefined) {
-    return (
-      <div className="sh-pr-panel sh-pr-panel--list sh-pr-panel--stack">
-        {/*
-          The way back, which a surface that replaced itself has to have. It
-          names the commit rather than saying `Back`, so the row says where you
-          are as well as how to leave.
-        */}
-        <button type="button" className="sh-pr-diff__head sh-ui-focusable" onClick={() => setOpen(null)}>
-          <Icon icon={namedGlyph('chevron-left')} size="sm" />
-          <span className="sh-pr-commit__sha">{shown.sha.slice(0, 7)}</span>
-          <span className="sh-pr-diff__path">{shown.subject}</span>
-          <span className="sh-pr-diff__count" data-tone="added">
-            +{shown.added}
-          </span>
-          <span className="sh-pr-diff__count" data-tone="removed">
-            −{shown.removed}
-          </span>
-        </button>
-        <DiffList
-          pr={pr}
-          files={files ?? []}
-          /* Keyed on the SHA alone: a commit is immutable, so its rendered
-             result can be cached for as long as the app lives. */
-          cacheKey={shown.sha}
-          busy={busy}
-          wrapHand={wrapHand}
-          onHandThread={onHandThread}
-          pending={files === undefined}
-        />
-      </div>
-    );
-  }
-
+/**
+ * The commits, as rows — newest first, the way a log is read.
+ *
+ * Opening one no longer replaces this list in place: a commit's diff takes the
+ * PANE, like a file's, because it is the same kind of object and wants the same
+ * room. The list is what the document carries.
+ */
+export function Commits({
+  pr,
+  now,
+  onOpen,
+}: PanelProps & { readonly onOpen: (sha: string) => void }): ReactElement {
   return (
-    <div className="sh-pr-panel">
+    <div className="sh-pr-lines">
       {pr.commits.map((commit) => (
-        /*
-         * A row that opens its own diff, so it is a button.
-         *
-         * "What did this one commit do" is the question a list of subjects
-         * raises and cannot answer, and the answer is one request away — a
-         * commit is immutable, so it is fetched once and held.
-         */
-        <button
-          key={commit.sha}
-          type="button"
-          className="sh-pr-commit sh-ui-focusable"
-          onClick={() => setOpen(commit.sha)}
-        >
-          {/* Seven characters, which is what git itself abbreviates to and what
-              a person types when they want one. */}
-          <span className="sh-pr-commit__sha">{commit.sha.slice(0, 7)}</span>
-          <span className="sh-pr-commit__subject">{commit.subject}</span>
-          <span className="sh-pr-diff__count" data-tone="added">
-            +{commit.added}
+        <button key={commit.sha} type="button" className="sh-pr-line" onClick={() => onOpen(commit.sha)}>
+          <span className="sh-pr-line__sha">{commit.sha.slice(0, 7)}</span>
+          <span className="sh-pr-line__name">{commit.subject}</span>
+          <span className="sh-pr-line__count" data-tone="added">+{commit.added}</span>
+          <span className="sh-pr-line__count" data-tone="removed">−{commit.removed}</span>
+          <span className="sh-pr-line__meta">
+            {commit.author}
+            {agoText(commit.at, now) === null ? '' : ` · ${agoText(commit.at, now) as string}`}
           </span>
-          <span className="sh-pr-diff__count" data-tone="removed">
-            −{commit.removed}
-          </span>
-          <span className="sh-pr-commit__who">{commit.author}</span>
-          <span className="sh-pr-commit__when">{agoText(commit.at, now) ?? ''}</span>
         </button>
       ))}
     </div>
   );
 }
 
-// ------------------------------------------------------------------ checks
+/**
+ * One commit's diff, on the whole pane.
+ *
+ * `files` is `undefined` while the fetch is out and `[]` for a commit that
+ * genuinely touched nothing — two states a single empty array cannot hold.
+ */
+export function CommitDiff({ pr, sha, onNeedCommit, busy, wrapHand, onHandThread }: PanelProps & { readonly sha: string }): ReactElement {
+  const [files, setFiles] = useState<readonly ChangedFile[] | undefined>(undefined);
 
-export function Checks({ pr, busy, wrapHand, onHandCheck, onOpenExternal }: PanelProps): ReactElement {
-  const failing = pr.checks.find((check) => check.state === 'failed');
-  const [at, setAt] = useState<string | null>(failing?.name ?? pr.checks[0]?.name ?? null);
-  const shown = pr.checks.find((check) => check.name === at) ?? pr.checks[0];
+  useEffect(() => {
+    let live = true;
+    setFiles(undefined);
+    void (async () => {
+      const answer = await onNeedCommit?.(sha);
+      // The component may have moved on while this was in flight, and writing
+      // then would show one commit's diff under another's heading.
+      if (live) setFiles(answer ?? []);
+    })();
+    return () => {
+      live = false;
+    };
+  }, [sha, onNeedCommit]);
 
-  if (pr.checks.length === 0 || shown === undefined) {
-    return <p className="sh-pr-panel__none">Nothing has run on this branch.</p>;
-  }
+  const commit = pr.commits.find((entry) => entry.sha === sha);
+  if (files === undefined) return <p className="sh-pr-none">Fetching this commit’s files…</p>;
+  if (files.length === 0) return <p className="sh-pr-none">This commit changed no files.</p>;
 
   return (
     <div className="sh-pr-panel sh-pr-panel--list">
-      <div className="sh-pr-list">
-        {pr.checks.map((check) => (
-          <button
-            key={check.name}
-            type="button"
-            className="sh-pr-list__row"
-            data-at={check.name === shown.name ? 'true' : undefined}
-            data-state={check.state}
-            onClick={() => setAt(check.name)}
-          >
-            <span className="sh-pr-list__mark" aria-hidden="true">
-              <CheckMark state={check.state} />
-            </span>
-            <span className="sh-pr-list__name">{check.name}</span>
-            <span className="sh-pr-list__meta">
-              {check.state === 'skipped' ? 'skipped' : durationText(check.durationMs)}
-            </span>
-            <span className="sh-ui-sr-only">{check.state}</span>
-          </button>
-        ))}
-      </div>
-
-      <div className="sh-pr-log">
-        <pre className="sh-pr-log__text">
-          {shown.log ?? shown.summary ?? 'GitHub has no output for this check.'}
-        </pre>
-        <div className="sh-pr-log__foot">
-          {wrapHand(
-            'check',
-            <Button variant="primary" size="sm" disabled={busy || shown.state !== 'failed'} onClick={() => onHandCheck(shown)}>
-              Hand to agent
-              <KeyCap>H</KeyCap>
-            </Button>,
-          )}
-          {shown.url === undefined ? null : (
-            <Button variant="ghost" size="sm" onClick={() => onOpenExternal(shown.url as string)}>
-              Full log ↗
-            </Button>
-          )}
-          <span className="sh-pr-log__spacer" />
-          <span className="sh-pr-log__note">
-            {shown.state === 'failed' ? 'sends the output and the failing file' : ''}
-          </span>
-        </div>
-      </div>
+      <p className="sh-pr-commit-head">{commit?.subject ?? sha.slice(0, 7)}</p>
+      <DiffList
+        pr={pr}
+        files={files}
+        cacheKey={sha}
+        busy={busy}
+        wrapHand={wrapHand}
+        onHandThread={onHandThread}
+        viewerRef={{ current: null }}
+        pending={false}
+      />
     </div>
   );
+}
+
+// ------------------------------------------------------------------ checks
+
+/**
+ * The checks, as rows that open.
+ *
+ * It was a two-column log viewer — names on the left, the selected check's
+ * output on the right — and that shape is still defensible (it moves you
+ * nowhere, so it is not a second rail). It is simply too much furniture for the
+ * common case: two checks, one line of output each. A row that discloses its own
+ * log costs nothing when nothing is wrong and still puts the failing lines on
+ * screen, which is the thing an ADE has over the website.
+ *
+ * A check with nothing to say does not open at all — a disclosure that reveals
+ * "GitHub has no output for this check" is a control that lies about having
+ * something behind it.
+ */
+export function Checks({ pr, busy, wrapHand, onHandCheck, onOpenExternal }: PanelProps): ReactElement {
+  const [open, setOpen] = useState<string | null>(() => firstFailure(pr)?.name ?? null);
+
+  return (
+    <div className="sh-pr-lines">
+      {pr.checks.map((check) => {
+        const said = check.log ?? check.summary ?? '';
+        const at = open === check.name && said !== '';
+        return (
+          <div key={check.name} className="sh-pr-check" data-state={check.state}>
+            <button
+              type="button"
+              className="sh-pr-line"
+              disabled={said === ''}
+              aria-expanded={said === '' ? undefined : at}
+              onClick={() => setOpen(at ? null : check.name)}
+            >
+              <span className="sh-pr-line__mark" aria-hidden="true">
+                <CheckMark state={check.state} />
+              </span>
+              <span className="sh-pr-line__name">{check.name}</span>
+              <span className="sh-pr-line__meta">{whatHappened(check)}</span>
+              <span className="sh-ui-sr-only">{check.state}</span>
+            </button>
+            {at ? (
+              <div className="sh-pr-check__said">
+                <pre className="sh-pr-log">{said}</pre>
+                <div className="sh-pr-check__verbs">
+                  {wrapHand(
+                    'check',
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={busy || check.state !== 'failed'}
+                      onClick={() => onHandCheck(check)}
+                    >
+                      Hand to agent
+                      <KeyCap>H</KeyCap>
+                    </Button>,
+                  )}
+                  {check.url === undefined ? null : (
+                    <Button variant="ghost" size="sm" onClick={() => onOpenExternal(check.url as string)}>
+                      Full log ↗
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * The row's right-hand words — what happened, not how long it took.
+ *
+ * A duration is the interesting number for a check that RAN. For the two states
+ * this pane exists to make visible it is no number at all: a queued check has
+ * not started and a blocked one is waiting on a person, and both drew an empty
+ * cell where the answer should be.
+ */
+function whatHappened(check: CheckRun): string {
+  if (check.state === 'queued') return 'has not reported';
+  if (check.state === 'blocked') return 'waiting on a person';
+  if (check.state === 'skipped') return 'skipped';
+  const took = durationText(check.durationMs);
+  if (check.state === 'failed') return took === '' ? 'failed' : `failed · ${took}`;
+  return took;
 }
 
 /**
@@ -838,7 +762,38 @@ function stillFetching(files: readonly ChangedFile[]): boolean {
   return !files.some((file) => file.patch !== undefined) && files.some((file) => file.added + file.removed > 0);
 }
 
-export function Files({ pr, busy, wrapHand, onHandThread, onNeedDiff }: PanelProps): ReactElement {
+/**
+ * The paths, as rows — what the document carries.
+ *
+ * The diff itself is a place you GO: `DiffList` renders every file's patch in
+ * one continuous scroll beside a tree, which is the largest object on this
+ * surface by an order of magnitude and wants the whole pane. Listing the paths
+ * here and opening that on demand is the same trade the Commits section makes.
+ */
+export function FilesList({ pr, onOpen }: PanelProps & { readonly onOpen: () => void }): ReactElement {
+  const files = pr.files ?? [];
+  if (files.length === 0) {
+    return (
+      <button type="button" className="sh-pr-line sh-pr-line--wide" onClick={onOpen}>
+        <span className="sh-pr-line__name">Open the diff</span>
+        <span className="sh-pr-line__meta">{pr.changedFiles} files</span>
+      </button>
+    );
+  }
+  return (
+    <div className="sh-pr-lines">
+      {files.map((file) => (
+        <button key={file.path} type="button" className="sh-pr-line" onClick={onOpen}>
+          <span className="sh-pr-line__name">{file.path}</span>
+          <span className="sh-pr-line__count" data-tone="added">+{file.added}</span>
+          <span className="sh-pr-line__count" data-tone="removed">−{file.removed}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function FilesDiff({ pr, busy, wrapHand, onHandThread, onNeedDiff }: PanelProps): ReactElement {
   const files = pr.files ?? [];
   /*
    * Asked for on mount, and again only if the PR changes under us.

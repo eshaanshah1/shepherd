@@ -225,7 +225,7 @@ describe('one PR (7c)', () => {
     expect(host.querySelector('.sh-review__back')).toBeNull();
     expect(host.querySelector('.sh-review__position')).toBeNull();
     expect(host.querySelector('.sh-pr-detail')).not.toBeNull();
-    expect(text('.sh-pr-head__title')).toBe('Add multiple task tabs');
+    expect(text('.sh-pr-brief__title')).toBe('Add multiple task tabs');
   });
 
   it('stops being the whole tab as soon as there is a second one', async () => {
@@ -272,13 +272,13 @@ describe('the footer’s primary', () => {
     draw([pr({ checks: [{ name: 'typecheck', state: 'failed' }], mergeState: 'blocked' })]);
     await settle();
     expect(host.textContent).not.toContain('Merge v2');
-    expect(text('.sh-pr-detail__why')).toBe('merge blocked · typecheck');
+    expect(text('.sh-pr-brief__because')).toContain('typecheck failed');
   });
 
   it('says GitHub is still deciding rather than offering a button that would fail', async () => {
     draw([pr({ mergeState: 'unknown' })]);
     await settle();
-    expect(text('.sh-pr-detail__why')).toContain('still working out');
+    expect(text('.sh-pr-brief__because')).toContain('still working out');
   });
 });
 
@@ -544,12 +544,16 @@ describe('choosing which agent gets it', () => {
   });
 });
 
-describe('the PR’s four sub-views (11)', () => {
+describe('the PR as one document (11)', () => {
   /**
-   * Everything a PR has does not fit in a stack: the description, the threads,
-   * the commits, twelve checks and their logs, and a diff. Stacked, the useful
-   * thing is always below the fold. Split, each tab is one job — and the tab row
-   * carries counts, so you can see what is in a tab before opening it.
+   * The four tabs are gone.
+   *
+   * They were the right answer while the panes competed for one rectangle, and
+   * the wrong one for a pull request: what it says, what was said about it, what
+   * ran and what changed are read TOGETHER. Three quarters of it one click away
+   * is three quarters nobody looks at — which is what the counts on the tabs
+   * were papering over. The two things that still take the pane are the two
+   * diffs, because a patch is a place you go rather than a section you scroll.
    */
   const rich = (over: Record<string, unknown> = {}): Record<string, unknown> =>
     pr({
@@ -568,46 +572,35 @@ describe('the PR’s four sub-views (11)', () => {
       ...over,
     });
 
-  const tabs = (): string[] => all('.sh-pr-head__tab').map((node) => node.textContent ?? '');
-  const clickTab = (name: string): void => {
-    act(() => all('.sh-pr-head__tab').find((node) => node.textContent?.startsWith(name))?.click());
+  const headings = (): string[] => all('.sh-ui-section-label__text').map((node) => node.textContent ?? '');
+  const openFiles = (): void => {
+    act(() => all('.sh-pr-line').find((node) => node.textContent?.includes('src/tree.ts'))?.click());
   };
 
-  it('draws four tabs, each with what is in it', async () => {
+  it('puts every section in ONE scroll, with no tab row at all', async () => {
     draw([rich()]);
     await settle();
-    expect(tabs()).toEqual(['Conversation1', 'Commits2', 'Checks1', 'Files1']);
+    expect(all('.sh-pr-head__tab')).toHaveLength(0);
+    expect(headings()).toEqual(['Conversation', 'Checks', 'Commits', 'Files']);
   });
 
-  it('colours only the FAILING count, and counts failures rather than the total', async () => {
-    // `12` on a Checks tab tells you nothing; the number you want on a tab you
-    // have not opened is how much is wrong. A second coloured count would make
-    // the first stop meaning anything.
+  it('shows the description and the checks together, which two tabs could not', async () => {
+    // The point of the change, asserted as one claim: the body and the failing
+    // check are on screen at the same time without anybody clicking anything.
     draw([rich()]);
     await settle();
-    const coloured = all('.sh-pr-head__count').filter((node) => node.dataset['tone'] === 'negative');
-    expect(coloured).toHaveLength(1);
-    expect(coloured[0]?.textContent).toBe('1');
+    expect(host.textContent).toContain('Adds TabMark and the row shape the strip needs.');
+    expect(host.textContent).toContain('typecheck');
   });
 
-  const openTab = (): string | undefined =>
-    all('.sh-pr-head__tab').find((node) => node.dataset['at'] === 'true')?.textContent;
-
-  it('opens on Checks when one has failed — the reason you came', async () => {
-    // Landing on Conversation and making you find it would be the pane knowing
-    // something and not saying it.
+  it('counts a section on its own heading, past the rule', async () => {
+    // SectionLabel puts the count at the far end so a column of headings has its
+    // numbers in one place — and it is sentence case with no tracking, which is
+    // the treatment §6 refuses the alternative to.
     draw([rich()]);
     await settle();
-    expect(openTab()).toContain('Checks');
-  });
-
-  it('opens on Conversation when nothing is failing', async () => {
-    // Its own test rather than a second render: the initial tab is `useState`'s
-    // seed, so re-rendering the same component would keep the first answer —
-    // which is correct behaviour and would make one assertion here a lie.
-    draw([rich({ checks: [{ name: 'lint', state: 'passed' }] })]);
-    await settle();
-    expect(openTab()).toContain('Conversation');
+    const counts = all('.sh-ui-section-label__count').map((node) => node.textContent);
+    expect(counts).toEqual(['1', '1/2', '2', '12']);
   });
 
   it('gives a queued check a mark, which is the state that used to draw nothing', async () => {
@@ -622,27 +615,30 @@ describe('the PR’s four sub-views (11)', () => {
      */
     draw([rich({ checks: [{ name: 'AI Harness / Audit Stack', state: 'queued' }] })]);
     await settle();
-    clickTab('Checks');
-    const row = all('.sh-pr-list__row').find((node) => node.dataset['state'] === 'queued');
-    expect(row?.querySelector('.sh-pr-list__mark svg')).not.toBeNull();
+    const row = all('.sh-pr-check').find((node) => node.dataset['state'] === 'queued');
+    expect(row?.querySelector('.sh-pr-line__mark svg')).not.toBeNull();
     // And the state is still readable without the colour, for a screen reader
     // and for anyone the hue does not reach.
     expect(row?.textContent).toContain('queued');
+    // The right-hand words say what happened rather than leaving the cell empty,
+    // which is what a duration did for a check that never started.
+    expect(row?.textContent).toContain('has not reported');
   });
 
   it('says the direction of the change in GitHub’s own sentence', async () => {
     draw([rich()]);
     await settle();
-    expect(text('.sh-pr-head__sub')).toContain('wants to merge 2 commits into');
-    expect(all('.sh-pr-head__ref').map((node) => node.textContent)).toEqual(['main', 'tabs']);
+    expect(text('.sh-pr-brief__says')).toContain('wants to merge 2 commits into');
+    expect(all('.sh-pr-brief__ref').map((node) => node.textContent)).toEqual(['main', 'tabs']);
   });
 
-  it('keeps the header across a tab change', async () => {
-    // The header is the THING and the tabs are jobs on it.
+  it('opens the failing check by default, and nothing else', async () => {
+    // A log is worth the room when it is the reason you came; three open logs
+    // are the wall of text the two-column viewer existed to avoid.
     draw([rich()]);
     await settle();
-    clickTab('Commits');
-    expect(text('.sh-pr-head__title')).toBe('Add multiple task tabs');
+    expect(all('.sh-pr-check__said')).toHaveLength(1);
+    expect(text('.sh-pr-log')).toContain('error TS2322');
   });
 
   it('shows the failing check’s log, not a link to it', async () => {
@@ -650,27 +646,27 @@ describe('the PR’s four sub-views (11)', () => {
     // error rather than a copy-paste out of a browser.
     draw([rich()]);
     await settle();
-    expect(text('.sh-pr-log__text')).toContain('error TS2322');
+    expect(text('.sh-pr-log')).toContain('error TS2322');
   });
 
   it('lists commits newest first, with a short sha', async () => {
     draw([rich()]);
     await settle();
-    clickTab('Commits');
-    expect(all('.sh-pr-commit__sha').map((node) => node.textContent)).toEqual(['e91c2a4', '77b0d13']);
+    expect(all('.sh-pr-line__sha').map((node) => node.textContent)).toEqual(['e91c2a4', '77b0d13']);
   });
 
-  it('asks for the patches when the Files tab opens, and not before', async () => {
+  it('asks for the patches when the diff is opened, and not before', async () => {
     /*
      * The whole reason patches are a second request: a diff is the largest thing
-     * about a PR and most people never open this tab. Fetching one per PR per
-     * poll would make the sync loop the most expensive thing in the app.
+     * about a PR and most people never open it. Fetching one per PR per poll
+     * would make the sync loop the most expensive thing in the app — and it is
+     * why the document lists PATHS and opens the patches on demand.
      */
     draw([rich()]);
     await settle();
     expect(calls.some((call) => call.command === 'github.diff')).toBe(false);
 
-    clickTab('Files');
+    openFiles();
     await settle();
     expect(calls.find((call) => call.command === 'github.diff')?.args).toMatchObject({
       task: 't-1',
@@ -691,16 +687,16 @@ describe('the PR’s four sub-views (11)', () => {
      */
     draw([rich()]);
     await settle();
-    clickTab('Files');
+    openFiles();
+    await settle();
     expect(host.querySelector('.sh-pr-diff__view')).not.toBeNull();
   });
 
   it('draws the ONE block GitHub could not — which agent owns this branch', async () => {
     draw([rich()], { over: { agent: { title: 'claude · sdk', state: 'idle' }, taskTitle: 'Add multiple task tabs' } });
     await settle();
-    // It lives on Conversation, and this PR opens on Checks.
-    clickTab('Conversation');
-    expect(host.textContent).toContain('claude · sdk');
-    expect(host.textContent).toContain('owns this branch’s worktree');
+    // One dim line in the brief now, rather than a labelled block in a column of
+    // its own — but it is still the block GitHub could not draw.
+    expect(text('.sh-pr-brief__facts')).toContain('claude · sdk');
   });
 });

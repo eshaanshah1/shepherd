@@ -519,6 +519,85 @@ export const canMerge = (pr: PullRequest): boolean =>
   pr.state === 'open' && pr.mergeState === 'clean' && countChecks(pr.checks).failed === 0;
 
 /**
+ * Whether this can merge, and — in one sentence — why not.
+ *
+ * The footer used to be the whole of this: a Merge button that vanished when it
+ * could not be pressed, and a phrase beside it saying which "not yet". That put
+ * the one fact you open this pane for at the bottom of a surface you had to
+ * scroll, and split it across two elements that had to be read together.
+ *
+ * So it is one value, and the pane draws it as a SENTENCE at the top rather than
+ * as a bar: a mark, a verdict, and the reason in prose. `because` is written to
+ * follow an em dash, which is why it opens lowercase and ends in a full stop.
+ *
+ * Every reason names something you can act on. `unknown` is the one that cannot
+ * — GitHub has not finished working it out — and it says so rather than
+ * inventing a blocker.
+ */
+export interface Gate {
+  readonly ok: boolean;
+  readonly verdict: string;
+  /** The clause after the dash, or `''` when the verdict says it all. */
+  readonly because: string;
+}
+
+export function mergeGate(pr: PullRequest): Gate {
+  if (pr.state === 'merged') return { ok: false, verdict: 'Merged', because: '' };
+  if (pr.state === 'closed') return { ok: false, verdict: 'Closed', because: 'without merging.' };
+  if (pr.state === 'draft') return { ok: false, verdict: 'Draft', because: 'mark it ready on GitHub before it can merge.' };
+
+  if (canMerge(pr)) {
+    const counts = countChecks(pr.checks);
+    const approvals = pr.approvals.length;
+    const said = [
+      approvals === 0 ? '' : `${approvals} ${approvals === 1 ? 'approval' : 'approvals'}`,
+      counts.total === 0 ? '' : `${counts.passed} of ${counts.total} checks passed`,
+    ].filter((part) => part !== '');
+    return { ok: true, verdict: 'Ready to merge', because: said.length === 0 ? '' : `${said.join(', ')}.` };
+  }
+
+  return { ok: false, verdict: 'Merge blocked', because: whyBlocked(pr) };
+}
+
+/**
+ * The reasons, joined — ALL of them, not the first.
+ *
+ * The old sentence named one, which is the wrong number for the case it exists
+ * to explain: a PR held up by a missing review AND a check that never ran told
+ * you about the check, you cleared it, and the pane then told you about the
+ * review. Two round trips to learn two facts it had both of.
+ */
+function whyBlocked(pr: PullRequest): string {
+  const reasons: string[] = [];
+
+  if (pr.mergeState === 'dirty') reasons.push('it conflicts with the base branch');
+  if (pr.mergeState === 'behind') reasons.push('it is behind the base branch');
+
+  const failed = pr.checks.filter((check) => check.state === 'failed');
+  if (failed.length === 1) reasons.push(`${failed[0]?.name ?? 'a check'} failed`);
+  else if (failed.length > 1) reasons.push(`${failed.length} checks failed`);
+
+  const counts = countChecks(pr.checks);
+  if (counts.queued > 0) reasons.push(`${counts.queued === 1 ? 'a required check has' : `${counts.queued} checks have`} not reported`);
+  if (counts.blocked > 0) reasons.push(`${counts.blocked === 1 ? 'a check is' : `${counts.blocked} checks are`} waiting on a person`);
+  if (pr.changesRequested.length > 0) reasons.push('a reviewer asked for changes');
+
+  if (reasons.length === 0) {
+    // `unknown` is GitHub still deciding; anything else here is a mergeState we
+    // read pessimistically and cannot name.
+    return pr.mergeState === 'unknown'
+      ? 'GitHub is still working out whether it can.'
+      : 'GitHub has not said why.';
+  }
+  return `${joinWords(reasons)}.`;
+}
+
+const joinWords = (parts: readonly string[]): string =>
+  parts.length <= 1
+    ? (parts[0] ?? '')
+    : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1] ?? ''}`;
+
+/**
  * The first thing stopping the whole task from landing — `sdk #44` — or `null`
  * when nothing is.
  *

@@ -5,6 +5,7 @@ import {
   checksSaid,
   countChecks,
   landOrder,
+  mergeGate,
   prKey,
   reviewSaid,
   rollUp,
@@ -55,6 +56,57 @@ describe('countChecks', () => {
     // `12 of 13` the healthy state — a number that is never green.
     const counts = countChecks([check('lint', 'passed'), check('typecheck', 'failed'), check('test', 'skipped')]);
     expect(counts).toEqual({ total: 2, passed: 1, failed: 1, running: 0, queued: 0, blocked: 0 });
+  });
+});
+
+describe('mergeGate', () => {
+  it('names EVERY reason, not the first — the old sentence named one', () => {
+    /*
+     * A PR held up by a missing review AND a check that never ran told you about
+     * the check; you cleared it, and the pane then told you about the review.
+     * Two round trips to learn two facts it had both of.
+     */
+    const gate = mergeGate(
+      pr({
+        mergeState: 'blocked',
+        changesRequested: ['jane'],
+        checks: [check('audit', 'queued'), check('deploy', 'blocked')],
+      }),
+    );
+    expect(gate.ok).toBe(false);
+    expect(gate.verdict).toBe('Merge blocked');
+    expect(gate.because).toBe(
+      'a required check has not reported, a check is waiting on a person and a reviewer asked for changes.',
+    );
+  });
+
+  it('names the failing check when there is exactly one, and counts them when there are more', () => {
+    expect(mergeGate(pr({ mergeState: 'blocked', checks: [check('typecheck', 'failed')] })).because).toBe(
+      'typecheck failed.',
+    );
+    expect(
+      mergeGate(pr({ mergeState: 'blocked', checks: [check('typecheck', 'failed'), check('lint', 'failed')] })).because,
+    ).toBe('2 checks failed.');
+  });
+
+  it('says GitHub has not decided rather than inventing a blocker', () => {
+    // `unknown` is the one reason that is not something you can act on, and a
+    // made-up blocker would send you looking for a check that is fine.
+    expect(mergeGate(pr({ mergeState: 'unknown' })).because).toBe(
+      'GitHub is still working out whether it can.',
+    );
+  });
+
+  it('reads a mergeable PR as ready, and says what carried it', () => {
+    const gate = mergeGate(pr({ mergeState: 'clean', approvals: ['jane'], checks: [check('lint', 'passed')] }));
+    expect(gate.ok).toBe(true);
+    expect(gate.verdict).toBe('Ready to merge');
+    expect(gate.because).toBe('1 approval, 1 of 1 checks passed.');
+  });
+
+  it('lets a terminal state be the whole sentence', () => {
+    expect(mergeGate(pr({ state: 'merged' }))).toEqual({ ok: false, verdict: 'Merged', because: '' });
+    expect(mergeGate(pr({ state: 'draft' })).verdict).toBe('Draft');
   });
 });
 
