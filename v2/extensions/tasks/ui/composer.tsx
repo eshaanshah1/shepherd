@@ -201,8 +201,8 @@ const PLACEMENTS = [{ value: 'worktree', label: 'worktree' }] as const;
  * The label promises privacy from the machine and nothing more.
  */
 const PROFILES = [
-  { value: 'default', label: 'Default profile' },
-  { value: 'incognito', label: 'Incognito' },
+  { value: 'default', label: 'default' },
+  { value: 'incognito', label: 'incognito' },
 ] as const;
 
 export function TaskComposer({
