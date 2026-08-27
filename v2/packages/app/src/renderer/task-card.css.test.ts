@@ -137,6 +137,24 @@ describe('the task card’s trailing action', () => {
     expect(ruleFor('.sh-task-card__action')?.style.getPropertyValue('margin-inline-start')).toBe('auto');
   });
 
+  it('lines the verb’s GLYPH up with the fact above it, not its box', () => {
+    /*
+     * The fact on the title line is a bare glyph; the verb under it is an
+     * `IconButton`, a `--sh-control-sm` square with the same glyph centred in it.
+     * Flushed against the same padding edge, the two marks land half the
+     * difference apart — a column of two glyphs that do not share an edge, which
+     * is the kind of misalignment you see without being able to name.
+     *
+     * The half-difference comes back as a negative end margin, and only when the
+     * verb IS the trailing edge: with repo chips after it there is nothing above
+     * to line up with and the shift would eat the line's gap.
+     */
+    const rule = ruleFor('.sh-task-card__action:last-child');
+    expect(rule?.style.getPropertyValue('margin-inline-end')).toBe(
+      'calc((var(--sh-font-size-medium) - var(--sh-control-sm)) / 2)',
+    );
+  });
+
   it('reserves ONE width, whether or not a row happens to have a fact', () => {
     /*
      * A `data-has-fact` variant would make the title's run depend on whether a
