@@ -742,34 +742,6 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    */
 
   /**
-   * D4, made real: what a task's agents are doing is READ from the panes, never
-   * written anywhere.
-   *
-   * A session whose pane never mounted contributes nothing rather than a guess,
-   * and so does one the mirror has not heard from — both are "no signal", which
-   * `rollUp` folds to idle.
-   */
-  const agentStatesOf = (task: TaskRecord): readonly string[] =>
-    task.sessions.flatMap((session) => {
-      const state = session.pane === undefined ? undefined : agentState.get(session.pane);
-      return state === undefined ? [] : [state];
-    });
-
-  /**
-   * The same rollup, for the sessions in ONE tab.
-   *
-   * A session with no recorded root belongs to the task's anchor — that is where
-   * every session written before tabs existed was in fact opened, so an old
-   * record rolls up into tab 1 rather than into nothing.
-   */
-  const agentStatesOfTab = (task: TaskRecord, root: string): readonly string[] =>
-    task.sessions.flatMap((session) => {
-      if ((session.root ?? taskRootId(task.id)) !== root) return [];
-      const state = session.pane === undefined ? undefined : agentState.get(session.pane);
-      return state === undefined ? [] : [state];
-    });
-
-  /**
    * `group → its tabs`, mirrored — the layout, as much of it as the sidebar needs.
    *
    * A MIRROR for the reason `agentState` above is one: reads do not cross the
@@ -783,12 +755,29 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * the stage from (ADR 0035); what this holds is which tabs EXIST and what they
    * are called, which nothing else can tell this extension.
    */
-  let tabsByGroup = new Map<string, readonly { root: string; label: string; session: string | null }[]>();
+  interface TabMirror {
+    readonly root: string;
+    readonly label: string;
+    readonly session: string | null;
+    /**
+     * EVERY pane in the root, which is what makes a task's rollup complete.
+     *
+     * A task's `sessions` only ever hold what this extension spawned and
+     * correlated. Open a second tab in a task, run `claude` in it by hand, and
+     * the record never hears about it — so the row read `idle` with an agent
+     * working two tabs over, while the tab strip drew the working mark correctly
+     * from this same layout. The rollup reads panes from here now, and the
+     * record is the other half rather than the only one.
+     */
+    readonly panes: readonly string[];
+  }
+
+  let tabsByGroup = new Map<string, readonly TabMirror[]>();
 
   const refreshTabs = async (): Promise<void> => {
     const answer = await commands.invoke<readonly unknown[]>('layout.listRoots', {});
     if (!answer.ok || !Array.isArray(answer.value)) return;
-    const next = new Map<string, { root: string; label: string; session: string | null }[]>();
+    const next = new Map<string, TabMirror[]>();
     for (const raw of answer.value) {
       // Read defensively: this crossed a port, and `ok` says the call succeeded
       // rather than that the value has a shape.
@@ -796,9 +785,22 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         root?: unknown;
         group?: unknown;
         label?: unknown;
+        focusedPane?: unknown;
         focusedSession?: unknown;
+        panes?: unknown;
       };
       if (typeof row.root !== 'string' || typeof row.group !== 'string') continue;
+      const panes = new Set<string>();
+      if (Array.isArray(row.panes)) {
+        for (const leaf of row.panes) {
+          const pane = (leaf as { pane?: unknown } | null)?.pane;
+          if (typeof pane === 'string') panes.add(pane);
+        }
+      }
+      // The focused one as well as the list, because a root that answered with
+      // only one of the two still has that pane in it — and a pane missed here
+      // is an agent the row cannot see.
+      if (typeof row.focusedPane === 'string') panes.add(row.focusedPane);
       const list = next.get(row.group) ?? [];
       list.push({
         root: row.root,
@@ -806,12 +808,76 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         // showing its id: `task:t1/tab-2` in the sidebar is an internal name.
         label: typeof row.label === 'string' && row.label !== '' ? row.label : 'Empty',
         session: typeof row.focusedSession === 'string' ? row.focusedSession : null,
+        panes: [...panes],
       });
       next.set(row.group, list);
     }
     tabsByGroup = next;
     changed();
   };
+
+  /**
+   * Every pane a task's agents could be running in — the layout's answer, and
+   * the record's.
+   *
+   * The layout is the authority: a pane in the group `task:<id>` belongs to that
+   * task by construction, whoever opened it and whatever is running inside. That
+   * is the half the rollup used to be missing, and the one the tab strip was
+   * always reading — hence a row sitting at `idle` beside a tab wearing the
+   * working mark for the same agent.
+   *
+   * The record is kept as the other half rather than dropped, for the window it
+   * covers: `layout.rootsChanged` is debounced by a tenth of a second, so for
+   * the first moments after a spawn this mirror does not know the root exists —
+   * which is exactly when an agent hits its trust prompt. A shelve strips
+   * `pane` off the record (see `recorrelate`), so a shelved task contributes
+   * nothing from either half.
+   */
+  const panesOf = (task: TaskRecord): readonly string[] => {
+    const panes = new Set<string>();
+    for (const tab of tabsByGroup.get(taskRootId(task.id)) ?? []) {
+      for (const pane of tab.panes) panes.add(pane);
+    }
+    for (const session of task.sessions) {
+      if (session.pane !== undefined) panes.add(session.pane);
+    }
+    return [...panes];
+  };
+
+  /**
+   * The same, for ONE tab.
+   *
+   * A recorded session with no root belongs to the task's anchor — that is where
+   * every session written before tabs existed was in fact opened, so an old
+   * record rolls up into tab 1 rather than into nothing.
+   */
+  const panesOfTab = (task: TaskRecord, root: string): readonly string[] => {
+    const tab = (tabsByGroup.get(taskRootId(task.id)) ?? []).find((candidate) => candidate.root === root);
+    const panes = new Set<string>(tab?.panes ?? []);
+    for (const session of task.sessions) {
+      if (session.pane !== undefined && (session.root ?? taskRootId(task.id)) === root) panes.add(session.pane);
+    }
+    return [...panes];
+  };
+
+  /**
+   * D4, made real: what a task's agents are doing is READ from the panes, never
+   * written anywhere.
+   *
+   * A pane the mirror has not heard from contributes nothing rather than a
+   * guess, and neither does a pane with no agent in it — both are "no signal",
+   * which `rollUp` folds to idle.
+   */
+  const statesIn = (panes: readonly string[]): readonly string[] =>
+    panes.flatMap((pane) => {
+      const state = agentState.get(pane);
+      return state === undefined ? [] : [state];
+    });
+
+  const agentStatesOf = (task: TaskRecord): readonly string[] => statesIn(panesOf(task));
+
+  const agentStatesOfTab = (task: TaskRecord, root: string): readonly string[] =>
+    statesIn(panesOfTab(task, root));
 
   /**
    * Subscribing to the topic, WITHOUT declaring any permission.

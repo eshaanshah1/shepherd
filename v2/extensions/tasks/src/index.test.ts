@@ -1032,6 +1032,110 @@ describe('agent state reaching the task tree', () => {
 });
 
 /**
+ * The rollup reads the LAYOUT, not just the record — the bug the sidebar wore.
+ *
+ * A task's `sessions` hold what this extension spawned and correlated. Open a
+ * second tab in a task and start `claude` in it yourself and the record never
+ * hears about it, so the row read `idle` for the life of that agent while the
+ * tab strip — which has always read the layout — drew the working mark for the
+ * same pane. Measured on a live install: a task whose record named one idle
+ * orchestrator, with a working agent in its third tab.
+ *
+ * A pane in the group `task:<id>` belongs to that task by construction, which is
+ * what makes the layout the authority here rather than a second opinion.
+ */
+describe('agent state from a pane the record never recorded', () => {
+  /** The kernel answering with a task group of two tabs, one pane in each. */
+  const withPanes = (tasks: readonly TaskRecord[], group = 'task:t1') =>
+    harness({
+      tasks,
+      invoke: (id) => {
+        if (id === 'layout.listRoots') {
+          return {
+            ok: true,
+            value: [
+              {
+                root: group,
+                group,
+                label: 'api',
+                focusedPane: 'p1',
+                focusedSession: null,
+                panes: [{ pane: 'p1', cwd: '/wt', userTitle: null, session: 's1' }],
+              },
+              {
+                root: `${group}/tab-2`,
+                group,
+                label: 'harness',
+                focusedPane: 'p2',
+                focusedSession: null,
+                panes: [{ pane: 'p2', cwd: '/wt/api', userTitle: null, session: 's2' }],
+              },
+            ],
+          } as never;
+        }
+        return undefined;
+      },
+    });
+
+  const working = (pane: string): Record<string, unknown> => ({
+    sessionId: `session-in-${pane}`,
+    kindId: 'claude-code',
+    pane,
+    from: 'idle',
+    to: 'working',
+    turnFinished: false,
+    level: 'none',
+    alertReason: '',
+  });
+
+  it('colours the row from an agent in a tab the record knows nothing about', async () => {
+    // The record names ONE session, in tab 1. The agent is in tab 2.
+    const h = (live = withPanes([
+      task({ sessions: [{ id: 's1', role: 'orchestrator', pane: 'p1', root: 'task:t1' }] }),
+    ]));
+    await until(async () => (await h.tree().children('t1')).length === 2);
+
+    h.emit('agents.stateChanged', working('p2'));
+
+    expect(await listedState(h)).toBe('working');
+    expect((await rowOf(h, 't1'))?.tint).toBe('working');
+  });
+
+  it('gives that tab its own dot too, and leaves its neighbour alone', async () => {
+    const h = (live = withPanes([task()]));
+    await until(async () => (await h.tree().children('t1')).length === 2);
+
+    h.emit('agents.stateChanged', working('p2'));
+
+    const rows = await h.tree().children('t1');
+    expect(rows.map((row) => row.tint)).toEqual(['idle', 'working']);
+  });
+
+  it('colours a task with no recorded sessions at all', async () => {
+    // Every session of this task was started by hand. The record is empty and
+    // the layout is the only thing that knows the panes exist.
+    const h = (live = withPanes([task()]));
+    await until(async () => (await h.tree().children('t1')).length === 2);
+
+    h.emit('agents.stateChanged', working('p1'));
+
+    expect((await rowOf(h, 't1'))?.tint).toBe('working');
+  });
+
+  it('ignores a pane in ANOTHER task\'s group', async () => {
+    // The group is the whole of the test: `task:t2`\'s panes are t2\'s agents,
+    // and a rollup that walked every root would light up every row at once.
+    const h = (live = withPanes([task()], 'task:t2'));
+    await until(async () => (await h.tree().children('t2')).length === 0);
+
+    h.emit('agents.stateChanged', working('p1'));
+
+    expect(await listedState(h)).toBe('idle');
+    expect((await rowOf(h, 't1'))?.tint).toBe('idle');
+  });
+});
+
+/**
  * A spawned pane is named, and the name is the task.
  *
  * Three agents on one task is three identically-titled shells otherwise, which
