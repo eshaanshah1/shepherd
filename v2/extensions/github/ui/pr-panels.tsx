@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactElement, type RefObject
 import { CodeView, type CodeViewHandle } from '@pierre/diffs/react';
 import { getIconForType, processFile, SVGSpriteSheet } from '@pierre/diffs';
 import { FileTree, useFileTree, useFileTreeSelection } from '@pierre/trees/react';
-import { Button, Icon, KeyCap, namedGlyph } from '@shepherd/ui';
+import { Button, Icon, SectionLabel, namedGlyph } from '@shepherd/ui';
 import { agoText } from './review-data.ts';
 import { Markdown } from './markdown.tsx';
 import { SHEPHERD_DIFF_CSS, SHEPHERD_DIFF_SIZING, SHEPHERD_DIFF_THEME } from './diff-theme.ts';
@@ -153,11 +153,17 @@ export function Clamp({ children }: { readonly children: ReactElement }): ReactE
  * No card and no byline: the brief above already says who opened it and when,
  * and this is the thing that sentence is about. Boxed, it read as the first of
  * several equal things.
+ *
+ * It carries a `SectionLabel` like every other section, and that is not
+ * decoration: without one the body began immediately under the brief's buttons,
+ * so the first paragraph read as a caption on them.
  */
 export function Description({ pr }: { readonly pr: PullRequest }): ReactElement | null {
   if (pr.body === '') return null;
   return (
-    <Clamp>
+    <section className="sh-pr-sec">
+      <SectionLabel>Description</SectionLabel>
+      <Clamp>
     <div className="sh-pr-body">
       {/*
         Markdown, because an AGENT writes this field. It used to split on blank
@@ -167,7 +173,8 @@ export function Description({ pr }: { readonly pr: PullRequest }): ReactElement 
       */}
       <Markdown text={pr.body} />
     </div>
-    </Clamp>
+      </Clamp>
+    </section>
   );
 }
 
@@ -299,9 +306,11 @@ function ThreadCard({
           <div className="sh-pr-said__verbs">
             {wrapHand(
               `thread:${thread.id}`,
+              /* No `H`: the key is the brief's and cannot address a thread. A
+                 legend on a control the key does not press is a promise the
+                 keyboard does not keep. */
               <Button variant="ghost" size="sm" disabled={busy} onClick={() => onHandThread(thread)}>
                 Hand to agent
-                <KeyCap>H</KeyCap>
               </Button>,
             )}
             {/*
@@ -360,11 +369,24 @@ export function Commits({
 export function CommitDiff({ pr, sha, onNeedCommit, busy, wrapHand, onHandThread }: PanelProps & { readonly sha: string }): ReactElement {
   const [files, setFiles] = useState<readonly ChangedFile[] | undefined>(undefined);
 
+  /*
+   * The callback lives in a ref and is NOT a dependency — the same trap
+   * `FilesDiff` records below.
+   *
+   * The pane re-reads every few seconds, so the parent hands down a fresh arrow
+   * on every tick. Depending on it re-ran this effect each time, and the
+   * `setFiles(undefined)` at the top of it dropped the whole diff back to
+   * `Fetching this commit's files…` twice a second — the flicker.
+   */
+  const need = useRef(onNeedCommit);
+  need.current = onNeedCommit;
+  const viewer = useRef<CodeViewHandle<ReviewThread> | null>(null);
+
   useEffect(() => {
     let live = true;
     setFiles(undefined);
     void (async () => {
-      const answer = await onNeedCommit?.(sha);
+      const answer = await need.current?.(sha);
       // The component may have moved on while this was in flight, and writing
       // then would show one commit's diff under another's heading.
       if (live) setFiles(answer ?? []);
@@ -372,15 +394,13 @@ export function CommitDiff({ pr, sha, onNeedCommit, busy, wrapHand, onHandThread
     return () => {
       live = false;
     };
-  }, [sha, onNeedCommit]);
+  }, [sha]);
 
-  const commit = pr.commits.find((entry) => entry.sha === sha);
   if (files === undefined) return <p className="sh-pr-none">Fetching this commit’s files…</p>;
   if (files.length === 0) return <p className="sh-pr-none">This commit changed no files.</p>;
 
   return (
     <div className="sh-pr-panel sh-pr-panel--list">
-      <p className="sh-pr-commit-head">{commit?.subject ?? sha.slice(0, 7)}</p>
       <DiffList
         pr={pr}
         files={files}
@@ -388,7 +408,7 @@ export function CommitDiff({ pr, sha, onNeedCommit, busy, wrapHand, onHandThread
         busy={busy}
         wrapHand={wrapHand}
         onHandThread={onHandThread}
-        viewerRef={{ current: null }}
+        viewerRef={viewer}
         pending={false}
       />
     </div>
@@ -438,19 +458,23 @@ export function Checks({ pr, busy, wrapHand, onHandCheck, onOpenExternal }: Pane
             {at ? (
               <div className="sh-pr-check__said">
                 <pre className="sh-pr-log">{said}</pre>
+                {/*
+                  Only a FAILED check has anything to hand over, and the greyed
+                  control that used to sit here for the other four said so in
+                  the one way a reader cannot act on.
+                */}
                 <div className="sh-pr-check__verbs">
-                  {wrapHand(
-                    'check',
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={busy || check.state !== 'failed'}
-                      onClick={() => onHandCheck(check)}
-                    >
-                      Hand to agent
-                      <KeyCap>H</KeyCap>
-                    </Button>,
-                  )}
+                  {check.state !== 'failed'
+                    ? null
+                    : wrapHand(
+                        'check',
+                        /* No `H` here either. The key hands over the FIRST
+                           failing check by name, so on a PR with two of them a
+                           legend on both rows would be wrong on one. */
+                        <Button variant="secondary" size="sm" disabled={busy} onClick={() => onHandCheck(check)}>
+                          Hand to agent
+                        </Button>,
+                      )}
                   {check.url === undefined ? null : (
                     <Button variant="ghost" size="sm" onClick={() => onOpenExternal(check.url as string)}>
                       Full log ↗

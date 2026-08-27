@@ -73,10 +73,22 @@ export function PrBrief({
         <span className="sh-pr-brief__number">#{pr.number}</span>
       </div>
 
+      {/*
+        Who, where, and how much — as FACTS rather than a sentence.
+        "wants to merge 3 commits into main from …" spent eleven words saying
+        what an arrow says, and wrapped to two lines to do it. The arrow points
+        the way the code travels: head → base, and the word it stands for is
+        carried for anything not reading the glyph.
+      */}
       <p className="sh-pr-brief__says">
-        <span className="sh-pr-brief__who">{authorOf(pr)}</span> wants to merge {pr.commits.length}{' '}
-        {pr.commits.length === 1 ? 'commit' : 'commits'} into <span className="sh-pr-brief__ref">{pr.baseRef}</span> from{' '}
-        <span className="sh-pr-brief__ref">{pr.headRef}</span>
+        <span className="sh-pr-brief__who">{authorOf(pr)}</span>{' '}
+        <span className="sh-pr-brief__ref">{pr.headRef}</span>{' '}
+        <span className="sh-pr-brief__into" aria-hidden="true">
+          →
+        </span>
+        <span className="sh-ui-sr-only"> into </span>{' '}
+        <span className="sh-pr-brief__ref">{pr.baseRef}</span>
+        {` · ${pr.commits.length} ${pr.commits.length === 1 ? 'commit' : 'commits'}`}
         {opened === null ? '' : ` · ${opened} ago`}
       </p>
 
@@ -122,9 +134,15 @@ export function PrBrief({
             <KeyCap>M</KeyCap>
           </Button>
         ) : (
+          /*
+            Bordered, because when the merge is blocked this IS the one thing to
+            do here. As a ghost it sat at the same volume as `Open on GitHub`
+            beside it and at the same volume as the prose under it, so the row
+            read as two words in the description rather than as controls.
+          */
           wrapHand(
             'brief',
-            <Button variant="ghost" size="sm" disabled={busy} onClick={onHand}>
+            <Button variant="secondary" size="sm" disabled={busy} onClick={onHand}>
               Hand to agent
               <KeyCap>H</KeyCap>
             </Button>,

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Result } from '@shepherd/sdk';
 import { ReviewPane } from './review.tsx';
 
@@ -94,6 +94,12 @@ function draw(
     calls.push({ command, args });
     if (command === 'github.prs') return { ok: true, value: answer(prs, options.over ?? {}) };
     if (command === 'github.changes') return { ok: true, value: options.changes ?? { repos: [] } };
+    if (command === 'github.commitDiff') {
+      return {
+        ok: true,
+        value: { files: [{ path: 'src/tree.ts', added: 2, removed: 0, patch: '@@ -1,2 +1,4 @@\n keep\n+added' }] },
+      };
+    }
     return { ok: true, value: { ok: true } };
   };
   act(() => {
@@ -358,11 +364,53 @@ describe('the keys', () => {
     expect(calls.some((call) => call.command === 'github.handToAgent')).toBe(false);
   });
 
-  it('hand over on H when focused', async () => {
+  it('hand over on H when focused, naming the failing check', async () => {
     draw([pr({ checks: [{ name: 'typecheck', state: 'failed' }] })]);
     await settle();
     press('h');
+    expect(calls.find((call) => call.command === 'github.handToAgent')?.args).toMatchObject({
+      task: 't-1',
+      pr: 'shepherd/v2#301',
+      check: 'typecheck',
+    });
+  });
+
+  it('presses the BRIEF’s button, so the menu can hang off something mounted', async () => {
+    /*
+     * H used to call `onHandCheck`, which anchors the destination menu to the
+     * check row's button — and that button exists only while the row is
+     * expanded. Collapse it, press H, and `choosing` was set with no anchor
+     * rendered anywhere: the menu drew nothing and the hand-off was silent.
+     *
+     * The brief's button is always on screen while the merge is blocked, which
+     * is the whole reason the key belongs to it.
+     */
+    draw([pr({ mergeState: 'blocked', checks: [{ name: 'typecheck', state: 'failed', log: 'boom' }] })]);
+    await settle();
+    // Collapse the failing check, which opens by default.
+    act(() => all('.sh-pr-line').find((node) => node.textContent?.includes('typecheck'))?.click());
+    expect(all('.sh-pr-check__verbs')).toHaveLength(0);
+
+    press('h');
+    // The brief still carries a `Hand to agent`, so the menu has an anchor.
+    expect(text('.sh-pr-brief__verbs')).toContain('Hand to agent');
     expect(calls.some((call) => call.command === 'github.handToAgent')).toBe(true);
+  });
+
+  it('draws the H legend on exactly one control', async () => {
+    // Three buttons used to claim it and only one could ever be right. A legend
+    // on a control the key does not press is a promise the keyboard breaks.
+    draw([
+      pr({
+        mergeState: 'blocked',
+        checks: [{ name: 'typecheck', state: 'failed', log: 'boom' }],
+        threads: [{ id: 'T1', author: 'sam', path: 'src/tree.ts', line: 61, resolved: false, body: 'use the token' }],
+      }),
+    ]);
+    await settle();
+    const caps = all('.sh-ui-keycap').filter((node) => node.textContent === 'H');
+    expect(caps).toHaveLength(1);
+    expect(caps[0]?.closest('.sh-pr-brief__verbs')).not.toBeNull();
   });
 
   it('Esc goes back to the list, and does nothing when there is no list', async () => {
@@ -596,6 +644,9 @@ describe('the PR as one document (11)', () => {
   const openFiles = (): void => {
     act(() => all('.sh-pr-line').find((node) => node.textContent?.includes('src/tree.ts'))?.click());
   };
+  const openCommit = (): void => {
+    act(() => all('.sh-pr-line').find((node) => node.textContent?.includes('Widen TabMark'))?.click());
+  };
 
   it('puts every section in ONE scroll, with no tab row at all', async () => {
     draw([rich()]);
@@ -607,10 +658,11 @@ describe('the PR as one document (11)', () => {
      * so the checks and the conversation lead, and the description, which is
      * the agent's account of its own work, closes.
      */
-    expect(headings()).toEqual(['Checks', 'Conversation', 'Files', 'Commits']);
-    // The description has no heading: it is the document's opening prose, not a
-    // section of it, and it is CLAMPED — which is what stops a hundred-line body
-    // deciding where the files sit, and is why it need not be moved to do so.
+    expect(headings()).toEqual(['Description', 'Checks', 'Conversation', 'Files', 'Commits']);
+    // The description is a section like the rest. Without a heading its first
+    // paragraph began directly under the brief's buttons and read as a caption
+    // on them. It is still CLAMPED, which is what stops a hundred-line body
+    // deciding where the files sit.
     expect(host.querySelector('.sh-pr-clamp .sh-pr-body')).not.toBeNull();
   });
 
@@ -739,11 +791,15 @@ describe('the PR as one document (11)', () => {
     expect(row?.textContent).toContain('has not reported');
   });
 
-  it('says the direction of the change in GitHub’s own sentence', async () => {
+  it('says the direction of the change as an arrow, and the word for it too', async () => {
+    // `tabs → main`, head to base. The sentence it replaced spent eleven words
+    // on what the arrow says, and wrapped to two lines to do it — but the arrow
+    // is a glyph, so the word travels beside it for anything not reading one.
     draw([rich()]);
     await settle();
-    expect(text('.sh-pr-brief__says')).toContain('wants to merge 2 commits into');
-    expect(all('.sh-pr-brief__ref').map((node) => node.textContent)).toEqual(['main', 'tabs']);
+    expect(all('.sh-pr-brief__ref').map((node) => node.textContent)).toEqual(['tabs', 'main']);
+    expect(text('.sh-pr-brief__says')).toContain('into');
+    expect(text('.sh-pr-brief__says')).toContain('2 commits');
   });
 
   it('opens the failing check by default, and nothing else', async () => {
@@ -761,6 +817,62 @@ describe('the PR as one document (11)', () => {
     draw([rich()]);
     await settle();
     expect(text('.sh-pr-log')).toContain('error TS2322');
+  });
+
+  it('gives the description a heading of its own, so it cannot read as a caption', async () => {
+    // Without one the body opened directly under the brief's buttons, and the
+    // first paragraph read as a line belonging to them.
+    draw([rich()]);
+    await settle();
+    const label = all('.sh-ui-section-label__text').find((node) => node.textContent === 'Description');
+    expect(label).toBeDefined();
+  });
+
+  it('offers no hand-off on a check that has nothing to hand over', async () => {
+    // A queued check has not failed, so there is nothing to send. It drew a
+    // greyed button, which says only that you cannot press it.
+    draw([rich({ checks: [{ name: 'audit', state: 'queued', log: 'waiting on the stack' }] })]);
+    await settle();
+    act(() => all('.sh-pr-line').find((node) => node.textContent?.includes('audit'))?.click());
+    expect(text('.sh-pr-check__said')).toContain('waiting on the stack');
+    expect(text('.sh-pr-check__verbs')).not.toContain('Hand to agent');
+  });
+
+  it('puts a commit’s subject in the crumb rather than beside its diff', async () => {
+    // It was a bare paragraph inside the panel's ROW layout, so the subject
+    // became a column of its own and wrapped down a gutter beside the files.
+    draw([rich()]);
+    await settle();
+    openCommit();
+    await settle();
+    expect(text('.sh-pr-away__what')).toBe('Widen TabMark');
+    expect(host.querySelector('.sh-pr-commit-head')).toBeNull();
+  });
+
+  it('keeps a commit’s diff on screen while the pane re-reads under it', async () => {
+    /*
+     * The pane re-reads every few seconds and hands down fresh callbacks. The
+     * commit view's fetch effect depended on one, so every poll re-ran it — and
+     * the effect clears `files` on the way in, so the whole diff dropped back to
+     * `Fetching this commit's files…` twice a second. That is the flicker.
+     */
+    vi.useFakeTimers();
+    try {
+      draw([rich()]);
+      await settle();
+      openCommit();
+      await settle();
+      expect(calls.filter((call) => call.command === 'github.commitDiff')).toHaveLength(1);
+
+      await act(async () => {
+        vi.advanceTimersByTime(3_100);
+        await Promise.resolve();
+      });
+      expect(calls.filter((call) => call.command === 'github.commitDiff')).toHaveLength(1);
+      expect(host.textContent).not.toContain('Fetching this commit');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('lists commits newest first, with a short sha', async () => {

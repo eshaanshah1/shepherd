@@ -44,7 +44,15 @@ describe('the declarations other rules rest on', () => {
     // Two edges, and only one of them may be the thing that visibly stops: a
     // measure is invisible, a container edge is not. Capping both made the
     // document appear to end in the middle of a wide window.
-    expect(css).toMatch(/\.sh-pr-body,\n\.sh-pr-talk \{\n\s*max-inline-size: \d+ch;/);
+    expect(css).toMatch(/\.sh-pr-brief__verdict,\n\.sh-pr-talk \{\n\s*max-inline-size: \d+ch;/);
     expect(body('.sh-pr-doc')).not.toContain('max-inline-size');
+  });
+
+  it('does NOT measure the description, which is the one block with a rule over it', () => {
+    // Every other measured block is a line or two of chrome. The description
+    // carries its own heading, so a rule runs to the document's edge directly
+    // above it — and prose stopping short of that rule reads as a column that
+    // failed to fill rather than as a measure.
+    expect(body('.sh-pr-body')).not.toContain('max-inline-size');
   });
 });

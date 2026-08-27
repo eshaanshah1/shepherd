@@ -30,6 +30,49 @@ import type { PullRequest } from './model/pr.ts';
  * cannot be looked at without one. `github.seed` refuses outside a dev build.
  */
 
+/**
+ * A body an AGENT wrote, which is the shape this pane exists to draw.
+ *
+ * Headings, inline code, a link, a disclosure, and enough of it to trip the
+ * clamp — every markdown case the renderer has a rule for, in one field. A
+ * two-line body was what stood here, and it exercised none of them: the section
+ * heading, the measure, the chip height and the disclosure marker are all
+ * invisible against prose that fits on one line.
+ */
+const RICH_BODY = [
+  "Closes the ask in [Tirth's thread](https://example.com): remove `Code PR Review` and",
+  '`Automation PR review`, and let PR review be the Internal / External Review status on the',
+  'dev sub-task instead.',
+  '',
+  'Nine pilot sub-tasks become seven. PR review is now the **Development** sub-task\'s own',
+  'Internal / External Review, on the sub-task of the module whose PR it is.',
+  '',
+  "## Why this isn't just a deletion",
+  '',
+  'Bolting "`final-gate` *flips Development*" onto the existing flow is a **silent no-op**.',
+  '`module done` flipped each module to Internal Review as its agent returned, and',
+  '`gate resume implement` closed it — so by Stage 9 every Development sub-task was Closed,',
+  '`harness_owned()` returned false, and the flip logged and skipped. On every run. Under',
+  '`--auto` it was worse: `flip_target()` returns Closed, so the sub-task went straight there',
+  'at Stage 6.',
+  '',
+  "So Development's window now spans `implement` + `final-gate`, and `gate resume` learns the",
+  'second half of it.',
+  '',
+  '<details><summary>Run configuration and what it changes</summary>',
+  '',
+  'You can disable the whole path with `STACK_DEV_PR_REVIEW=0`, which restores the',
+  'nine-sub-task pilot.',
+  '',
+  '</details>',
+  '',
+  '```sh',
+  'pnpm -r typecheck && pnpm -r test',
+  '```',
+  '',
+  'The remaining work is in `jira.sh` and `SKILL.md`, and both are covered by `jira_test.sh`.',
+].join('\n');
+
 /** Times are relative to `now` so the pane's ages read sensibly whenever it runs. */
 export function fixturePrs(now: number): readonly PullRequest[] {
   const minutes = (count: number): number => now - count * 60_000;
@@ -41,9 +84,7 @@ export function fixturePrs(now: number): readonly PullRequest[] {
       author: 'claude',
       number: 44,
       title: 'Tab rows in the sdk',
-      body:
-        'Adds TabMark and the row shape the strip needs, so the app side stops widening its own union.\n\n' +
-        "export type TabMark = 'attention' | 'failed' | 'unread';",
+      body: RICH_BODY,
       state: 'open',
       baseRef: 'main',
       headRef: 'tasks/add-multiple-task-tabs',
@@ -67,6 +108,18 @@ export function fixturePrs(now: number): readonly PullRequest[] {
             '2 errors · exited 2 after 38s',
           ].join('\n'),
           url: 'https://github.com/shepherd/sdk/actions/runs/1',
+        },
+        {
+          /*
+           * A required check that has NOT reported, which is the other reason a
+           * merge is blocked and the one with no failure to hand anybody. It
+           * carries a log so the row opens — the point being that what opens has
+           * no `Hand to agent` in it.
+           */
+          name: 'AI Harness / Audit Stack',
+          state: 'queued',
+          log: 'Audit required (see PR comment)',
+          url: 'https://github.com/shepherd/sdk/actions/runs/2',
         },
         { name: 'test', state: 'skipped' },
       ],

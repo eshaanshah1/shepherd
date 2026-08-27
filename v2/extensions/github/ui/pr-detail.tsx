@@ -113,9 +113,15 @@ export function PrDetail({
   }
 
   if (open.kind === 'commit') {
+    /*
+     * The subject rides in the CRUMB rather than above the diff. It was a bare
+     * `<p>` inside the panel's row layout, so it became a column of its own —
+     * the commit message wrapped down a 150px gutter beside the files.
+     */
+    const subject = pr.commits.find((entry) => entry.sha === open.sha)?.subject ?? open.sha.slice(0, 7);
     return (
       <div className="sh-pr-detail">
-        <Away what="the commit" onBack={() => setOpen({ kind: 'doc' })} />
+        <Away what={subject} onBack={() => setOpen({ kind: 'doc' })} />
         <CommitDiff {...shared} sha={open.sha} />
       </div>
     );

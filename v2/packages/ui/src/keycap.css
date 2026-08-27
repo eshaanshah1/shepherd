@@ -41,21 +41,37 @@
  * 5's "flat, bordered, honest", and on `canvas` it is the only thing giving the
  * legend an edge.
  *
- * On a PRIMARY button none of that holds. The button is already a solid block
- * of `wool` with its own edge, so a second bordered box inside it is a control
- * drawn inside a control — and the border, being `--sh-line` (a near-black
- * ground's hairline), lands as a grey rectangle on near-white. What the legend
- * needs there is what the label already has: the ink that reads on wool, and
- * nothing else.
+ * Inside a button that HAS AN EDGE OF ITS OWN, none of that holds — and both
+ * kinds have one. A `primary` is a solid block of `wool`, where the border,
+ * being `--sh-line` (a near-black ground's hairline), lands as a grey rectangle
+ * on near-white. A `secondary` is a hairline box, where the keycap's own
+ * hairline is a border inside a border two pixels away from it: a control drawn
+ * inside a control, which is the thing this rule exists to refuse.
+ *
+ * `ghost` is deliberately NOT here. It has no edge until hover, so on the pane
+ * the keycap's box is the only thing giving the legend one — take it away and
+ * `Hand to agent H` is four words.
  *
  * `currentColor` rather than `textOnWool` by name, so this stays right for any
- * future solid-fill variant whose ink is something else — the danger button's,
- * for one. It is the same trick `menu.css` uses on a highlighted item's keycap,
- * and for the same reason.
+ * variant whose ink is something else — the danger button's, for one. It is the
+ * same trick `menu.css` uses on a highlighted item's keycap, and for the same
+ * reason.
  */
-.sh-ui-button--primary .sh-ui-keycap {
+.sh-ui-button--primary .sh-ui-keycap,
+.sh-ui-button--secondary .sh-ui-keycap {
   border-color: transparent;
   color: currentColor;
-  /* The padding stays: it is what keeps the legend from touching the label, and
-     removing it with the border would make `Land task L` read as one word. */
+  /*
+   * The BLOCK padding goes with the border; the INLINE padding stays.
+   *
+   * A keycap is 4px of padding and a hairline either side of a micro legend, so
+   * inside a `sm` button it stands 21px in 24 — near enough the height of the
+   * thing containing it that it reads as a second control wedged into the
+   * first, which is what the box coming off was meant to stop. Dropping the
+   * block half makes it a legend on the button rather than a key inside it.
+   *
+   * The inline half is load-bearing and stays: it is the whole gap between the
+   * legend and the label, and without it `Land task L` is one word.
+   */
+  padding-block: 0;
 }

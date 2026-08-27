@@ -79,7 +79,17 @@ export function ReviewPane({ state, focused, invoke }: ExtensionPaneProps): Reac
     if (taskId === null) return;
     const answer = await invoke('github.prs', { task: taskId });
     // `ok` says the call succeeded, never that the value has a shape.
-    setData(answer.ok ? readReview(answer.value) : null);
+    const next = answer.ok ? readReview(answer.value) : null;
+    /*
+     * Kept BY VALUE, so a re-read that changed nothing changes nothing.
+     *
+     * Every three seconds this handed down a fresh object graph, and everything
+     * downstream keyed off identity — the diff viewer's item list, the file
+     * tree's paths, the effects holding them — rebuilt against data that was
+     * byte-for-byte what it already had. On a diff that is a visible flicker
+     * twice a second.
+     */
+    setData((was) => (JSON.stringify(was) === JSON.stringify(next) ? was : next));
   }, [invoke, taskId]);
 
   useEffect(() => {
@@ -561,11 +571,24 @@ function useKeys({
       const pr = showing ?? only;
       if (pr === undefined) return;
       const actions = actionsFor(pr);
+      /*
+       * H is the BRIEF's key, and it presses the brief's own button.
+       *
+       * It used to call `onHandCheck` for the first failing check, which put
+       * three different claims on one key: the brief drew an `H`, so did every
+       * check row, and so did every thread — and only one of them was ever
+       * true. Worse, `onHandCheck` anchors the destination menu to `check`, and
+       * that button is mounted only while its row is expanded, so H on a
+       * collapsed row set `choosing` with nothing to hang it off and the
+       * hand-off silently did nothing.
+       *
+       * The check still travels — `onHandReview` names it — so the prompt is
+       * the same one. What changes is that the key and the button it is drawn
+       * on are now the same gesture.
+       */
       if (event.key === 'h' || event.key === 'H') {
         event.preventDefault();
-        const failure = pr.checks.find((check) => check.state === 'failed');
-        if (failure === undefined) actions.onHandReview();
-        else actions.onHandCheck(failure);
+        actions.onHandReview(pr.checks.find((check) => check.state === 'failed')?.name);
         return;
       }
       if (event.key === 'm' || event.key === 'M') {

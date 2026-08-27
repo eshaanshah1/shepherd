@@ -419,23 +419,49 @@
 .sh-pr-brief__says,
 .sh-pr-brief__facts,
 .sh-pr-brief__verdict,
-.sh-pr-body,
 .sh-pr-talk {
   max-inline-size: 76ch;
 }
 
+/*
+ * The description is NOT measured, and it is the one block here that should not
+ * be.
+ *
+ * It is the only section with a heading of its own, so it has a rule running to
+ * the document's edge directly above it — and prose that stopped 200px short of
+ * that rule read as a column that had failed to fill, not as a measure. The
+ * blocks it contains bring their own edges too: a fenced command, a table, an
+ * image. Everything above it is one or two lines of chrome, which is why the
+ * cap still belongs there.
+ */
+
 /* ── the brief ────────────────────────────────────────────────────────────── */
 
+/*
+ * BASELINE, not `flex-start` with a nudge.
+ *
+ * It was `align-items: flex-start` and a 3px top padding on the mark, which is
+ * a guess at where the title's capitals start and tracks neither the font size
+ * nor the line height. Measured, it put the glyph 4.8px above the cap band —
+ * floating over the title rather than sitting on it.
+ *
+ * An inline SVG's baseline IS its bottom edge, so baseline alignment stands the
+ * glyph on the same line the capitals stand on, and re-derives itself if either
+ * the type scale or the line height moves. It also fixes `#44`, which is text
+ * and was hanging from the top of a 19px line for the same reason.
+ *
+ * The FIRST line's baseline, which is what a wrapped title needs: the mark
+ * belongs beside the title's opening words, not centred on the block.
+ */
 .sh-pr-brief__title-line {
   display: flex;
-  align-items: flex-start;
+  align-items: baseline;
   gap: var(--sh-space-lg);
 }
 
 .sh-pr-brief__state {
   flex: none;
   display: flex;
-  padding-block-start: var(--sh-space-xs);
 }
 
 .sh-pr-brief__title {
@@ -468,6 +494,12 @@
 .sh-pr-brief__ref {
   font-family: var(--sh-font-mono);
   color: var(--sh-text-dim);
+}
+
+/* The arrow between the two refs is punctuation, not a word — it recedes so the
+   branch names either side of it are what the eye lands on. */
+.sh-pr-brief__into {
+  color: var(--sh-text-ghost);
 }
 
 /*
@@ -810,7 +842,13 @@
   border-block-end: var(--sh-hairline) solid var(--sh-line);
 }
 
+/* Carries a commit subject, which is as long as the author felt like — so it
+   ends in an ellipsis rather than pushing the crumb off the band. */
 .sh-pr-away__what {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--sh-font-size-micro);
   color: var(--sh-text-ghost);
 }
@@ -1185,9 +1223,17 @@
  * `.sh-pr-tree .something` rule and cannot work out why it does nothing.
  */
 .sh-pr-tree {
-  inline-size: 200px;
-  flex: 0 0 200px;
-  overflow-y: auto;
+  /*
+   * Grows with the pane, within bounds.
+   *
+   * Fixed at 200px it truncated EVERY segment of a collapsed directory chain
+   * independently — `sta… / stack-or… / sl… / stac…`, four ellipses and no
+   * readable path. A tree gets a share of the pane and a ceiling, because past
+   * about 320px it is taking room from the diff, which is what the pane is for.
+   */
+  flex: 0 1 clamp(200px, 24cqi, 320px);
+  min-inline-size: 200px;
+  overflow: auto;
   box-shadow: inset calc(-1 * var(--sh-hairline)) 0 0 var(--sh-line);
 
   /*
@@ -1468,7 +1514,13 @@
  * and darkens on paper and needs no card under it.
  */
 .sh-md :not(.sh-md__code) > code {
-  padding: 2px 5px;
+  /*
+   * Horizontal padding only. A mono face's own em box is already taller than
+   * the sans line it sits in, so block padding on top of it drew a chip half
+   * again as tall as the text — a paragraph of them read as a row of buttons.
+   * The chip needs to be legible against the prose, not taller than it.
+   */
+  padding: 0 var(--sh-space-sm);
   background: var(--sh-code-fill);
   border-radius: var(--sh-radius-sm);
 }
@@ -1532,12 +1584,49 @@
   padding-block-end: var(--sh-space-md);
 }
 
+/*
+ * The disclosure's marker is DRAWN, not the browser's.
+ *
+ * The default is a filled triangle at the UA's own size and colour, sitting on
+ * the baseline of a 15px line — a grey wedge at a weight nothing else here uses,
+ * and half a line too low. This is the chevron the rest of the app turns on a
+ * row that opens, at the ink the summary is already set in.
+ */
 .sh-md summary {
   cursor: pointer;
   color: var(--sh-text-dim);
-  /* The marker is the disclosure's only affordance, so it keeps the default
-     triangle rather than a drawn one nobody has been taught. */
-  list-style-position: outside;
+  list-style: none;
+}
+
+.sh-md summary::-webkit-details-marker {
+  display: none;
+}
+
+/*
+ * Inline-block and NOT a flex item, because the summary's own content is prose
+ * and a flex container would make every run in it a separate item — the spaces
+ * between them collapse and the line comes apart at each `<b>`.
+ *
+ * `vertical-align: middle` centres it on the x-height, which is what makes the
+ * rotation need no hand-tuned offset in either state.
+ */
+.sh-md summary::before {
+  content: '';
+  display: inline-block;
+  vertical-align: middle;
+  inline-size: 6px;
+  block-size: 6px;
+  margin-inline-end: var(--sh-space-md);
+  /* Two edges of a square, turned 45° — the chevron every row that opens wears
+     here, at the one size that survives beside 15px text. */
+  border-inline-end: 1.5px solid currentColor;
+  border-block-end: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform var(--sh-motion) linear;
+}
+
+.sh-md details[open] > summary::before {
+  transform: rotate(45deg);
 }
 
 .sh-md summary:hover {

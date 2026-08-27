@@ -60,24 +60,44 @@ describe('KeyCap', () => {
   });
 });
 
-describe('a keycap on a solid fill', () => {
+describe('a keycap inside a button that has its own edge', () => {
   /**
    * MUTATION TARGET. The border is what makes a keycap read as a key against a
-   * dark surface — and it is a grey rectangle on near-white.
+   * dark surface — and it is the wrong thing inside a box that already has one.
    *
-   * A primary button is already a solid block of `wool` with its own edge, so a
-   * bordered box inside it is a control drawn inside a control. `currentColor`
-   * rather than `textOnWool` by name, so it stays right for any future
-   * solid-fill variant whose ink is something else.
+   * A `primary` is a solid block of `wool`, where that border lands as a grey
+   * rectangle on near-white; a `secondary` is a hairline box, where it is a
+   * border two pixels inside another border. Both are a control drawn inside a
+   * control. `currentColor` rather than `textOnWool` by name, so it stays right
+   * for any variant whose ink is something else.
    */
-  it('drops its border and takes the button’s own ink', () => {
-    const rule = rulesMentioning('sh-ui-keycap').find(
-      (candidate) => candidate.selectorText === '.sh-ui-button--primary .sh-ui-keycap',
+  const carved = (): CSSStyleRule | undefined =>
+    rulesMentioning('sh-ui-keycap').find(
+      (candidate) =>
+        candidate.selectorText.includes('.sh-ui-button--primary .sh-ui-keycap') &&
+        candidate.selectorText.includes('.sh-ui-button--secondary .sh-ui-keycap'),
     );
+
+  it('drops its border and takes the button’s own ink', () => {
+    const rule = carved();
     expect(rule?.style.borderColor).toBe('transparent');
     // jsdom lower-cases the keyword on the way in.
     expect(rule?.style.color?.toLowerCase()).toBe('currentcolor');
-    // The padding stays, or `Land task L` reads as one word.
-    expect(rule?.style.padding).toBe('');
+    /*
+     * The BLOCK padding goes and the inline padding stays, and the split is the
+     * point. With both, the keycap stands 21px inside a 24px button: the same
+     * height as the thing containing it, which is what makes it read as a
+     * second control rather than a legend on this one. Without the inline half,
+     * `Hand to agent H` reads as one word.
+     */
+    expect(rule?.style.paddingBlock).toBe('0px');
+    expect(rule?.style.paddingInline).toBe('');
+  });
+
+  it('leaves a GHOST button’s keycap bordered, which is the case that needs one', () => {
+    // A ghost has no edge until hover, so the keycap's box is the only thing
+    // giving the legend one. Carving it out here would make `Hand to agent H`
+    // read as four words.
+    expect(carved()?.selectorText).not.toContain('ghost');
   });
 });
