@@ -15,8 +15,15 @@ function fakeClock(): Clock & { advance(ms: number): void } {
   } as Clock & { advance(ms: number): void };
 }
 
-/** The commit the task's checkout is on, unless a test says otherwise. */
+/** The commit the task's WORKTREE is on, unless a test says otherwise. */
 const HEAD = 'a71c4e9b28d5f0631ac8e7b4920df15c6e83a047';
+/**
+ * What the user's own checkout is on — trunk, and never this task's work.
+ *
+ * The harness answers it for every path but the worktree, so a read of the
+ * wrong one fails the ownership tests rather than passing by coincidence.
+ */
+const TRUNK = 'f0a3c71d95b6e284037ac5f1b8d629e4713ca580';
 const STRANGER = '2d68b5f0913ce7a4820db6135f9e074ac2b81d6f';
 
 function pr(overrides: Partial<PullRequest> = {}): PullRequest {
@@ -54,15 +61,18 @@ function pr(overrides: Partial<PullRequest> = {}): PullRequest {
 const TASK: TaskSubject = {
   id: 't-1',
   root: '/tasks/slate-merino',
+  /** `path` is the user's own checkout; the task's is `<root>/<name>`. */
   repos: [{ path: '/repos/v2', name: 'v2' }],
   shipped: false,
 };
+
+const WORKTREE = '/tasks/slate-merino/v2';
 
 interface Harness {
   readonly sync: Sync;
   readonly clock: ReturnType<typeof fakeClock>;
   readonly asked: { slug: RepoSlug; branch: string }[];
-  /** Every repo whose HEAD was read — the cost `needsHead` exists to avoid. */
+  /** Every path whose HEAD was read — the cost `needsHead` exists to avoid. */
   readonly headReads: string[];
   /** Every WORKTREE whose HEAD branch was read — the branch is git's to answer. */
   readonly branchReads: string[];
@@ -108,7 +118,8 @@ function harness(
       Promise.resolve(options.remote === undefined ? { owner: 'shepherd', repo: 'v2' } : options.remote),
     headOf: (path) => {
       headReads.push(path);
-      return Promise.resolve(options.head === undefined ? HEAD : options.head);
+      if (options.head !== undefined) return Promise.resolve(options.head);
+      return Promise.resolve(path === WORKTREE ? HEAD : TRUNK);
     },
     branchOf: (worktree) => {
       branchReads.push(worktree);
@@ -311,7 +322,19 @@ describe('a PR that only shares the branch name', () => {
     h.answer([pr({ state: 'merged' })]);
     h.clock.advance(SYNC_INTERVALS.live);
     await h.sync.pass([TASK]);
-    expect(h.headReads).toEqual(['/repos/v2']);
+    expect(h.headReads).toEqual([WORKTREE]);
+  });
+
+  it('reads the WORKTREE’s HEAD, not the user’s own checkout', async () => {
+    // The checkout the task was made from sits on trunk and has never seen this
+    // task's commits, so judging a merged PR against it dropped every one of
+    // them — and a task with no PRs draws git's mark, so a PR merging made the
+    // glyph go backwards.
+    const h = harness();
+    h.answer([pr({ number: 301, state: 'merged' })]);
+    await h.sync.pass([TASK]);
+    expect(h.headReads).toEqual([WORKTREE]);
+    expect(h.sync.prsOf('t-1').map((entry) => entry.number)).toEqual([301]);
   });
 });
 

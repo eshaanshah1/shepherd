@@ -55,13 +55,17 @@ export interface SyncDeps {
   client: () => GitHubClient | null;
   remoteOf: (repoPath: string) => Promise<RepoSlug | null>;
   /**
-   * The commit that checkout is on, or `null` when it cannot be read.
+   * The commit a WORKTREE is on, or `null` when it cannot be read.
+   *
+   * The worktree, the same path `branchOf` is given — a task's `repo.path` is
+   * the user's own checkout, which sits on trunk and shares no commit with the
+   * task's branch.
    *
    * Asked only when a repo answered with a finished PR (`needsHead`), so the
    * ordinary task pays nothing for it. See `model/ownership.ts` for what it is
    * for and why `null` keeps rather than drops.
    */
-  headOf: (repoPath: string) => Promise<string | null>;
+  headOf: (worktree: string) => Promise<string | null>;
   /**
    * Which branch a worktree is on, or `null` when it is on none.
    *
@@ -244,7 +248,8 @@ export class Sync {
         // Per repo, because nothing keeps a task's repos on one branch once an
         // agent can rename them — `tasks.renameBranch` does every repo at once,
         // and a `git branch -m` typed by hand does not.
-        const branch = await this.#deps.branchOf(`${task.root}/${repo.name}`);
+        const worktree = `${task.root}/${repo.name}`;
+        const branch = await this.#deps.branchOf(worktree);
         if (branch === null) continue;
         try {
           const answered = await client.pullRequests(slug, branch, repo.name);
@@ -253,8 +258,12 @@ export class Sync {
            * include a PR that merged on a branch of this name before this task
            * existed. `ownedByTask` separates them by commit; the HEAD it needs
            * is read only when there is a finished PR to judge.
+           *
+           * The WORKTREE, not `repo.path` — the latter is the user's own
+           * checkout, which sits on trunk and has never seen this task's work,
+           * so every merged PR would be judged a stranger's and dropped.
            */
-          const headOid = needsHead(answered) ? await this.#deps.headOf(repo.path) : null;
+          const headOid = needsHead(answered) ? await this.#deps.headOf(worktree) : null;
           const { kept, dropped } = ownedByTask(answered, headOid);
           found.push(...kept);
           // Said out loud rather than filtered away: a PR that vanishes with no
