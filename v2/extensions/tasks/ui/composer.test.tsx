@@ -604,18 +604,29 @@ describe('the scope', () => {
     expect(paths()).toEqual([`${HOME}/dev/shepherd-ios`]);
   });
 
+  /**
+   * Submit the form.
+   *
+   * There is no send BUTTON any more — the screen teaches ⏎ in a line of text
+   * and lets the form's own submit do the work, so a test that clicked a control
+   * would be testing a control the user does not have. Dispatching `submit` is
+   * what pressing Enter in a form does, which is the gesture this stands for.
+   */
+  const submit = async (): Promise<void> => {
+    await act(async () => {
+      container
+        .querySelector<HTMLElement>('[data-testid="task-composer"]')!
+        .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+  };
+
   it('rides to `tasks.create` in document order, with the brief that names it', async () => {
     await type('fix the retry loop in #s');
     await press('Enter');
     await type('and #s');
     await press('Enter');
     await press('Escape');
-    await act(async () => {
-      container
-        .querySelector<HTMLElement>('[data-testid="composer-create"]')!
-        .closest('form')!
-        .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-    });
+    await submit();
 
     expect(invoke).toHaveBeenCalledWith('tasks.create', {
       // The pill serialises back to the repo's NAME and not to `#name`: the `#`
@@ -705,54 +716,242 @@ describe('the name ask', () => {
  * a privacy control that is on by accident is a control nobody can trust either
  * way.
  */
-describe('the profile picker', () => {
-  const profile = (): HTMLElement | null =>
-    container.querySelector<HTMLElement>('.sh-composer-select--profile');
-  const choose = async (label: string): Promise<void> => {
+describe('the incognito mark', () => {
+  const mark = (): HTMLElement =>
+    container.querySelector<HTMLElement>('[data-testid="composer-incognito"]')!;
+  const submit = async (): Promise<void> => {
     await act(async () => {
-      profile()?.querySelector<HTMLElement>('.sh-ui-select__trigger')?.click();
-    });
-    const item = [...(profile()?.querySelectorAll<HTMLElement>('[role="option"]') ?? [])].find(
-      (element) => element.textContent === label,
-    );
-    if (item === undefined) throw new Error(`the profile select has no ${label} option`);
-    await act(async () => {
-      item.click();
+      container
+        .querySelector<HTMLElement>('[data-testid="task-composer"]')!
+        .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
     });
   };
 
-  it('opens on the ordinary profile', () => {
-    expect(profile()?.querySelector('.sh-ui-select__value')?.textContent).toBe('default');
+  /*
+   * It stopped being a `Select` reading `default`.
+   *
+   * `default` written out is the row reporting that nothing happened, and a slot
+   * that always says so is the one control on the line teaching nothing. So the
+   * profile is a MARK: absent-looking at rest, ink when it is on, and the same
+   * mark is the way back out.
+   */
+  it('draws no word, and is not pressed, until it is chosen', () => {
+    expect(mark().getAttribute('aria-pressed')).toBe('false');
+    // The state is on the button and NOT in a label beside it — a status word
+    // beside a status mark is §10's first refusal.
+    expect(mark().textContent?.trim()).toBe('');
   });
 
-  it('offers exactly two, and no third state to explain', async () => {
+  it('says what it does, in both states, where a pointer can find it', async () => {
+    expect(mark().getAttribute('title')).toContain('incognito');
     await act(async () => {
-      profile()?.querySelector<HTMLElement>('.sh-ui-select__trigger')?.click();
+      mark().click();
     });
-    expect(
-      [...(profile()?.querySelectorAll<HTMLElement>('[role="option"]') ?? [])].map((o) => o.textContent),
-    ).toEqual(['default', 'incognito']);
+    // The ON title explains the CONSEQUENCE rather than repeating the word: a
+    // config dir of its own, deleted when the task ships.
+    expect(mark().getAttribute('title')).toContain('config dir of its own');
   });
 
   it('sends nothing when the ordinary profile is left alone', async () => {
     await type('a task like any other');
-    await act(async () => {
-      container.querySelector<HTMLElement>('[data-testid="composer-create"]')!.click();
-    });
+    await submit();
 
     const [, args] = invoke.mock.calls.find(([command]) => command === 'tasks.create')!;
     expect(args).not.toHaveProperty('incognito');
   });
 
-  it('asks for incognito when it is picked', async () => {
-    await choose('incognito');
-    await type('something I would rather not keep');
+  it('asks for incognito when the mark is set', async () => {
     await act(async () => {
-      container.querySelector<HTMLElement>('[data-testid="composer-create"]')!.click();
+      mark().click();
     });
+    expect(mark().getAttribute('aria-pressed')).toBe('true');
+    await type('something I would rather not keep');
+    await submit();
 
     const [, args] = invoke.mock.calls.find(([command]) => command === 'tasks.create')!;
     expect(args).toMatchObject({ incognito: true });
+  });
+
+  /*
+   * The way OUT, which the `Select` had for free and a toggle has to be given.
+   * A privacy control you can enter and not leave is the worst instance of §9's
+   * "you added the way out for every way in".
+   */
+  it('turns back off with the same mark', async () => {
+    await act(async () => {
+      mark().click();
+    });
+    await act(async () => {
+      mark().click();
+    });
+    expect(mark().getAttribute('aria-pressed')).toBe('false');
+
+    await type('back on the record');
+    await submit();
+    const [, args] = invoke.mock.calls.find(([command]) => command === 'tasks.create')!;
+    expect(args).not.toHaveProperty('incognito');
+  });
+});
+
+/**
+ * Reading a control row that is no longer made of `Select`s.
+ *
+ * A slot is a bare `<button>` carrying its glyph name, and the value is the one
+ * `<span>` inside it. Opening it renders `Menu`'s own list into a portal, so the
+ * rows are looked up in the DOCUMENT rather than inside the slot — which is the
+ * same thing `menu.test.tsx` does, and for the same reason.
+ */
+const slot = (glyph: string): HTMLElement | null =>
+  container.querySelector<HTMLElement>(`.sh-composer-slot[data-glyph="${glyph}"]`);
+
+const slotValue = (glyph: string): string | undefined =>
+  slot(glyph)?.querySelector('span')?.textContent ?? undefined;
+
+/**
+ * Open a slot the way a pointer does — `pointerdown`, not `click`.
+ *
+ * Radix's dropdown trigger opens on POINTERDOWN so the menu is up before the
+ * button is released, and jsdom's `.click()` never fires one. `menu.test.tsx`
+ * sidesteps this by rendering the menu already open and saying the trigger's own
+ * gesture is tested separately; this is that test, so it has to send the real
+ * event. A `MouseEvent` carries it because jsdom has no `PointerEvent` and React
+ * dispatches on the type name either way.
+ */
+const openSlot = async (glyph: string): Promise<void> => {
+  await act(async () => {
+    slot(glyph)?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }));
+  });
+};
+
+const slotRows = (): HTMLElement[] => {
+  const menus = document.querySelectorAll<HTMLElement>('.sh-ui-menu');
+  const menu = menus[menus.length - 1];
+  return menu === undefined ? [] : [...menu.querySelectorAll<HTMLElement>('.sh-ui-menu__item')];
+};
+
+const chooseInSlot = async (glyph: string, label: string): Promise<void> => {
+  await openSlot(glyph);
+  const row = slotRows().find((element) => element.textContent?.includes(label));
+  if (row === undefined) throw new Error(`the ${glyph} slot has no ${label} row`);
+  // `element.click()`, not a dispatched MouseEvent: Radix listens for pointer
+  // events on its own rows and a synthetic click alone does not select.
+  await act(async () => {
+    row.click();
+  });
+};
+
+/** Submit, the way the screen actually does — no button, the form's own event. */
+const submitForm = async (): Promise<void> => {
+  await act(async () => {
+    container
+      .querySelector<HTMLElement>('[data-testid="task-composer"]')!
+      .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+  });
+};
+
+/**
+ * The repo slot, which is the CLICK path — and it is not the typing path.
+ *
+ * The two were one thing for a while: clicking the slot called `appendText("#")`
+ * and let the mention flow do the rest. It reads as clever and it is wrong in
+ * three ways at once, and all three are asserted below — it littered the
+ * sentence with a `#` the user never typed, it showed the list narrowed by
+ * whatever had last been typed, and it offered no way back out of a repo already
+ * chosen.
+ */
+describe('the repo slot', () => {
+  const repos = (): HTMLElement[] => slotRows();
+
+  it('offers the zero-query list, not the one the last mention narrowed to', async () => {
+    /*
+     * Type a mention that narrows the INLINE list to two shepherd rows, then open
+     * the ROW's menu. It must still be answering the zero-query ask — `api`, the
+     * picked history — because the two are separate asks into separate state.
+     * Sharing one made the menu show whatever had last been typed and call it
+     * "your repos".
+     */
+    await type('fix #s');
+    await openSlot('folder');
+    expect(repos().map((row) => row.textContent)).toEqual([expect.stringContaining('api')]);
+  });
+
+  it('adds a repo at the end, and types no `#` into the sentence', async () => {
+    await type('fix the retry loop');
+    await chooseInSlot('folder', 'api');
+
+    const brief = container.querySelector<HTMLElement>('[data-testid="composer-brief"]')!;
+    expect(brief.querySelectorAll('[data-repo-path]').length).toBe(1);
+    // The gesture that used to leave one behind.
+    expect(brief.textContent).not.toContain('#');
+  });
+
+  /*
+   * The way out, which the append-a-`#` version did not have: the menu ticks a
+   * repo that is already scoped, and a tick you cannot clear is a control that
+   * reports state and refuses to change it.
+   */
+  it('removes a repo that is already scoped, pill and all', async () => {
+    await chooseInSlot('folder', 'api');
+    const brief = container.querySelector<HTMLElement>('[data-testid="composer-brief"]')!;
+    expect(brief.querySelectorAll('[data-repo-path]').length).toBe(1);
+
+    await chooseInSlot('folder', 'api');
+    expect(brief.querySelectorAll('[data-repo-path]').length).toBe(0);
+    /*
+     * And the non-breaking space went with it. One invisible character per
+     * add-and-remove accumulates at the end of the sentence, which is the exact
+     * place someone is counting characters.
+     */
+    expect(brief.textContent).not.toContain('\u00A0');
+  });
+
+  /*
+   * A pill arrives ADDED, not selected.
+   *
+   * `Range.insertNode` mutates its range to surround what it inserted, and the
+   * first version of `appendNode` reused that range for the caret — so a repo
+   * chosen from the row landed highlighted, and the next keystroke would have
+   * replaced it. Asserted on the selection because that is the defect: the DOM
+   * was correct in every other respect.
+   */
+  it('leaves the caret after the pill, with nothing selected', async () => {
+    await chooseInSlot('folder', 'api');
+    const selection = window.getSelection();
+    expect(selection?.isCollapsed).toBe(true);
+
+    /*
+     * And the pill is not what is selected.
+     *
+     * That is the defect stated exactly: Chromium draws a selected
+     * `contenteditable=false` span with an outline of its own, so a range that
+     * merely TOUCHED the pill made a freshly-chosen repo look like a thing about
+     * to be replaced.
+     *
+     * Asserted on the anchor rather than on a container-and-offset, because
+     * `collapse(false)` is free to land either on the field at an index or
+     * inside its last text node, and both are correct.
+     */
+    const brief = container.querySelector<HTMLElement>('[data-testid="composer-brief"]')!;
+    const pill = brief.querySelector<HTMLElement>('[data-repo-path]')!;
+    const anchor = selection!.anchorNode!;
+    expect(anchor === pill || pill.contains(anchor)).toBe(false);
+    /*
+     * Where focus LANDS is deliberately not asserted here. jsdom only focuses
+     * what it considers a focusable area — form controls and anything carrying a
+     * tabindex — and a bare `contenteditable` is neither, so `focus()` on the
+     * brief is a no-op in this environment and the assertion would be about
+     * jsdom rather than about the composer.
+     *
+     * The mechanism that puts it back is `restoreFocus={false}` on the slot's
+     * menu plus `caretToEnd`, and `menu.test.tsx` covers the flag itself.
+     */
+  });
+
+  it('says which repos are in the sentence, and the sentence is the only record', async () => {
+    await chooseInSlot('folder', 'api');
+    await openSlot('folder');
+    const ticked = repos().filter((row) => row.querySelector('svg') !== null);
+    expect(ticked.length).toBeGreaterThan(0);
   });
 });
 
@@ -763,18 +962,16 @@ describe('the profile picker', () => {
  * indistinguishable from a machine that advertises no models.
  */
 describe('the model picker', () => {
-  const model = (): HTMLElement | null =>
-    container.querySelector<HTMLElement>('.sh-composer-select--model');
-  const options = (): string[] => {
-    const list = model();
-    return [...(list?.querySelectorAll<HTMLElement>('[role="option"]') ?? [])].map(
-      (option) => option.textContent ?? '',
-    );
-  };
+  const model = (): HTMLElement | null => slot('robot');
+  /*
+   * Read from the DOCUMENT, not from inside the slot: `Menu` portals its list,
+   * so a query scoped to the trigger finds an empty array — and an empty array
+   * is indistinguishable from a machine advertising no models, which is the very
+   * confusion this describe's own note says the assertion exists to avoid.
+   */
+  const options = (): string[] => slotRows().map((option) => option.textContent ?? '');
   const open = async (): Promise<void> => {
-    await act(async () => {
-      model()?.querySelector<HTMLElement>('.sh-ui-select__trigger')?.click();
-    });
+    await openSlot('robot');
   };
 
   it('asks the agent layer for the list AND for which one it opens on', () => {
@@ -795,11 +992,13 @@ describe('the model picker', () => {
   });
 
   it('opens PRE-FILLED with the resolved default, and sends it', async () => {
-    expect(model()?.querySelector('.sh-ui-select__value')?.textContent).toBe('Opus');
+    expect(slotValue('robot')).toBe('Opus');
 
     await type('add a model picker to the composer');
     await act(async () => {
-      container.querySelector<HTMLElement>('[data-testid="composer-create"]')!.click();
+      container
+        .querySelector<HTMLElement>('[data-testid="task-composer"]')!
+        .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
     });
 
     // Sent even though nobody touched the control: what the card SHOWED is what
@@ -826,7 +1025,9 @@ describe('the model picker', () => {
 
     await type('add a model picker to the composer');
     await act(async () => {
-      container.querySelector<HTMLElement>('[data-testid="composer-create"]')!.click();
+      container
+        .querySelector<HTMLElement>('[data-testid="task-composer"]')!
+        .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
     });
 
     const [, args] = spy.mock.calls.find(([command]) => command === 'tasks.create')!;
@@ -835,19 +1036,19 @@ describe('the model picker', () => {
 
   it('sends a picked model instead of the default', async () => {
     await open();
-    const item = [...(model()?.querySelectorAll<HTMLElement>('[role="option"]') ?? [])].find(
-      (element) => element.textContent?.startsWith('Fable'),
-    );
-    if (item === undefined) throw new Error('the model select did not open');
+    const item = slotRows().find((element) => element.textContent?.startsWith('Fable'));
+    if (item === undefined) throw new Error('the model slot did not open');
     await act(async () => {
       item.click();
     });
 
-    expect(model()?.querySelector('.sh-ui-select__value')?.textContent).toBe('Fable');
+    expect(slotValue('robot')).toBe('Fable');
 
     await type('add a model picker to the composer');
     await act(async () => {
-      container.querySelector<HTMLElement>('[data-testid="composer-create"]')!.click();
+      container
+        .querySelector<HTMLElement>('[data-testid="task-composer"]')!
+        .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
     });
 
     const [, args] = invoke.mock.calls.find(([command]) => command === 'tasks.create')!;
@@ -865,8 +1066,7 @@ describe('the model picker', () => {
  * thing is made, which is why the repo picker has to ask the same machine.
  */
 describe('the machine picker', () => {
-  const machine = (): HTMLElement | null =>
-    container.querySelector<HTMLElement>('.sh-composer-select--machine');
+  const machine = (): HTMLElement | null => slot('dots');
 
   function withMachines(machines: unknown): ReturnType<typeof makeInvoke> {
     const spy = vi.fn(async (command: string, args?: unknown): Promise<{ ok: true; value: unknown }> => {
@@ -908,7 +1108,7 @@ describe('the machine picker', () => {
     // the picker is a `Select` like the model and placement controls beside it,
     // because three dropdowns on one row that are three different components is
     // three things to keep in step.
-    expect(machine()?.querySelector('.sh-ui-select__value')?.textContent).toContain('This Mac');
+    expect(slotValue('dots')).toContain('This Mac');
   });
 
   it('asks the CHOSEN machine for its repos, and creates the task there', async () => {
@@ -921,15 +1121,11 @@ describe('the machine picker', () => {
     mount(<TaskComposer invoke={spy} done={makeDone()} />);
     await act(async () => undefined);
 
-    await act(async () => {
-      // The TRIGGER, not the Select's root: the root is a positioning box and a
-      // click on it opens nothing.
-      machine()?.querySelector<HTMLElement>('.sh-ui-select__trigger')?.click();
-    });
-    const item = [...(machine()?.querySelectorAll<HTMLElement>('[role="option"]') ?? [])].find(
-      (element) => element.textContent?.includes('Work Mac'),
-    );
-    if (item === undefined) throw new Error('the machine select did not open');
+    // `pointerdown`: Radix's dropdown opens before the button is released, and
+    // jsdom's `.click()` never fires one. `openSlot` documents it.
+    await openSlot('dots');
+    const item = slotRows().find((element) => element.textContent?.includes('Work Mac'));
+    if (item === undefined) throw new Error('the machine slot did not open');
     /*
      * `element.click()`, not a dispatched `MouseEvent('click')`: Radix's item
      * reads properties the synthetic one leaves at zero and ignores it entirely,
@@ -940,7 +1136,7 @@ describe('the machine picker', () => {
       item.click();
     });
 
-    expect(machine()?.querySelector('.sh-ui-select__value')?.textContent).toContain('Work Mac');
+    expect(slotValue('dots')).toContain('Work Mac');
 
     // The repos are re-asked OF THAT MACHINE. Not merely cleared: the zero-query
     // answer is the history of repos actually used over there, which is exactly
@@ -1217,11 +1413,18 @@ describe('the terminal gesture', () => {
     expect(created()).toBeUndefined();
   });
 
-  it('teaches the keystroke on the send button rather than beside it', () => {
-    const send = container.querySelector<HTMLElement>('[data-testid="composer-create"]')!;
-    expect(send.getAttribute('title')).toContain('⌘⏎');
-    // …and the accessible name stays the VERB. A screen reader announcing a
-    // keycap strip is worse than one announcing what the control does.
-    expect(send.getAttribute('aria-label')).toBe('Start this task');
+  it('teaches both keystrokes in the line under the brief', () => {
+    const send = container.querySelector<HTMLElement>('[data-testid="composer-send"]')!;
+    // ⌘⏎ was taught in a `title` on the send circle — a tooltip on a control
+    // nobody hovers, on a surface that no longer has the control. The screen has
+    // room to say it, so it says it.
+    expect(send.textContent).toContain('⌘⏎');
+    expect(send.textContent).toContain('⏎');
+    /*
+     * And it is HIDDEN from assistive technology. ⏎ in a form is submit, which
+     * every screen reader announces already; a line reading "Press Enter to
+     * send" is a caption for a fact the platform states better.
+     */
+    expect(send.getAttribute('aria-hidden')).toBe('true');
   });
 });

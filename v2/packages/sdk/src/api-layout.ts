@@ -258,8 +258,32 @@ export type ViewProvider =
        * comes back to after a relaunch. It is for a surface with a subject —
        * this PR, this diff, this log — and never for a panel of controls, which
        * is what the other two are for. See ADR 0044.
+       *
+       * `screen` is the fourth: an overlay that stopped pretending to be a card.
+       * It covers the STAGE — the tab strip with it — while the rail keeps
+       * showing the flock, and it is a SINGLETON, so raising one closes any
+       * other. Two tests separate it from the three above, and a surface has to
+       * fail both to earn it:
+       *
+       *   - It is not a `pane`, because it is not a place. Nothing about it
+       *     survives a relaunch, you never split it, and there is no subject it
+       *     is a view OF — which is the whole of ADR 0044's bar.
+       *   - It is not an `overlay`, because a card is a claim about size. An
+       *     overlay says "this is small enough to float over your work"; the
+       *     moment that stops being true, a modal is a window with a border
+       *     drawn round the middle of it.
+       *
+       * Settings is the shape this generalizes: it took the window over from
+       * inside the shell because there was nowhere to declare it (ADR 0040). The
+       * composer is the second consumer, and a second consumer is what ADR 0049
+       * said a new contribution point has to have before it exists.
+       *
+       * The rail is deliberately NOT covered. Settings covers it because
+       * settings are a departure from the work; composing is the start of it,
+       * and the list of what is already running is the context you compose
+       * against.
        */
-      readonly surface?: 'dock' | 'overlay' | 'pane';
+      readonly surface?: 'dock' | 'overlay' | 'pane' | 'screen';
       /**
        * The accelerator that raises it, in Electron's vocabulary
        * (`CmdOrCtrl+T`). **A modifier is required** — a bare key here would be

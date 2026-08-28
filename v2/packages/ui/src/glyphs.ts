@@ -12,6 +12,7 @@ import {
   IconFolder,
   IconFolderFilled,
   IconBrandGit,
+  IconGitBranch,
   IconGitMerge,
   IconGitPullRequest,
   IconGitPullRequestClosed,
@@ -23,6 +24,7 @@ import {
   IconPlus,
   IconNotes,
   IconPuzzle,
+  IconRobot,
   IconSearch,
   IconSpy,
   IconShip,
@@ -112,6 +114,18 @@ export const NAMED_GLYPHS: Readonly<Record<string, ComponentType<TablerIconProps
    * keeps one stroke weight.
    */
   folder: IconFolder,
+  /*
+   * The composer's row, and the two names it needed that nothing else had asked
+   * for yet — added one line at a time, which is what this list's comment says
+   * the shape of growing it should be.
+   *
+   * `robot` is which model the task's agents open on. `branch` is where the work
+   * happens, and it is a BRANCH rather than a folder because the thing being
+   * chosen is a cut of the repo, not a directory on disk — `worktree` and
+   * `in-place` differ in whether a branch is made, and nothing else.
+   */
+  robot: IconRobot,
+  branch: IconGitBranch,
   'folder-filled': IconFolderFilled,
   /*
    * A pull request, which is the only git noun in here and is deliberately the

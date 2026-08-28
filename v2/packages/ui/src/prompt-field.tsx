@@ -89,6 +89,42 @@ export interface PromptFieldHandle {
    * clicked.
    */
   appendText(text: string): void;
+  /**
+   * Insert an element at the very END, wherever the caret is.
+   *
+   * The element analogue of `appendText`, and it exists because neither of the
+   * other two could say this: `insert` is CARET-relative, which is right for a
+   * typed trigger and wrong for a control outside the field that has no caret to
+   * be relative to; `appendText` is end-relative but takes a string.
+   *
+   * The gap showed up the first time a repo was chosen from a menu in the
+   * control row rather than by typing `#`. The field is not focused at that
+   * moment, so `insert` had nowhere to put the pill.
+   *
+   * `trailing` is the same non-breaking space `insert` takes, and for the same
+   * reason: the caret lands in text rather than against an atomic element.
+   */
+  appendNode(node: HTMLElement, options?: { readonly trailing?: string }): void;
+  /**
+   * Take an element back out, and report the edit.
+   *
+   * The other half of `appendNode`: a control that can add a pill from outside
+   * the field has to be able to remove one, or the only way back is Backspace
+   * over a character the user did not type. Removing the node directly and
+   * firing `input` by hand would work and is what the composer did first — this
+   * exists so that the field, not its caller, owns when a change is announced.
+   */
+  removeNode(node: HTMLElement): void;
+  /**
+   * Focus the field and put a collapsed caret at the very end.
+   *
+   * The thing neither `focus()` nor `appendText('')` could do: `focus()` says
+   * nothing about where the caret lands, and `appendText` returns early on an
+   * empty string. A control OUTSIDE the field that edits its content needs
+   * exactly this afterwards — it has taken focus itself, and handing it back
+   * without saying where the caret goes leaves whatever the last selection was.
+   */
+  caretToEnd(): void;
   /** Null when the caret is not inside this field, or is not in a text node. */
   caretContext(): CaretContext | null;
   focus(): void;
@@ -266,6 +302,70 @@ export const PromptField = forwardRef<PromptFieldHandle, PromptFieldProps>(funct
         const selection = window.getSelection();
         selection?.removeAllRanges();
         selection?.addRange(range);
+        report();
+      },
+      appendNode: (node, options) => {
+        const field = host.current;
+        if (field === null) return;
+        field.focus();
+        const range = document.createRange();
+        range.selectNodeContents(field);
+        range.collapse(false);
+        range.insertNode(node);
+        let after: Node = node;
+        const trailing = options?.trailing;
+        if (trailing !== undefined && trailing !== '') {
+          const text = document.createTextNode(trailing);
+          node.after(text);
+          after = text;
+        }
+        /*
+         * A FRESH range for the caret, not the one that did the inserting.
+         *
+         * `Range.insertNode` mutates its range to SURROUND the node it inserted,
+         * so reusing it here handed the selection a range spanning the pill —
+         * and a pill dropped in from the control row arrived highlighted, as
+         * though it had been selected rather than added. The next keystroke
+         * would have replaced it.
+         *
+         * Re-deriving is the fix rather than re-collapsing, because the mutated
+         * range's endpoints are not the ones this wants: the caret belongs after
+         * the trailing text, and the range knows only about the node.
+         */
+        const caret = document.createRange();
+        caret.setStartAfter(after);
+        caret.collapse(true);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(caret);
+        report();
+      },
+      caretToEnd: () => {
+        const field = host.current;
+        if (field === null) return;
+        field.focus();
+        const range = document.createRange();
+        range.selectNodeContents(field);
+        // The END of the contents, and COLLAPSED. `selectNodeContents` alone is a
+        // selection of everything, which is the state this exists to leave.
+        range.collapse(false);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+      },
+      removeNode: (node) => {
+        if (host.current === null || !host.current.contains(node)) return;
+        /*
+         * The non-breaking space `appendNode` and `insert` put after a pill goes
+         * with it. Leaving it behind accumulates one invisible character per
+         * add-and-remove, and they are invisible in the exact place a person is
+         * counting characters — the end of the sentence they are writing.
+         */
+        const next = node.nextSibling;
+        if (next !== null && next.nodeType === Node.TEXT_NODE && next.textContent === '\u00A0') {
+          next.remove();
+        }
+        node.remove();
         report();
       },
       caretContext: () => {

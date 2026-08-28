@@ -32,6 +32,7 @@ import { FindBar } from './find-bar.tsx';
 import { SkyStrip } from './sky-strip.tsx';
 import { ViewDock, contributedIcon, raiseIcon } from './view-dock.tsx';
 import { ViewOverlay } from './view-overlay.tsx';
+import { ViewScreen } from './view-screen.tsx';
 import { PaneKeys } from './pane-keys.ts';
 import { SettingsScreen } from './settings-screen.tsx';
 import { useContributions } from './contributions.ts';
@@ -907,6 +908,17 @@ export function App({
               }}
             />
           )}
+
+          {/*
+            The stage's takeover layer.
+
+            Inside `<main>` rather than beside it, which is the whole difference
+            between this and `SettingsScreen`: absolutely positioned over the
+            stage, it covers the tab strip and every root and leaves the rail
+            alone. The roots stay MOUNTED underneath — a conditional mount is a
+            released pty and then a second one.
+          */}
+          <ViewScreen views={contributions} bridge={viewsApi} />
         </main>
       </div>
 

@@ -264,6 +264,13 @@ body.sh-dragging {
   min-height: 0;
   display: flex;
   /*
+   * The containing block for `.sh-screen`, which is painted over the stage and
+   * has to stop at the rail. Without this the screen resolves against the
+   * viewport and covers the flock as well — which is the one thing separating
+   * this surface from `SettingsScreen`.
+   */
+  position: relative;
+  /*
    * A COLUMN, so the tab strip takes its own band along the top and the roots
    * take everything under it. It was a row when the stage held nothing but
    * roots; the roots are still laid out as a row internally (`.sh-root` is the
@@ -1233,27 +1240,37 @@ body.sh-dragging {
  * `--sh-text` the way a fixed `--sh-ink-*` never did.
  */
 /*
- * The control row lives INSIDE the well, and carries no rule above it.
+ * The control row — one line, and space is the only thing separating its slots.
  *
- * §5: "No inner hairlines above the controls: inside a well, space is the
- * structure." It had a `border-top` and its own re-declared `--sh-line` to draw
- * it with — which is the composer re-introducing, on itself, the exact hairline
- * the surrounding `--sh-line: transparent` exists to remove.
+ * It carried `gap: 2px` and a top padding, because the separation was done by
+ * `1px × 16` rules between ghost selects and the gap only had to keep them off
+ * each other. There are no rules now, so the gap IS the separation, and it has
+ * to be wide enough that four bare words read as four controls rather than as a
+ * sentence.
+ *
+ * `flex-wrap` is deliberately absent. A row that wraps is a row whose second
+ * line is a surprise, and the rule the slots are chosen by — one or two words,
+ * a default that needs no explaining — exists so that it never has to.
  */
 .sh-composer-controls {
   display: flex;
   align-items: center;
-  /* Tight: the row is ghost labels divided by rules, and the rule carries the
-     separation. A 12px gap on top of the rule's own margins spread three
-     controls across half the card. */
-  gap: var(--sh-space-hair);
-  padding-top: var(--sh-space-lg);
+  gap: calc(var(--sh-space-lg) * 2);
+  /* Negative, so the row's first glyph aligns with the sentence under it rather
+     than with the slot's own padding box. Optical, and it is the only place on
+     this screen where two things have to line up. */
+  margin-inline-start: calc(var(--sh-space-sm) * -1);
 }
 
-/* Everything before it is a picker; the one weighted control sits hard right. */
-.sh-composer-spacer {
-  flex: 1 1 auto;
-}
+/*
+ * `.sh-composer-spacer` and `.sh-composer-select` are GONE, with their markup.
+ *
+ * The spacer existed to push the send circle hard right; there is no send
+ * circle. The selects were bordered triggers with chevrons divided by 1px
+ * rules, and the whole argument of the takeover is that a row of boxes under a
+ * borderless brief is two design languages stacked. What replaced both is
+ * `.sh-composer-slot` below.
+ */
 
 /*
  * The `#repo` and `@machine` controls — ghost selects, divided by a rule.
@@ -1579,139 +1596,7 @@ body.sh-dragging {
   }
 }
 
-/*
- * ── the composer's three selects ──────────────────────────────────────────
- *
- * §5: "Ghost `Select`s — model, then worktree — at `h28`, `r7`, 12.5px, chevron
- * 11 at 2.2 stroke, separated by a `1px × 16` rule. **No bordered chips**;
- * inside a well a bordered box is the loudest thing on it."
- *
- * `Select` ships with the settings screen's bordered treatment, which is right
- * there and wrong here — so the ghost form is scoped to the composer rather than
- * added as a variant. A variant would let any surface turn a select ghost, and
- * the reason this one is ghost is that it sits on a WELL.
- */
-.sh-composer-select .sh-ui-select__trigger {
-  block-size: var(--sh-control-md);
-  padding: 0 var(--sh-space-sm);
-  border: 0;
-  background: none;
-  border-radius: var(--sh-radius-md);
-  font-size: var(--sh-font-size-medium);
-  /*
-   * `textFaint` is the role whose job IS "a control at rest", and §5 draws these
-   * at that step. `textDim` is a resting card's TITLE — one step brighter — and
-   * at 12.5px it made three pickers the second-loudest thing on the card after
-   * the send circle.
-   */
-  color: var(--sh-text-faint);
-  /*
-   * Hugs its label, chevron right beside it.
-   *
-   * `Select`'s own metrics are the settings screen's: three control widths of
-   * `min-width` so a one-word label and a model id are the same size down a
-   * column of rows, and `space-between` to put the chevron on that column's
-   * edge. On a row of ghost controls both are wrong — every picker became a
-   * 102px box with its chevron flung ~40px past the word it belongs to.
-   */
-  justify-content: flex-start;
-  gap: var(--sh-space-snug);
-}
 
-.sh-composer-select .sh-ui-select__trigger:hover {
-  background: var(--sh-fill-hover);
-  color: var(--sh-text);
-}
-
-/* Quieter than its label, as the design draws it: the chevron says a control is
-   a menu and is not part of reading the row. */
-.sh-composer-select .sh-ui-select__caret {
-  border-color: var(--sh-text-ghost);
-}
-
-/*
- * The divider — `1px × 16`, drawn by the select that FOLLOWS another one, so a
- * row with a single control has no orphaned rule beside it.
- */
-.sh-composer-select + .sh-composer-select::before {
-  content: '';
-  inline-size: var(--sh-hairline);
-  block-size: 16px;
-  margin-inline: var(--sh-space-xs) var(--sh-space-sm);
-  background: var(--sh-line-strong);
-}
-
-.sh-composer-select {
-  display: inline-flex;
-  align-items: center;
-  /* See the trigger above: the settings column's floor is not this row's. */
-  min-inline-size: 0;
-}
-
-/*
- * ── the scope rail ────────────────────────────────────────────────────────
- *
- * **Detached**, 7px below the card and outside it. That gap is the whole idea:
- * the card is what you are writing, and this is a statement about where the
- * result will land — a consequence, not a field. Fused to the card it read as
- * one more row of the form.
- */
-.sh-composer-scope-rail {
-  display: flex;
-  align-items: center;
-  gap: var(--sh-space-md);
-  margin-block-start: var(--sh-space-snug);
-  block-size: var(--sh-row-height);
-  padding: 0 var(--sh-space-lg);
-  border: var(--sh-hairline) solid var(--sh-line-strong);
-  border-radius: var(--sh-radius-card);
-  /* `pane`, not `well`: it is not part of the writing surface. */
-  background: var(--sh-pane);
-}
-
-.sh-composer-scope-rail__repo {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sh-space-sm);
-  font-size: var(--sh-font-size-medium);
-  color: var(--sh-text-dim);
-}
-
-.sh-composer-scope-rail__repo > i {
-  inline-size: 7px;
-  block-size: 7px;
-  border-radius: 2px;
-  flex: none;
-}
-
-/* Where the worktrees will be cut — the machine's own words, so mono. */
-.sh-composer-scope-rail__where {
-  margin-inline-start: auto;
-  font-family: var(--sh-font-mono);
-  font-size: var(--sh-font-size-nano);
-  font-variant-numeric: tabular-nums;
-  color: var(--sh-text-ghost);
-}
-
-/*
- * The bar over a root of captured screens — an archived task's tabs, rendered
- * from what was on screen when it was shelved.
- *
- * Painted in ROLES and STATIC. A pulse or a shimmer here would say something is
- * happening, and the whole point of this root is that nothing is: no pty, no
- * agent, no worktree on disk. The one control is the verb that ends the state.
- */
-.sh-archived-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sh-space-md);
-  padding: var(--sh-space-sm) var(--sh-space-md);
-  background: var(--sh-surface);
-  border-bottom: var(--sh-hairline) solid var(--sh-line);
-  color: var(--sh-text-faint);
-  font-size: var(--sh-font-size-small);
-}
 
 .sh-archived-banner-action {
   border: var(--sh-hairline) solid var(--sh-line);
@@ -1725,4 +1610,328 @@ body.sh-dragging {
 
 .sh-archived-banner-action:hover {
   background: var(--sh-well);
+}
+
+
+/*
+ * The takeover screen — `surface: 'screen'`, painted over the stage.
+ *
+ * `inset: 0` against `.sh-stage`, so it covers the tab strip and every root and
+ * stops at the rail's rule. Opaque rather than a scrim: a screen is not a card
+ * over your work, it IS the work for as long as it is up, and a translucent one
+ * would leave a terminal's output legible enough to read and too dim to read
+ * from — the worst of both.
+ */
+.sh-screen {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  background: var(--sh-canvas);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+}
+
+
+/* ────────────────────────────────────────────────────────────── the takeover */
+
+/*
+ * The slot inside a screen: no border, and no heading.
+ *
+ * The same two rules the modal above carries, and for the same reason —
+ * `ComponentView` gives every contribution a section with a heading, which is
+ * right in the dock and wrong on a surface whose whole content is one question.
+ * The composer's brief asks it; `New task` above it is a label for nothing, and
+ * on a takeover it is a label for nothing occupying the top of the window.
+ *
+ * The child combinator carries the same meaning it does there: a contributed
+ * view that draws its OWN `SectionLabel` inside its markup keeps it, and only
+ * the slot's title is suppressed.
+ */
+.sh-screen .sh-side-view { border: 0; flex: 1 1 auto; min-height: 0; }
+.sh-screen .sh-side-view > .sh-ui-section-label { display: none; }
+
+/*
+ * The composer's column, centred on the WINDOW rather than on the stage.
+ *
+ * The stage is offset by the rail, so centring inside it puts the column right
+ * of the window's true middle — correct for a pane, wrong for a surface that has
+ * taken the stage over: the eye centres on the window it is looking at, not on
+ * the box the markup happens to sit in. Half the stage, less half the column,
+ * less half `--sh-band-rail`, puts the block's centre on the window's centre and keeps
+ * it there at any width, because the rail does not resize.
+ *
+ * Vertically it sits at a THIRD, not a half. A block centred in the window reads
+ * as the middle of a page you are looking at; a block a third down reads as the
+ * top of one you are writing. The room below is where the answer will arrive, so
+ * leaving it empty is the composition rather than waste.
+ */
+.sh-compose {
+  position: absolute;
+  inset-block-start: 35%;
+  /*
+   * Clamped, because the ideal is not always reachable.
+   *
+   * The offset subtracts half the rail from half the STAGE, and in a narrow
+   * window — or a wide rail — that arithmetic goes negative and the column walks
+   * off the left edge with the brief clipped against it. Measured in the real
+   * app at a ~970px stage beside a wide rail: the first line of the sentence
+   * started outside the window.
+   *
+   * `max()` says the same thing the calc says and then refuses to say it past
+   * the gutter, so the block centres on the window while there is room and sits
+   * against the margin once there is not — which is the honest failure, and the
+   * one a reader can see is deliberate.
+   */
+  inset-inline-start: max(
+    var(--sh-compose-gutter),
+    calc(50% - (var(--sh-compose-column) / 2) - (var(--sh-band-rail) / 2))
+  );
+  /* And the column narrows before it clips: the gutter is kept on both sides. */
+  inline-size: min(var(--sh-compose-column), calc(100% - (2 * var(--sh-compose-gutter))));
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  /*
+   * Wide, and deliberately wider than anything else in the app. The three
+   * elements here are a row of knobs, a sentence and a hint — not a form's
+   * fields — and the space between them is what says they are three separate
+   * statements rather than one stack of controls.
+   */
+  gap: calc(var(--sh-space-huge) * 1.5);
+}
+
+/*
+ * The column's width, and it is a token because two rules read it — the offset
+ * above needs half of whatever this is, and a literal repeated in a `calc` is
+ * the kind of pair that drifts silently the first time one of them is tuned.
+ *
+ * 560px is roughly the natural width of the brief's first line and of the
+ * control row. A wider column does not hold more; it pads the centring
+ * calculation with space that is already there.
+ */
+.sh-screen {
+  --sh-compose-column: 560px;
+  /*
+   * The margin the column will not cross. Derived rather than a literal, so it
+   * moves with density like every other length — a takeover with a hardcoded
+   * 34px gutter is the one surface that would not respond to the setting.
+   */
+  --sh-compose-gutter: calc(var(--sh-space-huge) * 2);
+}
+
+/*
+ * One knob: a glyph, a word, and nothing else at rest.
+ *
+ * `background: none` and `border: 0` are the point rather than a reset — this is
+ * a `<button>`, and every default a button carries is a box. The only fill in
+ * the row arrives with `[data-open]`, which is the one moment an edge answers a
+ * question: which control am I inside.
+ */
+.sh-composer-slot {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sh-space-sm);
+  block-size: var(--sh-control-lg);
+  padding-inline: var(--sh-space-sm);
+  border: 0;
+  border-radius: var(--sh-radius-sm);
+  background: none;
+  font: inherit;
+  font-size: var(--sh-font-size-body);
+  /*
+   * The ghost step is the RESTING state, and the rule the whole row turns on: a
+   * default is a fact nobody chose, so it recedes, and the one knob you turned
+   * has something to be louder than. `[data-chosen]` is the only thing that
+   * promotes it.
+   */
+  color: var(--sh-text-mute);
+  cursor: pointer;
+  /* Colour only, 140ms — §8. Nothing here moves, grows or springs. */
+  transition: background var(--sh-motion) linear, color var(--sh-motion) linear;
+}
+
+.sh-composer-slot[data-chosen] { color: var(--sh-text); font-weight: 500; }
+/*
+ * Hover lifts the slot one step, not all the way.
+ *
+ * It went to full ink, which made an untouched default under the cursor look
+ * exactly like a decision — the one distinction this row exists to draw. A
+ * pointer resting on something is not a choice about it.
+ */
+.sh-composer-slot:hover { background: var(--sh-fill-hover); color: var(--sh-text-faint); }
+.sh-composer-slot[data-chosen]:hover,
+.sh-composer-slot[data-open]:hover { color: var(--sh-text); }
+
+/* Keyboard parity: the same lift, and only for a keyboard — §9's rule. */
+.sh-composer-slot:focus-visible,
+.sh-composer-incognito:focus-visible {
+  outline: var(--sh-hairline) solid var(--sh-focus-ring);
+  outline-offset: calc(var(--sh-hairline) * 2);
+}
+.sh-composer-slot[data-open] { background: var(--sh-fill-active); color: var(--sh-text); }
+
+/*
+ * The glyph tracks the word, one step behind it — so a chosen slot is brighter
+ * in both halves at once and neither reads as a separate control.
+ */
+.sh-composer-slot .sh-ui-icon { color: var(--sh-text-ghost); }
+.sh-composer-slot[data-chosen] .sh-ui-icon,
+.sh-composer-slot[data-open] .sh-ui-icon { color: var(--sh-text-faint); }
+/* The repo, in the repo's own hue — the same one the pill in the brief uses, so
+   the control and the sentence agree without being wired together. */
+.sh-composer-slot[data-glyph='folder'][data-chosen] .sh-ui-icon { color: var(--sh-sky); }
+
+.sh-composer-slot:disabled { cursor: default; color: var(--sh-text-ghost); }
+
+/*
+ * Incognito: a mark, no word, and no slot at all until it is on.
+ *
+ * `default` spelled out is the row reporting that nothing happened. Off, this is
+ * a ghost mark you can find if you are looking for it; on, it is INK — the
+ * loudest step, because it is the one choice on the line made against the grain.
+ * Not a hue: red is a run that failed, and a privacy control is not a warning.
+ */
+.sh-composer-incognito {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: var(--sh-control-lg);
+  block-size: var(--sh-control-lg);
+  border: 0;
+  border-radius: var(--sh-radius-sm);
+  background: none;
+  color: var(--sh-text-ghost);
+  cursor: pointer;
+  transition: background var(--sh-motion) linear, color var(--sh-motion) linear;
+}
+
+.sh-composer-incognito:hover { background: var(--sh-fill-hover); color: var(--sh-text-faint); }
+.sh-composer-incognito[data-on] { color: var(--sh-text); }
+
+/*
+ * The send line — a sentence, not a button.
+ *
+ * `aria-hidden`, deliberately: ⏎ in a form is submit, which every assistive
+ * technology already announces, and a line reading "Press Enter to send" is a
+ * caption for a fact the platform states better. It is drawn for the eye, and
+ * the keystroke it teaches is `⌘⏎`, which nothing else says out loud.
+ */
+.sh-composer-send {
+  display: flex;
+  gap: var(--sh-space-lg);
+  margin: 0;
+  font-size: var(--sh-font-size-small);
+  color: var(--sh-text-mute);
+}
+
+/* Quiet rather than absent: a hint that vanishes as you delete the last
+   character is a hint that moves the layout while you are editing. */
+.sh-composer-send [data-quiet] { color: var(--sh-text-ghost); }
+
+.sh-composer-send kbd {
+  font-family: var(--sh-font-mono);
+  font-size: var(--sh-font-size-small);
+  color: inherit;
+}
+
+
+/*
+ * The repo picker, inside a takeover.
+ *
+ * Every rule above it is written for a panel FUSED to the bottom edge of a card:
+ * negative margins pulling it out of the well's inset to full bleed, a top
+ * hairline meeting the well's border at both ends, and the card's own bottom
+ * radius so its square corners do not poke through the rounded ones. There is no
+ * card here, so all of that lands as a strip spanning the whole stage with a rule
+ * across it — which is what shipped, and it looked like a find bar.
+ *
+ * What it should be is what every other menu on this screen is: a small panel
+ * that appears where the sentence is, holding rows. So the fused geometry is
+ * undone and the menu's own is put back on, scoped to `.sh-screen` so the card
+ * version keeps working wherever a card still exists.
+ *
+ * It stays IN FLOW under the hint rather than being positioned over it. A
+ * popover would need an anchor, and the thing it wants to anchor to is a
+ * character in a contenteditable that moves as you type; a panel that simply
+ * follows the sentence is in the right place for the same reason and cannot be
+ * measured wrong.
+ */
+.sh-screen .sh-composer-picker {
+  margin: 0;
+  border-top: 0;
+  /* Wide enough for a path, and never wider than the column. */
+  inline-size: fit-content;
+  min-inline-size: min(100%, 320px);
+  max-inline-size: 100%;
+  /*
+   * `Menu`'s own separation, value for value: one luminance step and a hairline,
+   * and NO shadow. §10 bans elevation theatre, and `menu.css` states the reason
+   * a step is enough — the panel is small and always over something.
+   *
+   * This corrected the drawing rather than the other way round: the mock gave it
+   * a 24px shadow, which is what a panel needs when it is floating over a
+   * screenshot and not what one needs over a surface the palette controls.
+   */
+  background: var(--sh-raised);
+  border: var(--sh-hairline) solid var(--sh-line);
+  /* `radius-md`, the machined corner — `radius-soft` is reserved for a writing
+     surface, which is written on the token itself. A picker is chrome. */
+  border-radius: var(--sh-radius-md);
+  padding: var(--sh-space-xs);
+}
+
+/*
+ * The head goes.
+ *
+ * It drew the query back at you (`#relay`) beside a `↑↓ ↵ esc` legend. The query
+ * is already in the sentence you are typing — that is the whole point of
+ * mentioning a repo where it belongs — so the panel was restating it one line
+ * below. And the legend is the keycap strip cut from this screen once already:
+ * a shortcut explained on a surface whose rows are one click away.
+ */
+.sh-screen .sh-composer-picker-head { display: none; }
+
+.sh-screen .sh-composer-picker-list { padding: 0; }
+
+
+/*
+ * The brief, on a screen: no reserved height.
+ *
+ * `.sh-composer-brief` sets `min-block-size: 96px`, which is right on a card —
+ * a well that collapsed to one line would be a search box, and the card needs a
+ * shape before anything is typed. A screen has no shape to hold: the 96px is
+ * just a void between the row and the sentence, and it is what made an empty
+ * composer look like three things scattered down the window.
+ *
+ * It grows from one line, which is what it does while you type anyway.
+ */
+.sh-screen .sh-composer-brief { min-block-size: var(--sh-line-height-large); }
+
+/*
+ * Tighter than the mock, and the mock was wrong.
+ *
+ * 26px between every element read as generous on a 1400px drawing and as
+ * scattered in the app, because the drawing had a sentence in it and the empty
+ * state has a placeholder. The row, the sentence and the hint are one unit —
+ * they are the same act — so they sit at one step, and the space that separates
+ * this block from everything else is the empty stage around it, which there is
+ * plenty of.
+ */
+.sh-compose { gap: var(--sh-space-xxl); }
+
+/* The picker belongs to the sentence above it, not to the column's rhythm. */
+.sh-screen .sh-composer-picker { margin-block-start: calc(var(--sh-space-md) - var(--sh-space-xxl)); }
+
+/*
+ * And it is sized to its rows, not to the column.
+ *
+ * `fit-content` with a `min-inline-size` still let the rows dictate the width,
+ * and a `Row` fills whatever it is given — so the panel came out the width of
+ * the column with a repo name floating at one end and a path at the other.
+ */
+.sh-screen .sh-composer-picker {
+  inline-size: min(100%, calc(30 * var(--sh-space-xl)));
+  min-inline-size: 0;
 }

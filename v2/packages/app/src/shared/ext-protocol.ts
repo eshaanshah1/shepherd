@@ -247,7 +247,7 @@ const apiCallSchema = s.union(
     /** Present iff `viewKind` is `component`. Meaningless for a tree. */
     component: s.optional(s.string()),
     /** Where the shell draws it, and what raises it. Components only. */
-    surface: s.optional(s.enumOf(['dock', 'overlay', 'pane'] as const)),
+    surface: s.optional(s.enumOf(['dock', 'overlay', 'pane', 'screen'] as const)),
     key: s.optional(s.string()),
     /** The verb a PANE's `key` runs — see `ViewDeclaration.command` in the SDK. */
     command: s.optional(s.string()),

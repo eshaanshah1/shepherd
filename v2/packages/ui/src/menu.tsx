@@ -132,6 +132,35 @@ export interface MenuProps {
    * makes this a prop rather than a second component.
    */
   readonly trigger?: 'context' | 'click';
+  /**
+   * Which edge of the menu meets which edge of the trigger. `click` only.
+   *
+   * `end` is the default because the first dropdowns in this app hang off a
+   * control at the RIGHT of its row — a `⋯` button, where a menu growing left
+   * is the only way it stays on screen. A control at the START of a line is the
+   * mirror image, and inheriting `end` there sends a wide menu leftwards past
+   * the trigger it belongs to: the composer's repo slot opened a 360px panel
+   * whose right edge met a 90px word, so almost all of it sat to the left of the
+   * thing that had been clicked.
+   *
+   * Not derived, because it cannot be: which edge is safe depends on where the
+   * trigger sits in a layout this component cannot see.
+   */
+  readonly align?: 'start' | 'center' | 'end';
+  /**
+   * Whether closing hands focus back to the trigger. `click` only, default true.
+   *
+   * True is right for a menu of verbs on a row: you pressed `⋯`, you chose, and
+   * the button you pressed is where you still are. It is wrong for a menu that
+   * edits a document somewhere else on the surface — the composer's control row
+   * changes the sentence, and being returned to a button after changing a
+   * sentence means the next thing typed goes nowhere.
+   *
+   * A flag rather than an `onCloseAutoFocus` passthrough: the callers who want
+   * this all want the same thing, and handing out Radix's escape hatch invites
+   * four different answers to one question.
+   */
+  readonly restoreFocus?: boolean;
 }
 
 export function Menu({
@@ -142,6 +171,8 @@ export function Menu({
   open,
   onOpenChange,
   trigger = 'context',
+  align,
+  restoreFocus = true,
 }: MenuProps): ReactElement {
   /*
    * One set of parts, chosen once.
@@ -164,7 +195,21 @@ export function Menu({
        */}
       <Parts.Trigger asChild>{children}</Parts.Trigger>
       <Parts.Portal>
-        <Parts.Content className={cn('sh-ui-menu', className)} collisionPadding={8} {...Parts.contentProps}>
+        <Parts.Content
+          className={cn('sh-ui-menu', className)}
+          collisionPadding={8}
+          {...Parts.contentProps}
+          {...(align === undefined ? {} : { align })}
+          {...(restoreFocus
+            ? {}
+            : {
+                // Radix's restore runs on its own teardown, after `onSelect`. A
+                // caller placing focus itself in `onSelect` is therefore racing
+                // it — and losing, since a task beats a synchronous call. This
+                // stops the restore instead of trying to outrun it.
+                onCloseAutoFocus: (event: Event) => event.preventDefault(),
+              })}
+        >
           {items.map((entry, index) =>
             isMenuSeparator(entry) ? (
               // Keyed by position, which is the only identity a separator has:

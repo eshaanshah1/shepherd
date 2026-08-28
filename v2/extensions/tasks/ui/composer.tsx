@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { ExtensionViewProps } from "@shepherd/sdk";
-import { Composer, PromptField, SendButton, Select, type PromptFieldHandle } from "@shepherd/ui";
+import { Icon, Menu, PromptField, namedGlyph, type MenuEntry, type PromptFieldHandle } from "@shepherd/ui";
 import { firstLine } from "../src/model/naming.ts";
 import { repoName } from "../src/model/repo-name.ts";
 import type { PastedImage } from "../src/images.ts";
@@ -205,6 +205,117 @@ const PROFILES = [
   { value: 'incognito', label: 'incognito' },
 ] as const;
 
+/**
+ * One knob on the control row: a glyph, a word, and a menu under it.
+ *
+ * Not a `Select`, and the difference is the whole visual argument of this
+ * screen. `Select` draws a bordered control with a chevron, which is right in a
+ * settings `Field` and wrong on a surface built out of bare text — a row of
+ * boxes under a borderless brief is two languages stacked. So the trigger draws
+ * nothing at rest and takes a fill for exactly as long as its own menu is open,
+ * which is the one moment an edge answers a question.
+ *
+ * It is not a new PRIMITIVE either: the menu is `Menu`, the glyph is `Icon`, and
+ * what lives here is a trigger and a rule about ink. A primitive with one caller
+ * would be a layout (`composer.tsx`'s own note in `@shepherd/ui` says so), and
+ * this has one caller.
+ *
+ * `chosen` is the rule: ink when you decided it, the ghost step when it is the
+ * default you left alone. Drawing every slot in ink would spend the ramp's
+ * loudest step on facts nobody chose, and then the one knob you did turn would
+ * have nothing left to be louder than.
+ */
+function Slot({
+  glyph,
+  label,
+  value,
+  chosen,
+  busy,
+  items,
+  onSelect,
+  onClick,
+}: {
+  readonly glyph: string;
+  readonly label: string;
+  readonly value: string;
+  readonly chosen: boolean;
+  readonly busy?: boolean;
+  readonly items?: readonly MenuEntry[];
+  readonly onSelect?: (id: string) => void;
+  readonly onClick?: () => void;
+}): React.JSX.Element {
+  const [open, setOpen] = useState(false);
+
+  const trigger = (
+    <button
+      type="button"
+      className="sh-composer-slot"
+      /*
+       * The fill, and the ONLY one in the row. A `data-` attribute rather than a
+       * class so the stylesheet reads as one rule about state rather than two
+       * class names that have to be kept in step.
+       */
+      data-open={open ? "" : undefined}
+      data-chosen={chosen ? "" : undefined}
+      /*
+       * Which knob this is, for the stylesheet and for a test.
+       *
+       * The repo slot takes the repo's own hue when it is set, and the alternative
+       * to naming the slot here is a selector reaching for the `Icon` inside it —
+       * which would need `Icon` to publish the glyph it drew, and an icon that
+       * announces its own name in the DOM is a primitive carrying a field for one
+       * caller's stylesheet.
+       */
+      data-glyph={glyph}
+      /*
+       * The label is the accessible name and never drawn. Four labels rendered
+       * beside four values is the row this design replaced — and the value alone
+       * ("worktree", "Opus 5") does not say what it is FOR, which is exactly
+       * what a screen reader has to be told and a sighted user reads off the
+       * glyph.
+       */
+      aria-label={label}
+      disabled={busy}
+      onClick={onClick}
+    >
+      <Icon icon={namedGlyph(glyph)} size="sm" />
+      <span>{value}</span>
+    </button>
+  );
+
+  // No menu: the slot is a gesture, not a choice. The repo slot is the one, and
+  // it types a `#` rather than opening a list of its own.
+  if (items === undefined || onSelect === undefined) return trigger;
+
+  return (
+    <Menu
+      items={items}
+      trigger="click"
+      /*
+       * Left edge to left edge. The row's slots sit at the START of a line, so a
+       * menu anchored by its right edge — `Menu`'s default, and right for a `⋯`
+       * at the end of a row — opens almost entirely to the left of the word that
+       * was clicked.
+       */
+      align="start"
+      /*
+       * Focus goes back to the SENTENCE, not to the slot. Every knob on this row
+       * qualifies the brief, so choosing one is something you do in the middle of
+       * writing — and `caretToEnd` in each handler is what puts you back.
+       */
+      restoreFocus={false}
+      open={open}
+      onOpenChange={setOpen}
+      onSelect={(id) => {
+        onSelect(id);
+        setOpen(false);
+      }}
+    >
+      {trigger}
+    </Menu>
+  );
+}
+
 export function TaskComposer({
   invoke,
   done,
@@ -220,6 +331,20 @@ export function TaskComposer({
    */
   const [scope, setScope] = useState<readonly PickedRepo[]>([]);
   const [suggestions, setSuggestions] = useState<readonly RepoSuggestion[]>([]);
+  /**
+   * Every repo the slot's menu offers, and the reason it is a SECOND list.
+   *
+   * `suggestions` is the answer to what you have typed — it is replaced on every
+   * keystroke after a `#`, which is exactly right for the inline picker and
+   * exactly wrong for a menu. Reading it from the row's control meant the menu
+   * showed whatever the last mention had narrowed to, so opening it after typing
+   * `#s` offered one repo and called it the list.
+   *
+   * This one is asked once, with no query, and never re-asked while typing. The
+   * extension answers a zero-query ask with the picked history — the repos you
+   * actually use — which is the right content for "show me my repos".
+   */
+  const [known, setKnown] = useState<readonly RepoSuggestion[]>([]);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
@@ -268,6 +393,57 @@ export function TaskComposer({
   const [pickingMachine, setPickingMachine] = useState(false);
   const listId = useId();
   const card = useRef<HTMLDivElement | null>(null);
+
+  /**
+   * What the agent layer answered FIRST, kept so the row can tell a default from
+   * a decision.
+   *
+   * `model` alone cannot: it holds the resolved default the moment the ask lands,
+   * and a value you were handed reads identically to one you picked. So the
+   * first answer is stamped here and never written again — a ref rather than
+   * state, because nothing re-renders when it changes and it changes once.
+   */
+  const defaultModel = useRef<string | null>(null);
+
+  /**
+   * The caret, on mount — which the composer now has to do for itself.
+   *
+   * It never used to. `surface: 'overlay'` wrapped this in Radix's `Dialog`, and
+   * a focus trap autofocuses its first focusable on the way in; the composer got
+   * a caret in the brief without asking and without knowing it was being given
+   * one. A `screen` is a plain element with no trap, so the same component
+   * mounted into a takeover that measured as correct in every unit test and
+   * opened, in the real app, with the caret nowhere — you had to click the
+   * sentence before you could write it.
+   *
+   * Caught by `smoke:m3` and by nothing else, which is the whole argument of
+   * CLAUDE.md's "a green unit suite is not a working app": the tests that cover
+   * this component supply their own focus, so not one of them could see it.
+   *
+   * Deliberately unconditional and dependency-free: this component is MOUNTED
+   * when the screen opens and unmounted when it closes, so "on mount" and "when
+   * it opens" are the same moment, and there is no second one to guard against.
+   */
+  useEffect(() => {
+    promptRef.current?.focus();
+  }, []);
+
+  /**
+   * The row's words, derived here rather than in the markup.
+   *
+   * `shepherd +2` rather than three names: the line has to stay one line at any
+   * repo count, and that is the property that lets a control be added later
+   * without the row wrapping. The menu is where all three are readable.
+   */
+  const scopeLabel =
+    scope.length === 0
+      ? "Attach repo"
+      : scope.length === 1
+        ? (scope[0]?.name ?? "Attach repo")
+        : `${scope[0]?.name ?? ""} +${scope.length - 1}`;
+  const modelLabel = models.find((option) => option.value === model)?.label ?? "Model";
+  const machineLabel =
+    machines.find((entry) => entry.id === machine)?.name ?? LOCAL_MACHINE.name;
   const promptRef = useRef<PromptFieldHandle | null>(null);
   /**
    * How much text the pill replaces: the `#` plus whatever has been typed after
@@ -346,6 +522,12 @@ export function TaskComposer({
       if (!alive || !result.ok) return;
       const chosen = (result.value as { model?: unknown } | null)?.model;
       if (typeof chosen !== 'string' || chosen === '') return;
+      /*
+       * Stamped here, and only here: this is the one moment the app knows a
+       * value arrived rather than being picked. The row reads it back to decide
+       * whether the model slot is a decision (ink) or a default (ghost).
+       */
+      defaultModel.current = chosen;
       // A pre-fill only — never over a choice already made.
       setModel((was) => was ?? chosen);
     });
@@ -417,6 +599,20 @@ export function TaskComposer({
     if (answer.ok && mine === asked.current) setSuggestions(readSuggestions(answer.value));
   };
 
+  /**
+   * The menu's list, asked with no query — separately, and deliberately not by
+   * reusing the ask above.
+   *
+   * Sharing it would mean one answer landing in two states, and the typed one
+   * has a race guard (`asked.current`) whose whole job is to drop answers that
+   * arrived out of order. A menu that lost its list to a stale-response guard
+   * meant for a different question would be empty for no visible reason.
+   */
+  const askForKnown = async (forMember: string = machine): Promise<void> => {
+    const answer = await invoke("tasks.suggestRepos", { title: "", brief: "", query: "", member: forMember });
+    if (answer.ok) setKnown(readSuggestions(answer.value));
+  };
+
   // On mount the query is empty, which the extension answers with the picked
   // history alone — the repos you actually use, offered before you have typed
   // anything, so the first `#` has rows under it with no second keystroke.
@@ -425,6 +621,9 @@ export function TaskComposer({
   // (measured at ~10ms, cheaper than the keystroke that asked for it).
   useEffect(() => {
     void askForSuggestions("", "", "");
+    // And the row's own list, which the typed one will start narrowing the
+    // moment a `#` is typed. Same ask, different question.
+    void askForKnown();
   }, []);
 
   /**
@@ -629,6 +828,43 @@ export function TaskComposer({
     return pill;
   };
 
+  /**
+   * A repo chosen from the ROW, which is a different gesture from picking one
+   * out of the inline picker and has to behave differently.
+   *
+   * Typing `#s` and taking a row REPLACES the trigger you typed — that is what
+   * `replaceBack` is for, and the pill lands mid-sentence where the mention was.
+   * Clicking the slot types nothing, so there is nothing to replace and no caret
+   * to be relative to: the pill goes at the END, which is why `appendNode` had
+   * to exist.
+   *
+   * And because the menu shows what is already scoped with a tick, selecting a
+   * ticked row has to UNDO it. The pill is the scope (ADR 0035), so removing the
+   * repo means removing the pill from the sentence — not clearing a second array
+   * that would then disagree with the text.
+   */
+  const toggleRepo = (path: string, name: string): void => {
+    const host = card.current;
+    const existing = host?.querySelector<HTMLElement>(`[data-repo-path="${CSS.escape(path)}"]`) ?? null;
+    if (existing !== null) promptRef.current?.removeNode(existing);
+    else promptRef.current?.appendNode(repoPill(path, name), { trailing: "\u00A0" });
+    syncScope();
+    /*
+     * Back into the sentence, and AFTER the menu has finished closing.
+     *
+     * Radix restores focus to the trigger on close, and it does that after
+     * `onSelect` has run — so a caret placed during the insert was stomped a
+     * beat later, and the pill was left as the selection. Chromium draws a
+     * selected `contenteditable=false` span with an outline of its own, which is
+     * the blue box that showed up round a repo the moment it was chosen.
+     *
+     * A timeout rather than a microtask: the restore is on Radix's own teardown,
+     * which is a task. And the behaviour is the one you want anyway — you picked
+     * a repo in order to keep writing, not in order to be left on a button.
+     */
+    promptRef.current?.caretToEnd();
+  };
+
   const pick = (row: PickerRow): void => {
     promptRef.current?.insert(repoPill(row.path, row.name), {
       replaceBack: replaceBack.current,
@@ -770,7 +1006,227 @@ export function TaskComposer({
         offset it uses is measured against this box so the clamp has an edge to
         clamp to.
       */}
-      <Composer className="sh-composer" ref={card}>
+      {/*
+        The column, and it is a LAYOUT rather than a `Composer`.
+
+        `Composer` is the primitive for a writing surface, and what makes it one
+        is a scoped re-declaration of `--sh-surface`, `--sh-sunken` and
+        `--sh-line` — so a `Field` dropped inside gets no well and no hairline
+        without being told where it is. Every part of that assumes a WELL: a
+        filled box with an edge, sitting on something else.
+
+        This screen has no box. It is text on the stage, which is the canvas
+        role, and re-declaring the surface roles to values they already hold
+        would be a primitive doing nothing while claiming to do something. So the
+        column is a plain element and the controls inside it draw no edges
+        because none of them asks for one — which is the same end state reached
+        by not needing the mechanism rather than by invoking it.
+
+        It keeps the ref: the picker is anchored to a CHARACTER inside the
+        editor, and every offset it uses is measured against this box.
+      */}
+      <div className="sh-compose" ref={card}>
+        {/*
+          ROW, sentence, picker, hint — and the order is the design rather than
+          the history.
+
+          It shipped as sentence-then-row, because on a card the controls were a
+          FOOTER: a strip of selects fused under the writing, which is where a
+          form puts its controls. On a screen there is no footer to be at the
+          bottom of, and the row stopped being a footer the moment it started
+          saying what the task IS — which model, which repos, which tree. You
+          read those before you write the sentence they qualify, so they go
+          above it.
+
+          The picker follows the SENTENCE, not the hint, because it is part of
+          writing one: it opens on a `#` you typed mid-clause and closes when
+          you have picked. Left as the last child it sat below the send line,
+          detached from the text it was completing and separated from it by an
+          instruction about a key.
+        */}
+        {/*
+          The control row — one line, whatever the task.
+
+          It was three ghost `Select`s divided by 1px rules, sitting under the
+          brief inside a card. Every part of that is gone, and each for its own
+          reason:
+
+            - **No borders, no chevrons, no rules.** A row of bordered controls
+              under a borderless writing surface is two design languages stacked
+              one above the other. Every slot here is bare text on the stage, and
+              the only edge in the row belongs to the slot whose menu is open —
+              the one moment an edge answers a question ("which one am I in?").
+            - **A glyph for WHICH, a word for WHAT.** Four words in a row are
+              four things to read; four glyphs are one thing to scan. The word
+              stays, because a glyph cannot say `Opus 5`.
+            - **Ink is a decision, ghost is a default.** The two steps of the
+              ramp carry the only thing worth carrying — whether you chose this
+              or left it — so a row of untouched defaults recedes and the knob
+              you turned is the one that reads. Nothing labels the distinction,
+              and nothing needs to.
+        */}
+        <div className="sh-composer-controls" data-testid="composer-controls">
+          {/*
+            NOT `nullable`: there is no "default" model to pick, there is a model
+            you get by default and it is shown selected. `busy` covers the beat
+            before the asks land.
+          */}
+          <Slot
+            glyph="robot"
+            label="Model"
+            value={modelLabel}
+            /*
+              Ghost until it differs from what the agent layer resolved. A
+              default model is not a decision anyone made, and drawing it in ink
+              spends the loudest step of the ramp on the least interesting fact
+              in the row.
+            */
+            chosen={model !== null && model !== defaultModel.current}
+            busy={models.length === 0}
+            items={models.map((option) => ({
+              id: option.value,
+              label: option.label,
+              ...(option.value === model ? { icon: namedGlyph("check") } : {}),
+            }))}
+            onSelect={(next) => {
+              setModel(next);
+              promptRef.current?.caretToEnd();
+            }}
+          />
+          {/*
+            The repo slot, which is a MIRROR and never a store.
+
+            `scope` is derived from the pills in the brief (ADR 0035), so this
+            control cannot hold a repo of its own — that would be the second copy
+            of "what is on screen", and here the bug it causes is visible:
+            backspace over a pill drops the repo from the sentence, and the array
+            would go on scoping the task to it.
+
+            So clicking it types a `#`. `appendText` exists for exactly this and
+            says so — one code path whether the trigger was typed or clicked, the
+            same picker, ranked by the same extension, writing the same pill.
+            This slot reads the text back and writes nothing else to it.
+          */}
+          <Slot
+            glyph="folder"
+            label="Repos"
+            value={scopeLabel}
+            chosen={scope.length > 0}
+            busy={known.length === 0}
+            items={known.map((entry) => ({
+              id: entry.path,
+              label: entry.name,
+              /*
+               * `display`, not `path` — the field whose own comment says it is
+               * "the path as a person writes it — home collapsed". The raw path
+               * put `/Users/eshaan/…` beside a name in a menu the picker two
+               * lines away was already drawing as `~/dev/…`, so the same repo
+               * read as two different places depending on how you opened it.
+               *
+               * `name` is dropped off the end of it: the label already says the
+               * repo, and the meta's job is where it is.
+               */
+              meta: entry.display.endsWith(`/${entry.name}`)
+                ? entry.display.slice(0, -entry.name.length - 1)
+                : entry.display,
+              ...(scope.some((repo) => repo.path === entry.path) ? { icon: namedGlyph("check") } : {}),
+            }))}
+            onSelect={(path) => {
+              const entry = known.find((candidate) => candidate.path === path);
+              if (entry !== undefined) toggleRepo(entry.path, entry.name);
+            }}
+          />
+          {/*
+            Placement is drawn as a WORD, not a switch.
+
+            `PLACEMENTS` holds one entry, and its comment is explicit that the
+            one-item menu is deliberate — the seam for `in-place` lands before
+            the behaviour does. A toggle here would be a control that cannot
+            move, which is worse than a word that cannot yet be changed: the word
+            reports the state, the toggle invites a gesture and then refuses it.
+          */}
+          <Slot
+            glyph="branch"
+            label="Where the work happens"
+            value={placement}
+            chosen={placement !== "worktree"}
+            items={PLACEMENTS.map((option) => ({
+              id: option.value,
+              label: option.label,
+              ...(option.value === placement ? { icon: namedGlyph("check") } : {}),
+            }))}
+            onSelect={(next) => {
+              setPlacement(next);
+              promptRef.current?.caretToEnd();
+            }}
+          />
+          {/*
+            Drawn only when there is a choice. One machine is not a decision, and
+            a slot that always says "This Mac" is a control that teaches nothing
+            and takes room in the one row that has to stay readable.
+          */}
+          {machines.length < 2 ? null : (
+            <Slot
+              glyph="dots"
+              label="Which machine"
+              value={machineLabel}
+              chosen={machine !== LOCAL_MACHINE.id}
+              items={machines.map((entry) => ({
+                id: entry.id,
+                label: entry.here ? `${entry.name} (here)` : entry.name,
+                ...(entry.id === machine ? { icon: namedGlyph("check") } : {}),
+              }))}
+              onSelect={(next) => {
+                setMachine(next);
+                /*
+                 * The repo list belongs to the machine, so it is asked again the
+                 * moment the machine changes. Not merely cleared: the picker's
+                 * zero-query answer is the history of repos actually used over
+                 * there, which is exactly what somebody wants to see next.
+                 */
+                setSuggestions([]);
+                void askForSuggestions(firstLine(brief), brief, "", next);
+                // And the row's own list. A repo path only means something on
+                // the machine that holds it, so a menu still offering the last
+                // machine's checkouts offers paths that do not exist over there.
+                setKnown([]);
+                void askForKnown(next);
+                promptRef.current?.caretToEnd();
+              }}
+            />
+          )}
+          {/*
+            Incognito is a glyph and nothing else, and it does not exist until it
+            is set.
+
+            `default` written out is the row reporting that nothing happened —
+            the one thing a control should never spend a slot saying. So the
+            profile has no slot at its default, and when it is on, the mark IS
+            the statement. Ink rather than a hue: red is a run that failed, and
+            this is not a warning. It is the one choice on the line made against
+            the grain, so it takes the loudest step of the ramp.
+
+            The way out is the same mark. A state you can enter and not leave is
+            what §9 calls a way in with no way out, and a privacy control is the
+            worst place in the app to have one.
+          */}
+          <button
+            type="button"
+            className="sh-composer-incognito"
+            data-testid="composer-incognito"
+            data-on={profile === "incognito" ? "" : undefined}
+            aria-pressed={profile === "incognito"}
+            title={
+              profile === "incognito"
+                ? "Incognito — this task gets a config dir of its own, deleted when it is shipped"
+                : "Run this task incognito"
+            }
+            onClick={() => setProfile(profile === "incognito" ? "default" : "incognito")}
+          >
+            <Icon icon={namedGlyph("spy")} size="sm" />
+          </button>
+        </div>
+
         {/*
           ONE field, and now it is the only one.
 
@@ -909,161 +1365,6 @@ export function TaskComposer({
           }}
         />
 
-        {/*
-          The action row: the `#repo` affordance and what it has collected on the
-          left, one filled action hard right.
-        */}
-        <div className="sh-composer-controls">
-          {/*
-            The scope is expressed by the PILLS in the brief and by the scope
-            rail below — a `#repo` button and a mono "no repo scoped" line said
-            the same thing a third and fourth time, in the one row that has to
-            stay readable. §5: the controls inside a well are ghost text divided
-            by rules, and everything else is somewhere it already was.
-          */}
-          {/*
-            WHERE this task will be made — and drawn only when there is a choice.
-
-            One machine is not a decision, and a picker that always says "This Mac"
-            is a control that teaches nothing and takes space in the one row that
-            has to stay readable. With members in the net it is the first thing to
-            get right about a task, because it decides which disk the worktrees
-            land on: `#repo` beside it is already asking that machine what it has.
-
-            `Menu` rather than a hand-rolled dropdown — the design system's rule is
-            that a control comes from it — driven `open` so a left click opens what
-            is otherwise a right-click menu. The trigger reuses the `#repo`
-            button's own class so the row keeps one visual language rather than
-            gaining a second kind of small button.
-          */}
-          {/*
-            The three ghost selects, on one line, divided by `1px × 16` rules —
-            §5's control row.
-
-            All three are `Select` rather than three different shapes: the
-            machine picker was a `Menu` behind a bare button, which is a second
-            way of being a dropdown on a row whose whole job is looking like one
-            row. `Select` is the primitive; a control comes from the design
-            system.
-          */}
-          {/*
-            NOT `nullable`: there is no "default" model to pick, there is a model
-            you get by default and it is shown selected. `busy` covers the beat
-            before the asks land.
-          */}
-          <Select
-            className="sh-composer-select sh-composer-select--model"
-            label="Model"
-            value={model}
-            options={models}
-            busy={models.length === 0}
-            // A non-nullable select cannot answer null; ignoring one is the only
-            // reading that does not silently unset the model.
-            onChange={(next) => {
-              if (next !== null) setModel(next);
-            }}
-          />
-          {/*
-            The PROFILE picker this row's comment above has been waiting for.
-            Same row, same shape as the two beside it — a privacy control that
-            announced itself with a louder treatment would be the one control on
-            the card competing with the brief.
-          */}
-          <Select
-            className="sh-composer-select sh-composer-select--profile"
-            label="Profile"
-            value={profile}
-            options={PROFILES}
-            onChange={(next) => setProfile(next ?? 'default')}
-          />
-          <Select
-            className="sh-composer-select sh-composer-select--placement"
-            label="Where the work happens"
-            value={placement}
-            options={PLACEMENTS}
-            onChange={(next) => setPlacement(next ?? 'worktree')}
-          />
-          {/*
-            Drawn only when there is a choice. One machine is not a decision, and
-            a picker that always says "This Mac" is a control that teaches nothing
-            and takes room in the one row that has to stay readable.
-          */}
-          {machines.length < 2 ? null : (
-            <Select
-              /*
-                `Select` forwards no arbitrary props, so the hook a test reaches
-                for is a CLASS rather than a `data-testid` — which is the honest
-                seam anyway: the stylesheet needs one of these per control too.
-              */
-              className="sh-composer-select sh-composer-select--machine"
-              label="Which machine"
-              value={machine}
-              options={machines.map((entry) => ({
-                value: entry.id,
-                label: entry.here ? `${entry.name} (here)` : entry.name,
-              }))}
-              onChange={(next) => {
-                const id = next ?? LOCAL_MACHINE.id;
-                setMachine(id);
-                /*
-                 * The repo list belongs to the machine, so it is asked again the
-                 * moment the machine changes. Not merely cleared: the picker's
-                 * zero-query answer is the history of repos actually used over
-                 * there, which is exactly what somebody wants to see next.
-                 */
-                setSuggestions([]);
-                void askForSuggestions(firstLine(brief), brief, "", id);
-              }}
-            />
-          )}
-          {/*
-            The ONE weighted control on the card, and the only round element in
-            the product.
-
-            It was a `create task` primary — a `wool` block, the same treatment
-            §4 gives the one action on every other surface. On a WELL that is
-            wrong twice over: a filled rectangle beside ghost selects is the
-            loudest thing on a surface whose whole idea is that space carries the
-            structure, and the composer's action is not "one of the things here"
-            but the terminus of the sentence you just wrote. A circle says that
-            and nothing else does.
-
-            No `busy` state: `SendButton` has no label to replace with a spinner,
-            and the disabled-while-in-flight guard below is what stops a double
-            send. Feedback matched to duration (§4) puts a local action under
-            100ms in the "show nothing" band anyway.
-          */}
-          <span className="sh-composer-spacer" />
-          <SendButton
-            type="submit"
-            label="Start this task"
-            /*
-              Where ⌘⏎ is taught, and the only place it is.
-
-              `title` rather than a line of text beside the control: §4 gives a
-              well one weighted element, and the rail's own buttons already put
-              the keystroke in the tooltip on the argument that a control which
-              says what it does need not also paint its shortcut. It overrides
-              `SendButton`'s own `title={label}` — deliberately, and `label` stays
-              the accessible name, because a screen reader announcing a keycap
-              strip is worse than one announcing the verb.
-            */
-            title="Start this task (⏎) · ⌘⏎ opens a terminal in it instead"
-            data-testid="composer-create"
-            disabled={brief.trim() === "" || busy}
-          />
-        </div>
-
-        <output className="sh-ext-answer" data-testid="composer-status">
-          {status}
-        </output>
-
-        {/*
-          Last child, and it IS the bottom of the card — the design fuses it under
-          the control row rather than floating it over one. So it covers nothing,
-          needs no stacking order and needs no shadow: it extends the well
-          downward, and the well's own bottom corners are the ones it takes.
-        */}
         {open ? (
           <RepoPicker
             rows={rows}
@@ -1074,40 +1375,55 @@ export function TaskComposer({
             onPick={pick}
           />
         ) : null}
-      </Composer>
+
+        {/*
+          The send affordance, and it is a sentence rather than a button.
+
+          It was a filled sky circle — the one weighted control on the card, and
+          the only round element in the product. On a card that was right: the
+          composer's action is the terminus of the sentence you just wrote, and a
+          circle said that. On a SCREEN it is wrong, because the surface has no
+          card to be the terminus of, and a weighted control floating in a field
+          of black is the only thing on it with an edge.
+
+          What replaced it is the thing the button was competing with. ⏎ already
+          sends; a button duplicating a key that always works is chrome the
+          layout pays for on every open. So the line states the gesture, and
+          `⌘⏎` — the terminal variant, previously taught only in a `title` nobody
+          hovers — finally has somewhere to be said out loud.
+
+          It goes GHOST when there is nothing to send, rather than disappearing:
+          a hint that vanishes as you delete the last character is a hint that
+          moves the layout while you are editing.
+        */}
+        <p className="sh-composer-send" data-testid="composer-send" aria-hidden="true">
+          <span data-quiet={brief.trim() === "" ? "" : undefined}>
+            Press <kbd>⏎</kbd> to send
+          </span>
+          <span data-quiet="">
+            <kbd>⌘⏎</kbd> for a terminal
+          </span>
+        </p>
+
+        <output className="sh-ext-answer" data-testid="composer-status">
+          {status}
+        </output>
+      </div>
 
       {/*
-        The scope rail — DETACHED, below the card and outside it.
+        The scope rail is GONE, and this note is what replaces it.
 
-        The 7px gap is the idea: the card is what you are writing, and this is a
-        statement about where the result will land. Fused to the card it read as
-        one more row of the form; separated, it reads as the consequence of the
-        sentence above it.
+        It was a detached bar under the card naming each repo with its identity
+        mark and counting the worktrees — a statement about where the result
+        would land, separated by 7px from the sentence that decided it. Both
+        halves of what it said are now in the control row: `shepherd +2` is the
+        scope, `worktree` is the placement, and the pills in the brief carry the
+        names in the sentence that scopes them.
 
-        Drawn only when the brief actually scopes something. An empty bar saying
-        nothing is scoped is a row you have to read to learn there is nothing to
-        read — the composer already says where an unscoped task lands, by landing
-        it there.
+        Two rows saying one thing is the repetition §10 refuses, and on a surface
+        whose whole argument is that the room is worth having, the answer to
+        "there is space for it" is that space is not a reason.
       */}
-      {scope.length === 0 ? null : (
-        <div className="sh-composer-scope-rail" data-testid="composer-scope-rail">
-          {scope.map((repo, index) => (
-            <span key={repo.path} className="sh-composer-scope-rail__repo">
-              {/*
-                The same identity marks the task card draws, assigned the same
-                way — by POSITION within the task, because the mark's only job is
-                telling THIS task's repos apart and four positions cannot collide
-                where a hash of the path can.
-              */}
-              <i style={{ background: `var(--sh-repo${(index % 4) + 1})` }} aria-hidden="true" />
-              {repo.name}
-            </span>
-          ))}
-          <span className="sh-composer-scope-rail__where">
-            {scope.length === 1 ? '1 worktree' : `${scope.length} worktrees`} off main
-          </span>
-        </div>
-      )}
     </form>
   );
 }

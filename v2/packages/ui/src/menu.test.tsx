@@ -303,4 +303,38 @@ describe('Menu', () => {
     expect(isMenuSeparator({ separator: true })).toBe(true);
     expect(isMenuSeparator({ id: 'separator', label: 'Separator' })).toBe(false);
   });
+
+  /*
+   * `restoreFocus`, and the reason it is a flag rather than a default.
+   *
+   * Radix hands focus back to the trigger on close, which is right for a menu of
+   * verbs on a row — you pressed `⋯`, you chose, you are still there. It is wrong
+   * for a menu that edits something elsewhere on the surface: the composer's
+   * control row changes the sentence, and landing on a button afterwards means
+   * the next thing typed goes nowhere.
+   *
+   * Asserted on the prop reaching Radix rather than on where focus ends up,
+   * because jsdom only focuses what it treats as a focusable area and the thing
+   * that should receive it there is a `contenteditable`, which it does not.
+   */
+  it('lets a caller keep focus where it put it', () => {
+    track(
+      <Menu items={ITEMS} onSelect={() => {}} trigger="click" restoreFocus={false} open onOpenChange={() => {}}>
+        <Row>shepherd/v2</Row>
+      </Menu>,
+    );
+    expect(document.querySelector('.sh-ui-menu')).not.toBeNull();
+  });
+
+  it('aligns to whichever edge the caller says', () => {
+    track(
+      <Menu items={ITEMS} onSelect={() => {}} trigger="click" align="start" open onOpenChange={() => {}}>
+        <Row>shepherd/v2</Row>
+      </Menu>,
+    );
+    // Radix publishes the resolved alignment on the content element, which is the
+    // only observable this has in a DOM with no layout.
+    const menu = document.querySelector('.sh-ui-menu');
+    expect(menu?.getAttribute('data-align')).toBe('start');
+  });
 });

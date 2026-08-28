@@ -39,7 +39,7 @@ describe('one card, and the well is it', () => {
     // The guard against a vacuous pass: with the CSS stubbed out every
     // assertion below holds against an empty rule list.
     expect(rulesMentioning('sh-ui-composer').length).toBeGreaterThan(0);
-    expect(rulesMentioning('sh-composer-select').length).toBeGreaterThan(0);
+    expect(rulesMentioning('sh-composer-slot').length).toBeGreaterThan(0);
   });
 
   it('has the MODAL drop its surface, not the composer', () => {
@@ -73,32 +73,64 @@ describe('one card, and the well is it', () => {
 });
 
 describe('the control row', () => {
-  it('pushes the one weighted control hard right', () => {
-    // `.sh-composer-spacer` is in the markup and was in no stylesheet at all,
-    // so the send circle sat wherever the pickers happened to leave it.
-    expect(declared('.sh-composer-spacer', 'flex').join(' ')).toContain('1');
-  });
-
-  it('lets a ghost select hug its own label', () => {
+  /*
+   * The three assertions here used to be about `.sh-composer-spacer` and
+   * `.sh-composer-select` — a spacer pushing a send circle hard right, and a
+   * ghost select overriding the settings column's `min-width` and chevron
+   * placement. All three are gone with their markup, because the composer stopped
+   * being a card: there is no circle to push, and the controls are not selects.
+   *
+   * What replaced them is a row of bare `<button>`s, and what has to be asserted
+   * is the same class of thing at CSS level — that the row draws no boxes it was
+   * not asked to, and that its one fill means something.
+   */
+  it('draws no box at rest, which is the whole row', () => {
     /*
-     * `Select`'s own `min-width` and `space-between` are the settings column's:
-     * every row the same width, chevrons down one edge. On this row they made
-     * each picker a fixed box with its chevron flung past the word it belongs
-     * to — so the composer overrides both, and this is what says so.
+     * A `<button>` arrives with a border, a background and a radius from the UA
+     * sheet, and every one of them is a box. On a surface built out of bare text
+     * a box is the loudest thing present, so the reset is not tidying — it is
+     * the rule.
      */
-    expect(declared('.sh-composer-select', 'min-inline-size').some(isZero)).toBe(true);
-    expect(declared('.sh-composer-select .sh-ui-select__trigger', 'justify-content')).toContain(
-      'flex-start',
-    );
+    expect(declared('.sh-composer-slot', 'border').some(isZero)).toBe(true);
+    expect(declared('.sh-composer-slot', 'background')).toContain('none');
+    expect(declared('.sh-composer-incognito', 'border').some(isZero)).toBe(true);
+    expect(declared('.sh-composer-incognito', 'background')).toContain('none');
   });
 
-  it('draws its labels at the role whose job is “a control at rest”', () => {
-    // `textDim` is a resting card's TITLE, one step brighter, and three of them
-    // at 12.5px were the second-loudest thing on the card.
-    const ink = declared('.sh-composer-select .sh-ui-select__trigger', 'color');
-    expect(ink).toContain('var(--sh-text-faint)');
-    expect(ink).not.toContain('var(--sh-text-dim)');
+  it('gives a fill to exactly one state, and it is the open one', () => {
+    /*
+     * The open slot is the only element in the row with an edge, and that is
+     * what makes the edge mean something — it answers "which control am I
+     * inside", which nothing else on the screen is asking.
+     *
+     * Asserted as an ABSENCE too: a resting slot that also had a fill would make
+     * the open one a slightly different grey rather than a box.
+     */
+    expect(declared('.sh-composer-slot[data-open]', 'background')).toContain('var(--sh-fill-active)');
+    expect(declared('.sh-composer-slot', 'background')).not.toContain('var(--sh-fill-active)');
   });
+
+  it('draws a default at the resting role and a decision at ink', () => {
+    /*
+     * The row's one idea: ink is a decision you made, the ghost step is a
+     * default you left alone. Spending the loudest step of the ramp on facts
+     * nobody chose leaves the knob you DID turn with nothing to be louder than.
+     */
+    expect(declared('.sh-composer-slot', 'color')).toContain('var(--sh-text-mute)');
+    expect(declared('.sh-composer-slot[data-chosen]', 'color')).toContain('var(--sh-text)');
+  });
+
+  it('keeps the incognito mark ink when it is on, and never a hue', () => {
+    /*
+     * Red is a run that failed. A privacy control is not a warning — it is the
+     * one choice on the line made against the grain, so it takes the loudest
+     * step of the neutral ramp and no colour at all.
+     */
+    const on = declared('.sh-composer-incognito[data-on]', 'color');
+    expect(on).toContain('var(--sh-text)');
+    expect(on.join(' ')).not.toContain('--sh-red');
+  });
+
 });
 
 describe('the brief’s line box', () => {

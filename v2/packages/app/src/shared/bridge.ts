@@ -172,7 +172,7 @@ export interface ViewContributionDTO {
   /** How the page must draw it. `component` resolves against the UI table. */
   readonly kind: 'tree' | 'component';
   readonly component?: string;
-  readonly surface?: 'dock' | 'overlay' | 'pane';
+  readonly surface?: 'dock' | 'overlay' | 'pane' | 'screen';
   readonly key?: string;
   /** The verb a PANE's `key` runs — see `ViewDeclaration.command` in the SDK. */
   readonly command?: string;

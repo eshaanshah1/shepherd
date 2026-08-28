@@ -4549,10 +4549,22 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     views.registerViewType(TASK_VIEWS.composer, {
       kind: 'component',
       component: TASK_VIEWS.composer,
-      // A form you open, fill in and dismiss — v1's composer, declared rather
-      // than hardcoded into the shell. In the dock it would sit there taking a
-      // third of the sidebar forever.
-      surface: 'overlay',
+      /*
+       * A TAKEOVER, not a card.
+       *
+       * It was `overlay` while the brief was the only question: a 620px well
+       * with a send button, floating over a dimmed stage. Then it grew a model,
+       * a repo scope, a placement, a profile and a machine, and every one of
+       * them had to fit a row inside a card sized for a sentence — which is how
+       * the controls ended up as a strip of chevroned selects under the writing.
+       *
+       * A card is a claim that the thing is small enough to float over your
+       * work. This one is not, and a modal grown to fill the window is a window
+       * with a border drawn round the middle of it. So it takes the stage, keeps
+       * the rail — the flock is the context you compose a task against — and
+       * gets the room to say what it is asking without a scroll.
+       */
+      surface: 'screen',
       /*
        * ⌘N, and ⌘T is the shell's New Tab.
        *
