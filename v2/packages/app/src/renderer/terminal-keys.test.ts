@@ -41,11 +41,37 @@ describe('terminalKeyBytes', () => {
   });
 
   it('leaves backspace alone when another modifier is also held', () => {
-    // ⌥⌫ is already a word rubout via xterm's ESC DEL, and ⌘⌫ is line-kill
-    // territory — neither is this rule's to claim.
+    // ⌥⌫ is already a word rubout via xterm's ESC DEL, and ⌃⌘⌫ is neither
+    // chord this file claims.
     expect(terminalKeyBytes(chord('Backspace', { ctrl: true, alt: true }))).toBeNull();
     expect(terminalKeyBytes(chord('Backspace', { ctrl: true, meta: true }))).toBeNull();
     expect(terminalKeyBytes(chord('Backspace', { alt: true }))).toBeNull();
+    expect(terminalKeyBytes(chord('Backspace', { meta: true, alt: true }))).toBeNull();
+  });
+
+  it('sends ^U for cmd+backspace, the line kill macOS means by the gesture', () => {
+    // Measured before the fix: xterm's case 8 never reads metaKey, so ⌘⌫ sent
+    // DEL and deleted one character.
+    expect(terminalKeyBytes(chord('Backspace', { meta: true }))).toBe('\x15');
+  });
+
+  it('sends ESC b / ESC f for option+left / option+right', () => {
+    // Measured before the fix: xterm 6 sends `ESC [1;3D` / `ESC [1;3C`, which
+    // readline and the agents' input both leave unbound — the key is inert.
+    expect(terminalKeyBytes(chord('ArrowLeft', { alt: true }))).toBe('\x1bb');
+    expect(terminalKeyBytes(chord('ArrowRight', { alt: true }))).toBe('\x1bf');
+  });
+
+  it('leaves the arrows to xterm unless option alone is held', () => {
+    // Plain arrows are cursor keys, and ⌘⌥← is the pane-focus menu key — a
+    // rule here would delete it.
+    expect(terminalKeyBytes(chord('ArrowLeft'))).toBeNull();
+    expect(terminalKeyBytes(chord('ArrowRight'))).toBeNull();
+    expect(terminalKeyBytes(chord('ArrowLeft', { alt: true, meta: true }))).toBeNull();
+    expect(terminalKeyBytes(chord('ArrowRight', { alt: true, ctrl: true }))).toBeNull();
+    expect(terminalKeyBytes(chord('ArrowLeft', { alt: true, shift: true }))).toBeNull();
+    expect(terminalKeyBytes(chord('ArrowUp', { alt: true }))).toBeNull();
+    expect(terminalKeyBytes(chord('ArrowDown', { alt: true }))).toBeNull();
   });
 
   it('claims nothing else', () => {

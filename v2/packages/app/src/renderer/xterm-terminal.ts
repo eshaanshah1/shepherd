@@ -71,7 +71,7 @@ export function createXtermTerminal(initialMode: ThemeMode = DEFAULT_THEME_MODE)
   terminal.loadAddon(searchAddon);
 
   /*
-   * The two chords xterm's VT map answers wrongly for an agent. The rule is
+   * The chords xterm's VT map answers wrongly for an agent. The rule is
    * `terminal-keys.ts` and is unit tested there; this is the seam that applies
    * it, and it is deliberately the only key handling in this file.
    *
