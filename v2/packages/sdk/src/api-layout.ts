@@ -551,6 +551,21 @@ export interface TreeItem {
    */
   readonly quiet?: boolean;
   /**
+   * This control REVEALS rows the list is currently withholding — `… +20 more`,
+   * and not its own inverse.
+   *
+   * A `quiet` row says "I am chrome"; this says what the chrome is FOR, and the
+   * two are separate because the same row alternates between revealing and
+   * hiding as it is pressed. A surface that scrolls can run a revealing control
+   * when it comes into view — which is what a truncated region should do on a
+   * screen with room, where the rail had to ask — and must not run the hiding
+   * one, or arriving at the foot of the list would fold it up again.
+   *
+   * Absent means "do not run this by yourself". A tree that has never heard of
+   * this keeps a control the user presses, which is the behaviour it had.
+   */
+  readonly reveals?: boolean;
+  /**
    * This row is in a region with **no state column** — draw it without the leading
    * slot rather than reserving an empty one.
    *

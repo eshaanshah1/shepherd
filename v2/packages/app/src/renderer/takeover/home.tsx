@@ -1,9 +1,10 @@
-import type { ReactElement, ReactNode } from 'react';
+import { useEffect, useRef, type ReactElement, type ReactNode } from 'react';
 import { IconButton, StateMark } from '@shepherd/ui';
 import type { ViewContributionDTO, ViewsApi } from '../../shared/index.ts';
 import { ComponentView } from '../view-dock.tsx';
 import { PixelSheep } from '../sky-strip.tsx';
 import { raiseIcon } from '../view-dock.tsx';
+import type { MoreControl } from './entries.ts';
 import type { RowAnswer, RowDiff, RowRepo } from './row-facts.ts';
 import { liveCount, triage, type TriageEntry, type TriageSection } from './triage.ts';
 import { REGION_COLUMNS, TRAIL_ORDER, ageFor, type RegionColumns, type TrailCell } from './columns.ts';
@@ -48,6 +49,16 @@ export interface TakeoverHomeProps {
    */
   readonly panels?: readonly ViewContributionDTO[];
   readonly bridge?: ViewsApi | null;
+  /**
+   * Regions that are drawing a SUBSET, and the verb that finishes each one.
+   *
+   * Home does not draw a `Show all` button for these. It scrolls — which the
+   * rail could not — so the region simply continues when you reach the foot of
+   * it, and the cap goes back to meaning "how much loads before you ask" rather
+   * than "how much there is".
+   */
+  readonly more?: readonly MoreControl[];
+  readonly onReveal?: (control: MoreControl) => void;
 }
 
 export function TakeoverHome({
@@ -60,6 +71,8 @@ export function TakeoverHome({
   onOpenFace,
   panels = [],
   bridge = null,
+  more = [],
+  onReveal,
 }: TakeoverHomeProps): ReactElement {
   const sections = triage(entries);
   const needs = sections.find((section) => section.group === 'needs');
@@ -83,7 +96,17 @@ export function TakeoverHome({
         <div className="sh-take__home" data-testid="takeover-home">
           {needs === undefined ? <Quiet /> : null}
           {sections.map((section) => (
-            <Section key={section.group} section={section}>
+            <Section
+              key={section.group}
+              section={section}
+              /*
+               * The loud region never gets a window. It is the one thing on this
+               * screen that costs you to ignore, and a question card is the one
+               * element allowed to change size — clipping either would be the
+               * screen hiding the work it exists to surface.
+               */
+              windowed={!section.loud && (section.entries.length > REGION_ROWS || more.some((control) => control.group === section.group))}
+            >
               {section.entries.map((entry) =>
                 section.group === 'needs' && entry.facts.question !== undefined ? (
                   <QuestionCard
@@ -104,6 +127,14 @@ export function TakeoverHome({
                   />
                 ),
               )}
+              {more
+                .filter((control) => control.group === section.group)
+                .map((control) => (
+                  <Reveal
+                    key={control.id}
+                    onReach={() => onReveal?.(control)}
+                  />
+                ))}
             </Section>
           ))}
           {panels.length === 0 ? null : (
@@ -129,6 +160,25 @@ export function TakeoverHome({
  * regions still under it rather than replacing them. That is also why it is not
  * `Empty`: that primitive centres one sentence on a stage that really is bare.
  */
+/**
+ * How many rows a region shows before it becomes a window onto itself.
+ *
+ * `Shipped` is a record, and a record has no end — 47 finished tasks drawn in
+ * full push every other region off the screen and make the one surface that
+ * answers "what needs me" a scroll through work that does not. So the region
+ * keeps its ten rows and scrolls INSIDE them: the archive stays reachable and
+ * costs the screen a fixed amount of room.
+ *
+ * The HEIGHT of that window is `--sh-take-region-rows` in `takeover.css`; this
+ * decides which regions get one. Keep the two the same number.
+ *
+ * Ten and not eight, which is `SHIPPED_CAP` in `tasks`. They are different
+ * numbers about different things — the cap is how many rows the extension hands
+ * over before it is asked for more, and this is how many the screen draws at
+ * once — and tying them together would make a load boundary a layout one.
+ */
+const REGION_ROWS = 10;
+
 function Quiet(): ReactElement {
   return (
     <div className="sh-take__quiet" data-testid="takeover-quiet">
@@ -139,15 +189,79 @@ function Quiet(): ReactElement {
   );
 }
 
-function Section({ section, children }: { section: TriageSection; children: ReactNode }): ReactElement {
+/**
+ * The foot of a truncated region — a row of nothing, watched.
+ *
+ * **A sentinel rather than a control**, and that is the whole of the gesture:
+ * reaching the end of a list is already the user asking for more of it, so the
+ * screen answers rather than offering a button to press. It draws no ink and
+ * takes no focus, which is what lets it sit inside the region's grid without
+ * being a row in it.
+ *
+ * It fires **once**, held in a ref rather than in state — a re-render must not
+ * re-arm it, and the control it runs is a TOGGLE, so a second firing would fold
+ * the region back up under the cursor that was reading it. The margin is a
+ * screenful, so the rest is already drawn by the time the last row of the cap
+ * reaches the fold and nothing appears to load.
+ */
+function Reveal({ onReach }: { onReach: () => void }): ReactElement {
+  const at = useRef<HTMLDivElement | null>(null);
+  const fired = useRef(false);
+  /*
+   * The callback, held rather than closed over. It is a fresh function every
+   * render, and an effect that re-ran for it would tear the observer down
+   * mid-scroll — a window the foot of the list can cross unnoticed.
+   */
+  const reach = useRef(onReach);
+  reach.current = onReach;
+  useEffect(() => {
+    const node = at.current;
+    if (node === null) return;
+    const observer = new IntersectionObserver(
+      (records) => {
+        if (!records.some((record) => record.isIntersecting) || fired.current) return;
+        fired.current = true;
+        reach.current();
+      },
+      /*
+       * Watched inside the region's own window when it has one, so the load is
+       * triggered by scrolling THAT box rather than by the page happening to
+       * reach its foot. A margin of most of a window, because the rest should be
+       * drawn by the time the last loaded row reaches the bottom edge.
+       */
+      { root: node.closest('.sh-take__window'), rootMargin: '240px 0px' },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+  return <div ref={at} className="sh-take__reveal" aria-hidden="true" data-testid="takeover-reveal" />;
+}
+
+function Section({
+  section,
+  windowed,
+  children,
+}: {
+  section: TriageSection;
+  /** Draw the rows inside a fixed window of `REGION_ROWS` that scrolls itself. */
+  windowed: boolean;
+  children: ReactNode;
+}): ReactElement {
   return (
-    <section className="sh-take__group" data-group={section.group}>
+    <section className="sh-take__group" data-group={section.group} data-windowed={windowed ? 'true' : undefined}>
       <div className="sh-take__grouphead" data-loud={section.loud ? 'true' : undefined}>
         <b>{section.label}</b>
         <span className="sh-take__rule" />
         <span className="sh-take__n">{section.entries.length}</span>
       </div>
-      {children}
+      {/*
+        The window OWNS the tracks when there is one — a scroll container cannot
+        also be the grid its rows subgrid onto and keep its heading still, so the
+        section steps down to a block and the tracks move one level in. The rows
+        are unchanged either way, which is the point: they borrow whatever grid
+        they are in.
+      */}
+      {windowed ? <div className="sh-take__window">{children}</div> : children}
     </section>
   );
 }

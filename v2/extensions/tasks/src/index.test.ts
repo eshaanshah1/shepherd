@@ -3480,6 +3480,13 @@ describe('finished work', () => {
      * the user was mid-turn on.
      */
     expect(rows.find((row) => row.id === 'group:shipped:more')?.quiet).toBe(true);
+    /*
+     * And it says which DIRECTION it points, so a surface with room can run it
+     * rather than draw it. Home scrolls and the rail did not, which is why the
+     * cap left it showing eight shipped tasks and no gesture that reached the
+     * ninth.
+     */
+    expect(rows.find((row) => row.id === 'group:shipped:more')?.reveals).toBe(true);
   });
 
   it('shows every shipped row once asked, and offers the way back', async () => {
@@ -3498,6 +3505,11 @@ describe('finished work', () => {
     const rows = await h.tree().children(undefined);
     expect(rows.filter((row) => row.id.startsWith('s'))).toHaveLength(11);
     expect(rows.find((row) => row.id === 'group:shipped:more')?.label).toBe('Show fewer');
+    /*
+     * Pointing the other way, and it says so — a surface that ran this on sight
+     * would fold the region back up the moment you reached the bottom of it.
+     */
+    expect(rows.find((row) => row.id === 'group:shipped:more')?.reveals).toBe(false);
   });
 
   it('puts no time on a shipped row at all — the day header answers when', async () => {

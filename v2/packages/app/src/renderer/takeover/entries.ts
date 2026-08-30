@@ -3,7 +3,34 @@ import type { TreeItem } from '@shepherd/sdk';
 import { HOME_ROOT_ID, type ViewContributionDTO, type ViewsApi } from '../../shared/index.ts';
 import { markState } from '../view-dock.tsx';
 import { readRowFacts } from './row-facts.ts';
-import type { TriageEntry } from './triage.ts';
+import { triageOf, type TriageEntry, type TriageGroup } from './triage.ts';
+
+/**
+ * A region that is drawing a SUBSET, and the verb that finishes it.
+ *
+ * The tree's own `… +20 more` row, kept rather than drawn. Home has no button
+ * here — it scrolls, so the control fires when the foot of the region reaches
+ * the viewport and the rest of the record simply continues. That is the whole
+ * repair: the cap decides how much loads before you ask, not how much exists.
+ *
+ * `group` is read from the row ABOVE it rather than from its id, because the id
+ * is the extension's (`group:shipped:more`) and parsing one here would be the
+ * shell learning an extension's vocabulary — the thing this file's own header
+ * refuses. A truncation control belongs to the region it was drawn under, which
+ * is a fact about position and therefore one the shell can see.
+ */
+export interface MoreControl {
+  readonly id: string;
+  readonly group: TriageGroup;
+  readonly viewType: string;
+  readonly command: { readonly id: string; readonly args?: unknown };
+}
+
+export interface TriageRead {
+  readonly entries: readonly TriageEntry[];
+  /** At most one per region; a region drawing everything contributes none. */
+  readonly more: readonly MoreControl[];
+}
 
 /**
  * Every contributed tree's rows, flattened into what the triage screen draws.
@@ -15,17 +42,21 @@ import type { TriageEntry } from './triage.ts';
  * screen rather than two hardcoded lists. Any tree that arrives later lands in
  * the triage automatically, which is the promise ADR 0031 makes.
  *
- * Two kinds of row are dropped on the way through, and both for the same reason
- * — they are the DOCK's furniture and this surface supplies its own:
+ * A `section` heading is dropped on the way through — the takeover's regions are
+ * the takeover's, and a tree's headings are the dock's furniture.
  *
- *   - a `section` heading, because the takeover's regions are the takeover's;
- *   - a `quiet` control (`… +28`), because Home has no truncation to expand.
+ * A `quiet` control (`… +28`) is NOT. It used to be, on the reasoning that "Home
+ * has no truncation to expand", and that was the bug: the truncation happens in
+ * the extension, so Home inherited the cap and then threw away the only thing
+ * that could lift it — eight shipped tasks and no way to reach the ninth, on the
+ * one surface left after the rail. It comes back as a `MoreControl`, and the one
+ * that `reveals` is the one Home can run for you.
  */
 export function useTriageEntries(options: {
   readonly bridge: ViewsApi | null;
   /** The layout's own answer for which group a root is a tab of. */
   readonly groupOfRoot: (root: string) => string;
-}): readonly TriageEntry[] {
+}): TriageRead {
   const { bridge, groupOfRoot } = options;
   const [views, setViews] = useState<readonly ViewContributionDTO[]>([]);
   const [rows, setRows] = useState<Readonly<Record<string, readonly TreeItem[]>>>({});
@@ -59,12 +90,26 @@ export function useTriageEntries(options: {
 
   return useMemo(() => {
     const out: TriageEntry[] = [];
+    const more: MoreControl[] = [];
     for (const view of views) {
       if (view.kind !== 'tree') continue;
+      /** The last row of this view, so a control can be attributed to its region. */
+      let above: TriageEntry | undefined;
       for (const row of rows[view.type] ?? []) {
-        if (row.section === true || row.quiet === true) continue;
+        if (row.section === true) continue;
+        if (row.quiet === true) {
+          if (row.reveals === true && row.command !== undefined && above !== undefined) {
+            more.push({
+              id: `${view.type}:${row.id}`,
+              group: triageOf(above),
+              viewType: view.type,
+              command: { id: row.command.id, ...(row.command.args === undefined ? {} : { args: row.command.args }) },
+            });
+          }
+          continue;
+        }
         const facts = readRowFacts(row.data);
-        out.push({
+        const entry: TriageEntry = {
           id: `${view.type}:${row.id}`,
           rowId: row.id,
           label: row.label,
@@ -104,9 +149,11 @@ export function useTriageEntries(options: {
                     : { leaves: row.primaryAction.leaves }),
                 },
               }),
-        });
+        };
+        out.push(entry);
+        above = entry;
       }
     }
-    return out;
+    return { entries: out, more };
   }, [views, rows, groupOfRoot]);
 }

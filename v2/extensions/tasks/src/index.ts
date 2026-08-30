@@ -227,6 +227,8 @@ interface TreeItemOut {
   foot?: boolean;
   /** This row operates on the list rather than belonging to it — drawn as chrome. */
   quiet?: boolean;
+  /** This control reveals withheld rows — a scrolling surface may run it itself. */
+  reveals?: boolean;
   /** This row's region has no state column — no leading slot, not an empty one. */
   gutter?: boolean;
   tint?: string;
@@ -5636,6 +5638,18 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
                  * drew a shipped CHECK on something that is not a task.
                  */
                 quiet: true,
+                /*
+                 * **Only in the direction that reveals.**
+                 *
+                 * Home has room the rail did not, so it runs this control when it
+                 * scrolls into view rather than drawing a button — which is the
+                 * cap doing what it was always for, deciding how much loads
+                 * before you ask for more rather than how much exists. `Show
+                 * fewer` is the same row pointing the other way, and a surface
+                 * that ran THAT on sight would fold the region up the moment you
+                 * reached the bottom of it.
+                 */
+                reveals: !showingAll,
                 /*
                  * And no reserved slot either, because the region it closes has no
                  * state column: the shipped rows above it drop their mark, so a box
