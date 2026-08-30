@@ -175,8 +175,38 @@ per-client component work exist.
 
 ## 6. Cost, and the recommendation
 
-**Slower:** every command becomes a socket round-trip. Sub-millisecond on a unix
-socket, but it compounds on chatty paths. Stage 2 must measure rather than assume.
+**Slower — measured, not assumed** (live app, M4, kept-alive unix socket):
+
+| | p50 | p99 |
+|---|---|---|
+| in-process `CommandRegistry.invoke` | 0.13µs | 0.58µs |
+| socket `/invoke`, kernel handler | **133µs** | 616µs |
+| socket `/invoke`, extension-host handler | 487µs | 1.43ms |
+| socket `/invoke`, ext-host + 50KB payload | 673µs | 1.02ms |
+
+Raw unix-socket RTT is **4µs**; HTTP framing adds ~21µs, this stack ~29µs, and
+dispatch ~79µs — most of it the per-invoke debug log line, since schema validation
+and the permission check together are under a microsecond. A command whose handler
+lives in the extension host already pays the ~350µs utility-process hop today and
+would keep paying it; a socket changes its transport, not its cost class.
+
+Against real traffic this is a **non-problem**. `app.log` over a 39-hour window
+holds 44,692 commands — mean 3.0/s, and the busiest second ever logged is **42**.
+At the worst measured per-call cost that is 28ms spread across a full second, under
+3% of one core. The chattiest paths are extension beats, not the renderer:
+`agents.lastSaid` at 18,435 calls off the tasks extension's 500ms correlate beat,
+and `tasks.list` at 6,326 off `github`'s 10s sweep. ADR 0031's pull-with-nudge
+already prevents the one design that could go quadratic — a tree cannot be made to
+re-read per row.
+
+**The one pattern to design against** is a long serial chain of dependent calls on
+a paint path: at 0.13–0.7ms a link, ~23–107 links fit in a 16ms frame. Nothing in
+the log comes within an order of magnitude, but a future path that walks a list
+one call at a time before first paint should be batched or made a subscription.
+Concurrency queues rather than collapses — 16 in flight still cleared 9,460
+calls/s. Pty bytes stay on the daemon's data plane and are unaffected either way.
+
+Reproduce with `scratchpad/bench.mjs` against `~/.shepherd/v2/control.sock`.
 
 **Harder to debug:** four processes instead of three. The tuition is paid — the
 unified log discipline exists because multi-process debugging burned this repo
