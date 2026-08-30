@@ -41,3 +41,4 @@ export type { AgentsApi, ViewContributionDTO, ViewsApi } from './bridge.ts';
 export type { SettingsApi, SettingsPageDTO, SettingsSnapshotDTO } from './bridge.ts';
 export { THEME_KEY, type ThemeSetting } from './settings-keys.ts';
 export { memberOf, qualify, unqualify } from './view-types.ts';
+export { HOME_ROOT_ID } from './home-root.ts';

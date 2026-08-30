@@ -1,4 +1,4 @@
-import { palette, type ColorToken, type ThemeMode } from './palette.ts';
+import { palette, type ColorToken, type ThemeMode, type TokenSpec } from './palette.ts';
 
 /**
  * Tier 2 of the token layer: **roles are the public vocabulary.**
@@ -43,6 +43,8 @@ export type RoleName =
   | 'edgeSelected'
   | 'lineAccent'
   | 'glintAccent'
+  | 'glintInk'
+  | 'glintSolid'
   // text
   | 'text'
   | 'textQuiet'
@@ -134,6 +136,24 @@ export interface WashRole extends RoleShared {
 
 export type RoleSpec = TokenRole | AliasRole | WashRole;
 
+/**
+ * The two tables a role resolves against.
+ *
+ * `roleValue` used to close over the module's own `palette` and `roles`, which
+ * made "the built-in theme" and "the token layer" the same thing — a second skin
+ * could then only exist by mutating this file in place. A SKIN is a pair of
+ * tables (see `themes.ts`), and this is the shape of that pair, declared here
+ * rather than in `themes.ts` so the resolver does not have to import the module
+ * that imports it.
+ *
+ * The default is still the built-in pair, so every existing call site — and
+ * every test written against it — resolves exactly as it did.
+ */
+export interface PaintSource {
+  readonly palette: Readonly<Record<ColorToken, TokenSpec>>;
+  readonly roles: Readonly<Record<RoleName, RoleSpec>>;
+}
+
 export const roles: Readonly<Record<RoleName, RoleSpec>> = {
   // ── surfaces ────────────────────────────────────────────────────────────────
   sunken: {
@@ -224,6 +244,24 @@ export const roles: Readonly<Record<RoleName, RoleSpec>> = {
     job: 'the lit top edge of an accent-tinted box — the top BORDER’s colour.',
     notFor:
       'an inset shadow. That paints against the inner face of the border box, so the top edge lands 2px against 1px everywhere else and the extra light drags the label optically low. It is a colour, not a second edge.',
+  },
+
+  glintInk: {
+    kind: 'token',
+    token: 'glint',
+    job: 'the light a solid fill’s top edge is lit with, at full strength.',
+    notFor:
+      'drawing anything. It is the input to `glintSolid` and exists as a role only because a wash may only be taken of a role — reach for the wash, never for this.',
+  },
+  glintSolid: {
+    kind: 'wash',
+    of: 'glintInk',
+    // Paper takes less: the fill under it is ink, and a lit edge on a dark box
+    // shows at a lower alpha than one on a near-white box.
+    alpha: { dark: 0.35, light: 0.3 },
+    job: 'the 1px lit top edge of the ONE primary fill, drawn as `box-shadow: inset 0 1px 0`.',
+    notFor:
+      'a box that has a border. There the highlight is the top BORDER’s colour (`glintAccent`) — an inset shadow paints against the inner face of the border box, so the top edge lands 2px against 1px everywhere else and drags the label optically low. And never a second one: there is exactly one primary action on a surface.',
   },
 
   // ── text ────────────────────────────────────────────────────────────────────
@@ -644,11 +682,12 @@ export function roleVarName(role: RoleName): string {
  * *alpha* ramp is computed — and sRGB is what this package's contrast maths
  * (`relativeLuminance`) is defined in. One space.
  */
-export function roleValue(role: RoleName, mode: ThemeMode): string {
-  const spec = roles[role];
+export function roleValue(role: RoleName, mode: ThemeMode, source?: PaintSource): string {
+  const spec = (source?.roles ?? roles)[role];
+  const swatch = source?.palette ?? palette;
   switch (spec.kind) {
     case 'token':
-      return palette[spec.token][mode];
+      return swatch[spec.token][mode];
     case 'alias':
       return `var(${roleVarName(spec.of)})`;
     case 'wash': {
@@ -667,7 +706,8 @@ export function roleValue(role: RoleName, mode: ThemeMode): string {
  * other is a mistake that must fail loudly at build time, not hang a stylesheet
  * generator.
  */
-export function roleToken(role: RoleName): ColorToken {
+export function roleToken(role: RoleName, source?: PaintSource): ColorToken {
+  const table = source?.roles ?? roles;
   const seen = new Set<RoleName>();
   let current = role;
   for (;;) {
@@ -675,7 +715,7 @@ export function roleToken(role: RoleName): ColorToken {
       throw new Error(`roles: "${role}" resolves through a cycle at "${current}"`);
     }
     seen.add(current);
-    const spec = roles[current];
+    const spec = table[current];
     if (spec.kind === 'token') return spec.token;
     current = spec.of;
   }

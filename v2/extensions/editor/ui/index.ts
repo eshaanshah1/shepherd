@@ -6,3 +6,5 @@
  */
 export { EditorPane, readEditorState, readTree } from './editor-pane.tsx';
 export { FileEditor, saveOutcome, saveNote, readDoc } from './file-editor.tsx';
+export { TaskFilesFace } from './task-files.tsx';
+export type { EditorSurfaceProps } from './editor-pane.tsx';

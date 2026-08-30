@@ -12,3 +12,4 @@ export { agoText, readPr, readReview, type ReviewData } from './review-data.ts';
  * between the two is a shipped defect (`diff-metrics.css.test.ts`).
  */
 export { SHEPHERD_DIFF_SIZING } from './diff-theme.ts';
+export { TaskDiffFace } from './task-diff.tsx';

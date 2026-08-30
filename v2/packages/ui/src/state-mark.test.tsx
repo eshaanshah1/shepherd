@@ -162,13 +162,31 @@ describe('StateMark', () => {
      * lit colour are declared on the elements as well as in the frames: the
      * static silhouette is not a leftover, it is the reduced-motion rendering.
      */
-    const reduced = rulesMentioning('sh-ui-mark__bars').filter(
+    const stopped = rulesMentioning('sh-ui-mark__bars').filter(
       (rule) => rule.style.animation === 'none',
     );
-    expect(reduced).toHaveLength(1);
-    expect(reduced[0]?.selectorText).toBe('.sh-ui-mark__bars > i');
-    // Every bar, not the one that used to be the only animated one.
-    expect(reduced[0]?.selectorText).not.toContain('last-child');
+    /*
+     * TWO rules stop it now, and they stop it the same way on purpose.
+     *
+     * The second is the `quiet-craft` skin, which refuses looping animation
+     * outright — so the meter it draws has to be the complete silhouette rather
+     * than a paused frame, which is the identical requirement this case was
+     * written for. If either ever grows a `transform` or a `background` of its
+     * own it has stopped reusing the resting rendering and started inventing a
+     * second static form, which is what these selectors pin.
+     */
+    const selectors = stopped.map((rule) => rule.selectorText).sort();
+    expect(selectors).toEqual([
+      ".sh-ui-mark__bars > i",
+      ":root[data-skin='quiet-craft'] .sh-ui-mark__bars > i",
+    ]);
+    for (const rule of stopped) {
+      // Every bar, not the one that used to be the only animated one.
+      expect(rule.selectorText).not.toContain('last-child');
+      // Nothing but the animation is touched: the silhouette IS the resting state.
+      expect(rule.style.transform, rule.selectorText).toBe('');
+      expect(rule.style.background, rule.selectorText).toBe('');
+    }
   });
 
   it('draws three bars for working, and NOTHING else does', () => {

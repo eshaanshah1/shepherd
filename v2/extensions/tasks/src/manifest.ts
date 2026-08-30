@@ -22,6 +22,17 @@ export const TASK_COMMANDS = {
    * composer asks its own extension a question, and the extension asks the
    * point (D5).
    */
+  /**
+   * Put this one off — with a reason and a way back (`model/snooze.ts`).
+   *
+   * A verb rather than a field the shell writes, because a snooze is task state
+   * (ADR 0032): it has to survive a relaunch, be the same answer on every
+   * surface that draws this task, and be decided by the thing that knows whether
+   * its agents are still working — which is this extension and not the page.
+   */
+  snooze: 'tasks.snooze',
+  /** Bring it back now, by hand rather than by waiting. */
+  wake: 'tasks.wake',
   suggestRepos: 'tasks.suggestRepos',
   /**
    * What should this task be called? — asked while the brief is still being
@@ -143,6 +154,15 @@ export const TASK_VIEWS = {
   /** The ⇧⌘F overlay, and the row that raises it. */
   sessionSearch: 'tasks.sessionSearch',
   transcriptCount: 'tasks.transcriptCount',
+  /**
+   * The **Intent** face of a task (ADR 0051) — the brief, as it was typed.
+   *
+   * The one face whose subject this extension already holds. A brief is written
+   * once at the composer and then never seen again; three days in, "what did I
+   * actually ask for" has no surface to answer it, and the transcript is not
+   * that surface.
+   */
+  intent: 'tasks.intent',
 } as const;
 
 /**
@@ -561,6 +581,8 @@ export const tasksManifest: Manifest = {
       { id: TASK_COMMANDS.spawn, title: 'Tasks: Spawn a Session' },
       { id: TASK_COMMANDS.archive, title: 'Tasks: Archive' },
       { id: TASK_COMMANDS.restore, title: 'Tasks: Restore' },
+      { id: TASK_COMMANDS.snooze, title: 'Tasks: Later' },
+      { id: TASK_COMMANDS.wake, title: 'Tasks: Wake' },
       { id: TASK_COMMANDS.suggestRepos, title: 'Tasks: Suggest Repos' },
       { id: TASK_COMMANDS.suggestName, title: 'Tasks: Suggest a Name' },
       { id: TASK_COMMANDS.renameBranch, title: 'Tasks: Rename the Branch' },

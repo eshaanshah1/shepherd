@@ -38,6 +38,40 @@ describe('TaskStore', () => {
     expect(store.get('t1')).toEqual(draft());
   });
 
+  /**
+   * A snooze survives the round trip — **both halves of it**.
+   *
+   * The schema here is a `s.stored`, so a field the interface declares and the
+   * schema does not is read back as ABSENT: the record would save, the task
+   * would look snoozed until the next launch, and then quietly be awake again
+   * with nothing anywhere saying why. That is the `head` trap in the persistence
+   * layer, and this is the case that catches it.
+   *
+   * Both FORMS are asserted, because they are stored differently: a time and a
+   * condition. Testing only the first would leave "when agents finish" — the
+   * option the whole verb is worth having for — unpinned.
+   */
+  it('round-trips a snooze that sleeps on the clock', () => {
+    const store = new TaskStore(fakeKV());
+    const snooze = { label: 'later today', wakeAt: 1_800_000_000_000, was: 'Plan approval' } as const;
+    store.put(draft({ snooze }));
+    expect(store.get('t1')?.snooze).toEqual(snooze);
+  });
+
+  it('round-trips a snooze that sleeps on the room', () => {
+    const store = new TaskStore(fakeKV());
+    store.put(draft({ snooze: { label: 'when agents finish', wakeOnQuiet: true } }));
+    expect(store.get('t1')?.snooze).toEqual({ label: 'when agents finish', wakeOnQuiet: true });
+  });
+
+  it('reads a record written before snoozing existed', () => {
+    // The reason the field is optional and the schema is `s.stored`: every
+    // record on every machine predates it.
+    const store = new TaskStore(fakeKV());
+    store.put(draft());
+    expect(store.get('t1')?.snooze).toBeUndefined();
+  });
+
   it('lists tasks, which is the query KV can actually express', () => {
     const store = new TaskStore(fakeKV());
     store.put(draft({ id: 't1' }));

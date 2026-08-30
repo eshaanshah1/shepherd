@@ -81,6 +81,14 @@
           "title": "Tasks: Restore"
         },
         {
+          "id": "tasks.snooze",
+          "title": "Tasks: Later"
+        },
+        {
+          "id": "tasks.wake",
+          "title": "Tasks: Wake"
+        },
+        {
           "id": "tasks.suggestRepos",
           "title": "Tasks: Suggest Repos"
         },

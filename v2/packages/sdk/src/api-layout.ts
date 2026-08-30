@@ -245,7 +245,8 @@ export type ViewProvider =
       /**
        * Where the shell puts it. `dock` is a section in the sidebar; `overlay`
        * is a modal card over the whole window — a composer, not a panel;
-       * `pane` is a leaf of the layout tree, beside the terminals.
+       * `pane` is a leaf of the layout tree, beside the terminals; `face` is one
+       * way of reading a subject the shell is already showing (see `face`).
        *
        * A form the user opens, fills in and dismisses does not belong in a
        * sidebar permanently taking space; v1 learned that with its ⌘T composer,
@@ -283,7 +284,36 @@ export type ViewProvider =
        * and the list of what is already running is the context you compose
        * against.
        */
-      readonly surface?: 'dock' | 'overlay' | 'pane' | 'screen';
+      readonly surface?: 'dock' | 'overlay' | 'pane' | 'screen' | 'face';
+      /**
+       * Which FACE of a task this view is, when `surface` is `face`.
+       *
+       * The fifth surface, and the one ADR 0049 deferred until something bought
+       * it: a **document about a subject the shell already has**. See ADR 0051.
+       *
+       * A face is not a `pane`, and the difference is worth stating because they
+       * look alike. A pane is a PLACE — you split it, focus it, close it, and it
+       * comes back after a relaunch, so it carries an id the layout owns and a
+       * subject it minted for itself. A face is a WAY OF READING one subject the
+       * shell is already showing: the takeover's task band names the task, and
+       * `Diff`, `Files` and `Intent` are three answers about that same task. So a
+       * face has no pane, no id, and nothing to close — which is exactly why
+       * mounting one through `EXTENSION_PANE_UI` was wrong: it would have needed
+       * a `Pane` the layout does not have, and every verb the view invoked about
+       * "its" pane would have missed.
+       *
+       * **A slot is claimed, not assigned.** The shell draws a tab for each slot
+       * something actually claims, so a build without `github` has no Diff tab —
+       * which is the honest failure, and the reason the shell may not simply
+       * resolve `diff` to a view type it knows the name of. An extension that
+       * could be named by the shell is an extension the shell has learned the
+       * identity of, which is the rule the whole extension model rests on.
+       *
+       * `subject` is `task` and only `task` today. It is stated rather than
+       * assumed so the second subject — a repo, a PR — arrives as a value here
+       * rather than as a second field that means the same thing.
+       */
+      readonly face?: { readonly slot: 'diff' | 'intent' | 'files'; readonly subject: 'task' };
       /**
        * The accelerator that raises it, in Electron's vocabulary
        * (`CmdOrCtrl+T`). **A modifier is required** — a bare key here would be
@@ -379,6 +409,48 @@ export interface ExtensionPaneProps extends ExtensionViewProps {
    * showing the same PR would share.
    */
   readonly paneId: string;
+}
+
+/**
+ * What a FACE view is handed — the fourth props table, and ADR 0051's other
+ * half.
+ *
+ * Its own type for the reason `ExtensionPaneProps` and `ExtensionRowProps` are
+ * theirs: the fields are meaningless anywhere else, and one shared type would
+ * offer a dock section a `task` that is never there. It extends
+ * `ExtensionViewProps` because a face genuinely is a view — it invokes commands
+ * — but it deliberately does NOT take `paneId`, `state` or `focused`, and each
+ * absence is a statement:
+ *
+ *   - **No `paneId`**, because a face is not a place. There is no leaf, nothing
+ *     to split, nothing to close. This is the whole reason a face could not be
+ *     mounted through `EXTENSION_PANE_UI`: it would have needed a `Pane` the
+ *     layout does not have, and every verb the view invoked about "its" pane
+ *     would have missed.
+ *   - **No `state`**, because the subject is not something the view minted when
+ *     it opened — it is the task the window is already showing. A pane's state
+ *     is a subject it chose; a face's subject is handed to it.
+ *   - **No `focused`.** A face is the whole body of the window while it is up.
+ *     There is no sibling to lose a keystroke to, so a flag saying "you have the
+ *     keyboard" would be a constant `true` and an invitation to write the branch
+ *     that reads it.
+ *
+ * `done()` keeps its meaning and loses its effect: a face has nothing to close.
+ * The shell ignores it rather than refusing it, which is what a dock section
+ * already does — a component should not have to know which surface it landed on
+ * to be correct.
+ */
+export interface ExtensionFaceProps extends ExtensionViewProps {
+  /**
+   * The subject, handed over by the shell.
+   *
+   * `id` is the extension's own task id and `root` is the layout root the task
+   * is open on — the two names the window already has for the thing on screen,
+   * so a face never has to ask which task it is looking at. Both are strings and
+   * neither is `unknown`: unlike a pane's `state`, this did not come from an
+   * extension, it came from the shell.
+   */
+  readonly task: { readonly id: string; readonly root: string };
 }
 
 /**

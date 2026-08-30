@@ -38,6 +38,7 @@ import './review-pane.css';
 import './scratch-pane.css';
 import './editor-pane.css';
 import './settings.css';
+import './takeover.css';
 import './inspector.css';
 
 /** `var(--sh-x)` and `var(--sh-x, fallback)` — the name only. */

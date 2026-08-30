@@ -1,4 +1,28 @@
-import { cssVariables, xtermTheme, type ThemeMode } from '@shepherd/design-tokens';
+import {
+  DEFAULT_THEME,
+  cssVariables,
+  themes,
+  xtermTheme,
+  type Theme,
+  type ThemeMode,
+} from '@shepherd/design-tokens';
+
+/**
+ * The SKIN the app paints in, in ONE place — the same argument
+ * `DEFAULT_THEME_MODE` makes one line down, for the other axis.
+ *
+ * A mode is light or dark; a skin is which ramp, which faces and which job each
+ * hue carries (`@shepherd/design-tokens/themes.ts`). They are independent, and
+ * the app currently has one skin and two modes — so this is a constant with one
+ * name rather than a setting, and everything that has to agree about the app's
+ * appearance reads it: the chrome's variables, the grid's ANSI table, the
+ * pane-chrome background the foreground is measured from.
+ *
+ * When a skin becomes a setting it replaces this the way `shepherd.theme`
+ * replaced the mode constant: one value arriving one push after mount, with this
+ * as what is on screen until it does.
+ */
+export const APP_THEME: Theme = themes[DEFAULT_THEME];
 
 /**
  * The mode the first paint uses, in ONE place.
@@ -62,7 +86,7 @@ export function resolveThemeMode(setting: string, prefersDark: boolean): ThemeMo
  * the answer.
  */
 export function terminalBackground(mode: ThemeMode = DEFAULT_THEME_MODE): string {
-  return xtermTheme(mode).background;
+  return xtermTheme(mode, APP_THEME).background;
 }
 
 /**
@@ -75,8 +99,19 @@ export function terminalBackground(mode: ThemeMode = DEFAULT_THEME_MODE): string
  * "one token map" cases in @shepherd/design-tokens.
  */
 export function applyThemeVariables(root: HTMLElement, mode: ThemeMode): void {
-  for (const [name, value] of Object.entries(cssVariables(mode))) {
+  for (const [name, value] of Object.entries(cssVariables(mode, undefined, APP_THEME))) {
     root.style.setProperty(name, value);
   }
   root.dataset['theme'] = mode;
+  /*
+   * The skin's NAME on the root, beside the mode.
+   *
+   * Almost everything a skin changes is a variable and needs no selector. Two
+   * things are not values at all — a refusal (this skin runs no looping
+   * animation, so the working meter is a static silhouette) and a shape — and a
+   * rule cannot be written against a colour. The attribute is what those rules
+   * hang off, and it is set here so there is exactly one statement of which skin
+   * is on screen.
+   */
+  root.dataset['skin'] = APP_THEME.name;
 }

@@ -13,7 +13,7 @@ import {
 } from '@shepherd/design-tokens';
 import type { TerminalLike } from './pane-sessions.ts';
 import { terminalKeyBytes } from './terminal-keys.ts';
-import { DEFAULT_THEME_MODE } from './theme.ts';
+import { APP_THEME, DEFAULT_THEME_MODE } from './theme.ts';
 import '@xterm/xterm/css/xterm.css';
 
 /**
@@ -39,7 +39,7 @@ export function createXtermTerminal(initialMode: ThemeMode = DEFAULT_THEME_MODE)
    * variable at call time — see `searchOptions`, whose own comment predicted it.
    */
   let mode = initialMode;
-  const theme = xtermTheme(mode);
+  const theme = xtermTheme(mode, APP_THEME);
   const terminal = new Terminal({
     fontFamily: fonts.mono,
     fontSize: metrics.fontSize,
@@ -101,7 +101,7 @@ export function createXtermTerminal(initialMode: ThemeMode = DEFAULT_THEME_MODE)
    * frozen object here would keep painting matches in the palette that was live
    * when the pane opened.
    */
-  const searchOptions = () => ({ decorations: xtermSearchDecorations(mode) });
+  const searchOptions = () => ({ decorations: xtermSearchDecorations(mode, APP_THEME) });
 
   /**
    * The grid is drawn on the GPU, and it has to be, because xterm's other
@@ -175,7 +175,7 @@ export function createXtermTerminal(initialMode: ThemeMode = DEFAULT_THEME_MODE)
      */
     setTheme: (next) => {
       mode = next;
-      const themed = xtermTheme(next);
+      const themed = xtermTheme(next, APP_THEME);
       terminal.options.theme = themed;
       terminal.options.minimumContrastRatio = minimumContrastRatio(paneTitleSurface(themed.background));
     },

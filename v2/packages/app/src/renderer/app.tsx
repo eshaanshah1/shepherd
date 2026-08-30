@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { paneId, type PaneID } from '@shepherd/sdk';
 import type { ThemeMode } from '@shepherd/design-tokens';
-import { CommandPalette, IconButton, TabStrip, type MarkState, type PaletteCommand } from '@shepherd/ui';
+import { CommandPalette, TabStrip, type MarkState, type PaletteCommand } from '@shepherd/ui';
 import {
   LAYOUT_COMMANDS,
   displayTitle,
@@ -29,12 +29,14 @@ import { MENU_INVOCATIONS } from '../shared/menu-commands.ts';
 import { ArchivedBanner } from './archived-banner.tsx';
 import { EmptyState } from './empty-state.tsx';
 import { FindBar } from './find-bar.tsx';
-import { SkyStrip } from './sky-strip.tsx';
-import { ViewDock, contributedIcon, raiseIcon } from './view-dock.tsx';
+// `ViewDock` is gone with the rail; its two resolvers stay — the tab strip
+// draws a contributed glyph, and `raiseIcon` is its `+`.
+import { contributedIcon, raiseIcon } from './view-dock.tsx';
 import { ViewOverlay } from './view-overlay.tsx';
 import { ViewScreen } from './view-screen.tsx';
 import { PaneKeys } from './pane-keys.ts';
 import { SettingsScreen } from './settings-screen.tsx';
+import { useTakeover } from './takeover.tsx';
 import { useContributions } from './contributions.ts';
 import { useSetting } from './use-setting.ts';
 import {
@@ -261,7 +263,7 @@ export function App({
   );
 
   /**
-   * ⌘K — the command palette.
+   * ⌘⇧P — the command palette.
    *
    * The consumer that bought the primitive, and it closes a gap M1 opened: every
    * command carries a `title` the SDK documents as "shown in the palette", and
@@ -306,7 +308,18 @@ export function App({
      * to mean "close" while the palette itself is the thing on screen.
      */
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key !== 'k' || !(event.metaKey || event.ctrlKey) || event.altKey) return;
+      /*
+       * ⌘⇧P, and it used to be ⌘K.
+       *
+       * The takeover's switcher took that key, and the trade is the right way
+       * round: the two lists answer different questions — "where am I going"
+       * against "what can I run" — and the first is the one reached twenty times
+       * a session. The palette is still the only way to reach a verb that no row
+       * and no menu offers, which is why it keeps a key of its own rather than
+       * folding into the switcher.
+       */
+      if (event.key.toLowerCase() !== 'p' || !(event.metaKey || event.ctrlKey) || event.altKey) return;
+      if (!event.shiftKey) return;
       event.preventDefault();
       setPaletteOpen((open) => !open);
     };
@@ -712,10 +725,34 @@ export function App({
   }, [themeSetting, terminals]);
 
   /** Every accelerator an overlay declared, for the footer's keycap strip. */
-  const raisable = contributions.filter((view) => view.surface === 'overlay' && view.key !== undefined);
+
+  /**
+   * The attention router, as PARTS this component lays out — not a layer it
+   * mounts and hopes about.
+   *
+   * The band comes back as a flex child for `.sh-app`'s own column, so the body
+   * flows beneath it exactly as it flows beneath a title bar. Everything the
+   * band replaces (the plate, the rail, the tab strip) is then simply not
+   * rendered, rather than rendered and hidden — see each site below.
+   */
+  const takeover = useTakeover({
+    views: viewsApi,
+    // The same list the dock reads, handed over rather than re-fetched: the
+    // face tabs are computed from what claims a slot, and two subscriptions to
+    // one list is two answers to one question.
+    contributions,
+    groupOfRoot,
+    invoke,
+    onRaiseView: (type: string) => window.dispatchEvent(new CustomEvent('sh:raise-view', { detail: type })),
+    // Settings is a departure from the work: while it is up, nothing here
+    // should be listening for a bare `h`.
+    suspended: settingsOpen,
+  });
+  /** True while the takeover owns the window's chrome. */
+  const routed = takeover.place !== null;
 
   return (
-    <div className="sh-app">
+    <div className="sh-app" data-takeover={takeover.place ?? undefined}>
       {/*
         The window's OWN titlebar (`titleBarStyle: 'hiddenInset'`) — the traffic
         lights' clearance and the drag region, and nothing drawn of its own.
@@ -729,59 +766,57 @@ export function App({
         The one cell that survives is the one no other surface can show: a
         renderer with no bridge looks exactly like an app with no panes.
       */}
-      <header className="sh-plate">
-        <span className="sh-plate-spacer" />
-        {terminals === null && <span className="sh-plate-cell is-ember">NO BRIDGE</span>}
-      </header>
+      {/*
+        The band, or the plate — never both, and never one over the other.
 
-      <div className="sh-body">
-        <ViewDock
-          views={viewsApi}
-          // The same value the stage below draws from, so a row's highlight and
-          // the pane group on screen cannot get out of step.
-          activeRoot={snapshots?.active ?? null}
-          // …and which group that root is a tab of, so a task's row stays lit
-          // while you are on its second tab.
-          groupOfRoot={groupOfRoot}
-          actions={
-            /*
-              The panel's name lives on the sky strip, overlaid at its foot — one
-              surface carrying the picture and the heading, which is what makes
-              the strip a window rather than a band of decoration above a list.
+        `.sh-plate` is the app's own traffic-light clearance and drag region. The
+        takeover's band does that job AND says where you are, so while it is up
+        the plate is not drawn: two bars would spend 88px of a 900px window on
+        chrome, and the second one would be empty.
 
-              The panel's ONE primary action rides in the same row, which is also
-              why `raisable` collapses to a single button here: §4 allows one
-              primary per surface, and the rail is one surface.
-            */
-            <SkyStrip
-              title="Work"
-              action={
-                <>
-                  {raisable.map((view) => (
-                <IconButton
-                  key={view.type}
-                  icon={raiseIcon(view.icon)}
-                  size="sm"
-                  // Required by the type, which is the whole point of the
-                  // primitive: this control shipped as a bare `+` with no
-                  // accessible name and — the spec's opening anecdote — no CSS
-                  // at all.
-                  label={view.title ?? view.type}
-                  className="sh-side-add"
-                  data-testid="raise-view"
-                  data-view-type={view.type}
-                  // The keystroke is in the tooltip, not painted next to the
-                  // control: a button that already says what it does does not
-                  // need to also teach its shortcut.
-                  title={`${view.title ?? view.type} (${accelLabel(view.key ?? '')})`}
-                  onClick={() => window.dispatchEvent(new CustomEvent('sh:raise-view', { detail: view.type }))}
-                />
-                  ))}
-                </>
-              }
-            />
-          }
-        />
+        In FLOW, as the first child of the column. Everything under it — the
+        body, the stage, the panes — is then laid out in the space actually
+        left, which is the whole fix: no fixed layer, no padding compensation,
+        and nothing measuring itself against a height it does not have.
+      */}
+      {takeover.band === null ? (
+        <header className="sh-plate">
+          <span className="sh-plate-spacer" />
+          {terminals === null && <span className="sh-plate-cell is-ember">NO BRIDGE</span>}
+        </header>
+      ) : (
+        <div className="sh-take-band" data-testid="takeover-band" data-place={takeover.place}>
+          {takeover.band}
+        </div>
+      )}
+
+      {/*
+        The body, hidden — never unmounted — while a face has the room.
+
+        `display: none` keeps every root in the tree with its terminal attached,
+        which is the same device `.sh-root` uses for the roots you are not
+        looking at. Unmounting here would release a pty and spawn a second one on
+        the way back, which is v1's `_ConditionalContent` lesson and the reason
+        this whole surface is careful about the difference.
+      */}
+      <div className="sh-body" data-idle={takeover.face === null ? undefined : 'true'}>
+        {/*
+          THE RAIL IS GONE, and this comment is what stands where it was.
+
+          It was hidden with `display: none` for a while, which is a different
+          claim: a hidden dock still mounts, still subscribes to every
+          contributed tree, still re-reads and re-sorts on every nudge, and still
+          holds a focus order — all for a surface nobody can see. The takeover
+          replaced it outright: its rows are Home's regions, its `Scratchpad`
+          section is the `Shells` region and `0`, and ⌘K is a wider search than
+          its field was.
+
+          Two things went with it and are recorded rather than pretended away.
+          The dock's per-tree SEARCH filtered one extension's rows and was
+          answered by that extension (which could reach past `SHIPPED_CAP`); ⌘K
+          ranks PLACES and cannot. And the sky strip — the app's one
+          illustration — had the rail as its only home. Both are in the handoff.
+        */}
         {/*
           Every root, mounted; one of them visible.
 
@@ -798,6 +833,23 @@ export function App({
             showing, and a wrapper that re-parented them on a switch would be a
             remounted pane, which is a second pty.
           */}
+          {/*
+            The tab strip, and ONLY for a group that has more than one tab.
+
+            This reverses its own earlier rule ("a group of one still gets its
+            tab, so the window does not change shape when a second opens"), and
+            the reason is that the rule was written when the strip was the only
+            place a root was NAMED. The band says that now, with the state and
+            the faces beside it — so for a group of one the strip is a second row
+            of chrome repeating the row above it.
+
+            For a group of TWO it is not repetition, it is the only way to reach
+            the other tab: a task with two repos has a root each, and deleting
+            the strip outright would strand one of them. So it is drawn when it
+            carries something, which is also what keeps `tabMark` — the rollup
+            over every session in a root you cannot see — alive and asserted.
+          */}
+          {tabs.length < 2 ? null : (
           <TabStrip
             tabs={tabs}
             activeId={snapshots?.active ?? ''}
@@ -821,6 +873,7 @@ export function App({
               );
             }}
           />
+          )}
           {/*
             TWO ways to have nothing on the stage, and they draw the same thing.
 
@@ -923,6 +976,26 @@ export function App({
       </div>
 
       {/*
+        A face's document — the column's CONTENT slot, under the band.
+
+        A sibling of `.sh-body` rather than a layer over it, so it is measured
+        against the space actually left and "edge to edge" is a fact about the
+        layout rather than a claim in a stylesheet.
+      */}
+      {takeover.face}
+
+      {/*
+        Home — the one part of the router that really is a layer.
+
+        It covers the window because it IS the window: there is no stage to show
+        through, no pane to keep visible and nothing underneath it that the user
+        is looking at. That is what separates it from the band, which is chrome
+        over content and therefore belongs in the column rather than on top of
+        it. The roots stay mounted beneath, so every pty keeps running.
+      */}
+      {takeover.home}
+
+      {/*
         The takeover layer.
 
         Painted OVER `.sh-body` rather than instead of it: every root underneath
@@ -949,6 +1022,16 @@ export function App({
         />
       )}
 
+      {/*
+        The router's own fixed layers — the toast, the switcher, the Later menu.
+
+        LAST among the takeover's parts and before the app's other dialogs, so
+        they float over Home and over a task alike. Each carries its own z-index;
+        none of them is chrome that content has to flow around, which is exactly
+        why these stayed layers when the band did not.
+      */}
+      {takeover.overlays}
+
       <ViewOverlay views={contributions} bridge={viewsApi} />
 
       {/*
@@ -959,7 +1042,7 @@ export function App({
 
 
       {/*
-        ⌘K. Mounted always and open only when asked — `Modal` renders nothing at
+        ⌘⇧P. Mounted always and open only when asked — `Modal` renders nothing at
         all while closed, so this costs one element in the tree and keeps the
         palette's own state (its query, its active row) from being a remount
         away from whatever else is on screen.

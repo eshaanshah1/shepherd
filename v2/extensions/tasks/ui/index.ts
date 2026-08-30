@@ -11,3 +11,4 @@ export { TaskCard } from './task-card.tsx';
 export { TranscriptCountRow } from './transcript-count.tsx';
 export { SessionSearchView } from './session-search.tsx';
 export { readCardData, type CardData, type CardMark, type CardQuestion, type CardRepo } from './card-data.ts';
+export { TaskIntentFace } from './intent.tsx';

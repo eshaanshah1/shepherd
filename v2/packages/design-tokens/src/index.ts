@@ -25,12 +25,23 @@ export {
   roleVarName,
   roles,
   type AliasRole,
+  type PaintSource,
   type RoleName,
   type RoleSpec,
   type TokenRole,
   type WashRole,
 } from './roles.ts';
 export { cssVarName, cssVariableBlock, cssVariables } from './css.ts';
+export {
+  DEFAULT_THEME,
+  resolveTheme,
+  themeNames,
+  themeSwatch,
+  themes,
+  type FontStacks,
+  type Theme,
+  type ThemeName,
+} from './themes.ts';
 export {
   xtermSearchDecorations,
   xtermTheme,

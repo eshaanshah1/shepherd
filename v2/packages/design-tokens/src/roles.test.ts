@@ -111,7 +111,7 @@ describe('roles', () => {
 
   it('keeps grass out of the repo-identity set', () => {
     // §2, stated: a repo tinted green would read as something that passed.
-    const identity = (['repo1', 'repo2', 'repo3', 'repo4'] as const).map(roleToken);
+    const identity = (['repo1', 'repo2', 'repo3', 'repo4'] as const).map((role) => roleToken(role));
     expect(identity).not.toContain(roleToken('grass'));
     expect(new Set(identity).size, 'four repos, four distinct marks').toBe(4);
   });

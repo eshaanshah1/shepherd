@@ -291,6 +291,34 @@ export function activate(ctx: ExtensionContext, api: Shepherd): void {
     }),
   );
 
+  /**
+   * The **Diff** face of a task (ADR 0051).
+   *
+   * A separate type from the pane above, and the same COMPONENT. The pane is
+   * for a review whose subject is not the task you are in — someone else's
+   * branch, a pull request off a list — and the face is that surface for the
+   * task the window is already showing.
+   *
+   * It draws the whole of it: the working changes AND the pull request, its
+   * checks and its threads. It used to draw only the first, which left a task
+   * with two surfaces for one idea and the user having to know which held which
+   * fact. "What did this task do, and where is it in review" is one question.
+   */
+  ctx.subscriptions.push(
+    views.registerViewType(GITHUB_VIEWS.taskDiff, {
+      kind: 'component',
+      component: GITHUB_VIEWS.taskDiff,
+      surface: 'face',
+      face: { slot: 'diff', subject: 'task' },
+      /*
+       * `Changes`, not `Diff`. It carries the working tree AND the pull request
+       * carrying it — the slot key stays `diff` because that is the shell's
+       * vocabulary for the position, and the LABEL is what a person reads.
+       */
+      title: 'Changes',
+    }),
+  );
+
   // -------------------------------------------------------------------- verbs
 
   ctx.subscriptions.push(
@@ -298,39 +326,36 @@ export function activate(ctx: ExtensionContext, api: Shepherd): void {
       title: 'GitHub: Review',
       schema: s.object({ task: s.optional(s.string()) }),
       /**
-       * Open this task's review tab, or go to the one that is already open.
+       * **A task's review is its Changes face, so this opens no tab.**
        *
-       * The existing tab is found by asking the LAYOUT what it holds rather than
-       * by remembering what we opened: a record of our own would be wrong the
-       * moment the user closed the tab, and wrong again across a relaunch.
+       * It used to open one, in the task's OWN pane group — which put a `review`
+       * tab beside the agents of the very task whose Changes face draws the same
+       * surface. Two places for one idea, and the user had to know which held
+       * which fact.
+       *
+       * So the verb keeps the half only this extension can do — start watching,
+       * which raises the sync cadence for the task somebody is about to look at
+       * — and answers where the surface IS. The refusal names the face rather
+       * than saying no: a verb that stops working without saying what replaced
+       * it is a verb people go looking for a bug in.
+       *
+       * The PANE is deliberately still registered. A layout persisted before
+       * this change still holds a `github.review` leaf, and a view type that
+       * stopped resolving would draw an empty rectangle in it — and a review of
+       * a pull request that is NOT the task you are in has no face to be, which
+       * is the case that keeps the surface honest rather than vestigial.
        */
       handler: async (args) => {
         const task = args.task === undefined ? undefined : await taskById(args.task);
         if (task === undefined) return { ok: false, reason: 'no such task' };
-        if (task.group === null) return { ok: false, reason: 'that task has no pane group' };
 
-        // Watch it before opening: the tab is about to be on screen, and the
-        // faster cadence should cover the sync that fills it.
+        // Watch it: somebody is about to read this task's review, and the faster
+        // cadence should cover the sync that fills it. This is the whole of what
+        // opening the tab used to be for.
         sync.watch(task.id);
         sweep();
 
-        const listed = await commands.invoke(GITHUB_LAYOUT.listRoots, { group: task.group });
-        const open = listed.ok
-          ? readRoots(listed.value).find((root) => root.viewTypes.includes(GITHUB_VIEWS.review))
-          : undefined;
-        if (open !== undefined) {
-          await commands.invoke(GITHUB_LAYOUT.switchRoot, { root: open.root });
-          return { ok: true, root: open.root, opened: false };
-        }
-
-        const created = await commands.invoke(GITHUB_LAYOUT.newTab, {
-          group: task.group,
-          view: { type: GITHUB_VIEWS.review, state: { task: task.id } },
-          // Without this the tab reads `term`: a view pane runs no program, so
-          // nothing ever sets an OSC title on it.
-          title: 'review',
-        });
-        return created.ok ? { ok: true, opened: true } : { ok: false, reason: created.error.message };
+        return { ok: true, task: task.id, face: 'diff', opened: false };
       },
     }),
   );

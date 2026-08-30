@@ -226,3 +226,26 @@
     animation: none;
   }
 }
+
+/*
+ * ── the quiet-craft skin: the meter is a SILHOUETTE ─────────────────────────
+ *
+ * That skin runs no looping animation anywhere, and this is the only looping
+ * animation in the app — so the refusal has exactly one rule to write, and it is
+ * here rather than in a takeover stylesheet because the shape being refused is
+ * this component's.
+ *
+ * It reuses the reduced-motion rendering rather than inventing a second static
+ * form: `animation: none` alone leaves each bar at
+ * `scaleY(var(--sh-bar-rest))` and its declared colour, which is the complete
+ * 6 / 9 / 5 skyline lit — a marker, not a frame frozen mid-cycle. That is the
+ * whole reason the resting scale is a custom property on the element instead of
+ * living only inside the keyframes.
+ *
+ * The colours are NOT restated here. `markWorking` is a role, and the skin
+ * re-points it at a neutral (`themes.ts`) — a rule that named a colour would be
+ * the second copy this file's own header refuses.
+ */
+:root[data-skin='quiet-craft'] .sh-ui-mark__bars > i {
+  animation: none;
+}

@@ -43,7 +43,24 @@ import { WorkingChanges } from './working-changes.tsx';
  */
 const REFRESH_MS = 3_000;
 
-export function ReviewPane({ state, focused, invoke }: ExtensionPaneProps): ReactElement {
+/**
+ * The three props this surface actually reads.
+ *
+ * Narrowed from `ExtensionPaneProps` so the same component can be a PANE (a
+ * review of a pull request that is not the task you are in) and the **Changes
+ * face** of a task (ADR 0051). A pane is assignable to this, so the pane table
+ * is unchanged; a face is not a pane and has no `paneId` to invent — which is
+ * exactly the thing that would otherwise have to be faked, and faking it is how
+ * a verb about "its" pane comes to be invoked against a leaf the layout does
+ * not have.
+ *
+ * Stated as a `Pick` rather than hand-written so it cannot drift from the pane
+ * contract it is a subset of. `EditorPane` did this first and for the same
+ * reason.
+ */
+export type ReviewSurfaceProps = Pick<ExtensionPaneProps, 'state' | 'focused' | 'invoke'>;
+
+export function ReviewPane({ state, focused, invoke }: ReviewSurfaceProps): ReactElement {
   const taskId = readTaskId(state);
   const [data, setData] = useState<ReviewData | null>(null);
   /** Which PR is open, as `owner/repo#n`, or `null` for the home page. */

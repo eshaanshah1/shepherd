@@ -581,6 +581,62 @@ describe('the extension host runtime', () => {
       });
     });
 
+    /**
+     * A FACE's slot crosses the wire, and it is the third field in this family.
+     *
+     * The failure this pre-empts is the one the two cases above are written
+     * from, and it would be silent in the same way: the SDK declares the slot,
+     * `view-registry.ts` forwards it and the takeover draws a tab per claimed
+     * slot — so a serializer that dropped it would produce an app with no Diff
+     * tab and no error anywhere, which reads as "the feature was never built".
+     *
+     * Read through `childFrameSchema` for the reason the other two are: the wire
+     * is a strict `s.object`, so a field sent but not NAMED there costs the whole
+     * registration — the tab would not merely be misplaced, the view would not
+     * register at all.
+     */
+    it("carries a face's claimed slot across the wire", async () => {
+      h.seen.api?.proposed.views.registerViewType('one.diff', {
+        kind: 'component',
+        component: 'one.diff',
+        surface: 'face',
+        face: { slot: 'diff', subject: 'task' },
+      });
+      await settle();
+
+      const frame = h.calls().find((sent) => sent.call.kind === 'view.register');
+      if (frame === undefined) throw new Error('the child never registered the view');
+      const read = readFrames(frame, childFrameSchema);
+      expect(read.skipped).toEqual([]);
+      expect(read.frames[0]).toMatchObject({
+        call: {
+          kind: 'view.register',
+          type: 'one.diff',
+          viewKind: 'component',
+          surface: 'face',
+          face: { slot: 'diff', subject: 'task' },
+        },
+      });
+    });
+
+    /* A component that is not a face sends no slot — absent, never a default. */
+    it('sends no face for a component that claims no slot', async () => {
+      h.seen.api?.proposed.views.registerViewType('one.card', {
+        kind: 'component',
+        component: 'one.card',
+        surface: 'dock',
+      });
+      await settle();
+
+      const frame = h.calls().find((sent) => sent.call.kind === 'view.register');
+      if (frame === undefined) throw new Error('the child never registered the view');
+      const read = readFrames(frame, childFrameSchema);
+      expect(read.skipped).toEqual([]);
+      const first = read.frames[0];
+      if (first?.kind !== 'call') throw new Error('expected a call frame');
+      expect('face' in first.call).toBe(false);
+    });
+
     /* A tree that claims nothing sends nothing — absent, never `false`. */
     it('sends no head for a tree that does not claim one', async () => {
       h.seen.api?.proposed.views.registerViewType('one.tree', {

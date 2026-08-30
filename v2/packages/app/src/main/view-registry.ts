@@ -27,6 +27,23 @@ export interface ViewRegistryOptions {
 /** What a contributed view is drawn as. `panel` still refuses (ADR 0031). */
 export type ViewKind = 'tree' | 'component';
 
+/**
+ * Every surface a component may declare.
+ *
+ * It was `'dock' | 'overlay' | 'pane'` here long after `screen` shipped, and the
+ * value crossed anyway because this file only ever spreads it — which is the
+ * quiet half of the `head` failure: a type that lags does not break anything
+ * until somebody reads it, and then it lies. One name now, used by both
+ * interfaces below.
+ */
+export type ViewSurface = 'dock' | 'overlay' | 'pane' | 'screen' | 'face';
+
+/** Which face of a task a `face` view claims — ADR 0051. */
+export interface FaceSlot {
+  readonly slot: 'diff' | 'intent' | 'files';
+  readonly subject: 'task';
+}
+
 export interface Contribution {
   readonly extension: string;
   readonly type: string;
@@ -44,7 +61,9 @@ export interface Contribution {
    * Dock section, modal overlay, or a pane in the grid (ADR 0044). Components
    * only; a tree is always a dock.
    */
-  readonly surface?: 'dock' | 'overlay' | 'pane';
+  readonly surface?: ViewSurface;
+  /** Which face of a task a `face` view is (ADR 0051). */
+  readonly face?: FaceSlot;
   /** The accelerator that raises an overlay. A modifier is required. */
   readonly key?: string;
   /** The verb a PANE's `key` runs — see `ViewDeclaration.command`. */
@@ -62,7 +81,9 @@ export interface Contribution {
 
 /** Everything a contribution declares beyond its kind. */
 export interface ViewDeclaration {
-  readonly surface?: 'dock' | 'overlay' | 'pane';
+  readonly surface?: ViewSurface;
+  /** Which face of a task a `face` view is (ADR 0051). */
+  readonly face?: FaceSlot;
   readonly key?: string;
   /** The verb a PANE's `key` runs — see `ViewDeclaration.command` in the SDK. */
   readonly command?: string;
@@ -122,6 +143,12 @@ export class ViewRegistry {
       // key bound here is a key deleted from every terminal in the app, which is
       // v1's menu-accelerator lesson and not something an extension gets to do.
       ...(declaration.surface === undefined ? {} : { surface: declaration.surface }),
+      // Which face it claims. A slot is CLAIMED rather than assigned: the
+      // takeover draws a tab for each slot something registers, so a build
+      // missing an extension is a build missing that tab — which is the honest
+      // failure, and the reason the shell never resolves a slot to a view type
+      // it knows the name of.
+      ...(declaration.face === undefined ? {} : { face: declaration.face }),
       ...(declaration.key === undefined || !hasModifier(declaration.key) ? {} : { key: declaration.key }),
       // The verb a PANE's key runs. Kept only alongside a key that survived the
       // check above: a command with no accelerator has nothing to fire it, and

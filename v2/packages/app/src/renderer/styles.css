@@ -70,6 +70,34 @@
 }
 
 @font-face {
+  /*
+   * The takeover skin's chrome face (`themes['quiet-craft'].fonts.sans`). One
+   * variable file across the whole ramp, like Geist, so 500 and 600 are real
+   * weights rather than synthesised ones — the group headings and a card's name
+   * are the two places that shows.
+   */
+  font-family: 'Instrument Sans';
+  src: url('./fonts/InstrumentSans.ttf') format('truetype-variations');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  /*
+   * The MACHINE's narrow face (`--sh-font-data`): a count, an elapsed minute, a
+   * branch, a key hint. Deliberately NOT the grid's — the grid keeps the Nerd
+   * Font patch below, because this face carries no Private Use Area and a
+   * prompt drawn in it is a wall of tofu.
+   */
+  font-family: 'Fragment Mono';
+  src: url('./fonts/FragmentMono-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
   font-family: 'JetBrainsMono Nerd Font';
   /* The Nerd Fonts patch of the same face, because the grid has to draw the
      Private Use Area a prompt, `eza` and `lazygit` emit — see `fonts.mono`. Every

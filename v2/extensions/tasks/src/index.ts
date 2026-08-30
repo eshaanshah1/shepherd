@@ -39,6 +39,7 @@ import { orderSuggestions, rankScored } from './model/pick-order.ts';
 import { repoName } from './model/repo-name.ts';
 import { completeDirectories, exactRepoPath, looksLikeRepo } from './suggest.ts';
 import { taskRootId } from './model/root-id.ts';
+import { hasWoken, snoozeFor, type SnoozeUntil } from './model/snooze.ts';
 
 /**
  * How much of a tab's screen is kept when a task is shelved.
@@ -876,6 +877,34 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     });
 
   const agentStatesOf = (task: TaskRecord): readonly string[] => statesIn(panesOf(task));
+
+  /**
+   * Wake every snooze whose reason has expired.
+   *
+   * Called from the READ rather than from a timer of its own, and that is the
+   * whole design: the tree is re-read on every nudge and on the minute hand
+   * already, so a snooze that sleeps on a clock wakes within a minute and one
+   * that sleeps on the room wakes on the same event that changed the room. A
+   * dedicated timer would be a second thing deciding when a task comes back, and
+   * two of those disagree the first time one of them is late.
+   *
+   * The wake is a WRITE — it clears the field — so the row this pass builds
+   * already reflects it, the record survives a relaunch woken, and the shell's
+   * own crossing detector sees the task move out of `Later` and raises it. That
+   * is the "resurfaces as a push" half, and nothing here has to know what a
+   * toast is to produce it.
+   */
+  const wakeSnoozes = (): void => {
+    const now = Date.now();
+    for (const task of store.list()) {
+      if (task.snooze === undefined) continue;
+      const working = agentStatesOf(task).includes('working');
+      if (!hasWoken(task.snooze, now, working)) continue;
+      const { snooze: _slept, ...rest } = task;
+      store.put(rest);
+      ctx.log.info(`task ${task.id}: back from "${task.snooze.label}"`);
+    }
+  };
 
   const agentStatesOfTab = (task: TaskRecord, root: string): readonly string[] =>
     statesIn(panesOfTab(task, root));
@@ -3897,6 +3926,62 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     }),
   );
 
+  /**
+   * Put it off — the `Later` verb, and the `S` key.
+   *
+   * It writes a REASON, never a filter. The row stays in the list and moves to
+   * `Later` wearing `until <label>`; "not now" with no "then" is
+   * indistinguishable from "gone", and a person who cannot tell those apart
+   * stops using the verb — which is the failure the whole surface is built
+   * against.
+   *
+   * What it was doing is carried across, so the wake can say why it is back: a
+   * question that was snoozed comes back as that question rather than as
+   * "returned from later", which is a fact about the snooze and not about the
+   * work.
+   */
+  ctx.subscriptions.push(
+    commands.register(TASK_COMMANDS.snooze, {
+      title: 'Tasks: Later',
+      schema: s.object({ task: s.string(), until: s.enumOf(['today', 'quiet', 'tomorrow'] as const) }),
+      handler: (args) => {
+        const found = store.get(args.task);
+        if (found === undefined) throw new Error(`no task ${args.task}`);
+        /*
+         * Snoozing an already-snoozed task RE-snoozes it and keeps the original
+         * reason it was put off for. Overwriting `was` with the label of the
+         * sleep it is currently in would lose the question after two presses.
+         */
+        /*
+         * The word this task's state already reports — the same one the row
+         * shows — rather than a second vocabulary invented here. It is what the
+         * wake will say it is back FOR.
+         */
+        const was = found.snooze?.was ?? STATE_WORDS[displayState(found.lifecycle, agentStatesOf(found))];
+        const snooze = snoozeFor(args.until as SnoozeUntil, Date.now(), was);
+        store.put({ ...found, snooze });
+        changed();
+        return { task: found.id, until: snooze.label };
+      },
+    }),
+  );
+
+  /** Bring it back now, by hand rather than by waiting. */
+  ctx.subscriptions.push(
+    commands.register(TASK_COMMANDS.wake, {
+      title: 'Tasks: Wake',
+      schema: s.object({ task: s.string() }),
+      handler: (args) => {
+        const found = store.get(args.task);
+        if (found === undefined) throw new Error(`no task ${args.task}`);
+        const { snooze: _slept, ...rest } = found;
+        store.put(rest);
+        changed();
+        return { task: found.id };
+      },
+    }),
+  );
+
   ctx.subscriptions.push(
     commands.register(TASK_COMMANDS.archive, {
       schema: s.object({ task: s.string() }),
@@ -4579,6 +4664,25 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     }),
   );
 
+  /**
+   * The **Intent** face of a task (ADR 0051): the brief, as it was typed.
+   *
+   * The one face whose subject this extension already holds — `brief` has been
+   * on the record since M3 and has appeared nowhere on screen since the composer
+   * closed. Three days into a task, "what did I actually ask for" had no surface
+   * to answer it, and the transcript is not that surface: it is what the agent
+   * did, at length, and the ask is one paragraph.
+   */
+  ctx.subscriptions.push(
+    views.registerViewType(TASK_VIEWS.intent, {
+      kind: 'component',
+      component: TASK_VIEWS.intent,
+      surface: 'face',
+      face: { slot: 'intent', subject: 'task' },
+      title: 'Intent',
+    }),
+  );
+
   ctx.subscriptions.push(
     views.registerViewType(TASK_VIEWS.sessionSearch, {
       kind: 'component',
@@ -4621,6 +4725,9 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       search: { command: TASK_COMMANDS.filter, placeholder: 'Search' },
       data: {
         children: (parent) => {
+          // Before anything is drawn: a snooze whose reason has expired is not a
+          // snooze, and the rows built below must not say it is one.
+          wakeSnoozes();
           /*
            * A task's children are its TABS.
            *
@@ -4731,6 +4838,59 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
             const factsOf = factsFor(task);
             return {
             mark: markFor(task, state),
+            /*
+             * Put off, and WHY — the shell files a row carrying this under
+             * `Later` and draws `until <label>` beside its name.
+             *
+             * It rides on the card rather than being asked for separately
+             * because it is a fact about the row, like the mark and the elapsed:
+             * one answer, one read, and no surface that can disagree with the
+             * region the row was filed in.
+             */
+            ...(task.snooze === undefined ? {} : { snooze: task.snooze }),
+            /*
+             * The three ways to put it off, as VERBS the shell runs rather than
+             * a menu it knows the contents of.
+             *
+             * The same shape the question's answers take one field down, and for
+             * the same reason: a shell that could name `tasks.snooze` is a shell
+             * that has learned this extension exists. Publishing the options
+             * here means a row with nothing to defer — a shipped task — simply
+             * has no `Later`, and the control is absent rather than present and
+             * inert.
+             *
+             * Three SHAPES of later, not three durations. "When agents finish"
+             * is the one worth having: the reason you defer a question is
+             * usually that three other things are mid-turn, and no number of
+             * minutes names that moment.
+             */
+            ...(task.lifecycle === 'archived'
+              ? {}
+              : {
+                  later: {
+                    label: 'Later',
+                    options: [
+                      {
+                        label: 'Later today',
+                        command: TASK_COMMANDS.snooze,
+                        args: { task: task.id, until: 'today' },
+                        key: '1',
+                      },
+                      {
+                        label: 'When agents finish',
+                        command: TASK_COMMANDS.snooze,
+                        args: { task: task.id, until: 'quiet' },
+                        key: '2',
+                      },
+                      {
+                        label: 'Tomorrow',
+                        command: TASK_COMMANDS.snooze,
+                        args: { task: task.id, until: 'tomorrow' },
+                        key: '3',
+                      },
+                    ],
+                  },
+                }),
             /*
              * Which of your tasks is the quiet one.
              *

@@ -1,4 +1,18 @@
-import { color, type ThemeMode } from './palette.ts';
+import { type ColorToken, type ThemeMode } from './palette.ts';
+import { themes, type Theme } from './themes.ts';
+
+/*
+ * A skin reaches the GRID too, and that is not a nicety: the pane chrome
+ * measures the terminal background to pick its own foreground
+ * (`paneTitleSurface`), so a warm chrome over a true-neutral grid would put a
+ * visible seam down the one edge in the app that has to look like no edge at
+ * all. Both generators therefore take the theme, defaulting to the built-in
+ * skin so every existing call site answers exactly as it did.
+ */
+const swatch =
+  (mode: ThemeMode, theme: Theme) =>
+  (token: ColorToken): string =>
+    theme.palette[token][mode];
 
 /**
  * The subset of xterm.js's ITheme we set. Typed structurally so this package
@@ -70,8 +84,8 @@ export interface XtermSearchDecorations {
  * behind live cells, and choosing a text colour here would flatten whatever the
  * program drew.
  */
-export function xtermSearchDecorations(mode: ThemeMode): XtermSearchDecorations {
-  const c = (token: Parameters<typeof color>[0]) => color(token, mode);
+export function xtermSearchDecorations(mode: ThemeMode, theme: Theme = themes.shepherd): XtermSearchDecorations {
+  const c = swatch(mode, theme);
   return {
     matchBackground: c('inkMute'),
     matchOverviewRuler: c('inkMute'),
@@ -100,8 +114,8 @@ export function xtermSearchDecorations(mode: ThemeMode): XtermSearchDecorations 
  * nearest neighbour rather than introducing a sixth hue, which §6 refuses
  * outright.
  */
-export function xtermTheme(mode: ThemeMode): XtermTheme {
-  const c = (token: Parameters<typeof color>[0]) => color(token, mode);
+export function xtermTheme(mode: ThemeMode, theme: Theme = themes.shepherd): XtermTheme {
+  const c = swatch(mode, theme);
   return {
     background: c('pane'),
     foreground: c('inkDim'),

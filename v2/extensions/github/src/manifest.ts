@@ -171,6 +171,16 @@ export const GITHUB_COMMANDS = {
 /** The review pane's UI module, resolved by the renderer's table (ADR 0033). */
 export const GITHUB_VIEWS = {
   review: 'github.review',
+  /**
+   * The **Diff** face of a task (ADR 0051) — everything the task changed, across
+   * every repo it touches.
+   *
+   * A separate type from the review pane for the reason the editor's is separate
+   * from its workspace: a pane is a place you keep open, a face is one way of
+   * reading the task on screen. This one is the working changes the review pane
+   * already draws, claiming the slot.
+   */
+  taskDiff: 'github.taskDiff',
 } as const;
 
 export const githubManifest: Manifest = {

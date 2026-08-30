@@ -76,7 +76,22 @@ export function readTree(value: unknown): Tree {
   };
 }
 
-export function EditorPane({ state, focused, invoke }: ExtensionPaneProps): ReactElement {
+/**
+ * The three props this surface actually reads.
+ *
+ * Narrowed from `ExtensionPaneProps` so the same component can be the editor of
+ * a PANE and the **Files face** of a task (ADR 0051). A pane is assignable to
+ * this, so the pane table is unchanged; a face is not a pane and has no
+ * `paneId` to invent — which is exactly the thing that would have had to be
+ * faked to reuse this component, and faking it is how a verb about "its" pane
+ * comes to be invoked against a leaf the layout does not have.
+ *
+ * Stated as a `Pick` rather than a hand-written interface so it cannot drift
+ * from the pane contract it is a subset of.
+ */
+export type EditorSurfaceProps = Pick<ExtensionPaneProps, 'state' | 'focused' | 'invoke'>;
+
+export function EditorPane({ state, focused, invoke }: EditorSurfaceProps): ReactElement {
   const subject = readEditorState(state);
   const root = subject?.root;
 

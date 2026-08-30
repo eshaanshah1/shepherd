@@ -72,6 +72,17 @@ export async function runSmoke(
       return runM3Smoke(win, host, kernel);
     }
 
+    case 'takeover': {
+      const { runTakeoverSmoke } = await import('./smoke-takeover.ts');
+      // The window, and the control socket — a task has to EXIST before its
+      // four faces can be looked at, and the socket is the transport that makes
+      // one without going through the composer's own UI.
+      if (typeof kernel.controlSocket !== 'string') {
+        return die('the takeover smoke needs the control socket');
+      }
+      return runTakeoverSmoke(win, kernel.controlSocket);
+    }
+
     case 'editor': {
       const { runEditorSmoke } = await import('./smoke-editor.ts');
       if (typeof kernel.controlSocket !== 'string') {

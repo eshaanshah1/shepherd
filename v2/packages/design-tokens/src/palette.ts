@@ -82,6 +82,8 @@ export type ColorToken =
   | 'repoSlate'
   // What an overlay dims the app with.
   | 'scrimBase'
+  // The lit top edge of the one solid fill.
+  | 'glint'
   // The sky strip: the one decorative surface in the app.
   | 'scnSkyHigh'
   | 'scnSkyLow'
@@ -189,6 +191,25 @@ export const palette: Readonly<Record<ColorToken, TokenSpec>> = {
   // pale, because a scrim's job is to take contrast OUT of what is behind it and
   // a white veil over paper removes none.
   scrimBase: { dark: '#060606', light: '#181818', job: 'the ink an overlay dims the app with' },
+
+  /*
+   * ── the glint ───────────────────────────────────────────────────────────────
+   *
+   * The light that falls on the top edge of a SOLID fill, before its alpha.
+   *
+   * §10 refuses gradients and drop shadows outright, which leaves a flat
+   * language with no way at all to say "this is the one thing to press" beyond
+   * the fill itself. A 1px lit edge is the whole of what is left, and it was
+   * being typed as `rgba(255,255,255,.35)` in the prototype for exactly that
+   * reason.
+   *
+   * It does NOT follow the ramp, which is why it is a token of its own rather
+   * than a wash of `pane` or `ink`: on a near-white fill in dark mode the light
+   * is white, and on a near-black fill on paper it is a warm grey — in both
+   * cases LIGHTER than the fill under it, which no step of an inverting ladder
+   * can promise.
+   */
+  glint: { dark: '#FFFFFF', light: '#9A968D', job: 'the light on the top edge of a solid fill' },
 
   // ── the sky strip ───────────────────────────────────────────────────────────
   //

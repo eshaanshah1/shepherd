@@ -69,7 +69,7 @@ import { registerViewCommands } from './view-commands.ts';
 import { createRemoteService, PAIRED_DEVICE_PERMISSIONS } from './remote-service.ts';
 import { registerRemoteCommands } from './remote-commands.ts';
 import { remoteViews } from './remote-views.ts';
-import { memberOf, qualify } from '../shared/index.ts';
+import { HOME_ROOT_ID, memberOf, qualify } from '../shared/index.ts';
 import { resolveTransport, type Identity, type RemoteAPI } from '@shepherd/remote';
 import { SessionClient } from './session-client.ts';
 import { SessionRouter } from './session-router.ts';
@@ -478,7 +478,9 @@ const layout = new LayoutStore({
  * always exists. Every OTHER root is a pane group something else owns (a task
  * owns one; the sidebar switches between them), and those come and go.
  */
-const HOME_ROOT = rootId('window-1');
+// One statement of the window's own root id, shared with the renderer — see
+// `shared/home-root.ts` for why it is not a fourth copy of the literal.
+const HOME_ROOT = rootId(HOME_ROOT_ID);
 
 /**
  * Which root the window is currently showing. `layout-ipc.ts` owns the value —

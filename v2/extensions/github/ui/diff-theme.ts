@@ -199,6 +199,43 @@ export const SHEPHERD_DIFF_CSS = `
   font-variant-numeric: tabular-nums;
 }
 
+/*
+ * ONE FILE, ONE BLOCK.
+ *
+ * Three changed files ran together as one column of code: the only thing
+ * between them was a line of text at the same weight as everything else, so
+ * where one file ended and the next began was something you worked out by
+ * reading rather than saw. A diff is scanned file by file, so the file is the
+ * unit that has to have edges.
+ *
+ * A gap of the page's own ground, a hairline all the way round, and a header on
+ * a raised step: three cheap devices, no colour spent, and the boundary reads
+ * before any of the text does.
+ */
+[data-file] {
+  margin-block-start: var(--sh-space-lg) !important;
+  border: 1px solid var(--sh-line) !important;
+  border-radius: var(--sh-radius-md) !important;
+  overflow: hidden !important;
+}
+
+[data-file]:first-of-type {
+  margin-block-start: 0 !important;
+}
+
+[data-file] [data-file-info],
+[data-file] [data-diffs-code-view-header] {
+  background-color: var(--sh-raised) !important;
+  border-block-end: 1px solid var(--sh-line) !important;
+  color: var(--sh-text) !important;
+}
+
+/* The path is the file's name, so it carries the weight a name carries. */
+[data-file] [data-file-info] [data-title] {
+  font-weight: 600 !important;
+  color: var(--sh-text) !important;
+}
+
 /* The hunk separator, which says how many lines were skipped. */
 :is([data-separator="line-info"], [data-separator="line-info-basic"]) [data-separator-content] {
   font-family: var(--sh-font-sans) !important;

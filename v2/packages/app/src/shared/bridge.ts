@@ -172,7 +172,14 @@ export interface ViewContributionDTO {
   /** How the page must draw it. `component` resolves against the UI table. */
   readonly kind: 'tree' | 'component';
   readonly component?: string;
-  readonly surface?: 'dock' | 'overlay' | 'pane' | 'screen';
+  readonly surface?: 'dock' | 'overlay' | 'pane' | 'screen' | 'face';
+  /**
+   * Which face of a task this view is (ADR 0051) — `surface: 'face'` only.
+   *
+   * The takeover draws one tab per slot that something claims, so this is the
+   * whole of how a Diff tab comes to exist. Absent everywhere else.
+   */
+  readonly face?: { readonly slot: 'diff' | 'intent' | 'files'; readonly subject: 'task' };
   readonly key?: string;
   /** The verb a PANE's `key` runs — see `ViewDeclaration.command` in the SDK. */
   readonly command?: string;

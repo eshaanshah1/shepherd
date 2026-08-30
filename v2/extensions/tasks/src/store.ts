@@ -1,4 +1,5 @@
 import { s, type KV } from '@shepherd/sdk';
+import type { Snooze } from './model/snooze.ts';
 import type { ArchivedTab } from './model/archive-tabs.ts';
 import { LIFECYCLE_STATES, type TaskLifecycle } from './model/lifecycle.ts';
 import { recordUse, type RepoUse } from './model/repo-history.ts';
@@ -165,6 +166,18 @@ export interface TaskRecord {
    */
   readonly shelvedAt?: number;
   /**
+   * Put off, with a reason and a way back (ADR 0032's KV; the model is
+   * `model/snooze.ts`).
+   *
+   * On the RECORD rather than in the shell, because it is task state: it has to
+   * survive a relaunch, it has to be the same answer on every surface that draws
+   * this task, and the thing that decides it has woken is the same thing that
+   * knows whether its agents are working. A snoozed task is never filtered out —
+   * it moves to `Later` wearing this reason and comes back on its own, which is
+   * the promise that makes the verb usable at all.
+   */
+  readonly snooze?: Snooze;
+  /**
    * This task's agents run out of a Claude profile of their own, deleted with it.
    *
    * On the record rather than passed to the first spawn, for the reason `model`
@@ -225,6 +238,20 @@ const taskSchema = s.stored({
   archivedAt: s.optional(s.int()),
   activatedAt: s.optional(s.int()),
   shelvedAt: s.optional(s.int()),
+  /*
+   * `s.stored`, so a record written before this existed still reads — the same
+   * reason `archives` and `tabs` use it. Every field inside is optional but
+   * `label`: a snooze with no words is one the shell cannot draw a reason for,
+   * which is the whole thing this is.
+   */
+  snooze: s.optional(
+    s.stored({
+      label: s.string(),
+      wakeAt: s.optional(s.int()),
+      wakeOnQuiet: s.optional(s.literal(true)),
+      was: s.optional(s.string()),
+    }),
+  ),
   incognito: s.optional(s.literal(true)),
   orchestrator: s.optional(s.literal('none')),
   archives: s.optional(

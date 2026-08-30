@@ -1,0 +1,953 @@
+/*
+ * The takeover — Home and a task, drawn edge to edge.
+ *
+ * The window used to be rail + stage: a list on the left that was always there,
+ * and whatever you were doing on the right. This sheet is the other shape. The
+ * whole window is ONE thing at a time — the triage screen, or a task — and the
+ * only chrome is a header band with a hairline under it.
+ *
+ * Where the numbers come from: `docs/superpowers/…/shepherd-takeover.html`, the
+ * normative prototype, read off rather than invented. Four of them are not in
+ * the frozen scale and are declared here as tier-3 properties, which is the
+ * mechanism `styles.css` documents for exactly this — a length that belongs to
+ * one surface rather than to the app's rhythm:
+ *
+ *   `--sh-take-width`  960px. The reading measure. A triage row is a name and a
+ *                      few numbers, and at 1600px the numbers end up a hand's
+ *                      width from the name they describe.
+ *   `--sh-take-head`   48px, a task's header. `--sh-take-home-head` is 56, because
+ *                      Home's carries a title and a control rather than a name.
+ *   `--sh-take-row`    32px. The triage row, and not `--sh-row-height` (29): these
+ *                      rows are the only thing on a 960px column and they are read
+ *                      standing up, not scanned in a 360px rail.
+ *   `--sh-take-radius` 4px, one step under `--sh-radius-md`. The prototype's two
+ *                      radii are 4 and 6 and the scale ships 5 and 6.
+ *
+ * COLOURS ARE ROLES, always. There is no hex in this file and there must never
+ * be one — the skin decides what warm means (`themes.ts`), and a colour typed
+ * here is a colour the terminal grid does not know about.
+ *
+ * Two refusals inherited from §10 and re-stated because this surface is where
+ * they would be tempting: **no drop shadow** — depth is a surface step plus a
+ * hairline, and the one inset highlight on the primary button — and **no looping
+ * animation**. A state change may transition once, 120ms linear, colour only.
+ */
+
+/*
+ * ── the chrome slot ─────────────────────────────────────────────────────────
+ *
+ * The band is a FLEX CHILD of `.sh-app`, in the slot `.sh-plate` occupies when
+ * there is no takeover. Not fixed, not absolute, no z-index: the body below it
+ * is laid out in the space actually left, which is the entire fix.
+ *
+ * It was a `position: fixed` layer at z-index 4, and everything that laid out
+ * under it collided with it differently — the composer opened behind it, the
+ * terminal's first line was clipped under it, the `Ship` button ran off the
+ * right edge. Three patches (hide the rail, pad the stage, make the plate
+ * opaque) for one fault, and the fault was that a fixed layer is not part of the
+ * layout it sits in. Nothing here compensates for anything now.
+ */
+.sh-take-band {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  /*
+   * `min-inline-size: 0` so a long task name shrinks rather than pushing the
+   * `Ship` button past the window's right edge. A flex item's default
+   * `min-width: auto` is what let the band overflow, and an overflowing band is
+   * a control you cannot click.
+   */
+  min-inline-size: 0;
+  background: var(--sh-canvas);
+  font-family: var(--sh-font-sans);
+  color: var(--sh-text);
+}
+
+/*
+ * ── Home ────────────────────────────────────────────────────────────────────
+ *
+ * The one part of the router that really is a layer, because it really does
+ * cover the window: there is no stage showing through, no pane to keep visible,
+ * nothing underneath that anyone is looking at.
+ *
+ * `z-index: 4` — over the rail and the stage, which stack at `auto`; under
+ * `.sh-screen` (5), the contributed takeover the composer arrives on, so `New`
+ * opens over Home rather than behind it; under `SettingsScreen` (20), which is a
+ * departure from the work entirely. `.sh-stage` is `position: relative` with no
+ * z-index, so it opens no stacking context and those numbers really do compare.
+ */
+.sh-take {
+  --sh-take-width: 960px;
+  --sh-take-head: 44px;
+  /* Clears the three traffic lights so the band can be the title bar itself. */
+  --sh-take-lights: 78px;
+  --sh-take-home-head: 56px;
+  --sh-take-row: 32px;
+  --sh-take-radius: 4px;
+
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  background: var(--sh-canvas);
+  font-family: var(--sh-font-sans);
+  color: var(--sh-text);
+}
+
+/*
+ * The band's own scale, which is Home's minus the layer.
+ *
+ * Declared twice rather than hoisted to `:root`, because these are this
+ * surface's lengths and `:root` is the token layer's — a length that belongs to
+ * one surface is exactly what a tier-3 custom property is for (`styles.css`).
+ */
+.sh-take-band {
+  --sh-take-head: 44px;
+  --sh-take-lights: 78px;
+  --sh-take-row: 32px;
+  --sh-take-radius: 4px;
+}
+
+/* ── the header band ─────────────────────────────────────────────────────────
+ *
+ * The rule under it is `lineStrong` — this is the app's one horizon, and at
+ * `line` it disappeared against a 960px column of rows that each draw their own.
+ * Drawn as an inset `box-shadow` rather than a border: a border eats a pixel of
+ * the CONTENT box, so a 56px band becomes 55 of content and everything centred
+ * in it lands half a pixel off the traffic lights outside it.
+ */
+.sh-take__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-xxl);
+  block-size: var(--sh-take-head);
+  flex: none;
+  /*
+   * The band IS the title bar. It used to sit under a `--sh-plate-height`
+   * spacer, which stacked two bars and spent 104px of a 900px window on chrome
+   * that says one task's name.
+   *
+   * So the lights are cleared INLINE instead of above: the band starts at the
+   * window's top edge and its content begins to the right of them. `--sh-take-
+   * lights` is that clearance — the three 12px lights, their gaps and the inset
+   * macOS draws them at — and it is the only reason the left padding differs
+   * from the right.
+   */
+  padding-inline: var(--sh-take-lights) var(--sh-space-xxl);
+  box-shadow: inset 0 -1px 0 var(--sh-line-strong);
+  background: var(--sh-canvas);
+  /* Drag the window by its band; every control inside re-claims its own events. */
+  -webkit-app-region: drag;
+}
+
+.sh-take__head > * {
+  -webkit-app-region: no-drag;
+}
+
+.sh-take__head--home {
+  block-size: var(--sh-take-home-head);
+  /* Home centres a column, so its title cannot also sit beside the lights: it
+     keeps the plate's worth of clearance ABOVE instead, as its own top padding. */
+  padding-block-start: var(--sh-plate-height);
+  box-sizing: content-box;
+  /* Home's header shares the content column's left edge, so the title sits over
+     the first row's mark rather than 14px to the left of everything. */
+  inline-size: min(100%, calc(var(--sh-take-width) + 2 * var(--sh-space-huge)));
+  margin-inline: auto;
+  padding-inline: var(--sh-space-huge);
+}
+
+.sh-take__title {
+  font-size: var(--sh-font-size-card);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.sh-take__count {
+  font-family: var(--sh-font-data);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: var(--sh-font-size-micro);
+  color: var(--sh-text-mute);
+}
+
+.sh-take__spacer {
+  flex: 1;
+}
+
+/* ── Home ──────────────────────────────────────────────────────────────────── */
+
+.sh-take__scroll {
+  flex: 1;
+  min-block-size: 0;
+  overflow-y: auto;
+}
+
+.sh-take__home {
+  inline-size: min(100%, calc(var(--sh-take-width) + 2 * var(--sh-space-huge)));
+  margin-inline: auto;
+  padding: 0 var(--sh-space-huge) 96px;
+}
+
+.sh-take__group {
+  margin-block-start: 28px;
+}
+
+.sh-take__grouphead {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-mid);
+  margin-block-end: var(--sh-space-md);
+}
+
+.sh-take__grouphead > b {
+  font-size: var(--sh-micro-font-size);
+  font-weight: 600;
+  color: var(--sh-text-mute);
+  text-transform: uppercase;
+  letter-spacing: var(--sh-micro-tracking-wide);
+}
+
+/*
+ * One region is drawn loud, and it is the only one that costs you to ignore.
+ * Loud is INK, not a hue: the marks in the rows underneath are already carrying
+ * the accent, and a heading in the same colour competes with them.
+ */
+.sh-take__grouphead[data-loud='true'] > b {
+  color: var(--sh-text);
+}
+
+.sh-take__rule {
+  flex: 1;
+  block-size: 1px;
+  background: var(--sh-line);
+}
+
+.sh-take__n {
+  font-family: var(--sh-font-data);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: var(--sh-micro-font-size);
+  color: var(--sh-text-ghost);
+}
+
+/* ── a row ─────────────────────────────────────────────────────────────────── */
+
+.sh-take__row {
+  display: grid;
+  grid-template-columns: var(--sh-mark-slot) 1fr auto;
+  align-items: center;
+  gap: 11px;
+  block-size: var(--sh-take-row);
+  padding-inline: var(--sh-space-mid);
+  margin-inline: calc(-1 * var(--sh-space-mid));
+  inline-size: calc(100% + 2 * var(--sh-space-mid));
+  border: 0;
+  border-radius: var(--sh-take-radius);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  /* Colour only, once. §10's rule, and this surface's whole motion budget. */
+  transition: background 120ms linear;
+}
+
+.sh-take__row:hover {
+  background: var(--sh-fill-hover);
+}
+
+.sh-take__row:focus-visible {
+  outline: 2px solid var(--sh-focus-ring);
+  outline-offset: -2px;
+}
+
+.sh-take__name {
+  font-size: var(--sh-font-size-body);
+  color: var(--sh-text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-inline-size: 0;
+}
+
+.sh-take__name > b {
+  font-weight: 500;
+  color: var(--sh-text);
+}
+
+.sh-take__sub {
+  color: var(--sh-text-mute);
+  font-size: var(--sh-font-size-medium);
+  margin-inline-start: var(--sh-space-md);
+}
+
+/*
+ * Shipped rows are a RECORD, and a record is read at a glance or not at all.
+ * The heading above them already says they shipped, so the name steps back to
+ * the ink a timestamp gets and stops competing with live work.
+ */
+.sh-take__row[data-dim='true'] .sh-take__name > b {
+  color: var(--sh-text-mute);
+  font-weight: 400;
+}
+
+.sh-take__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-lg);
+  font-family: var(--sh-font-data);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: var(--sh-micro-font-size);
+  color: var(--sh-text-mute);
+}
+
+.sh-take__add {
+  color: var(--sh-grass);
+}
+
+.sh-take__del {
+  color: var(--sh-clay);
+}
+
+.sh-take__dot {
+  color: var(--sh-text-ghost);
+}
+
+.sh-take__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sh-space-sm);
+  font-family: var(--sh-font-sans);
+  font-size: var(--sh-micro-font-size);
+  color: var(--sh-text-mute);
+}
+
+.sh-take__chip > i {
+  inline-size: 6px;
+  block-size: 6px;
+  border-radius: 1.5px;
+  flex: none;
+  opacity: 0.8;
+}
+
+/* The shell's prompt glyph, in the slot a mark would occupy. A place has no
+   state, so the column holds the thing it IS instead of a state it has not. */
+.sh-take__prompt {
+  inline-size: var(--sh-mark-slot);
+  block-size: var(--sh-mark-slot);
+  display: inline-grid;
+  place-items: center;
+  font-family: var(--sh-font-data);
+  font-size: var(--sh-font-size-micro);
+  line-height: var(--sh-mark-slot);
+  color: var(--sh-text-ghost);
+}
+
+/* ── a question card ────────────────────────────────────────────────────────
+ *
+ * The one row in the app that opens into a card, and it earns it by carrying a
+ * sentence you have to read and two verbs that answer it. The left edge is the
+ * accent at 2px — the only place a hue touches a container in this language,
+ * and it is here because a card in a list of rows has to be findable without
+ * reading it.
+ */
+.sh-take__card {
+  display: block;
+  inline-size: 100%;
+  text-align: start;
+  font: inherit;
+  color: inherit;
+  background: var(--sh-surface);
+  border: 1px solid var(--sh-line);
+  border-inline-start: 2px solid var(--sh-mark-waiting);
+  border-radius: var(--sh-radius-md);
+  padding: var(--sh-space-lg) var(--sh-space-xxl);
+  margin-block-end: var(--sh-space-sm);
+  cursor: pointer;
+}
+
+.sh-take__card:focus-visible {
+  outline: 2px solid var(--sh-focus-ring);
+  outline-offset: -2px;
+}
+
+.sh-take__cardtop {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-mid);
+}
+
+.sh-take__cardname {
+  font-size: var(--sh-font-size-body);
+  font-weight: 600;
+}
+
+.sh-take__why {
+  margin-inline-start: auto;
+  font-family: var(--sh-font-data);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: var(--sh-micro-font-size);
+  color: var(--sh-text-mute);
+}
+
+.sh-take__q {
+  margin: var(--sh-space-md) 0 var(--sh-space-mid);
+  color: var(--sh-text-faint);
+  font-size: var(--sh-font-size-medium);
+  line-height: 1.55;
+  max-inline-size: 600px;
+}
+
+.sh-take__acts {
+  display: flex;
+  gap: var(--sh-space-md);
+}
+
+/* ── the takeover's own button ──────────────────────────────────────────────
+ *
+ * NOT a re-roll of `Button`: this one carries a KEY HINT inside it — `Y`, `N`,
+ * `S`, `N` — because on this surface the keyboard is the primary input and a
+ * button that does not say its key teaches nothing. `Button` has no slot for
+ * that and should not grow one for a single surface, so this is the takeover's
+ * own control and it is declared once, here.
+ */
+.sh-take__bt {
+  block-size: 26px;
+  padding-inline: 11px;
+  border: 0;
+  border-radius: var(--sh-take-radius);
+  font-family: var(--sh-font-sans);
+  font-size: var(--sh-font-size-medium);
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sh-space-snug);
+  background: none;
+  color: var(--sh-text-faint);
+  cursor: pointer;
+  transition: background 120ms linear, border-color 120ms linear, color 120ms linear;
+}
+
+.sh-take__bt > .sh-take__k {
+  font-family: var(--sh-font-data);
+  font-size: var(--sh-font-size-nano);
+  font-weight: 400;
+  opacity: 0.55;
+}
+
+.sh-take__bt[data-kind='primary'] {
+  background: var(--sh-wool);
+  color: var(--sh-text-on-wool);
+  /*
+   * The ONE inset highlight in the app, and it is not elevation theater: it is a
+   * 1px lit top edge on a solid fill, which is the only way a flat language says
+   * "this is the thing to press" without a shadow or a gradient — both refused.
+   */
+  box-shadow: inset 0 1px 0 var(--sh-glint-solid);
+}
+
+.sh-take__bt[data-kind='secondary'] {
+  border: 1px solid var(--sh-line-strong);
+  color: var(--sh-text-faint);
+}
+
+.sh-take__bt[data-kind='secondary']:hover,
+.sh-take__bt[data-kind='ghost']:hover {
+  color: var(--sh-text);
+}
+
+.sh-take__bt[data-kind='ghost'] {
+  color: var(--sh-text-mute);
+}
+
+.sh-take__bt:focus-visible {
+  outline: 2px solid var(--sh-focus-ring);
+  outline-offset: 1px;
+}
+
+/* ── the quiet state ────────────────────────────────────────────────────────
+ *
+ * Not `Empty`: that primitive centres one sentence on an empty STAGE, and this
+ * sits at the top of a screen that may still have six regions under it. Nothing
+ * needing you is not the same fact as nothing existing.
+ */
+.sh-take__quiet {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sh-space-mid);
+  padding: 36px 0 var(--sh-space-md);
+  color: var(--sh-text-mute);
+}
+
+.sh-take__quiet-say {
+  font-size: var(--sh-font-size-card);
+  font-weight: 500;
+}
+
+.sh-take__quiet-hint {
+  font-size: var(--sh-font-size-medium);
+  color: var(--sh-text-ghost);
+}
+
+/* ── the task band ──────────────────────────────────────────────────────────
+ *
+ * 48px, the same hairline horizon Home draws, and NOTHING under it: the stage
+ * keeps the panes. Everything here is chrome for one subject, in reading order —
+ * how to leave, what state, what it is called, how long.
+ */
+/*
+ * `⌘[` is a KEY, so it is drawn as one.
+ *
+ * Bare, the glyph read as punctuation that had lost its other half — an open
+ * bracket with nothing to close it, sitting next to three circles. A key hint
+ * has to look like a thing you press, and the frame is the whole difference
+ * between "press this" and "a stray character".
+ */
+.sh-take__back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sh-space-sm);
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: var(--sh-font-size-micro);
+  color: var(--sh-text-mute);
+  cursor: pointer;
+}
+
+.sh-take__back > b {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-inline-size: 26px;
+  block-size: 18px;
+  padding-inline: 5px;
+  border: 1px solid var(--sh-line-strong);
+  border-radius: 3px;
+  background: var(--sh-raised);
+  font-family: var(--sh-font-data);
+  font-size: var(--sh-font-size-micro);
+  font-weight: 400;
+  line-height: 1;
+  color: var(--sh-text-faint);
+}
+
+.sh-take__back:hover {
+  color: var(--sh-text-faint);
+}
+
+.sh-take__back:hover > b {
+  border-color: var(--sh-text-mute);
+  color: var(--sh-text);
+}
+
+.sh-take__tname {
+  font-size: var(--sh-font-size-body);
+  font-weight: 600;
+}
+
+.sh-take__tel {
+  font-family: var(--sh-font-data);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: var(--sh-micro-font-size);
+  color: var(--sh-text-mute);
+}
+
+/* ── ⌘K, the switcher ───────────────────────────────────────────────────────
+ *
+ * A card near the top rather than centred: it is a router, and the list under
+ * the field is what you are reading — a vertically centred dialog puts the first
+ * hit in the middle of the window and moves it every time the list resizes.
+ */
+.sh-take__scrim {
+  position: fixed;
+  inset: 0;
+  background: var(--sh-scrim);
+  z-index: 30;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+
+.sh-take__kcard {
+  inline-size: 620px;
+  max-inline-size: calc(100vw - 32px);
+  margin-block-start: 44px;
+  background: var(--sh-well);
+  border: 1px solid var(--sh-line-strong);
+  border-radius: var(--sh-radius-card);
+  overflow: hidden;
+}
+
+.sh-take__kq {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  block-size: var(--sh-take-head);
+  padding-inline: var(--sh-space-xxl);
+  box-shadow: inset 0 -1px 0 var(--sh-line);
+}
+
+.sh-take__kin {
+  flex: 1;
+  background: none;
+  border: 0;
+  outline: none;
+  color: var(--sh-text);
+  font-family: var(--sh-font-sans);
+  font-size: var(--sh-font-size-large);
+  caret-color: var(--sh-text);
+}
+
+.sh-take__kin::placeholder {
+  color: var(--sh-text-mute);
+}
+
+.sh-take__klist {
+  padding: var(--sh-space-sm);
+}
+
+.sh-take__klabel {
+  font-size: var(--sh-font-size-nano);
+  font-weight: 600;
+  color: var(--sh-text-ghost);
+  letter-spacing: var(--sh-micro-tracking-wide);
+  text-transform: uppercase;
+  padding: var(--sh-space-snug) var(--sh-space-md) var(--sh-space-xs);
+}
+
+.sh-take__krow {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-lg);
+  inline-size: 100%;
+  block-size: var(--sh-take-row);
+  padding-inline: var(--sh-space-md);
+  border: 0;
+  border-radius: var(--sh-take-radius);
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: var(--sh-font-size-body);
+  text-align: start;
+  cursor: pointer;
+}
+
+/*
+ * The cursor is a FILL, and it is the keyboard's position rather than the
+ * mouse's — so it is `data-on` and not `:hover`. A hover fill here would give
+ * the list two cursors the moment the pointer crosses it, and Enter would open
+ * the one the eye is not on.
+ */
+.sh-take__krow[data-on='true'] {
+  background: var(--sh-raised);
+}
+
+.sh-take__krow[data-empty='true'] {
+  color: var(--sh-text-mute);
+  cursor: default;
+}
+
+.sh-take__where {
+  margin-inline-start: auto;
+  font-family: var(--sh-font-data);
+  font-size: var(--sh-micro-font-size);
+  color: var(--sh-text-mute);
+}
+
+/* ── the interrupt ──────────────────────────────────────────────────────────
+ *
+ * Top right, one at a time, and 340px wide — enough for a name and a reason and
+ * not enough for a paragraph, which is the point. Its left edge is the accent at
+ * 2px, the same mark the question card wears, so an interrupt and the row it
+ * will take you to are visibly the same thing.
+ *
+ * It arrives with no animation. §10 refuses looping motion and this surface
+ * refuses the rest: a card that slides in draws the eye to the MOVEMENT, and the
+ * whole argument for interrupting at all is that the words are worth reading.
+ */
+.sh-take__toast {
+  position: fixed;
+  inset-block-start: var(--sh-space-xxl);
+  inset-inline-end: var(--sh-space-xxl);
+  inline-size: 340px;
+  z-index: 35;
+  background: var(--sh-raised);
+  border: 1px solid var(--sh-line-strong);
+  border-inline-start: 2px solid var(--sh-mark-waiting);
+  border-radius: var(--sh-radius-md);
+  padding: var(--sh-space-lg) var(--sh-space-xxl);
+}
+
+.sh-take__toastgo {
+  display: block;
+  inline-size: 100%;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.sh-take__toasttop {
+  display: flex;
+  align-items: center;
+  gap: var(--sh-space-mid);
+  font-weight: 600;
+  font-size: var(--sh-font-size-medium);
+}
+
+.sh-take__why-line {
+  display: block;
+  margin-block-start: var(--sh-space-sm);
+  color: var(--sh-text-faint);
+  font-size: var(--sh-font-size-medium);
+  line-height: 1.45;
+}
+
+.sh-take__keys {
+  margin-block-start: var(--sh-space-md);
+  font-family: var(--sh-font-data);
+  font-size: var(--sh-micro-font-size);
+  color: var(--sh-text-mute);
+}
+
+.sh-take__keys b {
+  color: var(--sh-text-faint);
+  font-weight: 400;
+}
+
+.sh-take__dismiss {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+/* ── the face tabs ──────────────────────────────────────────────────────────
+ *
+ * One subject, four ways of reading it. They sit in the band beside the name
+ * rather than in a strip of their own, because a second row of chrome over a
+ * document is the shape the takeover exists to get rid of.
+ *
+ * The selected one is a FILL, one surface step up, and no underline: an
+ * underline is a second device saying what the fill already says, and at 26px
+ * it lands 1px from the band's own hairline.
+ */
+.sh-take__faces {
+  display: flex;
+  gap: var(--sh-space-hair);
+  margin-inline-start: var(--sh-space-huge);
+}
+
+.sh-take__face {
+  block-size: 26px;
+  padding-inline: var(--sh-space-mid);
+  border: 0;
+  border-radius: var(--sh-take-radius);
+  background: none;
+  font-family: var(--sh-font-sans);
+  font-size: var(--sh-font-size-medium);
+  color: var(--sh-text-mute);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sh-space-snug);
+  cursor: pointer;
+  transition: background 120ms linear, color 120ms linear;
+}
+
+.sh-take__face:hover {
+  background: var(--sh-fill-hover);
+}
+
+.sh-take__face[data-on='true'] {
+  background: var(--sh-well);
+  color: var(--sh-text);
+  font-weight: 500;
+}
+
+.sh-take__face > .sh-take__k {
+  font-family: var(--sh-font-data);
+  font-size: var(--sh-font-size-nano);
+  color: var(--sh-text-ghost);
+}
+
+/* ── a face's body ──────────────────────────────────────────────────────────
+ *
+ * EDGE TO EDGE, and this rule is the whole of it: the contributed component
+ * owns the rectangle under the band the way a pane owns its leaf. No card, no
+ * inset, no padding of the shell's own — a document drawn inside a card is the
+ * window claiming the document is a widget, which is the shape the takeover
+ * replaced.
+ *
+ * `min-block-size: 0` because the component below is nearly always a scroller,
+ * and a flex child without it grows to its content and takes the scroll with it.
+ */
+.sh-face {
+  flex: 1;
+  min-block-size: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sh-face > * {
+  flex: 1;
+  min-block-size: 0;
+}
+
+/*
+ * What a face says when it has nothing to draw yet, or when the build has no
+ * component for the name an extension declared.
+ *
+ * A sentence rather than a spinner: the two cases it covers are "reading" and
+ * "this build cannot draw that", and a spinner tells the second one to wait
+ * forever.
+ */
+.sh-face-note {
+  padding: var(--sh-space-huge) var(--sh-space-xxl);
+  color: var(--sh-text-mute);
+  font-size: var(--sh-font-size-medium);
+}
+
+/* The Intent face's document — one column, at reading measure. */
+.sh-face-doc {
+  overflow-y: auto;
+  padding: var(--sh-space-huge) 28px 96px;
+}
+
+.sh-face-h {
+  font-size: var(--sh-micro-font-size);
+  font-weight: 600;
+  color: var(--sh-text-mute);
+  text-transform: uppercase;
+  letter-spacing: var(--sh-micro-tracking-wide);
+  margin: 0 0 var(--sh-space-md);
+}
+
+.sh-face-title {
+  font-size: var(--sh-font-size-card);
+  font-weight: 600;
+  color: var(--sh-text);
+  margin: 0 0 var(--sh-space-lg);
+  max-inline-size: 620px;
+}
+
+.sh-face-p {
+  font-size: var(--sh-font-size-large);
+  color: var(--sh-text);
+  line-height: 1.65;
+  max-inline-size: 620px;
+  margin: 0 0 var(--sh-space-lg);
+}
+
+/* ── "later" ────────────────────────────────────────────────────────────────
+ *
+ * Narrower than the switcher, because it is a decision with three answers
+ * rather than a list to search. Same card, same rows, same cursor.
+ */
+.sh-take__snz {
+  inline-size: 380px;
+}
+
+.sh-take__snzhead {
+  block-size: 44px;
+}
+
+/* The ordinal, in the slot the switcher gives a state mark: these are choices,
+   and the number IS the key that presses one. */
+.sh-take__ord {
+  margin-inline-start: 0;
+  inline-size: var(--sh-mark-slot);
+  color: var(--sh-text-ghost);
+}
+
+/*
+ * ── the body, while a face has the room ────────────────────────────────────
+ *
+ * Hidden, never unmounted. Every root keeps its terminal attached — the same
+ * device `.sh-root` uses for the roots you are not looking at — because a root
+ * that stops rendering releases its pty and grows a second one on the way back.
+ *
+ * There is no rule here hiding the rail or the tab strip, and there must not be:
+ * `app.tsx` does not RENDER them while the takeover is up. A hidden dock still
+ * subscribes to every contributed tree and re-sorts on every nudge for a surface
+ * nobody can see, and `display: none` is a claim about paint, not about work.
+ */
+.sh-body[data-idle='true'] {
+  display: none;
+}
+
+/*
+ * ── a row's face shortcuts ──────────────────────────────────────────────────
+ *
+ * "Open the changes" is a thing you want from Home without first entering the
+ * task and then pressing 2. The icons are the row's own way in.
+ *
+ * They share ONE grid cell with the metadata and are revealed by `visibility`,
+ * never by `display` — the numbers must not move when the cursor arrives, and a
+ * row whose contents shift under the pointer is a row whose target moved
+ * mid-click. `:focus-within` is not optional: the shortcuts are the only way to
+ * reach a face by keyboard from here.
+ */
+.sh-take__trail {
+  display: grid;
+  grid-template-areas: 'stack';
+  align-items: center;
+  justify-items: end;
+}
+
+.sh-take__trail > * {
+  grid-area: stack;
+}
+
+.sh-take__acts {
+  display: flex;
+  gap: 2px;
+  visibility: hidden;
+  /* Sits on the row's own ground so the metadata underneath cannot show through. */
+  background: var(--sh-surface);
+  padding-inline-start: var(--sh-space-md);
+}
+
+.sh-take__row:hover .sh-take__acts,
+.sh-take__row:focus-within .sh-take__acts {
+  visibility: visible;
+}
+
+.sh-take__row:hover .sh-take__meta,
+.sh-take__row:focus-within .sh-take__meta {
+  /* Hidden rather than removed, for the same no-reflow reason. */
+  visibility: hidden;
+}
+
+/* ── contributed panels ─────────────────────────────────────────────────────
+ *
+ * `surface: 'dock'` components, at the foot of Home. They had the rail and the
+ * rail is gone; a contribution the shell silently drops is the failure ADR 0033
+ * is written against — the extension registers, main logs it, and the screen
+ * shows nothing.
+ *
+ * Below the regions rather than beside them, because Home's column is one
+ * reading order: what needs you, then what is running, then the things that are
+ * always there.
+ */
+.sh-take__panels {
+  margin-block-start: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sh-space-lg);
+}
+
+.sh-take__panel {
+  background: var(--sh-surface);
+  border: 1px solid var(--sh-line);
+  border-radius: var(--sh-radius-md);
+  overflow: hidden;
+}

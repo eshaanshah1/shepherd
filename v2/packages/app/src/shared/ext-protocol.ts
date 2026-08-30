@@ -247,7 +247,21 @@ const apiCallSchema = s.union(
     /** Present iff `viewKind` is `component`. Meaningless for a tree. */
     component: s.optional(s.string()),
     /** Where the shell draws it, and what raises it. Components only. */
-    surface: s.optional(s.enumOf(['dock', 'overlay', 'pane', 'screen'] as const)),
+    surface: s.optional(s.enumOf(['dock', 'overlay', 'pane', 'screen', 'face'] as const)),
+    /**
+     * Which face of a task this view is (ADR 0051). Components with
+     * `surface: 'face'` only.
+     *
+     * Named here AND sent by `ext-host/api.ts` — both halves, because this is a
+     * strict `s.object` and a field sent but not named costs the WHOLE
+     * registration. That is the `head` lesson two fields down, and it is written
+     * twice on purpose: a serializer that names its fields silently discards the
+     * one nobody added to it, and every layer but the wire then agrees the
+     * feature works.
+     */
+    face: s.optional(
+      s.stored({ slot: s.enumOf(['diff', 'intent', 'files'] as const), subject: s.literal('task') }),
+    ),
     key: s.optional(s.string()),
     /** The verb a PANE's `key` runs — see `ViewDeclaration.command` in the SDK. */
     command: s.optional(s.string()),

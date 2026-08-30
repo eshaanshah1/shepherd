@@ -188,7 +188,8 @@ export interface ExtensionHostOptions {
       kind: 'tree' | 'component',
       component?: string,
       declaration?: {
-        surface?: 'dock' | 'overlay' | 'pane' | 'screen';
+        surface?: 'dock' | 'overlay' | 'pane' | 'screen' | 'face';
+        face?: { slot: 'diff' | 'intent' | 'files'; subject: 'task' };
         key?: string;
         command?: string;
         title?: string;
@@ -904,6 +905,7 @@ export class ExtensionHost {
         if (verdict !== undefined) return verdict;
         this.#options.views?.register(record.id, call.type, call.viewKind, call.component, {
           ...(call.surface === undefined ? {} : { surface: call.surface }),
+          ...(call.face === undefined ? {} : { face: call.face }),
           ...(call.key === undefined ? {} : { key: call.key }),
           ...(call.command === undefined ? {} : { command: call.command }),
           ...(call.title === undefined ? {} : { title: call.title }),

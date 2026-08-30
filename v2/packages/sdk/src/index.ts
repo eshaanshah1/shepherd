@@ -71,6 +71,7 @@ export { REGIONS } from './api-sessions.ts';
 export { secretKeyIssue, secretLinkIssue, secretPath, type SecretSpec } from './secrets.ts';
 export type {
   FocusDirection,
+  ExtensionFaceProps,
   ExtensionPaneProps,
   ExtensionRowProps,
   ExtensionViewProps,

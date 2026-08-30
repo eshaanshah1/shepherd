@@ -657,12 +657,76 @@ describe('roots the window switches between', () => {
     view.unmount();
   });
 
-  it('draws the sky strip once, in the rail', () => {
-    // §5's one decorative surface, and the discipline is that it is bounded: an
-    // earlier version spread the scene behind the whole app and was rejected as
-    // distracting. Two of them would be the same mistake by another door.
+  it('puts the band in the COLUMN, above the body, not on top of it', async () => {
+    /*
+     * The structural claim, asserted where it can actually be wrong — through
+     * the REAL `App`, driven into a task the way a person gets there.
+     *
+     * The band began as a `position: fixed` layer, and everything that laid out
+     * under it collided with it differently: the composer opened behind it, the
+     * terminal's first line was clipped under it, the `Ship` button ran off the
+     * right edge. Three patches for one fault. As a flex child of `.sh-app` it
+     * is furniture — the body is laid out in the space actually left, and there
+     * is nothing left to compensate for.
+     *
+     * `compareDocumentPosition` rather than an index, because what matters is
+     * the ORDER in the flow: a band that ended up after the body would lay out
+     * below it however the stylesheet was written.
+     */
+    const tree: ViewContributionDTO = { extension: 'tasks', type: 'tasks.tree', kind: 'tree', title: 'Work' };
+    const views: ViewsApi = {
+      list: () => Promise.resolve({ ok: true, value: [tree] }),
+      children: () =>
+        Promise.resolve({
+          ok: true,
+          value: [
+            { id: 'relay', label: 'Relay', root: 'task:t1', tint: 'working', command: { id: 'tasks.reveal' } },
+          ],
+        }),
+      activate: () => Promise.resolve({ ok: true, value: undefined }),
+      invoke: () => Promise.resolve({ ok: true, value: undefined }),
+      present: () => Promise.resolve({ ok: true, value: { shown: true } }),
+      onChanged: () => () => {},
+    };
+    const { view } = render({ snapshot: snapshotsOf('window-1', rootOf(leaf(makePane({})))), views });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // On HOME there is no band: Home is a layer that covers the window, so the
+    // plate keeps the traffic lights and nothing is in the chrome slot.
+    expect(view.container.querySelectorAll('[data-testid="takeover-band"]')).toHaveLength(0);
+    expect(view.container.querySelectorAll('.sh-plate')).toHaveLength(1);
+
+    act(() => (view.container.querySelector('[data-testid="takeover-row"]') as HTMLElement).click());
+
+    const band = view.container.querySelector('[data-testid="takeover-band"]');
+    const body = view.container.querySelector('.sh-body');
+    expect(band, 'the band is drawn').not.toBeNull();
+    expect(band?.parentElement).toBe(body?.parentElement);
+    const order = band === null ? 0 : band.compareDocumentPosition(body as Node);
+    expect(order & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // …and the plate is not ALSO drawn: two title bars is 88px of a 900px
+    // window spent on chrome, the second of them empty.
+    expect(view.container.querySelectorAll('.sh-plate')).toHaveLength(0);
+    view.unmount();
+  });
+
+  it('draws no rail, and therefore no sky strip', () => {
+    /*
+     * The rail is GONE, not hidden. It was `display: none` for a while, which
+     * is a different claim — a hidden dock still mounts, still subscribes to
+     * every contributed tree and still re-sorts on every nudge for a surface
+     * nobody can see.
+     *
+     * The sky strip went with it and has nowhere else to be: it was the app's
+     * one illustration and the rail was its only home. Asserted rather than
+     * quietly dropped, so re-homing it is a decision somebody makes on purpose.
+     */
     const { view } = render({ snapshot: snapshotsOf('window-1', rootOf(leaf(makePane({})))) });
-    expect(view.container.querySelectorAll('[data-testid="sky-strip"]')).toHaveLength(1);
+    expect(view.container.querySelectorAll('.sh-side')).toHaveLength(0);
+    expect(view.container.querySelectorAll('.sh-sky')).toHaveLength(0);
     view.unmount();
   });
 
@@ -770,7 +834,14 @@ describe('the empty state', () => {
 
     it('says the line instead of the quiet sentence, and offers no action', () => {
       const { view } = render({ snapshot: { active: 'task:t1', roots: [waiting()] } });
-      const stage = view.container.textContent ?? '';
+      /*
+       * The STAGE's text, not the window's. Home draws its own quiet sentence —
+       * the two surfaces are answering different questions ("this root holds no
+       * panes" against "nothing needs you") and both are on screen at once, so a
+       * search over the whole container reads the takeover's copy and passes for
+       * the wrong reason.
+       */
+      const stage = view.container.querySelector('.sh-stage')?.textContent ?? '';
 
       expect(stage).toContain('Creating the worktree');
       expect(stage).not.toContain('The flock is quiet.');
@@ -816,7 +887,12 @@ describe('the empty state', () => {
 });
 
 /**
- * ⌘K — the palette, and the kernel-s own command registry behind it.
+ * ⌘⇧P — the palette, and the kernel's own command registry behind it.
+ *
+ * It moved off ⌘K when the takeover's switcher took that key. The two lists
+ * answer different questions — where am I going, against what can I run — and
+ * the palette keeps a key of its own because it is still the only way to reach a
+ * verb no row and no menu offers.
  *
  * M1 gave every command a `title` documented as "shown in the palette" and there
  * was no palette, so `layout.zoom`, `layout.rename` and every `tasks.*` verb had
@@ -856,24 +932,27 @@ describe('the command palette', () => {
     { id: 'tasks.create', title: 'Tasks: New Task' },
   ];
 
-  it('is closed until ⌘K, and closes on a second one', async () => {
+  it('is closed until ⌘⇧P, and closes on a second one', async () => {
     const { view } = palette(LISTED);
     expect(document.querySelector('[data-testid="palette-input"]')).toBeNull();
 
-    press('k', { metaKey: true });
+    press('p', { metaKey: true, shiftKey: true });
     await act(async () => undefined);
     expect(document.querySelector('[data-testid="palette-input"]')).not.toBeNull();
 
-    press('k', { metaKey: true });
+    press('p', { metaKey: true, shiftKey: true });
     await act(async () => undefined);
     expect(document.querySelector('[data-testid="palette-input"]')).toBeNull();
     view.unmount();
   });
 
-  it('ignores a plain k, and ⌥⌘K', () => {
+  it('ignores a plain p, ⌥⌘⇧P, and the ⌘P that has no shift', () => {
     const { view } = palette(LISTED);
-    press('k');
-    press('k', { metaKey: true, altKey: true });
+    press('p');
+    press('p', { metaKey: true, altKey: true, shiftKey: true });
+    // Without the shift it is somebody else's key, and this handler is on the
+    // window in the capture phase — it must not eat one it does not own.
+    press('p', { metaKey: true });
     expect(document.querySelector('[data-testid="palette-input"]')).toBeNull();
     view.unmount();
   });
@@ -882,7 +961,7 @@ describe('the command palette', () => {
     // The filter is main-s (`command:list` returns only titled commands); the
     // page draws what it is given rather than deciding again.
     const { view } = palette(LISTED);
-    press('k', { metaKey: true });
+    press('p', { metaKey: true, shiftKey: true });
     await act(async () => undefined);
     expect(items().map((item) => item.dataset.commandId)).toEqual([
       'layout.zoom',
@@ -901,7 +980,7 @@ describe('the command palette', () => {
    */
   it('runs the chosen command through commands.invoke, attributed as the user', async () => {
     const { view, calls } = palette(LISTED);
-    press('k', { metaKey: true });
+    press('p', { metaKey: true, shiftKey: true });
     await act(async () => undefined);
 
     act(() => items()[1]?.click());
@@ -931,12 +1010,12 @@ describe('the command palette', () => {
     await act(async () => undefined);
     expect(asked).toBe(0);
 
-    press('k', { metaKey: true });
+    press('p', { metaKey: true, shiftKey: true });
     await act(async () => undefined);
     expect(asked).toBe(1);
 
-    press('k', { metaKey: true });
-    press('k', { metaKey: true });
+    press('p', { metaKey: true, shiftKey: true });
+    press('p', { metaKey: true, shiftKey: true });
     await act(async () => undefined);
     expect(asked).toBe(2);
     view.unmount();
@@ -960,17 +1039,40 @@ describe('the tab strip', () => {
       rootOf(leaf(makePane({ userTitle: 'home' })), undefined, 'window-1', 'window-1'),
     );
 
+  /*
+   * The STAGE's tabs, not the window's.
+   *
+   * The takeover's band draws face tabs with the same `role`, and it is above
+   * this strip in the same document — so an unscoped query answers with both and
+   * every count here would be one too many. Scoping is also the honest reading:
+   * these cases are about the strip, and the strip lives in the stage.
+   */
   const tabLabels = (container: HTMLElement): string[] =>
-    [...container.querySelectorAll<HTMLElement>('[role="tab"]')].map((tab) => tab.textContent ?? '');
+    [...(container.querySelector('.sh-stage')?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [])].map(
+      (tab) => tab.textContent ?? '',
+    );
 
-  it('draws the strip for a group of one, with that one tab in it', () => {
-    // The strip is the app's one permanent row of chrome. It used to appear only
-    // at the moment a second tab did, which meant the window changed shape under
-    // you when one opened — and, since the pane head went, it is also the only
-    // place a root is named.
-    const { view } = render();
-    expect(view.container.querySelector('[data-testid="tab-strip"]')).not.toBeNull();
-    expect(tabLabels(view.container)).toHaveLength(1);
+  it('draws NO strip for a group of one, because the band already names it', () => {
+    /*
+     * This reverses the strip's own earlier rule — "a group of one still gets
+     * its tab, so the window does not change shape when a second opens" — and
+     * the reason is that the rule was written when the strip was the only place
+     * a root was NAMED. The takeover's band says that now, with the state and
+     * the faces beside it, so for a group of one the strip is a second row of
+     * chrome repeating the row above it.
+     */
+    const { view } = render({
+      snapshot: snapshotsOf('window-1', rootOf(leaf(makePane({ userTitle: 'home' })), undefined, 'window-1', 'window-1')),
+    });
+    expect(tabLabels(view.container)).toEqual([]);
+    view.unmount();
+  });
+
+  it('draws the strip once a group has a second tab to reach', () => {
+    // The case that keeps it: a task with two repos has a root each, and with
+    // no strip one of them is unreachable.
+    const { view } = render({ snapshot: tabbed('task:t1') });
+    expect(tabLabels(view.container)).toEqual(['api', 'logs']);
     view.unmount();
   });
 

@@ -1,10 +1,10 @@
 import type { ComponentType } from 'react';
-import type { ExtensionPaneProps, ExtensionRowProps, ExtensionViewProps } from '@shepherd/sdk';
-import { SessionSearchView, TaskCard, TaskComposer, TranscriptCountRow } from '@shepherd/ext-tasks/ui';
+import type { ExtensionFaceProps, ExtensionPaneProps, ExtensionRowProps, ExtensionViewProps } from '@shepherd/sdk';
+import { SessionSearchView, TaskCard, TaskComposer, TaskIntentFace, TranscriptCountRow } from '@shepherd/ext-tasks/ui';
 import { DiagnosticsCard } from '@shepherd/ext-diagnostics/ui';
 import { WorktreeHookEditor } from '@shepherd/ext-worktree-hook/ui';
-import { EditorPane } from '@shepherd/ext-editor/ui';
-import { ReviewPane } from '@shepherd/ext-github/ui';
+import { EditorPane, TaskFilesFace } from '@shepherd/ext-editor/ui';
+import { ReviewPane, TaskDiffFace } from '@shepherd/ext-github/ui';
 import { ScratchPane } from '@shepherd/ext-scratch/ui';
 
 /**
@@ -94,4 +94,40 @@ export function resolveExtensionPaneUi(
 ): ComponentType<ExtensionPaneProps> | undefined {
   if (component === undefined) return undefined;
   return EXTENSION_PANE_UI[component];
+}
+
+/**
+ * The fourth table: a component that is a FACE of a task (ADR 0051).
+ *
+ * A fourth for the reason there is a third — different props, and the
+ * differences are the design rather than an inconvenience. A face is handed the
+ * SUBJECT the window is already showing and nothing else: no `paneId`, because
+ * there is no leaf; no `state`, because it did not mint a subject when it
+ * opened; no `focused`, because a face is the whole body of the window and has
+ * no sibling to lose a keystroke to.
+ *
+ * That is exactly why a face could not be squeezed into `EXTENSION_PANE_UI`: it
+ * would have needed a `Pane` the layout does not have, and every verb the view
+ * invoked about "its" pane would have missed a leaf that was never there.
+ *
+ * Its failure mode is the pane's: an unknown name draws a notice inside the
+ * face, because the tab exists and something has to be under it. But the tab
+ * only exists because an extension CLAIMED the slot — so the ordinary way to
+ * have no Diff is to have no `github`, and then there is no tab at all.
+ *
+ * This is the "document-surface contribution point" ADR 0049 deferred until a
+ * SECOND consumer bought it. The takeover is that consumer, and there are three
+ * of them here.
+ */
+export const EXTENSION_FACE_UI: Readonly<Record<string, ComponentType<ExtensionFaceProps>>> = {
+  'github.taskDiff': TaskDiffFace,
+  'tasks.intent': TaskIntentFace,
+  'editor.taskFiles': TaskFilesFace,
+};
+
+export function resolveExtensionFaceUi(
+  component: string | undefined,
+): ComponentType<ExtensionFaceProps> | undefined {
+  if (component === undefined) return undefined;
+  return EXTENSION_FACE_UI[component];
 }

@@ -431,13 +431,19 @@ export async function runM3Smoke(
   //
   // Asserting main's registry would pass even if the renderer never drew a
   // thing — the same reason m2 reads the badge's DOM rather than main's state.
-  // Diagnostics contributes this tree; nothing about the dock knows that, which
+  // Diagnostics contributes this tree; nothing about the SHELL knows that, which
   // is the property being tested.
+  //
+  // Read off Home's rows rather than the dock's, because the dock is gone: the
+  // takeover triages every contributed tree onto one screen, and a row carries
+  // `<view type>:<row id>` so the two trees are still told apart. The claim is
+  // unchanged and so is what would falsify it — an extension's rows reaching
+  // the real DOM through a shell that has never heard of that extension.
   const rows = await until(
     'the contributed tree to render',
     () =>
       win.webContents.executeJavaScript(
-        `Array.from(document.querySelectorAll('[data-view-type="diagnostics.tree"] [data-testid="view-row"]')).map((el) => el.textContent)`,
+`Array.from(document.querySelectorAll('[data-testid="takeover-row"][data-entry^="diagnostics.tree:"]')).map((el) => el.textContent)`,
       ) as Promise<string[]>,
     (found) => found.length > 0,
   );
@@ -446,14 +452,14 @@ export async function runM3Smoke(
 
   // --- 6. and the TASK tree specifically, carrying the task this smoke made.
   //
-  // The point of asserting both: the dock draws a diagnostics tree and a task
+  // The point of asserting both: the shell draws a diagnostics tree and a task
   // tree through the same code path, and neither is special-cased in the core.
   // If `tasks` had needed one, the view model would be wrong (sketch §2b).
   const taskRows = await until(
     'the task tree to show this task',
     () =>
       win.webContents.executeJavaScript(
-        `Array.from(document.querySelectorAll('[data-view-type="tasks.tree"] [data-testid="view-row"]')).map((el) => el.textContent)`,
+`Array.from(document.querySelectorAll('[data-testid="takeover-row"][data-entry^="tasks.tree:"]')).map((el) => el.textContent)`,
       ) as Promise<string[]>,
     // The row is labelled with the task's TITLE, and the quick model now owns
     // that string — the same answer that named the branch names the row (D18),
@@ -486,7 +492,7 @@ export async function runM3Smoke(
     "the card's command to change the tree it does not own",
     () =>
       win.webContents.executeJavaScript(
-        `Array.from(document.querySelectorAll('[data-view-type="diagnostics.tree"] [data-testid="view-row"]')).map((el) => el.textContent)`,
+`Array.from(document.querySelectorAll('[data-testid="takeover-row"][data-entry^="diagnostics.tree:"]')).map((el) => el.textContent)`,
       ) as Promise<string[]>,
     (found) => found.some((row) => row.includes('ticks: 1')),
   );
@@ -763,27 +769,34 @@ export async function runM3Smoke(
    * wrong. Nothing in this run has touched a sidebar row — the task was created
    * through the composer's command and the window followed the spawn.
    *
-   * Read off `data-selected`, the attribute the row primitive sets, and matched
-   * against the row's own id rather than a count: "exactly one row is selected"
-   * would pass with the wrong one lit.
+   * It USED to assert the rail's highlight following the window (ADR 0035) —
+   * `data-selected` on the dock's row. The dock is gone, and with it the idea
+   * of a row that is lit while you are somewhere else: the takeover shows one
+   * place at a time, so "the row for what is on screen" and "the screen" are
+   * the same thing and cannot disagree.
+   *
+   * What survives is the half that can still be wrong: a task made by the
+   * composer reaches the shell without anyone telling it to, exactly ONCE.
+   * Matched on the row's `data-entry` — `<view type>:<row id>` — rather than on
+   * a count, because "some row appeared" would pass on the wrong one.
+   *
+   * The band naming the task you entered is the ADR-0035 claim in the new
+   * shape, and `smoke:takeover` is where it is asserted.
    */
-  const highlighted = await until(
-    'the sidebar to highlight the task the window is on',
+  const composedRows = await until(
+    'the task the composer made to reach the shell',
     () =>
       win.webContents.executeJavaScript(`(() => {
-        const rows = Array.from(document.querySelectorAll('[data-testid="view-row"]'));
-        return {
-          selected: rows.filter((el) => el.dataset.selected === 'true').map((el) => el.dataset.rowId),
-          rows: rows.length,
-        };
-      })()`) as Promise<{ selected: readonly string[]; rows: number }>,
-    (state) => state.selected.length === 1 && state.selected[0] === composed.id,
+        const rows = Array.from(document.querySelectorAll('[data-testid="takeover-row"], [data-testid="takeover-card"]'));
+        return rows.map((el) => el.dataset.entry);
+      })()`) as Promise<readonly string[]>,
+    (entries) => entries.some((entry) => entry === `tasks.tree:${composed.id}`),
   );
   check(
-    highlighted.selected.length === 1 && highlighted.selected[0] === composed.id,
-    `the sidebar highlights the task on screen and only it: ${JSON.stringify(highlighted)}`,
+    composedRows.filter((entry) => entry === `tasks.tree:${composed.id}`).length === 1,
+    `the shell lists the composed task exactly once: ${JSON.stringify(composedRows)}`,
   );
-  say('ok — the sidebar followed the window nobody clicked');
+  say('ok — a task composed in the app reached the shell nobody told');
 
   /**
    * --- 8b. a task can hold a SECOND TAB, and the first tab closing is not the

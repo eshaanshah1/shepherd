@@ -1,6 +1,7 @@
 import { colorTokens, palette, type ThemeMode } from './palette.ts';
-import { fonts, metrics, motion, type Metrics } from './metrics.ts';
+import { metrics, motion, type Metrics } from './metrics.ts';
 import { roleNames, roleValue, roleVarName } from './roles.ts';
+import { themes, type Theme } from './themes.ts';
 import { paneTitleAlphas, paneTitleInk, withAlpha, type SurfaceKind } from './contrast.ts';
 
 const SURFACE_KINDS: readonly SurfaceKind[] = ['dark', 'light'];
@@ -21,13 +22,24 @@ export const cssVarName = (token: string): string => `--sh-${token}`;
  * `roleValue`'s alias and wash forms emit `var(--sh-…)` pointing at other ROLES,
  * so every reference they make is to a name emitted here.
  */
-export function cssVariables(mode: ThemeMode, scale: Metrics = metrics): Record<string, string> {
+export function cssVariables(
+  mode: ThemeMode,
+  scale: Metrics = metrics,
+  theme: Theme = themes.shepherd,
+): Record<string, string> {
   const vars: Record<string, string> = {};
-  for (const role of roleNames) vars[roleVarName(role)] = roleValue(role, mode);
+  for (const role of roleNames) vars[roleVarName(role)] = roleValue(role, mode, theme);
 
-  vars[cssVarName('font-sans')] = fonts.sans;
-  vars[cssVarName('font-mono')] = fonts.mono;
-  vars[cssVarName('font-serif')] = fonts.serif;
+  vars[cssVarName('font-sans')] = theme.fonts.sans;
+  vars[cssVarName('font-mono')] = theme.fonts.mono;
+  /*
+   * The third job, and NOT a third voice — see `FontStacks`. In the built-in
+   * skin it resolves to the same stack as `--sh-font-mono`, so a rule that reads
+   * it is correct under either skin and gets the narrower face under the one
+   * that has it.
+   */
+  vars[cssVarName('font-data')] = theme.fonts.data;
+  vars[cssVarName('font-serif')] = theme.fonts.serif;
   vars[cssVarName('motion')] = `${motion.transitionMs}ms`;
   vars[cssVarName('motion-enter')] = `${motion.enterMs}ms`;
 
@@ -96,8 +108,13 @@ export function cssVariables(mode: ThemeMode, scale: Metrics = metrics): Record<
 }
 
 /** The same map as a stylesheet, for injection into a view or webview. */
-export function cssVariableBlock(mode: ThemeMode, selector = ':root', scale: Metrics = metrics): string {
-  const body = Object.entries(cssVariables(mode, scale))
+export function cssVariableBlock(
+  mode: ThemeMode,
+  selector = ':root',
+  scale: Metrics = metrics,
+  theme: Theme = themes.shepherd,
+): string {
+  const body = Object.entries(cssVariables(mode, scale, theme))
     .map(([name, value]) => `  ${name}: ${value};`)
     .join('\n');
   return `${selector} {\n${body}\n}\n`;

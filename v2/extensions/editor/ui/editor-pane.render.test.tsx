@@ -68,7 +68,10 @@ async function mount(node: React.ReactElement): Promise<void> {
 }
 
 const pane = (state: unknown, invoke: ReturnType<typeof invoker>['invoke']): React.ReactElement => (
-  <EditorPane state={state} focused paneId="p1" invoke={invoke} done={() => {}} />
+  // `EditorSurfaceProps` — the three props this component reads. A pane hands it
+  // more (a `paneId`, a `done`); the Files face hands it exactly these, which is
+  // the whole reason the type narrowed.
+  <EditorPane state={state} focused invoke={invoke} />
 );
 
 describe('the editor pane', () => {

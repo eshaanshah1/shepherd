@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { fonts } from '@shepherd/design-tokens';
+import { fonts, themeNames, themes } from '@shepherd/design-tokens';
 
 /**
  * The app SHIPS the faces its tokens name.
@@ -30,10 +30,20 @@ function firstFamily(stack: string): string {
   return first.replace(/^['"]|['"]$/g, '');
 }
 
-describe.each([
-  ['sans', fonts.sans],
-  ['mono', fonts.mono],
-])('%s', (_job, stack) => {
+/**
+ * Every face of every SKIN, not just the built-in one.
+ *
+ * A skin sets its own stacks (`themes.ts`), so "the app ships the faces its
+ * tokens name" is now a claim about the whole table — and the failure it was
+ * bought by is exactly the failure a second skin invites: a face named in a
+ * token, absent from the bundle, invisible on any machine that happens to have
+ * it installed.
+ */
+const shippedFaces = [
+  ...new Set(themeNames.flatMap((name) => [themes[name].fonts.sans, themes[name].fonts.mono])),
+].map((stack) => [stack, stack] as const);
+
+describe.each(shippedFaces)('%s', (_job, stack) => {
   const family = firstFamily(stack);
 
   it(`declares an @font-face for “${family}”`, () => {
@@ -51,11 +61,35 @@ describe.each([
   });
 });
 
+it('bundles the narrow face every skin’s `data` job names', () => {
+  /*
+   * Split from the block above rather than folded into it, because a `data` face
+   * has no Nerd Font obligation — it never draws a grid — and the mono block
+   * below asserts coverage that would fail it for the right reason.
+   */
+  const faces = sheet.match(/@font-face\s*\{[^}]*\}/g) ?? [];
+  for (const name of themeNames) {
+    const family = firstFamily(themes[name].fonts.data);
+    const mine = faces.find((face) => face.includes(`'${family}'`)) ?? '';
+    expect(mine, `no @font-face for ${family}`).not.toBe('');
+    const url = /url\('([^']+)'\)/.exec(mine)?.[1];
+    expect(existsSync(resolve(here, url ?? '')), `${url} is not in the bundle`).toBe(true);
+  }
+});
+
 it('bundles no face nothing names', () => {
   // The other direction, and the half that let the mismatch sit unnoticed: a
   // font file with no token pointing at it is 240KB of dead weight AND the
   // strongest possible evidence that the face somebody meant is not loading.
-  const named = [fonts.sans, fonts.mono, fonts.serif].map(firstFamily);
+  const named = [
+    ...themeNames.flatMap((name) => [
+      themes[name].fonts.sans,
+      themes[name].fonts.mono,
+      themes[name].fonts.data,
+      themes[name].fonts.serif,
+    ]),
+    fonts.serif,
+  ].map(firstFamily);
   for (const face of sheet.match(/@font-face\s*\{[^}]*\}/g) ?? []) {
     const family = /font-family:\s*'([^']+)'/.exec(face)?.[1];
     expect(family, face).toBeDefined();

@@ -29,3 +29,4 @@ export { SHIPPED_CAP, activeOrder, capShipped, shippedOrder } from './order.ts';
 export type { Ordered } from './order.ts';
 export { collapseByTitle, dayLabel, groupByDay, shippedAt } from './shipped-days.ts';
 export type { Shippable, ShippedDay, ShippedRow } from './shipped-days.ts';
+export { hasWoken, nextMorning, snoozeFor, type Snooze, type SnoozeUntil } from './snooze.ts';

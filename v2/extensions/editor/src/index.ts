@@ -62,6 +62,30 @@ export const activate: ActivateFn = (ctx, api) => {
     }),
   );
 
+  /**
+   * The **Files** face of a task (ADR 0051).
+   *
+   * A second view type rather than a second surface on the one above, because a
+   * contribution declares ONE surface: the workspace is a pane you keep open and
+   * come back to; this is one way of reading a task the window is already
+   * showing. Both resolve to the same component, which is the point — a file and
+   * its diff stay one surface under one theme (ADR 0048).
+   *
+   * It CLAIMS the slot rather than being assigned it: the takeover draws a tab
+   * for each slot something registers, so a build without this extension has no
+   * Files tab. That is the honest failure, and the reason the shell never
+   * resolves `files` to a view type whose name it happens to know.
+   */
+  ctx.subscriptions.push(
+    views.registerViewType(EDITOR_VIEWS.taskFiles, {
+      kind: 'component',
+      component: EDITOR_VIEWS.taskFiles,
+      surface: 'face',
+      face: { slot: 'files', subject: 'task' },
+      title: 'Files',
+    }),
+  );
+
   // ------------------------------------------------------------------ the tree
 
   ctx.subscriptions.push(
@@ -207,6 +231,32 @@ export const activate: ActivateFn = (ctx, api) => {
         const root = args.path ?? task?.root ?? activeCwd(roots);
         if (root === undefined) {
           return { ok: false, reason: 'nothing here says which directory to open — pass a path' };
+        }
+
+        /*
+         * **A task's files are its Files face, so no tab is opened for one.**
+         *
+         * With no `path` this verb resolved the task you are in and opened an
+         * `editor` tab in its group — beside the agents of the very task whose
+         * Files face draws the same tree and the same editor. Two places for one
+         * idea, and you had to know which held which.
+         *
+         * Only the no-path case: a PATH is a subject of its own — a scratchpad,
+         * the `Notes` root (ADR 0049), a directory that belongs to no task — and
+         * that is what the pane is still for. `args.path` is how every one of
+         * those arrives, which is why the condition is written against the
+         * ARGUMENT rather than against the resolved directory: the same
+         * directory reached by asking for it and reached by defaulting to it are
+         * two different requests.
+         */
+        if (args.path === undefined && task !== undefined) {
+          return {
+            ok: true,
+            root,
+            opened: false,
+            face: 'files',
+            reason: 'this task’s files are its Files face — ⌘4',
+          };
         }
 
         const already = openEditorRoot(roots, root);

@@ -179,20 +179,44 @@ describe('editor.open', () => {
     },
   ];
 
-  it('opens on the TASK ROOT when given no path', async () => {
-    // Not the focused pane's cwd (`/repo`): a shell that has cd'd into a
-    // package would root the tree three levels inside the work, with the rest
-    // of the task unreachable from it.
+  it('opens NO TAB for the task you are in — its files are its Files face', async () => {
+    /*
+     * It used to open one, in the task's own pane group, beside the agents of
+     * the very task whose Files face draws the same tree and the same editor.
+     * Two places for one idea, and you had to know which held which.
+     *
+     * It still RESOLVES the task root — that is the answer to "which directory"
+     * and the face needs it — and it still names where the surface is, because a
+     * verb that stops working without saying what replaced it is a verb people
+     * go looking for a bug in.
+     */
     const { registered, invoked } = host({
       invoke: async (id) =>
         id === 'layout.listRoots' ? rootsAnswer() : id === 'tasks.list' ? TASKS : undefined,
     });
     const answer = await call(registered, EDITOR_COMMANDS.open, {});
-    expect(answer).toMatchObject({ ok: true, root: '/tasks/wheat', opened: true });
+    expect(answer).toMatchObject({ ok: true, root: '/tasks/wheat', opened: false, face: 'files' });
+    expect(invoked.find((entry) => entry.id === 'layout.newTab')).toBeUndefined();
+  });
+
+  it('still opens a tab for a PATH, which is a subject of its own', async () => {
+    /*
+     * The non-task case, and the reason the pane survives: a scratchpad, the
+     * `Notes` root (ADR 0049), a directory belonging to no task. Every one of
+     * them arrives as `path`, which is why the refusal above is written against
+     * the ARGUMENT — the same directory asked for and defaulted to are two
+     * different requests.
+     */
+    const { registered, invoked } = host({
+      invoke: async (id) =>
+        id === 'layout.listRoots' ? rootsAnswer() : id === 'tasks.list' ? TASKS : undefined,
+    });
+    const answer = await call(registered, EDITOR_COMMANDS.open, { path: '/notes' });
+    expect(answer).toMatchObject({ ok: true, root: '/notes', opened: true });
 
     const tab = invoked.find((entry) => entry.id === 'layout.newTab');
     expect(tab?.args).toMatchObject({
-      view: { type: EDITOR_VIEWS.workspace, state: { root: '/tasks/wheat' } },
+      view: { type: EDITOR_VIEWS.workspace, state: { root: '/notes' } },
       // Without a title the tab reads `term`: a view pane runs no program.
       title: 'editor',
     });

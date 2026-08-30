@@ -652,6 +652,10 @@ function createViews(services: ExtHostServices, providers: Map<string, ViewProvi
             viewKind: 'component',
             component: provider.component,
             ...(provider.surface === undefined ? {} : { surface: provider.surface }),
+            // The slot a `face` claims. Sent explicitly for the reason `head`
+            // was not, one block down: this serializer names its fields, so a
+            // field nobody adds here is a field the wire silently drops.
+            ...(provider.face === undefined ? {} : { face: provider.face }),
             ...(provider.key === undefined ? {} : { key: provider.key }),
             ...(provider.command === undefined ? {} : { command: provider.command }),
             ...(provider.title === undefined ? {} : { title: provider.title }),

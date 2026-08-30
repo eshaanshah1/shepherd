@@ -53,7 +53,19 @@ export const EDITOR_COMMANDS = {
  * its static table (ADR 0044). Two hops, one name, so a persisted `view` on
  * disk reads as the thing it is.
  */
-export const EDITOR_VIEWS = { workspace: 'editor.workspace' } as const;
+export const EDITOR_VIEWS = {
+  workspace: 'editor.workspace',
+  /**
+   * The **Files** face of a task (ADR 0051) — the same tree and the same editor,
+   * over the task's own directory instead of a directory a pane was opened with.
+   *
+   * A second view type rather than a second surface on the first, because a
+   * contribution declares ONE surface: the workspace is a pane you keep open and
+   * come back to, and this is one way of reading a task the window is already
+   * showing. Both resolve to the same component in the end, which is the point.
+   */
+  taskFiles: 'editor.taskFiles',
+} as const;
 
 /**
  * What the tab strip calls this pane.
