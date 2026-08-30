@@ -1,5 +1,6 @@
-import { KERNEL, s, toDisposable, type Disposable } from '@shepherd/sdk';
+import { KERNEL, extensionId, s, toDisposable, type Disposable } from '@shepherd/sdk';
 import type { CommandRegistry, EventBus, SettingsRegistry } from '@shepherd/core';
+import { refuseExternalCaller } from './in-process-only.ts';
 
 /**
  * The settings verbs — one table, reached by the ⌘K palette, by the control
@@ -14,7 +15,31 @@ export const SETTINGS_COMMANDS = {
   get: 'settings.get',
   set: 'settings.set',
   reset: 'settings.reset',
+  /**
+   * A contributed PAGE running a command, as the extension that contributed it.
+   *
+   * D14, one surface along: the click is the user's, the command id is the
+   * extension's, and the user cannot see it. A page whose command ran with
+   * `USER`'s unconditional trust would be a way for any extension to reach past
+   * its own grant, which is the hole `ViewRegistry.invoke` closed for tree rows.
+   *
+   * It was an `ipcMain` channel until Stage 2 of the core/UI isolation, which is
+   * to say a door only the app had. It is a verb now, with `refuseExternalCaller`
+   * restating the containment the channel used to provide — see that file for why
+   * that is honest rather than satisfactory.
+   */
+  invoke: 'settings.invoke',
 } as const;
+
+/**
+ * Whether the settings screen is up, on the bus.
+ *
+ * Pushed for `SETTINGS_CHANGED_TOPIC`'s reason and one more: there are four
+ * gestures that open it (⌘, the palette, the CLI, Esc) and exactly one fact, and
+ * the same fact feeds `presence.overlay`. A page that kept its own copy would be
+ * ADR 0035's mistake for the third time in this codebase.
+ */
+export const SETTINGS_VISIBILITY_TOPIC = 'settings.visibility';
 
 /**
  * A changed setting, on the bus.
@@ -94,6 +119,32 @@ export function registerSettingsCommands(options: SettingsCommandsOptions): Disp
         // everything that only checks `ok`.
         if (!result.ok) throw new Error(result.error.message);
         return { key: args.key, value: result.value };
+      },
+    }),
+
+    registry.register(SETTINGS_COMMANDS.invoke, {
+      // No title: it names a page and a command id, so there is nothing for a
+      // person to pick out of a palette.
+      permission: 'settings',
+      schema: s.object({ page: s.string(), command: s.string(), args: s.optional(s.unknown()) }),
+      handler: async (args, caller) => {
+        refuseExternalCaller(caller, SETTINGS_COMMANDS.invoke);
+        const owner = settings.pages().find((candidate) => candidate.id === args.page)?.owner;
+        if (owner === undefined) {
+          // Reported rather than silently resolved: a form whose submit does
+          // nothing is the "and then nothing happens" branch the log rule exists
+          // for.
+          throw new Error(`no extension owns the settings page "${args.page}"`);
+        }
+        const result = await registry.invoke(args.command, args.args, {
+          kind: 'extension',
+          id: extensionId(owner),
+        });
+        // The kernel's own `Result` is passed through rather than unwrapped: a
+        // failed write is a value the form draws, not an exception the page has
+        // to reconstruct from a mangled Electron error string.
+        if (!result.ok) throw new Error(result.error.message);
+        return result.value;
       },
     }),
 

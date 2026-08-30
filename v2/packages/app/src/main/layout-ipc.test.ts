@@ -175,91 +175,12 @@ describe('the active root', () => {
   });
 });
 
-/**
- * `command:list` — what the palette reads.
- *
- * The filter is HERE rather than in the page, and it is not this handler's
- * policy: the SDK documents `title` as "shown in the palette … Absent = not
- * user-facing". Until this channel existed nothing read that field, which is why
- * `layout.zoom`, `layout.rename` and every `tasks.*` verb had a user-facing name
- * and no way for a user to say it.
+/*
+ * `command:list` and `command:invoke` used to be tested here, because they used
+ * to be registered here. They are `control:list` and `control:invoke` now — the
+ * same pair `control.sock` serves — and their tests moved with them to
+ * `control-ipc.test.ts`.
  */
-describe('command:list', () => {
-  const list = async (): Promise<IpcResult<readonly { id: string; title: string }[]>> => {
-    const handler = electron.handlers.get(INVOKE.commandList);
-    if (handler === undefined) throw new Error('command:list was never registered');
-    return (await handler(null)) as IpcResult<readonly { id: string; title: string }[]>;
-  };
-
-  function withCommands(): CommandRegistry {
-    const registry = new CommandRegistry({ logger: nullLogger, grants: () => emptyGrants() });
-    registry.register('layout.zoom', {
-      title: 'Toggle Zoom',
-      schema: { describe: 'any', parse: (value: unknown) => ({ ok: true as const, value }) },
-      handler: () => undefined,
-    });
-    // No title: its author said it is plumbing, not a verb a user names.
-    registry.register('internal.reconcile', {
-      schema: { describe: 'any', parse: (value: unknown) => ({ ok: true as const, value }) },
-      handler: () => undefined,
-    });
-    registry.register('tasks.create', {
-      title: 'Tasks: New Task',
-      permission: 'layout',
-      schema: { describe: 'any', parse: (value: unknown) => ({ ok: true as const, value }) },
-      handler: () => undefined,
-    });
-    return registry;
-  }
-
-  /**
-   * MUTATION TARGET. Dropping the filter — returning `registry.list()` straight
-   * through — leaves every other assertion in this file green and puts an
-   * untitled command in the palette with an empty label. The narrowed return
-   * type is the other half of the guard: `title: string`, not `title?: string`.
-   */
-  it('returns only the commands that have a title', async () => {
-    live = registerLayoutIpc({
-      store: new LayoutStore({ logger: nullLogger, clock: systemClock, sessions: { release: () => {}, isLive: () => true } }),
-      registry: withCommands(),
-      active: HOME,
-    });
-    const result = await list();
-    expect(result).toEqual({
-      ok: true,
-      value: [
-        { id: 'layout.zoom', title: 'Toggle Zoom' },
-        { id: 'tasks.create', title: 'Tasks: New Task' },
-      ],
-    });
-  });
-
-  it('does not filter by permission, so there is one authorization model', async () => {
-    // Every palette command is invoked as `{kind:'user'}`, which `authorize`
-    // allows unconditionally — pre-filtering here would be a second model that
-    // could disagree with the real one. `tasks.create` declares a permission and
-    // is listed anyway; `command:invoke` is where the answer is decided.
-    live = registerLayoutIpc({
-      store: new LayoutStore({ logger: nullLogger, clock: systemClock, sessions: { release: () => {}, isLive: () => true } }),
-      registry: withCommands(),
-      active: HOME,
-    });
-    const result = await list();
-    expect(result.ok && result.value.map((command) => command.id)).toContain('tasks.create');
-  });
-
-  it('is removed on dispose, like every other handler this file registers', () => {
-    live = registerLayoutIpc({
-      store: new LayoutStore({ logger: nullLogger, clock: systemClock, sessions: { release: () => {}, isLive: () => true } }),
-      registry: withCommands(),
-      active: HOME,
-    });
-    expect(electron.handlers.has(INVOKE.commandList)).toBe(true);
-    live.dispose();
-    live = undefined;
-    expect(electron.handlers.has(INVOKE.commandList)).toBe(false);
-  });
-});
 
 /**
  * A root with NO PANES still travels.

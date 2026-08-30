@@ -422,20 +422,13 @@ export function App({
     if (agentsApi === null) return;
     const index = (list: readonly AgentIndicatorDTO[]): Readonly<Record<string, AgentIndicatorDTO>> =>
       Object.fromEntries(list.map((indicator) => [indicator.sessionId, indicator]));
-    // Follow first, then pull — so a transition landing between the two is not
-    // overwritten by a snapshot taken before it.
-    const off = agentsApi.onChanged((list) => setAgents(index(list)));
-    let live = true;
-    void agentsApi.get().then((result) => {
-      if (!live || !result.ok) return;
-      // Merge under, never over: anything the subscription already delivered is
-      // newer than this snapshot by construction.
-      setAgents((current) => ({ ...index(result.value), ...current }));
-    });
-    return () => {
-      live = false;
-      off();
-    };
+    // ONE call, and its first delivery is the current set. This used to be
+    // follow-then-pull with a merge-under rule for the race between them, and
+    // the rule was correct and load-bearing and impossible to test — a
+    // transition landing between the two calls would otherwise be overwritten by
+    // a snapshot taken before it. Snapshot and registration are one step now
+    // (`CONTROL_TOPICS.agents`), so there is no window and no rule.
+    return agentsApi.onChanged((list) => setAgents(index(list)));
   }, [agentsApi]);
 
   /**

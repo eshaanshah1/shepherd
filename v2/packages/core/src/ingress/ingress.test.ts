@@ -19,6 +19,7 @@ import { emptyGrants, type GrantSet } from '../commands/authorize.ts';
 import { EventBus } from '../events/bus.ts';
 import { EventsIngress } from './events-ingress.ts';
 import { ControlIngress } from './control-ingress.ts';
+import { ControlSurface, TopicRegistry } from '../control/index.ts';
 
 let dir: string;
 let records: LogRecord[];
@@ -26,6 +27,8 @@ let logger: Logger;
 let bus: EventBus;
 let commands: CommandRegistry;
 let grants: GrantSet;
+let topics: TopicRegistry;
+let surface: ControlSurface;
 const stopping: { stop(): Promise<void> }[] = [];
 
 beforeEach(() => {
@@ -36,6 +39,8 @@ beforeEach(() => {
   bus = new EventBus({ clock, logger });
   grants = emptyGrants();
   commands = new CommandRegistry({ logger, grants: () => grants });
+  topics = new TopicRegistry();
+  surface = new ControlSurface({ commands, bus, logger, topics });
 });
 
 afterEach(async () => {
@@ -95,7 +100,7 @@ async function eventsAt(name = 'events.sock'): Promise<string> {
 
 async function controlAt(name = 'control.sock'): Promise<string> {
   const path = join(dir, name);
-  const ingress = new ControlIngress({ path, commands, bus, logger });
+  const ingress = new ControlIngress({ path, surface, logger });
   stopping.push(ingress);
   const started = await ingress.start();
   if (!started.ok) throw new Error(started.error);
@@ -270,7 +275,7 @@ describe('control.sock', () => {
 describe('the wait subscription', () => {
   it('pushes matching events to a live client and drops the subscription when it leaves', async () => {
     const path = await controlAt();
-    const lines: unknown[] = [];
+    const lines: { kind?: string }[] = [];
 
     const req = request({ socketPath: path, path: '/subscribe?topic=agent.*', method: 'GET' });
     const response = await new Promise<import('node:http').IncomingMessage>((resolve) => {
@@ -279,7 +284,7 @@ describe('the wait subscription', () => {
     });
     response.setEncoding('utf8');
     response.on('data', (chunk: string) => {
-      for (const line of chunk.split('\n')) if (line !== '') lines.push(JSON.parse(line));
+      for (const line of chunk.split('\n')) if (line !== '') lines.push(JSON.parse(line) as { kind?: string });
     });
 
     await waitFor(() => messages().some((m) => m.includes('subscriber attached')));
@@ -288,14 +293,105 @@ describe('the wait subscription', () => {
     bus.emit('other.topic', { ignored: true }, { kind: 'user' });
     bus.emit('agent.state', { state: 'idle' }, { kind: 'agent', sessionId: sessionId('s-1') });
 
-    await waitFor(() => lines.length === 2);
+    await waitFor(() => lines.length === 3);
     expect(lines).toEqual([
-      { topic: 'agent.*', payload: { state: 'working' }, envelope: { seq: 1, ts: 1_000, source: { kind: 'agent', sessionId: 's-1' } } },
-      { topic: 'agent.*', payload: { state: 'idle' }, envelope: { seq: 2, ts: 1_000, source: { kind: 'agent', sessionId: 's-1' } } },
+      // The subscription names itself first, so a reader that sees a nudge
+      // already knows what to pull.
+      { kind: 'open', topic: 'agent.*', subscription: expect.any(String) },
+      {
+        kind: 'event',
+        topic: 'agent.*',
+        seq: 1,
+        payload: { state: 'working' },
+        envelope: { seq: 1, ts: 1_000, source: { kind: 'agent', sessionId: 's-1' } },
+      },
+      {
+        kind: 'event',
+        topic: 'agent.*',
+        seq: 2,
+        payload: { state: 'idle' },
+        envelope: { seq: 2, ts: 1_000, source: { kind: 'agent', sessionId: 's-1' } },
+      },
     ]);
 
     req.destroy();
     await waitFor(() => messages().some((m) => m.includes('subscriber left')));
+  });
+
+  it('hands a stateful topic its snapshot before any delta, over the socket', async () => {
+    // Snapshot-then-delta is the surface's, so it reaches every transport at
+    // once. This asserts the wire, which is the half a unit test cannot.
+    topics.declare({ topic: 'demo.state', delivery: 'push', snapshot: () => ({ count: 7 }) });
+    const path = await controlAt();
+    const lines: { kind?: string; value?: unknown }[] = [];
+
+    const req = request({ socketPath: path, path: '/subscribe?topic=demo.state', method: 'GET' });
+    const response = await new Promise<import('node:http').IncomingMessage>((resolve) => {
+      req.on('response', resolve);
+      req.end();
+    });
+    response.setEncoding('utf8');
+    response.on('data', (chunk: string) => {
+      for (const line of chunk.split('\n')) if (line !== '') lines.push(JSON.parse(line) as { kind?: string });
+    });
+
+    await waitFor(() => lines.length === 2);
+    expect(lines[1]).toEqual({ kind: 'snapshot', topic: 'demo.state', seq: 0, value: { count: 7 } });
+    req.destroy();
+  });
+
+  it('nudges once for a nudge topic, and again only after the reader pulls', async () => {
+    // ADR 0031's back-pressure, end to end over the socket — including the
+    // reader's half, which HTTP cannot carry inside the response and which is
+    // therefore its own POST.
+    topics.declare({ topic: 'demo.nudge', delivery: 'nudge' });
+    const path = await controlAt();
+    const lines: { kind?: string; subscription?: string; coalesced?: number }[] = [];
+
+    const req = request({ socketPath: path, path: '/subscribe?topic=demo.nudge', method: 'GET' });
+    const response = await new Promise<import('node:http').IncomingMessage>((resolve) => {
+      req.on('response', resolve);
+      req.end();
+    });
+    response.setEncoding('utf8');
+    response.on('data', (chunk: string) => {
+      for (const line of chunk.split('\n')) if (line !== '') lines.push(JSON.parse(line) as { kind?: string });
+    });
+    await waitFor(() => lines.length === 1);
+    const id = lines[0]?.subscription as string;
+
+    for (let i = 0; i < 20; i++) bus.emit('demo.nudge', { i }, { kind: 'user' });
+
+    await waitFor(() => lines.length === 2);
+    expect(lines[1]).toEqual({ kind: 'nudge', topic: 'demo.nudge', seq: 1, coalesced: 0 });
+    // Twenty changes, one frame. That is the whole claim.
+    expect(lines).toHaveLength(2);
+
+    const pulled = await post(path, '/pull', { subscription: id });
+    expect(pulled.status).toBe(200);
+    await waitFor(() => lines.length === 3);
+    expect(lines[2]).toMatchObject({ kind: 'nudge', coalesced: 19 });
+
+    req.destroy();
+  });
+
+  it('refuses a pull for a subscription that is gone, rather than answering ok', async () => {
+    // A reader pulling a dead subscription waits forever for a nudge nobody can
+    // send. It has to be able to tell that from "you are caught up".
+    const path = await controlAt();
+    const answer = await post(path, '/pull', { subscription: 'sub-999' });
+    expect(answer.status).toBe(404);
+    expect(answer.body).toMatchObject({ ok: false, error: { code: 'unknown-subscription' } });
+  });
+
+  it('describes the topics a client may follow', async () => {
+    topics.declare({ topic: 'demo.nudge', delivery: 'nudge' });
+    const path = await controlAt();
+    const answer = await get(path, '/topics');
+    expect(answer.body).toEqual({
+      ok: true,
+      value: [{ topic: 'demo.nudge', delivery: 'nudge', stateful: false }],
+    });
   });
 
   it('a hook event reaches a waiting subscriber end to end', async () => {
@@ -319,8 +415,9 @@ describe('the wait subscription', () => {
 
     await post(eventsPath, '/events', { topic: 'claude.hook', session_id: 's-1', payload: { event: 'Stop' } });
 
-    await waitFor(() => lines.length === 1);
-    expect(lines[0]?.payload).toEqual({ event: 'Stop' });
+    // Two: the `open` frame naming the subscription, then the event.
+    await waitFor(() => lines.length === 2);
+    expect(lines[1]?.payload).toEqual({ event: 'Stop' });
     req.destroy();
   });
 });

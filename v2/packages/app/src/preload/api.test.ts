@@ -12,6 +12,11 @@ import { createBridge, type IpcLike } from './api.ts';
  * escape hatch would fail this one on the very first line.
  */
 
+/** What the page ASKED for, with the bridge's own construction-time `on` dropped. */
+function invokes(ipc: { readonly log: Recorded[] }): Recorded[] {
+  return ipc.log.filter((entry) => entry.kind === 'invoke');
+}
+
 interface Recorded {
   readonly kind: 'invoke' | 'on' | 'off';
   readonly channel: string;
@@ -97,8 +102,23 @@ describe('the preload bridge surface', () => {
     bridge.session.onExit(() => undefined);
     bridge.layout.onChanged(() => undefined);
 
-    expect(ipc.log).toHaveLength(15);
+    // 15 calls plus the one the bridge makes for itself: a single listener on
+    // `control:frame`, which is how every control-plane subscription arrives.
+    expect(ipc.log).toHaveLength(16);
+    expect(ipc.log[0]).toMatchObject({ kind: 'on', channel: EMIT.controlFrame });
     for (const entry of ipc.log) expect(known, entry.channel).toContain(entry.channel);
+  });
+
+  it('opens exactly ONE frame listener, however many topics the page follows', () => {
+    // One channel carries every subscription, addressed by id. A listener per
+    // topic would put the routing in electron's dispatch table, where nothing
+    // can tear it down when a follower goes away.
+    const ipc = fakeIpc();
+    const bridge = createBridge(ipc);
+    bridge.agents.onChanged(() => undefined);
+    bridge.settings.onChanged(() => undefined);
+    bridge.views.onChanged(() => undefined);
+    expect(ipc.log.filter((entry) => entry.kind === 'on' && entry.channel === EMIT.controlFrame)).toHaveLength(1);
   });
 
   it('defaults a command with no arguments to `{}`, not `undefined`', () => {
@@ -110,9 +130,9 @@ describe('the preload bridge surface', () => {
 
     void bridge.commands.invoke('layout.close');
 
-    expect(ipc.log[0]).toEqual({
+    expect(invokes(ipc)[0]).toEqual({
       kind: 'invoke',
-      channel: INVOKE.commandInvoke,
+      channel: INVOKE.controlInvoke,
       args: ['layout.close', {}],
     });
   });
@@ -125,8 +145,8 @@ describe('the preload bridge surface', () => {
     void bridge.session.write('s7', bytes);
     void bridge.session.resize('s7', 120, 40);
 
-    expect(ipc.log[0]).toEqual({ kind: 'invoke', channel: INVOKE.sessionWrite, args: ['s7', bytes] });
-    expect(ipc.log[1]).toEqual({
+    expect(invokes(ipc)[0]).toEqual({ kind: 'invoke', channel: INVOKE.sessionWrite, args: ['s7', bytes] });
+    expect(invokes(ipc)[1]).toEqual({
       kind: 'invoke',
       channel: INVOKE.sessionResize,
       args: ['s7', 120, 40],
@@ -145,7 +165,9 @@ describe('the preload bridge surface', () => {
     // An IpcRendererEvent would carry `sender` — a way back out of the bridge.
     expect(seen[0]).not.toHaveProperty('sender');
     off();
-    expect(ipc.listenerCount).toBe(0);
+    // One remains, and it is the bridge's own: `control:frame` is opened at
+    // construction and lives as long as the bridge does.
+    expect(ipc.listenerCount).toBe(1);
   });
 
   it('a view that unmounts really does stop listening', () => {

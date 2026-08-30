@@ -168,6 +168,21 @@ export {
   type SessionLifetimeOptions,
 } from './session/index.ts';
 
+export {
+  ControlSurface,
+  MAX_NUDGE_KEYS,
+  SubscriptionState,
+  TopicRegistry,
+  type ControlSurfaceOptions,
+  type Delivery,
+  type ControlFrame,
+  type SnapshotResult,
+  type Subscription,
+  type SubscriptionSpec,
+  type TopicDeclaration,
+  type TopicSummary,
+} from './control/index.ts';
+
 export { ViewingResolver, type Presence } from './attention/index.ts';
 export { ViewerRegistry } from './attention/index.ts';
 export { route, wantsAttention, type RoutingDecision, type RoutingInput } from './attention/index.ts';

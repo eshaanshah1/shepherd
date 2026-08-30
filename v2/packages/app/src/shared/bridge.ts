@@ -152,18 +152,27 @@ export interface WindowApi {
 }
 
 /**
- * Agent state, read-only from the page — the same pull-then-follow shape as the
- * layout, and for the same reason: a push-only channel leaves a renderer that
- * mounted late (every HMR reload) blank until the next transition.
+ * Agent state, read-only from the page.
  *
- * Note what is NOT here: any way to name a bus topic. Main relays exactly one,
- * by an allow-list it owns. `claude.hook` carries whole hook payloads — tool
- * inputs, prompts, file contents — on the same bus, and a page that could
- * subscribe by name could ask for it.
+ * Note what is NOT here: any way to name a bus topic. The preload passes topic
+ * constants, so what a page may follow is the shape of this interface — which is
+ * what the agent relay's one-topic allow-list was protecting. `claude.hook`
+ * carries whole hook payloads (tool inputs, prompts, file contents) on the same
+ * bus, and a page that could subscribe by name could ask for it.
  */
 export interface AgentsApi {
-  get(): Promise<IpcResult<readonly AgentIndicatorDTO[]>>;
-  /** Returns an unsubscribe function. */
+  /**
+   * Follow agent state, and be handed the CURRENT set as the first call.
+   *
+   * There is no `get()`, and its absence is the point. The page used to follow,
+   * then pull, then merge the snapshot *under* whatever had already arrived —
+   * because a transition landing between the two calls would otherwise be
+   * overwritten by a snapshot taken before it. The subscription's first frame is
+   * the snapshot now, taken in the same step as the registration, so the race
+   * has no window to happen in.
+   *
+   * Returns an unsubscribe function.
+   */
   onChanged(listener: (indicators: readonly AgentIndicatorDTO[]) => void): () => void;
 }
 
@@ -330,7 +339,7 @@ export const BRIDGE_SURFACE = {
   ],
   commands: ['invoke', 'list'],
   layout: ['get', 'onChanged', 'setViewport', 'snapshot'],
-  agents: ['get', 'onChanged'],
+  agents: ['onChanged'],
   /**
    * Contributed views (M3). The page may ask which views exist, for a named
    * view's rows, and report a click — and nothing else. It cannot name a bus

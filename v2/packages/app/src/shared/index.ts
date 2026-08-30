@@ -17,6 +17,7 @@ export {
   type SessionExitMessage,
   type SessionResizeMessage,
   type ViewportRect,
+  type ControlFrameMessage,
 } from './channels.ts';
 
 export {
@@ -32,7 +33,8 @@ export {
 
 // `menu-commands.ts` is deliberately absent: it imports @shepherd/core/layout as
 // a value, and this barrel is what the sandboxed preload pulls in.
-export { COMMANDS, commandIds, type CommandID } from './commands.ts';
+export { COMMANDS, commandIds, SETTINGS_VISIBILITY_COMMAND, type CommandID } from './commands.ts';
+export { CONTROL_COMMANDS, CONTROL_TOPICS } from './control.ts';
 
 export { OutputCoalescer, type CoalescerOptions } from './coalescer.ts';
 

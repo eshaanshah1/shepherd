@@ -158,14 +158,16 @@ interface Rendered {
 /**
  * A stub `AgentsApi` that answers with a fixed set and never changes it.
  *
- * `onChanged` returns a no-op unsubscribe rather than dropping the listener on
- * the floor: `App` follows first and pulls second, and a subscription that
- * cannot be torn down leaks a setState into an unmounted tree.
+ * The set arrives as the subscription's FIRST delivery, which is what the real
+ * bridge does: the topic is stateful, so subscribing hands over the snapshot in
+ * the same step as the registration. There is no `get()` to stub any more.
  */
 function fixedAgents(indicators: readonly AgentIndicatorDTO[]): AgentsApi {
   return {
-    get: () => Promise.resolve({ ok: true as const, value: indicators }),
-    onChanged: () => () => {},
+    onChanged: (listener) => {
+      listener(indicators);
+      return () => {};
+    },
   };
 }
 

@@ -171,51 +171,14 @@ export function registerLayoutIpc(options: LayoutIpcOptions): LayoutIpc {
     },
   );
 
-  ipcMain.handle(
-    INVOKE.commandInvoke,
-    async (_event, command: unknown, args: unknown): Promise<IpcResult<unknown>> => {
-      if (typeof command !== 'string' || command.length === 0) {
-        return {
-          ok: false,
-          error: { code: 'invalid-argument', message: 'command must be a non-empty string' },
-        };
-      }
-      // `USER` is asserted HERE, never sent by the page. A renderer that could
-      // name its own caller kind could name `{kind:'agent'}` and inherit an
-      // agent's grants — the attribution has to be made by the side that knows.
-      const result = await registry.invoke(command, args, USER);
-      return result.ok
-        ? { ok: true, value: result.value }
-        : { ok: false, error: { code: result.error.code, message: result.error.message } };
-    },
-  );
-
-  /**
-   * What the palette lists.
-   *
-   * The FILTER IS HERE, not in the page, and it is not this handler's policy: the
-   * SDK documents `title` as "shown in the palette … Absent = not user-facing",
-   * so an untitled command is one whose author said it is plumbing. Doing it in
-   * main means the page is never handed a list it has to remember not to draw,
-   * and the narrowed type (`title: string`) carries the guarantee across the
-   * port instead of a comment asking for it.
-   *
-   * Deliberately NOT filtered by permission. Every command here is invoked as
-   * `{kind:'user'}`, which `authorize` allows unconditionally — so "can this
-   * caller run it" has one answer for all of them, and pre-filtering would be a
-   * second authorization model that could disagree with the real one.
+  /*
+   * `command:invoke` and `command:list` used to live here, and they were the
+   * renderer's own private door into `CommandRegistry`. They are `control:invoke`
+   * and `control:list` now (`control-ipc.ts`) — the same pair `control.sock`
+   * offers, so the page reaches the verb table exactly the way a phone and the
+   * CLI do. `USER` is still asserted by main and never sent by the page; see
+   * `control-ipc.ts` for why that is the one privilege left and where it ends.
    */
-  ipcMain.handle(
-    INVOKE.commandList,
-    (): IpcResult<readonly { id: string; title: string }[]> => ({
-      ok: true,
-      value: registry
-        .list()
-        .flatMap((command) =>
-          command.title === undefined ? [] : [{ id: command.id, title: command.title }],
-        ),
-    }),
-  );
 
   // ANY root's change republishes the whole envelope. The page holds all of them
   // mounted, so a change in a hidden root is one it still has to draw — its
@@ -229,13 +192,7 @@ export function registerLayoutIpc(options: LayoutIpcOptions): LayoutIpc {
     getActive: () => active,
     dispose: () => {
       subscription.dispose();
-      for (const channel of [
-        INVOKE.layoutGet,
-        INVOKE.layoutViewport,
-        INVOKE.layoutSnapshot,
-        INVOKE.commandInvoke,
-        INVOKE.commandList,
-      ]) {
+      for (const channel of [INVOKE.layoutGet, INVOKE.layoutViewport, INVOKE.layoutSnapshot]) {
         ipcMain.removeHandler(channel);
       }
     },

@@ -1,6 +1,7 @@
 // The IPC vocabulary, in one file both processes import. Shared code is loaded
 // in main AND renderer, so it may import neither electron nor react (lint).
 
+import type { ControlFrame } from '@shepherd/core/control';
 import type { Rect, SplitNode } from '@shepherd/core/layout';
 
 /** One session's agent state, as the chrome needs it. */
@@ -37,70 +38,35 @@ export const INVOKE = {
    * forever for a value that never changes.
    */
   layoutSnapshot: 'layout:snapshot',
-  commandInvoke: 'command:invoke',
   /**
-   * What the palette lists. Pull-shaped like `layoutGet`, and a SNAPSHOT rather
-   * than a subscription: the registry changes when an extension activates or is
-   * disposed, which never happens while a palette is open.
-   */
-  commandList: 'command:list',
-  /**
-   * Pull-shaped, mirroring `layoutGet`: the renderer asks on mount rather than
-   * main pushing on `did-finish-load`, which races React's first commit. It also
-   * makes an HMR remount re-pull for free.
-   */
-  agentsGet: 'agents:get',
-  /**
-   * Contributed views — M3. The renderer asks WHICH views exist and for a
-   * tree's rows; it never names a bus topic, which is what the agent relay's
-   * allow-list was protecting and what this generalizes.
-   */
-  viewsList: 'views:list',
-  viewsChildren: 'views:children',
-  viewsActivate: 'views:activate',
-  /**
-   * `activate` with the answer kept — what a contributed **component** needs
-   * (ADR 0033). It is the same attribution in main, deliberately: a second
-   * channel that ran a command a second way is where `{kind:'user'}` would
-   * quietly come back.
-   */
-  viewsInvoke: 'views:invoke',
-  /**
-   * "What does this row of ANOTHER member's view stand for, and show it here."
+   * The control plane, once — the same surface `control.sock` serves.
    *
-   * A separate channel from `activate` because the two are different intentions
-   * and only one of them is safe to send across the net: `activate` runs the
-   * row's own gesture, which for a task opens a pane and switches the window on
-   * whichever machine runs it. See `TreeItem.presents`.
-   */
-  viewsPresent: 'views:present',
-  /**
-   * Settings. Pull-shaped like `layoutGet`: the page asks on mount and then
-   * follows `EMIT.settingsChanged`, so an HMR remount re-pulls for free and a
-   * renderer that mounted late is never short a page.
-   */
-  settingsList: 'settings:list',
-  settingsSet: 'settings:set',
-  settingsReset: 'settings:reset',
-  /**
-   * A contributed settings PAGE running a command, attributed to the extension
-   * that contributed the page.
+   * Nine channels used to live here: `command:invoke`, `command:list`,
+   * `agents:get`, five `views:*` and five `settings:*`. Each had its own
+   * validation, its own error mapping and its own push, and together they were a
+   * second control protocol nobody had tested against anything but itself. These
+   * five name no feature, so adding a command or a topic adds nothing here.
    *
-   * The same rule `viewsInvoke` follows (D14): the click is the user's, the
-   * command id is the extension's, and an extension's own UI must not borrow the
-   * user's unconditional trust. Its own channel rather than `viewsInvoke` because
-   * a settings page has no registered view TYPE to be attributed through — its
-   * owner comes off the page, which the registry already records.
+   * The page still cannot name a topic: the preload passes constants, so what
+   * the bridge offers is the allow-list `agent-relay.ts` used to hold in a table.
    */
-  settingsInvoke: 'settings:invoke',
+  controlInvoke: 'control:invoke',
+  /** What the palette lists. A SNAPSHOT: the registry changes when an extension
+   * activates or is disposed, which never happens while a palette is open. */
+  controlList: 'control:list',
   /**
-   * "Put the screen up / take it down."
-   *
-   * The page ASKS; it does not decide. Main owns whether the screen is open
-   * (`settings-visibility.ts`) because the same answer feeds `presence.overlay`,
-   * and two copies of "what is on screen" is ADR 0035's mistake.
+   * Follow a topic. The FIRST frame is the topic's current value when it has one
+   * — snapshot and registration are one step, so a page can never fold a delta
+   * onto a state it never saw. That is `PtyFanout`'s rule on the control plane.
    */
-  settingsOpen: 'settings:open',
+  controlSubscribe: 'control:subscribe',
+  /**
+   * "I have read." The other half of pull-with-nudge (ADR 0031): a nudge stays
+   * outstanding until the reader comes back, so a chatty extension costs one
+   * frame per read rather than one per change.
+   */
+  controlPull: 'control:pull',
+  controlUnsubscribe: 'control:unsubscribe',
 } as const;
 
 /** Main → renderer, fire-and-forget (`webContents.send`). */
@@ -114,15 +80,19 @@ export const EMIT = {
    */
   sessionReshaped: 'session:reshaped',
   layoutChanged: 'layout:changed',
-  /** Agent state per session — the indicator's only source. */
-  agentsChanged: 'agents:changed',
-  /** A contributed view's data changed; re-ask for its rows. */
-  viewsChanged: 'views:changed',
-  /** One setting changed, whoever changed it — the screen, the CLI, an extension. */
-  settingsChanged: 'settings:changed',
-  /** Whether the settings screen is up. Main's word; the page draws it. */
-  settingsVisibility: 'settings:visibility',
+  /**
+   * One frame of one subscription. Every control-plane push arrives here —
+   * agent indicators, a changed setting, a view nudge — so main has no table of
+   * which topics may reach a page and no channel per feature.
+   */
+  controlFrame: 'control:frame',
 } as const;
+
+/** One frame, addressed to the subscription that asked for it. */
+export interface ControlFrameMessage {
+  readonly subscription: string;
+  readonly frame: ControlFrame;
+}
 
 export type InvokeChannel = (typeof INVOKE)[keyof typeof INVOKE];
 export type EmitChannel = (typeof EMIT)[keyof typeof EMIT];

@@ -1,18 +1,27 @@
-import { app, ipcMain, webContents } from 'electron';
-import type { Disposable, Logger } from '@shepherd/sdk';
-import type { AttentionStore, EventBus } from '@shepherd/core';
+import { app } from 'electron';
+import { KERNEL, type Disposable, type Logger } from '@shepherd/sdk';
+import type { AttentionStore, EventBus, TopicRegistry } from '@shepherd/core';
 import type { LayoutStore } from '@shepherd/core/layout';
-import { EMIT, INVOKE, type AgentIndicatorDTO, type IpcResult } from '../shared/index.ts';
+import { CONTROL_TOPICS, type AgentIndicatorDTO } from '../shared/index.ts';
 import { startAgentRelay, type AgentRelay, type AlertSink } from './agent-relay.ts';
 import { createSystemAlerts } from './system-alerts.ts';
 
 /**
- * The electron-shaped twenty lines around `agent-relay.ts`: push to every live
- * renderer, answer the pull, raise a real banner, set the dock badge.
+ * The electron-shaped twenty lines around `agent-relay.ts`: publish the set,
+ * raise a real banner, set the dock badge.
  *
  * Nothing here decides anything — same split as `layout-ipc.ts`. The decisions
  * (what crosses, whether a banner fires, what a dead host means) are in the
  * relay, where a test can reach them without an Electron process.
+ *
+ * **The push is a topic now, not a channel.** It used to be a
+ * `webContents.send` per live page plus an `agents:get` handler for the pull,
+ * and the page had to follow, pull, and merge the snapshot *under* whatever had
+ * already arrived — because a transition landing between the two calls would
+ * otherwise be overwritten by a snapshot taken before it. Declaring the topic
+ * with a snapshot provider makes the subscribe hand over the current set in the
+ * same step as the registration, so the race has no window to happen in and the
+ * merge rule has nothing to be right about.
  */
 
 export interface AgentIpc extends Disposable {
@@ -26,16 +35,17 @@ export interface AgentIpcOptions {
   readonly layout: LayoutStore;
   readonly attention: AttentionStore;
   readonly logger: Logger;
+  /** Where the topic is declared, so every client gets the same snapshot rule. */
+  readonly topics: TopicRegistry;
   /** Injected so a smoke can record alerts instead of stacking real banners. */
   readonly alerts?: AlertSink;
 }
 
 export function registerAgentIpc(options: AgentIpcOptions): AgentIpc {
   const publish = (indicators: readonly AgentIndicatorDTO[]): void => {
-    for (const contents of webContents.getAllWebContents()) {
-      if (contents.isDestroyed()) continue;
-      contents.send(EMIT.agentsChanged, indicators);
-    }
+    // `KERNEL`: main derived this from what an extension reported, and no verb
+    // was invoked. The same honest constant `viewing-topic.ts` uses.
+    options.bus.emit(CONTROL_TOPICS.agents, indicators, KERNEL);
   };
 
   const badge = (count: number): void => {
@@ -58,17 +68,24 @@ export function registerAgentIpc(options: AgentIpcOptions): AgentIpc {
     badge,
   });
 
-  ipcMain.handle(
-    INVOKE.agentsGet,
-    (): IpcResult<readonly AgentIndicatorDTO[]> => ({ ok: true, value: relay.snapshot() }),
-  );
+  const declared = options.topics.declare({
+    topic: CONTROL_TOPICS.agents,
+    delivery: 'push',
+    /**
+     * Push rather than nudge, and the difference is what the payload IS: an
+     * indicator set is small, complete and drawn directly, so a nudge would buy
+     * a round trip per change to fetch what the change already carried. ADR
+     * 0031's rule is for payloads a reader has to go and assemble.
+     */
+    snapshot: () => relay.snapshot(),
+  });
 
   return {
     relay,
     publish,
     badge,
     dispose: () => {
-      ipcMain.removeHandler(INVOKE.agentsGet);
+      declared.dispose();
       relay.dispose();
     },
   };

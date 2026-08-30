@@ -469,6 +469,16 @@ export const boundaries = [
         ['@shepherd/core/session*'],
         'the session registry lives in main; the renderer attaches over IPC.',
       ),
+      // Added with the control surface (core/UI isolation, Stage 2). The subpath
+      // exists so `shared/channels.ts` can name a frame's TYPE; a page that
+      // constructed a `ControlSurface` would hold a second, empty registry —
+      // every subscribe succeeding and no event ever arriving, which is the
+      // failure mode the ext-host rule already names one process along. The page
+      // reaches the control plane through the bridge, like everything else.
+      deny(
+        ['@shepherd/core/control*'],
+        'the control plane is reached through the preload bridge; a ControlSurface built in a page would be a second, empty kernel.',
+      ),
       // §7b's in-proc React seam, kept to ONE subpath (ADR 0033).
       //
       // `@shepherd/ext-*/ui` is an extension's own half of the page and is the

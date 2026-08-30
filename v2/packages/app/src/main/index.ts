@@ -28,7 +28,15 @@ import {
   SESSION_COMMANDS,
 } from '@shepherd/core';
 import { LayoutStore, registerLayoutCommands } from '@shepherd/core/layout';
-import { AttentionStore, SessionLifetime, ViewerRegistry, ViewingResolver, registerAttentionCommands } from '@shepherd/core';
+import {
+  AttentionStore,
+  ControlSurface,
+  SessionLifetime,
+  TopicRegistry,
+  ViewerRegistry,
+  ViewingResolver,
+  registerAttentionCommands,
+} from '@shepherd/core';
 import { diagnosticsManifest } from '@shepherd/ext-diagnostics/manifest';
 import { scratchManifest } from '@shepherd/ext-scratch/manifest';
 import { shellManifest } from '@shepherd/ext-shell/manifest';
@@ -94,7 +102,7 @@ import {
 import { menuDispatcher } from './menu-dispatch.ts';
 import { registerAgentIpc, type AgentIpc } from './agent-ipc.ts';
 import { hookRelay } from './hook-relay.ts';
-import { EMIT, INVOKE } from '../shared/index.ts';
+import { CONTROL_TOPICS } from '../shared/index.ts';
 import { agentPrincipals } from './agent-principals.ts';
 import { ViewRegistry } from './view-registry.ts';
 import { createSystemAlerts } from './system-alerts.ts';
@@ -104,12 +112,16 @@ import { publishViewingEdges } from './viewing-topic.ts';
 import { publishSessionBound } from './session-bound.ts';
 import { registerCaptureCommand } from './capture-command.ts';
 import { registerReloadCommand } from './reload-command.ts';
-import { registerSettingsCommands } from './settings-commands.ts';
+import {
+  registerSettingsCommands,
+  SETTINGS_CHANGED_TOPIC,
+  SETTINGS_VISIBILITY_TOPIC,
+} from './settings-commands.ts';
 import { registerSecretsCommands } from './secrets-commands.ts';
 import { keychainCipher } from './safe-storage.ts';
 import { GENERAL_PAGE } from './settings-general.ts';
-import { registerSettingsIpc } from './settings-ipc.ts';
 import { registerSettingsVisibility } from './settings-visibility.ts';
+import { registerControlIpc } from './control-ipc.ts';
 import { presenceFor } from './presence-input.ts';
 
 /**
@@ -477,6 +489,35 @@ const viewers = new ViewerRegistry();
  */
 const lifetime = new SessionLifetime({ end: (id) => void host.kill(id), logger });
 
+/**
+ * The control plane, once — and every client an adapter over it.
+ *
+ * `control.sock` and the renderer share this object. That is the whole of Stage
+ * 2: a protocol with exactly one in-process consumer is a protocol nobody has
+ * tested, and the socket's had one that never asked it for a snapshot or pushed
+ * back on it. What the page needed and the CLI never did — snapshot-then-delta
+ * and pull-with-nudge — is therefore implemented once, on the wire contract the
+ * kernel will keep when it leaves this process.
+ */
+const topics = new TopicRegistry();
+const surface = new ControlSurface({ commands: registry, bus, logger, topics });
+
+/**
+ * ADR 0031's nudge, declared as one.
+ *
+ * `onDidChange` on a view is "there is something new to ask for" — the host
+ * decides when to read, so a chatty extension cannot flood anyone. The key
+ * extractor is what keeps that from trading one flood for another: without it a
+ * coalesced nudge would say only "something changed" and the dock would re-read
+ * every contributed tree, each of which crosses a process boundary. An empty
+ * type has always meant "the SET moved", and it survives as "name nothing".
+ */
+topics.declare({
+  topic: CONTROL_TOPICS.views,
+  delivery: 'nudge',
+  key: (payload) => (typeof payload === 'string' && payload !== '' ? payload : undefined),
+});
+
 const layout = new LayoutStore({
   logger,
   clock: systemClock,
@@ -662,11 +703,16 @@ const views: ViewRegistry = new ViewRegistry({
     if (!result.ok) logger.warn('app', `a view row's command ${command} failed: ${result.error.message}`);
     return result;
   },
-  publish: (type) => {
-    for (const contents of webContents.getAllWebContents()) {
-      if (!contents.isDestroyed()) contents.send(EMIT.viewsChanged, type);
-    }
-  },
+  /**
+   * A contributed view changed — ADR 0031's nudge, on the bus.
+   *
+   * It used to be a `webContents.send` per live page, which is to say a private
+   * channel between main and the renderer with a topic name only main knew.
+   * Emitting instead means the socket, a paired device and the page all learn
+   * the same way, and the control surface is what decides that this topic
+   * coalesces (`delivery: 'nudge'`) rather than every reader re-deciding.
+   */
+  publish: (type) => bus.emit(CONTROL_TOPICS.views, type, KERNEL),
 });
 
 const extensionHost = new ExtensionHost({
@@ -909,11 +955,8 @@ void app.whenReady().then(async () => {
        * that the change came from another machine; it learns that a list it is
        * drawing is stale, which is all it has ever been told.
        */
-      onMemberViewChanged: (memberId, type) => {
-        for (const contents of webContents.getAllWebContents()) {
-          if (!contents.isDestroyed()) contents.send(EMIT.viewsChanged, qualify(memberId, type));
-        }
-      },
+      onMemberViewChanged: (memberId, type) =>
+        bus.emit(CONTROL_TOPICS.views, qualify(memberId, type), KERNEL),
     });
     registerRemoteCommands({ remote, registry, log: logger.child('session') });
     /**
@@ -965,6 +1008,17 @@ void app.whenReady().then(async () => {
     takeSeed: (id) => layout.takeInitialSeed(paneId(id)),
   });
   registerWindowIpc();
+
+  /**
+   * The renderer's front door to the control plane — the SAME surface
+   * `control.sock` serves, and the only way a page reaches a command or a topic.
+   *
+   * Registered here, before the window loads, for the reason every other handler
+   * is: the page's first act is to subscribe and invoke, and a handler that
+   * arrives afterwards answers "no handler registered" with nothing anywhere
+   * saying why.
+   */
+  registerControlIpc({ surface, logger });
 
   const layoutIpc = registerLayoutIpc({
     store: layout,
@@ -1023,15 +1077,6 @@ void app.whenReady().then(async () => {
 
   registerAttentionCommands({ store: attention, registry });
 
-  /**
-   * Contributed views, in the one verb table (§4.3).
-   *
-   * The renderer already reaches them over IPC; this is what lets the CLI, MCP
-   * and a paired DEVICE reach the same rows without a second implementation
-   * each — which is the thing v1 got wrong three times over.
-   */
-  registerViewCommands({ views, registry });
-
   // Before the extensions activate, so the first transition an agent publishes
   // has somewhere to land rather than being emitted at nobody.
   // Contributed views: three reads and one gesture. The page names a view type
@@ -1057,11 +1102,7 @@ void app.whenReady().then(async () => {
      * the way it is always told: a nudge, and it re-reads. No one view type
      * changed here, the SET did, so there is no type to name.
      */
-    changed: () => {
-      for (const contents of webContents.getAllWebContents()) {
-        if (!contents.isDestroyed()) contents.send(EMIT.viewsChanged, '');
-      }
-    },
+    changed: () => bus.emit(CONTROL_TOPICS.views, '', KERNEL),
     log: logger.child('session'),
   });
 
@@ -1080,37 +1121,18 @@ void app.whenReady().then(async () => {
     log: logger.child('session'),
   });
 
-  ipcMain.handle(
-    INVOKE.viewsPresent,
-    async (_event, type: string, presents: { id: string; args?: unknown }) => {
-      const memberId = memberOf(type);
-      if (memberId === undefined || !fromMembers.owns(type)) {
-        // Only a member's row goes through here. One of this Mac's own rows is
-        // activated, which already does the right thing on the machine it is on.
-        return { ok: true, value: { shown: false, reason: 'that view is local' } };
-      }
-      const effect = await fromMembers.present(type, presents);
-      if (effect === undefined) {
-        // The honest answer, and the one the row's own verb decided: a task with
-        // nothing running has no terminal to show, and an empty pane pretending
-        // otherwise is what `tasks.presentation` refuses to hand back.
-        return { ok: true, value: { shown: false, reason: 'nothing running to show' } };
-      }
-      if (effect.kind === 'view') {
-        // The sidebar already draws every member's views; a `view` effect is
-        // something the page focuses, not something main opens.
-        return { ok: true, value: { shown: false, reason: 'that row asked for a view' } };
-      }
-      const name = remote?.members().find((m) => m.memberId === memberId)?.name ?? memberId;
-      const shown = await presenter.present(memberId, name, effect);
-      return shown.ok
-        ? { ok: true, value: { shown: true } }
-        : { ok: true, value: { shown: false, reason: shown.error } };
-    },
-  );
-
-  ipcMain.handle(INVOKE.viewsList, async () => ({
-    ok: true,
+  /**
+   * The five view verbs, in the one table.
+   *
+   * They used to be five `ipcMain.handle` channels — a private door the app had
+   * and nothing else did, which is exactly what design §7 says must not exist.
+   * The bodies moved here unchanged; what changed is who can reach them. Three
+   * of them (`activate`, `invoke`, `present`) still refuse an external caller
+   * because their attribution makes them a way to BECOME an extension; see
+   * `in-process-only.ts`, and the handoff for what would lift it.
+   */
+  registerViewCommands({
+    registry,
     // This Mac's own first: they are the ones that always answer, and a sidebar
     // whose order depends on which machine replied fastest is a sidebar that
     // moves under the cursor.
@@ -1118,46 +1140,68 @@ void app.whenReady().then(async () => {
     // **Neither half is awaited over a wire.** This used to await
     // `fromMembers.list()`, which asks every member — so a profile with two
     // paired Macs that were switched off (packets dropped, not refused) never
-    // answered this call at all, and the renderer's sidebar stayed empty for the
-    // life of the process while the control socket, which asks nobody, answered
-    // in milliseconds. A member's views arrive on the nudge below instead.
-    value: [...views.list(), ...fromMembers.list()],
-  }));
-  ipcMain.handle(INVOKE.viewsChildren, async (_event, type: string, parent?: string) => ({
-    ok: true,
-    value: fromMembers.owns(type)
-      ? await fromMembers.children(type, parent)
-      : await views.children(type, parent),
-  }));
-  ipcMain.handle(INVOKE.viewsActivate, async (_event, type: string, command: { id: string; args?: unknown }) => {
-    if (fromMembers.owns(type)) await fromMembers.activate(type, command);
-    else await views.activate(type, command);
-    return { ok: true, value: undefined };
-  });
-  /**
-   * The same gesture, for a contributed component that has to show the answer.
-   *
-   * The kernel's own `Result` is what comes back from `ViewRegistry.invoke`, and
-   * it is passed through rather than unwrapped: a failed create is a value the
-   * form draws ("that path is not a git repo"), not an exception the page has to
-   * reconstruct from a mangled Electron error string.
-   */
-  ipcMain.handle(INVOKE.viewsInvoke, async (_event, type: string, command: string, args?: unknown) => {
-    const result = (await views.invoke(type, command, args)) as
-      | { ok: true; value: unknown }
-      | { ok: false; error: { code: string; message: string } }
-      | undefined;
-    if (result === undefined) {
-      // A view nobody owns. Reported rather than silently resolved: a form whose
-      // submit does nothing is the "and then nothing happens" branch v1's log
-      // rule exists for.
-      return { ok: false, error: { code: 'unknown-view', message: `no extension owns the view "${type}"` } };
-    }
-    if (result.ok) return { ok: true, value: result.value };
-    return { ok: false, error: { code: result.error.code, message: result.error.message } };
+    // answered at all, and the sidebar stayed empty for the life of the process
+    // while the control socket, which asks nobody, answered in milliseconds. A
+    // member's views arrive on the view nudge instead.
+    list: () => [...views.list(), ...fromMembers.list()],
+    children: async (type, parent) =>
+      fromMembers.owns(type) ? fromMembers.children(type, parent) : views.children(type, parent),
+    activate: async (type, command, args) => {
+      const verb = { id: command, ...(args === undefined ? {} : { args }) };
+      if (fromMembers.owns(type)) await fromMembers.activate(type, verb);
+      else await views.activate(type, verb);
+    },
+    /**
+     * The same gesture, for a contributed component that has to show the answer.
+     *
+     * A failure is thrown so the registry turns it into a `handler-failed`
+     * carrying the inner sentence — a refused create reaches the form as "that
+     * path is not a git repo" rather than as a silent no-op.
+     */
+    invoke: async (type, command, args) => {
+      const result = (await views.invoke(type, command, args)) as
+        | { ok: true; value: unknown }
+        | { ok: false; error: { code: string; message: string } }
+        | undefined;
+      if (result === undefined) {
+        // A view nobody owns. Reported rather than silently resolved: a form
+        // whose submit does nothing is the "and then nothing happens" branch
+        // v1's log rule exists for.
+        throw new Error(`no extension owns the view "${type}"`);
+      }
+      if (!result.ok) throw new Error(result.error.message);
+      return result.value;
+    },
+    present: async (type, command, args) => {
+      const memberId = memberOf(type);
+      if (memberId === undefined || !fromMembers.owns(type)) {
+        // Only a member's row goes through here. One of this Mac's own rows is
+        // activated, which already does the right thing on the machine it is on.
+        return { shown: false, reason: 'that view is local' };
+      }
+      const effect = await fromMembers.present(type, {
+        id: command,
+        ...(args === undefined ? {} : { args }),
+      });
+      if (effect === undefined) {
+        // The honest answer, and the one the row's own verb decided: a task with
+        // nothing running has no terminal to show, and an empty pane pretending
+        // otherwise is what `tasks.presentation` refuses to hand back.
+        return { shown: false, reason: 'nothing running to show' };
+      }
+      if (effect.kind === 'view') {
+        // The sidebar already draws every member's views; a `view` effect is
+        // something the page focuses, not something main opens.
+        return { shown: false, reason: 'that row asked for a view' };
+      }
+      const name = remote?.members().find((m) => m.memberId === memberId)?.name ?? memberId;
+      const shown = await presenter.present(memberId, name, effect);
+      return shown.ok ? { shown: true } : { shown: false, reason: shown.error };
+    },
   });
 
   agentIpc = registerAgentIpc({
+    topics,
     bus,
     layout,
     attention,
@@ -1332,15 +1376,34 @@ void app.whenReady().then(async () => {
    * presence is recomputed — because a takeover the predicate did not hear about
    * is a pane reported as seen while a settings screen covers it.
    */
-  const settingsIpc = registerSettingsIpc({ registry, bus, settings });
   registerSettingsVisibility({
     registry,
     onChange: (open) => {
       settingsOpen = open;
-      settingsIpc.pushVisibility(open);
+      // On the bus, like every other control-plane fact. The topic is declared
+      // WITH a snapshot below, so a page that mounted late is told at once
+      // rather than sitting for the life of the window believing the screen is
+      // down while it is up.
+      bus.emit(SETTINGS_VISIBILITY_TOPIC, { open }, KERNEL);
       syncPresence();
     },
   });
+  topics.declare({
+    topic: SETTINGS_VISIBILITY_TOPIC,
+    delivery: 'push',
+    snapshot: () => ({ open: settingsOpen }),
+  });
+  /**
+   * A changed setting reaches a page from the BUS, not from the write.
+   *
+   * So a change made anywhere — the CLI in a pane behind the window, an
+   * extension migrating a key on activation — updates an open settings screen. A
+   * push built into the write handler would only ever tell the window about its
+   * own writes. `settings-commands.ts` is what emits it; declaring it here is
+   * how the surface learns it is a plain push with no snapshot (the page reads
+   * `settings.list`, which is the snapshot).
+   */
+  topics.declare({ topic: SETTINGS_CHANGED_TOPIC, delivery: 'push' });
 
   // Extensions, after the command table exists and before the sockets open — so
   // a CLI client cannot arrive before `diagnostics.ping` is registered, and so a
@@ -1494,7 +1557,7 @@ void app.whenReady().then(async () => {
   // registered, so the first CLI client cannot arrive before there is anything
   // for it to invoke.
   ingress = await startIngress({
-    registry,
+    surface,
     bus,
     logger,
     support,

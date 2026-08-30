@@ -14,6 +14,10 @@
     "./layout": {
       "types": "./src/layout/index.ts",
       "default": "./src/layout/index.ts"
+    },
+    "./control": {
+      "types": "./src/control/index.ts",
+      "default": "./src/control/index.ts"
     }
   },
   "scripts": {

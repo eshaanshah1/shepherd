@@ -7,8 +7,7 @@ import {
   type Result,
   type Schema,
 } from '@shepherd/sdk';
-import type { CommandRegistry } from '../commands/registry.ts';
-import type { EventBus } from '../events/bus.ts';
+import type { ControlSurface, Subscription } from '../control/index.ts';
 import { UnixHttpServer, type Route } from './unix-http.ts';
 
 /**
@@ -23,11 +22,28 @@ import { UnixHttpServer, type Route } from './unix-http.ts';
  *
  * CLI-first by decision (§7b): MCP is deferred and would be another adapter over
  * the same registry, never a second verb table.
+ *
+ * Since the core/UI isolation work it adapts a `ControlSurface` rather than the
+ * registry directly, and that is the point rather than a refactor: the app's
+ * renderer adapts the SAME object over IPC, so snapshot-then-delta and
+ * pull-with-nudge are one implementation with two transports instead of a
+ * protocol whose only consumer never exercised it.
  */
 
 export const INVOKE_ROUTE = '/invoke';
 export const COMMANDS_ROUTE = '/commands';
 export const SUBSCRIBE_ROUTE = '/subscribe';
+/** What a client may follow, and how each topic behaves. */
+export const TOPICS_ROUTE = '/topics';
+/**
+ * "I have read" — the other half of pull-with-nudge (ADR 0031).
+ *
+ * A POST rather than something on the stream, because the stream is a one-way
+ * NDJSON response: HTTP has no upstream channel inside a response body, so the
+ * reader's acknowledgement has to be its own request. The subscription names
+ * itself in the stream's first frame.
+ */
+export const PULL_ROUTE = '/pull';
 
 interface InvokePost {
   command: string;
@@ -58,16 +74,26 @@ const invokePostSchema: Schema<InvokePost> = s.object({
 
 export interface ControlIngressOptions {
   readonly path: string;
-  readonly commands: CommandRegistry;
-  readonly bus: EventBus;
+  readonly surface: ControlSurface;
   readonly logger: Logger;
 }
 
+interface PullPost {
+  subscription: string;
+}
+
+const pullPostSchema: Schema<PullPost> = s.object({ subscription: s.string() });
+
 export class ControlIngress {
   readonly #server: UnixHttpServer;
+  /** Live subscriptions, so `/pull` can find the one a reader names. */
+  readonly #subscriptions = new Map<string, Subscription>();
+  #nextSubscription = 0;
 
   constructor(options: ControlIngressOptions) {
     const log = options.logger.child('ingress');
+    const subscriptions = this.#subscriptions;
+    const nextId = (): string => `sub-${(this.#nextSubscription += 1)}`;
 
     const invoke: Route = {
       method: 'POST',
@@ -81,7 +107,7 @@ export class ControlIngress {
         }
 
         const { command, args, caller, timeoutMs } = parsed.value;
-        const result = await options.commands.invoke(
+        const result = await options.surface.invoke(
           command,
           args,
           caller,
@@ -99,7 +125,44 @@ export class ControlIngress {
     const list: Route = {
       method: 'GET',
       path: COMMANDS_ROUTE,
-      handle: () => ({ kind: 'json', status: 200, body: { ok: true, value: options.commands.list() } }),
+      handle: () => ({ kind: 'json', status: 200, body: { ok: true, value: options.surface.list() } }),
+    };
+
+    const topics: Route = {
+      method: 'GET',
+      path: TOPICS_ROUTE,
+      handle: () => ({ kind: 'json', status: 200, body: { ok: true, value: options.surface.topics.list() } }),
+    };
+
+    const pull: Route = {
+      method: 'POST',
+      path: PULL_ROUTE,
+      handle({ body }) {
+        const parsed = pullPostSchema.parse(body);
+        if (!parsed.ok) {
+          return {
+            kind: 'json',
+            status: 400,
+            body: { ok: false, error: { code: 'invalid-request', message: 'a subscription id is required' } },
+          };
+        }
+        const subscription = subscriptions.get(parsed.value.subscription);
+        if (subscription === undefined) {
+          // 404, not 200: a reader pulling a subscription that has gone is a
+          // reader that will wait forever for a nudge nobody can send, and it
+          // has to be able to tell that from "you are caught up".
+          return {
+            kind: 'json',
+            status: 404,
+            body: {
+              ok: false,
+              error: { code: 'unknown-subscription', message: `no subscription ${parsed.value.subscription}` },
+            },
+          };
+        }
+        subscription.pull();
+        return { kind: 'json', status: 200, body: { ok: true, value: { pulled: true } } };
+      },
     };
 
     /**
@@ -118,13 +181,20 @@ export class ControlIngress {
         return {
           kind: 'ndjson',
           open(write) {
-            const subscription = options.bus.on(topic, (payload, envelope) => {
-              write({ topic, payload, envelope });
-            });
-            log.debug(`subscriber attached to ${topic}`);
+            const id = nextId();
+            /*
+             * The id goes out BEFORE any frame the subscription produces, so a
+             * reader that sees a nudge already knows what to pull. It is the
+             * same "these are one step" discipline the snapshot follows, and it
+             * is why `open` writes rather than returning a header.
+             */
+            write({ kind: 'open', topic, subscription: id });
+            const subscription = options.surface.subscribe(topic, (frame) => write(frame));
+            subscriptions.set(id, subscription);
             return toDisposable(() => {
+              subscriptions.delete(id);
               subscription.dispose();
-              log.debug(`subscriber left ${topic}`);
+              log.debug(`subscriber ${id} left ${topic}`);
             });
           },
         };
@@ -135,7 +205,7 @@ export class ControlIngress {
       path: options.path,
       logger: options.logger,
       name: 'control',
-      routes: [invoke, list, subscribe],
+      routes: [invoke, list, topics, subscribe, pull],
     });
   }
 

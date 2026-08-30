@@ -1,5 +1,5 @@
 import { mkdir } from 'node:fs/promises';
-import { ControlIngress, EventsIngress, type CommandRegistry, type EventBus } from '@shepherd/core';
+import { ControlIngress, EventsIngress, type ControlSurface, type EventBus } from '@shepherd/core';
 import type { Logger, Permission } from '@shepherd/sdk';
 import { PERMISSIONS, sessionId } from '@shepherd/sdk';
 import { flagValue } from './bootstrap.ts';
@@ -85,7 +85,12 @@ export const LOCAL_DEVICE_ID = 'local-cli';
 export const LOCAL_DEVICE_PERMISSIONS: readonly Permission[] = PERMISSIONS;
 
 export interface IngressOptions {
-  readonly registry: CommandRegistry;
+  /**
+   * The control plane, shared with the renderer's own adapter. The socket owns
+   * no verbs and no subscription semantics of its own — that is the property it
+   * has had since M2, now extended to the second client.
+   */
+  readonly surface: ControlSurface;
   readonly bus: EventBus;
   readonly logger: Logger;
   readonly support: string;
@@ -138,8 +143,7 @@ export async function startIngress(options: IngressOptions): Promise<RunningIngr
         });
   const control = new ControlIngress({
     path: options.controlSocket,
-    commands: options.registry,
-    bus: options.bus,
+    surface: options.surface,
     logger: options.logger,
   });
   if (events === undefined) log.info('the daemon is serving agent hooks; not opening our own socket');
