@@ -6,6 +6,7 @@ import { PixelSheep } from '../sky-strip.tsx';
 import { raiseIcon } from '../view-dock.tsx';
 import type { RowAnswer, RowDiff, RowRepo } from './row-facts.ts';
 import { liveCount, triage, type TriageEntry, type TriageSection } from './triage.ts';
+import { REGION_COLUMNS, TRAIL_ORDER, ageFor, type RegionColumns, type TrailCell } from './columns.ts';
 import type { FaceTab } from './faces.ts';
 import type { Face } from './nav.ts';
 
@@ -165,6 +166,8 @@ function TriageRow({
   onOpenFace: (entry: TriageEntry, face: Face) => void;
 }): ReactElement {
   const sub = subtitleOf(entry, group);
+  const columns = REGION_COLUMNS[group];
+  const cells = TRAIL_ORDER.filter((cell) => columns.cells.includes(cell));
   /*
    * A place has no faces — a loose shell has no diff to read and no brief that
    * asked for it — and neither has a row for something that never ran.
@@ -212,34 +215,44 @@ function TriageRow({
         {sub === undefined ? null : <span className="sh-take__sub">{sub}</span>}
       </span>
       {/*
-        The metadata and the shortcuts share ONE grid cell, stacked. Revealing
-        the icons must not move the numbers — a row whose contents shift under
-        the cursor is a row whose target moved mid-click.
+        One cell per column the REGION draws, in `TRAIL_ORDER`, each pinned to
+        its own track by `data-cell` — so `age` is the last thing on every row
+        that has one and a row missing a `diff` does not slide its repo chip
+        into the diff's column. `columns.ts` holds the argument for which cells
+        a region gets; the point here is only that the row does not choose.
+
+        A cell the region asked for whose fact is absent draws EMPTY rather than
+        being skipped. That is the difference between a column and a queue: the
+        track stays, so the rows either side of it still line up.
       */}
-      <span className="sh-take__trail">
-        <span className="sh-take__meta">
-          <Repos repos={entry.facts.repos} />
-          <Diff diff={entry.facts.diff} />
-          {entry.facts.elapsed === undefined ? null : <span>{entry.facts.elapsed}</span>}
+      {cells.map((cell) => (
+        <span className="sh-take__cell" data-cell={cell} key={cell}>
+          <Cell cell={cell} entry={entry} grain={columns.grain} />
         </span>
-        {shortcuts.length === 0 ? null : (
-          <span className="sh-take__acts">
-            {shortcuts.map((tab) => (
-              <IconButton
-                key={tab.face}
-                label={`${tab.label} — ${entry.label}`}
-                size="sm"
-                icon={raiseIcon(FACE_GLYPH[tab.face])}
-                onClick={(event) => {
-                  // The row underneath opens on Agents; this one opens on a face.
-                  event.stopPropagation();
-                  onOpenFace(entry, tab.face);
-                }}
-              />
-            ))}
-          </span>
-        )}
-      </span>
+      ))}
+      {/*
+        The shortcuts sit OVER the trailing cells — same tracks, revealed by
+        `visibility` — because revealing them must not move the numbers. A row
+        whose contents shift under the cursor is a row whose target moved
+        mid-click.
+      */}
+      {shortcuts.length === 0 ? null : (
+        <span className="sh-take__jump">
+          {shortcuts.map((tab) => (
+            <IconButton
+              key={tab.face}
+              label={`${tab.label} — ${entry.label}`}
+              size="sm"
+              icon={raiseIcon(FACE_GLYPH[tab.face])}
+              onClick={(event) => {
+                // The row underneath opens on Agents; this one opens on a face.
+                event.stopPropagation();
+                onOpenFace(entry, tab.face);
+              }}
+            />
+          ))}
+        </span>
+      )}
     </div>
   );
 }
@@ -265,6 +278,28 @@ const FACE_GLYPH: Record<Exclude<Face, 'agents'>, string> = {
 function subtitleOf(entry: TriageEntry, group: TriageSection['group']): string | undefined {
   if (group === 'later' && entry.facts.snooze !== undefined) return `until ${entry.facts.snooze.label}`;
   return entry.facts.summary ?? entry.description;
+}
+
+/**
+ * One trailing column's contents, or nothing.
+ *
+ * Nothing, and not `null` from the caller: the CELL is drawn either way, so a
+ * row with no diff still holds the diff column open for the rows around it.
+ * This decides only what goes in it.
+ */
+function Cell({
+  cell,
+  entry,
+  grain,
+}: {
+  cell: TrailCell;
+  entry: TriageEntry;
+  grain: RegionColumns['grain'];
+}): ReactElement | null {
+  if (cell === 'repos') return <Repos repos={entry.facts.repos} />;
+  if (cell === 'diff') return <Diff diff={entry.facts.diff} />;
+  const age = ageFor(entry.facts.elapsed, grain);
+  return age === undefined ? null : <>{age}</>;
 }
 
 function Repos({ repos }: { repos: readonly RowRepo[] | undefined }): ReactElement | null {

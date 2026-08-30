@@ -189,11 +189,36 @@
   padding: 0 var(--sh-space-huge) 96px;
 }
 
+/*
+ * ── a region, and its columns ───────────────────────────────────────────────
+ *
+ * **The SECTION owns the tracks and the rows subgrid onto them.** This is the
+ * whole alignment mechanism, and it is here rather than on the row because
+ * alignment is a fact about siblings — a row laid out alone can only ever agree
+ * with itself, which is exactly how this went wrong: every row sized its own
+ * trailing area to its own facts, so three rows under one heading ended in three
+ * different places.
+ *
+ * `auto` and not a width. A track sizes to the widest cell in the REGION, so the
+ * columns are as wide as the region's content needs and no wider, a column no
+ * row in this region draws collapses to nothing, and there is no number here to
+ * go stale when a repo gets a longer name. `columns.ts` decides which cells a
+ * region draws at all; this only draws them straight.
+ *
+ * `column-gap: 0`, and the air lives in the cells' own `padding-inline-start`
+ * instead — because a gap is charged for a collapsed track too, and a region
+ * that draws one column would still pay for three.
+ */
 .sh-take__group {
   margin-block-start: 28px;
+  display: grid;
+  grid-template-columns: var(--sh-mark-slot) minmax(0, 1fr) auto auto auto;
+  column-gap: 0;
 }
 
+/* A heading is about the region, not about a column in it. */
 .sh-take__grouphead {
+  grid-column: 1 / -1;
   display: flex;
   align-items: center;
   gap: var(--sh-space-mid);
@@ -233,10 +258,20 @@
 /* ── a row ─────────────────────────────────────────────────────────────────── */
 
 .sh-take__row {
+  /*
+   * The region's tracks, borrowed. `subgrid` and not a track list of its own:
+   * a row that declared `auto` here would size that column to ITS OWN content
+   * and line up with nothing, which is the defect this replaced.
+   *
+   * The negative margin and the equal padding below cancel exactly, so the
+   * row's borrowed tracks land on the region's — a subgrid's edges absorb its
+   * own margin, border and padding, and one `--sh-space-mid` out plus one in
+   * is zero.
+   */
+  grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: var(--sh-mark-slot) 1fr auto;
+  grid-template-columns: subgrid;
   align-items: center;
-  gap: 11px;
   block-size: var(--sh-take-row);
   padding-inline: var(--sh-space-mid);
   margin-inline: calc(-1 * var(--sh-space-mid));
@@ -262,6 +297,8 @@
 }
 
 .sh-take__name {
+  /* The gap the row used to carry, moved onto the cell — see `column-gap: 0`. */
+  padding-inline-start: 11px;
   font-size: var(--sh-font-size-body);
   color: var(--sh-text-faint);
   white-space: nowrap;
@@ -291,14 +328,72 @@
   font-weight: 400;
 }
 
-.sh-take__meta {
+/*
+ * One trailing cell, pinned to the track its KIND owns — so `age` is the last
+ * thing on every row that has one, and a row with no diff does not slide its
+ * repo chip into the diff's column. The tracks are numbered by `TRAIL_ORDER`
+ * and the two lists have to agree; `columns.css.test.ts` asserts that they do.
+ */
+.sh-take__cell {
   display: flex;
   align-items: center;
   gap: var(--sh-space-lg);
+  padding-inline-start: var(--sh-space-lg);
   font-family: var(--sh-font-data);
   font-variant-numeric: tabular-nums slashed-zero;
   font-size: var(--sh-micro-font-size);
   color: var(--sh-text-mute);
+  white-space: nowrap;
+}
+
+/*
+ * The variable cells first, then the repo — which is LAST because it is the one
+ * cell every region draws, so it and not a sometimes-absent number is what the
+ * eye reads as the row's right edge.
+ *
+ * All three end-aligned, for the same reason: the edge is the thing being held
+ * straight, and a start-aligned last column would leave it ragged by the
+ * difference between the longest repo name and the shortest.
+ */
+.sh-take__cell[data-cell='diff'] {
+  grid-column: 3;
+  justify-content: end;
+}
+
+.sh-take__cell[data-cell='age'] {
+  grid-column: 4;
+  justify-content: end;
+  /*
+   * **The one track that reserves its widest form instead of sizing to what is
+   * in it**, because it is the one whose content changes on a CLOCK.
+   *
+   * Every other cell changes only when the work does — a redraw you caused, and
+   * therefore one you are already looking at. The age ticks on a minute timer
+   * with nobody touching anything, and an `auto` track re-sized itself the
+   * moment a row crossed from `9m` to `10m`: the region's widest stamp grew a
+   * character, the `1fr` name gave up the space, and the diff column stepped
+   * left under the cursor on every row in the region. §8's rule about motion
+   * that moves a control, arriving from a direction nothing was watching.
+   *
+   * `4ch` in the cell's OWN font, not a track width on the section: `ch` there
+   * would resolve against the section's sans body font rather than this cell's
+   * tabular data font, and reserve the wrong amount. Four covers every stamp
+   * `formatElapsed` can produce — `59m`, `23h`, and days to three digits — so
+   * the track is sized by the format rather than by today's contents.
+   *
+   * **Plus the padding, because `box-sizing` is `border-box` app-wide**
+   * (`styles.css`) and a bare `4ch` is therefore the BORDER box: the cell's own
+   * `padding-inline-start` comes out of it and the text gets three characters
+   * and a bit. Shipped that way it under-reserved by exactly the padding, and
+   * the smoke's tick probe is what caught it — a unit test asserting `4ch` was
+   * declared passed, because the defect was in what `4ch` MEANS here.
+   */
+  min-inline-size: calc(4ch + var(--sh-space-lg));
+}
+
+.sh-take__cell[data-cell='repos'] {
+  grid-column: 5;
+  justify-content: end;
 }
 
 .sh-take__add {
@@ -352,6 +447,8 @@
  * reading it.
  */
 .sh-take__card {
+  /* A card is about the whole region, not about a column in it. */
+  grid-column: 1 / -1;
   display: block;
   inline-size: 100%;
   text-align: start;
@@ -823,33 +920,45 @@
  * mid-click. `:focus-within` is not optional: the shortcuts are the only way to
  * reach a face by keyboard from here.
  */
-.sh-take__trail {
-  display: grid;
-  grid-template-areas: 'stack';
-  align-items: center;
-  justify-items: end;
-}
-
-.sh-take__trail > * {
-  grid-area: stack;
-}
-
-.sh-take__acts {
+/*
+ * `__jump`, and NOT `__acts` — the name is the bug fix.
+ *
+ * These were both called `.sh-take__acts`: the question card's two answer verbs
+ * and the row's hover shortcuts, declared 500 lines apart at equal specificity.
+ * The later rule won, so the card's `Allow` / `Deny` / `Later` buttons inherited
+ * this block's `visibility: hidden` and were never on screen — revealed only by
+ * `.sh-take__row:hover`, and a card is not a row. The one control on Home you
+ * cannot reach any other way was invisible, and no test could see it because
+ * both buttons were in the DOM and both were clickable.
+ *
+ * They are two different controls with two different rules and they now have two
+ * different names.
+ */
+.sh-take__jump {
+  /*
+   * OVER the trailing cells, in the same tracks: the numbers must not move when
+   * the cursor arrives. Spanning to `-1` also means the region reserves room for
+   * the icons even where it draws no cells at all, so `Later` — which draws none
+   * — still has somewhere to put them without growing on hover.
+   */
+  grid-column: 3 / -1;
+  grid-row: 1;
+  justify-self: end;
   display: flex;
   gap: 2px;
   visibility: hidden;
-  /* Sits on the row's own ground so the metadata underneath cannot show through. */
+  /* Sits on the row's own ground so the cells underneath cannot show through. */
   background: var(--sh-surface);
   padding-inline-start: var(--sh-space-md);
 }
 
-.sh-take__row:hover .sh-take__acts,
-.sh-take__row:focus-within .sh-take__acts {
+.sh-take__row:hover .sh-take__jump,
+.sh-take__row:focus-within .sh-take__jump {
   visibility: visible;
 }
 
-.sh-take__row:hover .sh-take__meta,
-.sh-take__row:focus-within .sh-take__meta {
+.sh-take__row:hover .sh-take__cell,
+.sh-take__row:focus-within .sh-take__cell {
   /* Hidden rather than removed, for the same no-reflow reason. */
   visibility: hidden;
 }

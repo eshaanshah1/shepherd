@@ -234,6 +234,70 @@ export async function runTakeoverSmoke(win: BrowserWindow, controlSocket: string
     assertInWindow('home controls', home);
   }
 
+  // ── A region's columns line up ────────────────────────────────────────────
+  //
+  // The defect: a row sized its own trailing area to its own facts, so a row
+  // carrying an age ended sixty pixels short of one that did not, and no two
+  // rows under a heading agreed on where anything to the right of the name sat.
+  // The fix is a subgrid — the SECTION owns the tracks — which is a property of
+  // the stylesheet under a real layout engine and of nothing a unit test can
+  // reach: jsdom parses `subgrid` and lays out nothing.
+  //
+  // Measured on a PROBE rather than on the fixture rows, and the reason is the
+  // fact under test. `elapsed` is absent for the first minute of a task's state
+  // by design (`formatElapsed`), so a smoke that runs in seconds cannot produce
+  // the uneven region this exists to catch. The probe builds one: three rows,
+  // one of them carrying an age, in the real sheet's own classes.
+  {
+    const aligned = (await win.webContents.executeJavaScript(`
+      (() => {
+        const home = document.querySelector('[data-testid="takeover-home"]');
+        if (home === null) return { ok: false, why: 'no home' };
+        const section = document.createElement('section');
+        section.className = 'sh-take__group';
+        section.innerHTML = [0, 1, 2].map((n) => \`
+          <div class="sh-take__row">
+            <span class="sh-take__prompt"></span>
+            <span class="sh-take__name"><b>Row \${n}\${'—'.repeat(n * 6)}</b></span>
+            <span class="sh-take__cell" data-cell="repos">shepherd</span>
+            <span class="sh-take__cell" data-cell="age">\${n === 1 ? '3m' : ''}</span>
+          </div>\`).join('');
+        home.append(section);
+        const left = (n, kind) => Math.round(
+          section.children[n].querySelector('[data-cell="' + kind + '"]').getBoundingClientRect().x,
+        );
+        const repos = [0, 1, 2].map((n) => left(n, 'repos'));
+        const ages = [0, 1, 2].map((n) => left(n, 'age'));
+        // …and again with a stamp a character longer. The age is the one cell
+        // that changes on a CLOCK rather than because the work changed, so its
+        // track must not re-size when a row crosses from 9m to 10m.
+        section.children[1].querySelector('[data-cell="age"]').textContent = '148d';
+        const ticked = { repos: left(0, 'repos'), age: left(0, 'age') };
+        section.remove();
+        return { ok: true, repos, ages, ticked };
+      })()
+    `)) as {
+      ok: boolean;
+      why?: string;
+      repos?: number[];
+      ages?: number[];
+      ticked?: { repos: number; age: number };
+    };
+
+    check(aligned.ok, `home: the column probe ran (${aligned.why ?? ''})`);
+    const one = (xs: number[] | undefined): boolean => xs !== undefined && new Set(xs).size === 1;
+    // The whole claim: a row that has an age and two rows that do not still put
+    // their repo chips on the same pixel.
+    check(one(aligned.repos), `home: repo chips share a column (${JSON.stringify(aligned.repos)})`);
+    check(one(aligned.ages), `home: ages share a column (${JSON.stringify(aligned.ages)})`);
+    // The age reserves its widest form, so a longer stamp moves nothing.
+    check(
+      aligned.ticked?.repos === aligned.repos?.[0] && aligned.ticked?.age === aligned.ages?.[0],
+      `home: a longer age stamp moves no column (${JSON.stringify(aligned.ticked)})`,
+    );
+    say(`home: columns at repos=${aligned.repos?.[0]} age=${aligned.ages?.[0]}`);
+  }
+
   // ── Shells: a band in the column, with the panes under it ─────────────────
   {
     await press(win, '0');
