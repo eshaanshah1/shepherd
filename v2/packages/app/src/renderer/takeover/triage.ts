@@ -31,6 +31,12 @@ export type TriageGroup = 'needs' | 'running' | 'ship' | 'later' | 'resting' | '
 /**
  * Top to bottom, and it is the design rather than a preference.
  *
+ * `later` sits BELOW `resting`, which reads backwards until you remember what
+ * snoozing is: an answer. A resting task is unanswered — you have not said when
+ * you will look at it — so it is still yours to place. A snoozed one has a date
+ * on it and is the only region on this screen you have already dealt with, so it
+ * ranks under the work you have not.
+ *
  * `shells` sits between the work and the record deliberately: a loose terminal
  * is a PLACE, not a task — it has no lifecycle and never enters the queue — so
  * it belongs below everything that can ask for you and above what is finished.
@@ -39,8 +45,8 @@ export const TRIAGE_ORDER: readonly TriageGroup[] = [
   'needs',
   'running',
   'ship',
-  'later',
   'resting',
+  'later',
   'shells',
   'shipped',
 ];
