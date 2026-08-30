@@ -493,9 +493,24 @@ export function useTakeover({
             entry={byId.get(task.id) ?? null}
             fallbackName={task.root}
             onBack={() => setNav(pop)}
-            onAction={(command) =>
-              invoke(command.id, (command.args ?? {}) as Readonly<Record<string, unknown>>)
-            }
+            onAction={(action) => {
+              invoke(action.id, (action.args ?? {}) as Readonly<Record<string, unknown>>);
+              /*
+               * And leave, when the row says the verb ends this screen.
+               *
+               * Ship closes the task's panes and Unship tears the snapshot down
+               * to rebuild it, so staying put means watching the window you are
+               * in be dismantled — with no stage left, and a band naming a task
+               * that has moved to another region of the overview. The work goes
+               * on behind the row's own busy mark, which is where progress
+               * belongs; the gesture is over the moment it is made.
+               *
+               * `pop` rather than `home()`, the same move `defer` makes: it is
+               * the way OUT of this screen, and from a task you opened off the
+               * overview that is the overview.
+               */
+              if (action.leaves === true) setNav(pop);
+            }}
             tabs={tabs}
             face={task.face}
             onFace={(next) => setNav((current) => withFace(current, next))}

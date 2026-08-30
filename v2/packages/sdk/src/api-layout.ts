@@ -774,6 +774,23 @@ export interface TreeItem {
      * because that is when shipping kills something that was working.
      */
     readonly confirm?: string;
+    /**
+     * Running this ENDS the screen the row stands for — a client showing that
+     * screen should leave it.
+     *
+     * Declared by the extension for the reason every other field here is (ADR
+     * 0031): only `tasks` knows that shipping closes a task's panes and files it
+     * under Shipped, and a shell that popped its window whenever a hardcoded id
+     * came past would be a shell that knows what a task is. A row in a sidebar
+     * has no screen to leave and ignores it; the takeover, where the window IS
+     * the task, goes back.
+     *
+     * Both halves of a pair may carry it, and `tasks` sets it on both: Ship
+     * closes the panes you would be left staring at, and Unship tears the
+     * snapshot down to rebuild the real thing in its place. The rule is not
+     * "this is destructive" — it is "what you are looking at will not be there".
+     */
+    readonly leaves?: boolean;
   };
 }
 

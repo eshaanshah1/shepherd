@@ -280,6 +280,52 @@ describe('opening a row', () => {
     view.unmount();
   });
 
+  it('leaves the task when the row says its verb ends the screen', async () => {
+    /*
+     * Ship, from inside the thing being shipped. The verb runs and the window
+     * goes back to the overview on the same press — the shelving is git and it
+     * finishes behind the row's busy mark, with nobody watching a task have its
+     * panes closed underneath them.
+     *
+     * `leaves` is the row's, not the shell's: nothing here knows what
+     * `tasks.archive` does, only that the extension said this press ends the
+     * screen.
+     */
+    const shippable = task({
+      id: 'relay',
+      tint: 'working',
+      primaryAction: { id: 'tasks.archive', label: 'Ship', args: { task: 'relay' }, leaves: true },
+    });
+    const { view, calls } = render({ rows: { 'tasks.tree': [shippable] } });
+    await settle();
+    act(() => (all(view.container, 'takeover-row')[0] as HTMLElement).click());
+    expect(all(view.container, 'takeover-task')).toHaveLength(1);
+
+    act(() => one(view.container, 'takeover-primary').click());
+    expect(calls.at(-1)).toEqual({ command: 'tasks.archive', args: { task: 'relay' } });
+    expect(all(view.container, 'takeover-home')).toHaveLength(1);
+    view.unmount();
+  });
+
+  it('stays put for a primary verb that does NOT end the screen', async () => {
+    // The default, and it has to be: a row's one button is "the thing you do to
+    // this most", which for anything but a lifecycle verb leaves you where you
+    // were. Popping on every press would be the shell deciding what a verb means.
+    const staying = task({
+      id: 'relay',
+      tint: 'working',
+      primaryAction: { id: 'tasks.rerun', label: 'Rerun', args: { task: 'relay' } },
+    });
+    const { view, calls } = render({ rows: { 'tasks.tree': [staying] } });
+    await settle();
+    act(() => (all(view.container, 'takeover-row')[0] as HTMLElement).click());
+    act(() => one(view.container, 'takeover-primary').click());
+    expect(calls.at(-1)?.command).toBe('tasks.rerun');
+    expect(all(view.container, 'takeover-task')).toHaveLength(1);
+    expect(all(view.container, 'takeover-home')).toHaveLength(0);
+    view.unmount();
+  });
+
   it('raises the composer by NAME rather than importing it', async () => {
     const { view, raised } = render({ rows: {} });
     await settle();

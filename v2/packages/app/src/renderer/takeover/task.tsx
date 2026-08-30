@@ -23,7 +23,9 @@ import type { TriageEntry } from './triage.ts';
  * **The verb on the right is the extension's.** A row declares a
  * `primaryAction` — ship it, restore it, whatever the thing it stands for is
  * ready for — and the band draws that. The shell has no idea what shipping is,
- * which is the same rule that keeps `tasks.reveal` out of this file.
+ * which is the same rule that keeps `tasks.reveal` out of this file. It does not
+ * learn it by pressing, either: whether the press also ENDS this screen is the
+ * row's own `leaves`, handed back to the caller unread.
  *
  * **The face tabs are the extension's too**, and one step further: the shell
  * does not even know which of them exist. `Agents` is always there because it
@@ -38,7 +40,12 @@ export interface TakeoverTaskProps {
   /** A name to show before the first push lands, so the band is never blank. */
   readonly fallbackName: string;
   readonly onBack: () => void;
-  readonly onAction: (command: { readonly id: string; readonly args?: unknown }) => void;
+  readonly onAction: (action: {
+    readonly id: string;
+    readonly args?: unknown;
+    /** The extension saying this verb ends the screen — see `TreeItem.primaryAction`. */
+    readonly leaves?: boolean;
+  }) => void;
   /** Only the faces something claims, in the order they are drawn. */
   readonly tabs: readonly FaceTab[];
   readonly face: Face;
@@ -112,7 +119,9 @@ export function TakeoverTask({
         <TakeButton
           kind="primary"
           data-testid="takeover-primary"
-          onClick={() => onAction({ id: primary.id, args: primary.args })}
+          onClick={() =>
+            onAction({ id: primary.id, args: primary.args, leaves: primary.leaves })
+          }
         >
           {primary.label}
         </TakeButton>

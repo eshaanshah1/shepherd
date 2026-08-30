@@ -99,6 +99,9 @@ export function useTriageEntries(options: {
                   id: row.primaryAction.id,
                   label: row.primaryAction.label,
                   args: row.primaryAction.args,
+                  ...(row.primaryAction.leaves === undefined
+                    ? {}
+                    : { leaves: row.primaryAction.leaves }),
                 },
               }),
         });

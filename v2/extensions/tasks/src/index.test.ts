@@ -1663,6 +1663,54 @@ describe('a task owns a layout root', () => {
       await expect(h.run('tasks.archive', { task: 't1' })).rejects.toThrow('unmerged');
       expect(h.invoked.slice(before).filter((call) => call.id === 'layout.closeRoot')).toEqual([]);
     });
+
+    it('ships the row FIRST and does the git behind it', async () => {
+      /*
+       * The gesture is finished the moment it is made; what is left is
+       * housekeeping. Pressing Ship on the screen you are IN used to hold you
+       * there for the seconds git takes — a task still calling itself active
+       * while its panes were closed underneath it.
+       *
+       * `write-tree` is the archive's first read, held open so the record can be
+       * asked what it says mid-operation.
+       */
+      let finish = (): void => undefined;
+      const held = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      const h = (live = harness({
+        tasks: [task()],
+        git: (call) => (call.args[0] === 'write-tree' ? held.then(() => archivable(call)) : archivable(call)),
+      }));
+
+      const archiving = h.run('tasks.archive', { task: 't1' });
+      await until(async () => (await h.run<{ id: string; lifecycle: string }[]>('tasks.list'))[0]?.lifecycle === 'archived');
+      // …and the worktree is still there, which is the half that takes the time.
+      expect(h.trace.some((line) => line.includes('worktree remove'))).toBe(false);
+
+      finish();
+      await archiving;
+      expect(h.trace.some((line) => line.includes('worktree remove'))).toBe(true);
+    });
+
+    it('un-ships the row again when the snapshot refuses', async () => {
+      // Optimism has to be able to take it back. A conflicted worktree stops
+      // before a pane is closed, so the only casualty would be a row filed as
+      // finished over work that is still on disk with a merge to resolve.
+      const h = (live = harness({
+        tasks: [task()],
+        git: (call) =>
+          call.args[0] === 'ls-files' && call.args[1] === '-u'
+            ? { ok: true, stdout: '100644 abc 1\tREADME.md\n', stderr: '' }
+            : OK,
+      }));
+
+      await expect(h.run('tasks.archive', { task: 't1' })).rejects.toThrow('unmerged');
+
+      const listed = await h.run<{ id: string; lifecycle: string; archivedAt?: number }[]>('tasks.list');
+      expect(listed[0]?.lifecycle).toBe('running');
+      expect(listed[0]?.archivedAt).toBeUndefined();
+    });
   });
 });
 
@@ -2432,6 +2480,20 @@ describe('the ship button', () => {
       icon: 'unship',
       args: { task: 't2' },
     });
+  });
+
+  it('says that BOTH verbs end the screen they were pressed on', async () => {
+    /*
+     * The takeover reads this and goes back to the overview. Shipping closes the
+     * task's panes and un-shipping tears the snapshot down to rebuild the live
+     * thing, so in either direction what you were looking at is not there a
+     * second later — and the shell cannot know that without being told.
+     */
+    const h = (live = harness({
+      tasks: [task(), task({ id: 't2', lifecycle: 'archived', archivedAt: 1 })],
+    }));
+    expect((await rowOf(h, 't1'))?.primaryAction?.leaves).toBe(true);
+    expect((await rowOf(h, 't2'))?.primaryAction?.leaves).toBe(true);
   });
 });
 

@@ -275,6 +275,8 @@ interface TreeActionOut {
   danger?: boolean;
   shortcut?: string;
   args?: unknown;
+  /** Running it ends the screen the row stands for — see `TreeItem.primaryAction`. */
+  leaves?: boolean;
 }
 
 const CORRELATE_ATTEMPTS = 10;
@@ -4038,9 +4040,33 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
          * the archive commit". Found by the smoke, which has real worktrees; no
          * unit test could have, which is the argument for that smoke existing.
          */
-        const warnings = isShelved(found) ? [] : (await shelve(found)).warnings;
-        const latest = store.get(found.id) ?? found;
-        store.put({ ...latest, lifecycle: 'archived', archivedAt: ctx.clock.now() });
+        /*
+         * **The flip goes FIRST, and the disk work runs behind it** — the same
+         * shape `tasks.restore` has, and for the same reason.
+         *
+         * Shelving is git: a snapshot commit per repo, then every pane closed,
+         * then 838 MB of worktree removed. That is seconds, and for all of them
+         * this used to leave the row exactly where it was — so pressing Ship on
+         * the screen you are IN kept you there, watching a task that still called
+         * itself active have its panes closed underneath it. The gesture is
+         * finished the moment it is made; what is left is housekeeping, and
+         * housekeeping does not get to hold the window.
+         *
+         * The row moves now, wearing `archiving…` and the busy mark that `shelve`
+         * puts on it, and the takeover leaves for the overview on the same tick
+         * (`primaryAction.leaves`).
+         *
+         * **Still awaited, so nothing else loses its guarantee.** The handler
+         * resolves when the git is genuinely done — `shepherd task archive`, the
+         * smoke and the unit tests all read this promise as "the worktree is
+         * gone", and answering early would make every one of them a race. The
+         * renderer is the caller that does not wait, which is precisely the
+         * caller this is for.
+         */
+        const before = store.get(found.id) ?? found;
+        const shelved = isShelved(before);
+        const flipped = { ...before, lifecycle: 'archived' as const, archivedAt: ctx.clock.now() };
+        store.put(flipped);
         /*
          * Shipping an incognito task is the end of its session, so its profile
          * goes now rather than at delete.
@@ -4052,9 +4078,32 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
          * user asked to have deleted. Restore still returns the worktrees and the
          * branch — the work — and opens a fresh agent on them.
          */
-        forgetProfile(latest);
+        forgetProfile(flipped);
         changed();
-        return { id: found.id, lifecycle: 'archived', warnings };
+        if (shelved) return { id: found.id, lifecycle: 'archived', warnings: [] };
+        try {
+          const { warnings } = await shelve(flipped);
+          return { id: found.id, lifecycle: 'archived', warnings };
+        } catch (error: unknown) {
+          /*
+           * **Optimism has to be able to take it back.** `shelve` refuses rather
+           * than half-succeeding — a conflicted index cannot be snapshotted, and
+           * it stops before a single pane is closed — so on that path the work is
+           * untouched and a row left in Shipped would be the only casualty: a
+           * task filed as finished whose worktree is still on disk with the merge
+           * still to resolve.
+           *
+           * Rolled back only if nothing else has moved it since. A restore that
+           * raced in behind the failure is a newer answer than this one.
+           */
+          const latest = store.get(found.id);
+          if (latest !== undefined && latest.lifecycle === 'archived') {
+            const { archivedAt: _unshipped, ...rest } = latest;
+            store.put({ ...rest, lifecycle: before.lifecycle });
+            changed();
+          }
+          throw error;
+        }
       },
     }),
   );
@@ -5252,6 +5301,17 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
                     label: 'Unship',
                     icon: 'unship',
                     args: { task: task.id },
+                    /*
+                     * And it ENDS the screen it was pressed on, like Ship does.
+                     *
+                     * What you are looking at when a shipped task is on screen
+                     * is the snapshot — captured screens, no worktree, no pty
+                     * (ADR 0042). Restoring closes exactly those tabs and builds
+                     * the live ones in their place, so staying would mean
+                     * watching the thing you are reading be taken apart. The row
+                     * says `Restoring` while it happens.
+                     */
+                    leaves: true,
                   }
                 : {
                     id: TASK_COMMANDS.archive,
@@ -5278,6 +5338,23 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
                      */
                     icon: task.incognito === true ? 'trash' : 'ship',
                     args: { task: task.id },
+                    /*
+                     * **Pressing it is the last thing you do to this task**, so a
+                     * client whose whole window IS the task leaves for the
+                     * overview and lets the shelving finish behind the row.
+                     *
+                     * The alternative is what shipped: the takeover held you on
+                     * a task while its panes were closed underneath, its stage
+                     * emptied, and its row moved to another region of the screen
+                     * you were not on. Ship is the gesture made most and it is
+                     * made when you are DONE looking — the window should be back
+                     * where the next decision is.
+                     *
+                     * Declared rather than known, for the same reason the label
+                     * and the confirm are: only this extension knows that
+                     * shipping closes a task's panes.
+                     */
+                    leaves: true,
                     /*
                      * Instant when nothing is running, and a question when
                      * something is.

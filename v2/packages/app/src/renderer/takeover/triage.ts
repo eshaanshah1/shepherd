@@ -105,8 +105,17 @@ export interface TriageEntry {
    * Drawn as the task band's primary button. The shell never learns what it
    * does — "ship" is a `tasks` idea and this file has no opinion about whether
    * a task can be shipped, only about where the button goes.
+   *
+   * `leaves` is the one thing the shell DOES read: the extension saying that
+   * running this verb ends the screen, so the takeover goes back to the overview
+   * instead of holding you on a task whose panes are being closed.
    */
-  readonly primaryAction?: { readonly id: string; readonly label: string; readonly args?: unknown };
+  readonly primaryAction?: {
+    readonly id: string;
+    readonly label: string;
+    readonly args?: unknown;
+    readonly leaves?: boolean;
+  };
 }
 
 export interface TriageSection {
