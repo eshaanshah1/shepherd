@@ -454,6 +454,39 @@ describe('⌘K jumps anywhere', () => {
     view.unmount();
   });
 
+  it('a jump is not a descent: ⌘[ after switching tasks lands on the overview', async () => {
+    /*
+     * The switcher is how you LEAVE a task, so the one you were in is not
+     * behind the one you picked. Stacked, `⌘[` shuttled between the two with no
+     * way out of either.
+     */
+    const { view } = render({
+      rows: {
+        'tasks.tree': [
+          task({ id: 'relay', label: 'Relay retry storm', tint: 'working' }),
+          task({ id: 'palette', label: 'Palette pass', tint: 'working' }),
+        ],
+      },
+    });
+    await settle();
+    act(() => (all(view.container, 'takeover-row')[0] as HTMLElement).click());
+    expect(one(view.container, 'takeover-task').textContent).toContain('Relay');
+
+    press('k', { metaKey: true });
+    const input = view.container.querySelector('input') as HTMLInputElement;
+    type(input, 'palette');
+    act(() =>
+      void input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      ),
+    );
+    expect(one(view.container, 'takeover-task').textContent).toContain('Palette');
+
+    press('[', { metaKey: true });
+    expect(all(view.container, 'takeover-home')).toHaveLength(1);
+    view.unmount();
+  });
+
   it('says so rather than drawing an empty list', async () => {
     const { view } = render({ rows: {} });
     await settle();

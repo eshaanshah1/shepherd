@@ -69,6 +69,21 @@ export function go(nav: Nav, place: Place): Nav {
   return { at: place, stack: [...nav.stack, nav.at] };
 }
 
+/**
+ * ⌘K's move, and it is a TELEPORT rather than a step down.
+ *
+ * The switcher is the one place in the app you reach every screen from, so the
+ * task you were in when you opened it is not "behind" the task you picked — you
+ * did not descend into it, you left. Stacking it makes `⌘[` mean "the task
+ * before this one", which turns a key people press to GET OUT into a shuttle
+ * between two tasks with no way out of either. Cleared, `⌘[` after a jump is
+ * what it is everywhere else: back to the overview.
+ */
+export function jump(nav: Nav, place: Place): Nav {
+  if (samePlace(nav.at, place)) return { at: place, stack: nav.stack };
+  return { at: place, stack: [] };
+}
+
 export function pop(nav: Nav): Nav {
   const previous = nav.stack.at(-1);
   if (previous === undefined) return { at: { kind: 'home' }, stack: [] };

@@ -26,6 +26,7 @@ import {
   currentTask,
   go,
   home,
+  jump,
   openingFace,
   pop,
   withFace,
@@ -200,12 +201,13 @@ export function useTakeover({
    * would be an extension deciding what `esc` means.
    */
   const open = useCallback(
-    (entry: TriageEntry) => {
+    (entry: TriageEntry, how: 'push' | 'jump' = 'push') => {
+      const arrive = how === 'jump' ? jump : go;
       if (entry.command !== undefined) {
         invoke(entry.command.id, (entry.command.args ?? {}) as Readonly<Record<string, unknown>>);
       }
       if (entry.place) {
-        setNav((current) => go(current, { kind: 'shells' }));
+        setNav((current) => arrive(current, { kind: 'shells' }));
         return;
       }
       if (entry.root === undefined) return;
@@ -218,7 +220,7 @@ export function useTakeover({
         tabs,
         openingFace({ running: entry.mark === 'working', changed: entry.facts.diff !== undefined }),
       );
-      setNav((current) => go(current, { kind: 'task', id: entry.id, root: entry.root as string, face }));
+      setNav((current) => arrive(current, { kind: 'task', id: entry.id, root: entry.root as string, face }));
     },
     [invoke, tabs],
   );
@@ -320,10 +322,10 @@ export function useTakeover({
         return;
       }
       if (item.kind === 'shells') {
-        setNav((current) => go(current, { kind: 'shells' }));
+        setNav((current) => jump(current, { kind: 'shells' }));
         return;
       }
-      if (item.entry !== undefined) open(item.entry);
+      if (item.entry !== undefined) open(item.entry, 'jump');
     },
     [open, raiseComposer],
   );
