@@ -908,6 +908,35 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
     }
   };
 
+  /**
+   * The other door out of `Later`: it was ACTED ON.
+   *
+   * A snooze is a promise about attention — "not now, ask me then" — and the
+   * promise is void the moment you do the thing anyway. A task you spawned an
+   * agent into, renamed the branch of, or restored is a task you are working on,
+   * and leaving it filed under `Later` wearing `until tomorrow` is the surface
+   * telling you something about yourself that is not true. Worse, it is
+   * load-bearing: the wake is what raises the row, so a task acted on and still
+   * asleep will interrupt you tomorrow about work you finished today.
+   *
+   * A SECOND door rather than a case inside `hasWoken`, and the split is the
+   * same one `model/snooze.ts` already draws. `hasWoken` answers "has the reason
+   * expired" — a pure question about a clock and a room, asked on every read.
+   * This answers "did something happen", which is not a question at all: it is
+   * an event, it arrives from a handler, and there is no moment to ask it in.
+   *
+   * Silent on a task with no snooze, so a caller never has to check first — the
+   * verbs below say what they did and this decides whether it mattered.
+   */
+  const rouse = (id: string, why: string): void => {
+    const task = store.get(id);
+    if (task?.snooze === undefined) return;
+    const { snooze: _slept, ...rest } = task;
+    store.put(rest);
+    ctx.log.info(`task ${id}: out of "${task.snooze.label}" — ${why}`);
+    changed();
+  };
+
   const agentStatesOfTab = (task: TaskRecord, root: string): readonly string[] =>
     statesIn(panesOfTab(task, root));
 
@@ -929,6 +958,26 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
       if (typeof payload?.pane !== 'string' || typeof payload.to !== 'string') return;
       const delta = agentState.get(payload.pane) !== payload.to;
       agentState.set(payload.pane, payload.to);
+      /*
+       * An agent STARTING A TURN in a task that was put off is that task being
+       * worked on, so it comes back — `rouse`'s case, arriving as the only
+       * signal that catches every door in. `tasks.spawn` is one way an agent
+       * begins; typing into its pane, the CLI, and a `claude` started by hand in
+       * a terminal of that task are the others, and none of them is a verb this
+       * extension could hang the wake off. The pane mirror sees all four.
+       *
+       * **Never for a `quiet` snooze.** That reason is "wake when the room goes
+       * quiet" — it is SET while agents are working, and it is waiting on
+       * exactly this signal's absence. Rousing it here would cancel it on the
+       * next `blocked → working`, which is a permission prompt being answered
+       * mid-turn: the snooze would die seconds after you set it, every time.
+       */
+      if (delta && payload.to === 'working') {
+        for (const task of store.list()) {
+          if (task.snooze === undefined || task.snooze.wakeOnQuiet === true) continue;
+          if (panesOf(task).includes(payload.pane)) rouse(task.id, 'an agent started working in it');
+        }
+      }
       // The tree is pull-based (ADR 0031): the host re-asks `children()` only
       // when nudged, so a mirror that changed and did not nudge is a sidebar
       // still showing the old state. Nudged on a real delta only, because a
@@ -3673,6 +3722,9 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           prompt: args.prompt ?? '',
           role: 'workstream',
         });
+        // Before the re-read below, not after: `rouse` WRITES, and a record
+        // captured ahead of it would carry the snooze straight back in.
+        rouse(id, 'an agent was spawned into it');
         // Re-read: `startSession` awaits, and provisioning may have written.
         const current = store.get(id) ?? task;
         store.put({ ...current, sessions: [...current.sessions, session], lifecycle: 'running' });
@@ -3950,6 +4002,10 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * question that was snoozed comes back as that question rather than as
    * "returned from later", which is a fact about the snooze and not about the
    * work.
+   *
+   * Two things end it, not one. The reason expiring is `wakeSnoozes`; the task
+   * being ACTED ON is `rouse`, and that half matters because a promise about
+   * attention is void the moment you do the thing anyway.
    */
   ctx.subscriptions.push(
     commands.register(TASK_COMMANDS.snooze, {
@@ -4134,8 +4190,10 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         const task = store.get(args.task);
         if (task === undefined) throw new Error(`no task ${args.task}`);
         const shipped = task.lifecycle === 'archived';
+        rouse(task.id, 'it was restored');
         if (shipped) {
-          store.put({ ...task, lifecycle: 'running', activatedAt: ctx.clock.now() });
+          // Re-read for the reason `spawn` does: `rouse` may have written.
+          store.put({ ...(store.get(task.id) ?? task), lifecycle: 'running', activatedAt: ctx.clock.now() });
           changed();
         }
         void whileBusy(task.id, 'restoring', async () => {
@@ -4421,6 +4479,7 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         const passed = Math.min(Math.max(0, Math.trunc(args.passed)), total);
         if (total === 0) suites.delete(args.task);
         else suites.set(args.task, { total, passed });
+        rouse(args.task, 'its suite was run');
         changed();
         return { ok: true, total, passed };
       },
@@ -4512,6 +4571,9 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         // describes whatever is actually there.
         if (failed.length > 0) ctx.log.warn(`task ${task.id}: rename incomplete — ${failed.join('; ')}`);
         else ctx.log.info(`task ${task.id}: branch is now ${name}`);
+        // Any repo renamed is the work being handled, so it is not `Later`
+        // any more. A rename that touched nothing changed nothing.
+        if (renamed.length > 0) rouse(task.id, 'its branch was renamed');
         changed();
         return { id: task.id, from, to: name, renamed, failed };
       },

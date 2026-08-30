@@ -5471,3 +5471,97 @@ describe('a task opened as a terminal', () => {
     expect(lines[0]).toMatch(/^export CLAUDE_CONFIG_DIR='[^']+'$/);
   });
 });
+
+/**
+ * The second door out of `Later` — see `rouse` in `index.ts`.
+ *
+ * A snooze is a promise about attention, and the promise is void the moment you
+ * do the thing anyway. These pin the two halves that are easy to get backwards:
+ * that acting on a task cancels the deferral, and that a `quiet` snooze — the
+ * one reason that is WAITING on agent activity — is never cancelled by it.
+ */
+describe('a task acted on comes back from Later', () => {
+  const withPane = task({ sessions: [{ id: 's-1', role: 'orchestrator', pane: 'p1' }] });
+  const working = (pane = 'p1'): Record<string, unknown> => ({
+    sessionId: 's1',
+    kindId: 'claude-code',
+    pane,
+    from: 'idle',
+    to: 'working',
+    turnFinished: false,
+    level: 'none',
+    alertReason: '',
+  });
+
+  const snoozeOf = async (h: Harness, id: string): Promise<{ label: string } | undefined> =>
+    ((await rowOf(h, id))?.data as { snooze?: { label: string } } | undefined)?.snooze;
+
+  it('is in Later, wearing its reason, until something happens', async () => {
+    const h = (live = harness({ tasks: [withPane] }));
+    await h.run('tasks.snooze', { task: 't1', until: 'tomorrow' });
+    expect((await snoozeOf(h, 't1'))?.label).toBe('tomorrow');
+  });
+
+  /**
+   * The signal that catches every door in: `tasks.spawn`, the CLI, typing into
+   * its pane, a `claude` started by hand. None of those is a verb the wake could
+   * hang off — the pane mirror sees all four.
+   */
+  it('comes back when an agent starts working in it', async () => {
+    const h = (live = harness({ tasks: [withPane] }));
+    await h.run('tasks.snooze', { task: 't1', until: 'tomorrow' });
+
+    h.emit('agents.stateChanged', working());
+    expect(await snoozeOf(h, 't1')).toBeUndefined();
+  });
+
+  /**
+   * The carve-out, and the reason it is not optional: `when agents finish` is SET
+   * while agents are working. A `blocked → working` is a permission prompt being
+   * answered mid-turn, so rousing on it would kill this snooze seconds after
+   * every press.
+   */
+  it('does NOT come back on agent work when it is waiting for agents to finish', async () => {
+    const h = (live = harness({ tasks: [withPane] }));
+    await h.run('tasks.snooze', { task: 't1', until: 'quiet' });
+
+    h.emit('agents.stateChanged', { ...working(), from: 'blocked' });
+    expect((await snoozeOf(h, 't1'))?.label).toBe('when agents finish');
+  });
+
+  it('ignores an agent working in some other task', async () => {
+    const h = (live = harness({ tasks: [withPane] }));
+    await h.run('tasks.snooze', { task: 't1', until: 'tomorrow' });
+
+    h.emit('agents.stateChanged', working('p99'));
+    expect((await snoozeOf(h, 't1'))?.label).toBe('tomorrow');
+  });
+
+  it('comes back when an agent is spawned into it', async () => {
+    const h = (live = harness({ tasks: [withPane] }));
+    await h.run('tasks.snooze', { task: 't1', until: 'today' });
+
+    await h.run('tasks.spawn', { task: 't1', prompt: 'keep going' });
+    expect(await snoozeOf(h, 't1')).toBeUndefined();
+  });
+
+  it('comes back when its suite is reported', async () => {
+    const h = (live = harness({ tasks: [withPane] }));
+    await h.run('tasks.snooze', { task: 't1', until: 'today' });
+
+    await h.run('tasks.reportSuite', { task: 't1', total: 3, passed: 3 });
+    expect(await snoozeOf(h, 't1')).toBeUndefined();
+  });
+
+  /**
+   * Looking is not acting. A row you click to glance at and leave has to keep its
+   * deferral, or `Later` is unusable for anything you ever want to peek at.
+   */
+  it('stays in Later when you only reveal it', async () => {
+    const h = (live = harness({ tasks: [withPane] }));
+    await h.run('tasks.snooze', { task: 't1', until: 'tomorrow' });
+
+    await h.run('tasks.reveal', { task: 't1' });
+    expect((await snoozeOf(h, 't1'))?.label).toBe('tomorrow');
+  });
+});
