@@ -52,6 +52,43 @@ function type(input: HTMLInputElement, value: string): void {
   });
 }
 
+/**
+ * A scroll, as the only thing the sentinel can see.
+ *
+ * jsdom has no `IntersectionObserver` at all, so the reveal sentinel would
+ * simply never fire and a test asserting it does would pass for the wrong
+ * reason. This stands one up and hands back the trigger, which is the gesture
+ * under test: reaching the foot of a truncated region.
+ */
+function observing(): { reach: () => void; restore: () => void } {
+  const callbacks: IntersectionObserverCallback[] = [];
+  const had = (globalThis as Record<string, unknown>).IntersectionObserver;
+  class Stub {
+    constructor(callback: IntersectionObserverCallback) {
+      callbacks.push(callback);
+    }
+    observe(): void {}
+    disconnect(): void {}
+    unobserve(): void {}
+    takeRecords(): [] {
+      return [];
+    }
+  }
+  (globalThis as Record<string, unknown>).IntersectionObserver = Stub;
+  return {
+    reach: () => {
+      act(() => {
+        for (const callback of [...callbacks]) {
+          callback([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver);
+        }
+      });
+    },
+    restore: () => {
+      (globalThis as Record<string, unknown>).IntersectionObserver = had;
+    },
+  };
+}
+
 async function settle(): Promise<void> {
   await act(async () => {
     await Promise.resolve();
@@ -161,6 +198,76 @@ describe('Home is built from the view mechanism', () => {
     // One row, and it is the task: the takeover supplies its own regions, so a
     // contributed heading here would be a heading inside a heading.
     expect(all(view.container, 'takeover-row')).toHaveLength(1);
+    view.unmount();
+  });
+
+  it('keeps a `reveals` control as a sentinel, and scrolling to it loads the rest', async () => {
+    /*
+     * The bug this is written against: Home dropped every quiet row, including
+     * the one holding the only verb that could lift the extension's own cap — so
+     * `Shipped` drew eight rows and there was no gesture anywhere in the app
+     * that reached the ninth.
+     *
+     * The control lands in the region of the row ABOVE it, and it is not drawn:
+     * reaching the foot of a list is already the ask, so the screen answers.
+     */
+    const scroll = observing();
+    const { view, calls } = render({
+      rows: {
+        'tasks.tree': [
+          task({ id: 'relay', tint: 'working' }),
+          task({ id: 'old', data: { mark: 'shipped' } }),
+          {
+            id: 'group:shipped:more',
+            label: '20 more',
+            quiet: true,
+            reveals: true,
+            command: { id: 'tasks.expandTabs', args: { task: 'group:shipped' } },
+          },
+        ],
+      },
+    });
+    await settle();
+    const sentinel = one(view.container, 'takeover-reveal');
+    expect(sentinel.closest('[data-group]')?.getAttribute('data-group')).toBe('shipped');
+    expect(calls).toHaveLength(0);
+
+    scroll.reach();
+    expect(calls).toEqual([{ command: 'tasks.expandTabs', args: { task: 'group:shipped' } }]);
+
+    // ONCE. The verb is a toggle, so a second firing would fold the region back
+    // up under the reader who had just reached it.
+    scroll.reach();
+    expect(calls).toHaveLength(1);
+    scroll.restore();
+    view.unmount();
+  });
+
+  it('does not run a quiet control that only hides', async () => {
+    /*
+     * `Show fewer` is the same row pointing the other way, and it arrives
+     * without `reveals`. Nothing may run it on sight — and it stays out of the
+     * regions, because it is a control rather than a row.
+     */
+    const scroll = observing();
+    const { view, calls } = render({
+      rows: {
+        'tasks.tree': [
+          task({ id: 'old', data: { mark: 'shipped' } }),
+          {
+            id: 'group:shipped:more',
+            label: 'Show fewer',
+            quiet: true,
+            command: { id: 'tasks.expandTabs', args: { task: 'group:shipped' } },
+          },
+        ],
+      },
+    });
+    await settle();
+    expect(all(view.container, 'takeover-reveal')).toHaveLength(0);
+    scroll.reach();
+    expect(calls).toHaveLength(0);
+    scroll.restore();
     view.unmount();
   });
 

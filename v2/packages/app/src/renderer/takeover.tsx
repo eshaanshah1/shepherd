@@ -127,7 +127,7 @@ export function useTakeover({
   onRaiseView,
   suspended = false,
 }: TakeoverProps): TakeoverSurfaces {
-  const entries = useTriageEntries({ bridge: views, groupOfRoot });
+  const { entries, more } = useTriageEntries({ bridge: views, groupOfRoot });
   const [nav, setNav] = useState<Nav>(HOME);
   const [switching, setSwitching] = useState(false);
   /** The entry whose `Later` menu is open, by id. */
@@ -568,6 +568,17 @@ export function useTakeover({
           onNew={raiseComposer}
           faces={tabs}
           onOpenFace={openAt}
+          /*
+           * The truncation controls, and the verb that lifts one.
+           *
+           * Run through the same `invoke` a row's own command goes through — the
+           * shell still does not know what `expandTabs` does, only that a region
+           * declared this as the way to see the rest of itself.
+           */
+          more={more}
+          onReveal={(control) =>
+            invoke(control.command.id, (control.command.args ?? {}) as Readonly<Record<string, unknown>>)
+          }
           /*
            * Contributed panels — `surface: 'dock'` components, which had the
            * rail and lost it. Passed rather than filtered inside, because this

@@ -1,9 +1,10 @@
-import type { ReactElement, ReactNode } from 'react';
+import { useEffect, useRef, type ReactElement, type ReactNode } from 'react';
 import { IconButton, StateMark } from '@shepherd/ui';
 import type { ViewContributionDTO, ViewsApi } from '../../shared/index.ts';
 import { ComponentView } from '../view-dock.tsx';
 import { PixelSheep } from '../sky-strip.tsx';
 import { raiseIcon } from '../view-dock.tsx';
+import type { MoreControl } from './entries.ts';
 import type { RowAnswer, RowDiff, RowRepo } from './row-facts.ts';
 import { liveCount, triage, type TriageEntry, type TriageSection } from './triage.ts';
 import { REGION_COLUMNS, TRAIL_ORDER, ageFor, type RegionColumns, type TrailCell } from './columns.ts';
@@ -48,6 +49,16 @@ export interface TakeoverHomeProps {
    */
   readonly panels?: readonly ViewContributionDTO[];
   readonly bridge?: ViewsApi | null;
+  /**
+   * Regions that are drawing a SUBSET, and the verb that finishes each one.
+   *
+   * Home does not draw a `Show all` button for these. It scrolls — which the
+   * rail could not — so the region simply continues when you reach the foot of
+   * it, and the cap goes back to meaning "how much loads before you ask" rather
+   * than "how much there is".
+   */
+  readonly more?: readonly MoreControl[];
+  readonly onReveal?: (control: MoreControl) => void;
 }
 
 export function TakeoverHome({
@@ -60,6 +71,8 @@ export function TakeoverHome({
   onOpenFace,
   panels = [],
   bridge = null,
+  more = [],
+  onReveal,
 }: TakeoverHomeProps): ReactElement {
   const sections = triage(entries);
   const needs = sections.find((section) => section.group === 'needs');
@@ -104,6 +117,14 @@ export function TakeoverHome({
                   />
                 ),
               )}
+              {more
+                .filter((control) => control.group === section.group)
+                .map((control) => (
+                  <Reveal
+                    key={control.id}
+                    onReach={() => onReveal?.(control)}
+                  />
+                ))}
             </Section>
           ))}
           {panels.length === 0 ? null : (
@@ -137,6 +158,48 @@ function Quiet(): ReactElement {
       <div className="sh-take__quiet-hint">Everything running will raise its hand when it needs you.</div>
     </div>
   );
+}
+
+/**
+ * The foot of a truncated region — a row of nothing, watched.
+ *
+ * **A sentinel rather than a control**, and that is the whole of the gesture:
+ * reaching the end of a list is already the user asking for more of it, so the
+ * screen answers rather than offering a button to press. It draws no ink and
+ * takes no focus, which is what lets it sit inside the region's grid without
+ * being a row in it.
+ *
+ * It fires **once**, held in a ref rather than in state — a re-render must not
+ * re-arm it, and the control it runs is a TOGGLE, so a second firing would fold
+ * the region back up under the cursor that was reading it. The margin is a
+ * screenful, so the rest is already drawn by the time the last row of the cap
+ * reaches the fold and nothing appears to load.
+ */
+function Reveal({ onReach }: { onReach: () => void }): ReactElement {
+  const at = useRef<HTMLDivElement | null>(null);
+  const fired = useRef(false);
+  /*
+   * The callback, held rather than closed over. It is a fresh function every
+   * render, and an effect that re-ran for it would tear the observer down
+   * mid-scroll — a window the foot of the list can cross unnoticed.
+   */
+  const reach = useRef(onReach);
+  reach.current = onReach;
+  useEffect(() => {
+    const node = at.current;
+    if (node === null) return;
+    const observer = new IntersectionObserver(
+      (records) => {
+        if (!records.some((record) => record.isIntersecting) || fired.current) return;
+        fired.current = true;
+        reach.current();
+      },
+      { rootMargin: '600px 0px' },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+  return <div ref={at} className="sh-take__reveal" aria-hidden="true" data-testid="takeover-reveal" />;
 }
 
 function Section({ section, children }: { section: TriageSection; children: ReactNode }): ReactElement {

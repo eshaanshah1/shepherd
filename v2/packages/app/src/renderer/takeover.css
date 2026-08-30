@@ -177,10 +177,58 @@
 
 /* ── Home ──────────────────────────────────────────────────────────────────── */
 
+/*
+ * **Home's one scrolling surface**, and the only one that is a full window.
+ *
+ * The scrollbar is the app's — a thumb of `line` and nothing else, the treatment
+ * `styles.css` writes down for the rail and the terminal viewport and every
+ * textarea. macOS's own overlay bar was what it had, which is invisible on a
+ * near-black ground until you are already dragging: a screen whose last region
+ * is a record you scroll through has to SAY it continues.
+ *
+ * `both-edges` is what keeps that from moving the page. The measure is centred
+ * by `margin-inline: auto`, so a classic gutter taken from the right alone
+ * shifts the whole 960px column left by half a bar the moment the content
+ * overflows — and this list grows as you read it. Reserving on both sides costs
+ * a few pixels of margin at every length and buys a column that never moves.
+ */
 .sh-take__scroll {
   flex: 1;
   min-block-size: 0;
   overflow-y: auto;
+  scrollbar-gutter: stable both-edges;
+  scrollbar-width: thin;
+  scrollbar-color: var(--sh-line) transparent;
+}
+
+.sh-take__scroll::-webkit-scrollbar {
+  width: var(--sh-space-md);
+}
+
+.sh-take__scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sh-take__scroll::-webkit-scrollbar-thumb {
+  background: var(--sh-line);
+  border-radius: 0;
+}
+
+.sh-take__scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--sh-text-mute);
+}
+
+/*
+ * The foot of a truncated region: a hairline of nothing that the region watches.
+ *
+ * It draws no ink and reserves no space a reader can see — a row here would be
+ * a control, and the point is that there is nothing to press. One pixel rather
+ * than none because a zero-area target is the one shape an intersection
+ * observer is entitled to disagree about.
+ */
+.sh-take__reveal {
+  grid-column: 1 / -1;
+  block-size: 1px;
 }
 
 .sh-take__home {
