@@ -1383,6 +1383,23 @@ describe('the group commands', () => {
     expect(pane === null ? null : store.pane(pane)?.cwd).toBe('/tmp/wt');
   });
 
+  it('newTab into a NAMED group takes that group\u2019s cwd, not the one on screen', async () => {
+    /*
+     * A `group` argument makes this a tab of somebody else's group, and the
+     * directory has to come from there. Inheriting "the pane you were looking
+     * at" is right only for the unqualified gesture — an extension asking for a
+     * tab in a task while Home is on screen would otherwise mint a shell in
+     * Home's directory and call it a tab of the task.
+     */
+    const { registry, store } = wiredRoots();
+    store.open('task:t1', { cwd: '/tmp/wt' }, { group: 'task:t1' });
+    // And the window stays on Home, which is the whole case.
+
+    await registry.invoke(LAYOUT_COMMANDS.newTab, { group: 'task:t1' }, USER);
+    const pane = store.focused(rootId('task:t1/tab-2'));
+    expect(pane === null ? null : store.pane(pane)?.cwd).toBe('/tmp/wt');
+  });
+
   it('closeGroup ends every session in every tab', async () => {
     // `store.close` is the ONE terminator (ADR 0022). Dropping the roots without
     // draining them leaks a live pty per pane with nothing pointing at it.

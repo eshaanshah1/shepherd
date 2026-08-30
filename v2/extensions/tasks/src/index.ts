@@ -3536,8 +3536,17 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
          * behaves as though that task never happened. Which is the promise.
          */
         if (task.incognito !== true) {
+          /*
+           * The path that was PICKED, not the worktree it grows into.
+           *
+           * `<root>/<name>` is this task's own copy — a directory that will be
+           * deleted when the task is shelved and that no future `git worktree
+           * add` can fork. Recording it made the picker offer yesterday's task
+           * folders instead of the checkouts they came from, which is what
+           * `smoke:m3` catches at the `#` mention.
+           */
           store.recordRepoUses(
-            task.repos.map((repo) => `${rootOf(task)}/${repo.name}`),
+            task.repos.map((repo) => repo.path),
             ctx.clock.now(),
           );
         }

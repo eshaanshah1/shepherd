@@ -3057,7 +3057,16 @@ describe('incognito tasks', () => {
     await until(() => h.invoked.some((call) => call.id === 'layout.openRoot'));
 
     const suggested = await h.run<{ path: string }[]>('tasks.suggestRepos', { query: '' });
-    expect(suggested.length).toBeGreaterThan(0);
+    /*
+     * The CHECKOUT that was picked, not the worktree the task grew from it.
+     *
+     * The history exists to offer a path the next `git worktree add` can fork,
+     * and a task's own worktree is not one — offering it would hand the composer
+     * a directory that only ever means something inside the task that made it.
+     * A `length > 0` assertion passed with the worktree path in there for two
+     * commits, and `smoke:m3` is where it surfaced.
+     */
+    expect(suggested.map((row) => row.path)).toEqual(['/src/api']);
   });
 
   it('carries the credential in, so the agent does not open on a login prompt', async () => {
