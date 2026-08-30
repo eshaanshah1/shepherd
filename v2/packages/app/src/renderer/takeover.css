@@ -335,6 +335,19 @@
  * and the two lists have to agree; `columns.css.test.ts` asserts that they do.
  */
 .sh-take__cell {
+  /*
+   * **Row 1, explicitly** — the same row `.sh-take__jump` pins itself to.
+   *
+   * Without it a cell has a definite COLUMN and an auto row, and auto-placement
+   * resolves that against a row 1 the jump has already claimed all the way to
+   * `-1`. The cell cannot fit, so it lands in an implicit SECOND row: the row
+   * grew a line, and the repo chip drew above the hover icons instead of behind
+   * them, off the baseline every other row holds.
+   *
+   * Overlapping is the whole point (see `__jump`), and two things overlap only
+   * when both say where they are.
+   */
+  grid-row: 1;
   display: flex;
   align-items: center;
   gap: var(--sh-space-lg);
