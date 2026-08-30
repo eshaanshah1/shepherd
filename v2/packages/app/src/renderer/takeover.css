@@ -83,6 +83,9 @@
   --sh-take-lights: 78px;
   --sh-take-home-head: 56px;
   --sh-take-row: 32px;
+  /* How many rows a windowed region draws at once — `REGION_ROWS` in `home.tsx`
+     decides which regions get one, and this decides how tall it is. */
+  --sh-take-region-rows: 10;
   --sh-take-radius: 4px;
 
   position: fixed;
@@ -215,6 +218,58 @@
 }
 
 .sh-take__scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--sh-text-mute);
+}
+
+/*
+ * **A region as a window onto itself** — ten rows, and it scrolls inside them.
+ *
+ * `Shipped` is a record with no end, and drawn in full it pushed every other
+ * region off a screen whose whole job is "what needs me". A fixed window is the
+ * trade: the archive stays reachable and costs the page a constant amount of
+ * room, however much of it there is.
+ *
+ * It takes the TRACKS because it has to. A scroll container cannot also be the
+ * grid its rows subgrid onto and still hold its heading still, so a windowed
+ * region steps down to a block and the tracks move one level in — the row is
+ * unchanged, since a subgrid borrows whatever grid it finds itself in.
+ *
+ * `overflow-x: clip` rather than `hidden`, and the margin is the reason: a row
+ * bleeds `--sh-space-mid` past the measure on each side so its hover fill sits
+ * proud of the text, and that bleed is scrollable overflow — `auto` would hang a
+ * horizontal scrollbar off six pixels, and `hidden` would shave the fill. `clip`
+ * with a matching clip-margin does neither.
+ */
+.sh-take__group[data-windowed='true'] {
+  display: block;
+}
+
+.sh-take__window {
+  display: grid;
+  grid-template-columns: var(--sh-mark-slot) minmax(0, 1fr) auto auto auto;
+  column-gap: 0;
+  max-block-size: calc(var(--sh-take-region-rows) * var(--sh-take-row));
+  overflow-y: auto;
+  overflow-x: clip;
+  overflow-clip-margin: var(--sh-space-mid);
+  scrollbar-width: thin;
+  scrollbar-color: var(--sh-line) transparent;
+}
+
+.sh-take__window::-webkit-scrollbar {
+  width: var(--sh-space-md);
+}
+
+.sh-take__window::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sh-take__window::-webkit-scrollbar-thumb {
+  background: var(--sh-line);
+  border-radius: 0;
+}
+
+.sh-take__window::-webkit-scrollbar-thumb:hover {
   background: var(--sh-text-mute);
 }
 

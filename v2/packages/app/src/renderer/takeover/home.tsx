@@ -96,7 +96,17 @@ export function TakeoverHome({
         <div className="sh-take__home" data-testid="takeover-home">
           {needs === undefined ? <Quiet /> : null}
           {sections.map((section) => (
-            <Section key={section.group} section={section}>
+            <Section
+              key={section.group}
+              section={section}
+              /*
+               * The loud region never gets a window. It is the one thing on this
+               * screen that costs you to ignore, and a question card is the one
+               * element allowed to change size — clipping either would be the
+               * screen hiding the work it exists to surface.
+               */
+              windowed={!section.loud && (section.entries.length > REGION_ROWS || more.some((control) => control.group === section.group))}
+            >
               {section.entries.map((entry) =>
                 section.group === 'needs' && entry.facts.question !== undefined ? (
                   <QuestionCard
@@ -150,6 +160,25 @@ export function TakeoverHome({
  * regions still under it rather than replacing them. That is also why it is not
  * `Empty`: that primitive centres one sentence on a stage that really is bare.
  */
+/**
+ * How many rows a region shows before it becomes a window onto itself.
+ *
+ * `Shipped` is a record, and a record has no end — 47 finished tasks drawn in
+ * full push every other region off the screen and make the one surface that
+ * answers "what needs me" a scroll through work that does not. So the region
+ * keeps its ten rows and scrolls INSIDE them: the archive stays reachable and
+ * costs the screen a fixed amount of room.
+ *
+ * The HEIGHT of that window is `--sh-take-region-rows` in `takeover.css`; this
+ * decides which regions get one. Keep the two the same number.
+ *
+ * Ten and not eight, which is `SHIPPED_CAP` in `tasks`. They are different
+ * numbers about different things — the cap is how many rows the extension hands
+ * over before it is asked for more, and this is how many the screen draws at
+ * once — and tying them together would make a load boundary a layout one.
+ */
+const REGION_ROWS = 10;
+
 function Quiet(): ReactElement {
   return (
     <div className="sh-take__quiet" data-testid="takeover-quiet">
@@ -194,7 +223,13 @@ function Reveal({ onReach }: { onReach: () => void }): ReactElement {
         fired.current = true;
         reach.current();
       },
-      { rootMargin: '600px 0px' },
+      /*
+       * Watched inside the region's own window when it has one, so the load is
+       * triggered by scrolling THAT box rather than by the page happening to
+       * reach its foot. A margin of most of a window, because the rest should be
+       * drawn by the time the last loaded row reaches the bottom edge.
+       */
+      { root: node.closest('.sh-take__window'), rootMargin: '240px 0px' },
     );
     observer.observe(node);
     return () => observer.disconnect();
@@ -202,15 +237,31 @@ function Reveal({ onReach }: { onReach: () => void }): ReactElement {
   return <div ref={at} className="sh-take__reveal" aria-hidden="true" data-testid="takeover-reveal" />;
 }
 
-function Section({ section, children }: { section: TriageSection; children: ReactNode }): ReactElement {
+function Section({
+  section,
+  windowed,
+  children,
+}: {
+  section: TriageSection;
+  /** Draw the rows inside a fixed window of `REGION_ROWS` that scrolls itself. */
+  windowed: boolean;
+  children: ReactNode;
+}): ReactElement {
   return (
-    <section className="sh-take__group" data-group={section.group}>
+    <section className="sh-take__group" data-group={section.group} data-windowed={windowed ? 'true' : undefined}>
       <div className="sh-take__grouphead" data-loud={section.loud ? 'true' : undefined}>
         <b>{section.label}</b>
         <span className="sh-take__rule" />
         <span className="sh-take__n">{section.entries.length}</span>
       </div>
-      {children}
+      {/*
+        The window OWNS the tracks when there is one — a scroll container cannot
+        also be the grid its rows subgrid onto and keep its heading still, so the
+        section steps down to a block and the tracks move one level in. The rows
+        are unchanged either way, which is the point: they borrow whatever grid
+        they are in.
+      */}
+      {windowed ? <div className="sh-take__window">{children}</div> : children}
     </section>
   );
 }

@@ -243,6 +243,53 @@ describe('Home is built from the view mechanism', () => {
     view.unmount();
   });
 
+  it('windows a long region instead of letting it push the screen down', async () => {
+    /*
+     * `Shipped` is a record with no end. Drawn in full, 47 finished tasks push
+     * every region that can still ask for you off a screen whose whole job is
+     * answering "what needs me" — so the region keeps ten rows and scrolls
+     * inside them.
+     *
+     * The window OWNS the tracks, which is why the section steps down to a
+     * block: a scroll container cannot also be the grid its rows subgrid onto
+     * and keep its heading still.
+     */
+    const scroll = observing();
+    const many = Array.from({ length: 12 }, (_, i) =>
+      task({ id: `s${i}`, data: { mark: 'shipped' } }),
+    );
+    const { view } = render({ rows: { 'tasks.tree': many } });
+    await settle();
+    const shipped = view.container.querySelector('[data-group="shipped"]');
+    expect(shipped?.getAttribute('data-windowed')).toBe('true');
+    expect(all(view.container, 'takeover-row')).toHaveLength(12);
+    expect(shipped?.querySelector('.sh-take__window')?.childElementCount).toBe(12);
+    scroll.restore();
+    view.unmount();
+  });
+
+  it('leaves a short region and the loud one unwindowed', async () => {
+    /*
+     * A window costs a scroll to read what already fits, and `Needs you` may
+     * never have one at any length: it is the region that costs you something to
+     * ignore, and a question card is the one element allowed to change size.
+     */
+    const scroll = observing();
+    const { view } = render({
+      rows: {
+        'tasks.tree': [
+          ...Array.from({ length: 12 }, (_, i) => task({ id: `q${i}`, tint: 'blocked' })),
+          task({ id: 'old', data: { mark: 'shipped' } }),
+        ],
+      },
+    });
+    await settle();
+    expect(view.container.querySelector('[data-group="needs"]')?.getAttribute('data-windowed')).toBeNull();
+    expect(view.container.querySelector('[data-group="shipped"]')?.getAttribute('data-windowed')).toBeNull();
+    scroll.restore();
+    view.unmount();
+  });
+
   it('does not run a quiet control that only hides', async () => {
     /*
      * `Show fewer` is the same row pointing the other way, and it arrives
