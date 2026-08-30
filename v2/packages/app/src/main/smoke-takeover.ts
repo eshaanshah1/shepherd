@@ -94,7 +94,6 @@ const SURFACES = [
   '.sh-screen',
   '.sh-take',
   '.sh-side',
-  '.sh-take__toast',
   '.sh-take__kcard',
   '[data-testid="face-tab"]',
   '[data-testid="takeover-primary"]',

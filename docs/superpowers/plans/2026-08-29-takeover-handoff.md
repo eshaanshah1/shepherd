@@ -13,7 +13,7 @@ suite:
 | `8ad41a7` | a skin is a value — the quiet-craft ramp, faces and role re-pointing |
 | `222f46d` | Home: the triage screen |
 | `70f4207` | the router: `esc` stack, ⌘K switcher, the task band |
-| `5af9333` | the push half: the toast |
+| `5af9333` | the push half: the toast — **removed**, see below |
 | `c15caa3` | `surface: 'face'` — the four faces of a task (ADR 0051) |
 | `df78177` | snooze: the reason, the three shapes of later, and the way back |
 
@@ -33,7 +33,7 @@ is a HOOK (`useTakeover`) returning the window's parts; `app.tsx` composes them:
   .sh-body               flex: 1      display:none while a face has the room
   face                   flex: 1      a contributed document, edge to edge
   home                   layer        z-index 4, the one honest overlay
-  overlays               fixed        toast, switcher, Later menu
+  overlays               fixed        switcher, Later menu
 ```
 
 It was a `position: fixed` layer at z-index 4, and each of the three symptoms —
@@ -72,18 +72,17 @@ packages/design-tokens/src/themes.ts          the skin: two token tables + faces
 packages/design-tokens/src/themes.test.ts
 packages/app/src/renderer/fonts/InstrumentSans.ttf, FragmentMono-Regular.ttf
 packages/app/src/shared/home-root.ts          HOME_ROOT_ID, shared with main
-packages/app/src/renderer/takeover.tsx        the layer: nav, keys, toast queue
+packages/app/src/renderer/takeover.tsx        the layer: nav, keys
 packages/app/src/renderer/takeover.css        the whole skin of the surface
 packages/app/src/renderer/takeover.test.tsx   25 render/keyboard cases
 packages/app/src/renderer/takeover/
   triage.ts  triage.test.ts    the grouping — pure
   nav.ts     nav.test.ts       the stack — pure
-  raise.ts   raise.test.ts     the interrupt decision — pure
   places.ts  places.test.ts    ⌘K's list — pure
   row-facts.ts                 a defensive reader for a row's optional facts
   entries.ts                   contributed trees → triage entries
   faces.ts   faces.test.ts     which faces a task has — pure
-  home.tsx  task.tsx  switcher.tsx  toast.tsx  later.tsx  face-body.tsx
+  home.tsx  task.tsx  switcher.tsx  later.tsx  face-body.tsx
 ```
 
 The face contribution point (ADR 0051), across the five layers it had to touch:
@@ -252,10 +251,14 @@ the shell still would not learn what either verb does.
   the card as well would send a paragraph per row on every read of Home — a copy
   of a fact exactly one surface draws, and a second place for it to go stale.
   The requirement was "so Intent has something to draw", and it does.
-- **`Later` on a toast is not a fourth key on the card.** It opens the same menu
-  as everywhere else, and while a toast is up `S` belongs to the CARD rather than
-  to Home's first question — acting on a row the user is not looking at is the
-  one thing an interrupt must not do.
+- **The in-app toast is gone.** `raise.ts` and `toast.tsx` were deleted, and with
+  them the push half of the surface. Two reasons, both fatal for a card that
+  interrupts: it grabbed ⏎/⎋/`S` on the window in the CAPTURE phase, so it ate
+  keystrokes out of whatever you were typing into a terminal; and macOS already
+  delivers the same news as a real banner through `system-alerts.ts`, which is
+  the notification the OS lets you mute, route and ignore. Home is still the pull
+  half — the row moves into `Needs you` on its own — and `J` still jumps to the
+  next thing that needs you.
 
 ## Traps for whoever picks this up
 
@@ -263,9 +266,6 @@ the shell still would not learn what either verb does.
   `.sh-stage` is `position: relative` with no z-index and therefore opens no
   stacking context. If `.sh-stage` ever gains one, the composer disappears
   behind Home — which looks like a broken button, not a CSS bug.
-- The toast effect depends on `entries` **alone**. Adding `nav.at` makes it
-  re-run on every navigation with `previous` already advanced, so it can only
-  ever fire on stale news.
 - `smoke:m3` fails two checks (the repo picker and a task-root hook) identically
   on `origin/master`; they are not from this work. Its four composer checks pass,
   which is the half the takeover could have broken.

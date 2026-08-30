@@ -1023,7 +1023,7 @@ export function App({
       )}
 
       {/*
-        The router's own fixed layers — the toast, the switcher, the Later menu.
+        The router's own fixed layers — the switcher and the Later menu.
 
         LAST among the takeover's parts and before the app's other dialogs, so
         they float over Home and over a task alike. Each carries its own z-index;

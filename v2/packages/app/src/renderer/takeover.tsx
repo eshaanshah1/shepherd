@@ -1,23 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactElement } from 'react';
 import type { ViewContributionDTO, ViewsApi } from '../shared/index.ts';
 import { TakeoverHome } from './takeover/home.tsx';
 import { TakeoverTask } from './takeover/task.tsx';
 import { Switcher } from './takeover/switcher.tsx';
-import { Toast } from './takeover/toast.tsx';
 import { FaceBody } from './takeover/face-body.tsx';
 import { LaterMenu } from './takeover/later.tsx';
 import { faceForKey, faceTabs, nearestFace } from './takeover/faces.ts';
-import {
-  NO_TOASTS,
-  crossings,
-  dismiss,
-  enqueue,
-  prune,
-  standingOf,
-  toRaise,
-  type Standing,
-  type ToastQueue,
-} from './takeover/raise.ts';
 import type { PlaceItem } from './takeover/places.ts';
 import type { Face } from './takeover/nav.ts';
 import { useTriageEntries } from './takeover/entries.ts';
@@ -121,7 +109,7 @@ export interface TakeoverSurfaces {
   readonly face: ReactElement | null;
   /** The triage screen: a real full-window layer, over everything. */
   readonly home: ReactElement | null;
-  /** The toast, the switcher and the Later menu — fixed, and always last. */
+  /** The switcher and the Later menu — fixed, and always last. */
   readonly overlays: ReactElement;
   /**
    * What the window is showing, for the shell's own composition: with a place,
@@ -142,54 +130,12 @@ export function useTakeover({
   const entries = useTriageEntries({ bridge: views, groupOfRoot });
   const [nav, setNav] = useState<Nav>(HOME);
   const [switching, setSwitching] = useState(false);
-  const [toasts, setToasts] = useState<ToastQueue>(NO_TOASTS);
   /** The entry whose `Later` menu is open, by id. */
   const [deferring, setDeferring] = useState<string | null>(null);
-
-  /*
-   * The previous standing, in a REF rather than in state.
-   *
-   * It is an input to a decision, never a thing that is drawn — writing it to
-   * state would schedule a second render for every push and put the app one
-   * frame behind its own layout. The effect below is the only reader and the
-   * only writer, so there is no second copy of "what did this look like last
-   * time" for anything else to disagree with.
-   */
-  const before = useRef<Standing | null>(null);
 
   const byId = useMemo(() => new Map(entries.map((entry) => [entry.id, entry])), [entries]);
   /** Agents, plus one tab per slot an extension claimed (ADR 0051). */
   const tabs = useMemo(() => faceTabs(contributions), [contributions]);
-
-  /*
-   * The push half. Every re-read of the trees lands here, and the decision is
-   * `raise.ts`'s: something CROSSED into needing you, and you cannot see it.
-   *
-   * The very first push seeds the comparison and raises nothing — otherwise
-   * launching the app with three blocked tasks greets you with three cards
-   * about work you have not touched yet.
-   */
-  useEffect(() => {
-    const previous = before.current;
-    before.current = standingOf(entries);
-    setToasts((queue) => {
-      const pruned = prune(queue, entries);
-      if (previous === null) return pruned;
-      const raised = toRaise(nav.at, crossings(previous, entries));
-      return enqueue(pruned, raised.map((entry) => entry.id));
-    });
-    /*
-     * `entries` ALONE, and `nav.at` deliberately left out.
-     *
-     * It is read inside — the decision needs to know where you are — but it is
-     * an input to an event rather than a thing that can cause one. Listing it
-     * would re-run this on every navigation, with `previous` already advanced to
-     * the current standing, which is a comparison that can only ever fire on
-     * stale news. The effect is correct without it because a re-render rebuilds
-     * the closure: whenever `entries` does change, the `nav.at` it reads is the
-     * current one.
-     */
-  }, [entries]);
 
   /**
    * Open what a row stands for: run the row's own verb, and move the window.
@@ -263,22 +209,6 @@ export function useTakeover({
     onRaiseView(COMPOSER_VIEW);
   }, [onRaiseView]);
 
-  const showing = toasts.showing === null ? null : (byId.get(toasts.showing) ?? null);
-
-  const dismissToast = useCallback((id: string) => {
-    // The CARD goes; the task does not. It is still in `Needs you`, which is
-    // the promise that makes an interrupt tolerable at all.
-    setToasts((queue) => dismiss(queue, id));
-  }, []);
-
-  const goToast = useCallback(
-    (entry: TriageEntry) => {
-      dismissToast(entry.id);
-      open(entry);
-    },
-    [dismissToast, open],
-  );
-
   /**
    * Put one off. The menu is opened, never the verb run — the WHEN is the useful
    * half, and a `Later` that always meant the same delay would be a mute button
@@ -295,9 +225,6 @@ export function useTakeover({
   const defer = useCallback(
     (entry: TriageEntry, option: RowAnswer) => {
       setDeferring(null);
-      // Its card goes with it: an interrupt about a thing you have just deferred
-      // is the app arguing with a decision it asked you to make.
-      dismissToast(entry.id);
       invoke(option.command, (option.args ?? {}) as Readonly<Record<string, unknown>>);
       /*
        * And leave the task, if you were in it. Deferring from inside something
@@ -306,7 +233,7 @@ export function useTakeover({
        */
       setNav((current) => (currentTask(current)?.id === entry.id ? pop(current) : current));
     },
-    [invoke, dismissToast],
+    [invoke],
   );
 
   /** ⌘K's answer: one of the three standing places, or a task. */
@@ -363,37 +290,6 @@ export function useTakeover({
         event.stopPropagation();
         setSwitching((open_) => !open_);
         return;
-      }
-      /*
-       * A toast owns ⏎ and ⎋ while it is up, and takes them BEFORE the stack
-       * does — the card is the most recent thing that happened, so it is what
-       * "back" means until it is gone.
-       */
-      if (showing !== null && !switching && deferring === null) {
-        if (event.key === 'Enter') {
-          event.preventDefault();
-          event.stopPropagation();
-          goToast(showing);
-          return;
-        }
-        if (event.key === 'Escape') {
-          event.preventDefault();
-          event.stopPropagation();
-          dismissToast(showing.id);
-          return;
-        }
-        /*
-         * `S` belongs to the CARD while one is up, not to the screen behind it.
-         * The card is the most recent thing that happened and it is what the
-         * key hint on it refers to; deferring Home's first question instead
-         * would be the app acting on a row the user is not looking at.
-         */
-        if (event.key.toLowerCase() === 's' && showing.facts.later !== undefined) {
-          event.preventDefault();
-          event.stopPropagation();
-          later(showing);
-          return;
-        }
       }
       /*
        * Escape still DISMISSES — a menu, the switcher — because that is what it
@@ -531,21 +427,13 @@ export function useTakeover({
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [suspended, switching, deferring, showing, nav, tabs, entries, byId, open, answer, later, goToast, dismissToast, raiseComposer]);
+  }, [suspended, switching, deferring, nav, tabs, entries, byId, open, answer, later, raiseComposer]);
 
   const task = currentTask(nav);
   const deferred = deferring === null ? null : (byId.get(deferring) ?? null);
 
   const overlays = (
     <>
-      {showing === null ? null : (
-        <Toast
-          entry={showing}
-          onGo={() => goToast(showing)}
-          onDismiss={() => dismissToast(showing.id)}
-          onLater={showing.facts.later === undefined ? undefined : () => later(showing)}
-        />
-      )}
       {switching ? <Switcher entries={entries} onPick={pick} onClose={() => setSwitching(false)} /> : null}
       {deferred === null || deferred.facts.later === undefined ? null : (
         <LaterMenu
