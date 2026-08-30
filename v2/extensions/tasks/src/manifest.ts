@@ -583,15 +583,6 @@ export const tasksManifest: Manifest = {
       { id: TASK_COMMANDS.restore, title: 'Tasks: Restore' },
       { id: TASK_COMMANDS.snooze, title: 'Tasks: Later' },
       { id: TASK_COMMANDS.wake, title: 'Tasks: Wake' },
-      /*
-       * The KERNEL's id, answered here. Not in `TASK_COMMANDS` because it is not
-       * this extension's verb — main asks it of whoever registered it, and a
-       * second answerer would be a different extension with the same duty.
-       *
-       * No title: it answers a question the shell asks and is not a thing a
-       * person runs, which is the same reason `filter` carries none.
-       */
-      { id: 'alerts.describe' },
       { id: TASK_COMMANDS.suggestRepos, title: 'Tasks: Suggest Repos' },
       { id: TASK_COMMANDS.suggestName, title: 'Tasks: Suggest a Name' },
       { id: TASK_COMMANDS.renameBranch, title: 'Tasks: Rename the Branch' },

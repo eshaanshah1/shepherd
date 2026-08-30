@@ -1,7 +1,6 @@
-import type { AlertSpec, AttentionLevel, Disposable, Logger, PaneID, SessionID } from '@shepherd/sdk';
+import type { AttentionLevel, Disposable, Logger, PaneID, SessionID } from '@shepherd/sdk';
 import type { AttentionStore, EventBus } from '@shepherd/core';
 import type { LayoutStore } from '@shepherd/core/layout';
-import { resolveAlert } from './alert-spec.ts';
 
 /**
  * The one place an extension's events reach the chrome, and the only topic that
@@ -41,23 +40,10 @@ export interface AgentRelayOptions {
   readonly alerts: AlertSink;
   /** The dock badge. Injected for the same reason. */
   readonly badge: (count: number) => void;
-  /**
-   * Who this session is, in the words of whoever knows — see `alert-spec.ts`.
-   *
-   * Optional, and its absence is a working app rather than a broken one: with
-   * nobody to ask, every banner reads the way it read before this existed.
-   */
-  readonly describe?: (input: {
-    readonly sessionId: string;
-    readonly paneId: string;
-    readonly state: string;
-    readonly reason?: string;
-    readonly turnFinished: boolean;
-  }) => Promise<unknown>;
 }
 
 export interface AlertSink {
-  notify(alert: AlertSpec & { readonly sessionId: string }): void;
+  notify(alert: { readonly title: string; readonly body: string; readonly sessionId: string }): void;
 }
 
 export interface AgentRelay extends Disposable {
@@ -102,7 +88,7 @@ export function startAgentRelay(options: AgentRelayOptions): AgentRelay {
    */
   const badgeSubscription = options.attention.onDidChange(() => options.badge(options.attention.count()));
 
-  const subscription = options.bus.on(AGENT_STATE_TOPIC, async (payload) => {
+  const subscription = options.bus.on(AGENT_STATE_TOPIC, (payload) => {
     const change = payload as IncomingChange;
     if (typeof change.sessionId !== 'string' || typeof change.to !== 'string') {
       log.warn(`ignored an ${AGENT_STATE_TOPIC} payload with no session or state`);
@@ -150,41 +136,9 @@ export function startAgentRelay(options: AgentRelayOptions): AgentRelay {
     });
 
     if (!decision.banner) return;
-
-    const reason =
-      typeof change.alertReason === 'string' && change.alertReason !== '' ? change.alertReason : undefined;
-
-    /*
-     * ASKED, and only now.
-     *
-     * Alerts are rare and suppressed alerts are common, so the git read and the
-     * transcript tail behind this are paid once per banner and never for a
-     * change nobody will see. Everything above this line is synchronous, so
-     * nothing about the decision — the level, the viewing check, the badge —
-     * waits on an extension.
-     *
-     * Nothing registered, a rejection, and a session that belongs to no task all
-     * mean the same thing, and `resolveAlert` gives it one answer: the wording
-     * this file used before there was anything to ask.
-     */
-    const described =
-      options.describe === undefined
-        ? null
-        : await options
-            .describe({
-              sessionId,
-              paneId: pane as string,
-              state: change.to,
-              ...(reason === undefined ? {} : { reason }),
-              turnFinished: change.turnFinished === true,
-            })
-            .catch((error: unknown) => {
-              log.warn(`could not describe the alert for ${sessionId}: ${String(error)}`);
-              return null;
-            });
-
     options.alerts.notify({
-      ...resolveAlert(described, { state: change.to, ...(reason === undefined ? {} : { reason }) }),
+      title: title(change.to),
+      body: typeof change.alertReason === 'string' && change.alertReason !== '' ? change.alertReason : change.to,
       sessionId,
     });
   });
@@ -233,4 +187,15 @@ export function clearAgentState(options: {
     'agent',
     `cleared ${held.length} agent indicator(s): ${options.reason}. They are not stale — they are unknown.`,
   );
+}
+
+function title(state: string): string {
+  switch (state) {
+    case 'blocked':
+      return 'Waiting on you';
+    case 'error':
+      return 'Turn failed';
+    default:
+      return 'Turn finished';
+  }
 }

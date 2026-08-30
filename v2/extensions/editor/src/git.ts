@@ -1,6 +1,6 @@
 import type { ExecErr, ExecOk } from '@shepherd/sdk';
 import { treePaths } from './paths.ts';
-import { readNameStatus, readNumstat, readStatus, type DiffStat, type StatusEntry } from './status.ts';
+import { readNameStatus, readStatus, type StatusEntry } from './status.ts';
 import { walk, type Walked } from './walk.ts';
 
 /**
@@ -102,36 +102,6 @@ function mergeEntries(
   const byPath = new Map<string, StatusEntry>();
   for (const entry of [...since, ...working]) byPath.set(entry.path, entry);
   return [...byPath.values()];
-}
-
-/**
- * How much this checkout has changed — the numbers a row and a banner draw.
- *
- * TWO calls, for `listStatus`'s reason: `git diff` cannot see a file git has
- * never heard of, and writing one is often an agent's first act. An untracked
- * file counts as a changed FILE and contributes no lines, because counting its
- * lines would mean reading every one of them for a number nobody is checking.
- *
- * `base` widens the question from "what is uncommitted" to "what has this
- * checkout changed since it forked", exactly as it does for `listStatus`: an
- * agent commits, and the answer must not empty itself when it does.
- *
- * **The answer is taken from `stdout` in both branches**, which is `filePatch`'s
- * lesson one door along: `git diff` exits 1 when there ARE differences, so a
- * not-ok result carrying output is the ordinary case and reading `ok` would
- * report zero for every checkout that had changed. Outside a repository the
- * call fails with nothing on stdout, which parses to zero — the honest answer
- * for a directory with no history, and never worth failing a banner for.
- */
-export async function statOf(git: GitRunner, root: string, base?: string): Promise<DiffStat> {
-  const opts = { cwd: root, timeoutMs: LIST_MS };
-  const [changed, untracked] = await Promise.all([
-    git.gitRead(base === undefined ? ['diff', '--numstat'] : ['diff', '--numstat', base], opts),
-    git.gitRead(['ls-files', '--others', '--exclude-standard'], opts),
-  ]);
-  const stat = readNumstat(changed.stdout);
-  const extra = untracked.stdout.split('\n').filter((line) => line.trim() !== '').length;
-  return { ...stat, files: stat.files + extra };
 }
 
 /**

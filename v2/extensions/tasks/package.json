@@ -89,9 +89,6 @@
           "title": "Tasks: Wake"
         },
         {
-          "id": "alerts.describe"
-        },
-        {
           "id": "tasks.suggestRepos",
           "title": "Tasks: Suggest Repos"
         },

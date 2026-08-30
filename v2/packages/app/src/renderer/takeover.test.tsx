@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import { act, type ReactElement } from 'react';
 import type { TreeItem } from '@shepherd/sdk';
 import type { ViewContributionDTO, ViewsApi } from '../shared/index.ts';
-import type { NavigateMessage } from '../shared/index.ts';
 import { useTakeover, type TakeoverProps } from './takeover.tsx';
 import { all, mount, one } from './test-dom.ts';
 
@@ -845,104 +844,6 @@ describe('later', () => {
     const group = view.container.querySelector('[data-group]');
     expect(group?.getAttribute('data-group')).toBe('later');
     expect(group?.textContent).toContain('until later today');
-    view.unmount();
-  });
-});
-
-/**
- * A banner is the one surface that reaches you when the app does not have the
- * screen, so arriving from one is a TELEPORT: you were not somewhere else in
- * Shepherd a moment ago, you were in another app.
- */
-describe('a notification sends the window somewhere', () => {
-  const rows = {
-    'tasks.tree': [
-      task({ id: 'relay', label: 'Relay retry storm', tint: 'working' }),
-      task({ id: 'palette', label: 'Palette pass', tint: 'working' }),
-    ],
-  };
-  const faces: readonly ViewContributionDTO[] = [
-    {
-      extension: 'github',
-      type: 'github.taskDiff',
-      kind: 'component',
-      component: 'github.taskDiff',
-      surface: 'face',
-      face: { slot: 'diff', subject: 'task' },
-      title: 'Diff',
-    },
-  ];
-
-  function navigable(options: Parameters<typeof render>[0] = {}) {
-    let send: ((message: NavigateMessage) => void) | undefined;
-    const calls: Invocation[] = [];
-    const view = mount(
-      <Host
-        views={bridge(options.rows ?? {}, [...(options.views ?? [TREE])])}
-        contributions={options.faces ?? []}
-        groupOfRoot={(root) => options.groups?.[root] ?? root}
-        invoke={(command, args) => calls.push({ command, args })}
-        onRaiseView={() => {}}
-        onGoto={(listener) => {
-          send = listener;
-          return () => {
-            send = undefined;
-          };
-        }}
-      />,
-    );
-    return { view, calls, goto: (message: NavigateMessage) => act(() => send?.(message)) };
-  }
-
-  const press = (key: string, init: KeyboardEventInit = {}): void => {
-    act(() =>
-      void window.dispatchEvent(
-        new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }),
-      ),
-    );
-  };
-
-  it('teleports to the task it named, clearing the stack', async () => {
-    const { view, goto } = navigable({ rows });
-    await settle();
-    // Walk in first, so there IS a stack a push would leave behind.
-    act(() => (all(view.container, 'takeover-row')[0] as HTMLElement).click());
-    expect(one(view.container, 'takeover-task').textContent).toContain('Relay');
-
-    goto({ task: 'palette' });
-    expect(one(view.container, 'takeover-task').textContent).toContain('Palette');
-
-    // Back (⌘[) leaves the app's most interrupting surface for the overview,
-    // not for the task the banner interrupted.
-    press('[', { metaKey: true });
-    expect(all(view.container, 'takeover-home')).toHaveLength(1);
-    view.unmount();
-  });
-
-  it('runs the row’s own verb, so the worktree is on screen underneath', async () => {
-    const { view, calls, goto } = navigable({ rows });
-    await settle();
-    goto({ task: 'relay' });
-    expect(calls.at(-1)).toEqual({ command: 'tasks.reveal', args: { task: 'relay' } });
-    view.unmount();
-  });
-
-  it('opens the face the banner asked for', async () => {
-    const { view, goto } = navigable({ rows, faces });
-    await settle();
-    goto({ task: 'relay', face: 'diff' });
-    expect(one(view.container, 'takeover-band').getAttribute('data-place')).toBe('task');
-    expect(one(view.container, 'takeover-face').getAttribute('data-face')).toBe('diff');
-    view.unmount();
-  });
-
-  it('still moves the window for a task it has no row for yet', async () => {
-    const { view, calls, goto } = navigable({ rows });
-    await settle();
-    goto({ task: 'ghost' });
-    expect(calls.at(-1)).toEqual({ command: 'tasks.reveal', args: { task: 'ghost' } });
-    // And it stays where it was, rather than pointing at a place it cannot draw.
-    expect(all(view.container, 'takeover-home')).toHaveLength(1);
     view.unmount();
   });
 });

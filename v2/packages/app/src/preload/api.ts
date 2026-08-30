@@ -2,7 +2,6 @@ import {
   EMIT,
   INVOKE,
   type AgentIndicatorDTO,
-  type NavigateMessage,
   type LayoutSnapshots,
   type SessionDataMessage,
   type SessionExitMessage,
@@ -72,13 +71,6 @@ export function createBridge(ipc: IpcLike): ShepherdBridge {
       get: () => invoke(INVOKE.agentsGet),
       onChanged: (listener) =>
         subscribe<readonly AgentIndicatorDTO[]>(EMIT.agentsChanged, listener),
-    },
-    /**
-     * Where a banner is sending you. One listener and no getter: main pushes,
-     * and where the page then IS is the page's own state.
-     */
-    nav: {
-      onGoto: (listener) => subscribe<NavigateMessage>(EMIT.navigate, listener),
     },
     /**
      * Contributed views. Note what the page can ask for: WHICH views exist, a

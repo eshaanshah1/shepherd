@@ -1,6 +1,6 @@
 import { s, type ActivateFn } from '@shepherd/sdk';
 import { EDITOR_COMMANDS, EDITOR_VIEWS, TAB_TITLE } from './manifest.ts';
-import { filePatch, listPaths, listStatus, statOf } from './git.ts';
+import { filePatch, listPaths, listStatus } from './git.ts';
 import { readFileAt, writeFileAt } from './files.ts';
 import { activeCwd, activeGroup, openEditorRoot, readRoots } from './roots.ts';
 import { readTasks, taskInGroup } from './tasks-read.ts';
@@ -172,18 +172,6 @@ export const activate: ActivateFn = (ctx, api) => {
        * does. The tree pane omits it and is unaffected.
        */
       handler: async (args) => ({ entries: await listStatus(process, args.root, args.base) }),
-    }),
-  );
-
-  ctx.subscriptions.push(
-    commands.register(EDITOR_COMMANDS.stat, {
-      schema: s.object({ root: s.string(), base: s.optional(s.string()) }),
-      /**
-       * `base` for the same reason `changes` takes one, and the caller that
-       * needs it is the one asking "what has this task done", not "what is
-       * uncommitted right now".
-       */
-      handler: async (args) => await statOf(process, args.root, args.base),
     }),
   );
 

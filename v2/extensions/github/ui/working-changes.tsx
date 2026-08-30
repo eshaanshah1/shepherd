@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState, type ReactElement } from 'react';
 import { CodeView } from '@pierre/diffs/react';
 import { processFile } from '@pierre/diffs';
-import { Button, Empty, SectionLabel } from '@shepherd/ui';
+import { Button, Empty, Icon, SectionLabel, namedGlyph } from '@shepherd/ui';
 import { GITHUB_COMMANDS } from '../src/manifest.ts';
+import { ChangeMark, DiffSprite } from './pr-panels.tsx';
+import type { ChangedFile } from '../src/model/index.ts';
 import { SHEPHERD_DIFF_CSS, SHEPHERD_DIFF_SIZING, SHEPHERD_DIFF_THEME } from './diff-theme.ts';
 
 /**
@@ -108,6 +110,14 @@ export function WorkingChanges({ task, signedIn, invoke }: WorkingChangesProps):
   const [busy, setBusy] = useState<string | undefined>(undefined);
   const [said, setSaid] = useState<string | undefined>(undefined);
   const [failed, setFailed] = useState<string | undefined>(undefined);
+  /*
+   * How many answers have arrived — the item `version` a fold is folded by.
+   *
+   * `CodeView` drops an item whose version has not moved, so without a number
+   * that changes when the ANSWER changes, a reload that brought new patches
+   * would be short-circuited by the same rule that makes folding work.
+   */
+  const [epoch, setEpoch] = useState(0);
 
   const load = useMemo(
     () => async (): Promise<void> => {
@@ -119,6 +129,7 @@ export function WorkingChanges({ task, signedIn, invoke }: WorkingChangesProps):
       }
       setFailed(readRefusal(answer.value) ?? undefined);
       setRepos(readChanges(answer.value));
+      setEpoch((was) => was + 1);
     },
     [invoke, task],
   );
@@ -190,7 +201,7 @@ export function WorkingChanges({ task, signedIn, invoke }: WorkingChangesProps):
                 </Button>
               )}
             </header>
-            <Diffs repo={repo} />
+            <Diffs repo={repo} epoch={epoch} />
           </section>
         ))}
       </div>
@@ -198,7 +209,60 @@ export function WorkingChanges({ task, signedIn, invoke }: WorkingChangesProps):
   );
 }
 
-function Diffs({ repo }: { readonly repo: RepoChanges }): ReactElement {
+/**
+ * A worktree's status word in the vocabulary the mark and the counts speak.
+ *
+ * `editor`'s git says `deleted` and `untracked`; `ChangedFile` — GitHub's
+ * spelling, which `ChangeMark` reads — says `removed` and has no word for a
+ * file git has not been told about yet. An untracked file is an ARRIVAL, which
+ * is what `added` means, and calling it an edit draws the ordinary mark over a
+ * file that is entirely new.
+ */
+export function changedStatus(status: string): ChangedFile['status'] {
+  switch (status) {
+    case 'untracked':
+    case 'added':
+      return 'added';
+    case 'deleted':
+      return 'removed';
+    case 'renamed':
+      return 'renamed';
+    default:
+      return 'modified';
+  }
+}
+
+/**
+ * The files of one repo, each foldable by its own header.
+ *
+ * The header is OURS — `renderCustomHeader`, the same one the Files tab draws —
+ * for two reasons that are one reason. The package's header has no chevron and
+ * nothing to click, so a task with twenty changed files was twenty diffs to
+ * scroll past rather than a list you could shut. And `SHEPHERD_DIFF_SIZING`
+ * reserves 29px a header because that is `.sh-pr-diff__head` rendered, while
+ * the package's own is 44 — drawing theirs against our metrics puts the
+ * reserved boxes and the painted rows in different places.
+ *
+ * `version` is what makes a fold fold — see the longer note in `pr-panels.tsx`:
+ * `CodeView` keeps a record per item id and short-circuits on an unchanged
+ * version, so a new array with a flipped `collapsed` is dropped and only the
+ * chevron turns. Its `epoch` half moves when the ANSWER moves, so a reload
+ * redraws rather than being short-circuited the same way.
+ */
+function Diffs({ repo, epoch }: { readonly repo: RepoChanges; readonly epoch: number }): ReactElement {
+  /*
+   * Which files the user folded, and only those. Nothing here starts folded —
+   * unlike the Files tab, where anything long does — so a set of paths says
+   * everything there is to say.
+   */
+  const [folded, setFolded] = useState<ReadonlySet<string>>(() => new Set());
+  const toggle = (path: string): void =>
+    setFolded((was) => {
+      const next = new Set(was);
+      if (!next.delete(path)) next.add(path);
+      return next;
+    });
+
   const items = useMemo(
     () =>
       repo.files.flatMap((file) => {
@@ -207,25 +271,99 @@ function Diffs({ repo }: { readonly repo: RepoChanges }): ReactElement {
           isGitDiff: true,
         });
         if (fileDiff === undefined) return [];
-        return [{ id: `${repo.path}:${file.path}`, type: 'diff' as const, fileDiff }];
+        const shut = folded.has(file.path);
+        return [
+          {
+            id: `${repo.path}:${file.path}`,
+            type: 'diff' as const,
+            fileDiff,
+            collapsed: shut,
+            version: epoch * 2 + (shut ? 1 : 0),
+          },
+        ];
       }),
+    [repo, folded, epoch],
+  );
+
+  /*
+   * The counts the header shows, summed from the hunks the library already
+   * parsed. `github.changes` carries a patch and a status and no numbers, and
+   * counting the patch's own `+`/`-` lines again would be a second parser
+   * disagreeing with the first over `+++` and `\ No newline`.
+   */
+  const counts = useMemo(() => {
+    const rows = new Map<string, { readonly added: number; readonly removed: number }>();
+    for (const item of items) {
+      let added = 0;
+      let removed = 0;
+      for (const hunk of item.fileDiff.hunks) {
+        added += hunk.additionLines;
+        removed += hunk.deletionLines;
+      }
+      rows.set(item.id, { added, removed });
+    }
+    return rows;
+  }, [items]);
+
+  const byId = useMemo(
+    () => new Map<string, RepoChanges['files'][number]>(repo.files.map((file) => [`${repo.path}:${file.path}`, file])),
     [repo],
   );
 
   return (
-    <CodeView
-      className="sh-pr-diff__view"
-      items={items}
-      options={{
-        theme: SHEPHERD_DIFF_THEME,
-        unsafeCSS: SHEPHERD_DIFF_CSS,
-        // The same pair the Files tab settled on: unified so the column is not
-        // halved, wrapped so a line ends where the pane does.
-        diffStyle: 'unified',
-        overflow: 'wrap',
-        ...SHEPHERD_DIFF_SIZING,
-      }}
-      disableWorkerPool
-    />
+    <div className="sh-pr-diff">
+      <DiffSprite />
+      <CodeView
+        className="sh-pr-diff__view"
+        items={items}
+        options={{
+          theme: SHEPHERD_DIFF_THEME,
+          unsafeCSS: SHEPHERD_DIFF_CSS,
+          // The same pair the Files tab settled on: unified so the column is not
+          // halved, wrapped so a line ends where the pane does.
+          diffStyle: 'unified',
+          overflow: 'wrap',
+          /*
+           * The filename stays with the code it names. Six hundred lines in,
+           * the header that says which file this is has long since scrolled
+           * away, and the answer to "what am I reading" was to scroll back up.
+           */
+          stickyHeaders: true,
+          ...SHEPHERD_DIFF_SIZING,
+        }}
+        disableWorkerPool
+        renderCustomHeader={(item) => {
+          const file = byId.get(item.id);
+          if (file === undefined) return null;
+          const shut = folded.has(file.path);
+          const count = counts.get(item.id) ?? { added: 0, removed: 0 };
+          return (
+            <button
+              type="button"
+              className="sh-pr-diff__head sh-ui-focusable"
+              aria-expanded={!shut}
+              onClick={() => toggle(file.path)}
+            >
+              <Icon icon={namedGlyph(shut ? 'chevron-right' : 'chevron')} size="sm" />
+              <ChangeMark
+                file={{
+                  path: file.path,
+                  added: count.added,
+                  removed: count.removed,
+                  status: changedStatus(file.status),
+                }}
+              />
+              <span className="sh-pr-diff__path">{file.path}</span>
+              <span className="sh-pr-diff__count" data-tone="added">
+                +{count.added}
+              </span>
+              <span className="sh-pr-diff__count" data-tone="removed">
+                −{count.removed}
+              </span>
+            </button>
+          );
+        }}
+      />
+    </div>
   );
 }

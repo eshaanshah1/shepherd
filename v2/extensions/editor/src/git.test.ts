@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { filePatch, listPaths, listStatus, statOf, type GitRunner } from './git.ts';
+import { filePatch, listPaths, listStatus, type GitRunner } from './git.ts';
 
 /**
  * A stub that answers by the first two args, so a test reads as "git said X".
@@ -233,40 +233,5 @@ describe('a task an agent has worked in, as git reports it', () => {
       { path: 'moved.txt', status: 'renamed' },
       { path: 'untracked.txt', status: 'untracked' },
     ]);
-  });
-});
-
-/**
- * How much changed, which is two questions because git only answers one of them
- * per call: `git diff` cannot see a file git has never heard of.
- */
-describe('statOf', () => {
-  it('adds untracked files to the numstat', async () => {
-    const git = runner({
-      'diff --numstat': { stdout: '3\t1\tsrc/a.ts\n' },
-      'ls-files --others': { stdout: 'new.ts\nalso-new.ts\n' },
-    });
-    expect(await statOf(git, '/root')).toEqual({ files: 3, added: 3, removed: 1 });
-  });
-
-  it('reads the numbers off a diff that exited 1 for having differences', async () => {
-    const git = runner({
-      'diff --numstat': { stdout: '9\t2\tsrc/a.ts\n', ok: false, code: 1 },
-      'ls-files --others': { stdout: '' },
-    });
-    expect(await statOf(git, '/root')).toEqual({ files: 1, added: 9, removed: 2 });
-  });
-
-  it('compares against the base when it is given one', async () => {
-    const git = runner({
-      'diff --numstat': { stdout: '' },
-      'ls-files --others': { stdout: '' },
-    });
-    await statOf(git, '/root', 'abc123');
-    expect(git.seen[0]).toEqual(['diff', '--numstat', 'abc123']);
-  });
-
-  it('answers zero outside a repository', async () => {
-    expect(await statOf(runner({}), '/root')).toEqual({ files: 0, added: 0, removed: 0 });
   });
 });

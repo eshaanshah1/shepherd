@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readNameStatus, readNumstat, readStatus } from './status.ts';
+import { readNameStatus, readStatus } from './status.ts';
 
 /*
  * `--porcelain -z`: NUL-separated, and a rename is TWO NUL-separated fields —
@@ -124,26 +124,5 @@ describe('readNameStatus', () => {
 
   it('is empty for an empty answer', () => {
     expect(readNameStatus('')).toEqual([]);
-  });
-});
-
-/**
- * `git diff --numstat`, summed — the numbers a banner and a row draw.
- *
- * The binary case is the one worth a test: git reports `-` for both counts, and
- * a stat that dropped the row would say `0 files` for a turn that replaced an
- * icon.
- */
-describe('readNumstat', () => {
-  it('sums a numstat', () => {
-    expect(readNumstat('12\t3\tsrc/a.ts\n0\t7\tsrc/b.ts\n')).toEqual({ files: 2, added: 12, removed: 10 });
-  });
-
-  it('counts a binary file without counting its lines', () => {
-    expect(readNumstat('-\t-\tlogo.png\n')).toEqual({ files: 1, added: 0, removed: 0 });
-  });
-
-  it('answers zero for nothing', () => {
-    expect(readNumstat('')).toEqual({ files: 0, added: 0, removed: 0 });
   });
 });

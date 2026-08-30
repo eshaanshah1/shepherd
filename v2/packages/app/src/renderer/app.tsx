@@ -17,7 +17,6 @@ import {
   type AgentIndicatorDTO,
   type AgentsApi,
   type SettingsApi,
-  type NavApi,
   type ViewsApi,
   THEME_KEY,
   type CommandID,
@@ -82,8 +81,6 @@ export interface AppProps {
   readonly agents?: AgentsApi | null;
   /** Contributed views (M3). Absent = no dock, not a crash. */
   readonly views?: ViewsApi | null;
-  /** Where a notification is sending the window. Absent = banners raise only. */
-  readonly nav?: NavApi | null;
   /** Settings. Absent = ⌘, draws nothing, not a crash. */
   readonly settings?: SettingsApi | null;
   /** Rendered until (or instead of) main's first push. The no-bridge and test seam. */
@@ -217,7 +214,6 @@ export function App({
   commands,
   agents: agentsApi = null,
   views: viewsApi = null,
-  nav: navApi = null,
   settings: settingsApi = null,
   initialSnapshot,
   onSnapshot,
@@ -748,9 +744,6 @@ export function App({
     groupOfRoot,
     invoke,
     onRaiseView: (type: string) => window.dispatchEvent(new CustomEvent('sh:raise-view', { detail: type })),
-    // A clicked banner. Absent with no bridge, which is a window that simply
-    // cannot be sent anywhere rather than one that fails when it is.
-    ...(navApi === null ? {} : { onGoto: navApi.onGoto }),
     // Settings is a departure from the work: while it is up, nothing here
     // should be listening for a bare `h`.
     suspended: settingsOpen,

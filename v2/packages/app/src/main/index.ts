@@ -1116,9 +1116,6 @@ void app.whenReady().then(async () => {
     layout,
     attention,
     logger,
-    // What a banner should SAY, asked of whoever registered `alerts.describe`
-    // — and where a button pressed on one is run. See `alert-spec.ts`.
-    registry,
     // The smoke records alerts instead of raising them: a run that stacked real
     // banners in the user's Notification Center could not assert the one thing
     // ADR 0020 is about — that a turn finishing under your eyes raises nothing.
