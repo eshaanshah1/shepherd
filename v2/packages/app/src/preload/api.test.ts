@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BRIDGE_SURFACE, EMIT, INVOKE } from '../shared/index.ts';
+import { BRIDGE_SURFACE, CONTROL_TOPICS, EMIT, INVOKE } from '../shared/index.ts';
 import { createBridge, type IpcLike } from './api.ts';
 
 /**
@@ -27,6 +27,8 @@ function fakeIpc(): IpcLike & {
   readonly log: Recorded[];
   emit(channel: string, payload: unknown): void;
   readonly listenerCount: number;
+  /** What every `invoke` resolves with. Default: a bare success. */
+  answer: unknown;
 } {
   const log: Recorded[] = [];
   let listeners: Array<{ channel: string; fn: (event: unknown, ...args: unknown[]) => void }> = [];
@@ -35,9 +37,10 @@ function fakeIpc(): IpcLike & {
     get listenerCount() {
       return listeners.length;
     },
-    invoke: (channel, ...args) => {
+    answer: { ok: true, value: undefined },
+    invoke(channel, ...args) {
       log.push({ kind: 'invoke', channel, args });
-      return Promise.resolve({ ok: true, value: undefined });
+      return Promise.resolve(this.answer);
     },
     on: (channel, fn) => {
       log.push({ kind: 'on', channel, args: [] });
@@ -180,5 +183,135 @@ describe('the preload bridge surface', () => {
     ipc.emit(EMIT.layoutChanged, { root: 'window-1' });
 
     expect(seen).toEqual([]);
+  });
+});
+
+/**
+ * The control-plane namespaces, as ONE client of `control:invoke` and
+ * `control:subscribe`.
+ *
+ * These assert the two things Stage 2 bought and the CLI never needed: a
+ * subscription that starts with the topic's current value, and a nudge the
+ * reader acknowledges. They are asserted HERE rather than only in core because
+ * the preload is where a page's `agents.onChanged` becomes a topic name — and
+ * that translation is the whole of what keeps a compromised page from naming
+ * one.
+ */
+describe('the control plane, from the page\'s side', () => {
+  it('never lets the page name a topic — every subscribe carries a constant', () => {
+    const ipc = fakeIpc();
+    const bridge = createBridge(ipc);
+    bridge.agents.onChanged(() => undefined);
+    bridge.settings.onChanged(() => undefined);
+    bridge.settings.onVisibility(() => undefined);
+    bridge.views.onChanged(() => undefined);
+
+    const topics = ipc.log
+      .filter((entry) => entry.kind === 'invoke' && entry.channel === INVOKE.controlSubscribe)
+      .map((entry) => entry.args[1]);
+    expect(topics).toEqual([
+      CONTROL_TOPICS.agents,
+      CONTROL_TOPICS.settingsChanged,
+      CONTROL_TOPICS.settingsVisibility,
+      CONTROL_TOPICS.views,
+    ]);
+  });
+
+  it('delivers a topic\'s SNAPSHOT to the same listener the deltas reach', () => {
+    // The Stage 2 win: one code path, not a read plus a subscribe plus a merge
+    // rule for the race between them.
+    const ipc = fakeIpc();
+    const bridge = createBridge(ipc);
+    const seen: unknown[] = [];
+    bridge.agents.onChanged((indicators) => seen.push(indicators));
+
+    ipc.emit(EMIT.controlFrame, {
+      subscription: 's1',
+      frame: { kind: 'snapshot', topic: CONTROL_TOPICS.agents, seq: 0, value: [{ sessionId: 'a', state: 'idle' }] },
+    });
+    ipc.emit(EMIT.controlFrame, {
+      subscription: 's1',
+      frame: { kind: 'event', topic: CONTROL_TOPICS.agents, seq: 1, payload: [{ sessionId: 'a', state: 'working' }] },
+    });
+
+    expect(seen).toEqual([[{ sessionId: 'a', state: 'idle' }], [{ sessionId: 'a', state: 'working' }]]);
+  });
+
+  it('routes a frame only to the subscription it is addressed to', () => {
+    const ipc = fakeIpc();
+    const bridge = createBridge(ipc);
+    const agents: unknown[] = [];
+    const settings: unknown[] = [];
+    bridge.agents.onChanged((value) => agents.push(value));
+    bridge.settings.onChanged((value) => settings.push(value));
+
+    ipc.emit(EMIT.controlFrame, {
+      subscription: 's2',
+      frame: { kind: 'event', topic: CONTROL_TOPICS.settingsChanged, seq: 1, payload: { key: 'k', value: 1 } },
+    });
+
+    expect(agents).toEqual([]);
+    expect(settings).toEqual([{ key: 'k', value: 1 }]);
+  });
+
+  it('acknowledges a nudge, which is what lets the next one arrive', () => {
+    // Without the pull the reader gets exactly one nudge for the life of the
+    // window: the whole point of the outstanding flag is that nothing else is
+    // sent until the reader says it has read.
+    const ipc = fakeIpc();
+    const bridge = createBridge(ipc);
+    const changed: string[] = [];
+    bridge.views.onChanged((type) => changed.push(type));
+
+    ipc.emit(EMIT.controlFrame, {
+      subscription: 's1',
+      frame: { kind: 'nudge', topic: CONTROL_TOPICS.views, seq: 1, coalesced: 0, keys: ['tasks.tree'] },
+    });
+
+    expect(changed).toEqual(['tasks.tree']);
+    expect(ipc.log.filter((entry) => entry.channel === INVOKE.controlPull)).toHaveLength(1);
+  });
+
+  it('reports a keyless nudge as the empty type — "re-read what you hold"', () => {
+    // Main sends `''` when the SET of views changed rather than one of them, and
+    // a coalesced nudge that saw one of those names nothing at all.
+    const ipc = fakeIpc();
+    const bridge = createBridge(ipc);
+    const changed: string[] = [];
+    bridge.views.onChanged((type) => changed.push(type));
+
+    ipc.emit(EMIT.controlFrame, {
+      subscription: 's1',
+      frame: { kind: 'nudge', topic: CONTROL_TOPICS.views, seq: 1, coalesced: 4 },
+    });
+
+    expect(changed).toEqual(['']);
+  });
+
+  it('stops delivering, and says so upstream, when a follower unsubscribes', () => {
+    const ipc = fakeIpc();
+    const bridge = createBridge(ipc);
+    const seen: unknown[] = [];
+    const off = bridge.agents.onChanged((value) => seen.push(value));
+    off();
+
+    ipc.emit(EMIT.controlFrame, {
+      subscription: 's1',
+      frame: { kind: 'event', topic: CONTROL_TOPICS.agents, seq: 1, payload: [] },
+    });
+
+    expect(seen).toEqual([]);
+    expect(ipc.log.filter((entry) => entry.channel === INVOKE.controlUnsubscribe)).toHaveLength(1);
+  });
+
+  it('unwraps the envelope views.list answers in', () => {
+    // `views.list` answers `{ views: [...] }` because that is what a paired
+    // member reads off another Mac. A cast would have typechecked while handing
+    // the page the wrapper — and the dock would have drawn nothing, with the
+    // answer sitting right there.
+    const ipc = fakeIpc();
+    ipc.answer = { ok: true, value: { views: [{ type: 'tasks.tree' }] } };
+    const bridge = createBridge(ipc);
+    return expect(bridge.views.list()).resolves.toEqual({ ok: true, value: [{ type: 'tasks.tree' }] });
   });
 });
