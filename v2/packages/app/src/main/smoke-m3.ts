@@ -654,9 +654,20 @@ export async function runM3Smoke(
   check(scoped.includes(repo), `the mention became a pill: ${JSON.stringify(scoped)}`);
   say('ok — `#` named a repo inside the brief and the pill carries its path');
 
-  await win.webContents.executeJavaScript(
-    `document.querySelector('[data-testid="composer-create"]').click(), true`,
-  );
+  /*
+   * ⏎ IS the create button — there is no longer one to click.
+   *
+   * The composer's send affordance is a sentence (`composer-send`), not a
+   * control: the key that always worked stopped being duplicated by chrome the
+   * layout paid for on every open. So this presses the gesture the app actually
+   * ships, in the field that owns it, and the picker having just closed on the
+   * pill is what makes this ⏎ a submit rather than a second pick.
+   */
+  await win.webContents.executeJavaScript(`(() => {
+    const field = document.querySelector('[data-testid="composer-brief"]');
+    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    return true;
+  })()`);
 
   // The overlay CLOSES on success — the component said `done()` and the shell
   // acted on it. That is the assertion, and it is stronger than reading a status
@@ -720,23 +731,27 @@ export async function runM3Smoke(
   );
   say('ok — a task was created from inside the app, worktree and task root included');
 
-  // --- 8. and it LANDED you in the task — read from the real DOM.
-  //
-  // A task owns a layout root, so creating one must take you to it: v1's
-  // composer behaviour, and the difference between "an agent started" and "an
-  // agent started somewhere you cannot see". Asserting main's active root would
-  // pass while the window drew the old one, which is the same argument step 5
-  // makes about the registry — so this reads the stage the user is looking at.
-  //
-  // The root id convention (`task:<id>`) is inlined rather than imported: it is
-  // public vocabulary, like a command id, and a smoke reaching into an
-  // extension's model to agree with itself would assert nothing.
-  //
-  // Both halves matter. The id says the window is showing THIS task; the count
-  // says exactly one root is visible, so a switch that revealed a second root
-  // instead of replacing the first is a failure rather than a pass.
-  const landed = await until(
-    'the window to switch to the composed task’s root',
+  /**
+   * --- 8. and it LEFT the window where it was — read from the real DOM.
+   *
+   * The opposite of what this step used to assert, and the change is a decision
+   * rather than a drift: a spawn lands seconds after it was asked for, because
+   * provisioning is worktree-cutting and a round trip per repo, so a switch
+   * arrives long after the composer closed and takes the screen away from
+   * whatever was read in the meantime. `tasks.reveal` is the one verb that moves
+   * the window now, and a row is how a task off screen announces itself — which
+   * is what the next assertion is about.
+   *
+   * Read from the STAGE rather than from main's active root, for the reason the
+   * old assertion gave in the other direction: main agreeing with itself would
+   * pass while the window drew something else.
+   *
+   * Both halves still matter. The active root is the home root the run started
+   * on, and the count says exactly one root is visible — so a create that
+   * revealed the task beside Home is a failure rather than a pass.
+   */
+  const stayed = await until(
+    'the window to settle after the composed task provisioned',
     () =>
       win.webContents.executeJavaScript(`(() => {
         const roots = Array.from(document.querySelectorAll('.sh-root'));
@@ -744,14 +759,16 @@ export async function runM3Smoke(
         const active = document.querySelector('.sh-root[data-active="true"]');
         return { active: active === null ? null : active.dataset.root, visible: visible.length };
       })()`) as Promise<{ active: string | null; visible: number }>,
-    (state) => state.active === `task:${composed.id}`,
+    // The task's pane exists by now (`composed` waited on its worktree), so a
+    // switch would have happened already if this build still did one.
+    (state) => state.active !== null,
   );
   check(
-    landed.active === `task:${composed.id}`,
-    `the window is showing the composed task's root: ${JSON.stringify(landed)}`,
+    stayed.active !== `task:${composed.id}`,
+    `creating a task did not take the window to it: ${JSON.stringify(stayed)}`,
   );
-  check(landed.visible === 1, `exactly one root is on screen: ${JSON.stringify(landed)}`);
-  say('ok — creating a task took the window to it');
+  check(stayed.visible === 1, `exactly one root is on screen: ${JSON.stringify(stayed)}`);
+  say('ok — creating a task is quiet: the window stayed where it was');
 
   /**
    * And the SIDEBAR agrees about which task that is.

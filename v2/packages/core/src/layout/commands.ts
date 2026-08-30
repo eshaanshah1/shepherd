@@ -557,7 +557,21 @@ export function registerLayoutCommands(options: LayoutCommandsOptions): Disposab
       handler: (args) => {
         const from = resolveRoot(undefined);
         const group = args.group ?? store.groupOf(from) ?? String(from);
-        const focused = store.focused(from);
+        /*
+         * The directory comes from the group being JOINED, and only falls back
+         * to the root on screen when they are the same group.
+         *
+         * "The pane you were looking at" is the rule for the unqualified
+         * gesture, where the group is the one you are in and the two answers
+         * cannot differ. A NAMED group is somebody else's — an extension or the
+         * CLI asking for another tab of a task — and then the root on screen is
+         * an unrelated place: a tab minted for a task while Home is up landed a
+         * shell in Home's directory and called it a tab of the task. The
+         * ANCHOR's cwd is the one every other tab of the group already has.
+         */
+        const anchor = store.rootsInGroup(group).find((root) => String(root) === group);
+        const source = store.groupOf(from) === group ? from : (anchor ?? from);
+        const focused = store.focused(source);
         const inherited = args.cwd ?? (focused === null ? undefined : (store.pane(focused)?.cwd ?? undefined));
         const root = unwrap(
           store.newTab(group, {
