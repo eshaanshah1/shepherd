@@ -103,18 +103,25 @@ registerCustomCSSVariableTheme(SHEPHERD_DIFF_THEME, {
  * against our 29 and 18.
  *
  * `diffHeaderHeight` is `.sh-pr-diff__head` rendered — 12.5px text, two
- * `space-sm` of padding and a hairline. `lineHeight` is `--diffs-line-height`
- * from `review-pane.css`.
+ * `space-sm` of padding and a hairline on EACH edge (the second one is what
+ * ends the file above it). `lineHeight` is `--diffs-line-height` from
+ * `review-pane.css`.
+ *
+ * `layout.gap` is the air between two files, and it is not decoration: without
+ * it the last line of one file abuts the header of the next, and a list of
+ * twenty reads as one scroll of code. It is painted by `.sh-pr-diff__view`'s
+ * own background — `canvas`, a step below the diffs — so the gap is a break
+ * rather than more of the same colour.
  */
 export const SHEPHERD_DIFF_SIZING = {
   itemMetrics: {
-    diffHeaderHeight: 29,
+    diffHeaderHeight: 30,
     lineHeight: 18,
     spacing: 4,
     paddingTop: 0,
     paddingBottom: 4,
   },
-  layout: { paddingTop: 0, paddingBottom: 0, gap: 0 },
+  layout: { paddingTop: 0, paddingBottom: 0, gap: 8 },
 };
 
 export const SHEPHERD_DIFF_CSS = `

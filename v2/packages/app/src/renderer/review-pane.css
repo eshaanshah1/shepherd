@@ -1010,9 +1010,14 @@
  * The diff's own header — ours, not the package's.
  *
  * A button because it toggles the file, so it has to take a keyboard and say
- * what it does. It reads as a row rather than a control: no fill, no border, no
- * radius until you hover it, because a bordered capsule across the top of a
- * diff is a second toolbar.
+ * what it does. It is still not a toolbar — no radius, no capsule — but it is
+ * no longer the same ground as the code under it either: at `surface` with one
+ * hairline under it, twenty files read as one scroll of code with the odd
+ * filename in it, and you could not tell where one ended and the next began.
+ *
+ * So it is `raised` — one luminance step up, which is this language's whole
+ * vocabulary for elevation — ruled on BOTH edges. The rule above is the half
+ * that does the separating: it is the end of the file before it.
  */
 .sh-pr-diff__head {
   display: flex;
@@ -1023,8 +1028,8 @@
   min-inline-size: 0;
   padding: var(--sh-space-sm) var(--sh-space-lg);
   border: 0;
-  border-block-end: var(--sh-hairline) solid var(--sh-line);
-  background: var(--sh-surface);
+  border-block: var(--sh-hairline) solid var(--sh-line);
+  background: var(--sh-raised);
   font: inherit;
   font-size: var(--sh-font-size-medium);
   color: var(--sh-text);
@@ -1311,6 +1316,16 @@
   flex: 1 1 auto;
   min-block-size: 0;
   overflow: auto;
+
+  /*
+   * The ground BETWEEN the files, which is the only thing this paints.
+   *
+   * Every file draws its own `--diffs-bg` over this; what is left is the gap
+   * `SHEPHERD_DIFF_SIZING.layout` reserves between them, and a gap the same
+   * colour as the code it separates separates nothing. `canvas` is the step
+   * DOWN — the ground a surface sits on — so the files read as blocks on it.
+   */
+  background: var(--sh-canvas);
 
   /*
    * The file header was `1lh + 3 × 8px` — 44px of chrome over a two-line diff,

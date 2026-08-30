@@ -109,6 +109,18 @@ describe('the tracks the sheet pins each cell to', () => {
     expect(tracks.match(/auto/g)).toHaveLength(TRAIL_ORDER.length);
   });
 
+  it('keeps every cell on the jump’s row, so a chip cannot start a second one', () => {
+    /*
+     * The jump pins itself to row 1 and spans to `-1`. A cell with a definite
+     * column and an AUTO row cannot be placed there, so auto-placement put it
+     * in an implicit second row: the row grew a line and the repo chip drew
+     * above the hover icons rather than behind them, out of line with every
+     * other row in the region. They share a cell only if both name their row.
+     */
+    expect(declared('.sh-take__cell', 'grid-row')).toEqual(['1']);
+    expect(declared('.sh-take__jump', 'grid-row')).toEqual(['1']);
+  });
+
   it('borrows the region’s tracks rather than declaring its own', () => {
     // An `auto` here would size a column to ONE row's content, which is the
     // defect this replaced: rows that agree with nothing but themselves.

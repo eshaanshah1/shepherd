@@ -45,8 +45,17 @@ describe('the diff metrics the virtualiser is told', () => {
   });
 
   it('states a header height at all, which the package default would not', () => {
-    // 44 is the package's own chrome. Reserving it under a 29px header is the
+    // 44 is the package's own chrome. Reserving it under a 30px header is the
     // shipped defect above, and the numbers being equal is what "no band" means.
     expect(SHEPHERD_DIFF_SIZING.itemMetrics.diffHeaderHeight).toBeLessThan(44);
+  });
+
+  it('paints the ground the gap between two files shows', () => {
+    // The gap is reserved in JS and painted by nothing but the scroll
+    // container's own background. Reserve it without painting one and the air
+    // between two files is whatever colour sits behind the pane — which, if
+    // that is the diffs' own surface, is a gap that separates nothing.
+    if (SHEPHERD_DIFF_SIZING.layout.gap === 0) return;
+    expect(declared('.sh-pr-diff__view', 'background')).not.toEqual([]);
   });
 });

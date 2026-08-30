@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
-import { readChanges, readRefusal } from './working-changes.tsx';
+import { changedStatus, readChanges, readRefusal } from './working-changes.tsx';
 
 /**
  * What `github.changes` answered, read rather than cast — it crossed a port to
@@ -72,5 +72,29 @@ describe('readRefusal', () => {
 
   it('is null for a refusal with no reason to show', () => {
     expect(readRefusal({ ok: false })).toBeNull();
+  });
+});
+
+/**
+ * The fold header's mark and counts read `ChangedFile`'s vocabulary, and a
+ * worktree does not speak it — `editor`'s git says `deleted` and `untracked`.
+ */
+describe('changedStatus', () => {
+  it('reads an untracked file as the arrival it is', () => {
+    expect(changedStatus('untracked')).toBe('added');
+    expect(changedStatus('added')).toBe('added');
+  });
+
+  it('says removed, which is the word the mark is written in', () => {
+    expect(changedStatus('deleted')).toBe('removed');
+  });
+
+  it('carries a rename through', () => {
+    expect(changedStatus('renamed')).toBe('renamed');
+  });
+
+  it('falls back to an edit for anything it has no word for', () => {
+    expect(changedStatus('modified')).toBe('modified');
+    expect(changedStatus('typechange')).toBe('modified');
   });
 });

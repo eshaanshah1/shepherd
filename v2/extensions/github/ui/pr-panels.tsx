@@ -608,7 +608,7 @@ function changeMark(file: ChangedFile): { readonly symbol: string; readonly tone
  * an import — it is in the bundle, it is the same on every render, and no
  * caller can reach it.
  */
-function DiffSprite(): ReactElement {
+export function DiffSprite(): ReactElement {
   const host = useRef<HTMLSpanElement | null>(null);
   useEffect(() => {
     if (host.current !== null && host.current.childElementCount === 0) {
@@ -619,7 +619,7 @@ function DiffSprite(): ReactElement {
 }
 
 /** One mark, from the sprite above. */
-function ChangeMark({ file }: { readonly file: ChangedFile }): ReactElement {
+export function ChangeMark({ file }: { readonly file: ChangedFile }): ReactElement {
   const mark = changeMark(file);
   return (
     <span className="sh-pr-diff__mark" data-tone={mark.tone} title={file.status ?? 'modified'}>
@@ -788,6 +788,12 @@ function DiffList({
            */
           diffStyle: 'unified',
           overflow: 'wrap',
+          /*
+           * The filename stays with the code it names. Six hundred lines in,
+           * the header that says which file this is has long since scrolled
+           * away, and the answer to "what am I reading" was to scroll back up.
+           */
+          stickyHeaders: true,
           // What the virtualiser reserves, kept beside the stylesheet it has to
           // match — `diff-theme.ts` says what happens when they drift.
           ...SHEPHERD_DIFF_SIZING,
