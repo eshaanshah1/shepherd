@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactElement } from 'react';
-import type { ViewContributionDTO, ViewsApi } from '../shared/index.ts';
+import type { NavigateMessage, ViewContributionDTO, ViewsApi } from '../shared/index.ts';
 import { TakeoverHome } from './takeover/home.tsx';
 import { TakeoverTask } from './takeover/task.tsx';
 import { Switcher } from './takeover/switcher.tsx';
@@ -75,6 +75,14 @@ export interface TakeoverProps {
   readonly invoke: (command: string, args: Readonly<Record<string, unknown>>) => void;
   /** Raise a contributed screen by its view type — how `New` opens the composer. */
   readonly onRaiseView: (type: string) => void;
+  /**
+   * Where a notification is sending you — main's push, subscribed once.
+   *
+   * A subscription rather than a value, because it is an EVENT: the same task
+   * banner twice has to move the window twice, and a prop holding "the last
+   * place I was told to go" could only do that with a nonce.
+   */
+  readonly onGoto?: (listener: (message: NavigateMessage) => void) => () => void;
   /** True while another layer owns the window, so this one stops listening. */
   readonly suspended?: boolean;
 }
@@ -125,6 +133,7 @@ export function useTakeover({
   groupOfRoot,
   invoke,
   onRaiseView,
+  onGoto,
   suspended = false,
 }: TakeoverProps): TakeoverSurfaces {
   const entries = useTriageEntries({ bridge: views, groupOfRoot });
@@ -204,6 +213,48 @@ export function useTakeover({
     },
     [invoke],
   );
+
+  /**
+   * A banner said go here, so go — and it is a TELEPORT, not a step down.
+   *
+   * `jump`, for ⌘K's reason one door along: you did not descend into this task
+   * from wherever you were, you were pulled out of another app entirely. Stacked,
+   * `⌘[` would take you back to a task you were not reading — so the way out of
+   * the app's most interrupting surface would be the one gesture that leads
+   * somewhere you did not ask for.
+   *
+   * The row's own verb runs either way (`open`/`openAt` both invoke it), because
+   * the worktree still has to be on screen under whichever face is drawn.
+   *
+   * A task with no row yet — the tree has not arrived, or it is not in the list
+   * this window draws — still moves the window: the verb is invoked with the id
+   * the banner carried, and `nav` is left alone rather than pointed at a place
+   * that cannot be rendered.
+   */
+  useEffect(() => {
+    if (onGoto === undefined) return undefined;
+    return onGoto((message) => {
+      /*
+       * By `rowId`, which is the id the EXTENSION gave the row — the same id it
+       * put in the alert. `byId` is keyed by the shell's own `${view}:${row}`
+       * composite, which nothing outside this window has ever seen.
+       */
+      const entry = entries.find((candidate) => candidate.rowId === message.task);
+      if (entry === undefined || entry.root === undefined) {
+        invoke(REVEAL_COMMAND, { task: message.task });
+        return;
+      }
+      if (message.face === undefined) {
+        open(entry, 'jump');
+        return;
+      }
+      if (entry.command !== undefined) {
+        invoke(entry.command.id, (entry.command.args ?? {}) as Readonly<Record<string, unknown>>);
+      }
+      const face = nearestFace(tabs, message.face as Face);
+      setNav((current) => jump(current, { kind: 'task', id: entry.id, root: entry.root as string, face }));
+    });
+  }, [onGoto, entries, open, invoke, tabs]);
 
   const raiseComposer = useCallback(() => {
     onRaiseView(COMPOSER_VIEW);
@@ -594,3 +645,15 @@ export function useTakeover({
  * nothing and the button is the only thing that was wrong.
  */
 const COMPOSER_VIEW = 'tasks.composer';
+
+/**
+ * The verb for "show me this task", for a banner naming one this window has no
+ * row for — a tree that has not arrived yet, or a task filtered out of the list.
+ *
+ * A NAME for `COMPOSER_VIEW`'s reason, and the same string every row carries in
+ * its own `command`: the row's verb is used wherever there IS a row, and this is
+ * the fallback for the moment before there is one. With `tasks` absent it names
+ * nothing, the invocation fails, and the failure is reported where every other
+ * invocation's is.
+ */
+const REVEAL_COMMAND = 'tasks.reveal';

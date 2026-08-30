@@ -15,6 +15,7 @@ import type {
   SessionResizeMessage,
   ViewportRect,
   AgentIndicatorDTO,
+  NavigateMessage,
 } from './channels.ts';
 
 /**
@@ -291,11 +292,23 @@ export interface SettingsApi {
   onVisibility(listener: (open: boolean) => void): () => void;
 }
 
+/**
+ * Where main tells the page to GO — one listener, no getter.
+ *
+ * Deliberately push-only: there is no state here to read back, and a page that
+ * could ask "where was I told to go" would be a second copy of the nav stack,
+ * which is the fact `takeover/nav.ts` already owns.
+ */
+export interface NavApi {
+  onGoto(listener: (message: NavigateMessage) => void): () => void;
+}
+
 export interface ShepherdBridge {
   readonly session: SessionApi;
   readonly commands: CommandsApi;
   readonly layout: LayoutApi;
   readonly agents: AgentsApi;
+  readonly nav: NavApi;
   readonly views: ViewsApi;
   readonly settings: SettingsApi;
   readonly window: WindowApi;
@@ -326,6 +339,8 @@ export const BRIDGE_SURFACE = {
   commands: ['invoke', 'list'],
   layout: ['get', 'onChanged', 'setViewport', 'snapshot'],
   agents: ['get', 'onChanged'],
+  /** A banner's destination, pushed. See `NavApi`. */
+  nav: ['onGoto'],
   /**
    * Contributed views (M3). The page may ask which views exist, for a named
    * view's rows, and report a click — and nothing else. It cannot name a bus

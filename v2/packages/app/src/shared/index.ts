@@ -36,8 +36,8 @@ export { COMMANDS, commandIds, type CommandID } from './commands.ts';
 
 export { OutputCoalescer, type CoalescerOptions } from './coalescer.ts';
 
-export type { AgentIndicatorDTO } from './channels.ts';
-export type { AgentsApi, ViewContributionDTO, ViewsApi } from './bridge.ts';
+export type { AgentIndicatorDTO, NavigateMessage } from './channels.ts';
+export type { AgentsApi, NavApi, ViewContributionDTO, ViewsApi } from './bridge.ts';
 export type { SettingsApi, SettingsPageDTO, SettingsSnapshotDTO } from './bridge.ts';
 export { THEME_KEY, type ThemeSetting } from './settings-keys.ts';
 export { memberOf, qualify, unqualify } from './view-types.ts';

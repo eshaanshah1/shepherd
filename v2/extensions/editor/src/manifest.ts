@@ -43,6 +43,15 @@ export const EDITOR_COMMANDS = {
   changes: 'editor.changes',
   /** One file's patch against HEAD. */
   diff: 'editor.diff',
+  /**
+   * How MUCH differs — the counts, where `changes` answers which paths.
+   *
+   * A second command rather than a field on `changes`, because they are two
+   * different git calls with two different costs and two different callers: the
+   * tree draws every path and never a total, and a banner wants the total and
+   * none of the paths.
+   */
+  stat: 'editor.stat',
 } as const;
 
 /**

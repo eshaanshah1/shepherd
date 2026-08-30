@@ -139,3 +139,36 @@ function mark(code: string | undefined): StatusKind | undefined {
       return undefined;
   }
 }
+
+export interface DiffStat {
+  readonly files: number;
+  readonly added: number;
+  readonly removed: number;
+}
+
+/**
+ * `git diff --numstat`, summed — how MUCH changed, where `readStatus` answers
+ * what.
+ *
+ * A binary file reports `-` for both counts and is still a changed FILE, so it
+ * counts once and contributes no lines. Dropping the row instead would report
+ * `0 files` for a turn that replaced an icon, which is the one case where the
+ * numbers and the truth part company visibly.
+ *
+ * Anything that is not three tab-separated fields is skipped rather than
+ * guessed at — the same rule the parsers above follow, and what makes this safe
+ * against a `-z`-less quoted path arriving from a git that surprises us.
+ */
+export function readNumstat(stdout: string): DiffStat {
+  let files = 0;
+  let added = 0;
+  let removed = 0;
+  for (const line of stdout.split('\n')) {
+    const parts = line.split('\t');
+    if (parts.length < 3) continue;
+    files += 1;
+    added += Number.parseInt(parts[0] ?? '', 10) || 0;
+    removed += Number.parseInt(parts[1] ?? '', 10) || 0;
+  }
+  return { files, added, removed };
+}

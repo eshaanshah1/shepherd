@@ -39,6 +39,7 @@ import { orderSuggestions, rankScored } from './model/pick-order.ts';
 import { repoName } from './model/repo-name.ts';
 import { completeDirectories, exactRepoPath, looksLikeRepo } from './suggest.ts';
 import { taskRootId } from './model/root-id.ts';
+import { alertFor, type AlertStat } from './alert.ts';
 import { hasWoken, snoozeFor, type SnoozeUntil } from './model/snooze.ts';
 
 /**
@@ -64,6 +65,21 @@ const ARCHIVED_LINE = 'Archived — this is what was on screen when the task was
  */
 const AGENTS_RESUME_TARGET = 'agents.resumeTarget';
 const AGENTS_LAST_SAID = 'agents.lastSaid';
+
+/**
+ * How much a checkout has changed, asked of the extension that OWNS the working
+ * tree (ADR 0048). Running `git diff --numstat` here would make this a second
+ * owner of the same question.
+ */
+const EDITOR_STAT = 'editor.stat';
+
+/**
+ * The kernel's id for "what should this banner say", which this extension
+ * answers for a session that belongs to a task. Declared here rather than
+ * imported: the id is main's, and evaluating another package's module to learn a
+ * string is what `editor/manifest.ts` writes out `layout.newTab` to avoid.
+ */
+const ALERTS_DESCRIBE = 'alerts.describe';
 
 /**
  * The floor of the second line — what it says when the task has said nothing.
@@ -3797,6 +3813,111 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
         return {
           present: { kind: 'session', sessionId: sessionId(live.id) } satisfies PresentEffect,
         };
+      },
+    }),
+  );
+
+  /**
+   * How much this task has changed, summed over its repos.
+   *
+   * Only for a finished turn: a blocked agent's banner says what it is asking,
+   * and paying a git read to decorate a question nobody asked would be a cost on
+   * the one path that is already the most urgent.
+   *
+   * Every failure — a repo whose worktree is gone, an answer with a shape this
+   * has never seen — contributes zero rather than failing the answer.
+   */
+  const statOf = async (task: TaskRecord, state: string): Promise<AlertStat | undefined> => {
+    if (state === 'blocked' || state === 'error') return undefined;
+    const root = rootOf(task);
+    const reads = await Promise.all(
+      task.repos.map(async (repo) => {
+        try {
+          const answer = await commands.invoke<{ files?: unknown; added?: unknown; removed?: unknown }>(
+            EDITOR_STAT,
+            { root: `${root}/${repo.name}` },
+          );
+          // `ok` says the call succeeded, never that the value has a shape.
+          if (!answer.ok) return undefined;
+          const { files, added, removed } = answer.value ?? {};
+          if (typeof files !== 'number' || typeof added !== 'number' || typeof removed !== 'number') {
+            return undefined;
+          }
+          return { files, added, removed };
+        } catch (error: unknown) {
+          ctx.log.warn(`could not read ${task.id}'s diff in ${repo.name} — ${String(error)}`);
+          return undefined;
+        }
+      }),
+    );
+    return reads.reduce<AlertStat>(
+      (sum, each) =>
+        each === undefined
+          ? sum
+          : { files: sum.files + each.files, added: sum.added + each.added, removed: sum.removed + each.removed },
+      { files: 0, added: 0, removed: 0 },
+    );
+  };
+
+  /** The agent's closing sentence, asked of `agents-core` and never of a file. */
+  const lastSaidOf = async (session: string): Promise<string | undefined> => {
+    try {
+      const answer = await commands.invoke<{ text?: unknown }>(AGENTS_LAST_SAID, { sessionId: session });
+      return answer.ok && typeof answer.value?.text === 'string' ? answer.value.text : undefined;
+    } catch (error: unknown) {
+      ctx.log.warn(`could not read what ${session} last said — ${String(error)}`);
+      return undefined;
+    }
+  };
+
+  /**
+   * What a banner about this task should say — the kernel's `alerts.describe`.
+   *
+   * The id belongs to the KERNEL and this extension is one possible answerer:
+   * main asks after it has already decided a banner will fire, and anything that
+   * is not an answer (no task for this pane, a read that failed, this extension
+   * not installed) leaves the shell's own wording in place. So every degradation
+   * here costs the new words and never the notification.
+   *
+   * It is asked once per banner, which is what makes the two reads below
+   * affordable — a `git diff --numstat` per repo and a transcript tail. Neither
+   * runs for a state change that was suppressed, and neither is allowed to fail
+   * the answer: a banner is not worth failing for.
+   */
+  ctx.subscriptions.push(
+    commands.register(ALERTS_DESCRIBE, {
+      schema: s.object({
+        sessionId: s.string(),
+        paneId: s.string(),
+        state: s.string(),
+        reason: s.optional(s.string()),
+        turnFinished: s.boolean(),
+      }),
+      handler: async (args) => {
+        /*
+         * By PANE first, because that is the key that is always true: a task's
+         * record can still be carrying a `pending-` session id for the first
+         * seconds after a spawn, which is exactly when an agent hits its trust
+         * prompt. The recorded session is the fallback for a pane the layout
+         * mirror has not caught up with.
+         */
+        const task =
+          store.list().find((candidate) => panesOf(candidate).includes(args.paneId)) ??
+          store.list().find((candidate) => candidate.sessions.some((session) => session.id === args.sessionId));
+        if (task === undefined) return null;
+
+        const [stat, lastSaid] = await Promise.all([
+          statOf(task, args.state),
+          lastSaidOf(args.sessionId),
+        ]);
+
+        return alertFor({
+          task: { id: task.id, title: task.title },
+          state: args.state,
+          ...(args.reason === undefined ? {} : { reason: args.reason }),
+          ...(stat === undefined ? {} : { stat }),
+          ...(lastSaid === undefined ? {} : { lastSaid }),
+        });
       },
     }),
   );

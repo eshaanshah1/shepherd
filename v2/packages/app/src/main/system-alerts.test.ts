@@ -12,16 +12,19 @@ import { createSystemAlerts, type NotificationHandle } from './system-alerts.ts'
  * That is exactly the silent branch the logging rule exists to forbid.
  */
 
-function fakeNotification(): { handle: NotificationHandle; fire: (event: string, error: Error) => void } {
-  const handlers = new Map<string, (event: unknown, error: Error) => void>();
+function fakeNotification(): {
+  handle: NotificationHandle;
+  fire: (event: string, arg?: Error | number) => void;
+} {
+  const handlers = new Map<string, (event: unknown, arg?: Error | number) => void>();
   return {
     handle: {
       on: (event, handler) => {
-        handlers.set(event, handler as (event: unknown, error: Error) => void);
+        handlers.set(event, handler as (event: unknown, arg?: Error | number) => void);
       },
       show: () => {},
     },
-    fire: (event, error) => handlers.get(event)?.({}, error),
+    fire: (event, arg) => handlers.get(event)?.({}, arg),
   };
 }
 
@@ -80,5 +83,88 @@ describe('createSystemAlerts', () => {
     alerts.notify(ALERT);
 
     expect(lines.filter((line) => !line.startsWith('debug'))).toEqual([]);
+  });
+});
+
+/**
+ * The half that was missing until 2026-08-30: a banner that names its task,
+ * says something the state word cannot, and can be pressed.
+ */
+describe('a banner that carries a spec', () => {
+  it('hands the subtitle and the action labels to the OS', () => {
+    const { log } = recorder();
+    let seen: Parameters<NonNullable<Parameters<typeof createSystemAlerts>[0]['create']>>[0] | undefined;
+    const alerts = createSystemAlerts({
+      logger: log,
+      isSupported: () => true,
+      dispatch: () => {},
+      create: (options) => {
+        seen = options;
+        return fakeNotification().handle;
+      },
+    });
+
+    alerts.notify({
+      sessionId: 's1',
+      title: 'Notification revamp',
+      subtitle: 'Turn finished',
+      body: '3 files \u00b7 +42 \u22127',
+      actions: [{ label: 'Diff', goto: { task: 't1', face: 'diff' } }],
+    });
+
+    expect(seen?.title).toBe('Notification revamp');
+    expect(seen?.subtitle).toBe('Turn finished');
+    expect(seen?.actions).toEqual([{ type: 'button', text: 'Diff' }]);
+  });
+
+  it('dispatches the click and the buttons, and nothing for an index that is not there', () => {
+    const { log } = recorder();
+    const fake = fakeNotification();
+    const dispatched: unknown[] = [];
+    const alerts = createSystemAlerts({
+      logger: log,
+      isSupported: () => true,
+      create: () => fake.handle,
+      dispatch: (action) => dispatched.push(action),
+    });
+
+    alerts.notify({
+      sessionId: 's1',
+      title: 'Notification revamp',
+      body: 'approve Bash',
+      click: { task: 't1' },
+      actions: [{ label: 'Later today', command: 'tasks.snooze', args: { task: 't1', until: 'today' } }],
+    });
+
+    fake.fire('click');
+    fake.fire('action', 0);
+    fake.fire('action', 9);
+
+    expect(dispatched).toEqual([
+      { goto: { task: 't1' } },
+      { label: 'Later today', command: 'tasks.snooze', args: { task: 't1', until: 'today' } },
+    ]);
+  });
+
+  it('draws no buttons at all when nothing can dispatch them', () => {
+    const { log } = recorder();
+    let seen: { actions?: readonly unknown[] } | undefined;
+    const alerts = createSystemAlerts({
+      logger: log,
+      isSupported: () => true,
+      create: (options) => {
+        seen = options;
+        return fakeNotification().handle;
+      },
+    });
+
+    alerts.notify({
+      sessionId: 's1',
+      title: 'Notification revamp',
+      body: 'approve Bash',
+      actions: [{ label: 'Diff', goto: { task: 't1' } }],
+    });
+
+    expect(seen?.actions).toBeUndefined();
   });
 });

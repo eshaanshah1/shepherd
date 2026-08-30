@@ -148,6 +148,7 @@ createRoot(host).render(
       commands={bridge?.commands ?? null}
       agents={bridge?.agents ?? null}
       views={bridge?.views ?? null}
+      nav={bridge?.nav ?? null}
       settings={bridge?.settings ?? null}
       // With no bridge there is no main process to project a tree, so the page
       // draws one placeholder pane rather than nothing at all — which is what

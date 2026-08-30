@@ -123,7 +123,29 @@ export const EMIT = {
   settingsChanged: 'settings:changed',
   /** Whether the settings screen is up. Main's word; the page draws it. */
   settingsVisibility: 'settings:visibility',
+  /**
+   * Go to this task — what clicking a banner, or one of its buttons, means.
+   *
+   * Main sends a TASK and at most a face slot, never a place: which screen that
+   * is, and what it does to the back stack, are the page's own vocabulary
+   * (`takeover/nav.ts`), and a main process that could name a `Place` would be
+   * deciding what `esc` means from outside the window.
+   */
+  navigate: 'nav:goto',
 } as const;
+
+/**
+ * Where a banner is sending you.
+ *
+ * `face` is an opaque slot name forwarded from the extension that composed the
+ * alert — main does not resolve it, and a face nothing has claimed is the
+ * page's problem to fall back from (`nearestFace`), which it already knows how
+ * to do for a row's shortcuts.
+ */
+export interface NavigateMessage {
+  readonly task: string;
+  readonly face?: string;
+}
 
 export type InvokeChannel = (typeof INVOKE)[keyof typeof INVOKE];
 export type EmitChannel = (typeof EMIT)[keyof typeof EMIT];
