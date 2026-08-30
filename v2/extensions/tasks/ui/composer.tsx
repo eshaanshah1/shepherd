@@ -1001,12 +1001,6 @@ export function TaskComposer({
       }}
     >
       {/*
-        The card is the popover's positioning context, which is why it holds the
-        ref: the picker is anchored to a CHARACTER inside the editor, and every
-        offset it uses is measured against this box so the clamp has an edge to
-        clamp to.
-      */}
-      {/*
         The column, and it is a LAYOUT rather than a `Composer`.
 
         `Composer` is the primitive for a writing surface, and what makes it one
@@ -1022,392 +1016,410 @@ export function TaskComposer({
         because none of them asks for one — which is the same end state reached
         by not needing the mechanism rather than by invoking it.
 
-        It keeps the ref: the picker is anchored to a CHARACTER inside the
-        editor, and every offset it uses is measured against this box.
+        It keeps the ref, and it is the positioning context: the picker and the
+        send line both hang off this box's bottom edge, and a mousedown is tested
+        against it to decide whether the picker should close.
       */}
-      <div className="sh-compose" ref={card}>
-        {/*
-          ROW, sentence, picker, hint — and the order is the design rather than
-          the history.
+      {/*
+        The frame, and the two spacers that make the column grow DOWN and then UP.
 
-          It shipped as sentence-then-row, because on a card the controls were a
-          FOOTER: a strip of selects fused under the writing, which is where a
-          form puts its controls. On a screen there is no footer to be at the
-          bottom of, and the row stopped being a footer the moment it started
-          saying what the task IS — which model, which repos, which tree. You
-          read those before you write the sentence they qualify, so they go
-          above it.
+        The mechanism is `flex-shrink` on the leader and none on the floor;
+        `styles.css` carries the argument. What the markup owes a reader is why
+        there are two empty divs here instead of a measured height: the browser
+        is the only thing that knows how tall the sentence is, and every JS
+        version of this reads that height a frame late — which is visible as the
+        column settling after the keystroke rather than with it.
 
-          The picker follows the SENTENCE, not the hint, because it is part of
-          writing one: it opens on a `#` you typed mid-clause and closes when
-          you have picked. Left as the last child it sat below the send line,
-          detached from the text it was completing and separated from it by an
-          instruction about a key.
-        */}
-        {/*
-          The control row — one line, whatever the task.
-
-          It was three ghost `Select`s divided by 1px rules, sitting under the
-          brief inside a card. Every part of that is gone, and each for its own
-          reason:
-
-            - **No borders, no chevrons, no rules.** A row of bordered controls
-              under a borderless writing surface is two design languages stacked
-              one above the other. Every slot here is bare text on the stage, and
-              the only edge in the row belongs to the slot whose menu is open —
-              the one moment an edge answers a question ("which one am I in?").
-            - **A glyph for WHICH, a word for WHAT.** Four words in a row are
-              four things to read; four glyphs are one thing to scan. The word
-              stays, because a glyph cannot say `Opus 5`.
-            - **Ink is a decision, ghost is a default.** The two steps of the
-              ramp carry the only thing worth carrying — whether you chose this
-              or left it — so a row of untouched defaults recedes and the knob
-              you turned is the one that reads. Nothing labels the distinction,
-              and nothing needs to.
-        */}
-        <div className="sh-composer-controls" data-testid="composer-controls">
+        `aria-hidden` on both, because they are space. Anything walking this form
+        should find a row of controls, a text box, and nothing else.
+      */}
+      <div className="sh-compose-frame">
+        <div className="sh-compose-lead" aria-hidden="true" />
+        <div className="sh-compose" ref={card}>
           {/*
-            NOT `nullable`: there is no "default" model to pick, there is a model
-            you get by default and it is shown selected. `busy` covers the beat
-            before the asks land.
-          */}
-          <Slot
-            glyph="robot"
-            label="Model"
-            value={modelLabel}
-            /*
-              Ghost until it differs from what the agent layer resolved. A
-              default model is not a decision anyone made, and drawing it in ink
-              spends the loudest step of the ramp on the least interesting fact
-              in the row.
-            */
-            chosen={model !== null && model !== defaultModel.current}
-            busy={models.length === 0}
-            items={models.map((option) => ({
-              id: option.value,
-              label: option.label,
-              ...(option.value === model ? { icon: namedGlyph("check") } : {}),
-            }))}
-            onSelect={(next) => {
-              setModel(next);
-              promptRef.current?.caretToEnd();
-            }}
-          />
-          {/*
-            The repo slot, which is a MIRROR and never a store.
+            ROW, sentence, picker, hint — and the order is the design rather than
+            the history.
 
-            `scope` is derived from the pills in the brief (ADR 0035), so this
-            control cannot hold a repo of its own — that would be the second copy
-            of "what is on screen", and here the bug it causes is visible:
-            backspace over a pill drops the repo from the sentence, and the array
-            would go on scoping the task to it.
+            It shipped as sentence-then-row, because on a card the controls were a
+            FOOTER: a strip of selects fused under the writing, which is where a
+            form puts its controls. On a screen there is no footer to be at the
+            bottom of, and the row stopped being a footer the moment it started
+            saying what the task IS — which model, which repos, which tree. You
+            read those before you write the sentence they qualify, so they go
+            above it.
 
-            So clicking it types a `#`. `appendText` exists for exactly this and
-            says so — one code path whether the trigger was typed or clicked, the
-            same picker, ranked by the same extension, writing the same pill.
-            This slot reads the text back and writes nothing else to it.
+            The picker follows the SENTENCE, not the hint, because it is part of
+            writing one: it opens on a `#` you typed mid-clause and closes when
+            you have picked. Left as the last child it sat below the send line,
+            detached from the text it was completing and separated from it by an
+            instruction about a key.
           */}
-          <Slot
-            glyph="folder"
-            label="Repos"
-            value={scopeLabel}
-            chosen={scope.length > 0}
-            busy={known.length === 0}
-            items={known.map((entry) => ({
-              id: entry.path,
-              label: entry.name,
-              /*
-               * `display`, not `path` — the field whose own comment says it is
-               * "the path as a person writes it — home collapsed". The raw path
-               * put `/Users/eshaan/…` beside a name in a menu the picker two
-               * lines away was already drawing as `~/dev/…`, so the same repo
-               * read as two different places depending on how you opened it.
-               *
-               * `name` is dropped off the end of it: the label already says the
-               * repo, and the meta's job is where it is.
-               */
-              meta: entry.display.endsWith(`/${entry.name}`)
-                ? entry.display.slice(0, -entry.name.length - 1)
-                : entry.display,
-              ...(scope.some((repo) => repo.path === entry.path) ? { icon: namedGlyph("check") } : {}),
-            }))}
-            onSelect={(path) => {
-              const entry = known.find((candidate) => candidate.path === path);
-              if (entry !== undefined) toggleRepo(entry.path, entry.name);
-            }}
-          />
           {/*
-            Placement is drawn as a WORD, not a switch.
+            The control row — one line, whatever the task.
 
-            `PLACEMENTS` holds one entry, and its comment is explicit that the
-            one-item menu is deliberate — the seam for `in-place` lands before
-            the behaviour does. A toggle here would be a control that cannot
-            move, which is worse than a word that cannot yet be changed: the word
-            reports the state, the toggle invites a gesture and then refuses it.
+            It was three ghost `Select`s divided by 1px rules, sitting under the
+            brief inside a card. Every part of that is gone, and each for its own
+            reason:
+
+              - **No borders, no chevrons, no rules.** A row of bordered controls
+                under a borderless writing surface is two design languages stacked
+                one above the other. Every slot here is bare text on the stage, and
+                the only edge in the row belongs to the slot whose menu is open —
+                the one moment an edge answers a question ("which one am I in?").
+              - **A glyph for WHICH, a word for WHAT.** Four words in a row are
+                four things to read; four glyphs are one thing to scan. The word
+                stays, because a glyph cannot say `Opus 5`.
+              - **Ink is a decision, ghost is a default.** The two steps of the
+                ramp carry the only thing worth carrying — whether you chose this
+                or left it — so a row of untouched defaults recedes and the knob
+                you turned is the one that reads. Nothing labels the distinction,
+                and nothing needs to.
           */}
-          <Slot
-            glyph="branch"
-            label="Where the work happens"
-            value={placement}
-            chosen={placement !== "worktree"}
-            items={PLACEMENTS.map((option) => ({
-              id: option.value,
-              label: option.label,
-              ...(option.value === placement ? { icon: namedGlyph("check") } : {}),
-            }))}
-            onSelect={(next) => {
-              setPlacement(next);
-              promptRef.current?.caretToEnd();
-            }}
-          />
-          {/*
-            Drawn only when there is a choice. One machine is not a decision, and
-            a slot that always says "This Mac" is a control that teaches nothing
-            and takes room in the one row that has to stay readable.
-          */}
-          {machines.length < 2 ? null : (
+          <div className="sh-composer-controls" data-testid="composer-controls">
+            {/*
+              NOT `nullable`: there is no "default" model to pick, there is a model
+              you get by default and it is shown selected. `busy` covers the beat
+              before the asks land.
+            */}
             <Slot
-              glyph="dots"
-              label="Which machine"
-              value={machineLabel}
-              chosen={machine !== LOCAL_MACHINE.id}
-              items={machines.map((entry) => ({
-                id: entry.id,
-                label: entry.here ? `${entry.name} (here)` : entry.name,
-                ...(entry.id === machine ? { icon: namedGlyph("check") } : {}),
+              glyph="robot"
+              label="Model"
+              value={modelLabel}
+              /*
+                Ghost until it differs from what the agent layer resolved. A
+                default model is not a decision anyone made, and drawing it in ink
+                spends the loudest step of the ramp on the least interesting fact
+                in the row.
+              */
+              chosen={model !== null && model !== defaultModel.current}
+              busy={models.length === 0}
+              items={models.map((option) => ({
+                id: option.value,
+                label: option.label,
+                ...(option.value === model ? { icon: namedGlyph("check") } : {}),
               }))}
               onSelect={(next) => {
-                setMachine(next);
-                /*
-                 * The repo list belongs to the machine, so it is asked again the
-                 * moment the machine changes. Not merely cleared: the picker's
-                 * zero-query answer is the history of repos actually used over
-                 * there, which is exactly what somebody wants to see next.
-                 */
-                setSuggestions([]);
-                void askForSuggestions(firstLine(brief), brief, "", next);
-                // And the row's own list. A repo path only means something on
-                // the machine that holds it, so a menu still offering the last
-                // machine's checkouts offers paths that do not exist over there.
-                setKnown([]);
-                void askForKnown(next);
+                setModel(next);
                 promptRef.current?.caretToEnd();
               }}
             />
-          )}
+            {/*
+              The repo slot, which is a MIRROR and never a store.
+
+              `scope` is derived from the pills in the brief (ADR 0035), so this
+              control cannot hold a repo of its own — that would be the second copy
+              of "what is on screen", and here the bug it causes is visible:
+              backspace over a pill drops the repo from the sentence, and the array
+              would go on scoping the task to it.
+
+              So clicking it types a `#`. `appendText` exists for exactly this and
+              says so — one code path whether the trigger was typed or clicked, the
+              same picker, ranked by the same extension, writing the same pill.
+              This slot reads the text back and writes nothing else to it.
+            */}
+            <Slot
+              glyph="folder"
+              label="Repos"
+              value={scopeLabel}
+              chosen={scope.length > 0}
+              busy={known.length === 0}
+              items={known.map((entry) => ({
+                id: entry.path,
+                label: entry.name,
+                /*
+                 * `display`, not `path` — the field whose own comment says it is
+                 * "the path as a person writes it — home collapsed". The raw path
+                 * put `/Users/eshaan/…` beside a name in a menu the picker two
+                 * lines away was already drawing as `~/dev/…`, so the same repo
+                 * read as two different places depending on how you opened it.
+                 *
+                 * `name` is dropped off the end of it: the label already says the
+                 * repo, and the meta's job is where it is.
+                 */
+                meta: entry.display.endsWith(`/${entry.name}`)
+                  ? entry.display.slice(0, -entry.name.length - 1)
+                  : entry.display,
+                ...(scope.some((repo) => repo.path === entry.path) ? { icon: namedGlyph("check") } : {}),
+              }))}
+              onSelect={(path) => {
+                const entry = known.find((candidate) => candidate.path === path);
+                if (entry !== undefined) toggleRepo(entry.path, entry.name);
+              }}
+            />
+            {/*
+              Placement is drawn as a WORD, not a switch.
+
+              `PLACEMENTS` holds one entry, and its comment is explicit that the
+              one-item menu is deliberate — the seam for `in-place` lands before
+              the behaviour does. A toggle here would be a control that cannot
+              move, which is worse than a word that cannot yet be changed: the word
+              reports the state, the toggle invites a gesture and then refuses it.
+            */}
+            <Slot
+              glyph="branch"
+              label="Where the work happens"
+              value={placement}
+              chosen={placement !== "worktree"}
+              items={PLACEMENTS.map((option) => ({
+                id: option.value,
+                label: option.label,
+                ...(option.value === placement ? { icon: namedGlyph("check") } : {}),
+              }))}
+              onSelect={(next) => {
+                setPlacement(next);
+                promptRef.current?.caretToEnd();
+              }}
+            />
+            {/*
+              Drawn only when there is a choice. One machine is not a decision, and
+              a slot that always says "This Mac" is a control that teaches nothing
+              and takes room in the one row that has to stay readable.
+            */}
+            {machines.length < 2 ? null : (
+              <Slot
+                glyph="dots"
+                label="Which machine"
+                value={machineLabel}
+                chosen={machine !== LOCAL_MACHINE.id}
+                items={machines.map((entry) => ({
+                  id: entry.id,
+                  label: entry.here ? `${entry.name} (here)` : entry.name,
+                  ...(entry.id === machine ? { icon: namedGlyph("check") } : {}),
+                }))}
+                onSelect={(next) => {
+                  setMachine(next);
+                  /*
+                   * The repo list belongs to the machine, so it is asked again the
+                   * moment the machine changes. Not merely cleared: the picker's
+                   * zero-query answer is the history of repos actually used over
+                   * there, which is exactly what somebody wants to see next.
+                   */
+                  setSuggestions([]);
+                  void askForSuggestions(firstLine(brief), brief, "", next);
+                  // And the row's own list. A repo path only means something on
+                  // the machine that holds it, so a menu still offering the last
+                  // machine's checkouts offers paths that do not exist over there.
+                  setKnown([]);
+                  void askForKnown(next);
+                  promptRef.current?.caretToEnd();
+                }}
+              />
+            )}
+            {/*
+              Incognito is a glyph and nothing else, and it does not exist until it
+              is set.
+
+              `default` written out is the row reporting that nothing happened —
+              the one thing a control should never spend a slot saying. So the
+              profile has no slot at its default, and when it is on, the mark IS
+              the statement. Ink rather than a hue: red is a run that failed, and
+              this is not a warning. It is the one choice on the line made against
+              the grain, so it takes the loudest step of the ramp.
+
+              The way out is the same mark. A state you can enter and not leave is
+              what §9 calls a way in with no way out, and a privacy control is the
+              worst place in the app to have one.
+            */}
+            <button
+              type="button"
+              className="sh-composer-incognito"
+              data-testid="composer-incognito"
+              data-on={profile === "incognito" ? "" : undefined}
+              aria-pressed={profile === "incognito"}
+              title={
+                profile === "incognito"
+                  ? "Incognito — this task gets a config dir of its own, deleted when it is shipped"
+                  : "Run this task incognito"
+              }
+              onClick={() => setProfile(profile === "incognito" ? "default" : "incognito")}
+            >
+              <Icon icon={namedGlyph("spy")} size="sm" />
+            </button>
+          </div>
+
           {/*
-            Incognito is a glyph and nothing else, and it does not exist until it
-            is set.
+            ONE field, and now it is the only one.
 
-            `default` written out is the row reporting that nothing happened —
-            the one thing a control should never spend a slot saying. So the
-            profile has no slot at its default, and when it is on, the mark IS
-            the statement. Ink rather than a hue: red is a run that failed, and
-            this is not a warning. It is the one choice on the line made against
-            the grain, so it takes the loudest step of the ramp.
-
-            The way out is the same mark. A state you can enter and not leave is
-            what §9 calls a way in with no way out, and a privacy control is the
-            worst place in the app to have one.
+            A separate title box asked the same question twice, and a separate repo
+            field asked a question that belongs inside the sentence — scoping a task
+            is part of writing it. Both corrections land here: the brief is the
+            card, `#` names a repo where you are already typing, and the pill that
+            replaces it is part of the text it scopes.
           */}
-          <button
-            type="button"
-            className="sh-composer-incognito"
-            data-testid="composer-incognito"
-            data-on={profile === "incognito" ? "" : undefined}
-            aria-pressed={profile === "incognito"}
-            title={
-              profile === "incognito"
-                ? "Incognito — this task gets a config dir of its own, deleted when it is shipped"
-                : "Run this task incognito"
-            }
-            onClick={() => setProfile(profile === "incognito" ? "default" : "incognito")}
-          >
-            <Icon icon={namedGlyph("spy")} size="sm" />
-          </button>
-        </div>
+          <PromptField
+            ref={promptRef}
+            className="sh-composer-brief"
+            data-testid="composer-brief"
+            aria-label="what needs doing"
+            placeholder="what needs doing?"
+            /*
+              The combobox is the EDITOR, not a box beside it. `aria-expanded` and
+              `aria-activedescendant` therefore live here, on the thing that has
+              focus the whole time — which is the same reason `CommandPalette` names
+              its active row instead of focusing it.
+            */
+            role="combobox"
+            aria-expanded={open}
+            aria-controls={open ? listId : undefined}
+            aria-activedescendant={open && rows.length > 0 ? rowId(listId, index) : undefined}
+            onChange={onEdit}
+            /*
+              A pasted image becomes a Pill in the text, right where it was
+              pasted, and its bytes ride along to `tasks.create`. The token in the
+              text is what the service half substitutes a path for, so the pill
+              carries it as `data-token` — the label says "Image", and the label
+              is not what the agent should be told.
+            */
+            onPasteFiles={(files) => {
+              const images = files.filter((file) => file.type.startsWith("image/"));
+              if (images.length === 0) return false;
+              void (async () => {
+                for (const file of images) {
+                  const image = await readPastedImage(file);
+                  if (image === null) continue;
+                  const index = pasted.current.length + 1;
+                  pasted.current.push(image);
+                  promptRef.current?.insert(imagePill(index));
+                }
+              })();
+              return true;
+            }}
+            /*
+              A pasted Jira or Slack link becomes a Pill where it was pasted. The
+              pill goes in IMMEDIATELY with the token already correct, already the
+              vendor's colour and mark, and reading `Loading…`; resolving spawns a
+              subprocess, and a composer that stalled on paste would be worse than
+              a label that arrives a beat later.
 
-        {/*
-          ONE field, and now it is the only one.
+              The vendor comes from the PATTERN that claimed the paste, which is
+              why the box does not change shape when the answer lands — only the
+              word does.
 
-          A separate title box asked the same question twice, and a separate repo
-          field asked a question that belongs inside the sentence — scoping a task
-          is part of writing it. Both corrections land here: the brief is the
-          card, `#` names a repo where you are already typing, and the pill that
-          replaces it is part of the text it scopes.
-        */}
-        <PromptField
-          ref={promptRef}
-          className="sh-composer-brief"
-          data-testid="composer-brief"
-          aria-label="what needs doing"
-          placeholder="what needs doing?"
-          /*
-            The combobox is the EDITOR, not a box beside it. `aria-expanded` and
-            `aria-activedescendant` therefore live here, on the thing that has
-            focus the whole time — which is the same reason `CommandPalette` names
-            its active row instead of focusing it.
-          */
-          role="combobox"
-          aria-expanded={open}
-          aria-controls={open ? listId : undefined}
-          aria-activedescendant={open && rows.length > 0 ? rowId(listId, index) : undefined}
-          onChange={onEdit}
-          /*
-            A pasted image becomes a Pill in the text, right where it was
-            pasted, and its bytes ride along to `tasks.create`. The token in the
-            text is what the service half substitutes a path for, so the pill
-            carries it as `data-token` — the label says "Image", and the label
-            is not what the agent should be told.
-          */
-          onPasteFiles={(files) => {
-            const images = files.filter((file) => file.type.startsWith("image/"));
-            if (images.length === 0) return false;
-            void (async () => {
-              for (const file of images) {
-                const image = await readPastedImage(file);
-                if (image === null) continue;
-                const index = pasted.current.length + 1;
-                pasted.current.push(image);
-                promptRef.current?.insert(imagePill(index));
-              }
-            })();
-            return true;
-          }}
-          /*
-            A pasted Jira or Slack link becomes a Pill where it was pasted. The
-            pill goes in IMMEDIATELY with the token already correct, already the
-            vendor's colour and mark, and reading `Loading…`; resolving spawns a
-            subprocess, and a composer that stalled on paste would be worse than
-            a label that arrives a beat later.
-
-            The vendor comes from the PATTERN that claimed the paste, which is
-            why the box does not change shape when the answer lands — only the
-            word does.
-
-            Only a lone URL matching a claimed pattern. Everything else falls
-            through to the plain-text paste, which is what keeps the browser's
-            own undo entry for it.
-          */
-          onPasteText={(text) => {
-            const url = text.trim();
-            const vendor = claimedVendor(url, linkPatterns.current);
-            if (vendor === null) return false;
-            const id = `link-${(linkSeq.current += 1)}`;
-            promptRef.current?.insert(linkPill(url, id, vendor), {
-              // The same non-breaking space `pick` uses, and for the same
-              // reason: the caret lands in text rather than against the pill.
-              trailing: "\u00A0",
-            });
-            void (async () => {
-              const answer = await invoke(TASK_COMMANDS.resolveLink, { url });
-              if (!answer.ok) return;
-              const link = readLink(answer.value);
-              if (link === null) return;
+              Only a lone URL matching a claimed pattern. Everything else falls
+              through to the plain-text paste, which is what keeps the browser's
+              own undo entry for it.
+            */
+            onPasteText={(text) => {
+              const url = text.trim();
+              const vendor = claimedVendor(url, linkPatterns.current);
+              if (vendor === null) return false;
+              const id = `link-${(linkSeq.current += 1)}`;
+              promptRef.current?.insert(linkPill(url, id, vendor), {
+                // The same non-breaking space `pick` uses, and for the same
+                // reason: the caret lands in text rather than against the pill.
+                trailing: "\u00A0",
+              });
+              void (async () => {
+                const answer = await invoke(TASK_COMMANDS.resolveLink, { url });
+                if (!answer.ok) return;
+                const link = readLink(answer.value);
+                if (link === null) return;
+                /*
+                  Found by ID rather than by position: the person kept typing while
+                  this was in flight, and a pill they deleted must not be
+                  resurrected over whatever is there now. The picker's `asked` ref
+                  guards the same class of bug from the other direction.
+                */
+                const pill = card.current?.querySelector<HTMLElement>(
+                  `[data-link-id="${id}"]`,
+                );
+                if (pill === null || pill === undefined) return;
+                dressPill(pill, link);
+              })();
+              return true;
+            }}
+            onKeyDown={(event) => {
               /*
-                Found by ID rather than by position: the person kept typing while
-                this was in flight, and a pill they deleted must not be
-                resurrected over whatever is there now. The picker's `asked` ref
-                guards the same class of bug from the other direction.
+                While the picker is open it owns these five keys and nothing else
+                sees them. Closed, every key here falls through to ordinary text
+                editing — which is the rule that keeps ⌘A, ⌥←, ⌘⌫ and undo working,
+                because `PromptField` inherits them from the OS and a handler that
+                calls `preventDefault` on a key it did not need is what breaks them.
               */
-              const pill = card.current?.querySelector<HTMLElement>(
-                `[data-link-id="${id}"]`,
-              );
-              if (pill === null || pill === undefined) return;
-              dressPill(pill, link);
-            })();
-            return true;
-          }}
-          onKeyDown={(event) => {
-            /*
-              While the picker is open it owns these five keys and nothing else
-              sees them. Closed, every key here falls through to ordinary text
-              editing — which is the rule that keeps ⌘A, ⌥←, ⌘⌫ and undo working,
-              because `PromptField` inherits them from the OS and a handler that
-              calls `preventDefault` on a key it did not need is what breaks them.
-            */
-            if (open) {
-              if (event.key === "ArrowDown") {
-                event.preventDefault();
-                // Clamped, no wrap: a list that jumps from the last row back to
-                // the first is a list you can arrow past without noticing.
-                setActive(Math.min(index + 1, rows.length - 1));
-                return;
+              if (open) {
+                if (event.key === "ArrowDown") {
+                  event.preventDefault();
+                  // Clamped, no wrap: a list that jumps from the last row back to
+                  // the first is a list you can arrow past without noticing.
+                  setActive(Math.min(index + 1, rows.length - 1));
+                  return;
+                }
+                if (event.key === "ArrowUp") {
+                  event.preventDefault();
+                  setActive(Math.max(index - 1, 0));
+                  return;
+                }
+                if (event.key === "Enter" || event.key === "Tab") {
+                  event.preventDefault();
+                  const row = rows[index];
+                  // No rows is Enter doing NOTHING rather than submitting: the
+                  // picker is on screen, so ⏎ visibly belongs to it, and a submit
+                  // here would create a task from a half-typed mention.
+                  if (row !== undefined) pick(row);
+                  return;
+                }
+                // Escape is handled by the window-capture listener above, because
+                // Radix would otherwise close the whole composer first.
               }
-              if (event.key === "ArrowUp") {
-                event.preventDefault();
-                setActive(Math.max(index - 1, 0));
-                return;
-              }
-              if (event.key === "Enter" || event.key === "Tab") {
-                event.preventDefault();
-                const row = rows[index];
-                // No rows is Enter doing NOTHING rather than submitting: the
-                // picker is on screen, so ⏎ visibly belongs to it, and a submit
-                // here would create a task from a half-typed mention.
-                if (row !== undefined) pick(row);
-                return;
-              }
-              // Escape is handled by the window-capture listener above, because
-              // Radix would otherwise close the whole composer first.
-            }
-            /*
-              ⏎ submits and ⇧⏎ newlines — the chat convention. ⌘⏎ is neither: it
-              is handled on the FORM, so the gesture works wherever focus is
-              rather than only in the text. Bailing here is what lets it get
-              there — without this, a held ⌘ would submit as an agent and the
-              terminal gesture would be a key that silently does the other thing.
-            */
-            if (event.key !== "Enter" || event.shiftKey) return;
-            if (event.metaKey || event.ctrlKey) return;
-            event.preventDefault();
-            if (brief.trim() !== "") void create();
-          }}
-        />
-
-        {open ? (
-          <RepoPicker
-            rows={rows}
-            query={query}
-            activeIndex={index}
-            listId={listId}
-            onHover={setActive}
-            onPick={pick}
+              /*
+                ⏎ submits and ⇧⏎ newlines — the chat convention. ⌘⏎ is neither: it
+                is handled on the FORM, so the gesture works wherever focus is
+                rather than only in the text. Bailing here is what lets it get
+                there — without this, a held ⌘ would submit as an agent and the
+                terminal gesture would be a key that silently does the other thing.
+              */
+              if (event.key !== "Enter" || event.shiftKey) return;
+              if (event.metaKey || event.ctrlKey) return;
+              event.preventDefault();
+              if (brief.trim() !== "") void create();
+            }}
           />
-        ) : null}
 
-        {/*
-          The send affordance, and it is a sentence rather than a button.
+          {open ? (
+            <RepoPicker
+              rows={rows}
+              query={query}
+              activeIndex={index}
+              listId={listId}
+              onHover={setActive}
+              onPick={pick}
+            />
+          ) : null}
 
-          It was a filled sky circle — the one weighted control on the card, and
-          the only round element in the product. On a card that was right: the
-          composer's action is the terminus of the sentence you just wrote, and a
-          circle said that. On a SCREEN it is wrong, because the surface has no
-          card to be the terminus of, and a weighted control floating in a field
-          of black is the only thing on it with an edge.
+          {/*
+            The send affordance, and it is a sentence rather than a button.
 
-          What replaced it is the thing the button was competing with. ⏎ already
-          sends; a button duplicating a key that always works is chrome the
-          layout pays for on every open. So the line states the gesture, and
-          `⌘⏎` — the terminal variant, previously taught only in a `title` nobody
-          hovers — finally has somewhere to be said out loud.
+            It was a filled sky circle — the one weighted control on the card, and
+            the only round element in the product. On a card that was right: the
+            composer's action is the terminus of the sentence you just wrote, and a
+            circle said that. On a SCREEN it is wrong, because the surface has no
+            card to be the terminus of, and a weighted control floating in a field
+            of black is the only thing on it with an edge.
 
-          It goes GHOST when there is nothing to send, rather than disappearing:
-          a hint that vanishes as you delete the last character is a hint that
-          moves the layout while you are editing.
-        */}
-        <p className="sh-composer-send" data-testid="composer-send" aria-hidden="true">
-          <span data-quiet={brief.trim() === "" ? "" : undefined}>
-            Press <kbd>⏎</kbd> to send
-          </span>
-          <span data-quiet="">
-            <kbd>⌘⏎</kbd> for a terminal
-          </span>
-        </p>
+            What replaced it is the thing the button was competing with. ⏎ already
+            sends; a button duplicating a key that always works is chrome the
+            layout pays for on every open. So the line states the gesture, and
+            `⌘⏎` — the terminal variant, previously taught only in a `title` nobody
+            hovers — finally has somewhere to be said out loud.
 
-        <output className="sh-ext-answer" data-testid="composer-status">
-          {status}
-        </output>
+            It goes GHOST when there is nothing to send, rather than disappearing:
+            a hint that vanishes as you delete the last character is a hint that
+            moves the layout while you are editing.
+          */}
+          <p className="sh-composer-send" data-testid="composer-send" aria-hidden="true">
+            <span data-quiet={brief.trim() === "" ? "" : undefined}>
+              Press <kbd>⏎</kbd> to send
+            </span>
+            <span data-quiet="">
+              <kbd>⌘⏎</kbd> for a terminal
+            </span>
+          </p>
+
+          <output className="sh-ext-answer" data-testid="composer-status">
+            {status}
+          </output>
+        </div>
+        <div className="sh-compose-floor" aria-hidden="true" />
       </div>
 
       {/*

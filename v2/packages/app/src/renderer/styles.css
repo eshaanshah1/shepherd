@@ -1687,17 +1687,55 @@ body.sh-dragging {
  * of the window's true middle — correct for a pane, wrong for a surface that has
  * taken the stage over: the eye centres on the window it is looking at, not on
  * the box the markup happens to sit in. Half the stage, less half the column,
- * less half `--sh-band-rail`, puts the block's centre on the window's centre and keeps
- * it there at any width, because the rail does not resize.
+ * less half `--sh-band-rail`, puts the block's centre on the window's centre and
+ * keeps it there at any width, because the rail does not resize.
  *
- * Vertically it sits at a THIRD, not a half. A block centred in the window reads
- * as the middle of a page you are looking at; a block a third down reads as the
- * top of one you are writing. The room below is where the answer will arrive, so
- * leaving it empty is the composition rather than waste.
+ * ---------------------------------------------------------- and vertically
+ *
+ * A FRAME with a shrinking leader, not a block pinned to a point.
+ *
+ * It was `inset-block-start: 35%` with `translateY(-50%)` — the column centred
+ * on a point a third down. That is right for one line and wrong for two: a block
+ * centred on a point grows in BOTH directions, so every ⏎ walked the knob row up
+ * half a line. A composer whose top edge moves while you type is the layout
+ * answering a keystroke that was not addressed to it.
+ *
+ * What replaces it is three boxes and one number:
+ *
+ *   - `.sh-compose-lead`   the ideal offset, `flex: 0 1 35%` — a basis it keeps
+ *                          while there is room and gives up when there is not.
+ *   - `.sh-compose`        the column itself, `flex-shrink: 0`, so nothing takes
+ *                          space from the writing to pay for the leader.
+ *   - `.sh-compose-floor`  the comfort floor, rigid, so the block never descends
+ *                          past the last line of a page you would still read.
+ *
+ * `flex-shrink: 1` on the leader is the whole behaviour, and it gives two phases
+ * with no seam between them:
+ *
+ *   1. **Short.** The leader holds its basis, the top edge is nailed at the
+ *      third, and the sentence grows DOWN into the room below it. Nothing above
+ *      the caret moves.
+ *   2. **Past the floor.** The leader is the first thing to give, so the bottom
+ *      holds and the top rises — the caret parks on the floor line and the text
+ *      moves under it. Typewriter scrolling, which is what vim's `scrolloff` and
+ *      every writing app's typewriter mode do, and for the same reason: past a
+ *      certain depth the comfortable thing is a still caret, not a still page.
+ *
+ * The transition is invisible because it is not a jump. Both phases move by
+ * exactly one line per ⏎; only the edge that movement is measured from changes.
+ *
+ * Doing it in the box model rather than in JS is the same argument `TextArea`
+ * makes for `field-sizing: content`: the browser is the only thing that knows
+ * how tall the sentence is, and a measured version reads that height a frame
+ * late — which is visible as the column settling after the keystroke instead of
+ * with it.
  */
-.sh-compose {
+.sh-compose-frame {
   position: absolute;
-  inset-block-start: 35%;
+  /* The full height of the screen, so the leader's 35% and the floor's 15% are
+     percentages OF the window rather than of an inset band that would have to be
+     subtracted back out of both. */
+  inset-block: 0;
   /*
    * Clamped, because the ideal is not always reachable.
    *
@@ -1718,7 +1756,58 @@ body.sh-dragging {
   );
   /* And the column narrows before it clips: the gutter is kept on both sides. */
   inline-size: min(var(--sh-compose-column), calc(100% - (2 * var(--sh-compose-gutter))));
-  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  /*
+   * The frame is a measuring device, not a surface: it spans the window so the
+   * two spacers can, and a transparent box covering the screen would otherwise
+   * be the thing every click on the stage hits. The column turns events back on
+   * for itself.
+   */
+  pointer-events: none;
+}
+
+/*
+ * The leader — a third of the window, and the first thing to give it up.
+ *
+ * A block a third down reads as the top of a page you are writing; centred, it
+ * reads as the middle of one you are looking at. The room below is where the
+ * answer will arrive, so leaving it empty is the composition rather than waste.
+ * That is why the number is 35 and not 50, and it is unchanged from the pinned
+ * version — what changed is that it is a size which can yield rather than a
+ * coordinate which cannot.
+ *
+ * `min-block-size` is where phase 2 stops: the block rises to the same margin
+ * every other edge on this screen respects, and no further.
+ */
+.sh-compose-lead {
+  flex: 0 1 35%;
+  min-block-size: var(--sh-compose-gutter);
+}
+
+/*
+ * The comfort floor — rigid, and the rigidity IS the feature.
+ *
+ * `flex-shrink: 0`, so it never yields: it is the promise that the sentence will
+ * not descend into the bottom eighth of the window, where a line is technically
+ * visible and practically not read. The leader yields instead, and that is what
+ * turns downward growth into upward growth.
+ */
+.sh-compose-floor {
+  flex: 0 0 15%;
+}
+
+.sh-compose {
+  /*
+   * The positioning context for the two things that hang off the column's bottom
+   * edge — the picker and the send line. Both are `absolute` against this box
+   * (below), which is what keeps them out of the sizing above: the floor is a
+   * promise about the last line of the BRIEF, not about a caption under it.
+   */
+  position: relative;
+  /* Never shrinks. Room for the writing is not something the leader may take. */
+  flex: 0 0 auto;
+  pointer-events: auto;
   display: flex;
   flex-direction: column;
   /*
@@ -1880,13 +1969,33 @@ body.sh-dragging {
  * undone and the menu's own is put back on, scoped to `.sh-screen` so the card
  * version keeps working wherever a card still exists.
  *
- * It stays IN FLOW under the hint rather than being positioned over it. A
- * popover would need an anchor, and the thing it wants to anchor to is a
- * character in a contenteditable that moves as you type; a panel that simply
- * follows the sentence is in the right place for the same reason and cannot be
- * measured wrong.
+ * And it is an OVERLAY. It shipped in flow, on the argument that a popover would
+ * need an anchor and the only anchor was a character in a contenteditable that
+ * moves as you type. That argument is right about the caret and wrong about the
+ * panel: a list of repos is not a caret annotation, it is the answer to the
+ * sentence, and the thing it belongs under is the BRIEF — an edge that holds
+ * still, and one `inset-block-start: 100%` reaches with no measuring at all.
+ *
+ * In flow it cost what an in-flow menu always costs: opening it moved the page.
+ * The hint went down, the column got taller, and with a leader above it that
+ * pushed the knob row up — a panel appearing under the cursor and shoving what
+ * you were reading in two directions at once. Out of flow, opening and closing
+ * it changes nothing about the layout, which is the only behaviour a transient
+ * panel is allowed to have.
  */
 .sh-screen .sh-composer-picker {
+  /*
+   * Anchored to the column's bottom edge which — with the send line lifted out
+   * of flow below — IS the last line of the brief. `100%` is the whole
+   * measurement, and it cannot be a frame stale the way a caret rect read on
+   * every keystroke could.
+   */
+  position: absolute;
+  inset-block-start: calc(100% + var(--sh-space-md));
+  inset-inline-start: 0;
+  /* Over the hint. That is the space it borrows, and the reason the hint is
+     drawn ghost rather than being something to read while a menu covers it. */
+  z-index: 2;
   margin: 0;
   border-top: 0;
   /* Wide enough for a path, and never wider than the column. */
@@ -1935,7 +2044,32 @@ body.sh-dragging {
  *
  * It grows from one line, which is what it does while you type anyway.
  */
-.sh-screen .sh-composer-brief { min-block-size: var(--sh-line-height-large); }
+.sh-screen .sh-composer-brief {
+  min-block-size: var(--sh-line-height-large);
+
+  /*
+   * And the cap is the WINDOW's, not a line count.
+   *
+   * `prompt-field.css` stops at twelve lines, which is a guess about a card and
+   * a bad one on a screen: a takeover with 400px of empty canvas under the
+   * sentence has no business scrolling a field.
+   *
+   * So this one is derived, and derived from the frame above — the window, less
+   * the floor, less the gutter the leader stops at, less the knob row and its
+   * gap. That is the tallest the brief can be with the leader fully collapsed,
+   * which means the field is handed every pixel between the top gutter and the
+   * comfort floor BEFORE it is asked to scroll in any of them. Phase 1 grows
+   * down, phase 2 grows up, and the scrollbar is the last thing to appear rather
+   * than the first.
+   *
+   * 80 rather than 85: `vh` is the window and the frame is the stage, which is
+   * shorter by the titlebar. The difference is small and this is the side of it
+   * to be wrong on — an overestimate would put the last line under the floor.
+   */
+  max-block-size: calc(
+    80vh - var(--sh-compose-gutter) - var(--sh-control-lg) - var(--sh-space-xxl)
+  );
+}
 
 /*
  * Tighter than the mock, and the mock was wrong.
@@ -1949,8 +2083,31 @@ body.sh-dragging {
  */
 .sh-compose { gap: var(--sh-space-xxl); }
 
-/* The picker belongs to the sentence above it, not to the column's rhythm. */
-.sh-screen .sh-composer-picker { margin-block-start: calc(var(--sh-space-md) - var(--sh-space-xxl)); }
+/*
+ * The send line hangs off the column rather than sitting in it.
+ *
+ * It is a caption — `aria-hidden`, teaching a key — and the floor is a promise
+ * about the last line of the SENTENCE. Left in flow it would be the thing the
+ * floor measured to, which parks a caption on the comfort line and the caret one
+ * line above it. Out of flow it sits in the margin below, where there is always
+ * room for it, and the picker is free to cover it.
+ */
+.sh-screen .sh-composer-send {
+  position: absolute;
+  inset-block-start: calc(100% + var(--sh-space-xxl));
+  inset-inline-start: 0;
+}
+
+/*
+ * An empty status is not a gap.
+ *
+ * `<output>` is the last child of the column, so while it is empty the column's
+ * bottom edge would sit one `gap` below the brief — and that edge is what the
+ * picker, the send line and the floor are all measured from. `.sh-composer`
+ * carries this rule for the card; the screen is not a `Composer`, so it needs
+ * its own.
+ */
+.sh-compose .sh-ext-answer:empty { display: none; }
 
 /*
  * And it is sized to its rows, not to the column.

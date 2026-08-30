@@ -23,6 +23,36 @@
 }
 
 /*
+ * The scrollbar, matching the shell's: a thumb of `line` and nothing else — no
+ * track, no arrows, no rounded chrome. A stock macOS bar on a warm-ink surface
+ * is the single loudest wrong pixel in a dark app, and this field is where it
+ * showed: `textarea.css` has carried these five rules since the writing surface
+ * was a `TextArea`, and the element changed underneath them without the
+ * treatment coming along. Same values, so the two cannot read as two fields.
+ */
+.sh-ui-prompt {
+  scrollbar-width: thin;
+  scrollbar-color: var(--sh-line) transparent;
+}
+
+.sh-ui-prompt::-webkit-scrollbar {
+  width: var(--sh-space-md);
+}
+
+.sh-ui-prompt::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sh-ui-prompt::-webkit-scrollbar-thumb {
+  background: var(--sh-line);
+  border-radius: 0;
+}
+
+.sh-ui-prompt::-webkit-scrollbar-thumb:hover {
+  background: var(--sh-text-faint);
+}
+
+/*
  * `:empty` and not a class, so the placeholder cannot disagree with the field's
  * real contents — a state flag would have to be updated on every keystroke,
  * which is exactly the per-keystroke DOM work the component refuses to do.

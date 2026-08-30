@@ -117,6 +117,52 @@ async function press(win: BrowserWindow, key: string, modifiers: string[] = []):
   await sleep(160);
 }
 
+/**
+ * One element's box, measured directly.
+ *
+ * `read` only fills `boxes` for `SURFACES` — a selector passed as a target lands
+ * in `hits` and is answered with a boolean, which is the right shape for "can
+ * this be clicked" and no shape at all for "where is it". The composer's
+ * assertions are about coordinates, so they take their own measurement.
+ */
+async function boxOf(win: BrowserWindow, selector: string): Promise<Box | null> {
+  return (await win.webContents.executeJavaScript(`
+    (() => {
+      const el = document.querySelector(${JSON.stringify(selector)});
+      if (el === null) return null;
+      const r = el.getBoundingClientRect();
+      return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) };
+    })()
+  `)) as Box | null;
+}
+
+/** The same box, once it exists. A contributed view mounts a beat after its
+    screen does, and a `null` read in that beat is a mount race reported as a
+    missing element. */
+async function settle(win: BrowserWindow, selector: string, tries = 20): Promise<Box | null> {
+  for (let i = 0; i < tries; i += 1) {
+    const box = await boxOf(win, selector);
+    if (box !== null && box.h > 0) return box;
+    await sleep(100);
+  }
+  return null;
+}
+
+/** Text into the brief, the way a keystroke puts it there — so the caret moves
+    and the component's own `input` handler runs. */
+async function type(win: BrowserWindow, text: string): Promise<void> {
+  await win.webContents.executeJavaScript(`
+    (() => {
+      const brief = document.querySelector('.sh-composer-brief');
+      if (brief === null) return false;
+      brief.focus();
+      document.execCommand('insertText', false, ${JSON.stringify(text)});
+      return true;
+    })()
+  `);
+  await sleep(200);
+}
+
 async function click(win: BrowserWindow, selector: string): Promise<boolean> {
   return (await win.webContents.executeJavaScript(`
     (() => {
@@ -232,6 +278,83 @@ export async function runTakeoverSmoke(win: BrowserWindow, controlSocket: string
       check(screen.h > 100, `composer: it has real height (${screen.h})`);
     }
     assertInWindow('composer', composer);
+
+    /*
+     * ── The two things that must not move ────────────────────────────────
+     *
+     * Both were shipped defects, both were properties of the CSS, and both are
+     * invisible to every unit test in the repo — which is the reason this file
+     * exists. They are one bug wearing two hats: something below the knob row
+     * was allowed to change where the knob row is.
+     *
+     *   - the column was centred on a point, so growing the sentence grew it in
+     *     BOTH directions and every ⏎ walked the row up half a line;
+     *   - the picker was in flow, so opening it made the column taller and moved
+     *     the row again, in the other direction.
+     *
+     * The assertion is the same for both, and it is an equality on a
+     * coordinate rather than a description of one: the row's `y` before, and
+     * the row's `y` after.
+     */
+    const ROW = '.sh-composer-controls';
+    const BRIEF = '.sh-composer-brief';
+    const PICKER = '[data-testid="composer-picker"]';
+
+    // The contributed view mounts a beat after the screen does, so the row is
+    // waited FOR rather than assumed — a `null` here would otherwise read as
+    // "the knob row is gone" when it simply had not arrived.
+    const atRest = await settle(win, ROW);
+    check(atRest !== null, 'composer: the knob row is on screen');
+
+    if (atRest !== null) {
+      const briefAtRest = await boxOf(win, BRIEF);
+      // Typed through `insertText`, not by assigning `textContent`: it is the
+      // path a keystroke takes, so it moves the caret and fires the `input` the
+      // component listens to. A long line rather than newlines, because a
+      // contenteditable's own answer to ⏎ is a browser default this smoke has no
+      // business asserting — what is under test is the layout's response to a
+      // sentence that got taller, however it got there.
+      await type(win, 'retry the loop '.repeat(40));
+      const rowGrown = await boxOf(win, ROW);
+      const brief = await boxOf(win, BRIEF);
+      check(
+        brief !== null && briefAtRest !== null && brief.h > briefAtRest.h,
+        `composer: the brief grew with the sentence (${briefAtRest?.h ?? 'gone'} → ${brief?.h ?? 'gone'})`,
+      );
+      check(
+        rowGrown !== null && rowGrown.y === atRest.y,
+        `composer: the knob row does not move when the sentence grows (${atRest.y} → ${rowGrown?.y ?? 'gone'})`,
+      );
+
+      // And the picker is an OVERLAY: it opens over the hint, and nothing in the
+      // column notices. `#` is the trigger, typed the same way.
+      await type(win, ' #');
+      await sleep(200);
+      const panel = await boxOf(win, PICKER);
+      const rowPicking = await boxOf(win, ROW);
+      check(panel !== null, 'composer: the picker opened');
+      check(
+        rowPicking !== null && rowPicking.y === atRest.y,
+        `composer: the picker does not push the page (${atRest.y} → ${rowPicking?.y ?? 'gone'})`,
+      );
+      if (panel !== null && brief !== null) {
+        // Under the sentence — the edge it is anchored to is the brief's bottom.
+        check(
+          panel.y >= brief.y + brief.h,
+          `composer: the picker hangs below the brief (brief ${brief.y}+${brief.h}, panel ${panel.y})`,
+        );
+      }
+      say(`composer: row=${JSON.stringify(atRest)} brief=${JSON.stringify(brief)} picker=${JSON.stringify(panel)}`);
+    }
+
+    /*
+     * TWO escapes, and that is the layering rather than a retry: the topmost
+     * layer only. The first closes the picker the block above opened; the second
+     * closes the screen. One would leave the screen up and read here as the
+     * takeover refusing to close.
+     */
+    await press(win, 'Escape');
+    await sleep(160);
     await press(win, 'Escape');
     await sleep(160);
     const closed = await read(win);
