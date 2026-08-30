@@ -58,14 +58,40 @@ fight it.
    `git ls-files --others --ignored --directory` already draws with a trailing
    slash. ADR 0049 is the other half: **a scratchpad is a document that has not
    chosen a path yet**, so `scratch.saveAs` gives it one and the editor's `Notes`
-   root lists the ones without. **M4, the dogfood gate, is next.**
+   root lists the ones without. **Stages 1 and 2 of the core/UI isolation**
+   landed after that ([design](docs/superpowers/specs/2026-08-30-core-ui-isolation-design.md),
+   [handoff](docs/superpowers/plans/2026-08-30-core-ui-isolation-stages-1-2.md)):
+   a pane close DETACHES and `sessions.terminate` is the one terminator (ADR
+   0052), `isViewing` became the SET of principals viewing a session, and the
+   renderer stopped having nine private IPC channels — it is a client of the same
+   `ControlSurface` `control.sock` adapts, with snapshot-then-delta on subscribe
+   and ADR 0031's pull-with-nudge on the control plane. **Stage 3 (the kernel
+   leaving Electron) waits for M4, the dogfood gate, which is next.**
 2. [`docs/superpowers/specs/2026-08-06-ade-minimal-core-sketch.md`](docs/superpowers/specs/2026-08-06-ade-minimal-core-sketch.md)
    — thesis and **every decision** (§7, §7b, §7c the headless-agent seam, §7d presence).
 3. [`docs/superpowers/specs/2026-08-06-ade-v2-core-design.md`](docs/superpowers/specs/2026-08-06-ade-v2-core-design.md)
    — the API and the M0–M4 milestones.
 4. [`docs/superpowers/specs/2026-08-06-architecture-review.md`](docs/superpowers/specs/2026-08-06-architecture-review.md)
    — what v1 got wrong; **its Rebuild checklist is normative for v2**.
-5. ADRs [0021](.claude/adr/0021-v2-store-is-node-sqlite.md)–[0049](.claude/adr/0049-v2-a-scratchpad-is-a-document-without-a-path.md).
+5. ADRs [0021](.claude/adr/0021-v2-store-is-node-sqlite.md)–[0052](.claude/adr/0052-v2-a-pane-close-is-a-detach-and-termination-is-a-verb.md).
+   **0052** overturns half of 0022 and is the one to read before touching a
+   pane's close path or anything that asks "is the user looking at this". ADR
+   0022 made `layout.close` the one terminator and it was right — while there
+   was **one client**. With a phone, a second window, or the renderer-as-client
+   Stage 2 adds, that rule kills an agent somebody is watching because a window
+   closed. So a close DETACHES, `SessionLifetime` ends a session only when no
+   other principal holds it, and `sessions.terminate` is the verb for ending one
+   regardless. Holders are ASKED rather than booked — a bookkeeping failure is a
+   pty held forever by a client that crashed. `isViewing` became the SET of
+   principals viewing a session, which is not a second answer to 0020's question
+   but the same one with the client named: the resolver still decides for this
+   window and reports under its own principal, `sessions.viewing` is how anyone
+   else reports, and `ViewerRegistry.isViewed` is the only aggregation. The set
+   is also a holder, so "no push for a session another client is looking at" and
+   "no kill for one another client is watching" are one fact read twice. Its
+   lesson is worth the reread: 0022 was not wrong, its PREMISE expired, and the
+   tell was that it stated a fact about the world ("there is one client") as a
+   fact about the layout.
    **0048–0049** are the editor's. 0048 is why the save is EXPLICIT and why it
    can refuse: `scratch` debounces at 400ms and t3code does the same, and both
    are right for what they hold — a surface with one writer. This one has two, so
@@ -209,6 +235,17 @@ env -u NODE_OPTIONS pnpm ship --dev   # → /Applications/Shep Night.app, daily 
   ```
   A caller is required and **cannot be `user`** — that kind is minted in-process
   only. Inside a pane, `shepherd <verb>` does this for you.
+  The socket serves four more routes, and the renderer reaches the **same
+  `ControlSurface`** through five IPC channels rather than a channel per feature
+  (ADR 0052's Stage 2): `GET /commands` (the verb list), `GET /topics` (what you
+  may follow, and how each behaves), `GET /subscribe?topic=…` (NDJSON: an `open`
+  frame naming the subscription, then the topic's **snapshot** if it has one,
+  then deltas), and `POST /pull {subscription}` — the reader's "I have read",
+  which is what makes a nudge back-pressure rather than a hint. A nudge topic
+  sends ONE frame and goes quiet until you pull; it names the subjects that
+  changed so you re-read those rather than everything.
+  `env -u NODE_OPTIONS node tooling/scripts/bench-control.mjs` measures what a
+  call costs, against its own throwaway instance.
 - **The daemon logs to `~/.shepherd/v2/daemon.log`** (`v2-dev` for Shep Night),
   and it is the first file to read when terminals misbehave — it owns every pty,
   so an app that is fine and panes that are not is its story to tell. It used to
