@@ -238,3 +238,36 @@ privileged path**: it may do nothing a socket client cannot, including being
 
 Everything above is a consequence of that one sentence. Without it, every stage
 quietly grows a private hook and the isolation never actually happens.
+
+---
+
+## Appendix — the terminal stack, deferred
+
+Two rewrites get raised whenever the core feels slow, and they aim at different
+layers. Neither is scheduled; this records what is known so the question does not
+have to be re-derived.
+
+**`node-pty` → Rust: probably the wrong target.** A pty is a kernel object, and
+`node-pty` is a thin N-API wrapper doing `read()`/`write()` on an fd. Rust cannot
+make the syscall faster; what it could change is copies, GC pressure and the read
+loop's threading — real, but small, and the daemon already coalesces output
+(`OutputCoalescer`). Terminal slowness almost always lives in parse and render,
+not in getting bytes out of the kernel.
+
+**`xterm.js` → libghostty: aimed at the layer that actually costs.** Ghostty's VT
+parser and renderer are its fast part, and that is the layer `xterm.js` occupies.
+The available piece is **`libghostty-vt`, documented as WebAssembly-compatible** —
+the parser and screen state, *not* a drop-in terminal widget. So the realistic
+shape is: replace `xterm.js`'s parser and buffer with `libghostty-vt` in WASM and
+draw the screen state ourselves on canvas or WebGL. A renderer we would own, not a
+component we would install. Note this is also the bet Superlogical made — one
+engine across native, web and terminal clients — which composes with §5's Stage 4
+rather than competing with it.
+
+**Do not start either without measuring first.** The socket-cost claim in §6 was
+asserted, then measured, and was wrong in both directions; the same discipline
+applies here. What to measure: bytes/sec through a pty under a saturating writer,
+time split between `xterm.js` parse and paint, frame times while an agent streams
+hard, and whether the daemon's coalescer is already the limiter. If the answer is
+"the renderer at 8ms a frame under load", `libghostty-vt` is justified and
+`node-pty` is irrelevant. If it is "I/O-bound and nobody notices", neither is.
