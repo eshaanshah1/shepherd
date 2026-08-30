@@ -86,7 +86,6 @@ describe('the preload bridge surface', () => {
     void bridge.session.write('s1', 'x');
     void bridge.session.paste('s1', 'x');
     void bridge.session.resize('s1', 80, 24);
-    void bridge.session.kill('s1');
     void bridge.commands.invoke('layout.split', { axis: 'row' });
     // What the palette reads — a SNAPSHOT of the registry, on its own channel.
     void bridge.commands.list();
@@ -98,7 +97,7 @@ describe('the preload bridge surface', () => {
     bridge.session.onExit(() => undefined);
     bridge.layout.onChanged(() => undefined);
 
-    expect(ipc.log).toHaveLength(16);
+    expect(ipc.log).toHaveLength(15);
     for (const entry of ipc.log) expect(known, entry.channel).toContain(entry.channel);
   });
 

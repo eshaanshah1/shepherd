@@ -45,10 +45,14 @@ import { deserializeNode, serializeNode, type PersistedNode } from './serialize.
  * M0 kept the tree in the renderer, which was right for M0 and wrong from here:
  * `LayoutAPI`, attention aggregation and `isViewing` are all core concerns,
  * extensions read the tree, and — the load-bearing one — **`layout.close` has to
- * be what ends a session.** With the binding in a renderer, closing a pane over
- * the control socket leaks a live pty while the renderer's own close path
- * double-kills it. So the store owns the pane→session map and is constructed
- * with the thing that can end one; there is no way to build a store that forgets.
+ * be what a session's fate hangs off.** With the binding in a renderer, closing a
+ * pane over the control socket leaks a live pty while the renderer's own close
+ * path double-kills it. So the store owns the pane→session map and is constructed
+ * with the thing to tell; there is no way to build a store that forgets.
+ *
+ * What it tells changed in ADR 0052: it RELEASES rather than kills. The layout is
+ * one client's view, and a second client watching the same session is a reason
+ * the pty outlives this one's decision to stop drawing it.
  *
  * Where the session binding is NOT: on `Pane`. That type documents itself as
  * carrying only what the layout needs and what survives a relaunch, and
@@ -62,13 +66,22 @@ import { deserializeNode, serializeNode, type PersistedNode } from './serialize.
  */
 
 /**
- * What can end a session, and what can say whether one is still alive.
+ * What the layout does when it stops showing a session, and what can say whether
+ * one is still alive.
+ *
+ * **`release`, not `kill` (ADR 0052).** The layout is ONE client's view; ending
+ * the pty is a decision about every client, and the layout is not entitled to
+ * make it. So closing a pane says "this principal is done with it" and
+ * `SessionLifetime` decides — which for a single client is still "and so it
+ * ends", and for a second client watching is "and so it lives". The constructor
+ * argument stays REQUIRED for exactly the reason ADR 0022 made it required:
+ * there is no way to build a layout that closes a pane and tells nobody.
  *
  * `isLive` arrives with R1 (ADR 0036). Sessions now outlive the app, so a
  * restored pane's persisted `sessionId` is a claim rather than a fact — and the
  * only thing that can settle it is the process that holds the ptys. Required
- * rather than optional, for the same reason `kill` is: a store built without it
- * would silently adopt bindings nobody checked, which is the failure mode the
+ * rather than optional, for the same reason `release` is: a store built without
+ * it would silently adopt bindings nobody checked, which is the failure mode the
  * whole verification exists to prevent.
  */
 /**
@@ -92,7 +105,8 @@ export interface PaneSeed extends PaneInit {
 }
 
 export interface SessionSink {
-  kill(id: SessionID): void;
+  /** This layout no longer shows the session. Core decides whether that ends it. */
+  release(id: SessionID): void;
   isLive(id: SessionID): boolean;
 }
 
@@ -147,8 +161,13 @@ export interface OpenOptions {
 export interface CloseOutcome {
   /** The pane that went away. */
   readonly closed: PaneID;
-  /** The session it was showing, if any — already killed by the time you see this. */
-  readonly endedSession?: SessionID;
+  /**
+   * The session it was showing, if any — **detached** by the time you see this,
+   * which is not the same as ended (ADR 0052). The pane no longer points at it;
+   * whether the pty is gone is `SessionLifetime`'s answer, and it is `no` while
+   * another client still holds it.
+   */
+  readonly detachedSession?: SessionID;
   /**
    * True when that was the last pane of the root, which is now a fact about the
    * ROOT rather than an instruction about the window: the root is left open and
@@ -505,7 +524,7 @@ export class LayoutStore {
   /**
    * Forget a root entirely — the multi-root counterpart of closing a window.
    *
-   * It does NOT end sessions: `layout.close` is the one terminator (ADR 0022),
+   * It does NOT release sessions: closing a pane is what detaches one (ADR 0052),
    * so a caller drains the root's panes through `close` first and this drops
    * what is left. Going through `#changed` is what makes it stick: the notify
    * lets the shell republish (and `ViewingResolver` announce the vanished panes
@@ -924,9 +943,17 @@ export class LayoutStore {
   }
 
   /**
-   * Closes a pane and **ends the session it was showing**. This is the one place
-   * a session dies of a layout gesture; a re-render, a reparent, or a focus
-   * change never touches one.
+   * Closes a pane and **detaches the session it was showing** (ADR 0052).
+   *
+   * It used to end it, and that was right while the layout was the only thing
+   * that could point at a pty. It is not any more: a pane close is one client
+   * saying it has stopped drawing something, and killing an agent a phone is
+   * watching because a window closed is the multi-client version of v1's
+   * remounted-pane-is-a-new-pty bug pointed the other way.
+   *
+   * So this drops the binding and hands the session to `release`, which ends it
+   * iff nobody else holds it. A re-render, a reparent or a focus change still
+   * never touches one — that half of ADR 0022 is untouched.
    */
   close(pane: PaneID): Result<CloseOutcome, string> {
     const root = this.rootOf(pane);
@@ -958,13 +985,13 @@ export class LayoutStore {
       state.tree = null;
       state.focusedPaneId = null;
       state.zoomedPaneId = null;
-      if (session !== undefined) this.#endSession(pane, session);
+      if (session !== undefined) this.#detachSession(pane, session);
       else this.#releaseRemembered(pane);
       this.#log.info(`closed the last pane of ${root}; it is now empty`);
       this.#changed(root);
       return ok({
         closed: pane,
-        ...(session === undefined ? {} : { endedSession: session }),
+        ...(session === undefined ? {} : { detachedSession: session }),
         wasLastPane: true,
       });
     }
@@ -973,13 +1000,13 @@ export class LayoutStore {
     state.tree = next;
     state.focusedPaneId = heir;
     if (state.zoomedPaneId === pane) state.zoomedPaneId = null;
-    if (session !== undefined) this.#endSession(pane, session);
+    if (session !== undefined) this.#detachSession(pane, session);
     else this.#releaseRemembered(pane);
     this.#changed(root);
 
     return ok({
       closed: pane,
-      ...(session === undefined ? {} : { endedSession: session }),
+      ...(session === undefined ? {} : { detachedSession: session }),
       wasLastPane: false,
     });
   }
@@ -1139,18 +1166,24 @@ export class LayoutStore {
     return pane.id;
   }
 
-  #endSession(pane: PaneID, session: SessionID): void {
+  /**
+   * Drop the binding, then let go. In that order, and the order is the decision:
+   * `release` asks every holder whether it still wants the session, and this
+   * layout is one of them — so a binding still in place would make the layout
+   * hold a session against its own close.
+   */
+  #detachSession(pane: PaneID, session: SessionID): void {
     this.#sessionByPane.delete(pane);
     this.#paneBySession.delete(session);
     this.#lastSessionByPane.delete(pane);
-    this.#sessions.kill(session);
-    this.#log.info(`pane ${pane} closed, ended session ${session}`);
+    this.#log.info(`pane ${pane} closed, detached session ${session}`);
+    this.#sessions.release(session);
   }
 
   /**
    * A closing pane whose session had ALREADY exited.
    *
-   * `kill` on a dead session ends nothing — the pty is gone. It is still the
+   * Releasing a dead session ends nothing — the pty is gone. It is still the
    * right call, because the sink is also what releases the screen the host
    * retained for that session (`SessionHost.forget`), and a pane that closes
    * without it leaks half a megabyte for the life of the process. Nothing
@@ -1161,7 +1194,7 @@ export class LayoutStore {
     const remembered = this.#lastSessionByPane.get(pane);
     if (remembered === undefined) return;
     this.#lastSessionByPane.delete(pane);
-    this.#sessions.kill(remembered);
+    this.#sessions.release(remembered);
   }
 
   /** A structural change: notify, and schedule a write. */

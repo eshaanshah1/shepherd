@@ -41,7 +41,7 @@ beforeEach(() => {
   // R1: a `SessionSink` must also answer whether a session is still alive.
   // Always true here; the restore path that consumes it has its own cases in
   // `layout/store.test.ts`.
-  sessions = { kill: () => {}, isLive: () => true };
+  sessions = { release: () => {}, isLive: () => true };
   ids = 0;
 });
 

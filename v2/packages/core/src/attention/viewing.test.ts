@@ -25,7 +25,7 @@ beforeEach(() => {
   logger = createLogger({ clock, level: 'debug', sink: (_l, r) => records.push(r) });
   const killed: SessionID[] = [];
   // R1 widened `SessionSink`; nothing here exercises the restore path.
-  sessions = { kill: (id) => killed.push(id), isLive: () => true };
+  sessions = { release: (id) => killed.push(id), isLive: () => true };
   ids = 0;
 });
 

@@ -11,6 +11,8 @@ import {
 import { CommandRegistry } from '../commands/registry.ts';
 import { emptyGrants, type GrantSet } from '../commands/authorize.ts';
 import { SessionHost } from './host.ts';
+import { SessionLifetime } from './lifetime.ts';
+import { ViewerRegistry } from '../attention/viewers.ts';
 import { registerSessionCommands, SESSION_COMMANDS } from './commands.ts';
 
 // A real pty again, for the same reason host.test.ts uses one: the interesting
@@ -185,5 +187,155 @@ describe('sessions.capture', () => {
     const { registry } = build();
     const result = await registry.invoke(SESSION_COMMANDS.capture, { session: 'ghost' }, USER);
     expect(result.ok).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------- ADR 0052
+
+describe('sessions.terminate, sessions.viewing and sessions.reconcile', () => {
+  function wired() {
+    const host = new SessionHost();
+    hosts.push(host);
+    const registry = new CommandRegistry({
+      logger: createLogger({ clock: manualClock(0), level: 'debug', sink: () => {} }),
+      // A paired phone with the `sessions` entitlement — the principal these
+      // verbs exist for. `emptyGrants` would deny it as an unknown device, which
+      // would make every assertion below pass for the wrong reason.
+      grants: () => ({ ...emptyGrants(), devices: new Map([['phone-1', ['sessions'] as const]]) }),
+    });
+    const ended: string[] = [];
+    const lifetime = new SessionLifetime({
+      end: (id) => void ended.push(id),
+      logger: createLogger({ clock: manualClock(0), level: 'debug', sink: () => {} }),
+    });
+    const viewers = new ViewerRegistry();
+    lifetime.addHolder({ reason: 'viewing', principals: (id) => viewers.viewersOf(id) });
+    const subscription = registerSessionCommands({
+      host,
+      registry,
+      viewers,
+      lifetime,
+      holds: (principal) =>
+        host
+          .list()
+          .map((info) => info.id)
+          .filter((id) => lifetime.holdersOf(id, principal).length > 0),
+    });
+    return { host, registry, ended, lifetime, viewers, subscription };
+  }
+
+  it('terminate ends the session it names', async () => {
+    const w = wired();
+    const created = w.host.create({ command: '/bin/sh', args: [], cwd: process.cwd(), env: {} });
+    if (!isOk(created)) throw new Error('create failed');
+
+    const answer = await w.registry.invoke(SESSION_COMMANDS.terminate, { session: created.value.id }, USER);
+
+    expect(answer.ok).toBe(true);
+    expect(w.ended).toEqual([created.value.id]);
+    w.subscription.dispose();
+  });
+
+  it('viewing records the CALLER as the viewer, never a principal in the arguments', async () => {
+    // A client that could name the principal could suppress another client's
+    // notifications, or resurrect a session it does not hold.
+    const w = wired();
+    const created = w.host.create({ command: '/bin/sh', args: [], cwd: process.cwd(), env: {} });
+    if (!isOk(created)) throw new Error('create failed');
+
+    const answer = await w.registry.invoke(
+      SESSION_COMMANDS.viewing,
+      { session: created.value.id, viewing: true },
+      { kind: 'device', deviceId: 'phone-1' },
+    );
+
+    expect(answer).toMatchObject({ ok: true, value: { viewers: ['device:phone-1'] } });
+    expect(w.viewers.viewersOf(created.value.id)).toEqual(['device:phone-1']);
+    w.subscription.dispose();
+  });
+
+  it('a viewed session is reported as viewed by sessions.list, whoever is viewing', async () => {
+    const w = wired();
+    const created = w.host.create({ command: '/bin/sh', args: [], cwd: process.cwd(), env: {} });
+    if (!isOk(created)) throw new Error('create failed');
+    await w.registry.invoke(
+      SESSION_COMMANDS.viewing,
+      { session: created.value.id, viewing: true },
+      { kind: 'device', deviceId: 'phone-1' },
+    );
+
+    const listed = await w.registry.invoke(SESSION_COMMANDS.list, {}, USER);
+    if (!listed.ok) throw new Error('list failed');
+    const rows = listed.value as readonly { viewing: boolean | null; viewers: string[] | null }[];
+
+    expect(rows[0]?.viewing).toBe(true);
+    expect(rows[0]?.viewers).toEqual(['device:phone-1']);
+    w.subscription.dispose();
+  });
+
+  it('reconcile calls a live session nobody claims an orphan', async () => {
+    const w = wired();
+    const created = w.host.create({ command: '/bin/sh', args: [], cwd: process.cwd(), env: {} });
+    if (!isOk(created)) throw new Error('create failed');
+
+    const answer = await w.registry.invoke(SESSION_COMMANDS.reconcile, { claims: [] }, USER);
+
+    expect(answer).toMatchObject({ ok: true, value: { orphans: [created.value.id] } });
+    w.subscription.dispose();
+  });
+
+  it('reconcile does not call another client\'s session an orphan', async () => {
+    const w = wired();
+    const created = w.host.create({ command: '/bin/sh', args: [], cwd: process.cwd(), env: {} });
+    if (!isOk(created)) throw new Error('create failed');
+    // The phone is watching it, which is a hold.
+    await w.registry.invoke(
+      SESSION_COMMANDS.viewing,
+      { session: created.value.id, viewing: true },
+      { kind: 'device', deviceId: 'phone-1' },
+    );
+
+    const answer = await w.registry.invoke(SESSION_COMMANDS.reconcile, { claims: [] }, USER);
+
+    expect(answer).toMatchObject({ ok: true, value: { orphans: [] } });
+    w.subscription.dispose();
+  });
+
+  it('reconcile adopts a claim the host confirms and drops one it does not', async () => {
+    const w = wired();
+    const created = w.host.create({ command: '/bin/sh', args: [], cwd: process.cwd(), env: {} });
+    if (!isOk(created)) throw new Error('create failed');
+
+    const answer = await w.registry.invoke(
+      SESSION_COMMANDS.reconcile,
+      {
+        claims: [
+          { pane: 'p1', session: created.value.id },
+          { pane: 'p2', session: 'a-session-that-ended' },
+        ],
+      },
+      USER,
+    );
+
+    expect(answer).toMatchObject({
+      ok: true,
+      value: {
+        adopted: [{ pane: 'p1', session: created.value.id }],
+        dropped: [{ pane: 'p2', session: 'a-session-that-ended' }],
+        orphans: [],
+      },
+    });
+    w.subscription.dispose();
+  });
+
+  it('registers neither terminate nor viewing when it is given neither', () => {
+    // A verb that exists and always refuses is a verb every client has to
+    // special-case; `/commands` is how a client is meant to find out instead.
+    const plain = build();
+    const ids = plain.registry.list().map((command) => command.id);
+    expect(ids).not.toContain(SESSION_COMMANDS.terminate);
+    expect(ids).not.toContain(SESSION_COMMANDS.viewing);
+    expect(ids).not.toContain(SESSION_COMMANDS.reconcile);
+    plain.subscription.dispose();
   });
 });

@@ -1,6 +1,15 @@
-import { disposeAll, s, sessionId as toSessionId, type Disposable, type PaneID } from '@shepherd/sdk';
+import {
+  disposeAll,
+  s,
+  sessionId as toSessionId,
+  type Caller,
+  type Disposable,
+  type SessionID,
+} from '@shepherd/sdk';
 import type { CommandRegistry } from '../commands/registry.ts';
 import type { ForegroundReading, SessionInfo } from './host.ts';
+import type { PrincipalKey, SessionLifetime } from './lifetime.ts';
+import { reconcile, type SessionClaim } from './reconcile.ts';
 
 /**
  * Sessions as commands, so the reconciliation sweep — which lives in an
@@ -69,19 +78,93 @@ export interface SessionCommandsOptions {
    * Optional: a host with no resolver (a test, the session smoke) answers `null`,
    * which is "not known" and never `false`.
    */
-  readonly viewing?: ViewingLookup;
+  readonly viewers?: ViewerSink;
+  /**
+   * What ends a session, and who is allowed to say so (ADR 0052).
+   *
+   * Absent = this build has no terminator, and `sessions.terminate` is not
+   * registered rather than registered-and-failing: a verb that exists and
+   * refuses is a verb a client has to special-case, and the self-describing
+   * `/commands` list is exactly how a client is supposed to find that out.
+   */
+  readonly lifetime?: SessionLifetime;
+  /**
+   * Which live sessions somebody OTHER than this principal already holds — what
+   * keeps `sessions.reconcile` from calling another client's terminal an orphan.
+   *
+   * Injected rather than derived here: "held" is `SessionLifetime`'s notion, and
+   * this module answering it a second way is exactly the two-implementations
+   * drift the one verb table exists to prevent. Absent = `sessions.reconcile`
+   * is not registered.
+   */
+  readonly holds?: (principal: PrincipalKey) => readonly SessionID[];
 }
 
 /**
- * Just the question, so core's session module does not depend on the attention
- * module to answer it. `null` = this session is on no pane, so the question does
- * not apply.
+ * Who is looking at a session, aggregated over every client (ADR 0052).
+ *
+ * Declared here, narrowly, rather than importing `ViewerRegistry`: core's
+ * session module answering a question about attention must not depend on the
+ * attention module, for the same reason `ViewingLookup` was a bare function.
  */
-export type ViewingLookup = (pane: PaneID) => boolean;
+export interface ViewerSink {
+  report(principal: string, session: SessionID, viewing: boolean): boolean;
+  viewersOf(session: SessionID): readonly string[];
+}
+
+/**
+ * How a client is named in the viewer set. One string per client, derived from
+ * the caller the dispatcher already verified — a client cannot name its own
+ * principal any more than it can name its own caller kind.
+ */
+export function principalOf(caller: Caller): string {
+  switch (caller.kind) {
+    case 'user':
+      return 'user';
+    case 'kernel':
+      return 'kernel';
+    case 'device':
+      return `device:${caller.deviceId}`;
+    case 'extension':
+      return `extension:${caller.id}`;
+    case 'agent':
+      return `agent:${caller.sessionId}`;
+  }
+}
 
 export const SESSION_COMMANDS = {
   list: 'sessions.list',
   capture: 'sessions.capture',
+  /**
+   * End a session. **The one terminator** (ADR 0052).
+   *
+   * It used to be `layout.close`, which was right while the layout was the only
+   * thing that could point at a pty. With a second client a pane close is one
+   * client's decision to stop drawing something, and killing an agent a phone is
+   * watching because a window closed is the wrong answer. So closing a pane
+   * detaches, and ending is a verb somebody asks for — by name, through the same
+   * table `shepherd`, a device and an extension reach.
+   */
+  terminate: 'sessions.terminate',
+  /**
+   * "I am / am no longer looking at this session."
+   *
+   * The client half of ADR 0020's one predicate, now that there can be more than
+   * one client (ADR 0052). Core aggregates; a client only ever reports its own
+   * answer, and it is attributed to the caller the dispatcher verified rather
+   * than to a principal the client names.
+   */
+  viewing: 'sessions.viewing',
+  /**
+   * A client's **connect ritual** (ADR 0036, generalised by ADR 0052).
+   *
+   * It hands over what it believes it is showing and is told which of those
+   * claims the authority confirms, which have ended, and which live sessions
+   * nobody at all is claiming. It used to happen once, inside the layout's
+   * restore, because there was one client and one moment; a second client
+   * arrives whenever it arrives.
+   */
+  reconcile: 'sessions.reconcile',
   /**
    * Put text into a session, as if it had been pasted.
    *
@@ -114,7 +197,10 @@ export const SESSION_COMMANDS = {
 export const DEFAULT_CAPTURE_LINES = 1000;
 
 export function registerSessionCommands(options: SessionCommandsOptions): Disposable {
-  const { host, registry, viewing } = options;
+  const { host, registry, viewers, lifetime, holds } = options;
+
+  /** The aggregate — the ONE place "is anybody looking at this" is answered. */
+  const viewedBy = (session: SessionID): readonly string[] => viewers?.viewersOf(session) ?? [];
 
   const subscriptions: Disposable[] = [
     registry.register(SESSION_COMMANDS.capture, {
@@ -235,16 +321,95 @@ export function registerSessionCommands(options: SessionCommandsOptions): Dispos
               // indistinguishable from a field this build does not send.
               hasForegroundProcess: foreground.hasForegroundProcess ?? null,
               // The seed for an agent extension's viewing mirror — see
-              // `SessionCommandsOptions.viewing`. `null` is "not known" (no pane,
-              // or no resolver wired) and is deliberately not `false`, which would
-              // read as "they are definitely not looking".
-              viewing:
-                info.paneId === undefined || viewing === undefined ? null : viewing(info.paneId),
+              // `SessionCommandsOptions.viewers`. `null` is "not known" (no
+              // registry wired) and is deliberately not `false`, which would read
+              // as "they are definitely not looking".
+              //
+              // It is now the AGGREGATE over every client (ADR 0052), and it is
+              // still one predicate: a turn that finished under a phone's eyes
+              // has been seen, whatever this Mac's window is showing.
+              viewing: viewers === undefined ? null : viewedBy(info.id).length > 0,
+              // The set behind that boolean, so a client can say WHO — and so
+              // "why did I get no banner" has an answer that is not a guess.
+              viewers: viewers === undefined ? null : [...viewedBy(info.id)],
             };
           }),
         ),
     }),
   ];
+
+  if (lifetime !== undefined) {
+    subscriptions.push(
+      registry.register(SESSION_COMMANDS.terminate, {
+        title: 'End Session',
+        permission: 'sessions',
+        schema: s.object({ session: s.string() }),
+        /**
+         * Unconditional, deliberately. `SessionLifetime.release` is the one that
+         * asks whether anybody else is holding it, and it is called by a gesture
+         * about a *view*. Somebody naming a session and saying "end it" is not
+         * asking whether their phone happens to be showing it.
+         */
+        handler: (args) => {
+          lifetime.terminate(toSessionId(args.session));
+          return { session: args.session, terminated: true };
+        },
+      }),
+    );
+  }
+
+  if (holds !== undefined) {
+    subscriptions.push(
+      registry.register(SESSION_COMMANDS.reconcile, {
+        title: 'Reconcile Sessions',
+        permission: 'sessions',
+        schema: s.object({
+          claims: s.optional(s.array(s.object({ pane: s.string(), session: s.string() }))),
+        }),
+        /**
+         * Answers, and binds nothing. What a client does with an adopted claim
+         * is the client's — this app reattaches its pane, a phone opens a
+         * viewer — and a kernel that mutated somebody's layout from here would
+         * be deciding for a client it cannot see.
+         */
+        handler: async (args, caller) => {
+          const principal = principalOf(caller);
+          const claims: readonly SessionClaim[] = (args.claims ?? []).map((claim) => ({
+            pane: claim.pane,
+            session: toSessionId(claim.session),
+          }));
+          return reconcile({
+            claims,
+            live: host.list().map((info) => info.id),
+            held: holds(principal),
+          });
+        },
+      }),
+    );
+  }
+
+  if (viewers !== undefined) {
+    subscriptions.push(
+      registry.register(SESSION_COMMANDS.viewing, {
+        // No title: it is a client reporting its own state, not a verb a person
+        // picks out of a palette.
+        permission: 'sessions',
+        schema: s.object({ session: s.string(), viewing: s.boolean() }),
+        /**
+         * The principal comes from the CALLER, never from the arguments. A client
+         * that could name the principal could report on another client's behalf
+         * — and suppress its notifications, or resurrect a session it does not
+         * hold. Same rule as `externalCallerSchema` refusing `user`.
+         */
+        handler: (args, caller) => {
+          const session = toSessionId(args.session);
+          const principal = principalOf(caller);
+          viewers.report(principal, session, args.viewing);
+          return { session: args.session, viewers: [...viewers.viewersOf(session)] };
+        },
+      }),
+    );
+  }
 
   return { dispose: () => disposeAll(subscriptions) };
 }

@@ -175,13 +175,6 @@ export function registerSessionIpc(
     return set.ok ? okValue(undefined) : failFrom(set.error);
   });
 
-  handle(INVOKE.sessionKill, (_event, args) => {
-    const id = parseId(args[0]);
-    if (!id.ok) return id;
-    const killed = bridge.kill(id.value);
-    return killed.ok ? okValue(undefined) : failFrom(killed.error);
-  });
-
   return toDisposable(() => {
     for (const channel of [
       INVOKE.sessionCreate,
@@ -191,7 +184,6 @@ export function registerSessionIpc(
       INVOKE.sessionPaste,
       INVOKE.sessionResize,
       INVOKE.sessionViewport,
-      INVOKE.sessionKill,
     ]) {
       ipcMain.removeHandler(channel);
     }

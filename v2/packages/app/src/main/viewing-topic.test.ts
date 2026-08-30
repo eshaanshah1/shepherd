@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EventBus, ViewingResolver } from '@shepherd/core';
+import { EventBus, ViewerRegistry, ViewingResolver } from '@shepherd/core';
 import { LayoutStore } from '@shepherd/core/layout';
 import {
   nullLogger,
@@ -10,7 +10,7 @@ import {
   type PaneID,
   type SessionID,
 } from '@shepherd/sdk';
-import { VIEWING_TOPIC, publishViewingEdges, viewingEvent, type ViewingChanged } from './viewing-topic.ts';
+import { VIEWING_TOPIC, publishViewingEdges, type ViewingChanged } from './viewing-topic.ts';
 
 /**
  * The `session.viewing` publisher, asserted against a REAL resolver, layout and
@@ -25,6 +25,7 @@ interface Harness {
   readonly layout: LayoutStore;
   readonly viewing: ViewingResolver;
   readonly bus: EventBus;
+  readonly viewers: ViewerRegistry;
   /** Payloads seen on `session.viewing`, in arrival order. */
   readonly seen: ViewingChanged[];
   readonly pane: PaneID;
@@ -34,7 +35,7 @@ function harness(appActive = true): Harness {
   const layout = new LayoutStore({
     logger: nullLogger,
     clock: systemClock,
-    sessions: { kill: () => undefined, isLive: () => true },
+    sessions: { release: () => undefined, isLive: () => true },
   });
   layout.open(ROOT);
   const viewing = new ViewingResolver(
@@ -47,31 +48,19 @@ function harness(appActive = true): Harness {
   bus.on<ViewingChanged>(VIEWING_TOPIC, (payload) => void seen.push(payload));
   const pane = layout.focused(ROOT);
   expect(pane).not.toBeNull();
-  return { layout, viewing, bus, seen, pane: pane as PaneID };
+  return { layout, viewing, bus, viewers: new ViewerRegistry(), seen, pane: pane as PaneID };
 }
 
 function publisher(h: Harness): ReturnType<typeof publishViewingEdges> {
-  return publishViewingEdges({ viewing: h.viewing, layout: h.layout, bus: h.bus, logger: nullLogger });
+  return publishViewingEdges({
+    viewing: h.viewing,
+    layout: h.layout,
+    bus: h.bus,
+    logger: nullLogger,
+    viewers: h.viewers,
+    principal: 'app',
+  });
 }
-
-describe('viewingEvent', () => {
-  const bound = (id: SessionID) => (pane: PaneID) => (pane === paneId('p1') ? id : undefined);
-
-  it('turns an edge for a bound pane into the payload', () => {
-    const event = viewingEvent(paneId('p1'), true, bound(sessionId('sess-1')));
-    expect(event).toEqual({ sessionId: 'sess-1', paneId: 'p1', viewing: true });
-  });
-
-  it('publishes nothing for a pane with no session', () => {
-    // Paired with the case above deliberately: alone, this would pass just as
-    // well against a function that always answered null.
-    expect(viewingEvent(paneId('p2'), true, bound(sessionId('sess-1')))).toBeNull();
-  });
-
-  it('carries a false edge, which is the half that clears a mirror', () => {
-    expect(viewingEvent(paneId('p1'), false, bound(sessionId('sess-1')))?.viewing).toBe(false);
-  });
-});
 
 describe('publishViewingEdges', () => {
   it('publishes one event per edge for a bound pane', () => {
@@ -84,8 +73,8 @@ describe('publishViewingEdges', () => {
     h.viewing.setPresence({ appActive: true, focusedRoot: ROOT, overlay: false });
 
     expect(h.seen).toEqual([
-      { sessionId: session, paneId: h.pane, viewing: false },
-      { sessionId: session, paneId: h.pane, viewing: true },
+      { sessionId: session, paneId: h.pane, viewing: false, viewers: [] },
+      { sessionId: session, paneId: h.pane, viewing: true, viewers: ['app'] },
     ]);
     running.dispose();
   });
@@ -132,7 +121,7 @@ describe('publishViewingEdges', () => {
     h.layout.bindSession(h.pane, session);
     running.announce(h.pane);
 
-    expect(h.seen).toEqual([{ sessionId: session, paneId: h.pane, viewing: true }]);
+    expect(h.seen).toEqual([{ sessionId: session, paneId: h.pane, viewing: true, viewers: ['app'] }]);
     running.dispose();
   });
 
@@ -144,7 +133,7 @@ describe('publishViewingEdges', () => {
     h.layout.bindSession(h.pane, sessionId('sess-1'));
     running.announce(h.pane);
 
-    expect(h.seen).toEqual([{ sessionId: 'sess-1', paneId: h.pane, viewing: false }]);
+    expect(h.seen).toEqual([{ sessionId: 'sess-1', paneId: h.pane, viewing: false, viewers: [] }]);
     running.dispose();
   });
 
@@ -189,7 +178,7 @@ describe('the closing edge', () => {
     const session = sessionId('session-1');
     h.layout.bindSession(pane, session);
     live.announce(pane);
-    expect(h.seen).toContainEqual({ sessionId: session, paneId: pane, viewing: true });
+    expect(h.seen).toContainEqual({ sessionId: session, paneId: pane, viewing: true, viewers: ['app'] });
     h.seen.length = 0;
 
     h.layout.close(pane);
@@ -215,5 +204,56 @@ describe('the closing edge', () => {
     expect(h.seen).toHaveLength(1);
     expect(h.seen[0]?.viewing).toBe(false);
     live.dispose();
+  });
+});
+
+
+describe('the viewer set', () => {
+  it('keeps a session viewed while ANOTHER client is looking, after this window looks away', () => {
+    // The Stage 1 promise: nothing may push for a session another client is
+    // looking at. The phone reports through `sessions.viewing`, which lands in
+    // the same registry.
+    const h = harness();
+    const session = sessionId('sess-1');
+    h.layout.bindSession(h.pane, session);
+    const running = publisher(h);
+    h.viewers.report('device:phone', session, true);
+    h.seen.length = 0;
+
+    h.viewing.setPresence({ appActive: false, focusedRoot: null, overlay: false });
+
+    expect(h.seen).toEqual([
+      { sessionId: session, paneId: h.pane, viewing: true, viewers: ['device:phone'] },
+    ]);
+    running.dispose();
+  });
+
+  it('publishes another client\'s edge even though no pane of this window changed', () => {
+    const h = harness();
+    const session = sessionId('sess-1');
+    h.layout.bindSession(h.pane, session);
+    const running = publisher(h);
+    h.seen.length = 0;
+
+    h.viewers.report('device:phone', session, true);
+
+    expect(h.seen).toEqual([
+      { sessionId: session, paneId: h.pane, viewing: true, viewers: ['app', 'device:phone'] },
+    ]);
+    running.dispose();
+  });
+
+  it('seeds the registry from the resolver, so the first edge is not swallowed', () => {
+    // The resolver only fires on a CHANGE, and the change it fires is away from
+    // a value a publisher that started empty never heard. `PtyFanout`'s rule:
+    // snapshot and register are one step.
+    const h = harness();
+    const session = sessionId('sess-1');
+    h.layout.bindSession(h.pane, session);
+
+    const running = publisher(h);
+
+    expect(h.viewers.viewersOf(session)).toEqual(['app']);
+    running.dispose();
   });
 });

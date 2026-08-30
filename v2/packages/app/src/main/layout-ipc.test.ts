@@ -53,7 +53,7 @@ function harness(): Harness {
   const store = new LayoutStore({
     logger: nullLogger,
     clock: systemClock,
-    sessions: { kill: (id) => void killed.push(id), isLive: () => true },
+    sessions: { release: (id) => void killed.push(id), isLive: () => true },
   });
   store.open(HOME);
   store.open(TASK);
@@ -115,7 +115,7 @@ describe('the layout envelope', () => {
   });
 
   it('reports no root at all rather than an empty window it invented', async () => {
-    const store = new LayoutStore({ logger: nullLogger, clock: systemClock, sessions: { kill: () => {}, isLive: () => true } });
+    const store = new LayoutStore({ logger: nullLogger, clock: systemClock, sessions: { release: () => {}, isLive: () => true } });
     live = registerLayoutIpc({
       store,
       registry: new CommandRegistry({ logger: nullLogger, grants: () => emptyGrants() }),
@@ -220,7 +220,7 @@ describe('command:list', () => {
    */
   it('returns only the commands that have a title', async () => {
     live = registerLayoutIpc({
-      store: new LayoutStore({ logger: nullLogger, clock: systemClock, sessions: { kill: () => {}, isLive: () => true } }),
+      store: new LayoutStore({ logger: nullLogger, clock: systemClock, sessions: { release: () => {}, isLive: () => true } }),
       registry: withCommands(),
       active: HOME,
     });
@@ -240,7 +240,7 @@ describe('command:list', () => {
     // could disagree with the real one. `tasks.create` declares a permission and
     // is listed anyway; `command:invoke` is where the answer is decided.
     live = registerLayoutIpc({
-      store: new LayoutStore({ logger: nullLogger, clock: systemClock, sessions: { kill: () => {}, isLive: () => true } }),
+      store: new LayoutStore({ logger: nullLogger, clock: systemClock, sessions: { release: () => {}, isLive: () => true } }),
       registry: withCommands(),
       active: HOME,
     });
@@ -250,7 +250,7 @@ describe('command:list', () => {
 
   it('is removed on dispose, like every other handler this file registers', () => {
     live = registerLayoutIpc({
-      store: new LayoutStore({ logger: nullLogger, clock: systemClock, sessions: { kill: () => {}, isLive: () => true } }),
+      store: new LayoutStore({ logger: nullLogger, clock: systemClock, sessions: { release: () => {}, isLive: () => true } }),
       registry: withCommands(),
       active: HOME,
     });
@@ -286,7 +286,7 @@ describe('a paneless root in the envelope', () => {
   it('still reports no root at all when there are none', async () => {
     // The two "nothing" cases stay distinguishable: no ROOT is an error, an
     // EMPTY root is a snapshot.
-    const store = new LayoutStore({ logger: nullLogger, clock: systemClock, sessions: { kill: () => {}, isLive: () => true } });
+    const store = new LayoutStore({ logger: nullLogger, clock: systemClock, sessions: { release: () => {}, isLive: () => true } });
     live = registerLayoutIpc({
       store,
       registry: new CommandRegistry({ logger: nullLogger, grants: () => emptyGrants() }),

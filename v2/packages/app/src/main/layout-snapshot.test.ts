@@ -18,7 +18,7 @@ function store(): { store: LayoutStore; killed: SessionID[] } {
   const s = new LayoutStore({
     logger: nullLogger,
     clock: systemClock,
-    sessions: { kill: (id) => void killed.push(id), isLive: () => true },
+    sessions: { release: (id) => void killed.push(id), isLive: () => true },
   });
   s.open(ROOT);
   return { store: s, killed };
@@ -151,7 +151,7 @@ describe('layoutSnapshots', () => {
     const empty = new LayoutStore({
       logger: nullLogger,
       clock: systemClock,
-      sessions: { kill: () => {}, isLive: () => true },
+      sessions: { release: () => {}, isLive: () => true },
     });
     expect(layoutSnapshots(empty, ROOT)).toBeNull();
   });

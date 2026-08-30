@@ -42,7 +42,7 @@ describe('the settings screen and the one viewing predicate (ADR 0020)', () => {
     const layout = new LayoutStore({
       logger: nullLogger,
       clock: systemClock,
-      sessions: { kill: () => undefined, isLive: () => true },
+      sessions: { release: () => undefined, isLive: () => true },
     });
     layout.open(ROOT);
     const pane = layout.focused(ROOT);

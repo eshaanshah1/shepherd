@@ -55,7 +55,13 @@ export interface SessionApi {
     viewerId: string,
     viewport: { readonly cols: number; readonly rows: number } | null,
   ): Promise<IpcResult<void>>;
-  kill(sessionId: string): Promise<IpcResult<void>>;
+  /**
+   * Note what is NOT here: `kill`. It was a private door from the page straight
+   * to `SessionHost.kill` — a path no socket client had — and ADR 0052 gave the
+   * verb a name instead. A page that wants a session ended invokes
+   * `sessions.terminate` through `commands.invoke`, which is what a phone, the
+   * CLI and an extension all do. Nothing in the renderer ever called it.
+   */
   /** Returns an unsubscribe function — a pane that unmounts stops listening. */
   onData(listener: (message: SessionDataMessage) => void): () => void;
   onExit(listener: (message: SessionExitMessage) => void): () => void;
@@ -318,7 +324,6 @@ export const BRIDGE_SURFACE = {
     'paste',
     'resize',
     'setViewport',
-    'kill',
     'onData',
     'onExit',
     'onResize',

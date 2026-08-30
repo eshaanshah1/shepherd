@@ -20,15 +20,17 @@ describe('IPC channels', () => {
 
   it('covers the session verbs the renderer needs', () => {
     expect(Object.keys(INVOKE)).toEqual(
-      expect.arrayContaining([
-        'sessionCreate',
-        'sessionAttach',
-        'sessionWrite',
-        'sessionResize',
-        'sessionKill',
-      ]),
+      expect.arrayContaining(['sessionCreate', 'sessionAttach', 'sessionWrite', 'sessionResize']),
     );
     expect(EMIT.sessionData).toBe('session:data');
+  });
+
+  it('has NO channel that ends a session (ADR 0052)', () => {
+    // The page had a private door to `SessionHost.kill` that no socket client
+    // had. Ending a session is `sessions.terminate` now — a verb, reached
+    // through `commands.invoke` like every other.
+    expect(Object.keys(INVOKE)).not.toContain('sessionKill');
+    expect(invokeChannels).not.toContain('session:kill');
   });
 });
 

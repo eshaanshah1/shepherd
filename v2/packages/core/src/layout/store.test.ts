@@ -17,6 +17,7 @@ import {
 } from '@shepherd/sdk';
 import { CommandRegistry } from '../commands/registry.ts';
 import { emptyGrants } from '../commands/authorize.ts';
+import { SessionLifetime, type SessionHolder } from '../session/lifetime.ts';
 import { LayoutStore, type SessionSink } from './store.ts';
 import { LAYOUT_COMMANDS, registerLayoutCommands } from './commands.ts';
 import { leaf, leafIds } from './tree.ts';
@@ -40,6 +41,7 @@ function fakeKV(): KV & { readonly raw: Map<string, unknown> } {
 let records: LogRecord[];
 let logger: Logger;
 let clock: ManualClock;
+/** What the sink was told to let go of — a RELEASE now, not a kill (ADR 0052). */
 let killed: SessionID[];
 let live: Set<SessionID>;
 let sessions: SessionSink;
@@ -53,7 +55,7 @@ beforeEach(() => {
   live = new Set();
   // R1: the restore path asks whether a persisted binding is still alive, and
   // the daemon is what answers. Tests drive it through this set.
-  sessions = { kill: (id) => killed.push(id), isLive: (id) => live.has(id) };
+  sessions = { release: (id) => killed.push(id), isLive: (id) => live.has(id) };
   ids = 0;
 });
 
@@ -169,8 +171,73 @@ describe('focus by direction', () => {
   });
 });
 
-describe('closing a pane ends its session', () => {
-  it('kills the bound session and reports which', () => {
+describe('a close is a DETACH, and the lifetime decides the rest (ADR 0052)', () => {
+  /** A store whose sink releases into a real `SessionLifetime`. */
+  function withLifetime(holders: SessionHolder[]) {
+    const ended: SessionID[] = [];
+    const lifetime = new SessionLifetime({ end: (id) => void ended.push(id), logger });
+    for (const holder of holders) lifetime.addHolder(holder);
+    const store = new LayoutStore({
+      logger,
+      clock,
+      newPane,
+      sessions: { release: (id) => void lifetime.release(id, 'app'), isLive: (id) => live.has(id) },
+    });
+    return { store, ended, lifetime };
+  }
+
+  it('ends the session when this client was the only one holding it', () => {
+    // The single-client case, which must behave exactly as it did before.
+    const { store, ended } = withLifetime([]);
+    store.open();
+    store.bindSession(paneId('p1'), sessionId('s-1'));
+    store.close(paneId('p1'));
+    expect(ended).toEqual(['s-1']);
+  });
+
+  it('does NOT end a session another client is watching', () => {
+    // The whole point. A phone open on an agent is a reason the pty outlives
+    // this window's decision to stop drawing it.
+    const { store, ended } = withLifetime([
+      { reason: 'viewing', principals: (id) => (id === sessionId('s-1') ? ['device:phone'] : []) },
+    ]);
+    store.open();
+    store.bindSession(paneId('p1'), sessionId('s-1'));
+    const outcome = store.close(paneId('p1'));
+
+    expect(outcome).toEqual({ ok: true, value: { closed: 'p1', detachedSession: 's-1', wasLastPane: true } });
+    expect(ended).toEqual([]);
+    // Detached all the same: this window no longer shows it.
+    expect(store.sessionFor(paneId('p1'))).toBeUndefined();
+    expect(store.paneForSession(sessionId('s-1'))).toBeUndefined();
+  });
+
+  it('stops holding the session once the pane is closed, so the LAST client to let go ends it', () => {
+    // The detach has to be real, not just reported. If the pane→session map
+    // still named the session, this window would hold it forever and the phone
+    // letting go would end nothing — a pty alive with no client anywhere.
+    const watchers = new Set<string>(['device:phone']);
+    const { store, ended, lifetime } = withLifetime([
+      { reason: 'viewing', principals: (id) => (id === sessionId('s-1') ? [...watchers] : []) },
+    ]);
+    lifetime.addHolder({
+      reason: 'a pane of this window shows it',
+      principals: (id) => (store.paneForSession(id) === undefined ? [] : ['app']),
+    });
+    store.open();
+    store.bindSession(paneId('p1'), sessionId('s-1'));
+
+    store.close(paneId('p1'));
+    expect(ended).toEqual([]);
+
+    watchers.delete('device:phone');
+    lifetime.release(sessionId('s-1'), 'device:phone');
+    expect(ended).toEqual(['s-1']);
+  });
+});
+
+describe('closing a pane detaches its session', () => {
+  it('releases the bound session and reports which', () => {
     const store = build();
     const root = store.open();
     store.split(root, 'row');
@@ -178,7 +245,7 @@ describe('closing a pane ends its session', () => {
     store.bindSession(paneId('p2'), sessionId('s-2'));
 
     const outcome = store.close(paneId('p2'));
-    expect(outcome).toEqual({ ok: true, value: { closed: 'p2', endedSession: 's-2', wasLastPane: false } });
+    expect(outcome).toEqual({ ok: true, value: { closed: 'p2', detachedSession: 's-2', wasLastPane: false } });
     expect(killed).toEqual(['s-2']);
     // The other session is untouched — closing one pane is not closing a tab.
     expect(store.sessionFor(paneId('p1'))).toBe('s-1');
@@ -193,12 +260,12 @@ describe('closing a pane ends its session', () => {
     expect(killed).toEqual([]);
   });
 
-  it('the last pane reports wasLastPane and still ends its session', () => {
+  it('the last pane reports wasLastPane and still releases its session', () => {
     const store = build();
     store.open();
     store.bindSession(paneId('p1'), sessionId('s-1'));
     const outcome = store.close(paneId('p1'));
-    expect(outcome).toEqual({ ok: true, value: { closed: 'p1', endedSession: 's-1', wasLastPane: true } });
+    expect(outcome).toEqual({ ok: true, value: { closed: 'p1', detachedSession: 's-1', wasLastPane: true } });
     expect(killed).toEqual(['s-1']);
   });
 
@@ -560,7 +627,7 @@ describe('a root can hold no panes', () => {
     store.bindSession(paneId('p1'), sessionId('s-1'));
 
     const outcome = store.close(paneId('p1'));
-    expect(outcome).toEqual({ ok: true, value: { closed: 'p1', endedSession: 's-1', wasLastPane: true } });
+    expect(outcome).toEqual({ ok: true, value: { closed: 'p1', detachedSession: 's-1', wasLastPane: true } });
     expect(store.panes(root)).toEqual([]);
     expect(store.tree(root)).toBeUndefined();
     expect(store.focused(root)).toBeNull();

@@ -35,10 +35,25 @@ export {
 } from './host.ts';
 export {
   registerSessionCommands,
+  principalOf,
   SESSION_COMMANDS,
   type SessionCommandsOptions,
-  type ViewingLookup,
+  type ViewerSink,
 } from './commands.ts';
+export {
+  reconcile,
+  type ReconcileInput,
+  type ReconcileOutcome,
+  type SessionClaim,
+} from './reconcile.ts';
+export {
+  SessionLifetime,
+  type PrincipalKey,
+  type ReleaseOutcome,
+  type SessionHold,
+  type SessionHolder,
+  type SessionLifetimeOptions,
+} from './lifetime.ts';
 export {
   FrameDecoder,
   PROTOCOL_VERSION,

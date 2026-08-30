@@ -25,7 +25,7 @@ function harness() {
   const store = new LayoutStore({
     logger: nullLogger,
     clock: systemClock,
-    sessions: { kill: (id) => void killed.push(id), isLive: () => true },
+    sessions: { release: (id) => void killed.push(id), isLive: () => true },
   });
   registerLayoutCommands({
     store,

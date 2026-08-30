@@ -25,9 +25,10 @@ import {
   SettingsRegistry,
   SqliteStore,
   registerSessionCommands,
+  SESSION_COMMANDS,
 } from '@shepherd/core';
 import { LayoutStore, registerLayoutCommands } from '@shepherd/core/layout';
-import { AttentionStore, ViewingResolver, registerAttentionCommands } from '@shepherd/core';
+import { AttentionStore, SessionLifetime, ViewerRegistry, ViewingResolver, registerAttentionCommands } from '@shepherd/core';
 import { diagnosticsManifest } from '@shepherd/ext-diagnostics/manifest';
 import { scratchManifest } from '@shepherd/ext-scratch/manifest';
 import { shellManifest } from '@shepherd/ext-shell/manifest';
@@ -448,12 +449,40 @@ if (local instanceof SessionClient) local.onHooked((envelope) => hooks.receive(e
  * keyed on the DIRECTORY, not on `store.db`, so its runner drops the database
  * between passes and keeps the property it exists for.
  */
+/**
+ * This window's name in every per-client answer — the viewer set (ADR 0020's
+ * predicate, aggregated) and the hold set that decides a session's fate.
+ *
+ * A PRINCIPAL, not a connection: two windows of this app are one client, and a
+ * relaunch is the same client it was. It is deliberately not `user`: the caller
+ * kind a command runs as is a separate question, and Stage 3 takes `user` away
+ * from the app entirely (design §3). Nothing here depends on that not having
+ * happened yet.
+ */
+const APP_PRINCIPAL = 'app';
+
+/**
+ * Who is looking at what, over every client (ADR 0052). This window reports into
+ * it through `publishViewingEdges`; a phone or a second client reports through
+ * `sessions.viewing`.
+ */
+const viewers = new ViewerRegistry();
+
+/**
+ * What ends a session, and the only thing that may (ADR 0052).
+ *
+ * `layout.close` used to kill directly, which was right while the layout was the
+ * only thing that could point at a pty. Now it RELEASES, and this asks every
+ * other principal whether it still wants the session before ending it.
+ */
+const lifetime = new SessionLifetime({ end: (id) => void host.kill(id), logger });
+
 const layout = new LayoutStore({
   logger,
   clock: systemClock,
   storage: store.namespace('layout'),
   sessions: {
-    kill: (id) => void host.kill(id),
+    release: (id) => void lifetime.release(id, APP_PRINCIPAL),
     /**
      * R1 (ADR 0036): a restored pane's persisted `sessionId` is a claim, and the
      * daemon's inventory is what settles it. `has` reads the mirror
@@ -471,6 +500,23 @@ const layout = new LayoutStore({
      */
     isLive: (id) => memberOf(id) !== undefined || host.has(id),
   },
+});
+
+/**
+ * The two reasons a session outlives a pane closing, as holders.
+ *
+ * Derived rather than booked: the layout already knows which sessions its panes
+ * show and the registry already knows who is looking, so nothing has to remember
+ * to give a hold back. The failure of a derived answer is a wrong answer now; the
+ * failure of bookkeeping is a pty held forever by a client that crashed.
+ */
+lifetime.addHolder({
+  reason: 'a pane of this window shows it',
+  principals: (id) => (layout.paneForSession(id) === undefined ? [] : [APP_PRINCIPAL]),
+});
+lifetime.addHolder({
+  reason: 'viewing',
+  principals: (id) => viewers.viewersOf(id),
 });
 
 /**
@@ -556,7 +602,7 @@ function syncPresence(): void {
  * The same predicate, on the bus as `session.viewing`, for the agent extension a
  * process away — a cache of the one answer, never a second check.
  */
-const viewingTopic = publishViewingEdges({ viewing, layout, bus, logger });
+const viewingTopic = publishViewingEdges({ viewing, layout, bus, logger, viewers, principal: APP_PRINCIPAL });
 
 /**
  * `session.bound` — the pane a session landed in. See the module for why the
@@ -1131,8 +1177,24 @@ void app.whenReady().then(async () => {
     registry,
     // The one predicate, answering for each row — so an agent extension's pushed
     // mirror is seeded by the read it already makes rather than by a re-announce
-    // mechanism nobody can trigger.
-    viewing: (pane) => viewing.isViewing(pane),
+    // mechanism nobody can trigger. It is the AGGREGATE over every client now
+    // (ADR 0052), and the same object serves `sessions.viewing`, which is how a
+    // client that is not this window reports its own answer.
+    viewers,
+    // `sessions.terminate` — the one terminator, since `layout.close` stopped
+    // being one.
+    lifetime,
+    /**
+     * What `sessions.reconcile` calls "already spoken for". The SAME holder
+     * notion that decides whether a released session dies — one answer to "does
+     * anybody want this", used by both verbs, so a reaper and a releaser cannot
+     * disagree about which ptys are abandoned.
+     */
+    holds: (principal) =>
+      host
+        .list()
+        .map((info) => info.id)
+        .filter((id) => lifetime.holdersOf(id, principal).length > 0),
   });
 
   registerLayoutCommands({
@@ -1368,6 +1430,41 @@ void app.whenReady().then(async () => {
     logger.info('ingress', `replaying ${hooks.buffered} agent hook(s) the daemon held while the app was down`);
   }
   hooks.goLive();
+
+  /**
+   * The connect ritual (ADR 0036 as generalised by ADR 0052): this app is a
+   * client, and a client that has just connected verifies what it believes it
+   * is showing against the process that actually holds the ptys.
+   *
+   * The layout has already bound what it could — `isLive` settles each claim
+   * during the restore, and it must, because the renderer draws from that
+   * snapshot. What the verb adds is the third of ADR 0036's three cases, which
+   * has been named in comments since R1 and computed nowhere: a live session
+   * **nobody** claims. Logged rather than reaped — what to do about an orphan is
+   * a decision with a UI attached, and inventing one ahead of a caller is what
+   * ADR 0031 declines to do.
+   *
+   * Through `registry.invoke`, not by calling `reconcile` directly, because the
+   * point of Stage 1 is that this is a client's ritual rather than a startup
+   * special case: a phone runs the same verb with its own claims.
+   */
+  void registry
+    .invoke(SESSION_COMMANDS.reconcile, { claims: [] }, KERNEL)
+    .then((answer) => {
+      if (!answer.ok) {
+        logger.child('session').warn(`the connect reconcile failed: ${answer.error.message}`);
+        return;
+      }
+      const outcome = answer.value as { orphans?: readonly string[] };
+      const orphans = outcome.orphans ?? [];
+      if (orphans.length === 0) return;
+      logger
+        .child('session')
+        .warn(
+          `${orphans.length} live session(s) nobody is showing: ${orphans.join(', ')}. ` +
+            'They are the daemon\'s and they are still running — `shepherd raw sessions.terminate` ends one.',
+        );
+    });
 
   // The tree exists before the page can ask for it: `layout:get` is the first
   // thing the renderer does, and a root that is not open yet would answer

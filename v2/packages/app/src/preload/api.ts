@@ -49,7 +49,6 @@ export function createBridge(ipc: IpcLike): ShepherdBridge {
       resize: (id, cols, rows) => invoke(INVOKE.sessionResize, id, cols, rows),
       setViewport: (id, viewerId, viewport) =>
         invoke(INVOKE.sessionViewport, id, viewerId, viewport),
-      kill: (id) => invoke(INVOKE.sessionKill, id),
       onData: (listener) => subscribe<SessionDataMessage>(EMIT.sessionData, listener),
       onExit: (listener) => subscribe<SessionExitMessage>(EMIT.sessionExit, listener),
       onResize: (listener) => subscribe<SessionResizeMessage>(EMIT.sessionReshaped, listener),

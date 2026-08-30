@@ -152,12 +152,24 @@ export {
   foregroundReading,
   type ForegroundReading,
   registerSessionCommands,
+  principalOf,
   SESSION_COMMANDS,
   type SessionCommandsOptions,
-  type ViewingLookup,
+  type ViewerSink,
+  SessionLifetime,
+  reconcile,
+  type ReconcileInput,
+  type ReconcileOutcome,
+  type SessionClaim,
+  type PrincipalKey,
+  type ReleaseOutcome,
+  type SessionHold,
+  type SessionHolder,
+  type SessionLifetimeOptions,
 } from './session/index.ts';
 
 export { ViewingResolver, type Presence } from './attention/index.ts';
+export { ViewerRegistry } from './attention/index.ts';
 export { route, wantsAttention, type RoutingDecision, type RoutingInput } from './attention/index.ts';
 export {
   AttentionStore,

@@ -25,7 +25,6 @@ export const INVOKE = {
    * of them is now the only thing a pane may say. See `SessionApi.setViewport`.
    */
   sessionViewport: 'session:viewport',
-  sessionKill: 'session:kill',
   windowClose: 'window:close',
   layoutGet: 'layout:get',
   layoutViewport: 'layout:viewport',
