@@ -227,8 +227,8 @@ describe('the selection band', () => {
     if (spec.kind !== 'wash') throw new Error('unreachable');
     // Low enough on both grounds to read THROUGH; that is the whole point of a
     // wash here rather than a fill.
-    expect(spec.alpha.dark).toBeLessThanOrEqual(0.25);
-    expect(spec.alpha.light).toBeLessThanOrEqual(0.25);
+    expect(spec.alpha.dark).toBeLessThanOrEqual(0.35);
+    expect(spec.alpha.light).toBeLessThanOrEqual(0.4);
     /*
      * And light takes MORE than dark, which is the opposite of every other wash
      * in this file and is deliberate. A wash mixes toward what is behind it, so

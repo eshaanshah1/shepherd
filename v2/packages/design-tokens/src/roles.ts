@@ -612,9 +612,12 @@ export const roles: Readonly<Record<RoleName, RoleSpec>> = {
      *
      * Low enough on both to read THROUGH, which is the point of a wash here:
      * selected text and a selected token keep their own colour and are lit
-     * rather than covered.
+     * rather than covered. But only just — a band you have to hunt for is not a
+     * selection, and the first pass of these numbers was one. Both went up a
+     * long step; the ceiling is where the ink under the band starts losing its
+     * own colour, not where the band stops being visible.
      */
-    alpha: { dark: 0.14, light: 0.22 },
+    alpha: { dark: 0.28, light: 0.34 },
     job: 'the background of selected text, everywhere in the app.',
     notFor:
       'a selected ROW or card. That is `fillSelected` plus `edgeSelected` — this one is the text-level selection a drag makes.',
