@@ -775,6 +775,16 @@
  * hit in the middle of the window and moves it every time the list resizes.
  */
 .sh-take__scrim {
+  /*
+   * The takeover's scale, a third time. The overlays mount at the app's root
+   * rather than inside `.sh-take`, so neither of the scopes above reaches them
+   * and a row here has to be told its own height.
+   */
+  --sh-take-head: 44px;
+  --sh-take-row: 32px;
+  --sh-take-region-rows: 10;
+  --sh-take-radius: 4px;
+
   position: fixed;
   inset: 0;
   background: var(--sh-scrim);
@@ -820,6 +830,43 @@
 
 .sh-take__klist {
   padding: var(--sh-space-sm);
+}
+
+/*
+ * **A window onto the list**, the same ten rows a windowed region on Home gets
+ * and for the same reason: the tail of this list is the shipped record, which
+ * has no end, and a card that grows with it runs off the bottom of a scrim that
+ * cannot scroll — the rows past the fold are then unreachable by any means.
+ *
+ * The heading stays outside it. `Jump to` names the whole list, and a label that
+ * scrolls away is a label that is absent for nine rows out of ten.
+ *
+ * The scrollbar is the app's, which `styles.css` states: a thumb of `line` and
+ * nothing else, so the bar is found when wanted and is not chrome the rest of
+ * the time.
+ */
+.sh-take__krows {
+  max-block-size: calc(var(--sh-take-region-rows) * var(--sh-take-row));
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--sh-line) transparent;
+}
+
+.sh-take__krows::-webkit-scrollbar {
+  width: var(--sh-space-md);
+}
+
+.sh-take__krows::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sh-take__krows::-webkit-scrollbar-thumb {
+  background: var(--sh-line);
+  border-radius: 0;
+}
+
+.sh-take__krows::-webkit-scrollbar-thumb:hover {
+  background: var(--sh-text-mute);
 }
 
 .sh-take__klabel {

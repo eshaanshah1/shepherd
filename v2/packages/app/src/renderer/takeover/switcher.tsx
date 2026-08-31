@@ -28,6 +28,7 @@ export function Switcher({ entries, onPick, onClose }: SwitcherProps): ReactElem
   const [query, setQuery] = useState('');
   const [at, setAt] = useState(0);
   const input = useRef<HTMLInputElement>(null);
+  const rows = useRef<HTMLDivElement>(null);
 
   const hits = useMemo(() => filterPlaces(places(entries), query), [entries, query]);
   /*
@@ -40,6 +41,20 @@ export function Switcher({ entries, onPick, onClose }: SwitcherProps): ReactElem
   useEffect(() => {
     input.current?.focus();
   }, []);
+
+  /*
+   * The list is a window onto ten rows, so the cursor has to carry the view with
+   * it: an arrow key that moves a selection out of sight leaves the card looking
+   * like nothing happened and Enter opening something the user cannot see.
+   *
+   * Guarded rather than stubbed, as `CommandPalette` is: jsdom lays nothing out
+   * and implements no `scrollIntoView`, and a component that throws in a host
+   * without layout is one an extension cannot render in one either.
+   */
+  useEffect(() => {
+    const node = rows.current?.querySelector<HTMLElement>('[data-on="true"]');
+    if (node && typeof node.scrollIntoView === 'function') node.scrollIntoView({ block: 'nearest' });
+  }, [selected, hits]);
 
   return (
     <div
@@ -88,30 +103,32 @@ export function Switcher({ entries, onPick, onClose }: SwitcherProps): ReactElem
               Nothing matches
             </div>
           ) : (
-            hits.map((hit, index) => (
-              <button
-                type="button"
-                key={hit.id}
-                className="sh-take__krow"
-                data-testid="switcher-row"
-                data-on={index === selected ? 'true' : undefined}
-                // `mousedown`, not `click`: the input has focus and a click would
-                // blur it first, which closes nothing but loses the caret for the
-                // one frame before the pick lands.
-                onMouseDown={(event) => {
-                  event.preventDefault();
-                  onPick(hit);
-                }}
-              >
-                {hit.mark === undefined ? (
-                  <span className={markSlot} aria-hidden="true" />
-                ) : (
-                  <StateMark state={hit.mark} />
-                )}
-                <span>{hit.name}</span>
-                <span className="sh-take__where">{hit.where}</span>
-              </button>
-            ))
+            <div className="sh-take__krows" ref={rows}>
+              {hits.map((hit, index) => (
+                <button
+                  type="button"
+                  key={hit.id}
+                  className="sh-take__krow"
+                  data-testid="switcher-row"
+                  data-on={index === selected ? 'true' : undefined}
+                  // `mousedown`, not `click`: the input has focus and a click would
+                  // blur it first, which closes nothing but loses the caret for the
+                  // one frame before the pick lands.
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    onPick(hit);
+                  }}
+                >
+                  {hit.mark === undefined ? (
+                    <span className={markSlot} aria-hidden="true" />
+                  ) : (
+                    <StateMark state={hit.mark} />
+                  )}
+                  <span>{hit.name}</span>
+                  <span className="sh-take__where">{hit.where}</span>
+                </button>
+              ))}
+            </div>
           )}
         </div>
       </div>
