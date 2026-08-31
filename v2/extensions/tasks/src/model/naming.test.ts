@@ -35,8 +35,62 @@ describe('namingPrompt', () => {
     );
   });
 
+  /**
+   * MUTATION TARGET. Measured against `claude-haiku-4-5`, the real brief behind
+   * `bramble-portland`: without this rule the answer was
+   * `Init harness & clone BStackAutomation subrepos` 3 times in 3 — the setup
+   * step, phrased as an instruction, rather than the run it exists for. With it,
+   * `Test mobile regression flow` 3 times in 4.
+   */
+  it('asks for the goal rather than the first step toward it', () => {
+    const prompt = namingPrompt('clone the subrepos so I can run the flow');
+    expect(prompt).toContain('Name the goal, not the first step toward it');
+    expect(prompt).toContain('named for the flow, not the cloning');
+  });
+
+  /**
+   * MUTATION TARGET. A brief opens with the goal and closes on a question asked
+   * to get started, and the question is the last thing the model reads:
+   * "I wanna improve the entirety of the mobile regression flow ... can you tell
+   * me which one is the entrypoint first?" came back `Clarify mobile regression
+   * flow`, which names the asking.
+   */
+  it('does not let a question the brief asks become the task', () => {
+    expect(namingPrompt('how does this work? I want to rewrite it')).toContain(
+      'A question the task asks in order to get started is not the task',
+    );
+  });
+
+  /**
+   * MUTATION TARGET, and the example is the mutation. `Debug incorrect test
+   * generation` fits a dozen tasks; the brief it came from said `test_management`
+   * only ever inside a path, so the rule has to say a path segment counts. Naming
+   * the area lifted "Test Management" into 4 answers of 4.
+   */
+  it('keeps the area, including one that only appears inside a path', () => {
+    const prompt = namingPrompt('the UI cases from BStackAutomation/test_management/ are wrong');
+    expect(prompt).toContain('Keep the product area');
+    expect(prompt).toContain('"BStackAutomation/test_management/" is the Test Management area');
+  });
+
+  /**
+   * The other half of the area rule, and it is not decoration. Permission to read
+   * a name out of a path is taken as permission to rewrite one: with the first
+   * half alone, `browserstack-ai-harness` came back as `AI Harness` in 2 of 3.
+   */
+  it('forbids expanding or abbreviating a repo name the brief already spells', () => {
+    expect(namingPrompt('change stack:dev in browserstack-ai-harness')).toContain(
+      'never expanded or abbreviated',
+    );
+  });
+
   it('caps a very long brief, because a paragraph is not a better question', () => {
-    expect(namingPrompt('x'.repeat(10_000)).length).toBeLessThan(3_000);
+    // On the BRIEF, not on the whole prompt: the rules are fixed-size and a
+    // number covering both has to move every time one is edited, which is a test
+    // that reports its own maintenance rather than the truncation it is for.
+    const prompt = namingPrompt('x'.repeat(10_000));
+    expect(prompt).not.toContain('x'.repeat(2_001));
+    expect(prompt.length).toBeLessThan(4_000);
   });
 
   /**

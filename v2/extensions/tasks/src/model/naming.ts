@@ -102,6 +102,31 @@ export function stillTheSameBrief(asked: string, next: string): boolean {
  * covering two changes is otherwise answered by concatenating them, and
  * `remove live preview fix repo hash` is two tasks in a trench coat.
  *
+ * The goal, question and area rules exist because a brief is somebody's opening
+ * message and not a changelog entry, so the literal reading of it names the
+ * wrong thing three different ways.
+ *
+ * A brief states a goal and then asks for the step that gets it started, and the
+ * step is the part phrased as an instruction. "I first wanna run a test to see
+ * how the flow goes" followed by "init the harness and clone the subrepos" came
+ * back as `Init harness & clone BStackAutomation subrepos` 3 times in 3 — a name
+ * for scaffolding that is deleted before the task ends. Told to prefer the goal,
+ * the same brief answers `Test mobile regression flow`.
+ *
+ * A brief also asks a question to orient itself before the work starts, and the
+ * question is the last thing on the page. "I wanna improve the entirety of the
+ * mobile regression flow" ending on "can you tell me which one is the entrypoint
+ * first?" was named `Clarify mobile regression flow`, which is the asking and not
+ * the work.
+ *
+ * The area rule is the opposite failure: the model drops the one noun that says
+ * WHICH thing. `Debug incorrect test generation` fits any of a dozen tasks; the
+ * brief said `test_management` three times and only ever inside a path, so the
+ * example spells out that a path segment counts. The second half of that rule is
+ * load-bearing in the other direction — without it, permission to read a name out
+ * of a path is taken as permission to rewrite one, and `browserstack-ai-harness`
+ * comes back as `AI Harness`.
+ *
  * A brief is somebody talking to their agent, so it asks questions and requests
  * plans, and a model handed one answers it on a line after the name. That line
  * is the one `parseQuick` reads. The brief is fenced and declared material
@@ -121,7 +146,16 @@ export function namingPrompt(brief: string): string {
     '- Sentence case: capitalize the first word and the names of things in the',
     '  product ("Live Name preview", "Repo hash"). Nothing else.',
     '- Two separate changes join with "&": "Remove Live Name preview & Repo hash".',
-    '- Name what changes. Drop detail that does not tell this task apart from another.',
+    '- Name the goal, not the first step toward it. A task that says why it wants',
+    '  something ("I am testing the mobile regression flow, so first clone the',
+    '  subrepos") is named for the flow, not the cloning.',
+    '- A question the task asks in order to get started is not the task. Name the',
+    '  work it is starting.',
+    '- Keep the product area, feature or component it names ("Test Management UI",',
+    '  "mobile regression"). That is what tells one task from another. Drop the rest.',
+    '- An area named only inside a path still counts:',
+    '  "BStackAutomation/test_management/" is the Test Management area. A repo or',
+    '  tool is spelled the way the task spells it, never expanded or abbreviated.',
     '- No quotes, no backticks, no trailing period.',
     '',
     'Reply with the name alone. Nothing before it, nothing after it.',
