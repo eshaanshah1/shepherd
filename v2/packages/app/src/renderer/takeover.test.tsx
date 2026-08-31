@@ -132,6 +132,8 @@ function render(options: {
   views?: readonly ViewContributionDTO[];
   groups?: Readonly<Record<string, string>>;
   faces?: readonly ViewContributionDTO[];
+  /** What every verb refuses with, for the cases that assert a refusal is drawn. */
+  refuse?: string;
 }) {
   const calls: Invocation[] = [];
   const raised: string[] = [];
@@ -140,7 +142,10 @@ function render(options: {
       views={bridge(options.rows ?? {}, [...(options.views ?? [TREE])])}
       contributions={options.faces ?? []}
       groupOfRoot={(root) => options.groups?.[root] ?? root}
-      invoke={(command, args) => calls.push({ command, args })}
+      invoke={(command, args) => {
+        calls.push({ command, args });
+        return Promise.resolve(options.refuse);
+      }}
       onRaiseView={(type) => raised.push(type)}
     />,
   );
@@ -890,6 +895,13 @@ describe('later', () => {
       { label: 'Later today', command: 'tasks.snooze', args: { task: 'relay', until: 'today' }, key: '1' },
       { label: 'When agents finish', command: 'tasks.snooze', args: { task: 'relay', until: 'quiet' }, key: '2' },
       { label: 'Tomorrow', command: 'tasks.snooze', args: { task: 'relay', until: 'tomorrow' }, key: '3' },
+      {
+        label: 'Pick a time…',
+        command: 'tasks.snooze',
+        args: { task: 'relay' },
+        key: '4',
+        prompt: { field: 'until', placeholder: '4pm · friday · 2h' },
+      },
     ],
   };
 
@@ -918,6 +930,7 @@ describe('later', () => {
       '1Later today',
       '2When agents finish',
       '3Tomorrow',
+      '4Pick a time…',
     ]);
     view.unmount();
   });
@@ -945,7 +958,83 @@ describe('later', () => {
       new MouseEvent('mousedown', { bubbles: true, cancelable: true }),
     ));
     expect(calls.at(-1)).toEqual({ command: 'tasks.snooze', args: { task: 'relay', until: 'quiet' } });
+    // The menu closes on the ANSWER, not on the press: a refusal has to be able
+    // to keep it open, so the close waits for the verb to come back.
+    await settle();
     expect(all(view.container, 'takeover-later-menu')).toHaveLength(0);
+    view.unmount();
+  });
+
+  it('asks for a time instead of running, when the option carries a field', async () => {
+    /*
+     * The one option that is not a button. The three presets are the whens worth
+     * a keypress; every other when has to be said, and rounding it to the
+     * nearest preset puts the row back on Home at a moment nobody chose.
+     */
+    const { view, calls } = render({ rows: { 'tasks.tree': [asking] } });
+    await settle();
+    press('s');
+    act(() => (all(view.container, 'later-option')[3] as HTMLElement).dispatchEvent(
+      new MouseEvent('mousedown', { bubbles: true, cancelable: true }),
+    ));
+    // Nothing ran, and the options are gone: the card is the field now.
+    expect(calls.filter((call) => call.command === 'tasks.snooze')).toHaveLength(0);
+    expect(all(view.container, 'later-option')).toHaveLength(0);
+    const field = one(view.container, 'later-field') as HTMLInputElement;
+    expect(field.getAttribute('placeholder')).toBe('4pm · friday · 2h');
+    view.unmount();
+  });
+
+  it('sends what was typed as the argument the option named, and nothing else', async () => {
+    /*
+     * The shell picks no key and reads no value. `prompt.field` is the extension
+     * saying where its own verb wants the text — which is what keeps a text input
+     * on this surface from being the shell learning what a snooze is.
+     */
+    const { view, calls } = render({ rows: { 'tasks.tree': [asking] } });
+    await settle();
+    press('s');
+    act(() => (all(view.container, 'later-option')[3] as HTMLElement).dispatchEvent(
+      new MouseEvent('mousedown', { bubbles: true, cancelable: true }),
+    ));
+    const field = one(view.container, 'later-field') as HTMLInputElement;
+    act(() => type(field, 'friday 2pm'));
+    act(() =>
+      void field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })),
+    );
+    expect(calls.at(-1)).toEqual({
+      command: 'tasks.snooze',
+      args: { task: 'relay', until: 'friday 2pm' },
+    });
+    await settle();
+    expect(all(view.container, 'takeover-later-menu')).toHaveLength(0);
+    view.unmount();
+  });
+
+  it('keeps the field open on a refusal, wearing the reason it was refused', async () => {
+    /*
+     * A time nobody can read must not close the menu. Both outcomes take the row
+     * off the screen, and only one of them says it did the wrong thing — so the
+     * refusal is drawn beside the text that caused it, still editable.
+     */
+    const { view } = render({
+      rows: { 'tasks.tree': [asking] },
+      refuse: 'cannot read "next tuesdya" as a time',
+    });
+    await settle();
+    press('s');
+    act(() => (all(view.container, 'later-option')[3] as HTMLElement).dispatchEvent(
+      new MouseEvent('mousedown', { bubbles: true, cancelable: true }),
+    ));
+    const field = one(view.container, 'later-field') as HTMLInputElement;
+    act(() => type(field, 'next tuesdya'));
+    act(() =>
+      void field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })),
+    );
+    await settle();
+    expect(all(view.container, 'takeover-later-menu')).toHaveLength(1);
+    expect(one(view.container, 'later-error').textContent).toContain('next tuesdya');
+    expect((one(view.container, 'later-field') as HTMLInputElement).value).toBe('next tuesdya');
     view.unmount();
   });
 
@@ -970,6 +1059,7 @@ describe('later', () => {
       new MouseEvent('mousedown', { bubbles: true, cancelable: true }),
     ));
     expect(calls.at(-1)?.command).toBe('tasks.snooze');
+    await settle();
     expect(all(view.container, 'takeover-home')).toHaveLength(1);
     view.unmount();
   });

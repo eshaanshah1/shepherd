@@ -417,7 +417,7 @@ describe('Row', () => {
 
   it('exports its class constants so an extension-s own markup can look native', () => {
     const dom = mount(
-      <Row selected meta="1" actions={<span>x</span>} leading={<StateMark state="resting" />}>
+      <Row selected meta="1" actions={<span>x</span>} leading={<StateMark state="later" />}>
         a
       </Row>,
     );

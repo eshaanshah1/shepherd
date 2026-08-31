@@ -747,13 +747,14 @@ function TreeView({
                   /*
                     **No tint, no mark.** A row that declares no state has none to
                     draw, and the 12px slot is for a state. This defaulted to the
-                    resting ring, which put "nothing is happening here" on things
+                    hollow ring, which put "nothing is happening here" on things
                     that are not tasks at all — a `Show all 27` control, and the
                     diagnostics demo's `click me` row. It is the same category
                     error the foot branch above already records having fixed once,
                     arriving one row along. `markState`'s own default is unchanged:
-                    an unrecognised tint is still `resting`, because a word this
-                    shell does not know is still a claim that there IS a state.
+                    `markState` answers nothing for a tint it cannot place either,
+                    so a word this shell does not know draws the same empty box
+                    this branch does rather than a state nobody claimed.
 
                     The mark IS the state, and it takes a STATE — never a colour
                     and never the extension's own tint spelling. A coloured dot
@@ -766,8 +767,8 @@ function TreeView({
                     meter — and a row that is busy is a row whose mark is
                     `working`. Rows that set `busy` without a working tint now
                     read as whatever they actually are, which is the honest
-                    answer: a task being archived is resting, and the archiving is
-                    not a state of the task.
+                    answer: a task being archived reports its own state, and the
+                    archiving is not one of them.
                   */
                     /*
                       A STATE if the row has one, else what the row IS.
@@ -1075,7 +1076,7 @@ export function raiseIcon(name: string | undefined): ComponentType<TablerIconPro
  * What changed underneath is that it no longer selects a colour at all — it
  * selects a SHAPE, and the colour follows from that.
  *
- * Anything unrecognised is `resting` rather than an invented sixth state: a tint
+ * Anything unrecognised is nothing rather than an invented state: a tint
  * the shell does not know is not an emergency, and a hollow ring is the mark that
  * claims nothing.
  */
@@ -1117,8 +1118,18 @@ const TINT_STATES: Readonly<Record<string, MarkState>> = {
   red: 'failed',
 };
 
-export function markState(tint: string | undefined): MarkState {
-  return (tint === undefined ? undefined : TINT_STATES[tint]) ?? 'resting';
+/**
+ * A tint NAME → the state it stands for, or nothing.
+ *
+ * Nothing, rather than a guess. An unrecognised word is a claim that there IS a
+ * state and this shell cannot say which, so the mark draws its empty slot and
+ * says nothing either. Falling back was only ever available because "nothing is
+ * happening" was a state you could default to; every remaining mark is a claim
+ * about whose move it is, and picking one for a word nobody parsed would put
+ * that claim in the column the eye reads first.
+ */
+export function markState(tint: string | undefined): MarkState | undefined {
+  return tint === undefined ? undefined : TINT_STATES[tint];
 }
 
 /**

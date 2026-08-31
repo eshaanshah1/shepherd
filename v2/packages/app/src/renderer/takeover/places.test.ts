@@ -5,7 +5,7 @@ import type { TriageEntry } from './triage.ts';
 const entry = (over: Partial<TriageEntry> & { id: string }): TriageEntry => ({
   label: over.id,
   rowId: over.id,
-  mark: 'resting',
+  mark: 'ready',
   place: false,
   facts: {},
   viewType: 'tasks.tree',

@@ -126,7 +126,7 @@ export const palette: Readonly<Record<ColorToken, TokenSpec>> = {
   lineStrong: { dark: '#272727', light: '#D2D2D2', job: 'a well’s edge, a bordered control' },
   lineActive: { dark: '#2A2A2A', light: '#C6C6C6', job: 'the focused pane’s edge; a pending suite cell' },
   edgeSelected: { dark: '#333333', light: '#B6B6B6', job: 'a selected card’s edge' },
-  edgeRing: { dark: '#4A4A4A', light: '#ADADAD', job: 'the resting mark’s hollow ring' },
+  edgeRing: { dark: '#4A4A4A', light: '#ADADAD', job: 'the Later mark’s dashed ring' },
 
   // ── ink ─────────────────────────────────────────────────────────────────────
   //

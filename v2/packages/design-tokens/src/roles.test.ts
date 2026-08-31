@@ -93,7 +93,7 @@ describe('roles', () => {
     // alone, so the two roles must not resolve to one token.
     expect(roleToken('markReady')).toBe('grass');
     expect(roleToken('markReady')).not.toBe(roleToken('markWaiting'));
-    expect(roleToken('markRest')).toBe('edgeRing');
+    expect(roleToken('markLater')).toBe('edgeRing');
     expect(roleToken('markFailed')).toBe('red');
     expect(roleToken('meterPass')).toBe('grass');
     expect(roleToken('meterPending')).toBe('lineActive');

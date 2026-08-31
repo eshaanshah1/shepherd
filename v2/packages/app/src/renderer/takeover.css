@@ -989,11 +989,51 @@
 
 /* ── "later" ────────────────────────────────────────────────────────────────
  *
- * Narrower than the switcher, because it is a decision with three answers
+ * Narrower than the switcher, because it is a decision with a handful of answers
  * rather than a list to search. Same card, same rows, same cursor.
  */
 .sh-take__snz {
   inline-size: 380px;
+}
+
+/*
+ * The typed when.
+ *
+ * It REPLACES the option list in the card rather than opening under it, so the
+ * card never changes height: the decision is still one decision, and a menu that
+ * grew a field would put the presets you have just declined next to the thing
+ * you are typing instead.
+ *
+ * One row tall, exactly like the options it stands in for, so the cursor lands
+ * where the eye already was.
+ */
+.sh-take__snzfield {
+  inline-size: 100%;
+  block-size: var(--sh-take-row);
+  padding-inline: var(--sh-space-md);
+  border: var(--sh-hairline) solid var(--sh-line);
+  border-radius: var(--sh-take-radius);
+  background: var(--sh-raised);
+  color: inherit;
+  font: inherit;
+  font-size: var(--sh-font-size-body);
+}
+
+.sh-take__snzfield::placeholder {
+  color: var(--sh-text-ghost);
+}
+
+.sh-take__snzfield[aria-invalid='true'] {
+  border-color: var(--sh-mark-failed);
+}
+
+/* Under the field, in the metadata size — a correction, not an alarm. The border
+   above has already said which control it is about. */
+.sh-take__snzbad {
+  display: block;
+  padding: var(--sh-space-xs) var(--sh-space-md) 0;
+  font-size: var(--sh-micro-font-size);
+  color: var(--sh-text-mute);
 }
 
 .sh-take__snzhead {

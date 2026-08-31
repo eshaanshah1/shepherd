@@ -167,7 +167,7 @@ describe('TabStrip', () => {
       <TabStrip
         tabs={[
           { id: 'a', label: 'api', mark: 'working' },
-          { id: 'b', label: 'logs', mark: 'resting' },
+          { id: 'b', label: 'logs', mark: 'ready' },
         ]}
         activeId="a"
         onSelect={() => {}}
@@ -175,7 +175,7 @@ describe('TabStrip', () => {
     );
     expect(tabs(view.container).map((tab) => tab.querySelector('.sh-ui-mark')?.getAttribute('data-state'))).toEqual([
       'working',
-      'resting',
+      'ready',
     ]);
     view.unmount();
   });

@@ -198,10 +198,15 @@ export function handingMeans(agent: TaskAgent): 'sends now' | 'queues' {
  *
  * The translation lives HERE, at the boundary, for the reason the dock's
  * `markState` does: `agents-core` writes its own vocabulary and the mark takes a
- * SHAPE, so a word this build does not know is a hollow ring — the mark that
- * claims nothing — rather than an invented sixth state.
+ * SHAPE, so this build maps the words it knows rather than inventing a state for
+ * one it does not.
+ *
+ * Idle and every unknown word land on `ready`, the green square. Nothing running
+ * is the reader's move — this list exists to be picked from — and there is no
+ * quieter mark to fall to: a shape meaning "nothing is happening" described the
+ * absence of an agent as though it were the absence of anything to do.
  */
-export function markFor(agent: TaskAgent): 'working' | 'waiting' | 'resting' | 'failed' {
+export function markFor(agent: TaskAgent): 'working' | 'waiting' | 'ready' | 'failed' {
   switch (agent.state) {
     case 'working':
       return 'working';
@@ -211,7 +216,7 @@ export function markFor(agent: TaskAgent): 'working' | 'waiting' | 'resting' | '
     case 'error':
       return 'failed';
     default:
-      return 'resting';
+      return 'ready';
   }
 }
 

@@ -13,14 +13,14 @@ import {
 const entry = (over: Partial<TriageEntry> & { id: string }): TriageEntry => ({
   label: over.id,
   rowId: over.id,
-  mark: 'resting',
+  mark: 'ready',
   place: false,
   facts: {},
   viewType: 'tasks.tree',
   ...over,
 });
 
-const withDiff = (id: string, mark: TriageEntry['mark'] = 'resting'): TriageEntry =>
+const withDiff = (id: string, mark: TriageEntry['mark'] = 'ready'): TriageEntry =>
   entry({ id, mark, facts: { diff: { added: 9, removed: 2, files: 1 } } });
 
 describe('triageOf', () => {
@@ -29,26 +29,31 @@ describe('triageOf', () => {
     ['failed', 'needs'],
     ['ready', 'needs'],
     ['working', 'running'],
-    ['resting', 'resting'],
     ['shipped', 'shipped'],
   ] as const)('files a %s task under %s', (mark, group) => {
     expect(triageOf(entry({ id: mark, mark }))).toBe(group);
   });
 
-  it('files a resting task that CHANGED something under Ready to ship', () => {
+  it('files an idle task under Needs you whether or not it changed anything', () => {
     /*
-     * The one derivation in here, and the reason it is a derivation: there is no
-     * `done` state to read. A task with no agent running and a diff behind it is
-     * waiting on a ship decision; one with neither is asleep.
+     * The two used to be `Ready to ship` and `Resting`, split on whether git
+     * found bytes. That is a fact about the row and not a kind of ownership —
+     * one line written by an agent that then stopped earned the heading — and
+     * both are the same answer to the only question this file asks: nobody is
+     * working on it and nobody deferred it, so it is yours.
      */
-    expect(triageOf(withDiff('landed'))).toBe('ship');
-    expect(triageOf(entry({ id: 'asleep' }))).toBe('resting');
+    expect(triageOf(withDiff('landed'))).toBe('needs');
+    expect(triageOf(entry({ id: 'asleep' }))).toBe('needs');
   });
 
-  it('does not promote a WORKING task to Ready to ship for having a diff', () => {
-    // The diff only decides between the two quiet regions. A task mid-turn is
-    // Running whatever it has written so far.
+  it('leaves a WORKING task in Running whatever it has written so far', () => {
     expect(triageOf(withDiff('mid-turn', 'working'))).toBe('running');
+  });
+
+  it('files a row whose state nothing could name under Needs you', () => {
+    // No `mark` in the facts and a tint this build does not map. If the shell
+    // cannot say what is happening, looking is the user's move.
+    expect(triageOf(entry({ id: 'mystery', mark: undefined }))).toBe('needs');
   });
 
   it('lets a snooze outrank the state it is sleeping on', () => {
@@ -68,7 +73,7 @@ describe('triageOf', () => {
      * agent CAN be running in one, so it can arrive tinted. Reading the mark
      * first would have put a shell in `Needs you`.
      */
-    for (const mark of ['working', 'waiting', 'failed', 'ready', 'resting'] as const) {
+    for (const mark of ['working', 'waiting', 'failed', 'ready', 'later'] as const) {
       expect(triageOf(entry({ id: `sh-${mark}`, mark, place: true })), mark).toBe('shells');
     }
   });
@@ -84,9 +89,7 @@ describe('triage', () => {
     const sections = triage([
       entry({ id: 'ship1', mark: 'shipped' }),
       entry({ id: 'sh', place: true }),
-      entry({ id: 'rest' }),
-      entry({ id: 'snoozed', facts: { snooze: { label: 'tomorrow' } } }),
-      withDiff('ready-to-ship'),
+      entry({ id: 'snoozed', mark: 'later', facts: { snooze: { label: 'tomorrow' } } }),
       entry({ id: 'run', mark: 'working' }),
       entry({ id: 'ask', mark: 'waiting' }),
     ]);
@@ -140,6 +143,18 @@ describe('the count and the jump', () => {
 
   it('counts as LIVE everything that is neither a record nor a place', () => {
     expect(liveCount(entries)).toBe(3);
+  });
+
+  it('counts an idle task, because an idle task is one of the things needing you', () => {
+    // The number in the header moved when `Resting` folded into `Needs you`, and
+    // it moved on purpose: a task nobody is working on is a task waiting on you,
+    // and a count that excluded it was reporting a smaller morning than you had.
+    expect(liveCount([...entries, entry({ id: 'asleep' })])).toBe(4);
+    expect(needsYou([...entries, entry({ id: 'asleep' })]).map((each) => each.id)).toEqual([
+      'ask',
+      'broke',
+      'asleep',
+    ]);
   });
 
   it('walks the same queue Home draws, in the same order', () => {

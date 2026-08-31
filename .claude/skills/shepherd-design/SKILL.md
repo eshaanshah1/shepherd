@@ -53,9 +53,9 @@ edge in that graph, the change is wrong.
 
 Ask these in order. Most new UI never gets past question 3.
 
-1. **Does this state already have a mark?** working / waiting on you / resting /
-   failed / shipped covers nearly everything. Use `StateMark`. Do not invent a
-   sixth state because your feature feels different.
+1. **Does this state already have a mark?** working / waiting on you / ready for
+   you / later / failed / shipped covers nearly everything. Use `StateMark`. Do
+   not invent a seventh state because your feature feels different.
 2. **Can this go in an existing surface?** A rail section and a stage tab cost
    the user nothing to learn. A new panel costs them a new place to look.
 3. **Does it need a new primitive?** Almost certainly not. Read
@@ -93,6 +93,8 @@ one grid cell (`Row` does this for you) so revealing actions never reflows.
 
 **Ordering is the surface's own decision, and the rail no longer routes by
 attention.** It used to open with `Waiting on you` / `In flight` / `Resting` —
+sections as distances from needing you, and `Resting` was the one that did not
+survive the question "distance from what?" —
 sections as distances from needing you. That is gone: the status mark carries it,
 an active list is a handful of rows, and a heading per state is a thing to scan on
 the way to the rows. The rail is now an append-ordered list of live work with one
@@ -196,19 +198,27 @@ neither is.
 
 ## 5. State, and how it is drawn
 
-Five marks, one fixed 12px slot, and the slot never resizes — so a label never
+Six marks, one fixed 12px slot, and the slot never resizes — so a label never
 shifts because a state changed.
 
 | state | mark | and the surface does |
 |---|---|---|
 | working | three sky bars, one cycling | nothing |
 | waiting on you | solid wool square | **opens** into a card with the question and both answers inline |
-| resting | hollow ring | nothing |
-| failed | solid red square | keeps the resting surface; red lives in the mark and the exit code |
+| ready for you | solid grass square | nothing. Covers a finished turn AND a task with nothing running: both mean look at this |
+| later | dashed grey ring | moves to the `Later` region, wearing `until <when>` |
+| failed | solid red square | keeps the quiet surface; red lives in the mark and the exit code |
 | shipped | a check | moves to the `Shipped` region: a dimmed one-line row, kept |
 
-A **square** always means *your move*. A **ring** means nothing is happening. A
-**meter** means something is.
+A **square** always means *your move*. A **meter** means an agent is running. A
+**dashed ring** means you have already answered — put off, with a way back.
+
+**There is no mark for "nothing is happening".** There was one, a solid hollow
+ring, and it was describing the absence of an agent as though it were the absence
+of work: a task nobody is running is precisely the one nobody but you will pick
+up. Idle wears the green square. A state this build genuinely cannot name draws
+`markSlot` — the empty 12×12 box — rather than a guess, because every remaining
+mark is a claim about whose move it is.
 
 The state word travels as `title` and `aria-label` and is never drawn beside the
 mark — two states will eventually share a hue, and a fact encoded only in colour

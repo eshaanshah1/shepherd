@@ -54,17 +54,23 @@
   background: var(--sh-mark-failed);
 }
 
-/* ── resting — a hollow 7×7 ring ─────────────────────────────────────────────
+/* ── later — a dashed 8×8 ring ───────────────────────────────────────────────
  *
- * Hollow, and that is the whole signal: there is nothing inside it because
- * nothing is happening. A filled circle at this value would read as a sixth
- * state.
+ * The GAPS are the signal, not the hollowness. A continuous ring says nothing is
+ * happening, which is never worth a mark here: an idle task is your move and
+ * wears the green square. A broken one says the row is deliberately out of the
+ * queue and has a way back — the same thing a queued PR check says with
+ * `circle-dashed`, one surface along.
+ *
+ * 8px rather than the 7 a solid ring wanted. A dashed border draws its dashes
+ * along the circumference, and at 7px there are barely three of them, which
+ * reads as a ring rendered badly rather than as a ring with holes in it.
  */
-.sh-ui-mark[data-state='resting']::before {
+.sh-ui-mark[data-state='later']::before {
   content: '';
-  inline-size: 7px;
-  block-size: 7px;
-  border: var(--sh-hairline) solid var(--sh-mark-rest);
+  inline-size: 8px;
+  block-size: 8px;
+  border: var(--sh-hairline) dashed var(--sh-mark-later);
   border-radius: 50%;
 }
 

@@ -153,7 +153,7 @@ describe('a task card mid-build', () => {
   });
 
   it('draws the real name once the work is done, which IS the ready signal', () => {
-    draw(item('Fix the login redirect', { mark: 'resting' }));
+    draw(item('Fix the login redirect', { mark: 'ready' }));
     expect(title()).toBe('Fix the login redirect');
   });
 
@@ -299,20 +299,20 @@ describe('a shipped task card', () => {
      * words. With a floor under it the line can be unconditional and never be
      * empty, which is what a card is.
      */
-    draw(item('Fix the login redirect', { mark: 'resting', summary: 'idle' }));
+    draw(item('Fix the login redirect', { mark: 'ready', summary: 'idle' }));
     expect(host.querySelector('.sh-task-card__meta')?.textContent).toContain('idle');
   });
 
   it('draws no repo chips for ONE repo, which every row in the rail would repeat', () => {
     // §6 refuses repeating a name down the hierarchy, and one chip in a
     // single-repo workspace is the same word on every row.
-    draw(item('Fix the login redirect', { mark: 'resting', repos: [{ name: 'sdk', mark: 'repo1' }] }));
+    draw(item('Fix the login redirect', { mark: 'ready', repos: [{ name: 'sdk', mark: 'repo1' }] }));
     expect(host.querySelector('.sh-task-card__repos')).toBeNull();
   });
 
   it('draws them as soon as a task spans TWO, where they tell rows apart', () => {
     draw(item('Fix the login redirect', {
-      mark: 'resting',
+      mark: 'ready',
       repos: [
         { name: 'sdk', mark: 'repo1' },
         { name: 'app', mark: 'repo2' },
@@ -414,7 +414,7 @@ describe('a shipped task card', () => {
       shippedRow({
         diff: { added: 40, removed: 3, files: 2 },
         repos: [{ name: 'railsApp', mark: 'repo1' }],
-        tabs: ['resting', 'resting'],
+        tabs: ['ready', 'ready'],
         suite: { total: 10, passed: 10 },
       }),
     );
@@ -426,7 +426,7 @@ describe('a shipped task card', () => {
   it('stays one line even with two tabs, which would open a live card', () => {
     // `dense` normally yields to a multi-tab task — the mark strip is its second
     // line. A shipped task has no live tabs for that strip to describe.
-    draw(shippedRow({ tabs: ['resting', 'working'] }));
+    draw(shippedRow({ tabs: ['ready', 'working'] }));
     expect(host.querySelector('.sh-task-card')?.getAttribute('data-dense')).toBe('true');
   });
 

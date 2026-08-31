@@ -42,6 +42,24 @@ export interface RowAnswer {
   readonly args?: unknown;
   /** The single character that presses it — `Y` / `N` in the takeover. */
   readonly key?: string;
+  /**
+   * This answer needs a value before it can run — the shell opens a field.
+   *
+   * The one place a declared verb is not a button. Three presets cover the whens
+   * worth a keypress and every other when has to be said, so the option that
+   * says "a time I name" carries the field rather than a fourth fixed duration.
+   *
+   * The shell still learns nothing. It draws an input, merges what was typed
+   * into `args` under `field`, and runs the same verb it was handed — what the
+   * text MEANS is the extension's to decide, and a refusal comes back as the
+   * command's own error.
+   */
+  readonly prompt?: {
+    /** What the empty field says. An example, not an instruction. */
+    readonly placeholder?: string;
+    /** Which argument the typed text becomes. */
+    readonly field: string;
+  };
 }
 
 export interface RowQuestion {
@@ -99,7 +117,7 @@ const str = (value: unknown): string | undefined =>
 const int = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isFinite(value) ? Math.trunc(value) : undefined;
 
-const MARKS: readonly MarkState[] = ['working', 'waiting', 'ready', 'resting', 'failed', 'shipped'];
+const MARKS: readonly MarkState[] = ['working', 'waiting', 'ready', 'later', 'failed', 'shipped'];
 
 const readMark = (value: unknown): MarkState | undefined => MARKS.find((candidate) => candidate === value);
 
@@ -134,7 +152,15 @@ function readAnswer(value: unknown): RowAnswer | undefined {
   // Both or nothing: a button with no verb does nothing when pressed, which is
   // worse than an absent button.
   if (label === undefined || command === undefined) return undefined;
-  return { label, command, args: value['args'], key: str(value['key']) };
+  return { label, command, args: value['args'], key: str(value['key']), prompt: readPrompt(value['prompt']) };
+}
+
+/** Both halves or none: a field whose text lands in no argument runs the verb bare. */
+function readPrompt(value: unknown): RowAnswer['prompt'] {
+  if (!isRecord(value)) return undefined;
+  const field = str(value['field']);
+  if (field === undefined) return undefined;
+  return { field, placeholder: str(value['placeholder']) };
 }
 
 function readQuestion(value: unknown): RowQuestion | undefined {

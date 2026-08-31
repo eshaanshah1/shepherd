@@ -56,7 +56,7 @@ export function rollUp(states: readonly string[]): TaskAgentState {
  *     The table in `view-dock` disagreed with this paragraph for a while and sent
  *     `needs-check` to the wool square, which made "finished" and "waiting on an
  *     answer" one mark told apart only by a tooltip. Green still clears to the
- *     resting ring the moment you look at the pane, so it reads as "done, unread"
+ *     empty slot the moment you look at the pane, so it reads as "done, unread"
  *     rather than "resolved, ignore me".
  *   - `idle` emits `idle`, which `TINT_ROLES` does NOT contain. It resolves by
  *     falling through `markState`'s default, which is the behaviour any

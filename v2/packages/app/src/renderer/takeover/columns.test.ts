@@ -42,13 +42,15 @@ describe('a region names its own columns', () => {
      * two rows in that region ended in the same place.
      */
     const withAge = TRIAGE_ORDER.filter((group) => REGION_COLUMNS[group].cells.includes('age'));
-    expect(withAge).toEqual(['needs', 'resting']);
+    expect(withAge).toEqual(['needs']);
   });
 
   it('draws a diff only where the change is what you are deciding about', () => {
     const withDiff = TRIAGE_ORDER.filter((group) => REGION_COLUMNS[group].cells.includes('diff'));
     // Not `running`: a diff mid-flight is a number that moves while you read it.
-    expect(withDiff).toEqual(['ship', 'shipped']);
+    // `needs` draws it because it holds the rows that changed something and the
+    // rows that did not, and the diff is what tells those apart.
+    expect(withDiff).toEqual(['needs', 'shipped']);
   });
 
   it('draws the repo everywhere, which is what earns it the last track', () => {
@@ -72,7 +74,8 @@ describe('the age a region will print', () => {
   });
 
   it('keeps only a day-or-older stamp at day granularity', () => {
-    // `Resting`: three days asleep is staleness, three minutes is the ring.
+    // No region asks for it today. The filter is kept because the argument
+    // behind it survives: a stamp whose minutes nobody would act on is noise.
     expect(ageFor('3d', 'd')).toBe('3d');
     expect(ageFor('3m', 'd')).toBeUndefined();
     expect(ageFor('3h', 'd')).toBeUndefined();

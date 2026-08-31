@@ -1107,12 +1107,15 @@ describe('the tab strip', () => {
     view.unmount();
   });
 
-  it('marks a working agent and a resting one, because a tab is a pane you cannot see', async () => {
+  it('marks a working agent and an idle one, because a tab is a pane you cannot see', async () => {
     // Every agent tab says what its agent is doing. A strip that drew nothing
     // until something went wrong made 'working' and 'no agent here' one picture.
     for (const [state, mark] of [
       ['working', 'working'],
-      ['idle', 'resting'],
+      // Idle wears the SAME green square a finished turn does, and that is the
+      // point rather than a collision: both mean nothing is running and the next
+      // move is yours.
+      ['idle', 'ready'],
       ['needsCheck', 'ready'],
       ['error', 'failed'],
     ] as const) {

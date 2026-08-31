@@ -7,7 +7,7 @@ import { SUITE_METER_MAX_CELLS, SuiteMeter } from './suite-meter.tsx';
 // declare — a claim there is no way to make through the markup.
 import './styles.css';
 
-const STATES: MarkState[] = ['working', 'waiting', 'ready', 'resting', 'failed', 'shipped'];
+const STATES: MarkState[] = ['working', 'waiting', 'ready', 'later', 'failed', 'shipped'];
 
 const mark = (container: HTMLElement): HTMLElement => {
   const found = container.querySelector<HTMLElement>('.sh-ui-mark');
@@ -208,7 +208,7 @@ describe('StateMark', () => {
   });
 
   it('keeps a caller class alongside its own', () => {
-    const dom = mount(<StateMark state="resting" className="sh-row-glyph" />);
+    const dom = mount(<StateMark state="later" className="sh-row-glyph" />);
     expect(mark(dom.container).className).toContain('sh-ui-mark');
     expect(mark(dom.container).className).toContain('sh-row-glyph');
   });

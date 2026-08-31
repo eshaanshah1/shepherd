@@ -585,11 +585,15 @@ describe('a contribution-s tint word, resolved to a mark', () => {
     expect(markState('needs-check')).not.toBe(markState('blocked'));
   });
 
-  it('still answers resting for a word it does not know', () => {
-    // A tint the shell has never seen is not an emergency, and a ring is the
-    // mark that claims nothing.
-    expect(markState('whatever-the-next-extension-says')).toBe('resting');
-    expect(markState(undefined)).toBe('resting');
+  it('answers nothing at all for a word it does not know', () => {
+    /*
+     * Not a fallback state. Every mark left is a claim about whose move it is,
+     * so picking one for a word nobody parsed would put that claim in the column
+     * the eye reads first — and `StateMark` draws the empty 12×12 box for an
+     * absent state, which is the honest version of "this build cannot say".
+     */
+    expect(markState('whatever-the-next-extension-says')).toBeUndefined();
+    expect(markState(undefined)).toBeUndefined();
   });
 });
 

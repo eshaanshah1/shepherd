@@ -15,7 +15,7 @@ describe('readCardData', () => {
         diff: { added: 142, removed: 38, files: 7 },
         suite: { total: 4, passed: 3 },
         repos: [{ name: 'api', mark: 'repo1' }],
-        tabs: ['working', 'resting'],
+        tabs: ['working', 'ready'],
       }),
     ).toEqual({
       mark: 'working',
@@ -23,7 +23,7 @@ describe('readCardData', () => {
       diff: { added: 142, removed: 38, files: 7 },
       suite: { total: 4, passed: 3 },
       repos: [{ name: 'api', mark: 'repo1' }],
-      tabs: ['working', 'resting'],
+      tabs: ['working', 'ready'],
       question: undefined,
       exitCode: undefined,
     });
@@ -39,13 +39,13 @@ describe('readCardData', () => {
   });
 
   it('drops a diff that is all zeroes rather than drawing `+0 −0`', () => {
-    expect(readCardData({ mark: 'resting', diff: { added: 0, removed: 0, files: 0 } })?.diff).toBeUndefined();
+    expect(readCardData({ mark: 'ready', diff: { added: 0, removed: 0, files: 0 } })?.diff).toBeUndefined();
   });
 
   it('drops a partial diff rather than defaulting the missing half to zero', () => {
     // A card that omits a fact is honest; one that invents a zero is not.
-    expect(readCardData({ mark: 'resting', diff: { added: 5 } })?.diff).toBeUndefined();
-    expect(readCardData({ mark: 'resting', diff: 'lots' })?.diff).toBeUndefined();
+    expect(readCardData({ mark: 'ready', diff: { added: 5 } })?.diff).toBeUndefined();
+    expect(readCardData({ mark: 'ready', diff: 'lots' })?.diff).toBeUndefined();
   });
 
   it('takes two answers or NONE, never one', () => {
@@ -98,23 +98,23 @@ describe('readCardData', () => {
 
   it('skips junk inside a list instead of failing the whole card', () => {
     const data = readCardData({
-      mark: 'resting',
+      mark: 'ready',
       repos: [{ name: 'api', mark: 'repo1' }, 'nonsense', { name: 'no-mark' }, null],
-      tabs: ['working', 'nope', 42, 'resting'],
+      tabs: ['working', 'nope', 42, 'ready'],
     });
     expect(data?.repos).toEqual([{ name: 'api', mark: 'repo1' }]);
-    expect(data?.tabs).toEqual(['working', 'resting']);
+    expect(data?.tabs).toEqual(['working', 'ready']);
   });
 
   it('treats an empty list as absent, so nothing renders an empty strip', () => {
-    const data = readCardData({ mark: 'resting', repos: [], tabs: [] });
+    const data = readCardData({ mark: 'ready', repos: [], tabs: [] });
     expect(data?.repos).toBeUndefined();
     expect(data?.tabs).toBeUndefined();
   });
 
   it('drops a suite with no tests — SuiteMeter would draw nothing anyway', () => {
-    expect(readCardData({ mark: 'resting', suite: { total: 0, passed: 0 } })?.suite).toBeUndefined();
-    expect(readCardData({ mark: 'resting', suite: { total: 4 } })?.suite).toBeUndefined();
+    expect(readCardData({ mark: 'ready', suite: { total: 0, passed: 0 } })?.suite).toBeUndefined();
+    expect(readCardData({ mark: 'ready', suite: { total: 4 } })?.suite).toBeUndefined();
   });
 
   it('reads a duplicate count only above one, and only on shipped work', () => {
@@ -135,7 +135,7 @@ describe('readCardData', () => {
 
   it('never throws, whatever it is handed', () => {
     const nasty: unknown[] = [
-      { mark: 'resting', repos: 'not a list', tabs: {}, question: 5, suite: [], diff: [] },
+      { mark: 'ready', repos: 'not a list', tabs: {}, question: 5, suite: [], diff: [] },
       { mark: 'failed', exitCode: 'one', summary: '' },
       { mark: 'waiting', question: { text: '' } },
       { mark: 'waiting', question: { answers: [] } },
@@ -190,10 +190,10 @@ describe('facts, which come from an extension this code has never seen', () => {
 
 describe('an incognito task', () => {
   it('reads the flag through, so the card can say the session leaves nothing behind', () => {
-    expect(readCardData({ mark: 'resting', incognito: true })?.incognito).toBe(true);
+    expect(readCardData({ mark: 'ready', incognito: true })?.incognito).toBe(true);
   });
 
   it('is absent on an ordinary task rather than false', () => {
-    expect(readCardData({ mark: 'resting' })).not.toHaveProperty('incognito');
+    expect(readCardData({ mark: 'ready' })).not.toHaveProperty('incognito');
   });
 });

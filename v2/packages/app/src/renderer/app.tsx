@@ -175,7 +175,7 @@ const TAB_MARKS: readonly (readonly [state: string, mark: MarkState])[] = [
   ['error', 'failed'],
   ['needsCheck', 'ready'],
   ['working', 'working'],
-  ['idle', 'resting'],
+  ['idle', 'ready'],
 ];
 
 function tabMark(states: readonly (string | undefined)[]): MarkState | undefined {
@@ -249,15 +249,24 @@ export function App({
     return off;
   }, [layout]);
 
-  /** Every gesture, as one call into the kernel's verb table. */
+  /**
+   * Every gesture, as one call into the kernel's verb table.
+   *
+   * Answers the failure's MESSAGE, or nothing when it worked. Most callers drop
+   * that and rely on the log below, which is right for a button: it either did
+   * the thing or it did not, and there is nothing to re-type. A control holding
+   * something the user typed needs the message on screen instead, so it is
+   * returned as well as logged rather than only logged.
+   */
   const invoke = useCallback(
-    (command: string, args: Readonly<Record<string, unknown>>) => {
-      if (commands === null) return;
-      void commands.invoke(command, args).then((result) => {
-        // A command that failed must not fail silently: with the layout owned a
-        // process away, "the button did nothing" has no other way to be seen.
-        if (!result.ok) console.error(`[shepherd] ${command}: ${result.error.message}`);
-      });
+    async (command: string, args: Readonly<Record<string, unknown>>): Promise<string | undefined> => {
+      if (commands === null) return undefined;
+      const result = await commands.invoke(command, args);
+      if (result.ok) return undefined;
+      // A command that failed must not fail silently: with the layout owned a
+      // process away, "the button did nothing" has no other way to be seen.
+      console.error(`[shepherd] ${command}: ${result.error.message}`);
+      return result.error.message;
     },
     [commands],
   );

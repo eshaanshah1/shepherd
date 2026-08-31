@@ -36,7 +36,7 @@ export interface AgentChoice {
   readonly cwd: string;
   readonly repo?: string;
   readonly role: 'orchestrator' | 'workstream';
-  readonly mark: 'working' | 'waiting' | 'resting' | 'failed';
+  readonly mark: 'working' | 'waiting' | 'ready' | 'failed';
   readonly means: 'sends now' | 'queues';
 }
 

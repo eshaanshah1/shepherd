@@ -1094,7 +1094,7 @@ export interface AgentChoice {
   readonly repo?: string;
   readonly role: 'orchestrator' | 'workstream';
   /** Its state, as one of the app's five marks. */
-  readonly mark: 'working' | 'waiting' | 'resting' | 'failed';
+  readonly mark: 'working' | 'waiting' | 'ready' | 'failed';
   /** `sends now` or `queues` — what handing to it means right now. */
   readonly means: 'sends now' | 'queues';
 }

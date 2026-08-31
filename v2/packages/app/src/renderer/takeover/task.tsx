@@ -77,7 +77,7 @@ export function TakeoverTask({
       <button type="button" className="sh-take__back" onClick={onBack} data-testid="takeover-back">
         <b>⌘[</b> back
       </button>
-      <StateMark state={entry?.mark ?? 'resting'} />
+      <StateMark state={entry?.mark} />
       <span className="sh-take__tname">{entry?.label ?? fallbackName}</span>
       {/*
         Only if there is one. `0m` on a task that has not started is a number

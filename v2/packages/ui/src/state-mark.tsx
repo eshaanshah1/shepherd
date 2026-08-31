@@ -16,21 +16,27 @@ import { cn } from './cn.ts';
  * Three properties, each load-bearing:
  *
  *   - **A fixed 12×12 slot, and the mark inside never resizes it.** A ring is
- *     7×7 and a square is 8×8 and a meter is 8 tall, and none of that is visible
+ *     8×8 and a square is 8×8 and a meter is 8 tall, and none of that is visible
  *     as motion when a task changes state, because the box does not move. This
  *     is also why the eventual animated sheep (`flock`) can land here without
  *     re-laying-out every row that draws one.
- *   - **A square always means *your move*.** A ring means nothing is happening.
- *     A meter means something is. The SHAPE is the vocabulary; `wool`, `grass`
- *     and `red` are all squares because all three are your move, and they differ
- *     in urgency rather than in kind — a question, a finished turn nobody has
- *     read, a run that failed.
+ *   - **A square always means *your move*.** A meter means an agent is running.
+ *     A dashed ring means you have already answered — put off, with a way back —
+ *     which makes it the one state that is neither yours nor an agent's right
+ *     now. The SHAPE is the vocabulary; `wool`, `grass` and `red` are all squares
+ *     because all three are your move, and they differ in urgency rather than in
+ *     kind — a question, a finished turn nobody has read, a run that failed.
+ *
+ *     **There is no mark for a task that is merely idle.** Nothing running IS
+ *     your move, so an idle task wears the green square a finished turn wears:
+ *     both mean look at this, and a shape that said "nothing is happening" was
+ *     drawing the absence of an agent as though it were the absence of work.
  *   - **Every mark carries its word**, as a `title` and as `sr-only` text that is
  *     always in the DOM. Two states will eventually share a hue, and a fact
  *     encoded only in colour cannot be read out, searched, or asserted on.
  */
 
-export type MarkState = 'working' | 'waiting' | 'ready' | 'resting' | 'failed' | 'shipped';
+export type MarkState = 'working' | 'waiting' | 'ready' | 'later' | 'failed' | 'shipped';
 
 /**
  * The word each state says, and it is the accessible name unless overridden.
@@ -44,7 +50,7 @@ export const markWords: Readonly<Record<MarkState, string>> = {
   working: 'Working',
   waiting: 'Waiting on you',
   ready: 'Ready for you',
-  resting: 'Resting',
+  later: 'Later',
   failed: 'Failed',
   shipped: 'Shipped',
 };
@@ -64,20 +70,30 @@ export const markWords: Readonly<Record<MarkState, string>> = {
  * comment forbids, and it would drift the first time a mark changed size.
  *
  * The honest use is a row whose state is already stated by the region it sits in
- * — a shipped task under a heading that says Shipped. Not for a row whose state is
- * merely unknown: that is `resting`, and it has a mark.
+ * — a shipped task under a heading that says Shipped. The other is a row whose
+ * state is genuinely unknown: no payload yet, or a tint word this build does not
+ * carry. `StateMark` renders this box for an absent `state`, so a consumer taking
+ * the component gets the same answer without reaching for the class.
  */
 export const markSlot = 'sh-ui-mark';
 
 export interface StateMarkProps extends Omit<ComponentPropsWithRef<'span'>, 'role' | 'title'> {
-  /** Which of the five, by state. There is no colour prop and there will not be. */
-  readonly state: MarkState;
+  /**
+   * Which of the six, by state. There is no colour prop and there will not be.
+   *
+   * Absent draws the empty slot — the 12×12 box and nothing in it, with no word
+   * and no tooltip. That is for a row whose state this build cannot name: a
+   * payload that has not arrived, or a tint spelling nothing maps. Guessing a
+   * state there would put a claim in the one column the eye scans first, and the
+   * only honest guess is silence.
+   */
+  readonly state?: MarkState;
   /** Overrides the default word — for a reason ("Waiting on you — approve Bash"). */
   readonly label?: string;
 }
 
 export function StateMark({ state, label, className, ...rest }: StateMarkProps): ReactElement {
-  const word = label ?? markWords[state];
+  const word = state === undefined ? undefined : (label ?? markWords[state]);
   return (
     <span className={cn('sh-ui-mark', className)} data-state={state} title={word} {...rest}>
       {/*
@@ -101,7 +117,7 @@ export function StateMark({ state, label, className, ...rest }: StateMarkProps):
        * survives a search, an assertion, or a theme in which two states landed on
        * one hue.
        */}
-      <span className="sh-ui-sr-only">{word}</span>
+      {word === undefined ? null : <span className="sh-ui-sr-only">{word}</span>}
     </span>
   );
 }

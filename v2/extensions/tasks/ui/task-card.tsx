@@ -162,10 +162,11 @@ export function TaskCard({ item, selected, invoke }: ExtensionRowProps): ReactEl
     if (command !== undefined) void invoke(command.id, command.args);
   }, [invoke, item.command]);
 
-  // Unreadable data falls back to the plainest true thing: the label and a
-  // resting mark. The row still says what it stands for and is still clickable,
-  // which is the whole point of the name-resolves-or-degrades seam.
-  const card: CardData = data ?? { mark: 'resting' };
+  // Unreadable data falls back to the plainest true thing: the label, and the
+  // empty mark slot rather than a state nobody reported. The row still says what
+  // it stands for and is still clickable, which is the whole point of the
+  // name-resolves-or-degrades seam.
+  const card: CardData = data ?? {};
   const question = card.question;
   // Never on a shipped card. The ask block is the one thing below that `dense`
   // does not gate — it is what a card OPENS for — so a stale question on finished
@@ -176,7 +177,7 @@ export function TaskCard({ item, selected, invoke }: ExtensionRowProps): ReactEl
    * **A task is a ROW until it has something to show.**
    *
    * §5: "Everything else is a fixed-height row or a fixed-shape card." The
-   * first build made every task a card, and a rail of six resting tasks was
+   * first build made every task a card, and a rail of six idle tasks was
    * six bordered boxes with a title in each — six times the height for the same
    * six words, and the card treatment stopped meaning anything because
    * everything had it.
@@ -191,7 +192,7 @@ export function TaskCard({ item, selected, invoke }: ExtensionRowProps): ReactEl
    * An agent that is merely WORKING is a row. That is the correction that
    * matters most: working is the common case, and a rail where the common case
    * is tall is a rail you scroll to find the one thing that is not. The mark
-   * already says it is working, in the same 12px slot a resting one uses.
+   * already says it is working, in the same 12px slot every other mark uses.
    */
   /*
    * A SHIPPED task is always a row, and it wins over all three earners above.

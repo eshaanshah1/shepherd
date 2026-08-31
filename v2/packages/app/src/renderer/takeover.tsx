@@ -72,7 +72,16 @@ export interface TakeoverProps {
   /** The layout's own answer for which group a root is a tab of. */
   readonly groupOfRoot: (root: string) => string;
   /** The one funnel every gesture goes through. */
-  readonly invoke: (command: string, args: Readonly<Record<string, unknown>>) => void;
+  /**
+   * Every gesture, as one call into the kernel's verb table.
+   *
+   * Resolves to the failure's MESSAGE, or nothing when it worked. Almost every
+   * caller here ignores that — a button that failed has already logged, which is
+   * the shell-wide answer. The `Later` field is the exception, because it is the
+   * one control on this surface carrying something the user typed: it has to be
+   * able to say "that is not a time I can read" beside the text that was not one.
+   */
+  readonly invoke: (command: string, args: Readonly<Record<string, unknown>>) => Promise<string | undefined>;
   /** Raise a contributed screen by its view type — how `New` opens the composer. */
   readonly onRaiseView: (type: string) => void;
   /** True while another layer owns the window, so this one stops listening. */
@@ -223,15 +232,29 @@ export function useTakeover({
   }, []);
 
   const defer = useCallback(
-    (entry: TriageEntry, option: RowAnswer) => {
+    async (entry: TriageEntry, option: RowAnswer, text?: string): Promise<string | undefined> => {
+      /*
+       * What was typed becomes one argument, named by the option itself.
+       *
+       * The shell picks no key and reads no value — `field` is the extension
+       * saying where its own verb wants this, which is what keeps a text input
+       * on this surface from being the shell learning what a snooze is.
+       */
+      const typed =
+        option.prompt === undefined || text === undefined ? {} : { [option.prompt.field]: text };
+      const args = { ...((option.args ?? {}) as Readonly<Record<string, unknown>>), ...typed };
+      const failed = await invoke(option.command, args);
+      // A refusal leaves everything where it was, menu included: the row did not
+      // move, so neither should the screen.
+      if (failed !== undefined) return failed;
       setDeferring(null);
-      invoke(option.command, (option.args ?? {}) as Readonly<Record<string, unknown>>);
       /*
        * And leave the task, if you were in it. Deferring from inside something
        * is a way of saying "not this" — staying put would leave you looking at
        * the one thing you just said you did not want to look at.
        */
       setNav((current) => (currentTask(current)?.id === entry.id ? pop(current) : current));
+      return undefined;
     },
     [invoke],
   );
@@ -439,7 +462,7 @@ export function useTakeover({
         <LaterMenu
           name={deferred.label}
           later={deferred.facts.later}
-          onPick={(option) => defer(deferred, option)}
+          onPick={(option, text) => defer(deferred, option, text)}
           onClose={() => setDeferring(null)}
         />
       )}

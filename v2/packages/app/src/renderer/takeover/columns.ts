@@ -23,7 +23,7 @@
  * justification is entirely about being blocked — "a task that has been waiting
  * on you for a quarter of an hour should itch… only a clock says how long you
  * have been the one holding it up". That argument is true in `Needs you` and
- * false in all six other regions. On a `Running` row you are not holding
+ * false in every other region. On a `Running` row you are not holding
  * anything up: nothing you would do at `3m` differs from what you would do at
  * `2m`, and the stamp is deliberately FLOORED to make a wait feel long, which is
  * the wrong feeling to induce about work that is going fine.
@@ -59,9 +59,10 @@ export interface RegionColumns {
   /**
    * The coarsest stamp the `age` cell will print, when it prints one at all.
    *
-   * `'d'` keeps a day-or-older stamp and drops the rest. `Resting` is the only
-   * user: "asleep for three days" is a staleness signal worth a column and
-   * "asleep for three minutes" is the same fact as the ring beside it.
+   * `'d'` keeps a day-or-older stamp and drops the rest. Nothing asks for it
+   * today. It is kept because the argument that wanted it is still true of some
+   * future region — a stamp whose minutes nobody would act on is noise — and the
+   * filter costs one branch.
    */
   readonly grain?: 'd';
 }
@@ -71,13 +72,17 @@ export interface RegionColumns {
  *
  * | region | the question it answers | so it draws |
  * |---|---|---|
- * | `needs`   | how long have I been the blocker?   | the age — the one place the clock is real |
- * | `running` | which tree is it touching?          | the repo. A mid-flight diff is a number that moves |
- * | `ship`    | what did it change?                 | the diff, and where |
- * | `later`   | when does it come back?             | the repo — the `until …` subtitle answers the rest |
- * | `resting` | is this going stale?                | the repo, and the age at day granularity |
- * | `shells`  | where am I?                         | the repo |
- * | `shipped` | what did it do?                     | the diff, and where |
+ * | `needs`   | what is it, and how long has it been mine? | the diff, the age, the repo |
+ * | `running` | which tree is it touching?                 | the repo. A mid-flight diff is a number that moves |
+ * | `later`   | when does it come back?                    | the repo — the `until …` subtitle answers the rest |
+ * | `shells`  | where am I?                                | the repo |
+ * | `shipped` | what did it do?                            | the diff, and where |
+ *
+ * **`needs` is the one region that draws all three**, and it has to: it is the
+ * only region whose rows differ in kind. A row an agent handed back mid-question
+ * and a row that has sat untouched for three days are both yours, and the two
+ * facts that tell them apart are what changed and how long it has been. Every
+ * other region answers one question, so it spends one cell on it.
  *
  * **Every region draws `repos`**, which is what earns it the last track: a right
  * edge made of a cell some rows omit is ragged whatever the tracks agree on.
@@ -86,11 +91,9 @@ export interface RegionColumns {
  * the repo, so the edge holds across every region on the screen.
  */
 export const REGION_COLUMNS: Readonly<Record<TriageGroup, RegionColumns>> = {
-  needs: { cells: ['repos', 'age'] },
+  needs: { cells: ['repos', 'diff', 'age'] },
   running: { cells: ['repos'] },
-  ship: { cells: ['repos', 'diff'] },
   later: { cells: ['repos'] },
-  resting: { cells: ['repos', 'age'], grain: 'd' },
   shells: { cells: ['repos'] },
   shipped: { cells: ['repos', 'diff'] },
 };

@@ -68,7 +68,7 @@ export type RoleName =
   | 'markWorkingOff'
   | 'markWaiting'
   | 'markReady'
-  | 'markRest'
+  | 'markLater'
   | 'markFailed'
   | 'meterPass'
   | 'meterPending'
@@ -388,11 +388,12 @@ export const roles: Readonly<Record<RoleName, RoleSpec>> = {
     notFor:
       'a question. `markWaiting` is the one that opens a row into a card; this one is a square because reading it is still your move, and green because the work is done rather than stuck.',
   },
-  markRest: {
+  markLater: {
     kind: 'token',
     token: 'edgeRing',
-    job: 'the hollow 7×7 ring — nothing is happening.',
-    notFor: 'a fill. The ring is 1px and hollow; a filled circle at this value reads as a fifth state.',
+    job: 'the dashed 8×8 ring — put off, and it comes back on its own.',
+    notFor:
+      'a fill, and not a solid ring either. Hollow says nobody is acting on this; the GAPS say you already answered, and a continuous ring at this value reads as a state that merely has nothing happening in it.',
   },
   markFailed: {
     kind: 'alias',

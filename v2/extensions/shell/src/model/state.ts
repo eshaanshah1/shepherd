@@ -43,7 +43,7 @@ const LOUDEST: readonly AgentState[] = ['blocked', 'error', 'needsCheck', 'worki
  *
  * `undefined` rather than `'idle'`, because the row's `tint` is what the caller
  * needs and an absent tint is what draws no mark. A rail of plain shells should
- * report nothing, not report resting six times.
+ * report nothing, not claim a state six times.
  */
 export function rollUp(states: readonly string[]): AgentState | undefined {
   const present = new Set(states);
@@ -59,10 +59,11 @@ export function rollUp(states: readonly string[]): AgentState | undefined {
  * says so in as many words, and `extensions/tasks/src/model/agent-rollup.ts`
  * records what it cost to learn.
  *
- * The quiet states emit nothing at all rather than a word that resolves to the
- * resting ring. `view-dock`'s `markState` would answer `resting` for either, but
- * an absent tint means "this row has nothing to report" and a present one means
- * "I looked, and it is at rest" — and only the first is true of a plain shell.
+ * The quiet states emit nothing at all rather than a word for a state nobody is
+ * in. An absent tint means "this row has nothing to report", and a shell is a
+ * PLACE — it has no lifecycle, so there is no state of it to be in. A task that
+ * is merely idle is the opposite case and says so: nothing running is its
+ * owner's move, and it wears the green square that means exactly that.
  */
 export function tintFor(state: AgentState): string | undefined {
   if (state === 'idle' || state === 'shell') return undefined;

@@ -13,7 +13,7 @@
  * fact is honest; one that invents a zero is not.
  */
 
-export type CardMark = 'working' | 'waiting' | 'ready' | 'resting' | 'failed' | 'shipped';
+export type CardMark = 'working' | 'waiting' | 'ready' | 'later' | 'failed' | 'shipped';
 
 export interface CardDiff {
   readonly added: number;
@@ -76,7 +76,14 @@ export interface CardFact {
 }
 
 export interface CardData {
-  readonly mark: CardMark;
+  /**
+   * Absent only when the payload could not be read at all.
+   *
+   * `readCardData` refuses a card whose mark it cannot place, so every card that
+   * exists carries one. The row that falls back to no data at all has nothing to
+   * claim, and `StateMark` draws its empty slot for that.
+   */
+  readonly mark?: CardMark;
   /*
    * There is deliberately no `elapsed` field.
    *
@@ -205,7 +212,7 @@ const str = (value: unknown): string | undefined => (typeof value === 'string' &
 const int = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isFinite(value) ? Math.trunc(value) : undefined;
 
-const MARKS: readonly CardMark[] = ['working', 'waiting', 'ready', 'resting', 'failed', 'shipped'];
+const MARKS: readonly CardMark[] = ['working', 'waiting', 'ready', 'later', 'failed', 'shipped'];
 
 const mark = (value: unknown): CardMark | undefined =>
   MARKS.find((candidate) => candidate === value);
@@ -253,8 +260,8 @@ export function readCardData(value: unknown): CardData | null {
   if (!isRecord(value)) return null;
   const state = mark(value['mark']);
   // The mark is the one field with no honest default: it is the whole point of
-  // the row, and a card that guessed `resting` would say "nothing is happening"
-  // about a task that might be waiting on you.
+  // the row, and any guess is a claim about whose move it is made on behalf of a
+  // task that might be waiting on you.
   if (state === undefined) return null;
 
   const repos = Array.isArray(value['repos'])

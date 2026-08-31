@@ -39,7 +39,7 @@ import { orderSuggestions, rankScored } from './model/pick-order.ts';
 import { repoName } from './model/repo-name.ts';
 import { completeDirectories, exactRepoPath, looksLikeRepo } from './suggest.ts';
 import { taskRootId } from './model/root-id.ts';
-import { hasWoken, snoozeFor, type SnoozeUntil } from './model/snooze.ts';
+import { hasWoken, readUntil, snoozeFor } from './model/snooze.ts';
 
 /**
  * How much of a tab's screen is kept when a task is shelved.
@@ -86,6 +86,15 @@ const AGENTS_LAST_SAID = 'agents.lastSaid';
  * on a working task the brief wins. A row reaches this only when there is
  * nothing truer to put there.
  */
+/**
+ * The states with an agent that shipping would cut off mid-turn.
+ *
+ * `idle` is the one deliberately absent: nothing is running, so closing the
+ * panes costs nothing that was not already finished. `error` is absent for the
+ * same reason — a failed run has stopped.
+ */
+const LIVE_AGENT_STATES = new Set(['working', 'blocked', 'needsCheck', 'needs-check']);
+
 const STATE_WORDS: Readonly<Record<string, string>> = {
   blocked: 'waiting on you',
   error: 'failed',
@@ -571,14 +580,13 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * itself is the one BUILDING it.
    *
    * A task being provisioned has lifecycle `draft` and no sessions, so the rollup
-   * answers `idle` and `markOf` draws the hollow resting ring — "nothing is
-   * happening here" — for the whole of the longest wait in the app. That is the
-   * empty row this exists to stop: the handoff spec's first question is whether a
-   * state already has a mark, and this one does. Shepherd cutting worktrees for
-   * you IS working, and `working` is the three-bar meter that says so.
+   * answers `idle` and `markOf` draws the green "your move" square for the whole
+   * of the longest wait in the app — a row asking to be looked at while Shepherd
+   * is the one holding it up. Shepherd cutting worktrees for you IS working, and
+   * `working` is the three-bar meter that says so.
    *
-   * **Two guards, and both are load-bearing.** It only ever upgrades `resting`,
-   * so busy never overrides a mark an agent actually reported — archiving a task
+   * **Two guards, and both are load-bearing.** It only ever upgrades `ready`, so
+   * busy never overrides a mark an agent actually reported — archiving a task
    * whose agent is blocked keeps the waiting square, because that square is the
    * user's move and a spinner over it would hide the one thing in the rail they
    * can act on. And it only fires for a BUILDING phase, so a task being archived
@@ -587,12 +595,12 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    *
    * Used by the SECTION partition as well as by the card, and that is the whole
    * reason it is a named function: the two answering differently would file a
-   * spinning row under `Resting`.
+   * spinning row under the wrong heading.
    */
   const markFor = (task: TaskRecord, state: string): string => {
     const mark = markOf(state);
     const what = busy.get(task.id);
-    return mark === 'resting' && what !== undefined && BUILDING_PHASES.has(what) ? 'working' : mark;
+    return mark === 'ready' && what !== undefined && BUILDING_PHASES.has(what) ? 'working' : mark;
   };
 
   /**
@@ -686,11 +694,16 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
    * of losing something — and shipping snapshots every uncommitted line.
    */
   const shipConfirm = (task: TaskRecord, state: string): string => {
-    const mark = markOf(state);
+    /*
+     * The STATE, not the mark. The mark is a shape and three states share the
+     * green square — a finished turn, and a task with nothing running at all —
+     * because both are the reader's move. That is right for a 12px slot and
+     * useless for a sentence, which has to say which of them this is.
+     */
     const doing =
-      mark === 'waiting'
+      state === 'blocked'
         ? 'is waiting on an answer'
-        : mark === 'ready'
+        : state === 'needsCheck'
           ? 'has finished a turn you have not read'
           : 'is still working';
     const agents = task.sessions.length > 1 ? 'its agents' : 'its agent';
@@ -4012,7 +4025,16 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
   ctx.subscriptions.push(
     commands.register(TASK_COMMANDS.snooze, {
       title: 'Tasks: Later',
-      schema: s.object({ task: s.string(), until: s.enumOf(['today', 'quiet', 'tomorrow'] as const) }),
+      /*
+       * `until` is a STRING and not an enum, because the menu's fourth entry is a
+       * field rather than a preset: whatever was typed arrives here verbatim and
+       * `readUntil` decides whether it names a preset, a moment, or nothing.
+       *
+       * The shell could not do that decision instead. It draws the field, but
+       * what "4pm" means is a question about this task's clock — the same reason
+       * it runs a verb it was handed rather than knowing `tasks.snooze` exists.
+       */
+      schema: s.object({ task: s.string(), until: s.string() }),
       handler: (args) => {
         const found = store.get(args.task);
         if (found === undefined) throw new Error(`no task ${args.task}`);
@@ -4027,7 +4049,17 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
          * wake will say it is back FOR.
          */
         const was = found.snooze?.was ?? STATE_WORDS[displayState(found.lifecycle, agentStatesOf(found))];
-        const snooze = snoozeFor(args.until as SnoozeUntil, Date.now(), was);
+        const now = Date.now();
+        const until = readUntil(args.until, now);
+        /*
+         * A time nobody can read is a refusal, never a fallback.
+         *
+         * Both land the row in `Later`, and only one of them tells you it put it
+         * somewhere you did not ask for. The menu draws this message beside the
+         * field it came from.
+         */
+        if (until === undefined) throw new Error(`cannot read "${args.until}" as a time`);
+        const snooze = snoozeFor(until, now, was);
         store.put({ ...found, snooze });
         changed();
         return { task: found.id, until: snooze.label };
@@ -4959,7 +4991,20 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
           const cardFor = (task: TaskRecord, state: string, count?: number, stage?: string): unknown => {
             const factsOf = factsFor(task);
             return {
-            mark: markFor(task, state),
+            /*
+             * A snoozed task wears `later` — the dashed ring — whatever it was
+             * doing when you put it off.
+             *
+             * The answer outranks the state it is sleeping on, and the mark has
+             * to say so anywhere there is no heading to: the rail, a card, a
+             * search hit. On Home the region says it too, which is the same
+             * agreement `shipped` already has with the Shipped heading.
+             *
+             * Nothing is lost by overwriting it. `snooze.was` holds what the task
+             * was doing, so a wake still comes back as the question it was rather
+             * than as "returned from later".
+             */
+            mark: task.snooze === undefined ? markFor(task, state) : 'later',
             /*
              * Put off, and WHY — the shell files a row carrying this under
              * `Later` and draws `until <label>` beside its name.
@@ -5009,6 +5054,25 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
                         command: TASK_COMMANDS.snooze,
                         args: { task: task.id, until: 'tomorrow' },
                         key: '3',
+                      },
+                      /*
+                       * The fourth is a FIELD, and it is what the three above
+                       * cannot say. They are the whens worth one keypress; every
+                       * other when — until Thursday, until this afternoon, for
+                       * twenty minutes — had to be rounded to whichever preset
+                       * was least wrong, which puts the row back on Home at a
+                       * moment nobody chose.
+                       *
+                       * `until` is absent from `args` on purpose: the typed text
+                       * IS that argument, and `prompt.field` is how the shell
+                       * knows where to put it without learning what it means.
+                       */
+                      {
+                        label: 'Pick a time…',
+                        command: TASK_COMMANDS.snooze,
+                        args: { task: task.id },
+                        key: '4',
+                        prompt: { field: 'until', placeholder: '4pm · friday · 2h' },
                       },
                     ],
                   },
@@ -5247,14 +5311,24 @@ export function activate(ctx: ExtensionContext, api: Shepherd): TasksAPI {
              * not exist before: closing a task's panes reclaims its worktrees now
              * without shipping it.
              *
-             * Said in words rather than given a mark of its own. Nothing is
-             * happening to it, which is what the resting dot already means, and a
-             * colour cannot carry "your code is in a snapshot, not a directory".
+             * Said in words rather than given a mark of its own. Its mark already
+             * says the next step is yours, and a colour cannot carry "your code is
+             * in a snapshot, not a directory".
              */
             const shelvedNote = !shipped && isShelved(task) ? 'shelved' : undefined;
             const mark = markFor(task, state);
-            const liveAgent =
-              !shipped && (mark === 'working' || mark === 'waiting' || mark === 'ready');
+            /*
+             * Is there an agent to interrupt — read off the STATE rather than the
+             * mark.
+             *
+             * `idle` and `needsCheck` wear the same green square, because both
+             * are the user's move, and only one of them has a session mid-turn.
+             * Asking the mark therefore put a confirm dialog on the commonest
+             * gesture in the app — shipping a task nobody was working on — and
+             * told the user it had "finished a turn you have not read" about a
+             * task that had not run at all.
+             */
+            const liveAgent = !shipped && LIVE_AGENT_STATES.has(state);
             return {
               id: task.id,
               label: task.title,
@@ -5790,16 +5864,25 @@ function markOf(state: string): string {
       return 'failed';
     /*
      * `archived` is what `displayState` returns for finished work — `done` is a
-     * lifecycle value nothing writes. Without it the card drew a resting ring on
-     * every task in the Shipped drawer, which is the one place a check is the
+     * lifecycle value nothing writes. Without it the card fell to the default arm
+     * for every task in the Shipped drawer, which is the one place a check is the
      * whole point: §3 gives shipped its own mark precisely because the row has
      * left the live list and the mark is all that says why.
      */
     case 'archived':
     case 'done':
       return 'shipped';
+    /*
+     * Idle, and every lifecycle value this table does not name.
+     *
+     * The SAME green square `needsCheck` gets, because they are the same request
+     * seen a moment apart: nothing is running, so the next step is yours. There
+     * is no quieter mark to fall to — a shape meaning "nothing is happening"
+     * described the absence of an agent as though it were the absence of work,
+     * and an idle task is precisely the one nobody will pick up but you.
+     */
     default:
-      return 'resting';
+      return 'ready';
   }
 }
 

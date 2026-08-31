@@ -97,7 +97,7 @@ const quietCraftPalette: PaletteOverrides = {
   lineStrong: { dark: '#353330', light: '#CFCAC0', job: 'the horizon under a header, a bordered control' },
   lineActive: { dark: '#3B3835', light: '#C2BDB1', job: 'the focused pane’s edge' },
   edgeSelected: { dark: '#454239', light: '#B2ACA0', job: 'a selected card’s edge' },
-  edgeRing: { dark: '#807E77', light: '#8E8A81', job: 'the resting mark’s hollow ring' },
+  edgeRing: { dark: '#807E77', light: '#8E8A81', job: 'the Later mark’s dashed ring' },
 
   // ── ink ─────────────────────────────────────────────────────────────────────
   ink: { dark: '#ECEBE8', light: '#1A1815', job: 'a title, a live value; the one primary action’s fill' },
@@ -153,9 +153,9 @@ const quietCraftRoles: RoleOverrides = {
   markReady: {
     kind: 'alias',
     of: 'sky',
-    job: 'the solid square of a turn that finished, or work that is ready to ship.',
+    job: 'the solid square of a turn that finished, or of a task with nothing running.',
     notFor:
-      'a second accent. A finished turn and a question are both your move, and this skin says your move in exactly one colour — the group heading above the row says which kind.',
+      'a second accent. A question, a finished turn and an idle task are all your move, and this skin says your move in exactly one colour — the row’s own summary word says which kind. It used to be the group heading that said it, back when `Needs you`, `Ready to ship` and `Resting` were three regions; they are one now, so the word is carrying it alone.',
   },
 };
 

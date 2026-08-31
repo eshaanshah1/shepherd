@@ -658,7 +658,7 @@ function readChoices(value: unknown): readonly AgentChoice[] | null {
   if (typeof value !== 'object' || value === null) return null;
   const raw = (value as Record<string, unknown>)['choose'];
   if (!Array.isArray(raw)) return null;
-  const marks = ['working', 'waiting', 'resting', 'failed'] as const;
+  const marks = ['working', 'waiting', 'ready', 'failed'] as const;
   const choices = raw.flatMap((entry): AgentChoice[] => {
     if (typeof entry !== 'object' || entry === null) return [];
     const row = entry as Record<string, unknown>;
@@ -672,9 +672,10 @@ function readChoices(value: unknown): readonly AgentChoice[] | null {
         cwd: typeof row['cwd'] === 'string' ? row['cwd'] : '',
         ...(typeof row['repo'] === 'string' ? { repo: row['repo'] } : {}),
         role: row['role'] === 'orchestrator' ? 'orchestrator' : 'workstream',
-        // A mark this build does not know is a hollow ring — the mark that
-        // claims nothing — rather than an invented state.
-        mark: marks.find((candidate) => candidate === row['mark']) ?? 'resting',
+        // A mark this build does not know reads as pickable rather than as an
+        // invented state: this list exists to be chosen from, and a row drawn
+        // as something else is a row you would skip over.
+        mark: marks.find((candidate) => candidate === row['mark']) ?? 'ready',
         // And an unreadable `means` says the safer of the two: a row promising
         // "sends now" that then queued would be the one lie this list can tell.
         means: row['means'] === 'queues' ? 'queues' : 'sends now',

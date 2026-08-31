@@ -20,43 +20,32 @@
  *     reason next to it, never gone: "comes back on Home — never lost" is the
  *     promise the snooze verb makes, and a filter would break it silently.
  *   - **An empty region does not exist.** A heading over nothing is a heading
- *     that says the app is idle in six different ways.
+ *     that says the app is idle in five different ways.
  */
 
 import type { MarkState } from '@shepherd/ui';
 import type { RowFacts } from './row-facts.ts';
 
-export type TriageGroup = 'needs' | 'running' | 'ship' | 'later' | 'resting' | 'shells' | 'shipped';
+export type TriageGroup = 'needs' | 'running' | 'later' | 'shells' | 'shipped';
 
 /**
  * Top to bottom, and it is the design rather than a preference.
  *
- * `later` sits BELOW `resting`, which reads backwards until you remember what
- * snoozing is: an answer. A resting task is unanswered — you have not said when
- * you will look at it — so it is still yours to place. A snoozed one has a date
- * on it and is the only region on this screen you have already dealt with, so it
- * ranks under the work you have not.
+ * `later` sits below `running`, and the order is a claim about who owns the next
+ * step. `needs` is yours now, `running` is an agent's, and `later` is yours on a
+ * date you already chose — the only region on this screen you have answered, so
+ * it ranks under the work you have not.
  *
  * `shells` sits between the work and the record deliberately: a loose terminal
  * is a PLACE, not a task — it has no lifecycle and never enters the queue — so
  * it belongs below everything that can ask for you and above what is finished.
  */
-export const TRIAGE_ORDER: readonly TriageGroup[] = [
-  'needs',
-  'running',
-  'ship',
-  'resting',
-  'later',
-  'shells',
-  'shipped',
-];
+export const TRIAGE_ORDER: readonly TriageGroup[] = ['needs', 'running', 'later', 'shells', 'shipped'];
 
 export const TRIAGE_LABELS: Readonly<Record<TriageGroup, string>> = {
   needs: 'Needs you',
   running: 'Running',
-  ship: 'Ready to ship',
   later: 'Later',
-  resting: 'Resting',
   shells: 'Shells',
   shipped: 'Shipped',
 };
@@ -82,7 +71,16 @@ export interface TriageEntry {
   readonly rowId: string;
   readonly label: string;
   readonly description?: string;
-  readonly mark: MarkState;
+  /**
+   * Absent when nothing named a state this build can place — no `mark` in the
+   * facts and a `tint` word `markState` does not map.
+   *
+   * It lands the row in `Needs you`, which is the honest place for it: if the
+   * shell cannot say what is happening, looking is your move. The mark itself
+   * draws the empty slot rather than a guess, so the row says "come and see"
+   * without also claiming which of the four things it is.
+   */
+  readonly mark?: MarkState;
   /**
    * This row stands for a PLACE rather than a task: a loose terminal, with no
    * lifecycle and no claim on your attention.
@@ -126,32 +124,38 @@ export interface TriageSection {
 }
 
 /**
- * One entry → one region.
+ * One entry → one region, and the rule is a question about who moves next.
  *
- * The two splits worth reading twice:
+ * An agent is mid-turn, or you put the row off until a date you named, or the
+ * row is a place, or it is finished. **Everything else is yours**, and that is
+ * the default arm rather than a list of marks: a task nobody is working on and
+ * nobody has deferred is waiting on you whether it is blocked, unread, failed,
+ * or merely sitting there.
  *
- * **`ready` is `Needs you`, not `Ready to ship`.** The `ready` mark means a turn
- * finished and nobody has read it — it is a request, which is why §3 draws it as
- * a square. Filing it under finished work would put the one thing that just
- * changed into the region you scan last.
- *
- * **`Ready to ship` is a resting task that CHANGED something.** There is no
- * `done` state to read: `tasks`' lifecycle declares one and nothing anywhere
- * writes it (`lifecycle.ts` says so). But the distinction is real and already
- * derivable — a task with no agent running and a diff behind it is waiting on a
- * ship decision, and one with neither is simply asleep. That is exactly what the
- * two regions mean, computed from facts that exist rather than from a state that
- * does not.
+ * Two regions used to split that default and neither survived the question.
+ * `Resting` meant a task with no agent running and a clean worktree, drawn as
+ * "nothing is happening" — but nothing happening IS your move, so it was filing
+ * your own work under a heading that said the app was idle. `Ready to ship` was
+ * the same state with `git diff` finding bytes, which is a fact about the row
+ * rather than a kind of ownership: one line written by an agent that then
+ * stopped was enough to earn the heading, finished or not. The diff is still
+ * drawn — `columns.ts` gives `needs` the cell — it just no longer names a region.
  */
 export function triageOf(entry: TriageEntry): TriageGroup {
   if (entry.place) return 'shells';
   if (entry.mark === 'shipped') return 'shipped';
-  // Before the marks: a snoozed row has said "not now" about whatever it would
-  // otherwise be, and that answer outranks the state it is sleeping on.
+  /*
+   * Before `working`: a snoozed row has said "not now" about whatever it would
+   * otherwise be, and that answer outranks the state it is sleeping on.
+   *
+   * Read from the FACT and not from the `later` mark, because the mark is the
+   * publishing extension's to set and the promise that nothing is ever lost is
+   * this file's to keep. A tree that reports a snooze without relabelling its
+   * mark still lands in `Later`, with its reason beside it.
+   */
   if (entry.facts.snooze !== undefined) return 'later';
-  if (entry.mark === 'waiting' || entry.mark === 'failed' || entry.mark === 'ready') return 'needs';
   if (entry.mark === 'working') return 'running';
-  return entry.facts.diff === undefined ? 'resting' : 'ship';
+  return 'needs';
 }
 
 /** The regions that have anything in them, in order. */
