@@ -111,23 +111,20 @@ export function menuTemplate({ appName, isDev }: MenuOptions): MenuItemSpec[] {
           accelerator: 'CmdOrCtrl+T',
           command: COMMANDS.newTab,
         },
-        {
-          id: COMMANDS.revealShell,
-          label: 'Shells',
-          /*
-           * ⌘0, and the digit is the point: it reads as tab zero, home, the thing
-           * before the work — and it leaves ⌘1–⌘9 free if per-tab switching is
-           * ever wanted. Free because no `resetZoom` role is registered anywhere
-           * in this menu, so the key most apps spend on zoom is unspent here.
-           *
-           * Read this file's opening note before moving it: AppKit resolves a
-           * menu key equivalent BEFORE the page sees the keystroke, so this item
-           * does not compete with a contributed overlay on the same key — it
-           * DELETES it, silently.
-           */
-          accelerator: 'CmdOrCtrl+0',
-          command: COMMANDS.revealShell,
-        },
+        /*
+         * `Shells` on ⌘0 stood here, and it is bound in the page now
+         * (`takeover.tsx`) rather than moved.
+         *
+         * The opening note is why. A menu accelerator is resolved by AppKit
+         * before the page sees the keystroke, so this item could only ever run
+         * the extension's `shell.reveal` — which mints a shell and switches the
+         * layout's active root, half of the gesture. Which SCREEN the window is
+         * on is renderer state, so ⌘0 minted a shell and left you on Home. An
+         * item whose click could only do that half, beside an accelerator the
+         * page was better placed to answer, was two ways to be wrong.
+         *
+         * ⌘K's places list advertises it, the way it advertises `H` and `N`.
+         */
         { type: 'separator' },
         {
           id: COMMANDS.splitRight,

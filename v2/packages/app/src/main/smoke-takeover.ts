@@ -299,8 +299,13 @@ export async function runTakeoverSmoke(win: BrowserWindow, controlSocket: string
   }
 
   // ── Shells: a band in the column, with the panes under it ─────────────────
+  //
+  // ⌘0, from Home, which is where the reported bug bit: it minted a shell and
+  // left you on Home, because the key was a menu accelerator running the
+  // extension's layout verb and AppKit had already taken it from the page.
+  // Nothing below `useTakeover` can see that, which is why the claim is here.
   {
-    await press(win, '0');
+    await press(win, '0', ['cmd']);
     const shells = await read(win, ['[data-testid="takeover-back"]']);
     const band = shells.boxes['.sh-take-band'] ?? null;
     const body = shells.boxes['.sh-body'] ?? null;
@@ -323,6 +328,34 @@ export async function runTakeoverSmoke(win: BrowserWindow, controlSocket: string
     check(shells.hits['[data-testid="takeover-back"]'] === true, 'shells: the way back is clickable');
     assertInWindow('shells', shells);
     say(`shells: band=${JSON.stringify(band)} body=${JSON.stringify(body)}`);
+
+    /*
+     * …and a REAL shell under it, which is the other half of the report.
+     *
+     * The band drawing over an active root proves the chrome moved; a grid in
+     * that root proves the key revealed something to move to. The screen used to
+     * be reachable with no shell in it at all — bare `0` moved the nav and
+     * revealed nothing — so a band with an empty stage would have passed every
+     * assertion above.
+     */
+    const grids = (await win.webContents.executeJavaScript(
+      `document.querySelectorAll('.sh-root[data-active="true"] .xterm').length`,
+    )) as number;
+    check(grids > 0, `shells: a real shell is on the stage (${grids} grid(s))`);
+
+    /*
+     * Pressing it again FOCUSES rather than piling up: `shell.reveal` opens one
+     * only when there is nothing to go to. A key that minted a shell per press
+     * would silt the strip up, and the second press was the half of the report
+     * that did nothing at all.
+     */
+    await press(win, '0', ['cmd']);
+    const again = await read(win, ['[data-testid="takeover-back"]']);
+    check(again.boxes['.sh-take-band'] !== null, 'shells: ⌘0 again stays on the shells');
+    const grew = (await win.webContents.executeJavaScript(
+      `document.querySelectorAll('.sh-root[data-active="true"] .xterm').length`,
+    )) as number;
+    check(grew === grids, `shells: and opens no second shell (${grids} → ${grew})`);
   }
 
   // ── The composer, over the band ───────────────────────────────────────────
@@ -330,8 +363,13 @@ export async function runTakeoverSmoke(win: BrowserWindow, controlSocket: string
   // Raised from SHELLS on purpose: this is the exact case that was broken —
   // a contributed screen opening BEHIND chrome, which read as a blank window
   // with a band on top.
+  //
+  // With ⌘N, the accelerator the composer's own contribution declares, and not
+  // the bare `N` this used to press. ⌘0 reveals a real shell now, so the shells
+  // screen has a terminal holding the keyboard and a bare key is the pty's —
+  // which is the whole reason a contributed screen declares a chord.
   {
-    await press(win, 'N');
+    await press(win, 'N', ['cmd']);
     const composer = await read(win, ['.sh-screen']);
     const screen = composer.boxes['.sh-screen'] ?? null;
     check(screen !== null, 'composer: the screen is on stage');

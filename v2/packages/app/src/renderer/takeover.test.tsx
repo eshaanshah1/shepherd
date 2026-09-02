@@ -599,6 +599,83 @@ describe('the router', () => {
     expect(raised).toEqual(['tasks.composer']);
     view.unmount();
   });
+
+  /**
+   * The two halves of "go to the shells", which used to be two gestures with one
+   * half each.
+   *
+   * ⌘0 was a menu accelerator running the extension's verb, so a shell was
+   * minted and the window stayed where it was; bare `0` moved the window and
+   * revealed nothing, so with no shell yet the `Shells` screen drew whichever
+   * root happened to be active. Every case here asserts BOTH — the verb and the
+   * screen — because either alone is one of those bugs.
+   */
+  describe('the shells', () => {
+    it('reveals AND lands, on ⌘0', async () => {
+      const { view, calls } = render({ rows: two });
+      await settle();
+      press('0', { metaKey: true });
+      expect(calls.at(-1)).toEqual({ command: 'shell.reveal', args: {} });
+      expect(all(view.container, 'takeover-shells')).toHaveLength(1);
+      view.unmount();
+    });
+
+    it('reveals AND lands on the bare key too, where a terminal is not holding it', async () => {
+      const { view, calls } = render({ rows: two });
+      await settle();
+      press('0');
+      expect(calls.at(-1)).toEqual({ command: 'shell.reveal', args: {} });
+      expect(all(view.container, 'takeover-shells')).toHaveLength(1);
+      view.unmount();
+    });
+
+    it('asks again from a shell already on screen, because focusing one is the same gesture', async () => {
+      // The second half of the report: pressing it with a shell already open did
+      // nothing at all. `shell.reveal` switches to the first live shell and
+      // opens one only when there is none, so the repeat is what focuses.
+      const { view, calls } = render({ rows: two });
+      await settle();
+      press('0', { metaKey: true });
+      const once = calls.length;
+      press('0', { metaKey: true });
+      expect(calls.length).toBe(once + 1);
+      expect(calls.at(-1)).toEqual({ command: 'shell.reveal', args: {} });
+      expect(all(view.container, 'takeover-shells')).toHaveLength(1);
+      view.unmount();
+    });
+
+    it('is somewhere to come back FROM: ⌘[ leaves it', async () => {
+      const { view } = render({ rows: two });
+      await settle();
+      press('0', { metaKey: true });
+      press('[', { metaKey: true });
+      expect(all(view.container, 'takeover-home')).toHaveLength(1);
+      view.unmount();
+    });
+
+    it('never takes a bare 0 out of a text field, while the chord still works there', async () => {
+      const { view, calls } = render({ rows: two });
+      await settle();
+      const field = document.createElement('input');
+      document.body.append(field);
+      act(() =>
+        void field.dispatchEvent(
+          new KeyboardEvent('keydown', { key: '0', bubbles: true, cancelable: true }),
+        ),
+      );
+      expect(calls).toHaveLength(0);
+      // The chord is not text, and it is a Command chord for the same reason
+      // ⌘[ is: no field and no pty can claim one.
+      act(() =>
+        void field.dispatchEvent(
+          new KeyboardEvent('keydown', { key: '0', metaKey: true, bubbles: true, cancelable: true }),
+        ),
+      );
+      expect(calls.at(-1)).toEqual({ command: 'shell.reveal', args: {} });
+      field.remove();
+      view.unmount();
+    });
+  });
 });
 
 describe('⌘K jumps anywhere', () => {
@@ -689,6 +766,21 @@ describe('⌘K jumps anywhere', () => {
 
     press('[', { metaKey: true });
     expect(all(view.container, 'takeover-home')).toHaveLength(1);
+    view.unmount();
+  });
+
+  it('reveals the shells as well as landing on them, which a jump used not to', async () => {
+    const { view, calls } = render({ rows: {} });
+    await settle();
+    press('k', { metaKey: true });
+    type(view.container.querySelector('input') as HTMLInputElement, 'shell');
+    act(() =>
+      void (view.container.querySelector('input') as HTMLInputElement).dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      ),
+    );
+    expect(calls.at(-1)).toEqual({ command: 'shell.reveal', args: {} });
+    expect(all(view.container, 'takeover-shells')).toHaveLength(1);
     view.unmount();
   });
 

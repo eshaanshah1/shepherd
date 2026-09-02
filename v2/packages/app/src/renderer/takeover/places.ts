@@ -41,7 +41,13 @@ export function places(entries: readonly TriageEntry[]): readonly PlaceItem[] {
   const standing: readonly PlaceItem[] = [
     { id: 'place:home', kind: 'home', name: 'Overview', where: 'H' },
     { id: 'place:new', kind: 'new', name: 'New task', where: 'N' },
-    { id: 'place:shells', kind: 'shells', name: 'Shells', where: '0' },
+    /*
+     * `⌘0`, not `0`. Both reach it, and the chord is the one that works while a
+     * terminal has the keyboard — which on this screen it always does, since the
+     * stage IS a shell. Advertising the bare key would be advertising the half
+     * that dies the moment you are looking at what it took you to.
+     */
+    { id: 'place:shells', kind: 'shells', name: 'Shells', where: '⌘0' },
   ];
   const tasks = entries
     .filter((entry) => !entry.place)

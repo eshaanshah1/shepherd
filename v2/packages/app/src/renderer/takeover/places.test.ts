@@ -21,7 +21,9 @@ describe('places', () => {
      */
     const items = places([entry({ id: 'relay', mark: 'working' })]);
     expect(items.slice(0, 3).map((item) => item.name)).toEqual(['Overview', 'New task', 'Shells']);
-    expect(items.slice(0, 3).map((item) => item.where)).toEqual(['H', 'N', '0']);
+    // `⌘0`, not `0`: both reach the shells, and the chord is the half that
+    // survives a terminal holding the keyboard — which it does on that screen.
+    expect(items.slice(0, 3).map((item) => item.where)).toEqual(['H', 'N', '⌘0']);
   });
 
   it('says the region a task is in, in the words Home uses', () => {

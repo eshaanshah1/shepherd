@@ -33,15 +33,6 @@ export const MENU_INVOCATIONS: Readonly<Record<CommandID, Invocation>> = {
   // No `group`, for the reason stated above: a chrome gesture means "the group I
   // am looking at", and that default lives in `registerLayoutCommands`.
   [COMMANDS.newTab]: { command: LAYOUT_COMMANDS.newTab, args: {} },
-  /*
-   * Not a `LAYOUT_COMMANDS` id: the verb belongs to `shepherd.shell`, which knows
-   * which group the shells are and the kernel does not. Named as a string for the
-   * reason every cross-package id is — values do not cross between packages.
-   *
-   * `args: {}` and the handler's `s.nothing()` agree only because `nothing`
-   * accepts an empty object as well as an absent value.
-   */
-  [COMMANDS.revealShell]: { command: 'shell.reveal', args: {} },
   // ADR 0012's vocabulary, read off `@shepherd/core/layout` rather than from the
   // word: `row` is a ROW OF PANES — side by side. `column` is stacked.
   [COMMANDS.splitRight]: { command: LAYOUT_COMMANDS.split, args: { axis: 'row' } },

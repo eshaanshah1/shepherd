@@ -219,6 +219,29 @@ export function useTakeover({
   }, [onRaiseView]);
 
   /**
+   * Go to the shells — BOTH halves, and neither entrance used to do both.
+   *
+   * `shell.reveal` is the layout half: the extension knows which group the
+   * shells are and the shell does not, and it is idempotent — it opens one only
+   * when there is nothing to go to — which is what lets one call serve the first
+   * press and every press after it. The nav is the chrome half, and it is the
+   * page's own the way `open` above is.
+   *
+   * Fired and not awaited, exactly as a row's verb is: the key moves the window
+   * NOW, and the stage catches up on the layout push the command produces. On
+   * the first press that push is a pty starting, and a screen that waited for it
+   * would read as a key that missed.
+   */
+  const revealShells = useCallback(
+    (how: 'push' | 'jump' = 'push') => {
+      invoke(SHELL_REVEAL, {});
+      const arrive = how === 'jump' ? jump : go;
+      setNav((current) => arrive(current, { kind: 'shells' } satisfies Place));
+    },
+    [invoke],
+  );
+
+  /**
    * Put one off. The menu is opened, never the verb run — the WHEN is the useful
    * half, and a `Later` that always meant the same delay would be a mute button
    * on the one screen that exists to say what needs you.
@@ -272,12 +295,12 @@ export function useTakeover({
         return;
       }
       if (item.kind === 'shells') {
-        setNav((current) => jump(current, { kind: 'shells' }));
+        revealShells('jump');
         return;
       }
       if (item.entry !== undefined) open(item.entry, 'jump');
     },
-    [open, raiseComposer],
+    [open, raiseComposer, revealShells],
   );
 
   /*
@@ -371,6 +394,25 @@ export function useTakeover({
           }
         }
       }
+      /*
+       * ⌘0 — the shells, and a Command chord because it has to work while a
+       * terminal has the keyboard, which on this screen is always: the stage IS
+       * a shell, so the bare `0` below reaches the pty rather than this handler.
+       *
+       * Bound HERE and not in the menu bar. AppKit resolves a menu key
+       * equivalent before the page sees the keystroke, so `Pane > Shells` on
+       * ⌘0 could only ever run the extension's verb — a shell was minted and the
+       * window stayed on Home. It is the same reason ⌘F and ⌘K are the page's.
+       */
+      if (event.key === '0' && (event.metaKey || event.ctrlKey) && !event.altKey) {
+        // Not while the switcher or the Later menu is up: those own the keyboard
+        // while they are, and the switcher already lists Shells as a row.
+        if (switching || deferring !== null) return;
+        event.preventDefault();
+        event.stopPropagation();
+        revealShells();
+        return;
+      }
       if (event.key === '[' && (event.metaKey || event.ctrlKey) && !event.altKey) {
         // Never while another layer is up: the composer and the palette are
         // strictly in front of this and own their own dismissal.
@@ -444,13 +486,26 @@ export function useTakeover({
       }
       if (event.key === '0') {
         event.preventDefault();
-        setNav((current) => go(current, { kind: 'shells' } satisfies Place));
+        revealShells();
         return;
       }
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [suspended, switching, deferring, nav, tabs, entries, byId, open, answer, later, raiseComposer]);
+  }, [
+    suspended,
+    switching,
+    deferring,
+    nav,
+    tabs,
+    entries,
+    byId,
+    open,
+    answer,
+    later,
+    raiseComposer,
+    revealShells,
+  ]);
 
   const task = currentTask(nav);
   const deferred = deferring === null ? null : (byId.get(deferring) ?? null);
@@ -628,3 +683,12 @@ export function useTakeover({
  * nothing and the button is the only thing that was wrong.
  */
 const COMPOSER_VIEW = 'tasks.composer';
+
+/**
+ * The verb that puts a shell on screen, by NAME — `shepherd.shell`'s own.
+ *
+ * A string for the reason `COMPOSER_VIEW` is one: the shell does not import an
+ * extension. Which group the shells are is the extension's answer and the
+ * kernel has no verb for it, so this is the only way to ask.
+ */
+const SHELL_REVEAL = 'shell.reveal';
